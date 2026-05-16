@@ -266,14 +266,19 @@ impl App for AppImpl {
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_default();
                     
-                    // Escape if it's a keyword
-                    let escaped = Self::escape_rust_keyword(&stem);
+                    // For mod.rs files, the module is just "mod", not escaped
+                    // The file mod.rs defines the module named "mod"
+                    let module_decl = if stem == "mod" {
+                        "mod".to_string()
+                    } else {
+                        Self::escape_rust_keyword(&stem)
+                    };
                     
                     // Add to parent directory's module list
                     modules
                         .entry(parent)
                         .or_default()
-                        .push(escaped);
+                        .push(module_decl);
                 }
             }
         }

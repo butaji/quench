@@ -149,19 +149,45 @@ fn emit_conditional_expr(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExp
     let cons_type = infer_type(&cond.cons);
     let alt_type = infer_type(&cond.alt);
     
-    emitter.push_str("if ");
-    emit_expr(emitter, &cond.test);
+    // Check if we need to capture the result
+    let result_type = if cons_type == alt_type {
+        cons_type
+    } else if cons_type == "()" {
+        alt_type
+    } else if alt_type == "()" {
+        cons_type
+    } else {
+        // Different types - fallback to () 
+        "()".to_string()
+    };
     
-    // If both branches return the same non-unit type, use a match-like pattern
-    if cons_type != "()" || alt_type != "()" {
+    // If result is needed (variable assignment or expression context)
+    // we need to use a block that assigns to a temporary
+    let needs_temp = result_type != "()" && result_type != "f64" 
+        && result_type != "bool" && result_type != "String" 
+        && result_type != "i32" && result_type != "usize";
+    
+    if needs_temp {
+        // Emit as a block that returns the value
+        emitter.push_str("{");
+        emitter.push_str(" if ");
+        emit_expr(emitter, &cond.test);
+        emitter.push_str(" { ");
+        emit_expr(emitter, &cond.cons);
+        emitter.push_str(" } else { ");
+        emit_expr(emitter, &cond.alt);
+        emitter.push_str(" } ");
+        emitter.push_str("}");
+    } else {
+        // Emit as if-else expression without trailing semicolons
+        // In Rust, if-else returns values without semicolons
+        emitter.push_str("if ");
+        emit_expr(emitter, &cond.test);
         emitter.push_str(" { ");
         emit_expr(emitter, &cond.cons);
         emitter.push_str(" } else { ");
         emit_expr(emitter, &cond.alt);
         emitter.push_str(" }");
-    } else {
-        // Both return unit, just emit the condition check
-        emitter.push_str(";");
     }
 }
 
