@@ -43,7 +43,8 @@ fn emit_property_access(emitter: &mut CodeEmitter, prop_name: &str, is_nested: b
     // BUT check for special properties like 'length' that need conversion
     if is_nested {
         if prop_name == "length" {
-            emitter.push_str(".len()");
+            // Cast to f64 since TypeScript .length is a number
+            emitter.push_str(".len() as f64");
         } else {
             emitter.push_str(".");
             emitter.push_str(prop_name);
@@ -141,7 +142,7 @@ fn emit_method_name_no_call(emitter: &mut CodeEmitter, prop_name: &str) {
     
     // For property access (no method call), just emit the property with proper Rust mapping
     match prop_name {
-        "length" => emitter.push_str(".len()"),
+        "length" => emitter.push_str(".len() as f64"),
         "toString" | "valueOf" => {}
         "toLowerCase" => emitter.push_str(".to_lowercase()"),
         "toUpperCase" => emitter.push_str(".to_uppercase()"),
@@ -167,7 +168,7 @@ fn emit_method_name_no_call(emitter: &mut CodeEmitter, prop_name: &str) {
 /// Emit standard method names (with method call syntax).
 fn emit_standard_method_name(emitter: &mut CodeEmitter, prop_name: &str) {
     match prop_name {
-        "length" => emitter.push_str(".len()"),
+        "length" => emitter.push_str(".len() as f64"),
         "toString" => {}
         "valueOf" => {}
         "toLowerCase" => emitter.push_str(".to_lowercase()"),

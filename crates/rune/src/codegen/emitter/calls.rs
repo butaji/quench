@@ -116,6 +116,18 @@ pub fn emit_call(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) 
                 return;
             }
 
+            // Array index access with get()
+            if method == "get" {
+                emit_expr(emitter, &member.obj);
+                emitter.push_str(".get(");
+                if let Some(arg) = call_expr.args.first() {
+                    emit_expr(emitter, &arg.expr);
+                    emitter.push_str(" as usize");
+                }
+                emitter.push_str(")");
+                return;
+            }
+
             // Emit array iterator methods with .iter() prefix
             if matches!(method, "filter" | "map" | "reduce" | "forEach" | "some" | "every" | "find" | "findIndex" | "concat" | "join" | "reverse" | "sort" | "slice") {
                 emit_expr(emitter, &member.obj);
