@@ -5,6 +5,8 @@
 mod build;
 mod config;
 mod cache;
+mod init;
+mod write;
 
 pub use build::{BuildDriver, BuildOptions, BuildMode};
 pub use config::RuneConfig;

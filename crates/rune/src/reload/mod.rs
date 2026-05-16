@@ -4,9 +4,11 @@
 
 mod watcher;
 mod host;
+mod error_translator;
 
 pub use watcher::{DylibWatcher, ReloadEvent};
 pub use host::HostSignaler;
+pub use error_translator::ErrorTranslator;
 
 use thiserror::Error;
 

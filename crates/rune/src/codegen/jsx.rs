@@ -45,7 +45,7 @@ impl JsxTranspiler {
     /// Transpile to Ratatui widget construction.
     fn transpile_ratatui(&self, elem: &str) -> String {
         let elem = elem.trim();
-        let (tag, _rest) = if let Some(space) = elem.find(' ') {
+        let (tag, rest) = if let Some(space) = elem.find(' ') {
             (&elem[..space], Some(&elem[space..]))
         } else if let Some(gt) = elem.find('>') {
             (&elem[..gt], Some(&elem[gt..]))
@@ -59,13 +59,50 @@ impl JsxTranspiler {
             "ListItem" => "ListItem::new(text)",
             "Paragraph" | "Text" => "Paragraph::new(text)",
             "Button" => "Button::default()",
-            "Input" => "Paragraph::new(text)", // Simplified
+            "Input" => "Paragraph::new(text)",
             "VStack" => "Column::new()",
             "HStack" => "Row::new()",
             _ => &format!("{tag}::default()"),
         };
 
-        format!("{widget}.block()")
+        let mut result = widget.to_string();
+
+        // Apply props if present
+        if let Some(props_str) = rest {
+            self.apply_ratatui_props(&mut result, props_str);
+        }
+
+        result
+    }
+
+    /// Apply Ratatui props to widget chain.
+    fn apply_ratatui_props(&self, result: &mut String, props: &str) {
+        let props = props.trim_start().trim_end_matches("/>");
+        let props = props.trim_end_matches('>');
+
+        for prop in props.split_whitespace() {
+            let prop = prop.trim();
+            if prop.is_empty() || prop.starts_with('<') {
+                continue;
+            }
+
+            if let Some((key, value)) = prop.split_once('=') {
+                let key = key.trim();
+                let value = value.trim_matches('"').trim_matches('\'');
+
+                let setter = match key {
+                    "title" => format!(".title(\"{}\")", value),
+                    "borders" => ".block()".to_string(),
+                    "style" => format!(".style({})", value),
+                    "width" => format!(".width({})", value),
+                    "height" => format!(".height({})", value),
+                    "align" => format!(".alignment({})", value),
+                    _ => String::new(),
+                };
+
+                let _ = write!(result, "{setter}");
+            }
+        }
     }
 
     /// Transpile to Iced widget construction.
@@ -87,14 +124,46 @@ impl JsxTranspiler {
         }
     }
 
-    /// Transpile an element with props.
+    /// Transpile JSX children.
     #[must_use]
-    pub fn transpile_with_props(&self, elem: &str, props: &[(&str, &str)]) -> String {
-        let base = self.transpile_element(elem);
-        let mut result = base;
+    pub fn transpile_children(&self, children: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
 
-        for (key, value) in props {
-            let _ = write!(result, ".{key}({value})");
+        for c in children.chars() {
+            match c {
+                '<' => {
+                    if depth > 0 {
+                        current.push(c);
+                    }
+                    depth += 1;
+                }
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if !current.trim().is_empty() {
+                            result.push(current.trim().to_string());
+                        }
+                        current.clear();
+                    } else {
+                        current.push(c);
+                    }
+                }
+                _ if depth > 0 => current.push(c),
+                _ if c.is_whitespace() && current.trim().is_empty() => {}
+                _ if c == '\n' || c == '\r' => {
+                    if !current.trim().is_empty() {
+                        result.push(current.trim().to_string());
+                        current.clear();
+                    }
+                }
+                _ => current.push(c),
+            }
+        }
+
+        if !current.trim().is_empty() {
+            result.push(current.trim().to_string());
         }
 
         result
@@ -139,5 +208,13 @@ mod tests {
         let props = transpiler.extract_props(r#"title="Hello" borders="single"#);
         assert_eq!(props.len(), 2);
         assert_eq!(props[0], ("title", "Hello"));
+    }
+
+    #[test]
+    fn test_children_parsing() {
+        let transpiler = JsxTranspiler::new(WidgetLibrary::Ratatui);
+        let children = "<Text>Hello</Text><Text>World</Text>";
+        let result = transpiler.transpile_children(children);
+        assert_eq!(result.len(), 2);
     }
 }

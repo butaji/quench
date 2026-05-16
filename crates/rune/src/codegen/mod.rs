@@ -56,12 +56,8 @@ impl Import {
             let path = self.path.replace(':', "::");
             format!("use crate::native::{path};")
         } else {
-            let names: Vec<_> = self.names.iter()
-                .map(|n| n.rust_name.clone())
-                .collect();
-            let clean_path = self.path
-                .replace(".r.ts", "")
-                .replace(".r.tsx", "");
+            let names: Vec<_> = self.names.iter().map(|n| n.rust_name.clone()).collect();
+            let clean_path = self.path.replace(".r.ts", "").replace(".r.tsx", "");
             format!("use {clean_path}::{{{}}};", names.join(", "))
         }
     }
@@ -85,5 +81,5 @@ pub fn generate(
     analysis: &AnalysisResult,
 ) -> crate::Result<GeneratedModule> {
     let emitter = RustEmitter::new(source, analysis);
-    emitter.emit()
+    emitter.emit(source)
 }

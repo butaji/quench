@@ -1,43 +1,66 @@
 //! # Utilities
 //!
-//! Shared utility functions for the emitter.
+//! Common utility functions for code generation.
 
-/// Convert camelCase/snake_case to snake_case.
+/// Convert a TypeScript/camelCase name to snake_case.
 #[must_use]
 pub fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
-    let chars: Vec<char> = s.chars().collect();
-
-    for (i, c) in chars.iter().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 && !chars[i - 1].is_uppercase() {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-        } else if *c == '-' {
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
             result.push('_');
+        }
+        result.push(c.to_ascii_lowercase());
+    }
+    result
+}
+
+/// Convert a name to PascalCase.
+#[must_use]
+pub fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' || c == '-' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_ascii_uppercase());
+            capitalize_next = false;
         } else {
-            result.push(*c);
+            result.push(c);
         }
     }
+    result
+}
 
-    // Handle consecutive uppercase (e.g., "URLParser" -> "url_parser")
-    let mut final_result = String::new();
-    for (i, c) in result.chars().enumerate() {
-        if i > 0 && i < result.len() - 1 {
-            let prev = result.chars().nth(i - 1);
-            let next = result.chars().nth(i + 1);
-            if c.is_uppercase() && prev.is_some_and(|p| !p.is_uppercase()) {
-                final_result.push('_');
+/// Escape a string literal for Rust.
+#[must_use]
+pub fn escape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 2);
+    result.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c.is_ascii_control() => {
+                result.push_str(&format!("\\u{:04x}", c as u32));
             }
-            if c.is_uppercase() && next.is_some_and(|n| n.is_uppercase()) {
-                // keep as is
-            } else if c.is_uppercase() {
-                final_result.push('_');
-            }
+            c => result.push(c),
         }
-        final_result.push(c.to_ascii_lowercase());
     }
+    result.push('"');
+    result
+}
 
-    final_result.trim_matches('_').to_string()
+/// Format a list of items with commas.
+#[must_use]
+pub fn format_list<T: std::fmt::Display>(items: &[T]) -> String {
+    items
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }

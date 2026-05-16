@@ -1,129 +1,190 @@
-//! # Subset Validator Main
+//! # Subset Validation
 //!
-//! Validates the zero-overhead TypeScript subset using text patterns.
+//! Validates the zero-overhead TypeScript subset is being used.
 
-use crate::analyzer::context::AnalysisContext;
+use crate::parser::SourceFile;
+use super::ValidationError;
 
-/// Validation error with source location.
-#[derive(Debug, Clone)]
-pub struct ValidationError {
-    pub location: String,
-    pub message: String,
-    pub code: &'static str,
-}
-
-impl std::fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.location, self.message)
-    }
-}
-
-/// Validates the zero-overhead TypeScript subset.
-#[derive(Debug, Default)]
+/// Validator for the Rune TypeScript subset.
+#[derive(Debug)]
 pub struct SubsetValidator {
-    complexity: usize,
+    /// Errors found during validation
+    errors: Vec<ValidationError>,
 }
 
 impl SubsetValidator {
     /// Create a new validator.
-    pub fn new() -> Self {
-        Self { complexity: 0 }
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { errors: Vec::new() }
     }
 
-    /// Validate source file.
-    pub fn validate(&mut self, source: &crate::parser::SourceFile) -> crate::Result<()> {
-        let mut ctx = AnalysisContext::new(source);
-        self.validate_text(&source.source, source.path.display().to_string(), &mut ctx)
-    }
+    /// Validate a source file.
+    ///
+    /// # Errors
+    /// Returns an error if validation fails.
+    pub fn validate(&mut self, source: &SourceFile) -> Result<(), ValidationError> {
+        self.errors.clear();
+        let content = &source.source;
 
-    /// Validate source text.
-    pub fn validate_text(
-        &mut self,
-        source: &str,
-        path: String,
-        ctx: &mut AnalysisContext,
-    ) -> crate::Result<()> {
-        for line in source.lines() {
+        for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
+            let line_num = (line_num + 1) as u32;
 
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with("//") {
-                continue;
-            }
-
-            // Check for forbidden keywords
-            if let Some(err) = check_forbidden_keywords(line, &path) {
-                return Err(err);
-            }
-
-            // Check for high complexity
-            if line.matches("case ").count() > 10 {
-                self.complexity += 1;
-            }
+            self.check_forbidden_features(line, line_num)?;
         }
 
-        if self.complexity > 10 {
-            ctx.add_warning(
-                path,
-                "High cyclomatic complexity detected (>10 switch cases)".into(),
-                "complexity",
-            );
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(self.errors[0].clone())
+        }
+    }
+
+    /// Check for forbidden TypeScript features.
+    fn check_forbidden_features(
+        &mut self,
+        line: &str,
+        line_num: u32,
+    ) -> Result<(), ValidationError> {
+        // Skip comments
+        if line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+            return Ok(());
+        }
+
+        // Check for 'any' type
+        if line.contains(": any") || line.contains("<any>") {
+            self.errors.push(ValidationError {
+                code: "no-any",
+                message: "Type 'any' requires dynamic dispatch. Use concrete types.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'unknown' type
+        if line.contains(": unknown") {
+            self.errors.push(ValidationError {
+                code: "no-unknown",
+                message: "Type 'unknown' requires dynamic dispatch. Use concrete types.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'class' keyword
+        if line.contains(" class ") || line.starts_with("class ") {
+            self.errors.push(ValidationError {
+                code: "no-class",
+                message: "Classes are forbidden. Use plain objects and functions.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'new' keyword (except in array new)
+        if line.contains("new ") && !line.contains("new Array") {
+            self.errors.push(ValidationError {
+                code: "no-new",
+                message: "Constructors (new) are forbidden. Use factory functions.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'this' keyword
+        if line.contains("this.") || line.starts_with("this;") {
+            self.errors.push(ValidationError {
+                code: "no-this",
+                message: "'this' keyword is forbidden. Use explicit parameters.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'var' keyword
+        if line.starts_with("var ") {
+            self.errors.push(ValidationError {
+                code: "no-var",
+                message: "Use 'const' or 'let' instead of 'var'.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for loose equality (== and !=)
+        if line.contains(" == ") || line.contains(" != ") || line.contains("== ") || line.contains("!= ") {
+            self.errors.push(ValidationError {
+                code: "no-loose-equality",
+                message: "Use strict equality (=== or !==).".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for try/catch/throw
+        if line.contains("try") || line.contains("catch") || line.starts_with("throw") {
+            self.errors.push(ValidationError {
+                code: "no-exceptions",
+                message: "Use Result<T,E> return pattern instead of try/catch/throw.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for eval
+        if line.contains("eval(") {
+            self.errors.push(ValidationError {
+                code: "no-eval",
+                message: "eval() is forbidden.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for 'with' statement
+        if line.starts_with("with ") {
+            self.errors.push(ValidationError {
+                code: "no-with",
+                message: "with statement is forbidden.".to_string(),
+                line: line_num,
+                column: 0,
+            });
+        }
+
+        // Check for dynamic property access (obj[key])
+        if line.contains("[") && line.contains("]") && !line.starts_with("//") {
+            if let Some(idx) = line.find('[') {
+                let before = &line[..idx].trim();
+                if !before.is_empty()
+                    && !before.ends_with('(')
+                    && !before.ends_with('[')
+                    && !before.ends_with('{')
+                    && !before.ends_with('<')
+                {
+                    self.errors.push(ValidationError {
+                        code: "no-dynamic-access",
+                        message: "Dynamic property access (obj[key]) is forbidden. Use Map<K,V>."
+                            .to_string(),
+                        line: line_num,
+                        column: idx as u32,
+                    });
+                }
+            }
         }
 
         Ok(())
     }
+
+    /// Get all validation errors.
+    #[must_use]
+    pub fn errors(&self) -> &[ValidationError] {
+        &self.errors
+    }
 }
 
-/// Check for forbidden keywords and patterns.
-fn check_forbidden_keywords(line: &str, path: &str) -> Option<crate::RuneError> {
-    let forbidden = [
-        ("any", "Type 'any' requires dynamic dispatch. Use concrete types."),
-        ("unknown", "Type 'unknown' requires dynamic dispatch. Use concrete types."),
-        ("class ", "Classes and prototype inheritance are forbidden. Use plain objects and functions."),
-        ("new ", "Constructor syntax is forbidden. Use factory functions."),
-        ("var ", "Use const or let instead of var."),
-        (" == ", "Use === for strict equality."),
-        (" != ", "Use !== for strict inequality."),
-        (" try {", "try/catch is forbidden. Use Result<T,E> return pattern."),
-        (" catch ", "catch is forbidden. Use Result<T,E> return pattern."),
-        ("throw ", "throw is forbidden. Use Result<T,E> return pattern."),
-        ("eval(", "eval is forbidden. Dynamic code execution is not allowed."),
-        ("with (", "with statement is forbidden. Use explicit scoping."),
-        ("typeof ", "typeof is forbidden. Runtime type inspection not allowed."),
-        (" instanceof ", "instanceof is forbidden. Use explicit type checks."),
-        ("delete ", "delete is forbidden. Use ownership and explicit drops."),
-        ("for (const k in", "for...in on objects is forbidden. Use for...of with Object.keys()."),
-        (" arguments", "arguments object is forbidden. Use rest parameters."),
-    ];
-
-    for (pattern, message) in &forbidden {
-        if line.contains(pattern) {
-            return Some(crate::RuneError::Analysis {
-                location: format!("{path}:1"),
-                message: message.to_string(),
-            });
-        }
+impl Default for SubsetValidator {
+    fn default() -> Self {
+        Self::new()
     }
-
-    // Check for dynamic property access
-    let dynamic_prop = regex::Regex::new(r"\w+\[")
-        .ok()
-        .and_then(|re| re.find(line));
-
-    if dynamic_prop.is_some() {
-        return Some(crate::RuneError::Analysis {
-            location: format!("{path}:1"),
-            message: "Dynamic property access is forbidden. Use Map<K,V> or fixed structs.".to_string(),
-        });
-    }
-
-    // Check for integer division warning
-    if line.contains(" / ")
-        && regex::Regex::new(r"\d+ / \d+")
-            .is_ok_and(|re| re.is_match(line))
-    {
-        // Integer division detected - this is just informational
-    }
-
-    None
 }

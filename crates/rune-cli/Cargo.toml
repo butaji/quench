@@ -6,12 +6,23 @@ authors.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "cargo-rune"
+name = "rune"
 path = "src/main.rs"
 
 [dependencies]
-rune = { path = "../rune" }
-clap = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+rune = { path = "../rune", default-features = false }
+anyhow.workspace = true
+clap.workspace = true
+tracing-subscriber.workspace = true
+
+# For cargo subcommand integration
+pager = { version = "0.16", optional = true }
+
+[features]
+default = []
+cargo-subcommand = ["pager"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

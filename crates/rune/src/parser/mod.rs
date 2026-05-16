@@ -1,15 +1,17 @@
 //! # Parser Module
 //!
-//! Parses `*.r.ts` and `*.r.tsx` files.
+//! Parses `*.r.ts` and `*.r.tsx` files using SWC.
 
 mod source_file;
 mod diagnostics;
+pub mod swc_parser;
 
 pub use source_file::{SourceFile, SourceKind};
 pub use diagnostics::ParseDiagnostics;
+pub use swc_parser::SwcAst;
 
 /// Check if a file path is a Rune source file (ending in .r.ts or .r.tsx).
-fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
+pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
     let file_name = path.file_name()?.to_str()?;
     if file_name.ends_with(".r.ts") {
         Some((true, SourceKind::TypeScript))
@@ -20,7 +22,7 @@ fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
     }
 }
 
-/// Parse a Rune source file.
+/// Parse a Rune source file using SWC.
 ///
 /// # Errors
 /// Returns an error if the file cannot be parsed.
@@ -52,7 +54,10 @@ pub fn scan_directory(dir: &std::path::Path) -> crate::Result<Vec<std::path::Pat
     Ok(sources)
 }
 
-fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) -> crate::Result<()> {
+fn scan_directory_impl(
+    dir: &std::path::Path,
+    sources: &mut Vec<std::path::PathBuf>,
+) -> crate::Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -67,7 +72,6 @@ fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathB
             continue;
         }
 
-        // Check for .r.ts and .r.tsx files by filename, not just extension
         if is_rune_file(path).is_some() {
             sources.push(path.to_path_buf());
         }

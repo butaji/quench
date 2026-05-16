@@ -2,11 +2,13 @@
 //!
 //! Main compilation orchestration.
 
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::process::Command as ProcCommand;
+use std::time::Duration;
 use crate::{Result, parser, analyzer, codegen};
 use super::config::RuneConfig;
 use super::cache::CacheManager;
+use crate::reload::{DylibWatcher, HostSignaler};
 
 /// Build mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -66,16 +68,16 @@ impl BuildOptions {
 
 /// Main build driver.
 pub struct BuildDriver {
-    options: BuildOptions,
-    config: RuneConfig,
-    cache: CacheManager,
+    /// Build options
+    pub(crate) options: BuildOptions,
+    /// Rune configuration
+    pub(crate) config: RuneConfig,
+    /// Cache manager
+    pub(crate) cache: CacheManager,
 }
 
 impl BuildDriver {
     /// Create a new build driver.
-    ///
-    /// # Errors
-    /// Returns an error if configuration or cache cannot be initialized.
     pub fn new(options: BuildOptions) -> Result<Self> {
         let config_path = options.config.clone()
             .or_else(|| Some(options.workspace.join("rune.toml")));
@@ -100,47 +102,84 @@ impl BuildDriver {
     }
 
     /// Run in development mode with hot reload.
-    ///
-    /// # Errors
-    /// Returns an error if build fails.
     pub fn dev(&mut self) -> Result<()> {
         if self.options.verbose {
             println!("Running in development mode with hot reload...");
         }
 
-        let sources = self.find_sources()?;
+        // Initial build
+        self.build_once()?;
+
+        // Find source directory
+        let src_dir = self.options.workspace
+            .join("crates")
+            .join(&self.config.build.target_crate)
+            .join("src");
+
+        // Setup hot reload directory
+        let hot_dir = self.options.workspace.join("target/hot");
+        std::fs::create_dir_all(&hot_dir)?;
+
+        // Create host signaler
+        let signaler = HostSignaler::new(&hot_dir)
+            .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+
+        // Create watcher
+        let debounce = self.config.dev.debounce;
+        let watcher = DylibWatcher::new(&src_dir, debounce)
+            .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+
         if self.options.verbose {
-            println!("Found {} Rune source files", sources.len());
+            println!("Watching for changes in {}...", src_dir.display());
+            println!("Press Ctrl+C to stop.");
         }
 
-        let parsed = Self::parse_sources(&sources)?;
-        let analyses = Self::analyze_sources(&parsed)?;
-        let generated = self.generate_code(&parsed, &analyses)?;
-        self.write_generated(&generated)?;
-        self.build_crate(false)?;
-        self.setup_hot_reload()?;
-
-        if self.options.verbose {
-            println!("Development build complete. Dylib ready.");
+        // Watch loop
+        loop {
+            // Check for file changes
+            match watcher.wait_for_event(Duration::from_secs(1)) {
+                Some(crate::reload::ReloadEvent::FilesChanged(_)) => {
+                    if self.options.verbose {
+                        println!("File changed, rebuilding...");
+                    }
+                    match self.build_once() {
+                        Ok(_) => {
+                            if self.options.verbose {
+                                println!("Build successful, hot reload ready.");
+                            }
+                            // Signal host that new dylib is ready
+                            let _ = signaler.signal();
+                        }
+                        Err(e) => {
+                            eprintln!("Build failed: {}", e);
+                        }
+                    }
+                }
+                Some(crate::reload::ReloadEvent::ProtocolChanged) => {
+                    eprintln!("Protocol changed, full restart required.");
+                    let _ = signaler.mark_restart_needed();
+                    // Exit - user needs to restart
+                    break;
+                }
+                Some(crate::reload::ReloadEvent::Error(e)) => {
+                    eprintln!("Watcher error: {}", e);
+                }
+                None => {
+                    // Timeout - continue watching
+                }
+            }
         }
 
         Ok(())
     }
 
     /// Run in release mode.
-    ///
-    /// # Errors
-    /// Returns an error if build fails.
     pub fn build(&mut self) -> Result<()> {
         if self.options.verbose {
             println!("Running in release mode...");
         }
 
-        let sources = self.find_sources()?;
-        let parsed = Self::parse_sources(&sources)?;
-        let analyses = Self::analyze_sources(&parsed)?;
-        let generated = self.generate_code(&parsed, &analyses)?;
-        self.write_generated(&generated)?;
+        self.build_once()?;
         self.build_crate(true)?;
 
         if self.options.verbose {
@@ -151,9 +190,6 @@ impl BuildDriver {
     }
 
     /// Type check only.
-    ///
-    /// # Errors
-    /// Returns an error if analysis fails.
     pub fn check(&mut self) -> Result<()> {
         let sources = self.find_sources()?;
         let parsed = Self::parse_sources(&sources)?;
@@ -170,9 +206,6 @@ impl BuildDriver {
     }
 
     /// Transpile a single file to stdout.
-    ///
-    /// # Errors
-    /// Returns an error if transpilation fails.
     pub fn transpile(&mut self) -> Result<()> {
         let file = self.options.transpile_file.as_ref()
             .ok_or_else(|| crate::RuneError::Codegen("No file specified".into()))?;
@@ -186,83 +219,33 @@ impl BuildDriver {
     }
 
     /// Initialize a new project.
-    ///
-    /// # Errors
-    /// Returns an error if project creation fails.
-    #[allow(clippy::too_many_lines)]
-    pub fn init(&mut self) -> Result<()> {
-        let project_name = self.config.project.name.clone();
-        let target_crate = self.config.build.target_crate.clone();
+    pub fn init(&self) -> Result<()> {
+        self.init_project_structure()?;
+        self.init_protocol()?;
+        self.init_host()?;
+        self.init_app()?;
 
-        let base = self.options.workspace.join("crates").join(&target_crate);
-        std::fs::create_dir_all(base.join("src/native"))?;
-        std::fs::create_dir_all(base.join("src/views"))?;
+        println!("Initialized Rune project: {}", self.config.project.name);
+        Ok(())
+    }
 
-        let cargo = format!(r#"[package]
-name = "{target_crate}"
-version = "0.1.0"
-edition = "2021"
+    /// Build once without watching.
+    pub fn build_once(&mut self) -> Result<()> {
+        let sources = self.find_sources()?;
+        if self.options.verbose {
+            println!("Found {} Rune source files", sources.len());
+        }
 
-[lib]
-name = "{target_crate}"
-path = "src/lib.rs"
+        let parsed = Self::parse_sources(&sources)?;
+        let analyses = Self::analyze_sources(&parsed)?;
+        let generated = self.generate_code(&parsed, &analyses)?;
+        self.write_generated(&generated)?;
+        self.build_crate(matches!(self.options.mode, BuildMode::Release))?;
+        self.setup_hot_reload()?;
 
-[dependencies]
-protocol = {{ path = "../protocol" }}
-ratatui = "0.26"
-
-[build-dependencies]
-rune = {{ path = "../../.." }}
-"#);
-
-        std::fs::write(base.join("Cargo.toml"), cargo)?;
-
-        let lib = r#"mod native;
-
-pub struct AppState {
-    pub tasks: Vec<Task>,
-}
-
-#[derive(Clone)]
-pub struct Task {
-    pub id: i32,
-    pub title: String,
-    pub done: bool,
-}
-
-#[no_mangle]
-pub extern "C" fn create_app() -> *mut dyn protocol::App {
-    Box::into_raw(Box::new(AppImpl))
-}
-
-struct AppImpl;
-
-impl protocol::App for AppImpl {
-    fn update(&mut self, _state: &mut AppState) {}
-    fn render(&self, _term: &mut impl ratatui::backend::Backend, _state: &AppState) {}
-}
-"#;
-
-        std::fs::write(base.join("src/lib.rs"), lib)?;
-
-        let main_ts = "export function update(state: AppState): void {}\n\
-export function render(state: AppState): void {}\n";
-
-        std::fs::write(base.join("src/main.r.ts"), main_ts)?;
-
-        let state_ts = "export type Task = { id: number; title: string; done: boolean };\n\
-export type AppState = { tasks: Task[]; selected: number };\n";
-
-        std::fs::write(base.join("src/state.r.ts"), state_ts)?;
-
-        let native_mod = "pub mod fast_math;\n";
-        std::fs::write(base.join("src/native/mod.rs"), native_mod)?;
-
-        let fast_math = "pub fn fast_sqrt(x: f64) -> f64 { x.sqrt() }\n";
-        std::fs::write(base.join("src/native/fast_math.rs"), fast_math)?;
-
-        println!("Initialized Rune project: {project_name}");
-        println!("Created structure in crates/{target_crate}/");
+        if self.options.verbose {
+            println!("Build complete.");
+        }
 
         Ok(())
     }
@@ -295,19 +278,6 @@ export type AppState = { tasks: Task[]; selected: number };\n";
             .collect()
     }
 
-    fn write_generated(&self, modules: &[codegen::GeneratedModule]) -> Result<()> {
-        let cache_dir = self.cache.generated_dir();
-
-        for module in modules {
-            let rel_path = module.name.replace(".r", "");
-            let out_path = cache_dir.join(format!("{rel_path}.rs"));
-            std::fs::create_dir_all(out_path.parent().unwrap())?;
-            std::fs::write(&out_path, &module.source)?;
-        }
-
-        Ok(())
-    }
-
     fn build_crate(&self, release: bool) -> Result<()> {
         let manifest = self.cache.generated_cargo_toml();
         let mut cmd = ProcCommand::new("cargo");
@@ -333,7 +303,6 @@ export type AppState = { tasks: Task[]; selected: number };\n";
         Ok(())
     }
 
-    #[allow(clippy::unnecessary_wraps)]
     fn setup_hot_reload(&self) -> Result<()> {
         let hot_dir = self.options.workspace.join("target/hot");
         std::fs::create_dir_all(&hot_dir)?;

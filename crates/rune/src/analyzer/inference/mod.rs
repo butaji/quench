@@ -28,7 +28,6 @@ impl TypeInferrer {
     }
 
     /// Infer all types from source text.
-    #[must_use]
     pub fn infer_from_source(&mut self, source: &SourceFile) -> crate::Result<TypeMap> {
         self.module_name = source.module_name().to_string();
         let mut types = TypeMap::default();
@@ -74,7 +73,6 @@ impl TypeInferrer {
     /// Parse a function declaration from a line.
     fn parse_function(&self, line: &str) -> Option<FunctionInfo> {
         // Pattern: export function name(args): returnType
-        // or: function name(args): returnType
         let pattern = if line.starts_with("export") {
             "export function "
         } else {
@@ -96,6 +94,8 @@ impl TypeInferrer {
         // Extract return type
         let return_type = if let Some(ret) = rest.strip_prefix("): ") {
             self.parse_type(ret.trim_end_matches(';'))
+        } else if let Some(ret) = rest.strip_prefix("):") {
+            self.parse_type(ret.trim_end_matches(';').trim())
         } else {
             Box::new(TypeInfo::Unknown)
         };
@@ -186,7 +186,8 @@ impl TypeInferrer {
 
         // String literals
         if (s.starts_with('"') && s.ends_with('"'))
-            || (s.starts_with('\'') && s.ends_with('\'')) {
+            || (s.starts_with('\'') && s.ends_with('\''))
+        {
             return Box::new(TypeInfo::StringLiteral(s[1..s.len() - 1].to_string()));
         }
 
@@ -224,11 +225,72 @@ impl TypeInferrer {
             return Box::new(TypeInfo::Generic(format!("{}<{}>", name, generic)));
         }
 
+        // Object type: { field1: Type1, field2: Type2 }
+        if s.starts_with('{') && s.ends_with('}') {
+            let fields = self.parse_object_type_fields(s);
+            return Box::new(TypeInfo::Struct(StructInfo {
+                name: format!("GeneratedStruct{}", fields.len()),
+                fields,
+            }));
+        }
+
         // Regular type name
         Box::new(TypeInfo::Struct(StructInfo {
             name: s.to_string(),
             fields: Vec::new(),
         }))
+    }
+
+    /// Parse object type fields from a type string.
+    fn parse_object_type_fields(&self, type_str: &str) -> Vec<(String, TypeInfo)> {
+        let inner = type_str
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
+        if inner.is_empty() {
+            return Vec::new();
+        }
+
+        let mut fields = Vec::new();
+        let mut depth = 0;
+        let mut current_field = String::new();
+
+        for c in inner.chars() {
+            match c {
+                '{' | '<' | '(' => {
+                    depth += 1;
+                    current_field.push(c);
+                }
+                '}' | '>' | ')' => {
+                    depth -= 1;
+                    current_field.push(c);
+                }
+                ';' | ',' if depth == 0 => {
+                    if !current_field.trim().is_empty() {
+                        if let Some((name, type_str)) = current_field.trim().split_once(':') {
+                            let name = name.trim().to_string();
+                            let type_info = *self.parse_type(type_str.trim());
+                            fields.push((name, type_info));
+                        }
+                    }
+                    current_field.clear();
+                }
+                _ => {
+                    current_field.push(c);
+                }
+            }
+        }
+
+        // Handle last field (no trailing comma/semicolon)
+        if !current_field.trim().is_empty() {
+            if let Some((name, type_str)) = current_field.trim().split_once(':') {
+                let name = name.trim().to_string();
+                let type_info = *self.parse_type(type_str.trim());
+                fields.push((name, type_info));
+            }
+        }
+
+        fields
     }
 
     /// Parse a type alias or interface.
@@ -241,7 +303,9 @@ impl TypeInferrer {
         };
 
         let prefix = prefix.strip_prefix("type ")?;
-        let name_end = prefix.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(prefix.len());
+        let name_end = prefix
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(prefix.len());
         let name = prefix[..name_end].to_string();
 
         let rest = &prefix[name_end..];
@@ -275,13 +339,17 @@ impl TypeInferrer {
 
             // Start of interface
             if line.starts_with("export type ")
-                && (line.contains("= {") || line.contains(" ={")) {
+                && (line.contains("= {") || line.contains(" ={"))
+            {
                 in_interface = true;
                 let name_part = line.strip_prefix("export type ").unwrap();
-                let name_end = name_part.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(name_part.len());
+                let name_end = name_part
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(name_part.len());
                 current_name = name_part[..name_end].to_string();
 
-                brace_depth = line.matches('{').count() - line.matches('}').count();
+                brace_depth =
+                    line.matches('{').count() - line.matches('}').count();
 
                 // Extract fields from same line if present
                 if let Some(start) = line.find('{') {
@@ -299,7 +367,10 @@ impl TypeInferrer {
             }
 
             if in_interface {
-                brace_depth = (brace_depth as i32 + line.matches('{').count() as i32 - line.matches('}').count() as i32) as usize;
+                brace_depth = (brace_depth as i32
+                    + line.matches('{').count() as i32
+                    - line.matches('}').count() as i32)
+                    as usize;
 
                 if brace_depth == 0 {
                     // End of interface
@@ -361,7 +432,9 @@ impl TypeInferrer {
         }
 
         let rest = prefix.strip_prefix("enum ").unwrap();
-        let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+        let name_end = rest
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(rest.len());
         let name = rest[..name_end].to_string();
 
         Some(EnumInfo {

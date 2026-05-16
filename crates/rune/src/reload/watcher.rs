@@ -1,106 +1,140 @@
 //! # Dylib Watcher
 //!
-//! Watches for changes in the hot reload directory and signals the host.
+//! Watches for file changes and triggers hot reload.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
-use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
-use super::{ReloadResult, ReloadError};
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Watches for dylib changes and notifies the host.
+/// Events emitted by the dylib watcher.
+#[derive(Debug, Clone)]
+pub enum ReloadEvent {
+    /// Files changed, rebuild needed
+    FilesChanged(Vec<PathBuf>),
+    /// Protocol changed, full restart needed
+    ProtocolChanged,
+    /// Error occurred
+    Error(String),
+}
+
+/// Watches for file changes in Rune source files.
 pub struct DylibWatcher {
-    /// Watch directory
-    watch_dir: PathBuf,
-    /// Notify watcher
-    #[allow(dead_code)]
+    /// Watcher for file system events
     watcher: RecommendedWatcher,
-    /// Event receiver
-    receiver: mpsc::Receiver<ReloadEvent>,
-    /// Current dylib path
-    current: Option<PathBuf>,
+    /// Receiver for events
+    receiver: Receiver<Result<Event, notify::Error>>,
+    /// Directory being watched
+    watched_dir: PathBuf,
+    /// Debounce duration
+    debounce: Duration,
 }
 
 impl DylibWatcher {
-    /// Create a new watcher.
+    /// Create a new watcher for a directory.
     ///
     /// # Errors
     /// Returns an error if the watcher cannot be created.
-    pub fn new(hot_dir: &Path) -> ReloadResult<Self> {
-        let watch_dir = hot_dir.to_path_buf();
-        let (tx, rx) = mpsc::channel();
+    pub fn new(dir: &Path, debounce_ms: u64) -> ReloadResult<Self> {
+        let (tx, rx) = channel();
+        let debounce = Duration::from_millis(debounce_ms);
 
-        let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
-                    let _ = tx.send(ReloadEvent::Changed);
-                }
-            }
-        })
+        let watcher = RecommendedWatcher::new(
+            move |res| {
+                let _ = tx.send(res);
+            },
+            Config::default().with_poll_interval(debounce),
+        )
         .map_err(|e| ReloadError::Library(e.to_string()))?;
 
         let mut watcher = watcher;
         watcher
-            .watch(&watch_dir, RecursiveMode::NonRecursive)
+            .watch(dir, RecursiveMode::Recursive)
             .map_err(|e| ReloadError::Library(e.to_string()))?;
 
         Ok(Self {
-            watch_dir,
             watcher,
             receiver: rx,
-            current: None,
+            watched_dir: dir.to_path_buf(),
+            debounce,
         })
     }
 
-    /// Poll for changes with timeout.
+    /// Check for any pending events.
     #[must_use]
-    pub fn poll(&mut self, timeout: Duration) -> Option<ReloadEvent> {
+    pub fn poll(&self) -> Option<ReloadEvent> {
+        match self.receiver.try_recv() {
+            Ok(Ok(event)) => {
+                let paths: Vec<PathBuf> = event
+                    .paths
+                    .into_iter()
+                    .filter(|p| {
+                        p.extension()
+                            .map(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                if paths.is_empty() {
+                    return None;
+                }
+
+                // Check if protocol files changed
+                let protocol_changed = paths
+                    .iter()
+                    .any(|p| p.to_string_lossy().contains("protocol"));
+
+                if protocol_changed {
+                    Some(ReloadEvent::ProtocolChanged)
+                } else {
+                    Some(ReloadEvent::FilesChanged(paths))
+                }
+            }
+            Ok(Err(e)) => Some(ReloadEvent::Error(e.to_string())),
+            Err(_) => None,
+        }
+    }
+
+    /// Wait for an event with timeout.
+    #[must_use]
+    pub fn wait_for_event(&self, timeout: Duration) -> Option<ReloadEvent> {
         match self.receiver.recv_timeout(timeout) {
-            Ok(event) => Some(event),
-            Err(mpsc::RecvTimeoutError::Timeout) => None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => Some(ReloadEvent::Disconnected),
+            Ok(Ok(event)) => {
+                let paths: Vec<PathBuf> = event
+                    .paths
+                    .into_iter()
+                    .filter(|p| {
+                        p.extension()
+                            .map(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                if paths.is_empty() {
+                    return None;
+                }
+
+                let protocol_changed = paths
+                    .iter()
+                    .any(|p| p.to_string_lossy().contains("protocol"));
+
+                if protocol_changed {
+                    Some(ReloadEvent::ProtocolChanged)
+                } else {
+                    Some(ReloadEvent::FilesChanged(paths))
+                }
+            }
+            Ok(Err(e)) => Some(ReloadEvent::Error(e.to_string())),
+            Err(_) => None,
         }
     }
 
-    /// Check if the current dylib has changed.
-    ///
-    /// # Errors
-    /// Returns an error if checking fails.
-    pub fn check_current(&mut self) -> ReloadResult<Option<PathBuf>> {
-        let current_link = self.watch_dir.join(".current");
-
-        if !current_link.exists() {
-            return Ok(None);
-        }
-
-        let target = std::fs::read_link(&current_link)?;
-
-        if self.current.as_ref() != Some(&target) {
-            self.current = Some(target.clone());
-            return Ok(Some(target));
-        }
-
-        Ok(None)
-    }
-
-    /// Get the current dylib path.
+    /// Get the watched directory.
     #[must_use]
-    pub fn current_path(&self) -> Option<&Path> {
-        self.current.as_deref()
-    }
-
-    /// Unwatch and clean up.
-    #[allow(clippy::unused_self)]
-    pub fn unwatch(self) {
-        // Watcher is dropped here, which unregisters it
+    pub fn watched_dir(&self) -> &Path {
+        &self.watched_dir
     }
 }
 
-/// Events from the watcher.
-#[derive(Debug, Clone)]
-pub enum ReloadEvent {
-    /// A new dylib is available
-    Changed,
-    /// The channel was disconnected
-    Disconnected,
-}
+use super::ReloadResult;
+use super::ReloadError;

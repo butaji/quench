@@ -1,6 +1,6 @@
 //! # Rune CLI
 //!
-//! Main CLI entry point for the `rune` binary.
+//! Main CLI entry point for the `rune` binary and `cargo rune` subcommand.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueHint};
@@ -36,7 +36,7 @@ enum Commands {
         #[arg(value_hint = ValueHint::DirPath)]
         path: Option<PathBuf>,
 
-        /// Build release
+        /// Build release mode
         #[arg(short, long)]
         release: bool,
     },
@@ -51,7 +51,6 @@ enum Commands {
     /// Transpile a file to stdout
     Transpile {
         /// File to transpile
-        #[arg(value_hint = ValueHint::FilePath)]
         file: PathBuf,
     },
 
@@ -62,39 +61,17 @@ enum Commands {
     },
 }
 
-/// Main entry point.
 fn main() -> Result<()> {
-    // Initialize tracing
+    // Setup logging
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive("rune=info".parse()?))
+        .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    // Parse arguments
     let cli = Cli::parse();
 
-    // Determine workspace path
-    let _workspace = match &cli.command {
-        Commands::Dev { path } | Commands::Build { path, .. } | Commands::Check { path } => {
-            path.clone()
-                .or_else(|| std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from))
-                .or_else(|| std::env::var("PWD").ok().map(PathBuf::from))
-                .unwrap_or_else(|| PathBuf::from("."))
-        }
-        Commands::Init { .. } => {
-            std::env::var("PWD")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("."))
-        }
-        Commands::Transpile { .. } => {
-            std::env::var("CARGO_MANIFEST_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("."))
-        }
-    };
-
-    // Build options (will be overwritten per command)
-    let mut options;
+    let mut options: BuildOptions;
 
     // Execute command
     let result = match &cli.command {
@@ -107,7 +84,11 @@ fn main() -> Result<()> {
         Commands::Build { path, release } => {
             let path = path.clone().unwrap_or_else(|| PathBuf::from("."));
             options = BuildOptions::new(path);
-            options.mode = if *release { BuildMode::Release } else { BuildMode::Dev };
+            options.mode = if *release {
+                BuildMode::Release
+            } else {
+                BuildMode::Dev
+            };
             options.verbose = cli.verbose;
             rune::driver::run(Command::Build, options)
         }
@@ -124,15 +105,16 @@ fn main() -> Result<()> {
         }
         Commands::Init { name } => {
             options = BuildOptions::new(PathBuf::from("."));
-            if name.is_some() {
-                // TODO: use name
+            if let Some(n) = name {
+                // Use name for project
+                println!("Initializing project: {n}");
             }
             rune::driver::run(Command::Init, options)
         }
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 

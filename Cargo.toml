@@ -16,6 +16,11 @@ license = "MIT"
 thiserror = "1"
 anyhow = "1"
 
+# SWC for TypeScript parsing - using latest available versions
+swc_common = "21"
+swc_ecma_parser = "39"
+swc_ecma_ast = "23"
+
 # Async and utilities
 tokio = { version = "1", features = ["full"] }
 notify = "6"
@@ -29,3 +34,8 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

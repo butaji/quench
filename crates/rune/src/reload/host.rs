@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use super::ReloadResult;
 
 /// Signals the host process about reload state.
 pub struct HostSignaler {
@@ -19,6 +18,7 @@ impl HostSignaler {
     ///
     /// # Errors
     /// Returns an error if initialization fails.
+    #[allow(clippy::unwrap_used)]
     pub fn new(hot_dir: &Path) -> ReloadResult<Self> {
         let hot_dir = hot_dir.to_path_buf();
         let state_file = hot_dir.join("restart_needed");
@@ -100,3 +100,5 @@ impl HostSignaler {
         Ok(())
     }
 }
+
+use super::ReloadResult;

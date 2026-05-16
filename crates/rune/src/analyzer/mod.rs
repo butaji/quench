@@ -1,7 +1,7 @@
 //! # Analyzer Module
 //!
 //! Validates the zero-overhead TypeScript subset and performs
-//! ownership inference (borrow checking).
+//! ownership inference.
 
 mod ownership;
 mod context;
@@ -14,6 +14,7 @@ pub use inference::TypeInferrer;
 pub use validator::SubsetValidator;
 
 use std::collections::HashMap;
+use crate::parser::SourceFile;
 
 /// Full analysis result for a source file.
 #[derive(Debug, Clone, Default)]
@@ -140,43 +141,16 @@ impl StructInfo {
             .fields
             .iter()
             .map(|(name, ty)| {
-                format!("    pub {}: {},", Self::to_snake_case(name), ty.to_rust_type())
+                format!("    pub {}: {},", to_snake_case(name), ty.to_rust_type())
             })
             .collect::<Vec<_>>()
             .join("\n");
 
         format!(
             "#[derive(Clone, Debug)]\npub struct {} {{\n{}\n}}",
-            Self::to_pascal_case(&self.name),
+            to_pascal_case(&self.name),
             fields
         )
-    }
-
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-        }
-        result
-    }
-
-    fn to_pascal_case(s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in s.chars() {
-            if c == '_' || c == '-' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-        result
     }
 }
 
@@ -196,15 +170,21 @@ impl EnumInfo {
             .iter()
             .map(|v| {
                 if v.fields.is_empty() {
-                    format!("    {},", Self::to_pascal_case(&v.tag))
+                    format!("    {},", to_pascal_case(&v.tag))
                 } else {
                     let fields = v
                         .fields
                         .iter()
-                        .map(|(n, t)| format!("{}: {}", Self::to_snake_case(n), t.to_rust_type()))
+                        .map(|(n, t)| {
+                            format!("{}: {}", to_snake_case(n), t.to_rust_type())
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("    {} {{ {} }},", Self::to_pascal_case(&v.tag), fields)
+                    format!(
+                        "    {} {{ {} }},",
+                        to_pascal_case(&v.tag),
+                        fields
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -212,36 +192,9 @@ impl EnumInfo {
 
         format!(
             "#[derive(Clone, Debug)]\npub enum {} {{\n{}\n}}",
-            Self::to_pascal_case(&self.name),
+            to_pascal_case(&self.name),
             variants
         )
-    }
-
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-        }
-        result
-    }
-
-    fn to_pascal_case(s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in s.chars() {
-            if c == '_' || c == '-' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-        result
     }
 }
 
@@ -269,7 +222,7 @@ impl FunctionInfo {
         let params = self
             .params
             .iter()
-            .map(|(n, t)| format!("{}: {}", Self::to_snake_case(n), t.to_rust_type()))
+            .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_type()))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -280,17 +233,6 @@ impl FunctionInfo {
             async_prefix,
             self.return_type.to_rust_type()
         )
-    }
-
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-        }
-        result
     }
 }
 
@@ -344,8 +286,7 @@ pub struct ImportInfo {
 }
 
 /// Analyze a source file.
-#[allow(clippy::too_many_lines)]
-pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResult> {
+pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
     let mut ctx = AnalysisContext::new(source);
     let mut type_inferrer = TypeInferrer::new();
     let mut ownership_analyzer = OwnershipAnalyzer::new();
@@ -360,12 +301,12 @@ pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResu
         );
     }
 
-    // Validate the subset (warnings only for now)
+    // Validate the subset
     if let Err(e) = validator.validate(source) {
         ctx.add_warning(
-            "validation".to_string(),
-            e.to_string(),
-            "subset_validation",
+            format!("{}:{}", e.line, e.column),
+            e.message,
+            e.code,
         );
     }
 
@@ -379,13 +320,10 @@ pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResu
     let exports = types
         .iter()
         .filter(|(_, info)| matches!(info, TypeInfo::Function(_)))
-        .map(|(name, info)| {
-            let rust_name = to_snake_case(name);
-            ExportInfo {
-                name: name.to_string(),
-                rust_name,
-                type_info: info.clone(),
-            }
+        .map(|(name, info)| ExportInfo {
+            name: name.to_string(),
+            rust_name: to_snake_case(name),
+            type_info: info.clone(),
         })
         .collect();
 
@@ -398,6 +336,7 @@ pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResu
     })
 }
 
+/// Convert name to snake_case.
 fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
     for (i, c) in s.chars().enumerate() {
@@ -405,6 +344,23 @@ fn to_snake_case(s: &str) -> String {
             result.push('_');
         }
         result.push(c.to_ascii_lowercase());
+    }
+    result
+}
+
+/// Convert name to PascalCase.
+fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' || c == '-' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
     }
     result
 }
