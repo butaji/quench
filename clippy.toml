@@ -1,0 +1,11 @@
+# Clippy Configuration for Rune
+# Enforces code quality standards
+
+# Maximum function length
+too-many-lines-threshold = 40
+
+# Cyclomatic complexity
+cognitive-complexity-threshold = 10
+
+# Disallowed lints
+disallowed-names = ["foo", "bar", "baz", "quux"]
