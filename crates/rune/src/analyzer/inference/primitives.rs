@@ -6,13 +6,13 @@ use crate::analyzer::TypeInfo;
 
 /// Infers types from literals.
 #[allow(unused)]
-pub fn infer_lit(lit: &()) -> TypeInfo {
-    // Placeholder: In full implementation, would inspect literal
+pub fn infer_lit(_lit: &str) -> TypeInfo {
+    // Placeholder for literal inference
     TypeInfo::Unknown
 }
 
 /// Infers type from a binary expression.
-#[allow(unused)]
+#[allow(clippy::similar_names)]
 pub fn infer_bin_expr_type(left: &TypeInfo, right: &TypeInfo) -> TypeInfo {
     // If either is Float, result is Float
     if matches!(left, TypeInfo::Float) || matches!(right, TypeInfo::Float) {
@@ -36,6 +36,7 @@ pub fn infer_bin_op_result(op: &str) -> TypeInfo {
     match op {
         "+" | "-" | "*" | "/" | "%" => TypeInfo::Float,
         "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" => TypeInfo::Boolean,
+        "|" | "&" | "^" | "<<" | ">>" => TypeInfo::Integer(0),
         _ => TypeInfo::Unknown,
     }
 }

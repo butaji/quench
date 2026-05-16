@@ -54,7 +54,7 @@ pub enum RuneError {
 }
 
 /// Parse errors.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ParseError {
     #[error("Parse error: {0}")]
     Parse(String),

@@ -45,6 +45,7 @@ impl HostSignaler {
     }
 
     /// Get the path to the current dylib.
+    #[must_use]
     pub fn current_dylib(&self) -> ReloadResult<Option<PathBuf>> {
         let current = self.hot_dir.join(".current");
 
@@ -57,6 +58,7 @@ impl HostSignaler {
     }
 
     /// Check if host should restart (protocol changed).
+    #[must_use]
     pub fn should_restart(&self) -> ReloadResult<bool> {
         let restart_file = self.hot_dir.join(".restart-needed");
         Ok(restart_file.exists())

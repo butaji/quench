@@ -27,6 +27,7 @@ impl TypeEmitter {
             TypeInfo::Option(inner) => format!("Option<{}>", self.emit_type(inner)),
             TypeInfo::Result(ok, err) => format!("Result<{}, {}>", self.emit_type(ok), self.emit_type(err)),
             TypeInfo::Function(f) => self.emit_function(f),
+            TypeInfo::Generic(name) => name.clone(),
             TypeInfo::Unknown => "()".to_string(),
         }
     }

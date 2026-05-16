@@ -1,6 +1,6 @@
 //! # Parser Module
 //!
-//! Parses `*.r.ts` and `*.r.tsx` files.
+//! Parses `*.r.ts` and `*.r.tsx` files using SWC.
 
 mod source_file;
 mod diagnostics;
@@ -58,22 +58,4 @@ fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathB
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extension_validation() {
-        // Test that .r.ts and .r.tsx extensions are valid
-        assert!(matches!(
-            SourceKind::TypeScript,
-            SourceKind::TypeScript
-        ));
-        assert!(matches!(
-            SourceKind::Tsx,
-            SourceKind::Tsx
-        ));
-    }
 }

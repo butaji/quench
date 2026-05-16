@@ -2,17 +2,16 @@
 //!
 //! Emits Rust code from TypeScript expressions.
 
-use crate::codegen::CodegenOptions;
 use crate::analyzer::AnalysisResult;
 
 /// Emits Rust code for expressions.
 pub struct ExprEmitter<'a> {
     /// Output buffer
-    pub output: String,
+    output: String,
     /// Current indentation
-    pub indent: usize,
+    indent: usize,
     /// Analysis result
-    analysis: &'a AnalysisResult,
+    _analysis: &'a AnalysisResult,
 }
 
 impl<'a> ExprEmitter<'a> {
@@ -21,30 +20,25 @@ impl<'a> ExprEmitter<'a> {
         Self {
             output: String::new(),
             indent: 0,
-            analysis,
+            _analysis: analysis,
         }
     }
 
     /// Emit an expression.
     #[allow(unused)]
-    pub fn emit_expr(&mut self, expr: &()) -> String {
-        // Placeholder: In full implementation, would emit expression
+    pub fn emit_expr(&mut self, expr: &str) -> String {
+        self.emit_string(expr);
         self.output.clone()
     }
 
-    /// Mangle a name to avoid keyword conflicts.
-    fn mangle(&self, name: &str) -> String {
-        if matches!(
-            name,
-            "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn"
-            | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl"
-            | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub"
-            | "ref" | "return" | "self" | "Self" | "static" | "struct" | "super"
-            | "trait" | "true" | "type" | "unsafe" | "use" | "where" | "while"
-        ) {
-            format!("{}_", name)
-        } else {
-            name.to_string()
-        }
+    /// Emit an expression string to output.
+    fn emit_string(&mut self, expr: &str) {
+        self.output.push_str(expr);
+    }
+
+    /// Get the output.
+    #[must_use]
+    pub fn into_output(self) -> String {
+        self.output
     }
 }

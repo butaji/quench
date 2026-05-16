@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 /// Manages the cache directory.
+#[derive(Debug)]
 pub struct CacheManager {
     /// Base workspace path
     workspace: PathBuf,
@@ -21,26 +22,31 @@ impl CacheManager {
     }
 
     /// Get the cache root directory.
+    #[must_use]
     pub fn cache_dir(&self) -> PathBuf {
         self.workspace.join("target/rune-cache")
     }
 
     /// Get the generated code directory.
+    #[must_use]
     pub fn generated_dir(&self) -> PathBuf {
         self.cache_dir().join("generated")
     }
 
     /// Get the generated Cargo.toml path.
+    #[must_use]
     pub fn generated_cargo_toml(&self) -> PathBuf {
         self.cache_dir().join("Cargo.toml")
     }
 
     /// Get the hot reload directory.
+    #[must_use]
     pub fn hot_dir(&self) -> PathBuf {
         self.workspace.join("target/hot")
     }
 
     /// Get the current dylib symlink path.
+    #[must_use]
     pub fn current_dylib(&self) -> PathBuf {
         self.hot_dir().join(".current")
     }
@@ -63,11 +69,13 @@ impl CacheManager {
     }
 
     /// Get the path to a specific generated module.
+    #[must_use]
     pub fn module_path(&self, module_name: &str) -> PathBuf {
         self.generated_dir().join(format!("{}.rs", module_name))
     }
 
     /// Check if cache is valid for given sources.
+    #[must_use]
     pub fn is_valid(&self, sources: &[PathBuf]) -> bool {
         if !self.generated_cargo_toml().exists() {
             return false;

@@ -3,7 +3,7 @@
 //! Manages source file parsing.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use crate::{ParseError, Result};
 
 /// Kind of source file.
@@ -24,6 +24,12 @@ pub struct SourceFile {
     pub kind: SourceKind,
     /// Raw source text
     pub source: String,
+    /// Module name for display
+    pub name: String,
+    /// Whether parsing was successful
+    pub valid: bool,
+    /// Parse errors if any
+    pub errors: Vec<ParseError>,
 }
 
 impl SourceFile {
@@ -34,11 +40,108 @@ impl SourceFile {
         }
 
         let source = fs::read_to_string(path)?;
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("module")
+            .to_string();
+
+        // Basic validation - check for balanced braces
+        let errors = Self::validate_syntax(&source);
+
         Ok(Self {
             path: path.to_path_buf(),
             kind,
             source,
+            name,
+            valid: errors.is_empty(),
+            errors,
         })
+    }
+
+    /// Validate basic syntax.
+    fn validate_syntax(source: &str) -> Vec<ParseError> {
+        let mut errors = Vec::new();
+        let mut brace_depth = 0;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+        let mut in_string = false;
+        let mut string_char = '"';
+        let mut line = 1u32;
+
+        let chars: Vec<char> = source.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            let c = chars[i];
+
+            if c == '\n' {
+                line += 1;
+            }
+
+            // Handle string literals
+            if !in_string && (c == '"' || c == '\'') {
+                in_string = true;
+                string_char = c;
+            } else if in_string && c == string_char && (i == 0 || chars[i - 1] != '\\') {
+                in_string = false;
+            } else if !in_string {
+                match c {
+                    '{' => brace_depth += 1,
+                    '}' => {
+                        brace_depth -= 1;
+                        if brace_depth < 0 {
+                            errors.push(ParseError::Parse(format!(
+                                "Unexpected closing brace at line {}", line
+                            )));
+                            brace_depth = 0;
+                        }
+                    }
+                    '(' => paren_depth += 1,
+                    ')' => {
+                        paren_depth -= 1;
+                        if paren_depth < 0 {
+                            errors.push(ParseError::Parse(format!(
+                                "Unexpected closing parenthesis at line {}", line
+                            )));
+                            paren_depth = 0;
+                        }
+                    }
+                    '[' => bracket_depth += 1,
+                    ']' => {
+                        bracket_depth -= 1;
+                        if bracket_depth < 0 {
+                            errors.push(ParseError::Parse(format!(
+                                "Unexpected closing bracket at line {}", line
+                            )));
+                            bracket_depth = 0;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            i += 1;
+        }
+
+        if brace_depth != 0 {
+            errors.push(ParseError::Parse(format!(
+                "Unclosed brace(s) at end of file"
+            )));
+        }
+        if paren_depth != 0 {
+            errors.push(ParseError::Parse(format!(
+                "Unclosed parenthesis(es) at end of file"
+            )));
+        }
+        if bracket_depth != 0 {
+            errors.push(ParseError::Parse(format!(
+                "Unclosed bracket(s) at end of file"
+            )));
+        }
+
+        errors
     }
 
     /// Get line and column from byte offset.
@@ -64,20 +167,62 @@ impl SourceFile {
         (line, col)
     }
 
-    /// Get the module body (for AST traversal placeholder).
-    #[allow(unused)]
-    pub fn module(&self) -> ModulePlaceholder {
-        ModulePlaceholder {
-            body: Vec::new(),
-        }
+    /// Get the module name.
+    #[must_use]
+    pub fn module_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Check if this is a TSX file.
+    #[must_use]
+    pub fn is_tsx(&self) -> bool {
+        self.kind == SourceKind::Tsx
     }
 }
 
-/// Placeholder for AST module - will be replaced with SWC integration.
-#[derive(Debug, Clone)]
-pub struct ModulePlaceholder {
-    pub body: Vec<()>,
-}
+/// Parse diagnostics module.
+pub mod diagnostics {
+    use crate::ParseError;
 
-/// PathBuf type alias for clarity.
-use std::path::PathBuf;
+    /// Accumulated parse diagnostics.
+    #[derive(Debug, Default)]
+    pub struct ParseDiagnostics {
+        errors: Vec<ParseError>,
+    }
+
+    impl ParseDiagnostics {
+        /// Create a new diagnostics collector.
+        #[must_use]
+        pub fn new() -> Self {
+            Self { errors: Vec::new() }
+        }
+
+        /// Add an error.
+        pub fn add_error(&mut self, err: ParseError) {
+            self.errors.push(err);
+        }
+
+        /// Check if there are any errors.
+        #[must_use]
+        pub fn has_errors(&self) -> bool {
+            !self.errors.is_empty()
+        }
+
+        /// Get all errors.
+        #[must_use]
+        pub fn errors(&self) -> &[ParseError] {
+            &self.errors
+        }
+
+        /// Take all errors, leaving an empty collector.
+        pub fn take_errors(&mut self) -> Vec<ParseError> {
+            std::mem::take(&mut self.errors)
+        }
+    }
+
+    impl std::fmt::Display for ParseDiagnostics {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Parse errors: {}", self.errors.len())
+        }
+    }
+}

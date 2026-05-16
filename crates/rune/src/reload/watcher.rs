@@ -49,6 +49,7 @@ impl DylibWatcher {
     }
 
     /// Poll for changes with timeout.
+    #[must_use]
     pub fn poll(&mut self, timeout: Duration) -> Option<ReloadEvent> {
         match self.receiver.recv_timeout(timeout) {
             Ok(event) => Some(event),
@@ -65,8 +66,7 @@ impl DylibWatcher {
             return Ok(None);
         }
 
-        let target = std::fs::read_link(&current_link)
-            .map_err(|e| super::ReloadError::Io(e))?;
+        let target = std::fs::read_link(&current_link)?;
 
         if self.current.as_ref() != Some(&target) {
             self.current = Some(target.clone());
@@ -77,6 +77,7 @@ impl DylibWatcher {
     }
 
     /// Get the current dylib path.
+    #[must_use]
     pub fn current_path(&self) -> Option<&Path> {
         self.current.as_deref()
     }

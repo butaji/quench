@@ -27,14 +27,14 @@ impl<'a> StmtEmitter<'a> {
 
     /// Emit a statement.
     #[allow(unused)]
-    pub fn emit_stmt(&mut self, stmt: &()) {
-        // Placeholder: In full implementation, would emit statement
+    pub fn emit_stmt(&mut self, stmt: &str) {
         self.push_indent();
-        self.push("/* statement */");
+        self.push(stmt);
         self.push_line(";");
     }
 
     /// Get the output.
+    #[must_use]
     pub fn into_output(self) -> String {
         self.output
     }

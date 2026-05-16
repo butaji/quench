@@ -2,28 +2,22 @@
 //!
 //! Emits Rust type declarations from TypeScript types.
 
+use crate::analyzer::TypeInfo;
+
 /// Emits Rust type code.
-pub struct TypeEmitter {
-    /// Output buffer
-    output: String,
-}
+#[derive(Debug, Default)]
+pub struct TypeEmitter;
 
 impl TypeEmitter {
     /// Create a new type emitter.
+    #[must_use]
     pub fn new() -> Self {
-        Self { output: String::new() }
+        Self
     }
 
-    /// Emit a TypeScript type.
-    #[allow(unused)]
-    pub fn emit(&mut self, ts_type: &()) -> String {
-        // Placeholder: In full implementation, would emit type
-        self.output.clone()
-    }
-}
-
-impl Default for TypeEmitter {
-    fn default() -> Self {
-        Self::new()
+    /// Emit a type declaration.
+    #[must_use]
+    pub fn emit_type(&self, type_info: &TypeInfo) -> String {
+        type_info.to_rust_type()
     }
 }

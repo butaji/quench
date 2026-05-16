@@ -7,7 +7,7 @@ mod config;
 mod cache;
 
 pub use build::{BuildDriver, BuildOptions, BuildMode};
-pub use config::{RuneConfig, TargetCrate};
+pub use config::RuneConfig;
 pub use cache::CacheManager;
 
 /// CLI commands supported by rune.
@@ -27,6 +27,7 @@ pub enum Command {
 
 impl Command {
     /// Parse from string.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "dev" => Some(Self::Dev),
