@@ -9,6 +9,7 @@ pub struct ExprEmitter<'a> {
     /// Output buffer
     output: String,
     /// Current indentation
+    #[allow(unused)]
     indent: usize,
     /// Analysis result
     _analysis: &'a AnalysisResult,
@@ -16,7 +17,8 @@ pub struct ExprEmitter<'a> {
 
 impl<'a> ExprEmitter<'a> {
     /// Create a new expression emitter.
-    pub fn new(analysis: &'a AnalysisResult) -> Self {
+    #[must_use]
+    pub const fn new(analysis: &'a AnalysisResult) -> Self {
         Self {
             output: String::new(),
             indent: 0,
@@ -26,6 +28,7 @@ impl<'a> ExprEmitter<'a> {
 
     /// Emit an expression.
     #[allow(unused)]
+    #[must_use]
     pub fn emit_expr(&mut self, expr: &str) -> String {
         self.emit_string(expr);
         self.output.clone()

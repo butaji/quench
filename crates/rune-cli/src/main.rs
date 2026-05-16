@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Determine workspace path
-    let workspace = match &cli.command {
+    let _workspace = match &cli.command {
         Commands::Dev { path } | Commands::Build { path, .. } | Commands::Check { path } => {
             path.clone()
                 .or_else(|| std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from))
@@ -93,9 +93,8 @@ fn main() -> Result<()> {
         }
     };
 
-    // Build options
-    let mut options = BuildOptions::new(workspace);
-    options.verbose = cli.verbose;
+    // Build options (will be overwritten per command)
+    let mut options;
 
     // Execute command
     let result = match &cli.command {

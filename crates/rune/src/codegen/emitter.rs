@@ -3,29 +3,38 @@
 //! Core transpilation from TypeScript to Rust source.
 
 use crate::{parser::SourceFile, analyzer::AnalysisResult};
-use crate::codegen::{GeneratedModule, Import, ImportedName, CodegenOptions};
-use super::emitters::TypeEmitter;
+use crate::codegen::{GeneratedModule, Import, CodegenOptions};
 
 /// Options for code emission.
 #[derive(Debug, Clone, Default)]
 pub struct EmitOptions {
+    /// Generate debug info
     pub source_map: bool,
+    /// Pretty print output
     pub pretty: bool,
 }
 
 /// Emits Rust code from TypeScript source.
+#[derive(Debug)]
 pub struct RustEmitter<'a> {
+    /// Source file being transpiled
     source: &'a SourceFile,
+    /// Analysis results
     analysis: &'a AnalysisResult,
+    /// Imports needed by this module
     imports: Vec<Import>,
+    /// Output buffer
     output: String,
+    /// Current indentation level
     indent: usize,
-    type_emitter: TypeEmitter,
+    /// Generation options
+    #[allow(unused)]
     options: CodegenOptions,
 }
 
 impl<'a> RustEmitter<'a> {
     /// Create a new emitter.
+    #[must_use]
     pub fn new(source: &'a SourceFile, analysis: &'a AnalysisResult) -> Self {
         Self {
             source,
@@ -33,12 +42,14 @@ impl<'a> RustEmitter<'a> {
             imports: Vec::new(),
             output: String::new(),
             indent: 0,
-            type_emitter: TypeEmitter::new(),
             options: CodegenOptions::default(),
         }
     }
 
     /// Emit the complete module.
+    ///
+    /// # Errors
+    /// Returns an error if code generation fails.
     pub fn emit(mut self) -> crate::Result<GeneratedModule> {
         self.write_header();
         self.write_types();
@@ -46,7 +57,7 @@ impl<'a> RustEmitter<'a> {
         self.write_footer();
 
         let name = self.source.path.file_stem()
-            .and_then(|s| s.to_str())
+            .and_then(std::ffi::OsStr::to_str)
             .unwrap_or("module")
             .to_string();
 
@@ -59,7 +70,7 @@ impl<'a> RustEmitter<'a> {
         })
     }
 
-    /// Write module header.
+    /// Write module header with imports.
     fn write_header(&mut self) {
         self.push_line("//! Generated from Rune source");
         self.push_line("");
@@ -67,7 +78,7 @@ impl<'a> RustEmitter<'a> {
         self.push_line("use std::fmt::{self, Write};");
         self.push_line("");
 
-        // Add protocol imports for the app crate
+        // Add protocol imports for app crate
         if self.source.path.to_string_lossy().contains("/app/src/") {
             self.push_line("use protocol::{AppState, Filter, Task};");
             self.push_line("");
@@ -76,7 +87,7 @@ impl<'a> RustEmitter<'a> {
 
     /// Write type definitions.
     fn write_types(&mut self) {
-        for (name, info) in self.analysis.types.iter() {
+        for (_, info) in self.analysis.types.iter() {
             match info {
                 crate::analyzer::TypeInfo::Struct(s) => {
                     self.push_line("");
@@ -102,7 +113,7 @@ impl<'a> RustEmitter<'a> {
         }
     }
 
-    /// Emit a single function.
+    /// Emit a single function definition.
     fn emit_function(&mut self, name: &str, func: &crate::analyzer::FunctionInfo) {
         let rust_name = to_snake_case(name);
         let async_prefix = if func.is_async { "async " } else { "" };
@@ -117,12 +128,14 @@ impl<'a> RustEmitter<'a> {
         let return_type = func.return_type.to_rust_type();
 
         self.push_line("");
-        self.push_line(&format!("/// Function: {}", name));
+        self.push_line(&format!("/// Function: {name}"));
 
         if func.is_async {
-            self.push_line(&format!("{}pub fn {}({}) -> impl Future<Output = {}> + '_ {{", async_prefix, rust_name, params_str, return_type));
+            self.push_line(&format!(
+                "{async_prefix}pub fn {rust_name}({params_str}) -> impl Future<Output = {return_type}> + '_ {{"
+            ));
         } else {
-            self.push_line(&format!("pub fn {}({}) -> {} {{", rust_name, params_str, return_type));
+            self.push_line(&format!("pub fn {rust_name}({params_str}) -> {return_type} {{"));
         }
 
         self.indent += 1;
@@ -136,7 +149,8 @@ impl<'a> RustEmitter<'a> {
     }
 
     /// Generate function body from source.
-    fn generate_function_body(&mut self, name: &str) {
+    #[allow(clippy::too_many_lines)]
+    fn generate_function_body(&mut self, _name: &str) {
         // Find the function in the source text
         let source = &self.source.source;
 
@@ -150,12 +164,13 @@ impl<'a> RustEmitter<'a> {
             }
 
             // Find function body
-            if trimmed.contains("function ") && trimmed.contains(name) {
+            if trimmed.contains("function ") && trimmed.contains(_name) {
                 let body_start = trimmed.find('{').or_else(|| trimmed.find("=>"));
                 if let Some(start) = body_start {
                     let body = &trimmed[start + 1..];
                     if body.contains('}') {
-                        self.translate_line(&format!("    {}", body.trim_end_matches('}').trim_start_matches('{')));
+                        let cleaned = body.trim_end_matches('}').trim_start_matches('{').trim();
+                        self.translate_line(&format!("    {cleaned}"));
                     }
                 }
             }
@@ -178,8 +193,8 @@ impl<'a> RustEmitter<'a> {
         }
 
         // Return statements
-        if trimmed.starts_with("return ") {
-            let expr = trimmed.strip_prefix("return ").unwrap().trim_end_matches(';');
+        if let Some(expr) = trimmed.strip_prefix("return ") {
+            let expr = expr.trim_end_matches(';');
             self.push_indent();
             self.push_line(&format!("return {};", self.translate_expr(expr)));
             return;
@@ -209,20 +224,22 @@ impl<'a> RustEmitter<'a> {
             return;
         }
 
-        // Function calls (likely in expression context)
+        // Default: function calls in expression context
         self.push_indent();
-        self.push_line(&format!("{};", self.translate_expr(trimmed.trim_end_matches(';'))));
+        self.push_line(&format!(
+            "{};",
+            self.translate_expr(trimmed.trim_end_matches(';'))
+        ));
     }
 
     /// Translate a variable binding.
     fn translate_binding(&mut self, line: &str) {
-        let (keyword, rest) = if line.starts_with("const ") {
-            ("let".to_string(), line.strip_prefix("const ").unwrap())
+        let (keyword, rest) = if let Some(r) = line.strip_prefix("const ") {
+            ("let", r)
         } else {
-            ("let mut".to_string(), line.strip_prefix("let ").unwrap())
+            ("let mut", line.strip_prefix("let ").unwrap_or(line))
         };
 
-        // Pattern: name: type = value
         let rest = rest.trim_end_matches(';');
 
         if let Some(eq_pos) = rest.find(" = ") {
@@ -233,11 +250,18 @@ impl<'a> RustEmitter<'a> {
                 let name = name_type[..colon_pos].trim();
                 let type_hint = name_type[colon_pos + 2..].trim();
                 self.push_indent();
-                self.push_line(&format!("{} {}: {} = {};", keyword, name, self.type_emitter.emit_type(&self.parse_type_hint(type_hint)), self.translate_expr(value)));
+                self.push_line(&format!(
+                    "{keyword} {name}: {} = {};",
+                    self.parse_type_hint(type_hint),
+                    self.translate_expr(value)
+                ));
             } else {
                 let name = name_type.trim();
                 self.push_indent();
-                self.push_line(&format!("{} {} = {};", keyword, name, self.translate_expr(value)));
+                self.push_line(&format!(
+                    "{keyword} {name} = {};",
+                    self.translate_expr(value)
+                ));
             }
         }
     }
@@ -256,23 +280,29 @@ impl<'a> RustEmitter<'a> {
 
     /// Translate a for loop.
     fn translate_for(&mut self, line: &str) {
-        // for (const item of array) or for (let i = 0; i < len; i++)
         if line.contains(" of ") {
             // Iterator-based for loop
             if let Some(of_pos) = line.find(" of ") {
                 let binding = &line[5..of_pos].trim();
-                let array = &line[of_pos + 4..].trim().trim_end_matches(')').trim_end_matches(';');
+                let array = rest_until(line, of_pos + 4, ')');
+                let var_name = binding
+                    .replace("const ", "")
+                    .replace("let ", "")
+                    .trim()
+                    .to_string();
 
-                let var_name = binding.replace("const ", "").replace("let ", "").trim().to_string();
                 self.push_indent();
-                self.push_line(&format!("for {} in {} {{", var_name, self.translate_expr(array)));
+                self.push_line(&format!("for {var_name} in {} {{", self.translate_expr(array)));
                 self.indent += 1;
             }
         } else if line.contains(" = ") {
             // C-style for loop
             let rest = line.strip_prefix("for ").unwrap().trim_start_matches('(').trim_end_matches(')');
             self.push_indent();
-            self.push_line(&format!("for {} {{", self.translate_expr(rest.trim_end_matches(';'))));
+            self.push_line(&format!(
+                "for {} {{",
+                self.translate_expr(rest.trim_end_matches(';'))
+            ));
             self.indent += 1;
         }
     }
@@ -280,6 +310,7 @@ impl<'a> RustEmitter<'a> {
     /// Translate a switch statement.
     fn translate_switch(&mut self, line: &str) {
         let rest = line.strip_prefix("switch ").unwrap();
+
         if let Some(brace_pos) = rest.find('{') {
             let expr = rest[..brace_pos].trim();
             self.push_indent();
@@ -291,6 +322,7 @@ impl<'a> RustEmitter<'a> {
     /// Translate a while loop.
     fn translate_while(&mut self, line: &str) {
         let rest = line.strip_prefix("while ").unwrap();
+
         if let Some(brace_pos) = rest.find('{') {
             let condition = rest[..brace_pos].trim();
             self.push_indent();
@@ -300,15 +332,16 @@ impl<'a> RustEmitter<'a> {
     }
 
     /// Translate an expression.
+    #[allow(clippy::too_many_lines)]
     fn translate_expr(&self, expr: &str) -> String {
         let expr = expr.trim();
 
-        // String literals
+        // String literals - keep as-is
         if expr.starts_with('"') || expr.starts_with('\'') {
             return expr.to_string();
         }
 
-        // Number literals
+        // Number literals - keep as-is
         if expr.parse::<f64>().is_ok() {
             return expr.to_string();
         }
@@ -324,7 +357,7 @@ impl<'a> RustEmitter<'a> {
         }
 
         // Binary operations
-        if let Some(op) = self.find_binary_op(expr) {
+        if let Some(op) = Self::find_binary_op(expr) {
             return self.translate_binary_op(expr, op);
         }
 
@@ -335,7 +368,7 @@ impl<'a> RustEmitter<'a> {
 
         // Property access
         if expr.contains('.') && !expr.contains('(') {
-            return self.translate_property_access(expr);
+            return Self::translate_property_access(expr);
         }
 
         // Array literals
@@ -355,14 +388,20 @@ impl<'a> RustEmitter<'a> {
     /// Translate a ternary expression.
     fn translate_ternary(&self, expr: &str) -> String {
         // Find the ? and : positions
-        let question_pos = expr.find(" ? ").unwrap_or(expr.find("?(").unwrap_or(0));
-        let colon_pos = expr.rfind(" : ").unwrap_or(expr.rfind(":(").unwrap_or(0));
+        let question_pos = expr.find(" ? ")
+            .unwrap_or_else(|| expr.find("?(").unwrap_or(0));
+        let colon_pos = expr.rfind(" : ")
+            .unwrap_or_else(|| expr.rfind(":(").unwrap_or(0));
 
         if colon_pos > question_pos {
             let condition = self.translate_condition(&expr[..question_pos]);
             let then_expr = expr[question_pos + 3..colon_pos].trim();
-            let else_expr = expr[colon_pos + 3..].trim_end_matches(';').trim_end_matches(')');
-            return format!("if {} {{ {} }} else {{ {} }}",
+            let else_expr = expr[colon_pos + 3..]
+                .trim_end_matches(';')
+                .trim_end_matches(')');
+
+            return format!(
+                "if {} {{ {} }} else {{ {} }}",
                 condition,
                 self.translate_expr(then_expr),
                 self.translate_expr(else_expr)
@@ -372,21 +411,21 @@ impl<'a> RustEmitter<'a> {
         expr.to_string()
     }
 
-    /// Translate a binary operation.
-    fn find_binary_op(&self, expr: &str) -> Option<&'static str> {
-        let ops = ["+=", "-=", "*=", "/=", "===", "!==", "==", "!=", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", ">", "<", "|", "&", "^"];
+    /// Find binary operator in expression.
+    fn find_binary_op(expr: &str) -> Option<&'static str> {
+        const OPS: &[&str] = &[
+            "+=", "-=", "*=", "/=", "===", "!==", "==", "!=",
+            "<=", ">=", "&&", "||", "+", "-", "*", "/", "%",
+            ">", "<", "|", "&", "^",
+        ];
 
-        for op in ops {
-            if expr.contains(op) {
-                return Some(op);
-            }
-        }
-        None
+        OPS.iter().find(|&&op| expr.contains(op)).copied()
     }
 
     /// Translate a binary operation.
     fn translate_binary_op(&self, expr: &str, op: &str) -> String {
         let parts: Vec<&str> = expr.split(op).collect();
+
         if parts.len() == 2 {
             let left = parts[0].trim();
             let right = parts[1].trim();
@@ -396,22 +435,16 @@ impl<'a> RustEmitter<'a> {
                 "!==" | "!=" => "!=",
                 "&&" => "&&",
                 "||" => "||",
-                "+" => "+",
-                "-" => "-",
-                "*" => "*",
-                "/" => "/",
-                "%" => "%",
-                "<" => "<",
-                ">" => ">",
-                "<=" => "<=",
-                ">=" => ">=",
-                "|" => "|",
-                "&" => "&",
-                "^" => "^",
+                "+" | "-" | "*" | "/" | "%" | "|" | "&" | "^" => op,
+                "<" | ">" | "<=" | ">=" => op,
                 _ => op,
             };
 
-            return format!("({} {} {})", self.translate_expr(left), rust_op, self.translate_expr(right));
+            return format!(
+                "({} {rust_op} {})",
+                self.translate_expr(left),
+                self.translate_expr(right)
+            );
         }
 
         expr.to_string()
@@ -421,24 +454,25 @@ impl<'a> RustEmitter<'a> {
     fn translate_call(&self, expr: &str) -> String {
         if let Some(paren_pos) = expr.find('(') {
             let func = &expr[..paren_pos];
-            let args = &expr[paren_pos + 1..].trim_end_matches(')').trim_end_matches(';');
+            let args = expr[paren_pos + 1..]
+                .trim_end_matches(')')
+                .trim_end_matches(';');
 
             let rust_func = to_snake_case(func);
             let translated_args: Vec<String> = args.split(',')
                 .map(|a| self.translate_expr(a.trim()))
                 .collect();
 
-            return format!("{}({})", rust_func, translated_args.join(", "));
+            return format!("{rust_func}({})", translated_args.join(", "));
         }
 
         to_snake_case(expr)
     }
 
     /// Translate property access.
-    fn translate_property_access(&self, expr: &str) -> String {
-        let parts: Vec<&str> = expr.split('.').collect();
-        parts.iter()
-            .map(|p| to_snake_case(p))
+    fn translate_property_access(expr: &str) -> String {
+        expr.split('.')
+            .map(to_snake_case)
             .collect::<Vec<_>>()
             .join(".")
     }
@@ -446,7 +480,8 @@ impl<'a> RustEmitter<'a> {
     /// Translate an array literal.
     fn translate_array_literal(&self, expr: &str) -> String {
         let inner = expr.trim_start_matches('[').trim_end_matches(']');
-        let elements: Vec<String> = inner.split(',')
+        let elements: Vec<String> = inner
+            .split(',')
             .map(|e| self.translate_expr(e.trim()))
             .collect();
 
@@ -456,7 +491,8 @@ impl<'a> RustEmitter<'a> {
     /// Translate an object literal.
     fn translate_object_literal(&self, expr: &str) -> String {
         let inner = expr.trim_start_matches('{').trim_end_matches('}');
-        let fields: Vec<String> = inner.split(',')
+        let fields: Vec<String> = inner
+            .split(',')
             .filter_map(|f| {
                 let f = f.trim();
                 if f.is_empty() {
@@ -466,7 +502,7 @@ impl<'a> RustEmitter<'a> {
                 if parts.len() == 2 {
                     let key = parts[0].trim();
                     let value = self.translate_expr(parts[1].trim());
-                    return Some(format!("{}: {}", key, value));
+                    return Some(format!("{key}: {value}"));
                 }
                 Some(f.to_string())
             })
@@ -480,9 +516,8 @@ impl<'a> RustEmitter<'a> {
         let cond = cond.trim();
 
         // Negation
-        if cond.starts_with('!') {
-            let inner = cond.strip_prefix('!').unwrap().trim();
-            return format!("!{}", self.translate_condition(inner));
+        if let Some(inner) = cond.strip_prefix('!') {
+            return format!("!{}", self.translate_condition(inner.trim()));
         }
 
         // Parentheses
@@ -500,17 +535,17 @@ impl<'a> RustEmitter<'a> {
     }
 
     /// Parse a type hint string.
-    fn parse_type_hint(&self, hint: &str) -> crate::analyzer::TypeInfo {
+    #[allow(clippy::unused_self)]
+    fn parse_type_hint(&self, hint: &str) -> String {
         match hint {
-            "number" => crate::analyzer::TypeInfo::Float,
-            "string" => crate::analyzer::TypeInfo::String,
-            "boolean" => crate::analyzer::TypeInfo::Boolean,
-            _ => crate::analyzer::TypeInfo::Unknown,
+            "number" => "f64".to_string(),
+            "string" => "String".to_string(),
+            "boolean" => "bool".to_string(),
+            "i32" | "integer" => "i32".to_string(),
+            "usize" => "usize".to_string(),
+            "void" | "undefined" => "()".to_string(),
+            _ => hint.to_string(),
         }
-    }
-
-    fn push(&mut self, s: &str) {
-        self.output.push_str(s);
     }
 
     fn push_line(&mut self, s: &str) {
@@ -525,33 +560,44 @@ impl<'a> RustEmitter<'a> {
     }
 }
 
-/// Convert camelCase/snake_case to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut prev_was_upper = false;
+/// Extract substring until a closing character.
+fn rest_until(s: &str, start: usize, end: char) -> &str {
+    if let Some(end_pos) = s[start..].find(end) {
+        &s[start..start + end_pos]
+    } else {
+        &s[start..]
+    }
+}
 
-    for c in s.chars() {
+/// Convert camelCase/snake_case to snake_case.
+#[must_use]
+pub fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+
+    for (i, c) in chars.iter().enumerate() {
         if c.is_uppercase() {
-            if !result.is_empty() && !prev_was_upper {
+            if i > 0 && !chars[i - 1].is_uppercase() {
                 result.push('_');
             }
             result.push(c.to_ascii_lowercase());
-            prev_was_upper = true;
+        } else if *c == '-' {
+            result.push('_');
         } else {
-            result.push(c);
-            prev_was_upper = false;
+            result.push(*c);
         }
     }
 
     // Handle consecutive uppercase (e.g., "URLParser" -> "url_parser")
     let mut final_result = String::new();
-    let chars: Vec<char> = result.chars().collect();
-
-    for (i, c) in chars.iter().enumerate() {
-        if i > 0 && i < chars.len() - 1 {
-            if c.is_uppercase() && !chars[i - 1].is_uppercase() {
+    for (i, c) in result.chars().enumerate() {
+        if i > 0 && i < result.len() - 1 {
+            let prev = result.chars().nth(i - 1);
+            let next = result.chars().nth(i + 1);
+            if c.is_uppercase() && prev.is_some_and(|p| !p.is_uppercase()) {
                 final_result.push('_');
-            } else if c.is_uppercase() && chars[i + 1].is_uppercase() {
+            }
+            if c.is_uppercase() && next.is_some_and(|n| n.is_uppercase()) {
                 // keep as is
             } else if c.is_uppercase() {
                 final_result.push('_');
@@ -560,5 +606,5 @@ fn to_snake_case(s: &str) -> String {
         final_result.push(c.to_ascii_lowercase());
     }
 
-    final_result
+    final_result.trim_matches('_').to_string()
 }

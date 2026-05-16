@@ -12,12 +12,14 @@ pub struct StmtEmitter<'a> {
     /// Current indentation
     indent: usize,
     /// Expression emitter reference
+    #[allow(unused)]
     expr_emitter: ExprEmitter<'a>,
 }
 
 impl<'a> StmtEmitter<'a> {
     /// Create a new statement emitter.
-    pub fn new(analysis: &'a AnalysisResult) -> Self {
+    #[must_use]
+    pub const fn new(analysis: &'a AnalysisResult) -> Self {
         Self {
             output: String::new(),
             indent: 0,

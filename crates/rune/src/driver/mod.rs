@@ -41,6 +41,9 @@ impl Command {
 }
 
 /// Run the compiler with given options.
+///
+/// # Errors
+/// Returns an error if the command fails.
 pub fn run(command: Command, options: BuildOptions) -> crate::Result<()> {
     let mut driver = BuildDriver::new(options)?;
     match command {

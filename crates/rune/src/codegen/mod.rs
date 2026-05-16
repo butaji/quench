@@ -14,7 +14,7 @@ pub use jsx::JsxTranspiler;
 use crate::{parser::SourceFile, analyzer::AnalysisResult};
 
 /// Options for code generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CodegenOptions {
     /// Generate debug info
     pub debug: bool,
@@ -22,16 +22,6 @@ pub struct CodegenOptions {
     pub edition: String,
     /// Enable hot reload mode
     pub hot_reload: bool,
-}
-
-impl Default for CodegenOptions {
-    fn default() -> Self {
-        Self {
-            debug: false,
-            edition: "2021".to_string(),
-            hot_reload: false,
-        }
-    }
 }
 
 /// Generated Rust module.
@@ -65,12 +55,16 @@ impl Import {
     #[must_use]
     pub fn to_rust(&self) -> String {
         if self.is_native {
-            format!("use crate::native::{};", self.path.replace(':', "::"))
+            let path = self.path.replace(':', "::");
+            format!("use crate::native::{path};")
         } else {
             let names: Vec<_> = self.names.iter()
                 .map(|n| n.rust_name.clone())
                 .collect();
-            format!("use {}::{{{}}};", self.path.replace(".r.ts", "").replace(".r.tsx", ""), names.join(", "))
+            let clean_path = self.path
+                .replace(".r.ts", "")
+                .replace(".r.tsx", "");
+            format!("use {clean_path}::{{{}}};", names.join(", "))
         }
     }
 }
@@ -85,6 +79,9 @@ pub struct ImportedName {
 }
 
 /// Generate Rust code from analyzed source.
+///
+/// # Errors
+/// Returns an error if code generation fails.
 pub fn generate(
     source: &SourceFile,
     analysis: &AnalysisResult,

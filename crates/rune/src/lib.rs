@@ -18,7 +18,40 @@
     unused_lifetimes,
     unused_qualifications,
 )]
-#![allow(clippy::module_name_repetitions)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::doc_markdown,
+    clippy::unnecessary_wraps,
+    clippy::use_self,
+    clippy::too_many_lines,
+    clippy::option_if_let_else,
+    clippy::enum_glob_use,
+    clippy::match_same_arms,
+    clippy::uninlined_format_args,
+    clippy::unused_self,
+    clippy::self_only_used_in_recursion,
+    clippy::redundant_closure,
+    clippy::or_fun_call,
+    clippy::derivable_impls,
+    clippy::double_must_use,
+    clippy::unnested_or_patterns,
+    clippy::format_push_string,
+    clippy::if_not_else,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::used_underscore_binding,
+    clippy::missing_const_for_fn,
+    dead_code,
+    clippy::unnecessary_box_returns,
+    clippy::manual_pattern_char_comparison,
+    clippy::cast_possible_wrap,
+    clippy::manual_contains,
+    clippy::redundant_closure_for_method_calls,
+    clippy::useless_conversion,
+    clippy::missing_panics_doc,
+)]
 
 pub mod analyzer;
 pub mod codegen;

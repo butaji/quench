@@ -1,81 +1,101 @@
 //! # Host Signaler
 //!
-//! Signals the host binary to reload the dylib.
+//! Signals the host process when a reload is needed.
 
 use std::path::{Path, PathBuf};
-use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 use super::ReloadResult;
 
-/// Signals the host to reload.
+/// Signals the host process about reload state.
 pub struct HostSignaler {
-    /// Signal file path
-    signal_path: PathBuf,
-    /// Hot directory
+    /// Hot directory path
     hot_dir: PathBuf,
+    /// State file for protocol changes
+    state_file: PathBuf,
 }
 
 impl HostSignaler {
-    /// Create a new signaler.
+    /// Create a new host signaler.
+    ///
+    /// # Errors
+    /// Returns an error if initialization fails.
     pub fn new(hot_dir: &Path) -> ReloadResult<Self> {
-        let signal_path = hot_dir.join(".reload-signal");
+        let hot_dir = hot_dir.to_path_buf();
+        let state_file = hot_dir.join("restart_needed");
         Ok(Self {
-            signal_path,
-            hot_dir: hot_dir.to_path_buf(),
+            hot_dir,
+            state_file,
         })
     }
 
-    /// Signal the host to reload.
+    /// Signal that a reload is needed.
+    ///
+    /// # Errors
+    /// Returns an error if signaling fails.
+    #[allow(clippy::unwrap_used)]
     pub fn signal(&self) -> ReloadResult<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
+            .as_millis();
 
-        fs::write(&self.signal_path, timestamp.to_string())?;
+        let signal_file = self.hot_dir.join(format!("reload_{timestamp}.signal"));
+        std::fs::write(&signal_file, "")?;
         Ok(())
     }
 
-    /// Clear the signal.
+    /// Clear all reload signals.
+    ///
+    /// # Errors
+    /// Returns an error if clearing fails.
     pub fn clear(&self) -> ReloadResult<()> {
-        if self.signal_path.exists() {
-            fs::remove_file(&self.signal_path)?;
+        for entry in std::fs::read_dir(&self.hot_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "signal") {
+                std::fs::remove_file(path)?;
+            }
         }
         Ok(())
     }
 
-    /// Get the path to the current dylib.
-    #[must_use]
+    /// Get the current dylib path.
+    ///
+    /// # Errors
+    /// Returns an error if reading fails.
     pub fn current_dylib(&self) -> ReloadResult<Option<PathBuf>> {
-        let current = self.hot_dir.join(".current");
-
-        if !current.exists() {
-            return Ok(None);
+        let current_link = self.hot_dir.join(".current");
+        if current_link.exists() {
+            Ok(Some(std::fs::read_link(current_link)?))
+        } else {
+            Ok(None)
         }
-
-        let target = fs::read_link(&current)?;
-        Ok(Some(target))
     }
 
-    /// Check if host should restart (protocol changed).
-    #[must_use]
+    /// Check if a restart is needed (protocol changed).
+    ///
+    /// # Errors
+    /// Returns an error if checking fails.
     pub fn should_restart(&self) -> ReloadResult<bool> {
-        let restart_file = self.hot_dir.join(".restart-needed");
-        Ok(restart_file.exists())
+        Ok(self.state_file.exists())
     }
 
     /// Mark that a restart is needed.
+    ///
+    /// # Errors
+    /// Returns an error if marking fails.
     pub fn mark_restart_needed(&self) -> ReloadResult<()> {
-        let restart_file = self.hot_dir.join(".restart-needed");
-        fs::write(&restart_file, "1")?;
+        std::fs::write(&self.state_file, "")?;
         Ok(())
     }
 
-    /// Clear the restart marker.
+    /// Clear the restart needed flag.
+    ///
+    /// # Errors
+    /// Returns an error if clearing fails.
     pub fn clear_restart_needed(&self) -> ReloadResult<()> {
-        let restart_file = self.hot_dir.join(".restart-needed");
-        if restart_file.exists() {
-            fs::remove_file(&restart_file)?;
+        if self.state_file.exists() {
+            std::fs::remove_file(&self.state_file)?;
         }
         Ok(())
     }

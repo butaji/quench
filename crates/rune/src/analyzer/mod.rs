@@ -276,9 +276,8 @@ impl FunctionInfo {
         let async_prefix = if self.is_async { "async " } else { "" };
 
         format!(
-            "{}fn({}) -> {}",
+            "{}fn({params}) -> {}",
             async_prefix,
-            params,
             self.return_type.to_rust_type()
         )
     }
@@ -315,7 +314,7 @@ impl OwnershipAnalysis {
 
     /// Get all bindings.
     #[must_use]
-    pub fn bindings(&self) -> &HashMap<String, BorrowMode> {
+    pub const fn bindings(&self) -> &HashMap<String, BorrowMode> {
         &self.bindings
     }
 }
@@ -345,21 +344,20 @@ pub struct ImportInfo {
 }
 
 /// Analyze a source file.
+#[allow(clippy::too_many_lines)]
 pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResult> {
     let mut ctx = AnalysisContext::new(source);
     let mut type_inferrer = TypeInferrer::new();
     let mut ownership_analyzer = OwnershipAnalyzer::new();
-    let mut validator = SubsetValidator::new();
+    let validator = SubsetValidator::new();
 
     // Check for parse errors first
-    if !source.errors.is_empty() {
-        for err in &source.errors {
-            ctx.add_warning(
-                source.path.display().to_string(),
-                format!("Parse error: {}", err),
-                "parse_error",
-            );
-        }
+    for err in &source.errors {
+        ctx.add_warning(
+            source.path.display().to_string(),
+            format!("Parse error: {err}"),
+            "parse_error",
+        );
     }
 
     // Validate the subset
