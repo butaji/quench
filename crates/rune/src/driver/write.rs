@@ -11,24 +11,13 @@ impl BuildDriver {
     /// Write generated modules to cache.
     pub fn write_generated(&self, modules: &[GeneratedModule]) -> Result<()> {
         let generated_dir = self.cache.generated_dir();
-
-        // Ensure cache directory exists
         std::fs::create_dir_all(&generated_dir)?;
 
         for module in modules {
-            // Extract relative path from source file
-            let rel_path = self.cache_relative_path(&module.name);
-            let out_path = generated_dir.join(&rel_path);
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&out_path, &module.source)?;
+            write_single_module(&generated_dir, module)?;
         }
 
-        // Write mod.rs files for directory structure
         self.write_mod_files(&generated_dir, modules)?;
-
-        // Create/refresh Cargo.toml in cache
         self.setup_cache_cargo()?;
 
         Ok(())
@@ -38,20 +27,7 @@ impl BuildDriver {
     fn cache_relative_path(&self, name: &str) -> String {
         let parts: Vec<&str> = name.split('/').collect();
         let last = parts.last().unwrap_or(&name);
-
-        // The name is the file stem, which for Rune files is like:
-        // - "main.r" for "main.r.ts" or "main.r.tsx"
-        // - "handlers/keyboard.r" for "handlers/keyboard.r.ts"
-        // We need to strip the ".r" suffix to get the proper module name
-        let clean = if std::path::Path::new(last)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
-            && last.len() > 1
-        {
-            &last[..last.len() - 2]  // Remove trailing ".r"
-        } else {
-            last
-        };
+        let clean = clean_module_name(last);
 
         if parts.len() > 1 {
             let dir_parts = &parts[..parts.len() - 1];
@@ -67,24 +43,11 @@ impl BuildDriver {
         cache_dir: &Path,
         modules: &[GeneratedModule],
     ) -> Result<()> {
-        // Collect unique directories
-        let mut dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let dirs = collect_unique_dirs(modules);
 
-        for module in modules {
-            if let Some(parent) = Path::new(&module.name).parent() {
-                if !parent.as_os_str().is_empty()
-                    && parent.to_string_lossy() != "."
-                {
-                    dirs.insert(parent.to_string_lossy().to_string());
-                }
-            }
-        }
-
-        // Write mod.rs for each directory
         for dir in dirs {
             let dir_path = cache_dir.join(&dir);
             std::fs::create_dir_all(&dir_path)?;
-
             let mod_rs = dir_path.join("mod.rs");
             if !mod_rs.exists() {
                 std::fs::write(&mod_rs, "")?;
@@ -99,20 +62,110 @@ impl BuildDriver {
         let manifest_path = self.cache.generated_cargo_toml();
         let cache_src = self.cache.generated_dir();
 
-        // Create src directory in cache
         std::fs::create_dir_all(&cache_src)?;
-
-        // Generate lib.rs with generated modules
         self.write_cache_lib(&cache_src)?;
 
-        // Calculate relative path from cache to crates
-        // Cache is at workspace/target/rune-cache, crates is at workspace/crates
-        // So we need to go up 2 levels then down to crates: ../../crates
         let crates_path = self.options.workspace.join("crates");
         let cache_to_crates = relative_path(&manifest_path, &crates_path);
 
-        // Create a completely standalone manifest for the cache
-        let manifest = format!(r#"[package]
+        let manifest = generate_manifest(&self.config.build.target_crate, &cache_to_crates);
+        std::fs::write(&manifest_path, manifest)?;
+
+        Ok(())
+    }
+
+    /// Write the cache lib.rs.
+    pub fn write_cache_lib(&self, cache_src: &Path) -> Result<()> {
+        let lib_path = cache_src.parent().unwrap().join("lib.rs");
+        std::fs::create_dir_all(lib_path.parent().unwrap())?;
+
+        let generated_dir = cache_src;
+        let modules = self.collect_modules(generated_dir)?;
+
+        let lib_content = build_lib_content();
+        std::fs::write(&lib_path, lib_content)?;
+
+        self.write_directory_mod_files(generated_dir, &modules)?;
+
+        copy_native_module(self, cache_src)?;
+
+        Ok(())
+    }
+
+    /// Collect module names from generated directory.
+    fn collect_modules(
+        &self,
+        dir: &Path,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let mut modules: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if let Some(result) = process_module_entry(path, dir) {
+                modules.entry(result.0).or_default().push(result.1);
+            }
+        }
+
+        Ok(modules)
+    }
+
+    /// Write mod.rs files for each directory level.
+    fn write_directory_mod_files(
+        &self,
+        generated_dir: &Path,
+        modules: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Result<()> {
+        write_root_mod_file(generated_dir, modules)?;
+        write_subdirectory_mod_files(generated_dir, modules)?;
+        Ok(())
+    }
+}
+
+fn write_single_module(generated_dir: &Path, module: &GeneratedModule) -> Result<()> {
+    let rel_path = module.name.split('/').next_back().unwrap_or(module.name.as_str());
+    let clean = clean_module_name(rel_path);
+    let out_path = generated_dir.join(format!("{}.rs", clean));
+
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&out_path, &module.source)?;
+    Ok(())
+}
+
+fn clean_module_name(name: &str) -> String {
+    if std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
+        && name.len() > 1
+    {
+        String::from(&name[..name.len() - 2])
+    } else {
+        String::from(name)
+    }
+}
+
+fn collect_unique_dirs(modules: &[GeneratedModule]) -> std::collections::HashSet<String> {
+    let mut dirs = std::collections::HashSet::new();
+
+    for module in modules {
+        if let Some(parent) = Path::new(&module.name).parent() {
+            if !parent.as_os_str().is_empty() && parent.to_string_lossy() != "." {
+                dirs.insert(parent.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    dirs
+}
+
+fn generate_manifest(target_crate: &str, cache_to_crates: &str) -> String {
+    format!(
+        r#"[package]
 name = "{}"
 version = "0.1.0"
 edition = "2021"
@@ -131,45 +184,21 @@ serde_json = "1"
 
 [workspace]
 "#,
-            self.config.build.target_crate,
-            self.config.build.target_crate,
-            cache_to_crates
-        );
-        std::fs::write(&manifest_path, manifest)?;
+        target_crate, target_crate, cache_to_crates
+    )
+}
 
-        Ok(())
-    }
+fn build_lib_content() -> String {
+    String::from(
+        r#"//! Generated Rune modules
 
-    /// Write the cache lib.rs.
-    pub fn write_cache_lib(&self, cache_src: &Path) -> Result<()> {
-        // cache_src is the generated dir (.rune-cache/src/generated)
-        // We need to write lib.rs to .rune-cache/src/lib.rs
-        let lib_path = cache_src.parent().unwrap().join("lib.rs");
+mod native;
 
-        // Ensure the src directory exists
-        std::fs::create_dir_all(lib_path.parent().unwrap())?;
+pub mod generated;
 
-        // Get all generated modules
-        let generated_dir = cache_src;
-        let modules = self.collect_modules(generated_dir)?;
+use protocol::{App, AppState};
+pub use protocol::{Filter, Task};
 
-        let mut lib_content = String::new();
-        lib_content.push_str("//! Generated Rune modules\n\n");
-
-        // Add native module (from original crate)
-        lib_content.push_str("mod native;\n\n");
-
-        // Add generated module declaration
-        lib_content.push_str("pub mod generated;\n\n");
-
-        // Add protocol imports and AppState re-exports
-        lib_content.push_str("use protocol::{App, AppState};\n\n");
-        lib_content.push_str("// Re-export types\n");
-        lib_content.push_str("pub use protocol::{Filter, Task};\n\n");
-
-        // Add create_app function
-        lib_content.push_str(
-            r#"
 #[no_mangle]
 pub extern "C" fn create_app() -> *mut dyn App {
     Box::into_raw(Box::new(AppImpl::default()))
@@ -180,12 +209,10 @@ struct AppImpl;
 
 impl App for AppImpl {
     fn update(&mut self, state: &mut AppState) {
-        // Call generated update function with mutable borrow
         generated::main::update(state);
     }
 
     fn render(&self, frame: &mut ratatui::Frame, state: &AppState) {
-        // Render is handled by the generated view functions
         let _ = frame;
         let _ = state;
     }
@@ -193,152 +220,115 @@ impl App for AppImpl {
     fn handle_key(&mut self, _key: crossterm::event::KeyEvent, _state: &mut AppState) {}
 }
 "#,
-        );
+    )
+}
 
-        std::fs::write(&lib_path, lib_content)?;
-
-        // Write mod.rs files for each directory level
-        self.write_directory_mod_files(generated_dir, &modules)?;
-
-        // Copy native module from original crate if exists
-        let native_src = self.options.workspace
-            .join("crates")
-            .join(&self.config.build.target_crate)
-            .join("src/native");
-        let native_dest = cache_src.parent().unwrap().join("native");
-
-        if native_src.exists() {
-            copy_dir_recursive(&native_src, &native_dest)?;
-        } else {
-            std::fs::create_dir_all(&native_dest)?;
-            std::fs::write(native_dest.join("mod.rs"), "// Native modules\n")?;
-        }
-
-        Ok(())
+fn process_module_entry(path: &Path, base_dir: &Path) -> Option<(String, String)> {
+    if !path.is_file() || path.extension().is_none_or(|e| e != "rs") {
+        return None;
     }
 
-    /// Collect module names from generated directory.
-    /// Returns a map of directory -> list of module names in that directory.
-    fn collect_modules(&self, dir: &Path) -> Result<std::collections::HashMap<String, Vec<String>>> {
-        let mut modules: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-
-        for entry in walkdir::WalkDir::new(dir)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            
-            // Only process .rs files
-            if !path.is_file() || path.extension().is_some_and(|e| e != "rs") {
-                continue;
-            }
-            
-            // Get the file name as string
-            let file_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            
-            // Skip mod.rs files - they define the module themselves
-            if file_name == "mod.rs" {
-                continue;
-            }
-            
-            // Get relative path from cache dir
-            if let Ok(rel) = path.strip_prefix(dir) {
-                let rel_str = rel.to_string_lossy();
-                // Remove .rs extension
-                let module_name = rel_str.replace(".rs", "");
-                
-                // Get parent directory (relative to cache dir)
-                let parent = Path::new(&module_name).parent()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                
-                // Get the module name (last component)
-                let stem = Path::new(&module_name)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                
-                // Escape Rust keywords in module names
-                let module_decl = escape_rust_keyword_for_module(&stem);
-                
-                // Add to parent directory's module list
-                modules
-                    .entry(parent)
-                    .or_default()
-                    .push(module_decl);
-            }
-        }
-
-        Ok(modules)
+    let file_name = path.file_name()?.to_str()?;
+    if file_name == "mod.rs" {
+        return None;
     }
 
-    /// Write mod.rs files for each directory level.
-    fn write_directory_mod_files(
-        &self,
-        generated_dir: &Path,
-        modules: &std::collections::HashMap<String, Vec<String>>,
-    ) -> Result<()> {
-        // Write mod.rs for the root generated directory
-        let root_mod_content: String = modules
-            .get("")
-            .cloned()
-            .unwrap_or_default()
+    let rel = path.strip_prefix(base_dir).ok()?;
+    let module_name = rel.to_string_lossy().replace(".rs", "");
+    let parent = Path::new(&module_name)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let stem = Path::new(&module_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    Some((parent, escape_rust_keyword_for_module(&stem)))
+}
+
+fn write_root_mod_file(
+    generated_dir: &Path,
+    modules: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<()> {
+    let root_mod_content: String = modules
+        .get("")
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| format!("pub mod {};", m))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(generated_dir.join("mod.rs"), root_mod_content)?;
+    Ok(())
+}
+
+fn write_subdirectory_mod_files(
+    generated_dir: &Path,
+    modules: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<()> {
+    for (dir, mods) in modules {
+        if dir.is_empty() {
+            continue;
+        }
+        let dir_path = generated_dir.join(dir);
+        std::fs::create_dir_all(&dir_path)?;
+        let mod_content: String = mods
             .iter()
             .map(|m| format!("pub mod {};", m))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(generated_dir.join("mod.rs"), root_mod_content)?;
-
-        // Write mod.rs for each subdirectory
-        for (dir, mods) in modules {
-            if dir.is_empty() {
-                continue;
-            }
-            let dir_path = generated_dir.join(dir);
-            std::fs::create_dir_all(&dir_path)?;
-            let mod_content: String = mods
-                .iter()
-                .map(|m| format!("pub mod {};", m))
-                .collect::<Vec<_>>()
-                .join("\n");
-            std::fs::write(dir_path.join("mod.rs"), mod_content)?;
-        }
-
-        Ok(())
+        std::fs::write(dir_path.join("mod.rs"), mod_content)?;
     }
+    Ok(())
+}
+
+fn copy_native_module(driver: &BuildDriver, cache_src: &Path) -> Result<()> {
+    let native_src = driver
+        .options
+        .workspace
+        .join("crates")
+        .join(&driver.config.build.target_crate)
+        .join("src/native");
+    let native_dest = cache_src.parent().unwrap().join("native");
+
+    if native_src.exists() {
+        copy_dir_recursive(&native_src, &native_dest)?;
+    } else {
+        std::fs::create_dir_all(&native_dest)?;
+        std::fs::write(native_dest.join("mod.rs"), "// Native modules\n")?;
+    }
+    Ok(())
 }
 
 /// Calculate relative path from a file to a target directory.
 fn relative_path(from_file: &Path, to_target: &Path) -> String {
-    if let Some(from_dir) = from_file.parent() {
-        let mut ups = 0;
-        let mut current = from_dir;
-        while !to_target.starts_with(current) {
-            if let Some(parent) = current.parent() {
-                ups += 1;
-                current = parent;
-            } else {
-                break;
-            }
+    let Some(from_dir) = from_file.parent() else {
+        return to_target.to_string_lossy().to_string();
+    };
+
+    let mut ups = 0;
+    let mut current = from_dir;
+    while !to_target.starts_with(current) {
+        if let Some(parent) = current.parent() {
+            ups += 1;
+            current = parent;
+        } else {
+            break;
         }
-        let mut parts: Vec<String> = Vec::new();
-        for _ in 0..ups {
-            parts.push(String::from(".."));
-        }
-        if let Ok(rest) = to_target.strip_prefix(current) {
-            for component in rest.components() {
-                if let std::path::Component::Normal(s) = component {
-                    parts.push(s.to_string_lossy().into_owned());
-                }
-            }
-        }
-        parts.join("/")
-    } else {
-        to_target.to_string_lossy().to_string()
     }
+
+    let mut parts: Vec<String> = vec![String::from(".."); ups];
+
+    if let Ok(rest) = to_target.strip_prefix(current) {
+        for component in rest.components() {
+            if let std::path::Component::Normal(s) = component {
+                parts.push(s.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    parts.join("/")
 }
 
 /// Copy directory recursively.
@@ -351,8 +341,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let rel_path =
-            path.strip_prefix(src).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        let rel_path = path.strip_prefix(src)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
         let dest_path = dst.join(rel_path);
 
         if path.is_dir() {
