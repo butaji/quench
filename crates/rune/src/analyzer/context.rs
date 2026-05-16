@@ -1,10 +1,9 @@
 //! # Analysis Context
 //!
-//! Maintains state during analysis including source location tracking
-//! and warning accumulation.
+//! Maintains state during analysis.
 
 use crate::parser::SourceFile;
-use super::TypeInfo;
+use crate::analyzer::TypeInfo;
 
 /// Context for type and ownership analysis.
 #[derive(Debug)]
@@ -16,9 +15,7 @@ pub struct AnalysisContext {
     /// Current column being processed
     current_column: u32,
     /// Accumulated warnings
-    warnings: Vec<super::AnalysisWarning>,
-    /// Inferred types cache
-    type_cache: std::collections::HashMap<String, TypeInfo>,
+    warnings: Vec<crate::analyzer::AnalysisWarning>,
 }
 
 impl AnalysisContext {
@@ -29,7 +26,6 @@ impl AnalysisContext {
             current_line: 1,
             current_column: 1,
             warnings: Vec::new(),
-            type_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -39,15 +35,16 @@ impl AnalysisContext {
     }
 
     /// Update current location from a span.
-    pub fn update_location(&mut self, span: &swc_common::Span) {
-        let (line, col) = self.source.location_from_offset(span.lo.0);
-        self.current_line = line;
-        self.current_column = col;
+    #[allow(unused)]
+    pub fn update_location(&mut self, _span: &()) {
+        // Placeholder: In full implementation, would update from span
+        self.current_line = 1;
+        self.current_column = 1;
     }
 
     /// Add a warning.
     pub fn add_warning(&mut self, location: String, message: String, code: &'static str) {
-        self.warnings.push(super::AnalysisWarning {
+        self.warnings.push(crate::analyzer::AnalysisWarning {
             location,
             message,
             code,
@@ -55,13 +52,14 @@ impl AnalysisContext {
     }
 
     /// Take all warnings.
-    pub fn take_warnings(&mut self) -> Vec<super::AnalysisWarning> {
+    pub fn take_warnings(&mut self) -> Vec<crate::analyzer::AnalysisWarning> {
         std::mem::take(&mut self.warnings)
     }
 
     /// Get inferred type for a name.
-    pub fn infer_type(&self, _expr: &swc_ecma_ast::Expr) -> Option<TypeInfo> {
-        // Would need to walk the expression tree to determine type
+    #[allow(unused)]
+    pub fn infer_type(&self, _expr: &()) -> Option<TypeInfo> {
+        // Placeholder: In full implementation, would infer type
         None
     }
 

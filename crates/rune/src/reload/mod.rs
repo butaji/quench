@@ -22,4 +22,4 @@ pub enum ReloadError {
 }
 
 /// Result type for reload operations.
-pub type ReloadResult<T> = std::result::Result<T, ReloadError>;
+pub type ReloadResult<T> = Result<T, ReloadError>;

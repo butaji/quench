@@ -9,10 +9,6 @@ license.workspace = true
 name = "cargo-rune"
 path = "src/main.rs"
 
-[[bin]]
-name = "rune"
-path = "src/rune_main.rs"
-
 [dependencies]
 rune = { path = "../rune" }
 clap = { workspace = true }

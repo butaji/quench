@@ -41,7 +41,7 @@ impl Command {
 
 /// Run the compiler with given options.
 pub fn run(command: Command, options: BuildOptions) -> crate::Result<()> {
-    let driver = BuildDriver::new(options)?;
+    let mut driver = BuildDriver::new(options)?;
     match command {
         Command::Dev => driver.dev(),
         Command::Build => driver.build(),
