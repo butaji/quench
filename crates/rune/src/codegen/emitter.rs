@@ -2,18 +2,15 @@
 //!
 //! Core transpilation from TypeScript AST to Rust source.
 
-use std::collections::HashMap;
 use swc_ecma_ast::*;
 use crate::{parser::SourceFile, analyzer::{AnalysisResult, BorrowMode}};
-use super::{GeneratedModule, Import, ImportedName, CodegenOptions};
-use super::emitters::{ExprEmitter, StmtEmitter};
+use super::{GeneratedModule, Import, ImportedName};
+use super::emitters::{ExprEmitter, StmtEmitter, TypeEmitter};
 
 /// Options for code emission.
 #[derive(Debug, Clone, Default)]
 pub struct EmitOptions {
-    /// Generate source maps
     pub source_map: bool,
-    /// Pretty print output
     pub pretty: bool,
 }
 
@@ -24,7 +21,7 @@ pub struct RustEmitter<'a> {
     imports: Vec<Import>,
     output: String,
     indent: usize,
-    options: EmitOptions,
+    type_emitter: TypeEmitter,
 }
 
 impl<'a> RustEmitter<'a> {
@@ -36,7 +33,7 @@ impl<'a> RustEmitter<'a> {
             imports: Vec::new(),
             output: String::new(),
             indent: 0,
-            options: EmitOptions::default(),
+            type_emitter: TypeEmitter::new(),
         }
     }
 
@@ -110,7 +107,6 @@ impl<'a> RustEmitter<'a> {
     /// Emit a function.
     fn emit_fn(&mut self, f: &FnDecl) -> crate::Result<()> {
         let name = self.mangle(&f.ident.sym.to_string());
-
         if f.function.is_async {
             self.push("pub async ");
         } else {
@@ -123,7 +119,7 @@ impl<'a> RustEmitter<'a> {
 
         if let Some(ret) = &f.function.return_type {
             self.push(" -> ");
-            self.emit_ts_type(&ret.type_ann)?;
+            self.push(&self.type_emitter.emit(&ret.type_ann));
         }
 
         if let Some(body) = &f.function.body {
@@ -132,7 +128,6 @@ impl<'a> RustEmitter<'a> {
         } else {
             self.push(";")?;
         }
-
         Ok(())
     }
 
@@ -160,11 +155,10 @@ impl<'a> RustEmitter<'a> {
 
         if let Some(type_ann) = param.pat.as_ident().and_then(|i| i.type_ann.as_ref()) {
             self.push(&format!("{prefix}{name}: "));
-            self.emit_ts_type(&type_ann.type_ann)?;
+            self.push(&self.type_emitter.emit(&type_ann.type_ann));
         } else {
             self.push(&format!("{prefix}{name}"));
         }
-
         Ok(())
     }
 
@@ -211,11 +205,10 @@ impl<'a> RustEmitter<'a> {
     fn emit_pat(&mut self, pat: &Pat) -> crate::Result<()> {
         match pat {
             Pat::Ident(i) => {
-                let name = self.mangle(&i.id.sym.to_string());
-                self.push(&name);
+                self.push(&self.mangle(&i.id.sym.to_string()));
                 if let Some(type_ann) = &i.type_ann {
                     self.push(": ");
-                    self.emit_ts_type(&type_ann.type_ann)?;
+                    self.push(&self.type_emitter.emit(&type_ann.type_ann));
                 }
             }
             Pat::Array(a) => {
@@ -233,9 +226,6 @@ impl<'a> RustEmitter<'a> {
                 for (i, prop) in o.props.iter().enumerate() {
                     if i > 0 { self.push(", "); }
                     match prop {
-                        ObjectPatProp::Assign(a) => {
-                            self.push(&a.key.sym.to_string());
-                        }
                         ObjectPatProp::KeyValue(kv) => {
                             let mut expr_emitter = ExprEmitter::new(self.analysis);
                             self.push(&expr_emitter.emit_expr(&Expr::Ident(kv.key.clone().into()))?);
@@ -246,6 +236,7 @@ impl<'a> RustEmitter<'a> {
                             self.push("..");
                             self.emit_pat(&r.arg)?;
                         }
+                        _ => {}
                     }
                 }
                 self.push("}");
@@ -262,7 +253,7 @@ impl<'a> RustEmitter<'a> {
     /// Emit a type alias.
     fn emit_type_alias(&mut self, t: &TsTypeAliasDecl) -> crate::Result<()> {
         self.push(&format!("pub type {} = ", self.mangle(&t.id.sym.to_string())));
-        self.emit_ts_type(&t.type_ann)?;
+        self.push(&self.type_emitter.emit(&t.type_ann));
         self.push(";")?;
         Ok(())
     }
@@ -271,7 +262,6 @@ impl<'a> RustEmitter<'a> {
     fn emit_enum(&mut self, e: &TsEnumDecl) -> crate::Result<()> {
         self.push(&format!("pub enum {}", self.mangle(&e.id.sym.to_string())));
         self.push_line(" {")?;
-
         for member in &e.members {
             let tag = match &member.id {
                 TsEnumMemberId::Str(s) => s.value.to_string(),
@@ -281,18 +271,14 @@ impl<'a> RustEmitter<'a> {
             self.push(&format!("{},", self.pascal_case(&tag)));
             self.push_line("");
         }
-
         self.push("}")?;
         Ok(())
     }
 
     /// Emit an interface.
     fn emit_interface(&mut self, i: &TsInterfaceDecl) -> crate::Result<()> {
-        self.push(&format!("pub struct {} ", self.mangle(&i.id.sym.to_string())))?;
-        self.emit_block_stmt(&BlockStmt {
-            span: Default::default(),
-            stmts: Vec::new(),
-        })?;
+        self.push(&format!("pub struct {} ", self.mangle(&i.id.sym.to_string())));
+        self.emit_block_stmt(&BlockStmt { span: Default::default(), stmts: Vec::new() })?;
         Ok(())
     }
 
@@ -308,7 +294,6 @@ impl<'a> RustEmitter<'a> {
     /// Emit an import.
     fn emit_import(&mut self, import: &ImportDecl) -> crate::Result<()> {
         let module_name = import.src.value.to_string();
-
         if module_name.starts_with("native:") {
             let path = module_name.strip_prefix("native:").unwrap_or(&module_name);
             let import = Import {
@@ -349,7 +334,6 @@ impl<'a> RustEmitter<'a> {
             };
             self.imports.push(import);
         }
-
         Ok(())
     }
 
@@ -366,82 +350,6 @@ impl<'a> RustEmitter<'a> {
                 Ok(())
             }
         }
-    }
-
-    /// Emit a TypeScript type.
-    fn emit_ts_type(&mut self, ts_type: &TsType) -> crate::Result<()> {
-        match ts_type {
-            TsType::TsKeywordType(k) => {
-                let ty = match k.kind {
-                    TsKeywordTypeKind::TsNumberKeyword => "f64",
-                    TsKeywordTypeKind::TsStringKeyword => "String",
-                    TsKeywordTypeKind::TsBooleanKeyword => "bool",
-                    TsKeywordTypeKind::TsNullKeyword => "()",
-                    TsKeywordTypeKind::TsUndefinedKeyword => "()",
-                    TsKeywordTypeKind::TsVoidKeyword => "()",
-                    _ => "()",
-                };
-                self.push(ty);
-            }
-            TsType::TsArrayType(a) => {
-                self.emit_ts_type(&a.elem_type)?;
-                self.push("Vec<");
-                self.emit_ts_type(&a.elem_type)?;
-                self.push(">");
-            }
-            TsType::TsTypeRef(t) => {
-                let name = t.type_name.as_str();
-                match name {
-                    "Array" | "Vec" => {
-                        self.push("Vec<");
-                        if let Some(params) = &t.type_params {
-                            if !params.params.is_empty() {
-                                self.emit_ts_type(&params.params[0])?;
-                            }
-                        }
-                        self.push(">");
-                    }
-                    "Option" => {
-                        self.push("Option<");
-                        if let Some(params) = &t.type_params {
-                            if !params.params.is_empty() {
-                                self.emit_ts_type(&params.params[0])?;
-                            }
-                        }
-                        self.push(">");
-                    }
-                    "Result" => {
-                        self.push("Result<");
-                        if let Some(params) = &t.type_params {
-                            if params.params.len() >= 2 {
-                                self.emit_ts_type(&params.params[0])?;
-                                self.push(", ");
-                                self.emit_ts_type(&params.params[1])?;
-                            }
-                        }
-                        self.push(">");
-                    }
-                    "string" => self.push("String"),
-                    "number" => self.push("f64"),
-                    "boolean" => self.push("bool"),
-                    "void" => self.push("()"),
-                    _ => self.push(&self.mangle(name)),
-                }
-            }
-            TsType::TsTupleType(t) => {
-                self.push("(");
-                for (i, elem) in t.elem_types.iter().enumerate() {
-                    if i > 0 { self.push(", "); }
-                    self.emit_ts_type(&elem.ty)?;
-                }
-                self.push(")");
-            }
-            TsType::TsParenthesizedType(p) => {
-                self.emit_ts_type(&p.type_ann)?;
-            }
-            _ => self.push("()"),
-        }
-        Ok(())
     }
 
     // Utility methods
