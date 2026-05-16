@@ -17,8 +17,10 @@ impl BuildDriver {
         for module in modules {
             // Extract relative path from source file
             let rel_path = self.cache_relative_path(&module.name);
-            let out_path = generated_dir.join(format!("{rel_path}.rs"));
-            std::fs::create_dir_all(out_path.parent().unwrap_or(&generated_dir))?;
+            let out_path = generated_dir.join(&rel_path);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             std::fs::write(&out_path, &module.source)?;
         }
 
@@ -33,12 +35,28 @@ impl BuildDriver {
 
     /// Create relative path for generated file.
     fn cache_relative_path(&self, name: &str) -> String {
-        // If name contains a path separator, extract just the filename
-        name.split('/')
-            .next_back()
-            .unwrap_or(name)
-            .replace(".r.ts", ".rs")
-            .replace(".r.tsx", ".rs")
+        // Handle paths like "main.r", "views/main.r", etc.
+        // where the stem already includes the .r suffix from file_stem()
+        // We need to strip that and produce "main.rs", "views/main.rs"
+        
+        let parts: Vec<&str> = name.split('/').collect();
+        let last = parts.last().unwrap_or(&name);
+        
+        // The name might be "main.r" (from file_stem of main.r.ts)
+        // or "views/main.r" (for files in subdirectories)
+        // We need to convert "main.r" to "main.rs"
+        let clean = if last.ends_with(".r") {
+            &last[..last.len() - 2]
+        } else {
+            last
+        };
+        
+        if parts.len() > 1 {
+            let dir_parts = &parts[..parts.len() - 1];
+            format!("{}/{}.rs", dir_parts.join("/"), clean)
+        } else {
+            format!("{}.rs", clean)
+        }
     }
 
     /// Write mod.rs files for directory structure.
@@ -127,11 +145,16 @@ serde_json = "1"
 
     /// Write the cache lib.rs.
     pub fn write_cache_lib(&self, cache_src: &Path) -> Result<()> {
-        let lib_path = cache_src.join("lib.rs");
+        // cache_src is the generated dir (.rune-cache/src/generated)
+        // We need to write lib.rs to .rune-cache/src/lib.rs
+        let lib_path = cache_src.parent().unwrap().join("lib.rs");
+
+        // Ensure the src directory exists
+        std::fs::create_dir_all(lib_path.parent().unwrap())?;
 
         // Get all generated modules
-        let generated_dir = cache_src.join("generated");
-        let modules = self.collect_modules(&generated_dir)?;
+        let generated_dir = cache_src;
+        let modules = self.collect_modules(generated_dir)?;
 
         let mut lib_content = String::new();
         lib_content.push_str("//! Generated Rune modules\n\n");
@@ -191,7 +214,7 @@ impl App for AppImpl {
             .join("crates")
             .join(&self.config.build.target_crate)
             .join("src/native");
-        let native_dest = cache_src.join("native");
+        let native_dest = cache_src.parent().unwrap().join("native");
 
         if native_src.exists() {
             copy_dir_recursive(&native_src, &native_dest)?;
