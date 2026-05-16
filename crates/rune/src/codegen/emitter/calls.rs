@@ -116,6 +116,25 @@ pub fn emit_call(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) 
                 return;
             }
 
+            // Emit array iterator methods with .iter() prefix
+            if matches!(method, "filter" | "map" | "reduce" | "forEach" | "some" | "every" | "find" | "findIndex" | "concat" | "join" | "reverse" | "sort" | "slice") {
+                emit_expr(emitter, &member.obj);
+                emitter.push_str(".iter().");
+                emitter.push_str(method);
+                emitter.push_str("(");
+                for (i, arg) in call_expr.args.iter().enumerate() {
+                    if i > 0 {
+                        emitter.push_str(", ");
+                    }
+                    if arg.spread.is_some() {
+                        emitter.push_str("/* spread */");
+                    }
+                    emit_expr(emitter, &arg.expr);
+                }
+                emitter.push_str(")");
+                return;
+            }
+
             // String methods
             match method {
                 "localeCompare" => {

@@ -183,7 +183,8 @@ fn emit_case_pattern_for_test(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Ex
             emit_tagged_variant_pattern(emitter, member);
         }
         swc_ecma_ast::Expr::Ident(ident) => {
-            emitter.push_str(&to_snake_case(ident.sym.as_ref()));
+            // Preserve case for enum types/variants
+            emitter.push_str(&super::to_rust_name(ident.sym.as_ref()));
         }
         swc_ecma_ast::Expr::Lit(lit) => {
             if let swc_ecma_ast::Lit::Str(s) = lit {
@@ -206,8 +207,8 @@ fn emit_case_pattern(emitter: &mut CodeEmitter, case: &SwitchCase) {
             }
             swc_ecma_ast::Expr::Ident(ident) => {
                 // Simple enum: Filter.Active -> Filter::Active
-                let name = ident.sym.as_ref();
-                emitter.push_str(&to_snake_case(name));
+                // Preserve case for enum types/variants
+                emitter.push_str(&super::to_rust_name(ident.sym.as_ref()));
             }
             swc_ecma_ast::Expr::Lit(lit) => {
                 // String literal: "Move" -> Message::Move
@@ -224,18 +225,35 @@ fn emit_case_pattern(emitter: &mut CodeEmitter, case: &SwitchCase) {
 
 /// Emit a tagged variant pattern from member access.
 fn emit_tagged_variant_pattern(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr) {
-    // Pattern: msg.tag === "Move" where msg is the discriminant
-    // We extract the variant name from the discriminant's property access
+    // Pattern: KeyCode.Up or Filter.Active
+    // Emit as EnumType::Variant with proper case preservation
     if let swc_ecma_ast::MemberProp::Ident(prop) = &member.prop {
         let prop_name = prop.sym.as_ref();
+        
+        // Emit the enum type name with preserved case
+        if let swc_ecma_ast::Expr::Ident(type_ident) = &*member.obj {
+            let type_name = type_ident.sym.as_ref();
+            // Preserve case for enum types (PascalCase)
+            if super::is_enum_type(type_name) {
+                emitter.push_str(type_name);
+            } else {
+                emitter.push_str(&super::to_rust_name(type_name));
+            }
+            emitter.push_str("::");
+            // Variant names are also PascalCase
+            emitter.push_str(prop_name);
+            return;
+        }
+        
         if prop_name == "tag" {
-            // This is a tag access - emit as enum variant
-            // The actual variant name should come from the comparison value
-            // For now, emit the enum type name
+            // Tagged union tag access - emit enum type with ::
             emit_expr(emitter, &member.obj);
             emitter.push_str("::");
         } else {
-            emit_expr(emitter, &swc_ecma_ast::Expr::Member(member.clone()));
+            // Regular member access
+            emit_expr(emitter, &member.obj);
+            emitter.push_str(".");
+            emitter.push_str(prop_name);
         }
     } else {
         emit_expr(emitter, &swc_ecma_ast::Expr::Member(member.clone()));

@@ -27,7 +27,7 @@ pub use infer::infer_type;
 pub use literals::emit_lit;
 pub use members::{emit_member, emit_object};
 pub use type_resolver::TypeResolver;
-pub use types::{RustType, to_snake_case};
+pub use types::{RustType, to_snake_case, to_rust_name, is_enum_type};
 #[allow(unused_imports)]
 pub use ast_walker::AstWalker;
 #[allow(unused_imports)]

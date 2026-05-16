@@ -72,6 +72,32 @@ pub fn to_snake_case(s: &str) -> String {
     result
 }
 
+/// Check if a name looks like an enum type (PascalCase).
+/// These should be preserved as-is for enum variants.
+#[must_use]
+pub fn is_enum_type(name: &str) -> bool {
+    // PascalCase: first char is uppercase, rest is alphanumeric
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_uppercase() => chars.all(|c| c.is_alphanumeric()),
+        _ => false,
+    }
+}
+
+/// Convert a type/variant name to appropriate Rust form.
+/// - Enum types (PascalCase) are preserved: Filter -> Filter
+/// - Enum variants (PascalCase) become PascalCase: Active -> Active
+/// - Regular names become snake_case: filter_tasks -> filter_tasks
+#[must_use]
+pub fn to_rust_name(name: &str) -> String {
+    // Preserve case for PascalCase names (likely enum types/variants)
+    if is_enum_type(name) {
+        name.to_string()
+    } else {
+        to_snake_case(name)
+    }
+}
+
 /// Convert name to PascalCase.
 #[must_use]
 pub fn to_pascal_case(s: &str) -> String {
