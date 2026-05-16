@@ -176,54 +176,63 @@ pub fn parse_type(type_str: &str) -> Box<TypeInfo> {
 
 /// Parse object type fields from a type string.
 fn parse_object_type_fields(type_str: &str) -> Vec<(String, TypeInfo)> {
-    let inner = type_str
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim();
+    let inner = extract_brace_content(type_str);
     if inner.is_empty() {
         return Vec::new();
     }
 
-    let mut fields = Vec::new();
-    let mut depth = 0;
-    let mut current_field = String::new();
+    let raw_fields = split_field_strings(inner);
+    raw_fields.iter().filter_map(|s| parse_field_string(s)).collect()
+}
+
+/// Extract content between outer braces.
+fn extract_brace_content(type_str: &str) -> &str {
+    type_str
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim()
+}
+
+/// Split field strings by comma/semicolon at depth 0.
+fn split_field_strings(inner: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut depth: i32 = 0;
+    let mut current = String::new();
 
     for c in inner.chars() {
         match c {
             '{' | '<' | '(' => {
                 depth += 1;
-                current_field.push(c);
+                current.push(c);
             }
             '}' | '>' | ')' => {
-                depth -= 1;
-                current_field.push(c);
+                depth = depth.saturating_sub(1);
+                current.push(c);
             }
             ';' | ',' if depth == 0 => {
-                if !current_field.trim().is_empty() {
-                    if let Some((name, type_str)) = current_field.trim().split_once(':') {
-                        let name = name.trim().to_string();
-                        let type_info = *parse_type(type_str.trim());
-                        fields.push((name, type_info));
-                    }
+                if !current.trim().is_empty() {
+                    result.push(current.trim().to_string());
                 }
-                current_field.clear();
+                current.clear();
             }
-            _ => {
-                current_field.push(c);
-            }
+            _ => current.push(c),
         }
     }
 
-    // Handle last field (no trailing comma/semicolon)
-    if !current_field.trim().is_empty() {
-        if let Some((name, type_str)) = current_field.trim().split_once(':') {
-            let name = name.trim().to_string();
-            let type_info = *parse_type(type_str.trim());
-            fields.push((name, type_info));
-        }
+    // Handle trailing field
+    if !current.trim().is_empty() {
+        result.push(current.trim().to_string());
     }
 
-    fields
+    result
+}
+
+/// Parse a single field string into name and type.
+fn parse_field_string(field_str: &str) -> Option<(String, TypeInfo)> {
+    let (name, type_str) = field_str.split_once(':')?;
+    let name = name.trim().to_string();
+    let type_info = *parse_type(type_str.trim());
+    Some((name, type_info))
 }
 
 /// Parse a type alias or interface.
