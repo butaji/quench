@@ -6,10 +6,12 @@
 mod emitter;
 mod types;
 mod jsx;
+mod emitters;
 
 pub use emitter::{RustEmitter, EmitOptions};
 pub use types::TypeEmitter;
 pub use jsx::JsxTranspiler;
+pub use emitters::{ExprEmitter, StmtEmitter};
 
 /// Options for code generation.
 #[derive(Debug, Clone)]

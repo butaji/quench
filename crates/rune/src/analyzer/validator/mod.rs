@@ -3,8 +3,16 @@
 //! Validates that TypeScript code uses only the zero-overhead subset.
 //! Rejects forbidden features like `any`, `class`, `try/catch`, etc.
 
+mod rules;
+
 use swc_ecma_ast::*;
 use super::context::AnalysisContext;
+pub use rules::{
+    validate_expr_is_allowed, validate_lit_is_allowed,
+    validate_bin_op_is_allowed, validate_stmt_is_allowed,
+    validate_decl_is_allowed, validate_ts_keyword_is_allowed,
+    validate_module_decl_is_allowed,
+};
 
 /// Validation error with source location.
 #[derive(Debug, Clone)]
@@ -23,7 +31,6 @@ impl std::fmt::Display for ValidationError {
 /// Validates the zero-overhead TypeScript subset.
 #[derive(Debug, Default)]
 pub struct SubsetValidator {
-    /// Current depth for complexity tracking
     complexity: usize,
 }
 
@@ -53,25 +60,29 @@ impl SubsetValidator {
 
     /// Validate a declaration.
     fn validate_decl(&mut self, decl: &Decl, ctx: &mut AnalysisContext) -> crate::Result<()> {
+        if let Some(err) = validate_decl_is_allowed(decl, ctx) {
+            return Err(crate::RuneError::Analysis {
+                location: err.location,
+                message: err.message,
+            });
+        }
+
         match decl {
             Decl::Fn(f) => self.validate_function(&f.function, ctx),
             Decl::Var(v) => {
                 self.validate_var_decl(v, ctx)?;
                 Ok(())
             }
-            Decl::Class(_) => Err(self.error(ctx, "Classes are forbidden. Use plain objects.")),
             Decl::TsInterface(_) => Ok(()),
             Decl::TsTypeAlias(t) => self.validate_ts_type(&t.type_ann, ctx),
             Decl::TsEnum(e) => self.validate_ts_enum(e, ctx),
             Decl::TsModule(_) => Ok(()),
+            _ => Ok(()),
         }
     }
 
     /// Validate a variable declaration.
     fn validate_var_decl(&mut self, v: &VarDecl, ctx: &mut AnalysisContext) -> crate::Result<()> {
-        if v.kind != VarDeclKind::Var {
-            // const and let are allowed
-        }
         for decl in &v.decls {
             if let Some(init) = &decl.init {
                 self.validate_expr(init, ctx)?;
@@ -92,22 +103,25 @@ impl SubsetValidator {
         }
 
         let result = f.body.as_ref().map_or(Ok(()), |b| self.validate_stmt(b, ctx));
-
         self.complexity -= 1;
         result
     }
 
     /// Validate a statement.
     fn validate_stmt(&mut self, stmt: &Stmt, ctx: &mut AnalysisContext) -> crate::Result<()> {
+        if let Some(err) = validate_stmt_is_allowed(stmt, ctx) {
+            return Err(crate::RuneError::Analysis {
+                location: err.location,
+                message: err.message,
+            });
+        }
+
         match stmt {
             Stmt::Expr(e) => self.validate_expr(&e.expr, ctx),
             Stmt::If(i) => {
                 self.validate_expr(&i.test, ctx)?;
                 self.validate_stmt(&i.cons, ctx)?;
-                if let Some(alt) = &i.alt {
-                    self.validate_stmt(alt, ctx)?;
-                }
-                Ok(())
+                i.alt.as_ref().map_or(Ok(()), |a| self.validate_stmt(a, ctx))
             }
             Stmt::While(w) => {
                 self.validate_expr(&w.test, ctx)?;
@@ -129,7 +143,6 @@ impl SubsetValidator {
                 self.validate_stmt(&f.body, ctx)
             }
             Stmt::ForIn(f) => {
-                // Only allowed for arrays with Object.keys() pattern
                 self.validate_expr(&f.right, ctx)?;
                 self.validate_stmt(&f.body, ctx)
             }
@@ -159,35 +172,49 @@ impl SubsetValidator {
                 }
                 Ok(())
             }
-            Stmt::Try(t) => Err(self.error(ctx, "try/catch is forbidden. Use Result<T,E> pattern.")),
-            Stmt::Throw(_) => Err(self.error(ctx, "throw is forbidden. Use Result<T,E> pattern.")),
-            Stmt::Return(r) => {
-                r.value.as_ref().map_or(Ok(()), |e| self.validate_expr(e, ctx))
-            }
-            Stmt::Break(_) | Stmt::Continue(_) => Ok(()),
-            Stmt::With(_) => Err(self.error(ctx, "with is forbidden.")),
+            Stmt::Return(r) => r.value.as_ref().map_or(Ok(()), |e| self.validate_expr(e, ctx)),
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Empty(_) | Stmt::Debugger(_) => Ok(()),
             Stmt::Labeled(l) => self.validate_stmt(&l.body, ctx),
-            Stmt::Empty(_) => Ok(()),
-            Stmt::Debugger(_) => Ok(()),
             Stmt::Decl(d) => self.validate_decl(d, ctx),
+            _ => Ok(()),
         }
     }
 
     /// Validate an expression.
     fn validate_expr(&mut self, expr: &Expr, ctx: &mut AnalysisContext) -> crate::Result<()> {
+        if let Some(err) = validate_expr_is_allowed(expr, ctx) {
+            return Err(crate::RuneError::Analysis {
+                location: err.location,
+                message: err.message,
+            });
+        }
+
         match expr {
-            Expr::Ident(_) => Ok(()),
-            Expr::Lit(l) => self.validate_lit(l, ctx),
+            Expr::Ident(_) | Expr::Await(_) | Expr::Paren(_) => Ok(()),
+            Expr::Lit(l) => {
+                if let Some(err) = validate_lit_is_allowed(l, ctx) {
+                    return Err(crate::RuneError::Analysis {
+                        location: err.location,
+                        message: err.message,
+                    });
+                }
+                Ok(())
+            }
             Expr::Bin(b) => {
                 self.validate_expr(&b.left, ctx)?;
                 self.validate_expr(&b.right, ctx)?;
-                // Check for loose equality
-                if matches!(b.op, BinaryOp::EqEq | BinaryOp::NotEq) {
-                    return Err(self.error(ctx, "Use === instead of ==".into()));
+                if let Some(err) = validate_bin_op_is_allowed(b.op, ctx) {
+                    return Err(crate::RuneError::Analysis {
+                        location: err.location,
+                        message: err.message,
+                    });
                 }
-                // Warn about potential integer division
                 if matches!(b.op, BinaryOp::Div) {
-                    self.check_integer_division(b, ctx);
+                    ctx.add_warning(
+                        ctx.current_location(),
+                        "Integer division inferred. Use explicit float (e.g., x / 2.0) if float division intended.".into(),
+                        "integer-division",
+                    );
                 }
                 Ok(())
             }
@@ -200,10 +227,12 @@ impl SubsetValidator {
             Expr::Member(m) => {
                 self.validate_expr(&m.obj, ctx)?;
                 if m.computed {
-                    // Dynamic property access - only allowed for arrays
                     let obj_type = ctx.infer_type(&m.obj);
                     if !matches!(obj_type, Some(super::TypeInfo::Array(_))) {
-                        return Err(self.error(ctx, "Dynamic property access is forbidden. Use Map<K,V>.".into()));
+                        return Err(crate::RuneError::Analysis {
+                            location: ctx.current_location(),
+                            message: "Dynamic property access is forbidden. Use Map<K,V>.".into(),
+                        });
                     }
                 }
                 if let Some(prop) = &m.prop {
@@ -218,20 +247,26 @@ impl SubsetValidator {
                 }
                 Ok(())
             }
-            Expr::New(n) => Err(self.error(ctx, "new is forbidden. Use factory functions.".into())),
-            Expr::Arrow(f) => {
-                for param in &f.params {
-                    if let Pat::Assign(a) = &param.pat {
-                        self.validate_expr(&a.right, ctx)?;
+            Expr::New(_) => Err(crate::RuneError::Analysis {
+                location: ctx.current_location(),
+                message: "new is forbidden. Use factory functions.".into(),
+            }),
+            Expr::Arrow(a) => {
+                for param in &a.params {
+                    if let Pat::Assign(assign) = &param.pat {
+                        self.validate_expr(&assign.right, ctx)?;
                     }
                 }
-                self.validate_expr(&f.body, ctx)
+                self.validate_expr(&a.body, ctx)
             }
             Expr::Fn(f) => self.validate_function(&f.function, ctx),
-            Expr::Class(c) => Err(self.error(ctx, "Classes are forbidden. Use plain objects.".into())),
+            Expr::Class(_) => Err(crate::RuneError::Analysis {
+                location: ctx.current_location(),
+                message: "Classes are forbidden. Use plain objects.".into(),
+            }),
             Expr::Seq(s) => {
-                for expr in &s.exprs {
-                    self.validate_expr(expr, ctx)?;
+                for e in &s.exprs {
+                    self.validate_expr(e, ctx)?;
                 }
                 Ok(())
             }
@@ -239,21 +274,6 @@ impl SubsetValidator {
                 self.validate_expr(&c.test, ctx)?;
                 self.validate_expr(&c.cons, ctx)?;
                 self.validate_expr(&c.alt, ctx)
-            }
-            Expr::Await(a) => self.validate_expr(&a.arg, ctx),
-            Expr::Paren(p) => self.validate_expr(&p.expr, ctx),
-            Expr::Tpl(t) => {
-                for expr in &t.exprs {
-                    self.validate_expr(expr, ctx)?;
-                }
-                Ok(())
-            }
-            Expr::TaggedTpl(t) => {
-                self.validate_expr(&t.tag, ctx)?;
-                for expr in &t.tpl.exprs {
-                    self.validate_expr(expr, ctx)?;
-                }
-                Ok(())
             }
             Expr::Array(a) => {
                 for elem in &a.elems {
@@ -272,38 +292,40 @@ impl SubsetValidator {
                 }
                 Ok(())
             }
-            Expr::This(_) => Err(self.error(ctx, "this is forbidden. Use explicit parameters.".into())),
-            Expr::Yield(_) => Err(self.error(ctx, "yield is forbidden.".into())),
-            Expr::MetaProp(_) => Err(self.error(ctx, "Meta properties are forbidden.".into())),
-            Expr::Super(_) => Err(self.error(ctx, "super is forbidden.".into())),
+            Expr::Tpl(t) => {
+                for e in &t.exprs {
+                    self.validate_expr(e, ctx)?;
+                }
+                Ok(())
+            }
+            Expr::TaggedTpl(t) => {
+                self.validate_expr(&t.tag, ctx)?;
+                for e in &t.tpl.exprs {
+                    self.validate_expr(e, ctx)?;
+                }
+                Ok(())
+            }
             Expr::TsTypeAssertion(t) => self.validate_expr(&t.expr, ctx),
             Expr::TsAs(t) => self.validate_expr(&t.expr, ctx),
             Expr::TsNonNull(t) => self.validate_expr(&t.expr, ctx),
             Expr::TsSatisfies(t) => self.validate_expr(&t.expr, ctx),
-            Expr::Jsx(_) => Ok(()), // Handled by JSX-specific validation
-            Expr::Invalid(_) => Err(self.error(ctx, "Invalid expression.".into())),
+            Expr::Jsx(_) => Ok(()),
+            Expr::Invalid(_) => Err(crate::RuneError::Analysis {
+                location: ctx.current_location(),
+                message: "Invalid expression.".into(),
+            }),
+            _ => Ok(()),
         }
     }
 
-    /// Validate a literal.
-    fn validate_lit(&self, lit: &Lit, ctx: &mut AnalysisContext) -> crate::Result<()> {
-        match lit {
-            Lit::Null(_) => Ok(()),
-            Lit::Bool(_) | Lit::Num(_) | Lit::Str(_) | Lit::BigInt(_) => Ok(()),
-            Lit::Regex(_) => Err(self.error(ctx, "Regex literals are forbidden.".into())),
-            Lit::JSXText(_) => Ok(()),
-        }
-    }
-
-    /// Validate an object property.
+    /// Validate a property.
     fn validate_prop(&self, prop: &Prop, ctx: &mut AnalysisContext) -> crate::Result<()> {
         match prop {
-            Prop::Shorthand(i) => Ok(()),
-            Prop::KeyValue(k) => {
-                self.validate_expr(&k.value, ctx)
-            }
+            Prop::Shorthand(_) => Ok(()),
+            Prop::KeyValue(kv) => self.validate_expr(&kv.value, ctx),
             Prop::Assign(a) => self.validate_expr(&a.value, ctx),
-            Prop::Getter(g) => self.validate_expr(&g.body.as_ref().unwrap_or(&BlockStmtOrExpr::Invalid(Invalid { span: Default::default() })), ctx),
+            Prop::Getter(g) => g.body.as_ref()
+                .map_or(Ok(()), |b| self.validate_expr(b, ctx)),
             Prop::Setter(s) => {
                 if let Some(param) = &s.param {
                     self.validate_pat(param, ctx)?;
@@ -317,7 +339,7 @@ impl SubsetValidator {
     /// Validate a pattern.
     fn validate_pat(&self, pat: &Pat, ctx: &mut AnalysisContext) -> crate::Result<()> {
         match pat {
-            Pat::Ident(i) => Ok(()),
+            Pat::Ident(_) => Ok(()),
             Pat::Array(a) => {
                 for elem in &a.elems {
                     if let Some(p) = elem {
@@ -335,7 +357,7 @@ impl SubsetValidator {
                                 self.validate_expr(def, ctx)?;
                             }
                         }
-                        ObjectPatProp::KeyValue(k) => self.validate_pat(&k.value, ctx),
+                        ObjectPatProp::KeyValue(kv) => self.validate_pat(&kv.value, ctx),
                         ObjectPatProp::Rest(r) => self.validate_pat(&r.arg, ctx),
                     }
                 }
@@ -345,29 +367,23 @@ impl SubsetValidator {
                 self.validate_pat(&a.left, ctx)?;
                 self.validate_expr(&a.right, ctx)
             }
-            Pat::Invalid(_) => Ok(()),
-            Pat::Expr(e) => self.validate_expr(e, ctx),
+            _ => Ok(()),
         }
     }
 
     /// Validate a module declaration.
     fn validate_module_decl(&self, decl: &ModuleDecl, ctx: &mut AnalysisContext) -> crate::Result<()> {
+        if let Some(err) = validate_module_decl_is_allowed(decl, ctx) {
+            return Err(crate::RuneError::Analysis {
+                location: err.location,
+                message: err.message,
+            });
+        }
+
         match decl {
-            ModuleDecl::Import(i) => {
-                for spec in &i.specifiers {
-                    if let ImportSpecifier::TypeOnly(_) = spec {
-                        // Type-only imports are fine
-                    }
-                }
-                Ok(())
-            }
+            ModuleDecl::Import(_) => Ok(()),
             ModuleDecl::Export(e) => self.validate_export(e, ctx),
-            ModuleDecl::TsImportEquals(_) => Ok(()),
-            ModuleDecl::ExportDefault(_) => Ok(()),
-            ModuleDecl::ExportAll(_) => Ok(()),
-            ModuleDecl::ModuleASCII(_) => Ok(()),
-            ModuleDecl::UseAs(_) => Ok(()),
-            ModuleDecl::ImportStar(_) => Err(self.error(ctx, "Wildcard imports are forbidden.".into())),
+            _ => Ok(()),
         }
     }
 
@@ -375,16 +391,7 @@ impl SubsetValidator {
     fn validate_export(&self, export: &ExportDecl, ctx: &mut AnalysisContext) -> crate::Result<()> {
         match export {
             ExportDecl::Decl(d) => self.validate_decl(d, ctx),
-            ExportDecl::Named(n) => {
-                for spec in &n.specifiers {
-                    match spec {
-                        ExportSpecifier::Named(_) => {}
-                        ExportSpecifier::Default(_) => {}
-                        ExportSpecifier::Namespace(_) => {}
-                    }
-                }
-                Ok(())
-            }
+            ExportDecl::Named(_) => Ok(()),
         }
     }
 
@@ -392,12 +399,14 @@ impl SubsetValidator {
     fn validate_ts_type(&self, type_: &TsType, ctx: &mut AnalysisContext) -> crate::Result<()> {
         match type_ {
             TsType::TsKeywordType(k) => {
-                if matches!(k.kind, TsKeywordTypeKind::TsAnyType | TsKeywordTypeKind::TsUnknownType) {
-                    return Err(self.error(ctx, "any and unknown are forbidden. Use concrete types.".into()));
+                if let Some(err) = validate_ts_keyword_is_allowed(k.kind, ctx) {
+                    return Err(crate::RuneError::Analysis {
+                        location: err.location,
+                        message: err.message,
+                    });
                 }
                 Ok(())
             }
-            TsType::TsLitType(_) => Ok(()),
             TsType::TsArrayType(a) => self.validate_ts_type(&a.elem_type, ctx),
             TsType::TsTupleType(t) => {
                 for elem in &t.elem_types {
@@ -424,11 +433,6 @@ impl SubsetValidator {
                 }
                 Ok(())
             }
-            TsType::TsConstructorType(_) => Ok(()),
-            TsType::TsMappedType(_) => Err(self.error(ctx, "Mapped types are forbidden.".into())),
-            TsType::TsTemplateLiteralType(_) => Ok(()),
-            TsType::TsInferType(_) => Ok(()),
-            TsType::TspreadType(_) => Ok(()),
             TsType::TsTypeRef(t) => {
                 if let Some(type_params) = &t.type_params {
                     for param in &type_params.params {
@@ -441,48 +445,34 @@ impl SubsetValidator {
                 self.validate_ts_type(&i.obj_type, ctx)?;
                 self.validate_ts_type(&i.index_type, ctx)
             }
-            TsType::TsTypeOperatorType(t) => self.validate_ts_type(&t.type_ann, ctx),
-            TsType::TsConditionalType(c) => {
-                self.validate_ts_type(&c.check_type, ctx)?;
-                self.validate_ts_type(&c.extends_type, ctx)?;
-                self.validate_ts_type(&c.true_type, ctx)?;
-                self.validate_ts_type(&c.false_type, ctx)
-            }
+            TsType::TsMappedType(_) => Err(crate::RuneError::Analysis {
+                location: ctx.current_location(),
+                message: "Mapped types are forbidden.".into(),
+            }),
+            _ => Ok(()),
         }
     }
 
     /// Validate a TypeScript enum.
     fn validate_ts_enum(&self, e: &TsEnumDecl, ctx: &mut AnalysisContext) -> crate::Result<()> {
-        // Check for duplicate members
         let mut tags: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for member in &e.members {
             let tag = match &member.id {
                 TsEnumMemberId::Str(s) => s.value.as_str(),
-                TsEnumMemberId::Computed(c) => return Err(self.error(ctx, "Computed enum members are forbidden.".into())),
+                TsEnumMemberId::Computed(_) => {
+                    return Err(crate::RuneError::Analysis {
+                        location: ctx.current_location(),
+                        message: "Computed enum members are forbidden.".into(),
+                    });
+                }
             };
             if !tags.insert(tag) {
-                return Err(self.error(ctx, format!("Duplicate enum member: {}", tag)));
+                return Err(crate::RuneError::Analysis {
+                    location: ctx.current_location(),
+                    message: format!("Duplicate enum member: {}", tag),
+                });
             }
         }
         Ok(())
-    }
-
-    /// Check for integer division warning.
-    fn check_integer_division(&self, bin: &BinExpr, ctx: &mut AnalysisContext) {
-        // This is a simplified check - full implementation would
-        // track inferred types through the expression tree
-        ctx.add_warning(
-            ctx.current_location(),
-            "Integer division inferred. Use explicit float (e.g., x / 2.0) if float division intended.".into(),
-            "integer-division",
-        );
-    }
-
-    /// Create a validation error.
-    fn error(&self, ctx: &mut AnalysisContext, message: String) -> crate::RuneError {
-        crate::RuneError::Analysis {
-            location: ctx.current_location(),
-            message,
-        }
     }
 }

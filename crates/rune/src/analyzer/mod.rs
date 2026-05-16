@@ -4,12 +4,12 @@
 //! ownership inference (borrow checking).
 
 mod validator;
-mod type_inference;
 mod ownership;
 mod context;
+mod inference;
 
 pub use validator::{SubsetValidator, ValidationError};
-pub use type_inference::TypeInferrer;
+pub use inference::TypeInferrer;
 pub use ownership::{OwnershipAnalyzer, BorrowMode};
 pub use context::AnalysisContext;
 
