@@ -240,38 +240,47 @@ impl App for AppImpl {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
-                // Get relative path from cache dir
-                if let Ok(rel) = path.strip_prefix(dir) {
-                    let rel_str = rel.to_string_lossy();
-                    // Remove .rs extension
-                    let module_name = rel_str.replace(".rs", "");
-                    
-                    // Get parent directory (relative to cache dir)
-                    let parent = Path::new(&module_name).parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    
-                    // Get the module name (last component)
-                    let stem = Path::new(&module_name)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    
-                    // For mod.rs files, the module is just "mod", not escaped
-                    // The file mod.rs defines the module named "mod"
-                    let module_decl = if stem == "mod" {
-                        "mod".to_string()
-                    } else {
-                        Self::escape_rust_keyword(&stem)
-                    };
-                    
-                    // Add to parent directory's module list
-                    modules
-                        .entry(parent)
-                        .or_default()
-                        .push(module_decl);
-                }
+            
+            // Only process .rs files
+            if !path.is_file() || path.extension().is_some_and(|e| e != "rs") {
+                continue;
+            }
+            
+            // Get the file name as string
+            let file_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            
+            // Skip mod.rs files - they define the module themselves
+            if file_name == "mod.rs" {
+                continue;
+            }
+            
+            // Get relative path from cache dir
+            if let Ok(rel) = path.strip_prefix(dir) {
+                let rel_str = rel.to_string_lossy();
+                // Remove .rs extension
+                let module_name = rel_str.replace(".rs", "");
+                
+                // Get parent directory (relative to cache dir)
+                let parent = Path::new(&module_name).parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                
+                // Get the module name (last component)
+                let stem = Path::new(&module_name)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                
+                // Escape Rust keywords in module names
+                let module_decl = Self::escape_rust_keyword(&stem);
+                
+                // Add to parent directory's module list
+                modules
+                    .entry(parent)
+                    .or_default()
+                    .push(module_decl);
             }
         }
 

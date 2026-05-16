@@ -83,3 +83,74 @@ pub fn generate(
     let emitter = RustEmitter::new(source, analysis);
     emitter.emit(source)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_struct() {
+        let source = SourceFile {
+            path: std::path::PathBuf::from("test.r.ts"),
+            kind: crate::parser::SourceKind::TypeScript,
+            source: String::from("export type Task = { id: number, title: string, done: boolean };"),
+            name: String::from("test"),
+            valid: true,
+            errors: Vec::new(),
+        };
+
+        let analysis = AnalysisResult::default();
+        let result = generate(&source, &analysis);
+
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        // Verify the generated source contains expected Rust struct
+        assert!(module.source.contains("pub struct Task"));
+        assert!(module.source.contains("pub id: f64"));
+        assert!(module.source.contains("pub title: String"));
+        assert!(module.source.contains("pub done: bool"));
+    }
+
+    #[test]
+    fn test_generate_enum() {
+        let source = SourceFile {
+            path: std::path::PathBuf::from("test.r.ts"),
+            kind: crate::parser::SourceKind::TypeScript,
+            source: String::from("export enum Filter { All, Active, Completed }"),
+            name: String::from("test"),
+            valid: true,
+            errors: Vec::new(),
+        };
+
+        let analysis = AnalysisResult::default();
+        let result = generate(&source, &analysis);
+
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        // Verify the generated source contains expected Rust enum
+        assert!(module.source.contains("pub enum Filter"));
+        assert!(module.source.contains("All"));
+        assert!(module.source.contains("Active"));
+        assert!(module.source.contains("Completed"));
+    }
+
+    #[test]
+    fn test_generate_function() {
+        let source = SourceFile {
+            path: std::path::PathBuf::from("test.r.ts"),
+            kind: crate::parser::SourceKind::TypeScript,
+            source: String::from("export function add(a: number, b: number): number { return a + b; }"),
+            name: String::from("test"),
+            valid: true,
+            errors: Vec::new(),
+        };
+
+        let analysis = AnalysisResult::default();
+        let result = generate(&source, &analysis);
+
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        // Verify the generated source contains expected Rust function
+        assert!(module.source.contains("pub fn add"));
+    }
+}

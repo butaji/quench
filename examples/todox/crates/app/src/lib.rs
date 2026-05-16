@@ -1,30 +1,11 @@
 //! Rune application wiring layer
+//!
+//! This file is hand-written and references generated Rune modules.
+//! The build.rs copies generated code to OUT_DIR before compilation.
 
 mod native;
 
-use protocol::{App, AppState};
+// Generated Rune modules - included from OUT_DIR by build.rs
+include!(concat!(env!("OUT_DIR"), "/generated/mod.rs"));
 
-#[no_mangle]
-pub extern "C" fn create_app() -> *mut dyn App {
-    Box::into_raw(Box::new(AppImpl::default()))
-}
-
-#[derive(Default)]
-struct AppImpl;
-
-impl App for AppImpl {
-    fn update(&mut self, state: &mut AppState) {
-        // Call the generated update function
-        generated::main::update(state);
-    }
-
-    fn render(&self, frame: &mut ratatui::Frame, state: &AppState) {
-        use ratatui::{widgets::Paragraph, layout::Rect};
-        let count = state.tasks.len();
-        let text = format!("TODOX - {} tasks", count);
-        let paragraph = Paragraph::new(text);
-        frame.render_widget(paragraph, Rect::new(0, 0, 30, 1));
-    }
-
-    fn handle_key(&mut self, _key: crossterm::event::KeyEvent, _state: &mut AppState) {}
-}
+pub use protocol::{App, AppState};

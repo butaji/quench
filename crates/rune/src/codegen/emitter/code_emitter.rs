@@ -64,10 +64,12 @@ impl CodeEmitter {
         self.push_line(&format!("pub struct {struct_name} {{"));
         self.indent += 1;
         for (field_name, field_type) in fields {
+            self.push_indent();
             let rust_field = to_snake_case(field_name);
             self.push_line(&format!("pub {rust_field}: {field_type},"));
         }
         self.indent -= 1;
+        self.push_indent();
         self.push_line("}");
         self.push_line("");
     }
@@ -79,6 +81,7 @@ impl CodeEmitter {
         self.push_line(&format!("pub enum {pascal_name} {{"));
         self.indent += 1;
         for variant in &ed.variants {
+            self.push_indent();
             if variant.fields.is_empty() {
                 self.push_line(&format!("{},", to_pascal_case(&variant.name)));
             } else {
@@ -87,10 +90,15 @@ impl CodeEmitter {
                     .iter()
                     .map(|(n, t)| format!("{}: {t}", to_snake_case(n)))
                     .collect();
-                self.push_line(&format!("{} {{ {} }},", to_pascal_case(&variant.name), field_strs.join(", ")));
+                self.push_line(&format!(
+                    "{} {{ {} }},",
+                    to_pascal_case(&variant.name),
+                    field_strs.join(", ")
+                ));
             }
         }
         self.indent -= 1;
+        self.push_indent();
         self.push_line("}");
         self.push_line("");
     }
@@ -110,7 +118,10 @@ impl CodeEmitter {
             .map(|(n, t)| format!("{}: {t}", to_snake_case(n)))
             .collect();
         self.push_indent();
-        self.push_str(&format!("pub {async_prefix}fn {rust_name}({}) -> {return_type} {{\n", params_str.join(", ")));
+        self.push_str(&format!(
+            "pub {async_prefix}fn {rust_name}({}) -> {return_type} {{\n",
+            params_str.join(", ")
+        ));
         self.indent += 1;
         // Set expected return type for type inference in the body
         let prev_return = self.expected_return.clone();

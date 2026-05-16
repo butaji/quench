@@ -8,7 +8,7 @@ use swc_ecma_ast::{
     Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem,
     Stmt, TsType,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::types::{EnumDefinition, EnumVariant};
 
 /// Raw field for deferred type resolution.
@@ -37,8 +37,10 @@ pub struct AstWalker {
     resolver: TypeResolver,
     /// Module name (for imports)
     module_name: String,
-    /// Known imports
+    /// Known imports (path → names)
     imports: HashMap<String, Vec<String>>,
+    /// Native imports (module names that use native: prefix)
+    native_imports: HashSet<String>,
 }
 
 impl AstWalker {
@@ -53,6 +55,7 @@ impl AstWalker {
             resolver: TypeResolver::new(),
             module_name: String::new(),
             imports: HashMap::new(),
+            native_imports: HashSet::new(),
         }
     }
 
@@ -79,6 +82,17 @@ impl AstWalker {
             if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
                 // import.src is a Box<Str> containing the module path (ESM import)
                 let path_str = format!("{:?}", import.src.value);
+
+                // Check for native: imports
+                let is_native = path_str.starts_with("\"native:");
+                if is_native {
+                    // Extract module name from "native:module" -> "module"
+                    let module_name = path_str
+                        .trim_start_matches("\"native:")
+                        .trim_end_matches('"');
+                    self.native_imports.insert(module_name.to_string());
+                }
+
                 let names: Vec<String> = import
                     .specifiers
                     .iter()
@@ -140,6 +154,7 @@ impl AstWalker {
     #[allow(clippy::single_match)]
     fn collect_item(&mut self, item: &ModuleItem) {
         match item {
+            // Direct type declarations
             ModuleItem::Stmt(Stmt::Decl(Decl::TsInterface(d))) => {
                 self.collect_interface(d.id.sym.as_ref(), &d.body);
             }
@@ -151,6 +166,32 @@ impl AstWalker {
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::TsModule(d))) => {
                 self.collect_ts_module(d);
+            }
+            // Exported type declarations
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::TsInterface(d),
+                ..
+            })) => {
+                self.collect_interface(d.id.sym.as_ref(), &d.body);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::TsEnum(d),
+                ..
+            })) => {
+                self.collect_enum(d.id.sym.as_ref(), d);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::TsTypeAlias(d),
+                ..
+            })) => {
+                self.collect_type_alias(d.id.sym.as_ref(), &d.type_ann);
+            }
+            // Handle named exports: export { Type }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
+                // Named exports don't contain type definitions themselves
+                // Type re-exports like: export { Task } from "./types"
+                // are handled by the import system
+                let _ = named;
             }
             _ => {}
         }
@@ -182,9 +223,20 @@ impl AstWalker {
         let variants: Vec<EnumVariant> = decl
             .members
             .iter()
-            .map(|member| EnumVariant {
-                name: format!("{:?}", member.id),
-                fields: Vec::new(),
+            .map(|member| {
+                // Get the variant name from the enum member ID
+                let variant_name = match &member.id {
+                    swc_ecma_ast::TsEnumMemberId::Ident(ident) => {
+                        ident.sym.to_string()
+                    }
+                    swc_ecma_ast::TsEnumMemberId::Str(s) => {
+                        format!("{:?}", s.value)
+                    }
+                };
+                EnumVariant {
+                    name: variant_name,
+                    fields: Vec::new(),
+                }
             })
             .collect();
 
@@ -423,6 +475,18 @@ impl AstWalker {
     #[must_use]
     pub fn into_output(self) -> String {
         self.emitter.into_output()
+    }
+
+    /// Get native imports.
+    #[must_use]
+    pub fn native_imports(&self) -> &HashSet<String> {
+        &self.native_imports
+    }
+
+    /// Consume walker and return native imports.
+    #[must_use]
+    pub fn into_native_imports(self) -> HashSet<String> {
+        self.native_imports
     }
 }
 

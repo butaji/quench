@@ -2,6 +2,7 @@
 //!
 //! Main RustEmitter implementation.
 
+use std::collections::HashSet;
 use crate::{parser::SourceFile, analyzer::AnalysisResult};
 use crate::codegen::{GeneratedModule, CodegenOptions};
 use super::ast_walker::AstWalker;
@@ -65,12 +66,16 @@ impl RustEmitter {
         }
         .map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{e}"))))?;
 
-        // Write header with imports
-        self.write_header(&module_name);
-
         // Walk the AST and emit Rust code
         let mut walker = AstWalker::new();
         walker.walk_module(&ast.module);
+
+        // Get native imports from walker (must do before consuming walker)
+        let native_imports = { walker.native_imports().clone() };
+
+        // Write header with imports
+        self.write_header(&module_name, &native_imports);
+
         self.output.push_str(&walker.into_output());
 
         let output = std::mem::take(&mut self.output);
@@ -110,21 +115,22 @@ impl RustEmitter {
     }
 
     /// Write module header with imports.
-    fn write_header(&mut self, module_name: &str) {
+    fn write_header(&mut self, module_name: &str, native_imports: &HashSet<String>) {
         self.push_line(&format!("// Module: {module_name}"));
         self.push_line("");
-        // Protocol types - these are always needed for the app
-        self.push_line("use protocol::{AppState, Filter, Task};");
-        self.push_line("use ratatui::widgets::{Widget, Paragraph, ListItem};");
-        self.push_line("use ratatui::text::Span;");
-        self.push_line("use ratatui::style::{Style, Modifier};");
-        self.push_line("use crossterm::event::KeyCode;");
-        self.push_line("use serde_json;");
-        self.push_line("use std::time;");
+
+        // Protocol imports - always needed for AppState, Task, Filter types
+        self.push_line("use protocol::{AppState, Task, Filter};");
         self.push_line("");
 
-        // Native imports
+        // Native module import - for hand-written Rust functions
         self.push_line("use crate::native;");
+
+        // Emit native imports (specific modules)
+        for module in native_imports {
+            self.push_line(&format!("use crate::native::{module};"));
+        }
+
         self.push_line("");
     }
 
