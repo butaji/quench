@@ -24,8 +24,9 @@ impl protocol::App for AppImpl {
         generated::main::update(state);
     }
 
-    fn render(&self, state: &protocol::AppState) -> impl ratatui::widgets::Widget {
-        generated::views::root::render(state)
+    fn render(&self, f: &mut ratatui::Frame<'_>, state: &protocol::AppState) {
+        let widget = generated::views::root::render(state);
+        f.render_widget(widget, f.size());
     }
 
     fn handle_key(

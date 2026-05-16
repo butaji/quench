@@ -1,6 +1,6 @@
 //! Generated from views/task_list.r.tsx
 
-use crate::protocol::{AppState, Filter, Task};
+use protocol::{AppState, Filter, Task};
 use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     style::{Style, Color},
@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 /// Task list component.
-pub fn render(state: &AppState) -> impl Widget {
+pub fn render(state: &AppState) -> Box<dyn Widget> {
     let visible_tasks: Vec<&Task> = match state.filter {
         Filter::Active => state.tasks.iter().filter(|t| !t.done).collect(),
         Filter::Completed => state.tasks.iter().filter(|t| t.done).collect(),
@@ -29,17 +29,14 @@ pub fn render(state: &AppState) -> impl Widget {
         ListItem::new(content).style(style)
     }).collect();
 
-    let list = List::new(items)
-        .block(Block::default()
-            .title(format!("Tasks ({})", visible_tasks.len()))
-            .borders(Borders::ALL))
-        .highlight_style(Style::new().bg(Color::Blue));
-
     if visible_tasks.is_empty() {
-        let empty = Paragraph::new("No tasks. Press 'a' to add one.")
-            .block(Block::default().borders(Borders::ALL));
-        empty
+        Box::new(Paragraph::new("No tasks. Press 'a' to add one.")
+            .block(Block::default().borders(Borders::ALL)))
     } else {
-        list
+        Box::new(List::new(items)
+            .block(Block::default()
+                .title(format!("Tasks ({})", visible_tasks.len()))
+                .borders(Borders::ALL))
+            .highlight_style(Style::new().bg(Color::Blue)))
     }
 }

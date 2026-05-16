@@ -1,6 +1,6 @@
 //! Generated from handlers/api.r.ts
 
-use crate::protocol::Task;
+use protocol::Task;
 use serde::{Deserialize, Serialize};
 
 /// Result type for validation.

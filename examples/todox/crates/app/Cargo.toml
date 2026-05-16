@@ -16,4 +16,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [build-dependencies]
-rune = { path = "../../../crates/rune" }
+rune = { path = "../../../../crates/rune" }

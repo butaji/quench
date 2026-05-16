@@ -1,6 +1,6 @@
 //! Generated from main.r.ts
 
-use crate::protocol::{AppState, Filter, Task};
+use protocol::{AppState, Filter, Task};
 
 /// Update application state.
 pub fn update(state: &mut AppState) {

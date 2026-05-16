@@ -42,12 +42,13 @@ pub enum Filter {
 }
 
 /// Application trait - implemented by app dylib.
+/// Renders directly to terminal frame for dyn-compatibility.
 pub trait App {
     /// Update application state.
     fn update(&mut self, state: &mut AppState);
 
-    /// Render the application.
-    fn render(&self, state: &AppState) -> impl ratatui::widgets::Widget;
+    /// Render the application to a terminal frame.
+    fn render(&self, f: &mut ratatui::Frame<'_>, state: &AppState);
 
     /// Handle key events.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, state: &mut AppState);
