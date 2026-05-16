@@ -9,6 +9,10 @@ license.workspace = true
 name = "rune"
 path = "src/main.rs"
 
+[[bin]]
+name = "cargo-rune"
+path = "src/main.rs"
+
 [dependencies]
 rune = { path = "../rune", default-features = false }
 anyhow.workspace = true

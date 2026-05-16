@@ -8,6 +8,18 @@ use std::path::PathBuf;
 use rune::driver::{BuildOptions, BuildMode, Command};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+/// Detect if running as cargo subcommand (binary named cargo-rune).
+fn is_cargo_subcommand() -> bool {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(name) = exe.file_name() {
+            if let Some(name_str) = std::ffi::OsStr::to_str(name) {
+                return name_str.starts_with("cargo-");
+            }
+        }
+    }
+    false
+}
+
 /// Rune compiler driver.
 #[derive(Parser)]
 #[command(name = "rune")]
@@ -68,8 +80,20 @@ fn main() -> Result<()> {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    // Parse arguments
-    let cli = Cli::parse();
+    // Check if running as cargo subcommand
+    let is_cargo = is_cargo_subcommand();
+
+    // Get command line args
+    let mut args: Vec<String> = std::env::args().collect();
+
+    // When cargo invokes cargo-rune, it passes ["cargo", "rune", ...]
+    // We need to strip the "rune" arg for clap to work
+    if is_cargo && args.len() > 1 && args[1] == "rune" {
+        args.remove(1);
+    }
+
+    // Parse arguments using clap's from_iter which doesn't consume args
+    let cli = Cli::parse_from(&args);
 
     let mut options: BuildOptions;
 
