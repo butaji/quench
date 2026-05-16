@@ -6,7 +6,7 @@
 mod ownership;
 mod context;
 mod inference;
-mod validator;
+pub mod validator;
 
 pub use ownership::{OwnershipAnalyzer, BorrowMode};
 pub use context::AnalysisContext;
@@ -349,7 +349,7 @@ pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResu
     let mut ctx = AnalysisContext::new(source);
     let mut type_inferrer = TypeInferrer::new();
     let mut ownership_analyzer = OwnershipAnalyzer::new();
-    let validator = SubsetValidator::new();
+    let mut validator = SubsetValidator::new();
 
     // Check for parse errors first
     for err in &source.errors {
@@ -360,12 +360,12 @@ pub fn analyze(source: &crate::parser::SourceFile) -> crate::Result<AnalysisResu
         );
     }
 
-    // Validate the subset
+    // Validate the subset (warnings only for now)
     if let Err(e) = validator.validate(source) {
         ctx.add_warning(
-            e.location,
-            e.message,
-            e.code,
+            "validation".to_string(),
+            e.to_string(),
+            "subset_validation",
         );
     }
 
