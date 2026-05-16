@@ -5,7 +5,8 @@
 use super::CodeEmitter;
 use swc_ecma_ast::{Stmt, Decl};
 
-use super::expressions::{emit_expr, infer_type};
+use super::infer::infer_type;
+use super::expressions::emit_expr;
 
 /// Emit a function body statement.
 pub fn emit_body_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {

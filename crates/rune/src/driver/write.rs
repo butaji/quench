@@ -188,16 +188,8 @@ impl App for AppImpl {
 
         std::fs::write(&lib_path, lib_content)?;
 
-        // Write generated/mod.rs
-        let mod_rs_content: String = modules
-            .iter()
-            .map(|m| {
-                let name = m.replace(".rs", "").replace('-', "_");
-                format!("pub mod {};", name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(generated_dir.join("mod.rs"), mod_rs_content)?;
+        // Write mod.rs files for each directory level
+        self.write_directory_mod_files(generated_dir, &modules)?;
 
         // Copy native module from original crate if exists
         let native_src = self.options.workspace
@@ -216,9 +208,23 @@ impl App for AppImpl {
         Ok(())
     }
 
+    /// Escape a Rust keyword for use as a module name.
+    fn escape_rust_keyword(name: &str) -> String {
+        match name {
+            "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
+            | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if"
+            | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut"
+            | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct"
+            | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where"
+            | "while" => format!("r#{name}"),
+            _ => name.to_string(),
+        }
+    }
+
     /// Collect module names from generated directory.
-    fn collect_modules(&self, dir: &Path) -> Result<Vec<String>> {
-        let mut modules = Vec::new();
+    /// Returns a map of directory -> list of module names in that directory.
+    fn collect_modules(&self, dir: &Path) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let mut modules: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(true)
@@ -229,15 +235,69 @@ impl App for AppImpl {
             if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
                 // Get relative path from cache dir
                 if let Ok(rel) = path.strip_prefix(dir) {
-                    let rel_str = rel.to_string_lossy()
-                        .replace(['/', '\\'], "::")
-                        .replace(".rs", "");
-                    modules.push(rel_str);
+                    let rel_str = rel.to_string_lossy();
+                    // Remove .rs extension
+                    let module_name = rel_str.replace(".rs", "");
+                    
+                    // Get parent directory (relative to cache dir)
+                    let parent = Path::new(&module_name).parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    
+                    // Get the module name (last component)
+                    let stem = Path::new(&module_name)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    
+                    // Escape if it's a keyword
+                    let escaped = Self::escape_rust_keyword(&stem);
+                    
+                    // Add to parent directory's module list
+                    modules
+                        .entry(parent)
+                        .or_default()
+                        .push(escaped);
                 }
             }
         }
 
         Ok(modules)
+    }
+
+    /// Write mod.rs files for each directory level.
+    fn write_directory_mod_files(
+        &self,
+        generated_dir: &Path,
+        modules: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Result<()> {
+        // Write mod.rs for the root generated directory
+        let root_mod_content: String = modules
+            .get("")
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|m| format!("pub mod {};", m))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(generated_dir.join("mod.rs"), root_mod_content)?;
+
+        // Write mod.rs for each subdirectory
+        for (dir, mods) in modules {
+            if dir.is_empty() {
+                continue;
+            }
+            let dir_path = generated_dir.join(dir);
+            std::fs::create_dir_all(&dir_path)?;
+            let mod_content: String = mods
+                .iter()
+                .map(|m| format!("pub mod {};", m))
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(dir_path.join("mod.rs"), mod_content)?;
+        }
+
+        Ok(())
     }
 }
 

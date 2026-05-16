@@ -20,12 +20,12 @@ pub struct EmitOptions {
 pub struct RustEmitter {
     /// Analysis results
     pub analysis: AnalysisResult,
-    /// Imports needed by this module
-    pub imports: Vec<crate::codegen::Import>,
+    /// Imports needed by this module (path → names)
+    pub imports: Vec<(String, Vec<String>)>,
     /// Output buffer
-    pub output: String,
+    output: String,
     /// Current indentation level
-    pub indent: usize,
+    indent: usize,
     /// Generation options
     options: CodegenOptions,
     /// Source line mappings for error translation
@@ -47,10 +47,14 @@ impl RustEmitter {
 
     /// Emit the complete module using AST walking.
     pub fn emit(mut self, source: &SourceFile) -> crate::Result<GeneratedModule> {
-        let file_stem = source.path.file_stem()
+        let file_stem = source
+            .path
+            .file_stem()
             .and_then(std::ffi::OsStr::to_str)
             .unwrap_or("module")
             .to_string();
+
+        let module_name = AstWalker::escape_keyword(&file_stem);
         let source_text = source.source.clone();
 
         // Parse with SWC to get AST
@@ -58,13 +62,11 @@ impl RustEmitter {
             SwcAst::parse_tsx(&source_text, &file_stem)
         } else {
             SwcAst::parse_ts(&source_text, &file_stem)
-        }.map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{}", e))))?;
+        }
+        .map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{e}"))))?;
 
-        // Write header with protocol and ratatui imports
-        self.push_line("use protocol::{AppState, Filter, Task};");
-        self.push_line("use ratatui::widgets::Widget;");
-        self.push_line("use crossterm::event::KeyCode;");
-        self.push_line("");
+        // Write header with imports
+        self.write_header(&module_name);
 
         // Walk the AST and emit Rust code
         let mut walker = AstWalker::new();
@@ -72,7 +74,21 @@ impl RustEmitter {
         self.output.push_str(&walker.into_output());
 
         let output = std::mem::take(&mut self.output);
-        let imports = std::mem::take(&mut self.imports);
+        let imports: Vec<_> = self
+            .imports
+            .into_iter()
+            .map(|(path, names)| crate::codegen::Import {
+                path,
+                names: names
+                    .into_iter()
+                    .map(|n| crate::codegen::ImportedName {
+                        original: n.clone(),
+                        rust_name: n,
+                    })
+                    .collect(),
+                is_native: false,
+            })
+            .collect();
 
         Ok(GeneratedModule {
             name: file_stem,
@@ -94,9 +110,18 @@ impl RustEmitter {
     }
 
     /// Write module header with imports.
-    fn write_header(&mut self) {
-        self.push_line("//! Generated Rune module");
+    fn write_header(&mut self, module_name: &str) {
+        self.push_line(&format!("// Module: {module_name}"));
         self.push_line("");
+        // Protocol types - these are always needed for the app
+        self.push_line("use protocol::{AppState, Filter, Task};");
+        self.push_line("use ratatui::widgets::{Widget, Paragraph, ListItem, Span};");
+        self.push_line("use ratatui::style::Style;");
+        self.push_line("use crossterm::event::KeyCode;");
+        self.push_line("use serde_json;");
+        self.push_line("");
+
+        // Native imports
         self.push_line("use crate::native;");
         self.push_line("");
     }
