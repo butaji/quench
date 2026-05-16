@@ -38,8 +38,15 @@ impl BuildDriver {
         let parts: Vec<&str> = name.split('/').collect();
         let last = parts.last().unwrap_or(&name);
 
-        // Strip ".r" extension and add ".rs"
-        let clean = last.strip_suffix(".r").unwrap_or(last);
+        // The name is the file stem, which for Rune files is like:
+        // - "main.r" for "main.r.ts" or "main.r.tsx"
+        // - "handlers/keyboard.r" for "handlers/keyboard.r.ts"
+        // We need to strip the ".r" suffix to get the proper module name
+        let clean = if last.ends_with(".r") && last.len() > 1 {
+            &last[..last.len() - 2]  // Remove trailing ".r"
+        } else {
+            last
+        };
 
         if parts.len() > 1 {
             let dir_parts = &parts[..parts.len() - 1];

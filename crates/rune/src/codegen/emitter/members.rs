@@ -225,15 +225,54 @@ fn emit_standard_method_name(emitter: &mut CodeEmitter, prop_name: &str) {
 /// Emit an object literal, with struct name context if available.
 pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     let has_struct = emitter.object_struct_name().is_some();
+    
+    // Check if this object has spread syntax (struct update)
+    let spread_source = find_spread_source(obj);
+    
     if has_struct {
         let name = emitter.object_struct_name().unwrap().clone();
         emitter.push_str(&name);
-        emitter.push_str(" { ");
+        if spread_source.is_some() {
+            emitter.push_str(" { ");
+            // Handle struct update: { ...task, done: true }
+            if let Some(source) = spread_source {
+                emitter.push_str("..");
+                emit_expr(emitter, &source);
+                emitter.push_str(", ");
+            }
+            emit_object_props(emitter, obj, true);
+            emitter.push_str(" }");
+        } else {
+            emitter.push_str(" { ");
+            emit_object_props(emitter, obj, false);
+            emitter.push_str(" }");
+        }
     } else {
-        emitter.push_str("{ ");
+        if spread_source.is_some() {
+            // Without struct context, we can't properly handle struct updates
+            emitter.push_str("{ /* struct update without type context */ }");
+        } else {
+            emitter.push_str("{ ");
+            emit_object_props(emitter, obj, false);
+            emitter.push_str(" }");
+        }
     }
+}
 
-    let mut first = true;
+/// Find the spread source in an object literal (for struct updates).
+fn find_spread_source(obj: &ObjectLit) -> Option<Box<swc_ecma_ast::Expr>> {
+    for prop in &obj.props {
+        if let swc_ecma_ast::PropOrSpread::Spread(spread) = prop {
+            return Some(spread.expr.clone());
+        }
+    }
+    None
+}
+
+/// Emit the property assignments of an object literal (excluding spread).
+fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, has_spread: bool) {
+    let mut first = !has_spread; // If we have spread, the first prop is the spread (already emitted)
+    
     for prop in &obj.props {
         match prop {
             swc_ecma_ast::PropOrSpread::Prop(prop) => {
@@ -266,18 +305,11 @@ pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
                     }
                 }
             }
-            swc_ecma_ast::PropOrSpread::Spread(spread) => {
-                if !first {
-                    emitter.push_str(", ");
-                }
-                first = false;
-                emitter.push_str("..");
-                emit_expr(emitter, &spread.expr);
+            swc_ecma_ast::PropOrSpread::Spread(_) => {
+                // Skip spread - already handled
             }
         }
     }
-
-    emitter.push_str(" }");
 }
 
 /// Emit object property key.
@@ -291,6 +323,9 @@ fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
         }
         PropName::Num(n) => {
             emitter.push_str(&n.value.to_string());
+        }
+        PropName::Computed(_) => {
+            emitter.push_str("/* computed */ ()");
         }
         _ => emitter.push_str("unknown"),
     }

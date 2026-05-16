@@ -11,7 +11,7 @@ use crate::native;
 pub fn update(state: AppState) -> () {
     let filtered: () = filter_tasks(state.tasks, state.filter);
     if state.selected >= filtered.len() && filtered.len() > 0i32 {
-        ();
+        state.selected = filtered.len() - 1i32;
     }
 }
 

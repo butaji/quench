@@ -13,7 +13,7 @@ pub fn create_task(title: String) -> Task {
 }
 
 pub fn toggle_task(task: Task) -> Task {
-    return { ..task, done: !task.done };
+    return { /* struct update without type context */ };
 }
 
 pub fn validate_title(title: String) -> Result {

@@ -21,7 +21,21 @@ pub fn infer_type(expr: &Expr) -> String {
             Lit::Null(_) => "Option<()>".to_string(),
             _ => "()".to_string(),
         },
-        Expr::Array(_) => "Vec<()>".to_string(),
+        Expr::Array(arr) => {
+            // Infer array element type
+            if arr.elems.is_empty() {
+                String::from("Vec<()>")
+            } else if let Some(elem) = arr.elems.first() {
+                if let Some(e) = elem {
+                    let elem_type = infer_type(&e.expr);
+                    format!("Vec<{}>", elem_type)
+                } else {
+                    String::from("Vec<()>")
+                }
+            } else {
+                String::from("Vec<()>")
+            }
+        }
         Expr::Object(_) => "()".to_string(),
         Expr::Tpl(_) => "String".to_string(),
         Expr::Bin(bin_expr) => infer_bin_type(bin_expr),
@@ -38,10 +52,17 @@ pub fn infer_type(expr: &Expr) -> String {
         Expr::Cond(cond_expr) => {
             let cons_type = infer_type(&cond_expr.cons);
             let alt_type = infer_type(&cond_expr.alt);
+            // If both branches are the same type, use that type
             if cons_type == alt_type {
                 cons_type
+            } else if cons_type == "()" && alt_type != "()" {
+                // One branch is unit, the other has a type - use the non-unit type
+                alt_type
+            } else if alt_type == "()" && cons_type != "()" {
+                cons_type
             } else {
-                "()".to_string()
+                // Different non-unit types - for now, return cons type as best-effort
+                cons_type
             }
         }
         Expr::Arrow(_) => "()".to_string(),
