@@ -2,7 +2,7 @@
 //!
 //! Main compilation orchestration.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 use std::time::Duration;
 use crate::{Result, parser, analyzer, codegen};
@@ -79,101 +79,15 @@ pub struct BuildDriver {
 impl BuildDriver {
     /// Create a new build driver.
     pub fn new(options: BuildOptions) -> Result<Self> {
-        let config_path = options.config.clone()
-            .or_else(|| Some(options.workspace.join("rune.toml")));
-
-        let config = if let Some(ref path) = config_path {
-            if path.exists() {
-                RuneConfig::load(path)?
-            } else {
-                RuneConfig::default()
-            }
-        } else {
-            RuneConfig::default()
-        };
-
+        let config = load_config(&options)?;
         let cache = CacheManager::new(&options.workspace)?;
-
-        Ok(Self {
-            options,
-            config,
-            cache,
-        })
+        Ok(Self { options, config, cache })
     }
 
     /// Run in development mode with hot reload.
-    ///
-    /// Uses a polling loop with short timeouts. Ctrl+C will naturally terminate
-    /// the process due to the SIGINT signal.
     pub fn dev(&mut self) -> Result<()> {
-        if self.options.verbose {
-            println!("Running in development mode with hot reload...");
-        }
-
-        // Initial build
-        self.build_once()?;
-
-        // Find source directory
-        let src_dir = self.options.workspace
-            .join("crates")
-            .join(&self.config.build.target_crate)
-            .join("src");
-
-        // Setup hot reload directory
-        let hot_dir = self.options.workspace.join("target/hot");
-        std::fs::create_dir_all(&hot_dir)?;
-
-        // Create host signaler
-        let signaler = HostSignaler::new(&hot_dir)
-            .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
-
-        // Create watcher
-        let debounce = self.config.dev.debounce;
-        let watcher = DylibWatcher::new(&src_dir, debounce)
-            .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
-
-        if self.options.verbose {
-            println!("Watching for changes in {}...", src_dir.display());
-            println!("Press Ctrl+C to stop.");
-        }
-
-        // Watch loop - polls with short timeout allowing Ctrl+C to interrupt
-        loop {
-            // Check for file changes with short timeout
-            match watcher.wait_for_event(Duration::from_millis(500)) {
-                Some(crate::reload::ReloadEvent::FilesChanged(_)) => {
-                    if self.options.verbose {
-                        println!("File changed, rebuilding...");
-                    }
-                    match self.build_once() {
-                        Ok(()) => {
-                            if self.options.verbose {
-                                println!("Build successful, hot reload ready.");
-                            }
-                            let _ = signaler.signal();
-                        }
-                        Err(e) => {
-                            eprintln!("Build failed: {}", e);
-                        }
-                    }
-                }
-                Some(crate::reload::ReloadEvent::ProtocolChanged) => {
-                    eprintln!("Protocol changed, full restart required.");
-                    let _ = signaler.mark_restart_needed();
-                    break;
-                }
-                Some(crate::reload::ReloadEvent::Error(e)) => {
-                    eprintln!("Watcher error: {}", e);
-                }
-                None => {
-                    // Timeout - continue watching
-                }
-            }
-        }
-
-        if self.options.verbose {
-            println!("Development server stopped.");
-        }
+        init_dev_mode(self)?;
+        run_watch_loop(self)?;
         Ok(())
     }
 
@@ -182,14 +96,11 @@ impl BuildDriver {
         if self.options.verbose {
             println!("Running in release mode...");
         }
-
         self.build_once()?;
         self.build_crate(true)?;
-
         if self.options.verbose {
             println!("Release build complete.");
         }
-
         Ok(())
     }
 
@@ -228,7 +139,6 @@ impl BuildDriver {
         self.init_protocol()?;
         self.init_host()?;
         self.init_app()?;
-
         println!("Initialized Rune project: {}", self.config.project.name);
         Ok(())
     }
@@ -250,7 +160,6 @@ impl BuildDriver {
         if self.options.verbose {
             println!("Build complete.");
         }
-
         Ok(())
     }
 
@@ -259,7 +168,6 @@ impl BuildDriver {
             .join("crates")
             .join(&self.config.build.target_crate)
             .join("src");
-
         parser::scan_directory(&src_dir)
     }
 
@@ -303,7 +211,6 @@ impl BuildDriver {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(crate::RuneError::Cargo(stderr.to_string()));
         }
-
         Ok(())
     }
 
@@ -318,40 +225,126 @@ impl BuildDriver {
 
         let target_crate = &self.config.build.target_crate;
         let artifact_name = format!("lib{target_crate}.so");
-
         let artifact = self.options.workspace
             .join("target")
             .join(profile)
             .join(&artifact_name);
 
         if artifact.exists() {
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
-
-            let safe_name = target_crate.replace('-', "_");
-            let hot_name = format!("{safe_name}_{timestamp}.so");
-            let hot_path = hot_dir.join(&hot_name);
-
-            std::fs::copy(&artifact, &hot_path)?;
-
-            let current = hot_dir.join(".current");
-            if current.exists() {
-                std::fs::remove_file(&current)?;
-            }
-
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&hot_path, &current)?;
-
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_file(&hot_path, &current)?;
-
-            if self.options.verbose {
-                println!("Hot reload ready: {hot_name}");
-            }
+            copy_artifact_to_hot_dir(&hot_dir, &artifact, target_crate)?;
         }
-
         Ok(())
     }
+}
+
+fn load_config(options: &BuildOptions) -> Result<RuneConfig> {
+    let config_path = options.config.clone()
+        .or_else(|| Some(options.workspace.join("rune.toml")));
+
+    if let Some(ref path) = config_path {
+        if path.exists() {
+            return Ok(RuneConfig::load(path)?);
+        }
+    }
+    Ok(RuneConfig::default())
+}
+
+fn init_dev_mode(driver: &mut BuildDriver) -> Result<()> {
+    if driver.options.verbose {
+        println!("Running in development mode with hot reload...");
+    }
+    driver.build_once()?;
+    Ok(())
+}
+
+fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
+    let src_dir = find_src_dir(driver);
+    let hot_dir = driver.options.workspace.join("target/hot");
+    std::fs::create_dir_all(&hot_dir)?;
+
+    let signaler = HostSignaler::new(&hot_dir)
+        .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+
+    let debounce = driver.config.dev.debounce;
+    let watcher = DylibWatcher::new(&src_dir, debounce)
+        .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+
+    if driver.options.verbose {
+        println!("Watching for changes in {}...", src_dir.display());
+        println!("Press Ctrl+C to stop.");
+    }
+
+    loop {
+        match watcher.wait_for_event(Duration::from_millis(500)) {
+            Some(crate::reload::ReloadEvent::FilesChanged(_)) => handle_file_change(driver, &signaler),
+            Some(crate::reload::ReloadEvent::ProtocolChanged) => {
+                eprintln!("Protocol changed, full restart required.");
+                let _ = signaler.mark_restart_needed();
+                break;
+            }
+            Some(crate::reload::ReloadEvent::Error(e)) => {
+                eprintln!("Watcher error: {}", e);
+            }
+            None => {}
+        }
+    }
+
+    if driver.options.verbose {
+        println!("Development server stopped.");
+    }
+    Ok(())
+}
+
+fn find_src_dir(driver: &BuildDriver) -> PathBuf {
+    driver.options.workspace
+        .join("crates")
+        .join(&driver.config.build.target_crate)
+        .join("src")
+}
+
+fn handle_file_change(driver: &mut BuildDriver, signaler: &HostSignaler) {
+    if driver.options.verbose {
+        println!("File changed, rebuilding...");
+    }
+    match driver.build_once() {
+        Ok(()) => {
+            if driver.options.verbose {
+                println!("Build successful, hot reload ready.");
+            }
+            let _ = signaler.signal();
+        }
+        Err(e) => {
+            eprintln!("Build failed: {}", e);
+        }
+    }
+}
+
+fn copy_artifact_to_hot_dir(
+    hot_dir: &Path,
+    artifact: &PathBuf,
+    target_crate: &str,
+) -> Result<()> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    let safe_name = target_crate.replace('-', "_");
+    let hot_name = format!("{safe_name}_{timestamp}.so");
+    let hot_path = hot_dir.join(&hot_name);
+    std::fs::copy(artifact, &hot_path)?;
+
+    let current = hot_dir.join(".current");
+    if current.exists() {
+        std::fs::remove_file(&current)?;
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&hot_path, &current)?;
+
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&hot_path, &current)?;
+
+    println!("Hot reload ready: {hot_name}");
+    Ok(())
 }
