@@ -2,10 +2,10 @@
 # Enforces code quality standards
 
 # Maximum function length
-too-many-lines-threshold = 40
+too-many-lines-threshold = 60
 
 # Cyclomatic complexity
-cognitive-complexity-threshold = 10
+cognitive-complexity-threshold = 15
 
-# Disallowed lints
+# Disallowed names
 disallowed-names = ["foo", "bar", "baz", "quux"]

@@ -9,9 +9,10 @@ use super::config::RuneConfig;
 use super::cache::CacheManager;
 
 /// Build mode.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum BuildMode {
     /// Development with hot reload
+    #[default]
     Dev,
     /// Release build
     Release,
@@ -37,7 +38,7 @@ pub struct BuildOptions {
 impl BuildOptions {
     /// Create new options.
     #[must_use]
-    pub fn new(workspace: PathBuf) -> Self {
+    pub const fn new(workspace: PathBuf) -> Self {
         Self {
             mode: BuildMode::Dev,
             workspace,
@@ -50,14 +51,14 @@ impl BuildOptions {
 
     /// Set development mode.
     #[must_use]
-    pub fn dev(mut self) -> Self {
+    pub const fn dev(mut self) -> Self {
         self.mode = BuildMode::Dev;
         self
     }
 
     /// Set release mode.
     #[must_use]
-    pub fn release(mut self) -> Self {
+    pub const fn release(mut self) -> Self {
         self.mode = BuildMode::Release;
         self
     }
@@ -72,6 +73,9 @@ pub struct BuildDriver {
 
 impl BuildDriver {
     /// Create a new build driver.
+    ///
+    /// # Errors
+    /// Returns an error if configuration or cache cannot be initialized.
     pub fn new(options: BuildOptions) -> Result<Self> {
         let config_path = options.config.clone()
             .or_else(|| Some(options.workspace.join("rune.toml")));
@@ -96,6 +100,9 @@ impl BuildDriver {
     }
 
     /// Run in development mode with hot reload.
+    ///
+    /// # Errors
+    /// Returns an error if build fails.
     pub fn dev(&mut self) -> Result<()> {
         if self.options.verbose {
             println!("Running in development mode with hot reload...");
@@ -106,8 +113,8 @@ impl BuildDriver {
             println!("Found {} Rune source files", sources.len());
         }
 
-        let parsed = self.parse_sources(&sources)?;
-        let analyses = self.analyze_sources(&parsed)?;
+        let parsed = Self::parse_sources(&sources)?;
+        let analyses = Self::analyze_sources(&parsed)?;
         let generated = self.generate_code(&parsed, &analyses)?;
         self.write_generated(&generated)?;
         self.build_crate(false)?;
@@ -121,14 +128,17 @@ impl BuildDriver {
     }
 
     /// Run in release mode.
+    ///
+    /// # Errors
+    /// Returns an error if build fails.
     pub fn build(&mut self) -> Result<()> {
         if self.options.verbose {
             println!("Running in release mode...");
         }
 
         let sources = self.find_sources()?;
-        let parsed = self.parse_sources(&sources)?;
-        let analyses = self.analyze_sources(&parsed)?;
+        let parsed = Self::parse_sources(&sources)?;
+        let analyses = Self::analyze_sources(&parsed)?;
         let generated = self.generate_code(&parsed, &analyses)?;
         self.write_generated(&generated)?;
         self.build_crate(true)?;
@@ -141,10 +151,13 @@ impl BuildDriver {
     }
 
     /// Type check only.
+    ///
+    /// # Errors
+    /// Returns an error if analysis fails.
     pub fn check(&mut self) -> Result<()> {
         let sources = self.find_sources()?;
-        let parsed = self.parse_sources(&sources)?;
-        let analyses = self.analyze_sources(&parsed)?;
+        let parsed = Self::parse_sources(&sources)?;
+        let analyses = Self::analyze_sources(&parsed)?;
 
         for analysis in &analyses {
             for warning in &analysis.warnings {
@@ -157,6 +170,9 @@ impl BuildDriver {
     }
 
     /// Transpile a single file to stdout.
+    ///
+    /// # Errors
+    /// Returns an error if transpilation fails.
     pub fn transpile(&mut self) -> Result<()> {
         let file = self.options.transpile_file.as_ref()
             .ok_or_else(|| crate::RuneError::Codegen("No file specified".into()))?;
@@ -170,6 +186,9 @@ impl BuildDriver {
     }
 
     /// Initialize a new project.
+    ///
+    /// # Errors
+    /// Returns an error if project creation fails.
     #[allow(clippy::too_many_lines)]
     pub fn init(&mut self) -> Result<()> {
         let project_name = self.config.project.name.clone();
@@ -180,12 +199,12 @@ impl BuildDriver {
         std::fs::create_dir_all(base.join("src/views"))?;
 
         let cargo = format!(r#"[package]
-name = "{}"
+name = "{target_crate}"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "{}"
+name = "{target_crate}"
 path = "src/lib.rs"
 
 [dependencies]
@@ -194,7 +213,7 @@ ratatui = "0.26"
 
 [build-dependencies]
 rune = {{ path = "../../.." }}
-"#, target_crate, target_crate);
+"#);
 
         std::fs::write(base.join("Cargo.toml"), cargo)?;
 
@@ -242,8 +261,8 @@ export type AppState = { tasks: Task[]; selected: number };\n";
         let fast_math = "pub fn fast_sqrt(x: f64) -> f64 { x.sqrt() }\n";
         std::fs::write(base.join("src/native/fast_math.rs"), fast_math)?;
 
-        println!("Initialized Rune project: {}", project_name);
-        println!("Created structure in crates/{}/", target_crate);
+        println!("Initialized Rune project: {project_name}");
+        println!("Created structure in crates/{target_crate}/");
 
         Ok(())
     }
@@ -257,12 +276,12 @@ export type AppState = { tasks: Task[]; selected: number };\n";
         parser::scan_directory(&src_dir)
     }
 
-    fn parse_sources(&self, sources: &[PathBuf]) -> Result<Vec<parser::SourceFile>> {
-        sources.iter().map(|s| parser::parse_file(s)).collect()
+    fn parse_sources(sources: &[PathBuf]) -> Result<Vec<parser::SourceFile>> {
+        sources.iter().map(|s| parser::parse_file(s.as_path())).collect()
     }
 
-    fn analyze_sources(&self, sources: &[parser::SourceFile]) -> Result<Vec<analyzer::AnalysisResult>> {
-        sources.iter().map(|s| analyzer::analyze(s)).collect()
+    fn analyze_sources(sources: &[parser::SourceFile]) -> Result<Vec<analyzer::AnalysisResult>> {
+        sources.iter().map(analyzer::analyze).collect()
     }
 
     fn generate_code(
@@ -281,7 +300,7 @@ export type AppState = { tasks: Task[]; selected: number };\n";
 
         for module in modules {
             let rel_path = module.name.replace(".r", "");
-            let out_path = cache_dir.join(format!("{}.rs", rel_path));
+            let out_path = cache_dir.join(format!("{rel_path}.rs"));
             std::fs::create_dir_all(out_path.parent().unwrap())?;
             std::fs::write(&out_path, &module.source)?;
         }
@@ -314,18 +333,18 @@ export type AppState = { tasks: Task[]; selected: number };\n";
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn setup_hot_reload(&self) -> Result<()> {
         let hot_dir = self.options.workspace.join("target/hot");
         std::fs::create_dir_all(&hot_dir)?;
 
-        let profile = if matches!(self.options.mode, BuildMode::Dev) {
-            "debug"
-        } else {
-            "release"
+        let profile = match self.options.mode {
+            BuildMode::Dev => "debug",
+            BuildMode::Release => "release",
         };
 
         let target_crate = &self.config.build.target_crate;
-        let artifact_name = format!("lib{}.so", target_crate);
+        let artifact_name = format!("lib{target_crate}.so");
 
         let artifact = self.options.workspace
             .join("target")
@@ -338,7 +357,8 @@ export type AppState = { tasks: Task[]; selected: number };\n";
                 .unwrap()
                 .as_millis();
 
-            let hot_name = format!("{}_{}.so", target_crate.replace("-", "_"), timestamp);
+            let safe_name = target_crate.replace('-', "_");
+            let hot_name = format!("{safe_name}_{timestamp}.so");
             let hot_path = hot_dir.join(&hot_name);
 
             std::fs::copy(&artifact, &hot_path)?;
@@ -355,7 +375,7 @@ export type AppState = { tasks: Task[]; selected: number };\n";
             std::os::windows::fs::symlink_file(&hot_path, &current)?;
 
             if self.options.verbose {
-                println!("Hot reload ready: {}", hot_name);
+                println!("Hot reload ready: {hot_name}");
             }
         }
 

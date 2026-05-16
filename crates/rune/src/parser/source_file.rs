@@ -34,6 +34,9 @@ pub struct SourceFile {
 
 impl SourceFile {
     /// Parse a source file from a path.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read.
     pub fn parse(path: &Path, kind: SourceKind) -> Result<Self> {
         if !path.exists() {
             return Err(ParseError::NotFound(path.display().to_string()).into());
@@ -43,11 +46,10 @@ impl SourceFile {
 
         let name = path
             .file_stem()
-            .and_then(|s| s.to_str())
+            .and_then(std::ffi::OsStr::to_str)
             .unwrap_or("module")
             .to_string();
 
-        // Basic validation - check for balanced braces
         let errors = Self::validate_syntax(&source);
 
         Ok(Self {
@@ -63,9 +65,8 @@ impl SourceFile {
     /// Validate basic syntax.
     fn validate_syntax(source: &str) -> Vec<ParseError> {
         let mut errors = Vec::new();
-        let mut brace_depth = 0;
-        let mut paren_depth = 0;
-        let mut bracket_depth = 0;
+        let mut depth = SyntaxDepth::default();
+
         let mut in_string = false;
         let mut string_char = '"';
         let mut line = 1u32;
@@ -84,38 +85,38 @@ impl SourceFile {
             if !in_string && (c == '"' || c == '\'') {
                 in_string = true;
                 string_char = c;
-            } else if in_string && c == string_char && (i == 0 || chars[i - 1] != '\\') {
+            } else if in_string && c == string_char && !escaped(&chars, i) {
                 in_string = false;
             } else if !in_string {
                 match c {
-                    '{' => brace_depth += 1,
+                    '{' => depth.brace += 1,
                     '}' => {
-                        brace_depth -= 1;
-                        if brace_depth < 0 {
+                        depth.brace -= 1;
+                        if depth.brace < 0 {
                             errors.push(ParseError::Parse(format!(
-                                "Unexpected closing brace at line {}", line
+                                "Unexpected closing brace at line {line}"
                             )));
-                            brace_depth = 0;
+                            depth.brace = 0;
                         }
                     }
-                    '(' => paren_depth += 1,
+                    '(' => depth.paren += 1,
                     ')' => {
-                        paren_depth -= 1;
-                        if paren_depth < 0 {
+                        depth.paren -= 1;
+                        if depth.paren < 0 {
                             errors.push(ParseError::Parse(format!(
-                                "Unexpected closing parenthesis at line {}", line
+                                "Unexpected closing parenthesis at line {line}"
                             )));
-                            paren_depth = 0;
+                            depth.paren = 0;
                         }
                     }
-                    '[' => bracket_depth += 1,
+                    '[' => depth.bracket += 1,
                     ']' => {
-                        bracket_depth -= 1;
-                        if bracket_depth < 0 {
+                        depth.bracket -= 1;
+                        if depth.bracket < 0 {
                             errors.push(ParseError::Parse(format!(
-                                "Unexpected closing bracket at line {}", line
+                                "Unexpected closing bracket at line {line}"
                             )));
-                            bracket_depth = 0;
+                            depth.bracket = 0;
                         }
                     }
                     _ => {}
@@ -125,34 +126,27 @@ impl SourceFile {
             i += 1;
         }
 
-        if brace_depth != 0 {
-            errors.push(ParseError::Parse(format!(
-                "Unclosed brace(s) at end of file"
-            )));
+        if depth.brace != 0 {
+            errors.push(ParseError::Parse("Unclosed brace(s) at end of file".into()));
         }
-        if paren_depth != 0 {
-            errors.push(ParseError::Parse(format!(
-                "Unclosed parenthesis(es) at end of file"
-            )));
+        if depth.paren != 0 {
+            errors.push(ParseError::Parse("Unclosed parenthesis(es) at end of file".into()));
         }
-        if bracket_depth != 0 {
-            errors.push(ParseError::Parse(format!(
-                "Unclosed bracket(s) at end of file"
-            )));
+        if depth.bracket != 0 {
+            errors.push(ParseError::Parse("Unclosed bracket(s) at end of file".into()));
         }
 
         errors
     }
 
     /// Get line and column from byte offset.
-    #[allow(unused)]
+    #[must_use]
     pub fn location_from_offset(&self, offset: u32) -> (u32, u32) {
         let mut line = 1u32;
         let mut col = 1u32;
-        let mut pos = 0u32;
 
-        for c in self.source.chars() {
-            if pos >= offset {
+        for (pos, c) in self.source.chars().enumerate() {
+            if pos as u32 >= offset {
                 break;
             }
             if c == '\n' {
@@ -161,7 +155,6 @@ impl SourceFile {
             } else {
                 col += 1;
             }
-            pos += 1;
         }
 
         (line, col)
@@ -180,7 +173,31 @@ impl SourceFile {
     }
 }
 
+/// Track nested syntax depth.
+#[derive(Default)]
+struct SyntaxDepth {
+    brace: i32,
+    paren: i32,
+    bracket: i32,
+}
+
+/// Check if a character is escaped.
+fn escaped(chars: &[char], pos: usize) -> bool {
+    let mut count = 0;
+    let mut i = pos;
+    while i > 0 {
+        i -= 1;
+        if chars[i] == '\\' {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count % 2 == 1
+}
+
 /// Parse diagnostics module.
+#[allow(dead_code)]
 pub mod diagnostics {
     use crate::ParseError;
 
@@ -193,7 +210,7 @@ pub mod diagnostics {
     impl ParseDiagnostics {
         /// Create a new diagnostics collector.
         #[must_use]
-        pub fn new() -> Self {
+        pub const fn new() -> Self {
             Self { errors: Vec::new() }
         }
 
@@ -204,7 +221,7 @@ pub mod diagnostics {
 
         /// Check if there are any errors.
         #[must_use]
-        pub fn has_errors(&self) -> bool {
+        pub const fn has_errors(&self) -> bool {
             !self.errors.is_empty()
         }
 

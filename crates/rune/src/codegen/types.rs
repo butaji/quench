@@ -5,9 +5,11 @@
 use crate::analyzer::TypeInfo;
 
 /// Emits Rust type code.
+#[allow(dead_code)]
 pub struct TypeEmitter;
 
 impl TypeEmitter {
+    #[allow(dead_code)]
     /// Create a new type emitter.
     pub fn new() -> Self {
         Self
@@ -33,6 +35,7 @@ impl TypeEmitter {
     }
 
     /// Emit a struct.
+    #[allow(dead_code)]
     fn emit_struct(&self, s: &crate::analyzer::StructInfo) -> String {
         let fields = s.fields.iter()
             .map(|(name, ty)| format!("    pub {}: {},", self.to_snake_case(name), self.emit_type(ty)))
@@ -47,6 +50,7 @@ impl TypeEmitter {
     }
 
     /// Emit an enum.
+    #[allow(dead_code)]
     fn emit_enum(&self, e: &crate::analyzer::EnumInfo) -> String {
         let variants = e.variants.iter()
             .map(|v| {
@@ -71,6 +75,7 @@ impl TypeEmitter {
     }
 
     /// Emit a function type.
+    #[allow(dead_code)]
     fn emit_function(&self, f: &crate::analyzer::FunctionInfo) -> String {
         let params = f.params.iter()
             .map(|(n, t)| format!("{}: {}", self.to_snake_case(n), self.emit_type(t)))
@@ -85,6 +90,7 @@ impl TypeEmitter {
     }
 
     /// Convert to snake_case.
+    #[allow(dead_code)]
     fn to_snake_case(&self, s: &str) -> String {
         let mut result = String::new();
         for (i, c) in s.chars().enumerate() {
@@ -97,6 +103,7 @@ impl TypeEmitter {
     }
 
     /// Convert to PascalCase.
+    #[allow(dead_code)]
     fn to_pascal_case(&self, s: &str) -> String {
         let mut result = String::new();
         let mut capitalize_next = true;

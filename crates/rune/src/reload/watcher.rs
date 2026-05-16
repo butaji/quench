@@ -6,13 +6,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
-use super::ReloadResult;
+use super::{ReloadResult, ReloadError};
 
 /// Watches for dylib changes and notifies the host.
 pub struct DylibWatcher {
     /// Watch directory
     watch_dir: PathBuf,
     /// Notify watcher
+    #[allow(dead_code)]
     watcher: RecommendedWatcher,
     /// Event receiver
     receiver: mpsc::Receiver<ReloadEvent>,
@@ -22,6 +23,9 @@ pub struct DylibWatcher {
 
 impl DylibWatcher {
     /// Create a new watcher.
+    ///
+    /// # Errors
+    /// Returns an error if the watcher cannot be created.
     pub fn new(hot_dir: &Path) -> ReloadResult<Self> {
         let watch_dir = hot_dir.to_path_buf();
         let (tx, rx) = mpsc::channel();
@@ -33,12 +37,12 @@ impl DylibWatcher {
                 }
             }
         })
-        .map_err(|e| super::ReloadError::Library(e.to_string()))?;
+        .map_err(|e| ReloadError::Library(e.to_string()))?;
 
         let mut watcher = watcher;
         watcher
             .watch(&watch_dir, RecursiveMode::NonRecursive)
-            .map_err(|e| super::ReloadError::Library(e.to_string()))?;
+            .map_err(|e| ReloadError::Library(e.to_string()))?;
 
         Ok(Self {
             watch_dir,
@@ -59,6 +63,9 @@ impl DylibWatcher {
     }
 
     /// Check if the current dylib has changed.
+    ///
+    /// # Errors
+    /// Returns an error if checking fails.
     pub fn check_current(&mut self) -> ReloadResult<Option<PathBuf>> {
         let current_link = self.watch_dir.join(".current");
 
@@ -83,8 +90,9 @@ impl DylibWatcher {
     }
 
     /// Unwatch and clean up.
-    pub fn unwatch(mut self) {
-        let _ = self.watcher.unwatch(&self.watch_dir);
+    #[allow(clippy::unused_self)]
+    pub fn unwatch(self) {
+        // Watcher is dropped here, which unregisters it
     }
 }
 

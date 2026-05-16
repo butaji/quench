@@ -1,105 +1,143 @@
 //! # JSX Transpiler
 //!
-//! Transpiles JSX/TSX syntax to Rust builder patterns (e.g., Ratatui).
+//! Transpiles JSX/TSX syntax to Rust widget construction patterns.
 
-/// Transpiles JSX to Rust builder patterns.
+use std::fmt::Write as FmtWrite;
+
+/// Widget library to transpile to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidgetLibrary {
+    /// Ratatui TUI library
+    Ratatui,
+    /// Iced GUI library
+    Iced,
+}
+
+impl Default for WidgetLibrary {
+    fn default() -> Self {
+        Self::Ratatui
+    }
+}
+
+/// JSX transpiler for Rust UI libraries.
 #[derive(Debug)]
 pub struct JsxTranspiler {
-    /// Widget library to target
+    /// Target widget library
     library: WidgetLibrary,
-}
-
-/// Target widget library.
-#[derive(Debug, Clone, Copy)]
-pub enum WidgetLibrary {
-    /// Ratatui (TUI)
-    Ratatui,
-    /// Iced (GUI)
-    Iced,
-    /// Custom
-    Custom,
-}
-
-impl Default for JsxTranspiler {
-    fn default() -> Self {
-        Self::new(WidgetLibrary::Ratatui)
-    }
 }
 
 impl JsxTranspiler {
     /// Create a new JSX transpiler.
     #[must_use]
-    pub fn new(library: WidgetLibrary) -> Self {
+    pub const fn new(library: WidgetLibrary) -> Self {
         Self { library }
     }
 
     /// Transpile a JSX element.
-    #[allow(unused)]
+    #[must_use]
     pub fn transpile_element(&self, elem: &str) -> String {
         match self.library {
             WidgetLibrary::Ratatui => self.transpile_ratatui(elem),
             WidgetLibrary::Iced => self.transpile_iced(elem),
-            WidgetLibrary::Custom => elem.to_string(),
         }
     }
 
-    /// Transpile to Ratatui widgets.
+    /// Transpile to Ratatui widget construction.
     fn transpile_ratatui(&self, elem: &str) -> String {
-        // Basic JSX to Ratatui translation
         let elem = elem.trim();
-
-        // Parse tag name
-        let (tag, rest) = if let Some(space) = elem.find(' ') {
-            (&elem[..space], &elem[space..])
+        let (tag, _rest) = if let Some(space) = elem.find(' ') {
+            (&elem[..space], Some(&elem[space..]))
         } else if let Some(gt) = elem.find('>') {
-            (&elem[..gt], &elem[gt..])
+            (&elem[..gt], Some(&elem[gt..]))
         } else {
-            (elem.trim_end_matches('/'), "")
+            (elem.trim_end_matches('/'), None)
         };
 
-        let tag = tag.trim_start_matches('<').trim_end_matches('/');
-
-        // Translate common tags to Ratatui widgets
         let widget = match tag {
             "Block" => "Block::default()",
             "List" => "List::new(items)",
             "ListItem" => "ListItem::new(text)",
-            "Paragraph" => "Paragraph::new(text)",
-            "Text" => "Paragraph::new(text)",
+            "Paragraph" | "Text" => "Paragraph::new(text)",
             "Button" => "Button::default()",
-            "Input" => "Paragraph::new(\"[input]\")",
+            "Input" => "Paragraph::new(text)", // Simplified
             "VStack" => "Column::new()",
             "HStack" => "Row::new()",
-            "Spacer" => "Constraint::new(0).expand()",
             _ => &format!("{tag}::default()"),
         };
 
-        format!("{}.block()", widget)
+        format!("{widget}.block()")
     }
 
-    /// Transpile to Iced widgets.
+    /// Transpile to Iced widget construction.
     fn transpile_iced(&self, elem: &str) -> String {
         let elem = elem.trim();
-        let tag = elem.split_whitespace().next().unwrap_or("Text").trim_start_matches('<');
+        let (tag, _rest) = if let Some(space) = elem.find(' ') {
+            (&elem[..space], Some(&elem[space..]))
+        } else {
+            (elem.trim_end_matches('/'), None)
+        };
 
         match tag {
-            "Text" => "text(\"\")".to_string(),
-            "Button" => "Button::new(\"Click me\")".to_string(),
+            "Button" => "button::Button::new(text)".to_string(),
+            "Text" => "text::Text::new(text)".to_string(),
             "Column" => "Column::new()".to_string(),
             "Row" => "Row::new()".to_string(),
-            _ => format!("{tag}::new()", tag = tag),
+            "Container" => "Container::new(content)".to_string(),
+            _ => format!("{tag}::new()"),
         }
     }
 
-    /// Transpile JSX expression with props.
-    #[allow(unused)]
+    /// Transpile an element with props.
+    #[must_use]
     pub fn transpile_with_props(&self, elem: &str, props: &[(&str, &str)]) -> String {
-        let mut result = self.transpile_element(elem);
+        let base = self.transpile_element(elem);
+        let mut result = base;
 
         for (key, value) in props {
-            result.push_str(&format!(".{}({})", key, value));
+            let _ = write!(result, ".{key}({value})");
         }
 
         result
+    }
+
+    /// Extract props from JSX attributes.
+    #[must_use]
+    pub fn extract_props<'a>(&self, attrs: &'a str) -> Vec<(&'a str, &'a str)> {
+        let attrs = attrs.trim();
+        if attrs.is_empty() {
+            return Vec::new();
+        }
+
+        attrs
+            .split_whitespace()
+            .filter_map(|attr| {
+                let parts: Vec<&str> = attr.split('=').collect();
+                if parts.len() == 2 {
+                    Some((parts[0], parts[1].trim_matches('"').trim_matches('\'')))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_element() {
+        let transpiler = JsxTranspiler::new(WidgetLibrary::Ratatui);
+        let result = transpiler.transpile_element("Block");
+        assert!(result.contains("Block"));
+    }
+
+    #[test]
+    fn test_props_extraction() {
+        let transpiler = JsxTranspiler::new(WidgetLibrary::Ratatui);
+        let props = transpiler.extract_props(r#"title="Hello" borders="single"#);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0], ("title", "Hello"));
     }
 }

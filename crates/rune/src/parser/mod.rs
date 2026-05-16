@@ -1,6 +1,6 @@
 //! # Parser Module
 //!
-//! Parses `*.r.ts` and `*.r.tsx` files using SWC.
+//! Parses `*.r.ts` and `*.r.tsx` files.
 
 mod source_file;
 mod diagnostics;
@@ -9,23 +9,25 @@ pub use source_file::{SourceFile, SourceKind};
 pub use diagnostics::ParseDiagnostics;
 
 /// Parse a Rune source file.
-/// Returns the parsed AST module or an error.
+///
+/// # Errors
+/// Returns an error if the file cannot be parsed.
 pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
     let extension = path
         .extension()
-        .and_then(|e| e.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .ok_or_else(|| crate::ParseError::InvalidExtension(String::new()))?;
 
     let kind = match extension {
         "r.ts" => SourceKind::TypeScript,
         "r.tsx" => SourceKind::Tsx,
-        "rs" => return SourceFile::parse(path, SourceKind::TypeScript).map_err(Into::into),
+        "rs" => return SourceFile::parse(path, SourceKind::TypeScript),
         _ => {
             return Err(crate::ParseError::InvalidExtension(extension.to_string()).into());
         }
     };
 
-    SourceFile::parse(path, kind)
+    SourceFile::parse(path, kind).map_err(Into::into)
 }
 
 /// Scan a directory for all Rune source files.
@@ -35,6 +37,7 @@ pub fn scan_directory(dir: &std::path::Path) -> crate::Result<Vec<std::path::Pat
     Ok(sources)
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) -> crate::Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -50,7 +53,7 @@ fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathB
             continue;
         }
 
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if let Some(ext) = path.extension().and_then(std::ffi::OsStr::to_str) {
             if ext == "r.ts" || ext == "r.tsx" {
                 sources.push(path.to_path_buf());
             }

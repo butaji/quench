@@ -1,42 +1,53 @@
-//! # Primitive Type Inference
+//! # Type Inference - Primitives
 //!
-//! Infers types from literals and primitives.
+//! Type inference for primitive types.
 
-use crate::analyzer::TypeInfo;
+use super::{TypeInferrer, TypeInfo};
 
-/// Infers types from literals.
-#[allow(unused)]
-pub fn infer_lit(_lit: &str) -> TypeInfo {
-    // Placeholder for literal inference
-    TypeInfo::Unknown
-}
+impl TypeInferrer {
+    /// Infer type from a literal value.
+    #[must_use]
+    pub fn infer_literal(&self, literal: &str) -> TypeInfo {
+        // Try integer
+        if let Ok(n) = literal.parse::<i64>() {
+            return TypeInfo::Integer(n);
+        }
 
-/// Infers type from a binary expression.
-#[allow(clippy::similar_names)]
-pub fn infer_bin_expr_type(left: &TypeInfo, right: &TypeInfo) -> TypeInfo {
-    // If either is Float, result is Float
-    if matches!(left, TypeInfo::Float) || matches!(right, TypeInfo::Float) {
-        return TypeInfo::Float;
+        // Try float
+        if literal.parse::<f64>().is_ok() {
+            return TypeInfo::Float;
+        }
+
+        // String literal
+        if literal.starts_with('"') || literal.starts_with('\'') {
+            let content = &literal[1..literal.len() - 1];
+            return TypeInfo::StringLiteral(content.to_string());
+        }
+
+        // Boolean
+        if literal == "true" || literal == "false" {
+            return TypeInfo::Boolean;
+        }
+
+        TypeInfo::Unknown
     }
-    // If both are integers, result is integer
-    if matches!(left, TypeInfo::Integer(_)) && matches!(right, TypeInfo::Integer(_)) {
-        return TypeInfo::Integer(0);
-    }
-    // String concatenation
-    if matches!(left, TypeInfo::String | TypeInfo::StringLiteral(_))
-        || matches!(right, TypeInfo::String | TypeInfo::StringLiteral(_)) {
-        return TypeInfo::String;
-    }
-    TypeInfo::Float
-}
 
-/// Infers the result type of a binary operator.
-#[allow(unused)]
-pub fn infer_bin_op_result(op: &str) -> TypeInfo {
-    match op {
-        "+" | "-" | "*" | "/" | "%" => TypeInfo::Float,
-        "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" => TypeInfo::Boolean,
-        "|" | "&" | "^" | "<<" | ">>" => TypeInfo::Integer(0),
-        _ => TypeInfo::Unknown,
+    /// Infer type from binary operator.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn infer_bin_expr_type(left: &TypeInfo, right: &TypeInfo) -> TypeInfo {
+        use TypeInfo::*;
+
+        match (left, right) {
+            // Number + Number = Number
+            (Integer(_), Integer(_)) => Integer(0),
+            (Float, Integer(_)) | (Integer(_), Float) => Float,
+            (Float, Float) => Float,
+            // String + anything = String
+            (String | StringLiteral(_), _) | (_, String | StringLiteral(_)) => String,
+            // Boolean operations
+            (Boolean, Boolean) => Boolean,
+            _ => Unknown,
+        }
     }
 }
