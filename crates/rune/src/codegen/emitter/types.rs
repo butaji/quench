@@ -1,0 +1,91 @@
+//! # Rust Type Representations
+//!
+//! Type information for code generation.
+
+use std::fmt;
+
+/// Type information for code generation.
+#[derive(Debug, Clone)]
+pub enum RustType {
+    I32,
+    F64,
+    Bool,
+    String,
+    Str,
+    Vec(Box<RustType>),
+    Option(Box<RustType>),
+    Result(Box<RustType>),
+    HashMap(Box<RustType>, Box<RustType>),
+    Unit,
+    Unknown,
+    Custom(String),
+}
+
+impl fmt::Display for RustType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RustType::I32 => write!(f, "i32"),
+            RustType::F64 => write!(f, "f64"),
+            RustType::Bool => write!(f, "bool"),
+            RustType::String => write!(f, "String"),
+            RustType::Str => write!(f, "&str"),
+            RustType::Vec(t) => write!(f, "Vec<{t}>"),
+            RustType::Option(t) => write!(f, "Option<{t}>"),
+            RustType::Result(t) => write!(f, "Result<{t}, String>"),
+            RustType::HashMap(k, v) => write!(f, "std::collections::HashMap<{k}, {v}>"),
+            RustType::Unit | RustType::Unknown => write!(f, "()"),
+            RustType::Custom(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+/// Raw field for deferred type resolution.
+pub type RawField = (String, swc_ecma_ast::TsType);
+
+/// Struct field info.
+pub type StructFields = Vec<(String, RustType)>;
+
+/// Enum variant.
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: StructFields,
+}
+
+/// Enum definition.
+#[derive(Debug, Clone)]
+pub struct EnumDefinition {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+/// Convert name to snake_case.
+#[must_use]
+pub fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            result.push('_');
+        }
+        result.push(c.to_ascii_lowercase());
+    }
+    result
+}
+
+/// Convert name to PascalCase.
+#[must_use]
+pub fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' || c == '-' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}

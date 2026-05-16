@@ -2,8 +2,8 @@
 //!
 //! Type inference for TypeScript type annotations.
 
-use super::{TypeInferrer, TypeInfo, StructInfo, EnumInfo};
-use crate::analyzer::EnumVariant;
+use crate::analyzer::{TypeInferrer, TypeInfo, EnumVariant};
+use crate::analyzer::{StructInfo, EnumInfo};
 
 impl TypeInferrer {
     /// Parse a type annotation string.

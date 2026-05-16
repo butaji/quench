@@ -6,6 +6,7 @@ mod build;
 mod config;
 mod cache;
 mod init;
+mod templates;
 mod write;
 
 pub use build::{BuildDriver, BuildOptions, BuildMode};

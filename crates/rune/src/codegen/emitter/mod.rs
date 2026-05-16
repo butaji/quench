@@ -2,17 +2,20 @@
 //!
 //! Transpiles TypeScript to Rust.
 
+mod ast_walker;
+mod code_emitter;
 mod core;
 mod expr;
-mod stmt;
 mod module;
+mod type_resolver;
+mod types;
 mod utils;
-mod ast_walker;
 
+pub use code_emitter::CodeEmitter;
 pub use core::{RustEmitter, EmitOptions};
-#[allow(unused_imports)]
-pub use expr::ExprTranspiler;
-#[allow(unused_imports)]
-pub use utils::to_snake_case;
+pub use type_resolver::TypeResolver;
+pub use types::{RustType, to_snake_case};
 #[allow(unused_imports)]
 pub use ast_walker::AstWalker;
+#[allow(unused_imports)]
+pub use expr::ExprTranspiler;

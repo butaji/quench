@@ -3,7 +3,7 @@
 //! A compiler driver that makes `*.r.ts` and `*.r.tsx` valid source files
 //! for Rust projects with zero runtime overhead.
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![deny(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(
     unsafe_code,
     bare_trait_objects,
@@ -14,10 +14,10 @@
     non_ascii_idents,
     trivial_casts,
     trivial_numeric_casts,
-    unused_extern_crates,
     unused_lifetimes,
-    unused_qualifications,
 )]
+// Note: unused_extern_crates and unused_qualifications are denied but serde/therror
+// derive macros emit allow() for these, so we use deny instead of forbid
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
@@ -51,6 +51,9 @@
     clippy::redundant_closure_for_method_calls,
     clippy::useless_conversion,
     clippy::missing_panics_doc,
+    clippy::cognitive_complexity,
+    unused_extern_crates,
+    unused_qualifications,
 )]
 
 pub mod analyzer;

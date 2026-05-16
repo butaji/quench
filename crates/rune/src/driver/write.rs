@@ -35,22 +35,12 @@ impl BuildDriver {
 
     /// Create relative path for generated file.
     fn cache_relative_path(&self, name: &str) -> String {
-        // Handle paths like "main.r", "views/main.r", etc.
-        // where the stem already includes the .r suffix from file_stem()
-        // We need to strip that and produce "main.rs", "views/main.rs"
-        
         let parts: Vec<&str> = name.split('/').collect();
         let last = parts.last().unwrap_or(&name);
-        
-        // The name might be "main.r" (from file_stem of main.r.ts)
-        // or "views/main.r" (for files in subdirectories)
-        // We need to convert "main.r" to "main.rs"
-        let clean = if last.ends_with(".r") {
-            &last[..last.len() - 2]
-        } else {
-            last
-        };
-        
+
+        // Strip ".r" extension and add ".rs"
+        let clean = last.strip_suffix(".r").unwrap_or(last);
+
         if parts.len() > 1 {
             let dir_parts = &parts[..parts.len() - 1];
             format!("{}/{}.rs", dir_parts.join("/"), clean)
