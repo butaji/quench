@@ -19,6 +19,8 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         Expr::Member(member_expr) => emit_member(emitter, member_expr),
         Expr::Cond(cond_expr) => emit_conditional_expr(emitter, cond_expr),
         Expr::Array(arr) => {
+            // Infer the array element type
+            let elem_type = infer_array_element_type(arr);
             emitter.push_str("vec![");
             for (i, elem) in arr.elems.iter().enumerate() {
                 if i > 0 {
@@ -29,6 +31,10 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
                 }
             }
             emitter.push_str("]");
+            // Add type annotation if we can infer the element type
+            if !elem_type.is_empty() && elem_type != "()" {
+                emitter.push_str(&format!(" as Vec<{}>", elem_type));
+            }
         }
         Expr::Object(obj) => emit_object(emitter, obj),
         Expr::Arrow(arrow) => emit_arrow(emitter, arrow),
@@ -37,7 +43,10 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
             emit_expr(emitter, &paren.expr);
             emitter.push_str(")");
         }
-        Expr::New(_n) => emitter.push_str("/* new */ ()"),
+        Expr::New(_n) => {
+            // For new expressions like new Date() or new Map(), emit appropriate Rust
+            emit_new_expr(emitter, _n);
+        }
         Expr::Tpl(tpl) => emit_template_literal(emitter, tpl),
         Expr::TaggedTpl(_) => emitter.push_str("String::new()"),
         Expr::JSXElement(_) | Expr::JSXFragment(_) => emitter.push_str("()"),
@@ -48,7 +57,9 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         }
         Expr::Yield(_) => emitter.push_str("()"),
         Expr::Update(_) => emitter.push_str("()"),
-        Expr::Assign(_) => emitter.push_str("()"),
+        Expr::Assign(_) => {
+            emit_assign_expr(emitter, expr);
+        }
         Expr::Seq(_) => emitter.push_str("()"),
         _ => emitter.push_str("()"),
     }
@@ -70,9 +81,23 @@ fn emit_bin_expr(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
         return;
     }
 
-    emit_expr(emitter, &bin_expr.left);
-    emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
-    emit_expr(emitter, &bin_expr.right);
+    // Handle spread operator in array context
+    // Note: Spread is not actually a binary op, this is a no-op here
+
+    // Handle comparison operators that need type coercion
+    match bin_expr.op {
+        swc_ecma_ast::BinaryOp::Lt | swc_ecma_ast::BinaryOp::LtEq |
+        swc_ecma_ast::BinaryOp::Gt | swc_ecma_ast::BinaryOp::GtEq => {
+            emit_expr(emitter, &bin_expr.left);
+            emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
+            emit_expr(emitter, &bin_expr.right);
+        }
+        _ => {
+            emit_expr(emitter, &bin_expr.left);
+            emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
+            emit_expr(emitter, &bin_expr.right);
+        }
+    }
 }
 
 /// Emit a unary expression with proper handling.
@@ -98,15 +123,27 @@ fn emit_unary_expr(emitter: &mut CodeEmitter, unary_expr: &swc_ecma_ast::UnaryEx
 }
 
 /// Emit a conditional (ternary) expression properly.
-/// TypeScript: `a ? b : c` -> Rust: `if a { b } else { c }`
+/// TypeScript: `a ? b : c` -> Rust: match-style or if-else
 fn emit_conditional_expr(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExpr) {
-    emitter.push_str("if ");
-    emit_expr(emitter, &cond.test);
-    emitter.push_str(" { ");
-    emit_expr(emitter, &cond.cons);
-    emitter.push_str(" } else { ");
-    emit_expr(emitter, &cond.alt);
-    emitter.push_str(" }");
+    // Infer the common type of both branches
+    let cons_type = infer_type(&cond.cons);
+    let alt_type = infer_type(&cond.alt);
+    
+    // If both branches return the same non-unit type, use a match-like pattern
+    if cons_type != "()" || alt_type != "()" {
+        emitter.push_str("if ");
+        emit_expr(emitter, &cond.test);
+        emitter.push_str(" { ");
+        emit_expr(emitter, &cond.cons);
+        emitter.push_str(" } else { ");
+        emit_expr(emitter, &cond.alt);
+        emitter.push_str(" }");
+    } else {
+        // Both return unit, just emit the condition check
+        emitter.push_str("if ");
+        emit_expr(emitter, &cond.test);
+        emitter.push_str(";");
+    }
 }
 
 /// Emit an arrow function with proper closure syntax.
@@ -162,8 +199,91 @@ fn bin_op_str(op: swc_ecma_ast::BinaryOp) -> &'static str {
         swc_ecma_ast::BinaryOp::BitXor => "^",
         swc_ecma_ast::BinaryOp::LShift => "<<",
         swc_ecma_ast::BinaryOp::RShift => ">>",
-        swc_ecma_ast::BinaryOp::In => "in",
+        swc_ecma_ast::BinaryOp::In => "contains",
         swc_ecma_ast::BinaryOp::InstanceOf => "is",
+        swc_ecma_ast::BinaryOp::EqEq | swc_ecma_ast::BinaryOp::NotEq => "==",
         _ => "??",
+    }
+}
+
+/// Infer the element type of an array.
+fn infer_array_element_type(arr: &swc_ecma_ast::ArrayLit) -> String {
+    if arr.elems.is_empty() {
+        return "()".to_string();
+    }
+    // Use the first element to infer type
+    if let Some(elem) = arr.elems.first() {
+        if let Some(e) = elem {
+            return infer_type(&e.expr);
+        }
+    }
+    "()".to_string()
+}
+
+/// Emit a new expression.
+fn emit_new_expr(emitter: &mut CodeEmitter, n: &swc_ecma_ast::NewExpr) {
+    // For now, emit a placeholder - specific handling for Date, Map, Set, etc.
+    emit_expr(emitter, &n.callee);
+    emitter.push_str("()");
+}
+
+/// Emit an assignment expression.
+fn emit_assign_expr(emitter: &mut CodeEmitter, expr: &Expr) {
+    if let Expr::Assign(assign) = expr {
+        // Simple assignment - emit left as identifier then right
+        emit_assign_target(emitter, &assign.left);
+        match assign.op {
+            swc_ecma_ast::AssignOp::AddAssign => emitter.push_str(" += "),
+            swc_ecma_ast::AssignOp::SubAssign => emitter.push_str(" -= "),
+            swc_ecma_ast::AssignOp::MulAssign => emitter.push_str(" *= "),
+            swc_ecma_ast::AssignOp::DivAssign => emitter.push_str(" /= "),
+            _ => emitter.push_str(" = "),
+        }
+        emit_expr(emitter, &assign.right);
+    } else {
+        emitter.push_str("()");
+    }
+}
+
+/// Emit an assignment target (the left side of an assignment).
+fn emit_assign_target(emitter: &mut CodeEmitter, target: &swc_ecma_ast::AssignTarget) {
+    use swc_ecma_ast::AssignTarget;
+    match target {
+        AssignTarget::Simple(simple) => {
+            match simple {
+                swc_ecma_ast::SimpleAssignTarget::Ident(ident) => {
+                    emitter.push_str(&super::to_snake_case(ident.id.sym.as_ref()));
+                }
+                swc_ecma_ast::SimpleAssignTarget::Member(member) => {
+                    emit_member_impl(emitter, member);
+                }
+                _ => {
+                    emitter.push_str("/* unknown simple target */");
+                }
+            }
+        }
+        AssignTarget::Pat(_pat) => {
+            // Pattern assignments (destructuring) - simplified handling
+            emitter.push_str("/* pattern assignment */");
+        }
+    }
+}
+
+/// Emit a member expression (for assignment targets).
+fn emit_member_impl(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr) {
+    emit_expr(emitter, &member.obj);
+    match &member.prop {
+        swc_ecma_ast::MemberProp::Ident(ident) => {
+            emitter.push_str(".");
+            emitter.push_str(ident.sym.as_ref());
+        }
+        swc_ecma_ast::MemberProp::Computed(comp) => {
+            emitter.push_str("[");
+            emit_expr(emitter, &comp.expr);
+            emitter.push_str("]");
+        }
+        _ => {
+            emitter.push_str(".prop");
+        }
     }
 }

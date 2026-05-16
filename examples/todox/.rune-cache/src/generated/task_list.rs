@@ -16,13 +16,13 @@ pub show_completed: bool,
 }
 
 pub fn task_list(props: TaskListProps) -> Widget {
-    let visible_tasks: () = if props.show_completed { props.tasks } else { props.tasks.filter(|t| !t.done) };
+    let visible_tasks: () = if props.show_completed;;
     return (());
 }
 
 pub fn task_row(props: __AnonymousStruct1) -> ListItem {
     let checkbox: String = if props.task.done { "[x]" } else { "[ ]" };
-    let title: () = if props.task.done { strikethrough(props.task.title) } else { props.task.title };
+    let title: () = if props.task.done;;
     return (());
 }
 
@@ -35,7 +35,7 @@ pub fn strikethrough(text: String) -> String {
 }
 
 pub fn filter_tabs(props: __AnonymousStruct2) -> Widget {
-    let tabs: Vec<()> = vec!["All", "Active", "Completed"];
+    let tabs: Vec<String> = vec!["All", "Active", "Completed"] as Vec<String>;
     return (());
 }
 
