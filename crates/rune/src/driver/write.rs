@@ -105,8 +105,15 @@ impl BuildDriver {
         self.write_cache_lib(&cache_src)?;
 
         // Calculate relative path from cache to crates
+        // Cache is at workspace/target/rune-cache, crates is at workspace/crates
+        // So we need to go up 2 levels (target, then to workspace) then down to crates
         let cache_to_crates = if self.cache.root().strip_prefix(self.options.workspace.as_path()).is_ok() {
-            "../crates".to_string()
+            // Count directory depth from workspace to cache root
+            let rel_path = self.cache.root().strip_prefix(self.options.workspace.as_path())
+                .unwrap_or_else(|_| std::path::Path::new(""));
+            let depth = rel_path.components().count();
+            // "../" goes up one level, so repeat 'depth' times to go up 'depth' levels
+            "../".repeat(depth) + "crates"
         } else {
             // Fallback: absolute path
             self.options.workspace
