@@ -93,7 +93,9 @@ impl TypeResolver {
 
         // Handle common types
         match name.as_str() {
-            "Widget" | "Task" | "Filter" | "AppState" => RustType::Custom(name),
+            "Widget" | "Task" | "Filter" => RustType::Custom(name.clone()),
+            // AppState should always be passed by mutable borrow
+            "AppState" => RustType::MutBorrow(Box::new(RustType::Custom(name))),
             "Result" => RustType::Result(Box::new(RustType::Unknown)),
             "Option" => RustType::Option(Box::new(RustType::Unknown)),
             _ => RustType::Custom(name),

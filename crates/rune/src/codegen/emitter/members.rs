@@ -405,13 +405,16 @@ fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, _has_spread: bo
                         emit_expr(emitter, &kv.value);
                     }
                     swc_ecma_ast::Prop::Shorthand(ident) => {
-                        let name = to_snake_case(ident.sym.as_ref());
-                        emitter.push_str(&name);
+                        let name = ident.sym.as_ref();
+                        let escaped = escape_rust_keyword(name);
+                        emitter.push_str(&escaped);
                         emitter.push_str(": ");
-                        emitter.push_str(&name);
+                        emitter.push_str(&escaped);
                     }
                     swc_ecma_ast::Prop::Assign(kv) => {
-                        emitter.push_str(&to_snake_case(kv.key.sym.as_ref()));
+                        let name = kv.key.sym.as_ref();
+                        let escaped = escape_rust_keyword(name);
+                        emitter.push_str(&escaped);
                         emitter.push_str(": ");
                         emit_expr(emitter, &kv.value);
                     }
@@ -434,10 +437,15 @@ fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, _has_spread: bo
 fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
     match key {
         PropName::Ident(ident) => {
-            emitter.push_str(&to_snake_case(ident.sym.as_ref()));
+            let name = ident.sym.as_ref();
+            // Escape Rust keywords
+            let escaped = escape_rust_keyword(name);
+            emitter.push_str(&escaped);
         }
         PropName::Str(s) => {
-            emitter.push_str(&to_snake_case(&format!("{:?}", s.value)));
+            let name = format!("{:?}", s.value);
+            let escaped = escape_rust_keyword(&to_snake_case(&name));
+            emitter.push_str(&escaped);
         }
         PropName::Num(n) => {
             emitter.push_str(&n.value.to_string());
@@ -446,5 +454,18 @@ fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
             emitter.push_str("/* computed */ ()");
         }
         PropName::BigInt(_) => emitter.push_str("unknown"),
+    }
+}
+
+/// Escape a Rust keyword for use as an identifier.
+fn escape_rust_keyword(name: &str) -> String {
+    match name {
+        "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
+        | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if"
+        | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut"
+        | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct"
+        | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where"
+        | "while" => format!("r#{name}"),
+        _ => to_snake_case(name),
     }
 }

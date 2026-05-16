@@ -10,9 +10,20 @@ export type Task = {
 };
 
 /**
+ * Filter mode for task list.
+ */
+export enum Filter {
+    All = "All",
+    Active = "Active",
+    Completed = "Completed",
+}
+
+/**
  * Application state owned by host.
  */
 export type AppState = {
     tasks: Task[],
     selected: number,
+    filter: Filter,
+    should_exit: boolean,
 };

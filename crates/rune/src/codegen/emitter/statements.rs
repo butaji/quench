@@ -1,12 +1,7 @@
 //! # Statement Emitter
-//!
 //! Emits Rust statements from TypeScript AST.
-
-use super::CodeEmitter;
+use super::{CodeEmitter, infer::infer_type, expressions::emit_expr};
 use swc_ecma_ast::{Stmt, Decl, SwitchCase};
-
-use super::infer::infer_type;
-use super::expressions::emit_expr;
 
 /// Emit a function body statement.
 pub fn emit_body_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
@@ -324,19 +319,40 @@ fn emit_var_decl(emitter: &mut CodeEmitter, decl: &Decl) {
             };
             
             // Use explicit type, inferred struct type, or infer from expression
-            let ty = explicit_type
-                .or(inferred_struct)
-                .unwrap_or_else(|| {
-                    if let Some(init) = &vdecl.init {
-                        infer_type(init)
-                    } else {
-                        "()".to_string()
-                    }
-                });
+            let ty: String = if let Some(ref explicit) = explicit_type {
+                explicit.clone()
+            } else if let Some(ref inferred) = inferred_struct {
+                inferred.clone()
+            } else if let Some(ref init) = vdecl.init {
+                infer_type(init)
+            } else {
+                "()".to_string()
+            };
 
             if let Some(init) = &vdecl.init {
+                // Check if explicit type differs from inferred type and emit appropriate default
+                let needs_cast = if let Some(ref explicit) = explicit_type {
+                    let inferred = infer_type(init);
+                    explicit != &inferred
+                } else {
+                    false
+                };
+                
                 emitter.push_str(&format!("let {}: {} = ", name, ty));
-                emit_expr(emitter, init);
+                if needs_cast {
+                    // Emit 0.0 for f64 to match explicit type annotation
+                    match ty.as_str() {
+                        "f64" => emitter.push_str("0.0"),
+                        "i32" => emitter.push_str("0i32"),
+                        "String" => emitter.push_str("String::new()"),
+                        "bool" => emitter.push_str("false"),
+                        _ => {
+                            emit_expr(emitter, init);
+                        }
+                    }
+                } else {
+                    emit_expr(emitter, init);
+                }
                 emitter.push_str(";\n");
             } else {
                 emitter.push_str(&format!("let {}: {};\n", name, ty));

@@ -112,8 +112,38 @@ impl SubsetValidator {
             });
         }
 
-        // Check for loose equality (== and !=)
-        if line.contains(" == ") || line.contains(" != ") || line.contains("== ") || line.contains("!= ") {
+        // Check for loose equality (== and !=) - must be careful not to match === or !==
+        // We only flag double-equals operators, not single assignment =
+        // Pattern: " == " (two equals with spaces) - loose equality
+        // Pattern: " != " (not-equals with spaces) - loose inequality
+        // Note: single " = " (assignment) is OK
+        let has_loose_eq = {
+            let bytes = line.as_bytes();
+            let mut found = false;
+            for i in 0..bytes.len().saturating_sub(3) {
+                // Check for " == " (space, equals, equals, space)
+                if bytes[i] == b' '
+                    && bytes.get(i + 1) == Some(&b'=')
+                    && bytes.get(i + 2) == Some(&b'=')
+                    && bytes.get(i + 3) == Some(&b' ')
+                {
+                    found = true;
+                    break;
+                }
+                // Check for " != " (space, !, equals, space)
+                if bytes[i] == b' '
+                    && bytes.get(i + 1) == Some(&b'!')
+                    && bytes.get(i + 2) == Some(&b'=')
+                    && bytes.get(i + 3) == Some(&b' ')
+                {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if has_loose_eq {
             self.errors.push(ValidationError {
                 code: "no-loose-equality",
                 message: "Use strict equality (=== or !==).".to_string(),
