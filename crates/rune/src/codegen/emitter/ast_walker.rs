@@ -195,8 +195,16 @@ impl AstWalker {
 
         let is_async = fn_decl.function.is_async;
 
-        self.emitter
-            .emit_function(&rust_name, &params, &return_type, is_async);
+        // Get the function body
+        let body = fn_decl.function.body.as_ref().map(|block| Stmt::Block(block.clone()));
+
+        self.emitter.emit_function_with_body(
+            &rust_name,
+            &params,
+            &return_type,
+            is_async,
+            body,
+        );
     }
 
     /// Get the generated output.
