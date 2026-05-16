@@ -40,9 +40,14 @@ pub fn emit_member(emitter: &mut CodeEmitter, member_expr: &swc_ecma_ast::Member
 /// Emit a property access (not a method call).
 fn emit_property_access(emitter: &mut CodeEmitter, prop_name: &str, is_nested: bool) {
     // For nested property access like props.task.done, just emit the property
+    // BUT check for special properties like 'length' that need conversion
     if is_nested {
-        emitter.push_str(".");
-        emitter.push_str(prop_name);
+        if prop_name == "length" {
+            emitter.push_str(".len()");
+        } else {
+            emitter.push_str(".");
+            emitter.push_str(prop_name);
+        }
         return;
     }
     

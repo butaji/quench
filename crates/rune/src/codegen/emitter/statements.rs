@@ -168,7 +168,10 @@ fn emit_switch_case(emitter: &mut CodeEmitter, case: &SwitchCase) {
 
     emitter.inc_indent();
     for stmt in &case.cons {
-        emit_single_stmt(emitter, stmt);
+        // Skip break statements in switch cases - Rust match doesn't need them
+        if !matches!(stmt, Stmt::Break(_)) {
+            emit_single_stmt(emitter, stmt);
+        }
     }
     emitter.dec_indent();
 
