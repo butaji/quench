@@ -20,10 +20,10 @@ impl CacheManager {
     /// # Errors
     /// Returns an error if the cache directory cannot be created.
     pub fn new(workspace: &Path) -> std::io::Result<Self> {
-        // Use .rune-cache at workspace root level (outside target/ to avoid workspace issues)
-        let root = workspace.join(".rune-cache");
+        // Use target/rune-cache/ as specified in the architecture
+        let root = workspace.join("target/rune-cache");
         fs::create_dir_all(&root)?;
-        Ok(Self { 
+        Ok(Self {
             root,
             workspace: workspace.to_path_buf(),
         })
@@ -91,9 +91,10 @@ impl CacheManager {
     /// Get the hot reload directory.
     #[must_use]
     pub fn hot_dir(&self) -> PathBuf {
-        self.root.parent()
-            .unwrap_or(&self.root)
-            .join("hot")
+        // target/rune-cache -> target/hot
+        self.root
+            .parent()
+            .map_or_else(|| PathBuf::from("target/hot"), |p| p.join("hot"))
     }
 
     /// Get the current dylib symlink.
