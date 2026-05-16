@@ -6,8 +6,6 @@ mod validation;
 
 pub use validation::SubsetValidator;
 
-use crate::parser::SourceFile;
-
 /// Validation error.
 #[derive(Debug, Clone)]
 pub struct ValidationError {

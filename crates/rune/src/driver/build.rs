@@ -2,7 +2,7 @@
 //!
 //! Main compilation orchestration.
 
-use std::path::{PathBuf, Path};
+use std::path::PathBuf;
 use std::process::Command as ProcCommand;
 use std::time::Duration;
 use crate::{Result, parser, analyzer, codegen};
@@ -143,7 +143,7 @@ impl BuildDriver {
                         println!("File changed, rebuilding...");
                     }
                     match self.build_once() {
-                        Ok(_) => {
+                        Ok(()) => {
                             if self.options.verbose {
                                 println!("Build successful, hot reload ready.");
                             }

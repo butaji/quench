@@ -2,8 +2,7 @@
 //!
 //! Walks SWC AST and emits Rust code.
 
-use crate::codegen::emitter::core::RustEmitter;
-use swc_ecma_ast::*;
+use swc_ecma_ast::{Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem, Stmt};
 
 /// Walks the AST and emits Rust code.
 pub struct AstWalker {

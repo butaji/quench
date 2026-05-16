@@ -48,7 +48,7 @@ impl SubsetValidator {
         line_num: u32,
     ) -> Result<(), ValidationError> {
         // Skip comments
-        if line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+        if line.starts_with("//") || line.starts_with("/*") || line.starts_with('*') {
             return Ok(());
         }
 
@@ -153,7 +153,7 @@ impl SubsetValidator {
         }
 
         // Check for dynamic property access (obj[key])
-        if line.contains("[") && line.contains("]") && !line.starts_with("//") {
+        if line.contains('[') && line.contains(']') && !line.starts_with("//") {
             if let Some(idx) = line.find('[') {
                 let before = &line[..idx].trim();
                 if !before.is_empty()

@@ -70,8 +70,7 @@ impl DylibWatcher {
                     .into_iter()
                     .filter(|p| {
                         p.extension()
-                            .map(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
-                            .unwrap_or(false)
+                            .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
                     })
                     .collect();
 
@@ -105,8 +104,7 @@ impl DylibWatcher {
                     .into_iter()
                     .filter(|p| {
                         p.extension()
-                            .map(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
-                            .unwrap_or(false)
+                            .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
                     })
                     .collect();
 

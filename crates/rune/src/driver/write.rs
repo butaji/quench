@@ -35,7 +35,7 @@ impl BuildDriver {
     fn cache_relative_path(&self, name: &str) -> String {
         // If name contains a path separator, extract just the filename
         name.split('/')
-            .last()
+            .next_back()
             .unwrap_or(name)
             .replace(".r.ts", ".rs")
             .replace(".r.tsx", ".rs")
@@ -179,7 +179,7 @@ impl App for AppImpl {
         let mod_rs_content: String = modules
             .iter()
             .map(|m| {
-                let name = m.replace(".rs", "").replace("-", "_");
+                let name = m.replace(".rs", "").replace('-', "_");
                 format!("pub mod {};", name)
             })
             .collect::<Vec<_>>()
@@ -217,8 +217,7 @@ impl App for AppImpl {
                 // Get relative path from cache dir
                 if let Ok(rel) = path.strip_prefix(dir) {
                     let rel_str = rel.to_string_lossy()
-                        .replace("/", "::")
-                        .replace("\\", "::")
+                        .replace(['/', '\\'], "::")
                         .replace(".rs", "");
                     modules.push(rel_str);
                 }

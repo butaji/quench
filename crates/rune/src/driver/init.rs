@@ -85,7 +85,7 @@ serde_json = { workspace = true }
 "#;
         std::fs::write(proto_dir.join("Cargo.toml"), cargo)?;
 
-        let lib = r#"//! # Protocol
+        let lib = "//! # Protocol
 //!
 //! Shared protocol between host and app dylib.
 
@@ -135,7 +135,7 @@ pub trait App {
     /// Handle key events.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, state: &mut AppState);
 }
-"#;
+";
         std::fs::write(proto_dir.join("src/lib.rs"), lib)?;
 
         Ok(())
@@ -365,7 +365,7 @@ impl App for AppImpl {
         std::fs::create_dir_all(app_dir.join("src/native"))?;
         std::fs::write(app_dir.join("src/native/mod.rs"), native_mod)?;
 
-        let fast_math = r#"//! Fast math utilities written in Rust.
+        let fast_math = "//! Fast math utilities written in Rust.
 
 /// Fast square root approximation.
 pub fn fast_sqrt(x: f64) -> f64 {
@@ -376,7 +376,7 @@ pub fn fast_sqrt(x: f64) -> f64 {
 pub fn fast_sin(x: f64) -> f64 {
     x.sin()
 }
-"#;
+";
         std::fs::write(app_dir.join("src/native/fast_math.rs"), fast_math)?;
 
         // Main Rune file

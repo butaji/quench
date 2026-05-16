@@ -4,7 +4,7 @@
 
 use swc_common::{sync::Lrc, SourceMap, FileName, errors::Handler};
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
-use swc_ecma_ast::*;
+use swc_ecma_ast::{Module, ModuleItem};
 use std::io::sink;
 use std::fmt;
 

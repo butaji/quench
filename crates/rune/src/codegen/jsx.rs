@@ -128,42 +128,62 @@ impl JsxTranspiler {
     #[must_use]
     pub fn transpile_children(&self, children: &str) -> Vec<String> {
         let mut result = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
+        let mut element_content = String::new();
+        let mut in_tag = false;
+        let mut pending_open_tag: Option<String> = None;
 
         for c in children.chars() {
-            match c {
-                '<' => {
-                    if depth > 0 {
-                        current.push(c);
-                    }
-                    depth += 1;
+            if !in_tag {
+                if c == '<' {
+                    // Start of a new tag - begin collecting element
+                    in_tag = true;
+                    // Clear any previous element content
+                    element_content.clear();
+                    element_content.push(c);
                 }
-                '>' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        if !current.trim().is_empty() {
-                            result.push(current.trim().to_string());
-                        }
-                        current.clear();
+                // Skip text content between tags - we don't want to include it
+            } else {
+                // Inside a tag
+                element_content.push(c);
+
+                if c == '>' {
+                    // Determine tag type - find the content between < and this >
+                    let tag_str = if let Some(end_idx) = element_content.find('>') {
+                        element_content[1..end_idx].to_string()
                     } else {
-                        current.push(c);
+                        element_content.trim().trim_start_matches('<').to_string()
+                    };
+
+                    if tag_str.starts_with('/') {
+                        // Closing tag
+                        let closing_name = tag_str.trim_start_matches('/');
+                        if pending_open_tag.as_ref().is_some_and(|n| n == closing_name) {
+                            // Match found - complete the element
+                            // element_content now has full element, push it
+                            let element = element_content.trim().to_string();
+                            result.push(element);
+                            element_content.clear();
+                            pending_open_tag = None;
+                        }
+                    } else if tag_str.ends_with('/') {
+                        // Self-closing tag - element is complete
+                        let element = element_content.trim().to_string();
+                        result.push(element);
+                        element_content.clear();
+                        pending_open_tag = None;
+                    } else {
+                        // Opening tag - remember it
+                        pending_open_tag = Some(tag_str.clone());
                     }
+
+                    in_tag = false;
                 }
-                _ if depth > 0 => current.push(c),
-                _ if c.is_whitespace() && current.trim().is_empty() => {}
-                _ if c == '\n' || c == '\r' => {
-                    if !current.trim().is_empty() {
-                        result.push(current.trim().to_string());
-                        current.clear();
-                    }
-                }
-                _ => current.push(c),
             }
         }
 
-        if !current.trim().is_empty() {
-            result.push(current.trim().to_string());
+        // Handle any remaining content (unclosed element)
+        if !element_content.trim().is_empty() {
+            result.push(element_content.trim().to_string());
         }
 
         result
