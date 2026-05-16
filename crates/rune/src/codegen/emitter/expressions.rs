@@ -11,79 +11,84 @@ use swc_ecma_ast::Expr;
 pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
     match expr {
         Expr::Lit(lit) => emit_lit(emitter, lit),
-        Expr::Ident(ident) => {
-            emitter.push_str(&super::to_snake_case(ident.sym.as_ref()));
-        }
+        Expr::Ident(ident) => emit_ident(emitter, ident),
         Expr::Bin(bin_expr) => emit_bin_expr(emitter, bin_expr),
         Expr::Unary(unary_expr) => emit_unary_expr(emitter, unary_expr),
         Expr::Call(call_expr) => emit_call(emitter, call_expr),
         Expr::Member(member_expr) => emit_member(emitter, member_expr),
         Expr::Cond(cond_expr) => emit_conditional_expr(emitter, cond_expr),
-        Expr::Array(arr) => {
-            // Infer the array element type
-            let elem_type = infer_array_element_type(arr);
-            emitter.push_str("vec![");
-            for (i, elem) in arr.elems.iter().enumerate() {
-                if i > 0 {
-                    emitter.push_str(", ");
-                }
-                if let Some(elem) = elem {
-                    emit_expr(emitter, &elem.expr);
-                }
-            }
-            emitter.push_str("]");
-            // Add type annotation if we can infer the element type
-            if !elem_type.is_empty() && elem_type != "()" {
-                emitter.push_str(&format!(" as Vec<{}>", elem_type));
-            }
-        }
-        Expr::Object(obj) => {
-            // Check if we have struct context from expected return type or variable type
-            let existing_struct = emitter.object_struct_name().cloned();
-            let struct_name = existing_struct.or_else(|| infer_struct_from_object(obj));
-            if let Some(name) = struct_name {
-                let prev_struct = emitter.object_struct_name().cloned();
-                emitter.set_object_struct(Some(name));
-                emit_object(emitter, obj);
-                if let Some(prev) = prev_struct {
-                    emitter.set_object_struct(Some(prev));
-                } else {
-                    emitter.set_object_struct(None);
-                }
-            } else {
-                emit_object(emitter, obj);
-            }
-        }
+        Expr::Array(arr) => emit_array_expr(emitter, arr),
+        Expr::Object(obj) => emit_object_expr(emitter, obj),
         Expr::Arrow(arrow) => emit_arrow(emitter, arrow),
-        Expr::Paren(paren) => {
-            emitter.push_str("(");
-            emit_expr(emitter, &paren.expr);
-            emitter.push_str(")");
-        }
-        Expr::New(n) => {
-            // For new expressions like new Date() or new Map(), emit appropriate Rust
-            emit_new_expr(emitter, n);
-        }
+        Expr::Paren(paren) => emit_paren_expr(emitter, paren),
+        Expr::New(n) => emit_new_expr(emitter, n),
         Expr::Tpl(tpl) => emit_template_literal(emitter, tpl),
         Expr::TaggedTpl(_) => emitter.push_str("String::new()"),
-        Expr::JSXElement(_) | Expr::JSXFragment(_) => {
-            // For now, emit a placeholder widget
-            // Full JSX transpilation would walk the JSX AST
-            emitter.push_str("Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>");
-        }
-        Expr::Await(await_expr) => {
-            emitter.push_str("tokio::spawn(async move { ");
-            emit_expr(emitter, &await_expr.arg);
-            emitter.push_str(" }).await");
-        }
+        Expr::JSXElement(_) | Expr::JSXFragment(_) => emit_jsx_placeholder(emitter),
+        Expr::Await(await_expr) => emit_await_expr(emitter, await_expr),
         Expr::Yield(_) => emitter.push_str("()"),
         Expr::Update(_) => emitter.push_str("()"),
-        Expr::Assign(_) => {
-            emit_assign_expr(emitter, expr);
-        }
+        Expr::Assign(_) => emit_assign_expr(emitter, expr),
         Expr::Seq(_) => emitter.push_str("()"),
         _ => emitter.push_str("()"),
     }
+}
+
+fn emit_ident(emitter: &mut CodeEmitter, ident: &swc_ecma_ast::Ident) {
+    emitter.push_str(&super::to_snake_case(ident.sym.as_ref()));
+}
+
+fn emit_array_expr(emitter: &mut CodeEmitter, arr: &swc_ecma_ast::ArrayLit) {
+    let elem_type = infer_array_element_type(arr);
+    emitter.push_str("vec![");
+    for (i, elem) in arr.elems.iter().enumerate() {
+        if i > 0 {
+            emitter.push_str(", ");
+        }
+        if let Some(elem) = elem {
+            emit_expr(emitter, &elem.expr);
+        }
+    }
+    emitter.push_str("]");
+    if !elem_type.is_empty() && elem_type != "()" {
+        emitter.push_str(&format!(" as Vec<{}>", elem_type));
+    }
+}
+
+fn emit_object_expr(emitter: &mut CodeEmitter, obj: &swc_ecma_ast::ObjectLit) {
+    let existing_struct = emitter.object_struct_name().cloned();
+    let struct_name = existing_struct.or_else(|| infer_struct_from_object(obj));
+
+    if let Some(name) = struct_name {
+        let prev_struct = emitter.object_struct_name().cloned();
+        emitter.set_object_struct(Some(name));
+        emit_object(emitter, obj);
+        if let Some(prev) = prev_struct {
+            emitter.set_object_struct(Some(prev));
+        } else {
+            emitter.set_object_struct(None);
+        }
+    } else {
+        emit_object(emitter, obj);
+    }
+}
+
+fn emit_paren_expr(emitter: &mut CodeEmitter, paren: &swc_ecma_ast::ParenExpr) {
+    emitter.push_str("(");
+    emit_expr(emitter, &paren.expr);
+    emitter.push_str(")");
+}
+
+fn emit_jsx_placeholder(emitter: &mut CodeEmitter) {
+    emitter.push_str(
+        "Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>",
+    );
+}
+
+fn emit_await_expr(emitter: &mut CodeEmitter, await_expr: &swc_ecma_ast::AwaitExpr) {
+    emitter.push_str("tokio::spawn(async move { ");
+    emit_expr(emitter, &await_expr.arg);
+    emitter.push_str(" }).await");
 }
 
 /// Emit a binary expression with proper type coercion.
@@ -94,30 +99,38 @@ fn emit_bin_expr(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
     if bin_expr.op == swc_ecma_ast::BinaryOp::Add
         && (left_type == "String" || right_type == "String")
     {
-        emitter.push_str("format!(\"{}{}\", ");
-        emit_expr(emitter, &bin_expr.left);
-        emitter.push_str(", ");
-        emit_expr(emitter, &bin_expr.right);
-        emitter.push_str(")");
+        emit_string_concat(emitter, bin_expr);
         return;
     }
 
-    // Handle spread operator in array context
-    // Note: Spread is not actually a binary op, this is a no-op here
+    emit_binary_op(emitter, bin_expr);
+}
 
-    // Handle comparison operators that need type coercion
-    match bin_expr.op {
-        swc_ecma_ast::BinaryOp::Lt | swc_ecma_ast::BinaryOp::LtEq |
-        swc_ecma_ast::BinaryOp::Gt | swc_ecma_ast::BinaryOp::GtEq => {
-            emit_expr(emitter, &bin_expr.left);
-            emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
-            emit_expr(emitter, &bin_expr.right);
-        }
-        _ => {
-            emit_expr(emitter, &bin_expr.left);
-            emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
-            emit_expr(emitter, &bin_expr.right);
-        }
+fn emit_string_concat(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
+    emitter.push_str("format!(\"{}{}\", ");
+    emit_expr(emitter, &bin_expr.left);
+    emitter.push_str(", ");
+    emit_expr(emitter, &bin_expr.right);
+    emitter.push_str(")");
+}
+
+fn emit_binary_op(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
+    let needs_parens = matches!(
+        bin_expr.op,
+        swc_ecma_ast::BinaryOp::Lt
+            | swc_ecma_ast::BinaryOp::LtEq
+            | swc_ecma_ast::BinaryOp::Gt
+            | swc_ecma_ast::BinaryOp::GtEq
+    );
+
+    if needs_parens {
+        emitter.push_str("(");
+    }
+    emit_expr(emitter, &bin_expr.left);
+    emitter.push_str(&format!(" {} ", bin_op_str(bin_expr.op)));
+    emit_expr(emitter, &bin_expr.right);
+    if needs_parens {
+        emitter.push_str(")");
     }
 }
 
@@ -144,67 +157,63 @@ fn emit_unary_expr(emitter: &mut CodeEmitter, unary_expr: &swc_ecma_ast::UnaryEx
 }
 
 /// Emit a conditional (ternary) expression properly.
-/// TypeScript: `a ? b : c` -> Rust: match-style or if-else
 fn emit_conditional_expr(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExpr) {
-    // Infer the common type of both branches
     let cons_type = infer_type(&cond.cons);
     let alt_type = infer_type(&cond.alt);
-    
-    // Check if we need to capture the result
-    let result_type = if cons_type == alt_type {
-        cons_type
-    } else if cons_type == "()" {
-        alt_type
-    } else if alt_type == "()" {
-        cons_type
+    let result_type = resolve_result_type(&cons_type, &alt_type);
+
+    if needs_temp_var(&result_type) {
+        emit_conditional_block(emitter, cond);
     } else {
-        // Different types - fallback to () 
-        "()".to_string()
-    };
-    
-    // If result is needed (variable assignment or expression context)
-    // we need to use a block that assigns to a temporary
-    let needs_temp = result_type != "()" && result_type != "f64" 
-        && result_type != "bool" && result_type != "String" 
-        && result_type != "i32" && result_type != "usize";
-    
-    if needs_temp {
-        // Emit as a block that returns the value
-        emitter.push_str("{");
-        emitter.push_str(" if ");
-        emit_expr(emitter, &cond.test);
-        emitter.push_str(" { ");
-        emit_expr(emitter, &cond.cons);
-        emitter.push_str(" } else { ");
-        emit_expr(emitter, &cond.alt);
-        emitter.push_str(" } ");
-        emitter.push_str("}");
-    } else {
-        // Emit as if-else expression without trailing semicolons
-        // In Rust, if-else returns values without semicolons
-        emitter.push_str("if ");
-        emit_expr(emitter, &cond.test);
-        emitter.push_str(" { ");
-        emit_expr(emitter, &cond.cons);
-        emitter.push_str(" } else { ");
-        emit_expr(emitter, &cond.alt);
-        emitter.push_str(" }");
+        emit_conditional_expr_simple(emitter, cond);
     }
+}
+
+fn resolve_result_type(cons_type: &str, alt_type: &str) -> String {
+    if cons_type == alt_type {
+        cons_type.to_string()
+    } else if cons_type == "()" {
+        alt_type.to_string()
+    } else if alt_type == "()" {
+        cons_type.to_string()
+    } else {
+        "()".to_string()
+    }
+}
+
+fn needs_temp_var(result_type: &str) -> bool {
+    !result_type.is_empty()
+        && result_type != "()"
+        && result_type != "f64"
+        && result_type != "bool"
+        && result_type != "String"
+        && result_type != "i32"
+        && result_type != "usize"
+}
+
+fn emit_conditional_block(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExpr) {
+    emitter.push_str("{ if ");
+    emit_expr(emitter, &cond.test);
+    emitter.push_str(" { ");
+    emit_expr(emitter, &cond.cons);
+    emitter.push_str(" } else { ");
+    emit_expr(emitter, &cond.alt);
+    emitter.push_str(" } }");
+}
+
+fn emit_conditional_expr_simple(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExpr) {
+    emitter.push_str("if ");
+    emit_expr(emitter, &cond.test);
+    emitter.push_str(" { ");
+    emit_expr(emitter, &cond.cons);
+    emitter.push_str(" } else { ");
+    emit_expr(emitter, &cond.alt);
+    emitter.push_str(" }");
 }
 
 /// Emit an arrow function with proper closure syntax.
 fn emit_arrow(emitter: &mut CodeEmitter, arrow: &swc_ecma_ast::ArrowExpr) {
-    let params: Vec<_> = arrow
-        .params
-        .iter()
-        .filter_map(|p| {
-            if let swc_ecma_ast::Pat::Ident(ident) = p {
-                Some(super::to_snake_case(ident.id.sym.as_ref()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let params = extract_arrow_params(arrow);
 
     if params.is_empty() {
         emitter.push_str("|| ");
@@ -222,6 +231,20 @@ fn emit_arrow(emitter: &mut CodeEmitter, arrow: &swc_ecma_ast::ArrowExpr) {
             emitter.push_str(" }");
         }
     }
+}
+
+fn extract_arrow_params(arrow: &swc_ecma_ast::ArrowExpr) -> Vec<String> {
+    arrow
+        .params
+        .iter()
+        .filter_map(|p| {
+            if let swc_ecma_ast::Pat::Ident(ident) = p {
+                Some(super::to_snake_case(ident.id.sym.as_ref()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Get binary operator string.
@@ -257,7 +280,6 @@ fn infer_array_element_type(arr: &swc_ecma_ast::ArrayLit) -> String {
     if arr.elems.is_empty() {
         return "()".to_string();
     }
-    // Use the first element to infer type
     if let Some(Some(elem)) = arr.elems.first() {
         return infer_type(&elem.expr);
     }
@@ -266,7 +288,6 @@ fn infer_array_element_type(arr: &swc_ecma_ast::ArrayLit) -> String {
 
 /// Emit a new expression.
 fn emit_new_expr(emitter: &mut CodeEmitter, n: &swc_ecma_ast::NewExpr) {
-    // For now, emit a placeholder - specific handling for Date, Map, Set, etc.
     emit_expr(emitter, &n.callee);
     emitter.push_str("()");
 }
@@ -274,41 +295,49 @@ fn emit_new_expr(emitter: &mut CodeEmitter, n: &swc_ecma_ast::NewExpr) {
 /// Emit an assignment expression.
 fn emit_assign_expr(emitter: &mut CodeEmitter, expr: &Expr) {
     if let Expr::Assign(assign) = expr {
-        // Simple assignment - emit left as identifier then right
         emit_assign_target(emitter, &assign.left);
-        match assign.op {
-            swc_ecma_ast::AssignOp::AddAssign => emitter.push_str(" += "),
-            swc_ecma_ast::AssignOp::SubAssign => emitter.push_str(" -= "),
-            swc_ecma_ast::AssignOp::MulAssign => emitter.push_str(" *= "),
-            swc_ecma_ast::AssignOp::DivAssign => emitter.push_str(" /= "),
-            _ => emitter.push_str(" = "),
-        }
+        emit_assign_op(emitter, assign.op);
         emit_expr(emitter, &assign.right);
     } else {
         emitter.push_str("()");
     }
 }
 
+fn emit_assign_op(emitter: &mut CodeEmitter, op: swc_ecma_ast::AssignOp) {
+    match op {
+        swc_ecma_ast::AssignOp::AddAssign => emitter.push_str(" += "),
+        swc_ecma_ast::AssignOp::SubAssign => emitter.push_str(" -= "),
+        swc_ecma_ast::AssignOp::MulAssign => emitter.push_str(" *= "),
+        swc_ecma_ast::AssignOp::DivAssign => emitter.push_str(" /= "),
+        _ => emitter.push_str(" = "),
+    }
+}
+
 /// Emit an assignment target (the left side of an assignment).
 fn emit_assign_target(emitter: &mut CodeEmitter, target: &swc_ecma_ast::AssignTarget) {
-    use swc_ecma_ast::AssignTarget;
     match target {
-        AssignTarget::Simple(simple) => {
-            match simple {
-                swc_ecma_ast::SimpleAssignTarget::Ident(ident) => {
-                    emitter.push_str(&super::to_snake_case(ident.id.sym.as_ref()));
-                }
-                swc_ecma_ast::SimpleAssignTarget::Member(member) => {
-                    emit_member_impl(emitter, member);
-                }
-                _ => {
-                    emitter.push_str("/* unknown simple target */");
-                }
-            }
+        swc_ecma_ast::AssignTarget::Simple(simple) => {
+            emit_simple_target(emitter, simple);
         }
-        AssignTarget::Pat(_pat) => {
-            // Pattern assignments (destructuring) - simplified handling
+        swc_ecma_ast::AssignTarget::Pat(_pat) => {
             emitter.push_str("/* pattern assignment */");
+        }
+    }
+}
+
+fn emit_simple_target(
+    emitter: &mut CodeEmitter,
+    simple: &swc_ecma_ast::SimpleAssignTarget,
+) {
+    match simple {
+        swc_ecma_ast::SimpleAssignTarget::Ident(ident) => {
+            emitter.push_str(&super::to_snake_case(ident.id.sym.as_ref()));
+        }
+        swc_ecma_ast::SimpleAssignTarget::Member(member) => {
+            emit_member_impl(emitter, member);
+        }
+        _ => {
+            emitter.push_str("/* unknown simple target */");
         }
     }
 }

@@ -6,36 +6,17 @@ use crate::analyzer::{TypeInfo, FunctionInfo, StructInfo, EnumInfo};
 
 /// Parse a function declaration from a line.
 pub fn parse_function(line: &str) -> Option<FunctionInfo> {
-    // Pattern: export function name(args): returnType
-    let pattern = if line.starts_with("export") {
-        "export function "
-    } else {
-        "function "
-    };
-
+    let pattern = if line.starts_with("export") { "export function " } else { "function " };
     let rest = line.strip_prefix(pattern)?;
     let rest = rest.strip_prefix("async ").unwrap_or(rest);
     let rest = rest.strip_prefix("pub ").unwrap_or(rest);
 
-    // Extract function name
-    let name_end = rest
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .unwrap_or(rest.len());
+    let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
     let name = rest[..name_end].to_string();
     let rest = &rest[name_end..];
 
-    // Extract parameters
     let (params_str, rest) = extract_in_parens(rest)?;
-
-    // Extract return type
-    let return_type = if let Some(ret) = rest.strip_prefix("): ") {
-        parse_type(ret.trim_end_matches(';'))
-    } else if let Some(ret) = rest.strip_prefix("):") {
-        parse_type(ret.trim_end_matches(';').trim())
-    } else {
-        Box::new(TypeInfo::Unknown)
-    };
-
+    let return_type = extract_return_type(rest);
     let params = parse_params(&params_str);
 
     Some(FunctionInfo {
@@ -45,6 +26,16 @@ pub fn parse_function(line: &str) -> Option<FunctionInfo> {
         is_async: line.contains("async function"),
         is_method: false,
     })
+}
+
+fn extract_return_type(rest: &str) -> Box<TypeInfo> {
+    if let Some(ret) = rest.strip_prefix("): ") {
+        return parse_type(ret.trim_end_matches(';'));
+    }
+    if let Some(ret) = rest.strip_prefix("):") {
+        return parse_type(ret.trim_end_matches(';').trim());
+    }
+    Box::new(TypeInfo::Unknown)
 }
 
 /// Extract content within parentheses.
@@ -71,103 +62,139 @@ fn extract_in_parens(s: &str) -> Option<(String, &str)> {
 
 /// Parse parameter list.
 fn parse_params(params_str: &str) -> Vec<(String, TypeInfo)> {
-    let mut params = Vec::new();
+    params_str
+        .split(',')
+        .filter_map(|param| {
+            let param = param.trim();
+            if param.is_empty() {
+                return None;
+            }
+            parse_param_item(param)
+        })
+        .collect()
+}
 
-    for param in params_str.split(',') {
-        let param = param.trim();
-        if param.is_empty() {
-            continue;
-        }
-
-        // Pattern: name: type
-        if let Some((idx, _)) = param.match_indices(": ").next() {
-            let name = param[..idx].trim().to_string();
-            let type_str = param[idx + 2..].trim();
-            let type_info = *parse_type(type_str);
-            params.push((name, type_info));
-        } else if let Some((idx, _)) = param.match_indices(':').next() {
-            let name = param[..idx].trim().to_string();
-            let type_str = param[idx + 1..].trim();
-            let type_info = *parse_type(type_str);
-            params.push((name, type_info));
-        } else {
-            // Infer from name or default
-            params.push((param.to_string(), TypeInfo::Unknown));
-        }
+fn parse_param_item(param: &str) -> Option<(String, TypeInfo)> {
+    // Try "name: type" pattern
+    if let Some((idx, _)) = param.match_indices(": ").next() {
+        return Some(param_to_tuple(param, idx));
     }
+    // Try "name:type" pattern (no space)
+    if let Some((idx, _)) = param.match_indices(':').next() {
+        return Some(param_to_tuple(param, idx));
+    }
+    // No type annotation - use Unknown
+    Some((param.to_string(), TypeInfo::Unknown))
+}
 
-    params
+fn param_to_tuple(param: &str, idx: usize) -> (String, TypeInfo) {
+    let name = param[..idx].trim().to_string();
+    let type_str = param[idx + 1..].trim();
+    let type_info = *parse_type(type_str);
+    (name, type_info)
 }
 
 /// Parse a type string.
 pub fn parse_type(type_str: &str) -> Box<TypeInfo> {
-    let s = type_str.trim();
+    let s = type_str.trim().trim_end_matches(|c: char| c == ';' || c == ',' || c == ')' || c == '>');
+    parse_type_inner(s)
+}
 
-    // Remove trailing punctuation
-    let s = s.trim_end_matches(|c: char| c == ';' || c == ',' || c == ')' || c == '>');
-
-    // Void
-    if s == "void" || s == "undefined" {
-        return Box::new(TypeInfo::Unknown);
+fn parse_type_inner(s: &str) -> Box<TypeInfo> {
+    if let Some(info) = parse_primitive_type(s) {
+        return info;
     }
+    if let Some(info) = parse_string_literal(s) {
+        return info;
+    }
+    if let Some(info) = parse_integer_literal(s) {
+        return info;
+    }
+    if let Some(info) = parse_array_type(s) {
+        return info;
+    }
+    if let Some(info) = parse_option_type(s) {
+        return info;
+    }
+    if let Some(info) = parse_result_type(s) {
+        return info;
+    }
+    if let Some(info) = parse_generic_type(s) {
+        return info;
+    }
+    if let Some(info) = parse_object_type(s) {
+        return info;
+    }
+    parse_type_name(s)
+}
 
-    // Primitive types
+fn parse_primitive_type(s: &str) -> Option<Box<TypeInfo>> {
     match s {
-        "number" => return Box::new(TypeInfo::Float),
-        "string" => return Box::new(TypeInfo::String),
-        "boolean" => return Box::new(TypeInfo::Boolean),
-        "null" => return Box::new(TypeInfo::Unknown),
-        _ => {}
+        "void" | "undefined" | "null" => Some(Box::new(TypeInfo::Unknown)),
+        "number" => Some(Box::new(TypeInfo::Float)),
+        "string" => Some(Box::new(TypeInfo::String)),
+        "boolean" => Some(Box::new(TypeInfo::Boolean)),
+        _ => None,
     }
+}
 
-    // String literals
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        return Box::new(TypeInfo::StringLiteral(s[1..s.len() - 1].to_string()));
+fn parse_string_literal(s: &str) -> Option<Box<TypeInfo>> {
+    let is_quoted = (s.starts_with('"') && s.ends_with('"'))
+        || (s.starts_with('\'') && s.ends_with('\''));
+    if is_quoted {
+        Some(Box::new(TypeInfo::StringLiteral(s[1..s.len() - 1].to_string())))
+    } else {
+        None
     }
+}
 
-    // Integer literals
-    if let Ok(n) = s.parse::<i64>() {
-        return Box::new(TypeInfo::Integer(n));
-    }
+fn parse_integer_literal(s: &str) -> Option<Box<TypeInfo>> {
+    s.parse::<i64>().ok().map(|n| Box::new(TypeInfo::Integer(n)))
+}
 
-    // Array type: T[]
-    if let Some(inner) = s.strip_suffix("[]") {
-        return Box::new(TypeInfo::Array(parse_type(inner)));
-    }
+fn parse_array_type(s: &str) -> Option<Box<TypeInfo>> {
+    s.strip_suffix("[]").map(|inner| Box::new(TypeInfo::Array(parse_type(inner))))
+}
 
-    // Option type: T | null
-    if let Some(inner) = s.strip_suffix(" | null") {
-        return Box::new(TypeInfo::Option(parse_type(inner)));
-    }
+fn parse_option_type(s: &str) -> Option<Box<TypeInfo>> {
+    s.strip_suffix(" | null")
+        .map(|inner| Box::new(TypeInfo::Option(parse_type(inner))))
+}
 
-    // Result type patterns
+fn parse_result_type(s: &str) -> Option<Box<TypeInfo>> {
     if s.contains("ok:") && s.contains("error:") {
-        return Box::new(TypeInfo::Result(
+        Some(Box::new(TypeInfo::Result(
             Box::new(TypeInfo::Unknown),
             Box::new(TypeInfo::String),
-        ));
+        )))
+    } else {
+        None
     }
+}
 
-    // Generic type: Name<T>
-    if let Some((name, generic)) = s.split_once('<') {
-        let generic = generic.trim_end_matches('>');
-        if generic.contains(',') {
-            let first = generic.split(',').next().unwrap_or("T");
-            return Box::new(TypeInfo::Generic(format!("{}<{}>", name, first)));
-        }
-        return Box::new(TypeInfo::Generic(format!("{}<{}>", name, generic)));
+fn parse_generic_type(s: &str) -> Option<Box<TypeInfo>> {
+    let (name, generic) = s.split_once('<')?;
+    let generic = generic.trim_end_matches('>');
+    let generic_part = if generic.contains(',') {
+        generic.split(',').next().unwrap_or("T")
+    } else {
+        generic
+    };
+    Some(Box::new(TypeInfo::Generic(format!("{}<{}>", name, generic_part))))
+}
+
+fn parse_object_type(s: &str) -> Option<Box<TypeInfo>> {
+    if !s.starts_with('{') || !s.ends_with('}') {
+        return None;
     }
+    let fields = parse_object_type_fields(s);
+    Some(Box::new(TypeInfo::Struct(StructInfo {
+        name: format!("GeneratedStruct{}", fields.len()),
+        fields,
+    })))
+}
 
-    // Object type: { field1: Type1, field2: Type2 }
-    if s.starts_with('{') && s.ends_with('}') {
-        let fields = parse_object_type_fields(s);
-        return Box::new(TypeInfo::Struct(StructInfo {
-            name: format!("GeneratedStruct{}", fields.len()),
-            fields,
-        }));
-    }
-
-    // Regular type name
+fn parse_type_name(s: &str) -> Box<TypeInfo> {
     Box::new(TypeInfo::Struct(StructInfo {
         name: s.to_string(),
         fields: Vec::new(),
@@ -180,17 +207,15 @@ fn parse_object_type_fields(type_str: &str) -> Vec<(String, TypeInfo)> {
     if inner.is_empty() {
         return Vec::new();
     }
-
-    let raw_fields = split_field_strings(inner);
-    raw_fields.iter().filter_map(|s| parse_field_string(s)).collect()
+    split_field_strings(inner)
+        .iter()
+        .filter_map(|s| parse_field_string(s))
+        .collect()
 }
 
 /// Extract content between outer braces.
 fn extract_brace_content(type_str: &str) -> &str {
-    type_str
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim()
+    type_str.trim_start_matches('{').trim_end_matches('}').trim()
 }
 
 /// Split field strings by comma/semicolon at depth 0.
@@ -219,7 +244,6 @@ fn split_field_strings(inner: &str) -> Vec<String> {
         }
     }
 
-    // Handle trailing field
     if !current.trim().is_empty() {
         result.push(current.trim().to_string());
     }
@@ -237,7 +261,6 @@ fn parse_field_string(field_str: &str) -> Option<(String, TypeInfo)> {
 
 /// Parse a type alias or interface.
 pub fn parse_type_alias(line: &str, _source: &str) -> Option<StructInfo> {
-    // Pattern: export type Name = { ... }
     let prefix = if line.starts_with("export") {
         line.strip_prefix("export ")?
     } else {
@@ -258,7 +281,6 @@ pub fn parse_type_alias(line: &str, _source: &str) -> Option<StructInfo> {
 
     let rest = rest.trim_start_matches('=').trim();
 
-    // This is an alias to another type
     if !rest.starts_with('{') {
         return Some(StructInfo {
             name,
@@ -277,20 +299,16 @@ pub fn parse_field(line: &str) -> Option<(String, TypeInfo)> {
         return None;
     }
 
-    // Pattern: name: type
     if let Some((idx, _)) = line.match_indices(": ").next() {
         let name = line[..idx].trim().to_string();
         let type_str = line[idx + 2..].trim();
-        let type_info = parse_type(type_str);
-        return Some((name, *type_info));
+        return Some((name, *parse_type(type_str)));
     }
 
-    // Pattern: name:type (no space)
     if let Some((idx, _)) = line.match_indices(':').next() {
         let name = line[..idx].trim().to_string();
         let type_str = line[idx + 1..].trim();
-        let type_info = parse_type(type_str);
-        return Some((name, *type_info));
+        return Some((name, *parse_type(type_str)));
     }
 
     None
@@ -298,7 +316,6 @@ pub fn parse_field(line: &str) -> Option<(String, TypeInfo)> {
 
 /// Parse an enum declaration.
 pub fn parse_enum(line: &str) -> Option<EnumInfo> {
-    // Pattern: export enum Name
     let prefix = if line.starts_with("export ") {
         line.strip_prefix("export ")?
     } else {
@@ -331,7 +348,6 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
     for line in source.lines() {
         let line = line.trim();
 
-        // Start of interface
         if line.starts_with("export type ")
             && (line.contains("= {") || line.contains(" ={"))
         {
@@ -344,18 +360,7 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
 
             brace_depth = line.matches('{').count() - line.matches('}').count();
 
-            // Extract fields from same line if present
-            if let Some(start) = line.find('{') {
-                let end = line.rfind('}');
-                if let Some(end) = end {
-                    let body = &line[start + 1..end];
-                    for field in body.split(';') {
-                        if let Some(f) = parse_field(field) {
-                            fields.push(f);
-                        }
-                    }
-                }
-            }
+            extract_fields_from_line(line, &mut fields);
             continue;
         }
 
@@ -366,14 +371,7 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
                 as usize;
 
             if brace_depth == 0 {
-                // End of interface
-                types.insert(
-                    current_name.clone(),
-                    TypeInfo::Struct(StructInfo {
-                        name: current_name.clone(),
-                        fields: fields.clone(),
-                    }),
-                );
+                finalize_interface(types, &current_name, &fields);
                 in_interface = false;
                 fields.clear();
                 current_name.clear();
@@ -382,4 +380,28 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
             }
         }
     }
+}
+
+fn extract_fields_from_line(line: &str, fields: &mut Vec<(String, TypeInfo)>) {
+    if let Some(start) = line.find('{') {
+        let end = line.rfind('}');
+        if let Some(end) = end {
+            let body = &line[start + 1..end];
+            for field in body.split(';') {
+                if let Some(f) = parse_field(field) {
+                    fields.push(f);
+                }
+            }
+        }
+    }
+}
+
+fn finalize_interface(types: &mut crate::analyzer::TypeMap, name: &str, fields: &[(String, TypeInfo)]) {
+    types.insert(
+        name.to_string(),
+        TypeInfo::Struct(StructInfo {
+            name: name.to_string(),
+            fields: fields.to_vec(),
+        }),
+    );
 }
