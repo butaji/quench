@@ -31,6 +31,7 @@ impl std::fmt::Display for TranslatedError {
 }
 
 /// Translates Rust errors to TypeScript source locations.
+#[derive(Default)]
 pub struct ErrorTranslator {
     /// Source map: generated file -> original source file
     source_map: HashMap<String, String>,
@@ -64,7 +65,6 @@ impl ErrorTranslator {
     #[must_use]
     pub fn translate(&self, rust_error: &str) -> TranslatedError {
         // Try to extract file path and line number from rustc output
-        // Format: error[E####]: message --> file:line:col
         let parts: Vec<&str> = rust_error.split("-->").collect();
 
         if parts.len() >= 2 {
@@ -78,14 +78,12 @@ impl ErrorTranslator {
                 let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
                 let col: u32 = loc_parts[2].trim().parse().unwrap_or(0);
 
-                // Look up source file
                 let source_file = self
                     .source_map
                     .get(file)
                     .cloned()
                     .unwrap_or_else(|| file.to_string());
 
-                // Look up original line
                 let source_line = self
                     .line_maps
                     .get(file)
@@ -102,7 +100,6 @@ impl ErrorTranslator {
             }
         }
 
-        // Fallback: return original error with unknown location
         TranslatedError {
             file: "unknown".to_string(),
             line: 0,
@@ -112,12 +109,11 @@ impl ErrorTranslator {
         }
     }
 
-    /// Translate Rust error messages to more helpful TypeScript-focused messages.
+    /// Translate Rust error messages to TypeScript-focused messages.
     #[must_use]
     fn translate_message(&self, message: &str) -> String {
         let msg = message.trim();
 
-        // Borrow checker errors
         if msg.contains("cannot move") {
             return "Move error: value was already moved. Use .clone() to explicitly copy.".to_string();
         }
@@ -125,32 +121,11 @@ impl ErrorTranslator {
             return "Borrow error: value was moved. Consider using a reference or .clone().".to_string();
         }
         if msg.contains("does not implement") {
-            return format!(
-                "Type error: {}",
-                msg.lines().next().unwrap_or(msg)
-            );
+            return format!("Type error: {}", msg.lines().next().unwrap_or(msg));
         }
         if msg.contains("expected") && msg.contains("found") {
-            // Extract expected and found types
-            if let Some(exp_idx) = msg.find("expected ") {
-                let exp_rest = &msg[exp_idx + 9..];
-                let exp_end = exp_rest.find(' ').unwrap_or(exp_rest.len());
-                let expected = &exp_rest[..exp_end];
-
-                if let Some(found_idx) = msg.find("found ") {
-                    let found_rest = &msg[found_idx + 6..];
-                    let found_end = found_rest.find(' ').unwrap_or(found_rest.len());
-                    let found = &found_rest[..found_end];
-
-                    return format!(
-                        "Type mismatch: expected `{}`, found `{}`",
-                        expected, found
-                    );
-                }
-            }
+            return self.extract_type_mismatch(msg);
         }
-
-        // Integer division warning
         if msg.contains("integer") && msg.contains("division") {
             return format!(
                 "Warning: {} (Integer division produces i32 result, not f64)",
@@ -158,6 +133,25 @@ impl ErrorTranslator {
             );
         }
 
+        msg.to_string()
+    }
+
+    /// Extract type mismatch information from error message.
+    #[must_use]
+    fn extract_type_mismatch(&self, msg: &str) -> String {
+        if let Some(exp_idx) = msg.find("expected ") {
+            let exp_rest = &msg[exp_idx + 9..];
+            let exp_end = exp_rest.find(' ').unwrap_or(exp_rest.len());
+            let expected = &exp_rest[..exp_end];
+
+            if let Some(found_idx) = msg.find("found ") {
+                let found_rest = &msg[found_idx + 6..];
+                let found_end = found_rest.find(' ').unwrap_or(found_rest.len());
+                let found = &found_rest[..found_end];
+
+                return format!("Type mismatch: expected `{}`, found `{}`", expected, found);
+            }
+        }
         msg.to_string()
     }
 
@@ -169,12 +163,6 @@ impl ErrorTranslator {
             .filter(|line| line.starts_with("error") || line.starts_with("warning"))
             .map(|line| self.translate(line))
             .collect()
-    }
-}
-
-impl Default for ErrorTranslator {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
