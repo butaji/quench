@@ -1,0 +1,17 @@
+# Rune Configuration for TODOX
+
+[project]
+name = "todox"
+entry = "crates/app/src/main.r.ts"
+
+[build]
+target_crate = "app"
+host_crate = "host"
+
+[dev]
+hot_reload = true
+debounce = 100
+
+[release]
+static = true
+lto = true

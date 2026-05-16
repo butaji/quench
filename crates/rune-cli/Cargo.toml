@@ -1,0 +1,21 @@
+[package]
+name = "rune-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cargo-rune"
+path = "src/main.rs"
+
+[[bin]]
+name = "rune"
+path = "src/rune_main.rs"
+
+[dependencies]
+rune = { path = "../rune" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

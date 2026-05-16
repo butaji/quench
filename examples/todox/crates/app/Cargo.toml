@@ -1,0 +1,19 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "app"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+protocol = { path = "../protocol" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+rune = { path = "../../.." }
