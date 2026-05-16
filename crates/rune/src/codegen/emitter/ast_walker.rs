@@ -3,23 +3,42 @@
 //! Walks SWC AST and emits Rust code.
 
 use super::{CodeEmitter, TypeResolver, RustType, to_snake_case};
-use swc_ecma_ast::{Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem, Stmt};
+use super::types::to_pascal_case;
+use swc_ecma_ast::{
+    Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem,
+    Stmt, TsType,
+};
 use std::collections::HashMap;
 use super::types::{EnumDefinition, EnumVariant};
 
 /// Raw field for deferred type resolution.
-type RawField = (String, swc_ecma_ast::TsType);
+type RawField = (String, TsType);
+
+/// Information about a struct type.
+#[derive(Debug, Clone)]
+struct StructInfo {
+    /// Rust struct name
+    rust_name: String,
+    /// Fields with types
+    fields: Vec<(String, RustType)>,
+}
 
 /// Walks the AST and emits Rust code.
 pub struct AstWalker {
-    /// Type fields to emit
+    /// Type fields to emit (TS name → fields)
     type_fields: HashMap<String, Vec<RawField>>,
     /// Enums to emit
     enums: HashMap<String, EnumDefinition>,
+    /// Struct type info (TS name → struct info)
+    structs: HashMap<String, StructInfo>,
     /// Code emitter
     emitter: CodeEmitter,
     /// Type resolver
     resolver: TypeResolver,
+    /// Module name (for imports)
+    module_name: String,
+    /// Known imports
+    imports: HashMap<String, Vec<String>>,
 }
 
 impl AstWalker {
@@ -29,24 +48,55 @@ impl AstWalker {
         Self {
             type_fields: HashMap::new(),
             enums: HashMap::new(),
+            structs: HashMap::new(),
             emitter: CodeEmitter::new(),
             resolver: TypeResolver::new(),
+            module_name: String::new(),
+            imports: HashMap::new(),
         }
     }
 
     /// Walk a module and emit Rust code.
     pub fn walk_module(&mut self, module: &Module) {
-        // First pass: collect all type definitions and enums
+        // First pass: collect imports
+        self.collect_imports(module);
+
+        // Second pass: collect all type definitions and enums
         for item in &module.body {
             self.collect_item(item);
         }
         self.emit_named_types();
 
-        // Second pass: emit functions
+        // Third pass: emit functions
         for item in &module.body {
             self.emit_item(item);
         }
         self.emit_anonymous_structs();
+    }
+
+    fn collect_imports(&mut self, module: &Module) {
+        for item in &module.body {
+            if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+                // import.src is a Box<Str> containing the module path (ESM import)
+                let path_str = format!("{:?}", import.src.value);
+                let names: Vec<String> = import
+                    .specifiers
+                    .iter()
+                    .map(|spec| match spec {
+                        swc_ecma_ast::ImportSpecifier::Named(named) => {
+                            to_snake_case(named.local.as_ref())
+                        }
+                        swc_ecma_ast::ImportSpecifier::Default(_) => {
+                            "default".to_string()
+                        }
+                        swc_ecma_ast::ImportSpecifier::Namespace(ns) => {
+                            format!("*{}", to_snake_case(ns.local.as_ref()))
+                        }
+                    })
+                    .collect();
+                self.imports.insert(path_str, names);
+            }
+        }
     }
 
     fn emit_named_types(&mut self) {
@@ -62,7 +112,15 @@ impl AstWalker {
                 .iter()
                 .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
                 .collect();
-            self.emitter.emit_struct(&name, &fields);
+
+            // Store struct info for object literal context
+            let rust_name = to_pascal_case(&name);
+            self.structs.insert(name.clone(), StructInfo {
+                rust_name: rust_name.clone(),
+                fields: fields.clone(),
+            });
+
+            self.emitter.emit_struct(&rust_name, &fields);
         }
 
         // Emit enum types
@@ -99,12 +157,13 @@ impl AstWalker {
     }
 
     fn collect_interface(&mut self, name: &str, body: &swc_ecma_ast::TsInterfaceBody) {
-        let mut fields: Vec<(String, swc_ecma_ast::TsType)> = Vec::new();
+        let mut fields: Vec<(String, TsType)> = Vec::new();
         for member in &body.body {
             if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
                 let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
                     ident.sym.to_string()
-                } else if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) = prop.key.as_ref()
+                } else if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) =
+                    prop.key.as_ref()
                 {
                     format!("{:?}", s.value)
                 } else {
@@ -138,13 +197,14 @@ impl AstWalker {
         );
     }
 
-    fn collect_type_alias(&mut self, name: &str, type_ann: &swc_ecma_ast::TsType) {
+    fn collect_type_alias(&mut self, name: &str, type_ann: &TsType) {
         self.type_fields
             .insert(name.to_string(), vec![("_type".to_string(), type_ann.clone())]);
     }
 
     fn collect_ts_module(&mut self, decl: &swc_ecma_ast::TsModuleDecl) {
-        if let Some(swc_ecma_ast::TsNamespaceBody::TsModuleBlock(block)) = decl.body.as_ref() {
+        if let Some(swc_ecma_ast::TsNamespaceBody::TsModuleBlock(block)) = decl.body.as_ref()
+        {
             for item in &block.body {
                 self.collect_item(item);
             }
@@ -196,7 +256,15 @@ impl AstWalker {
         let is_async = fn_decl.function.is_async;
 
         // Get the function body
-        let body = fn_decl.function.body.as_ref().map(|block| Stmt::Block(block.clone()));
+        let body =
+            fn_decl
+                .function
+                .body
+                .as_ref()
+                .map(|block| Stmt::Block(block.clone()));
+
+        // Set the expected return type for type inference
+        self.emitter.set_expected_return(Some(return_type.to_string()));
 
         self.emitter.emit_function_with_body(
             &rust_name,
@@ -205,6 +273,23 @@ impl AstWalker {
             is_async,
             body,
         );
+
+        self.emitter.set_expected_return(None);
+    }
+
+    /// Escape a Rust keyword for use as an identifier.
+    #[must_use]
+    pub fn escape_keyword(name: &str) -> String {
+        match name {
+            "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn"
+            | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl"
+            | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub" | "ref"
+            | "return" | "self" | "Self" | "static" | "struct" | "super" | "trait" | "true"
+            | "type" | "unsafe" | "use" | "where" | "while" | "abstract" | "become"
+            | "box" | "do" | "final" | "macro" | "override" | "priv" | "try"
+            | "typeof" | "unsized" | "virtual" | "yield" => format!("r#{name}"),
+            _ => name.to_string(),
+        }
     }
 
     /// Get the generated output.

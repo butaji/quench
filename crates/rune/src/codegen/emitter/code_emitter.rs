@@ -11,13 +11,46 @@ pub struct CodeEmitter {
     output: String,
     /// Current indentation level
     indent: usize,
+    /// Expected return type for the current function (for type inference)
+    expected_return: Option<String>,
+    /// Struct name prefix for the current object literal context
+    object_struct_name: Option<String>,
+}
+
+impl CodeEmitter {
+    /// Set the expected return type for type inference.
+    pub fn set_expected_return(&mut self, ty: Option<String>) {
+        self.expected_return = ty;
+    }
+
+    /// Get the expected return type.
+    #[must_use]
+    pub fn expected_return(&self) -> Option<&String> {
+        self.expected_return.as_ref()
+    }
+
+    /// Set the struct name context for object literals.
+    pub fn set_object_struct(&mut self, name: Option<String>) {
+        self.object_struct_name = name;
+    }
+
+    /// Get the current struct name context.
+    #[must_use]
+    pub fn object_struct_name(&self) -> Option<&String> {
+        self.object_struct_name.as_ref()
+    }
 }
 
 impl CodeEmitter {
     /// Create a new code emitter.
     #[must_use]
     pub fn new() -> Self {
-        Self { output: String::new(), indent: 0 }
+        Self {
+            output: String::new(),
+            indent: 0,
+            expected_return: None,
+            object_struct_name: None,
+        }
     }
 
     /// Emit a struct definition.
@@ -79,13 +112,19 @@ impl CodeEmitter {
         self.push_indent();
         self.push_str(&format!("pub {async_prefix}fn {rust_name}({}) -> {return_type} {{\n", params_str.join(", ")));
         self.indent += 1;
+        // Set expected return type for type inference in the body
+        let prev_return = self.expected_return.clone();
+        self.expected_return = Some(return_type.to_string());
         if let Some(body_stmt) = body {
             super::emit_body_stmt(self, &body_stmt);
         } else {
             self.push_indent();
             self.push_line("()");
         }
+        // Restore previous context
+        self.expected_return = prev_return;
         self.indent -= 1;
+        self.push_indent();
         self.push_line("}");
         self.push_line("");
     }
