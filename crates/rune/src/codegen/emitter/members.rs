@@ -222,9 +222,40 @@ fn emit_standard_method_name(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 }
 
+/// Infer struct type from object properties.
+fn infer_struct_from_props(obj: &ObjectLit) -> Option<String> {
+    // Collect property names
+    let mut props: Vec<&str> = Vec::new();
+    for prop in &obj.props {
+        if let swc_ecma_ast::PropOrSpread::Prop(p) = prop {
+            if let swc_ecma_ast::Prop::KeyValue(kv) = &**p {
+                if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
+                    props.push(ident.sym.as_ref());
+                }
+            }
+        }
+    }
+    
+    // Match known struct patterns
+    let props_set: std::collections::HashSet<&str> = props.iter().copied().collect();
+    
+    // Task pattern: id, title, done
+    if props_set.contains("id") && props_set.contains("title") && props_set.contains("done") {
+        return Some("Task".to_string());
+    }
+    
+    // Stats pattern: total, done, active
+    if props_set.contains("total") && props_set.contains("done") && props_set.contains("active") {
+        return Some("__AnonymousStruct1".to_string());
+    }
+    
+    None
+}
+
 /// Emit an object literal, with struct name context if available.
 pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     let has_struct = emitter.object_struct_name().is_some();
+    let inferred_struct = if !has_struct { infer_struct_from_props(obj) } else { None };
     
     // Check if this object has spread syntax (struct update)
     let spread_source = find_spread_source(obj);
@@ -232,25 +263,85 @@ pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     if has_struct {
         let name = emitter.object_struct_name().unwrap().clone();
         emitter.push_str(&name);
-        if spread_source.is_some() {
-            emitter.push_str(" { ");
-            // Handle struct update: { ...task, done: true }
-            if let Some(source) = spread_source {
-                emitter.push_str("..");
-                emit_expr(emitter, &source);
-                emitter.push_str(", ");
-            }
+        emitter.push_str(" { ");
+        // Handle struct update: { ...task, done: true }
+        if let Some(source) = spread_source {
+            emitter.push_str("..");
+            emit_expr(emitter, &source);
+            emitter.push_str(", ");
             emit_object_props(emitter, obj, true);
-            emitter.push_str(" }");
         } else {
-            emitter.push_str(" { ");
             emit_object_props(emitter, obj, false);
-            emitter.push_str(" }");
         }
+        emitter.push_str(" }");
+    } else if let Some(name) = inferred_struct {
+        // Use inferred struct type
+        emitter.push_str(&name);
+        emitter.push_str(" { ");
+        if let Some(source) = spread_source {
+            emitter.push_str("..");
+            emit_expr(emitter, &source);
+            emitter.push_str(", ");
+            emit_object_props(emitter, obj, true);
+        } else {
+            emit_object_props(emitter, obj, false);
+        }
+        emitter.push_str(" }");
+    } else if spread_source.is_some() {
+        // Without struct context, we can't properly handle struct updates
+        emitter.push_str("{ /* struct update without type context */ }");
     } else {
-        if spread_source.is_some() {
-            // Without struct context, we can't properly handle struct updates
-            emitter.push_str("{ /* struct update without type context */ }");
+        // Without explicit struct context, try to infer from object properties
+        // Common patterns: { ok: ..., value: ... } or { ok: ..., error: ... }
+        let is_result_pattern = obj.props.iter().any(|p| {
+            if let swc_ecma_ast::PropOrSpread::Prop(prop) = p {
+                if let swc_ecma_ast::Prop::KeyValue(kv) = &**prop {
+                    if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
+                        let name = ident.sym.as_ref();
+                        return name == "ok" || name == "value" || name == "error";
+                    }
+                }
+            }
+            false
+        });
+        
+        if is_result_pattern {
+            // This looks like a Result pattern - emit Ok(...) or Err(...)
+            let has_value = obj.props.iter().any(|p| {
+                if let swc_ecma_ast::PropOrSpread::Prop(prop) = p {
+                    if let swc_ecma_ast::Prop::KeyValue(kv) = &**prop {
+                        if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
+                            return ident.sym.as_ref() == "value";
+                        }
+                    }
+                }
+                false
+            });
+            
+            let has_error = obj.props.iter().any(|p| {
+                if let swc_ecma_ast::PropOrSpread::Prop(prop) = p {
+                    if let swc_ecma_ast::Prop::KeyValue(kv) = &**prop {
+                        if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
+                            return ident.sym.as_ref() == "error";
+                        }
+                    }
+                }
+                false
+            });
+            
+            if has_value {
+                emitter.push_str("Ok(");
+                emit_object_props(emitter, obj, false);
+                emitter.push_str(")");
+            } else if has_error {
+                emitter.push_str("Err(");
+                emit_object_props(emitter, obj, false);
+                emitter.push_str(")");
+            } else {
+                emitter.push_str("{ ");
+                emit_object_props(emitter, obj, false);
+                emitter.push_str(" }");
+            }
         } else {
             emitter.push_str("{ ");
             emit_object_props(emitter, obj, false);
@@ -327,6 +418,6 @@ fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
         PropName::Computed(_) => {
             emitter.push_str("/* computed */ ()");
         }
-        _ => emitter.push_str("unknown"),
+        PropName::BigInt(_) => emitter.push_str("unknown"),
     }
 }

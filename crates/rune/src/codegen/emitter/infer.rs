@@ -25,13 +25,9 @@ pub fn infer_type(expr: &Expr) -> String {
             // Infer array element type
             if arr.elems.is_empty() {
                 String::from("Vec<()>")
-            } else if let Some(elem) = arr.elems.first() {
-                if let Some(e) = elem {
-                    let elem_type = infer_type(&e.expr);
-                    format!("Vec<{}>", elem_type)
-                } else {
-                    String::from("Vec<()>")
-                }
+            } else if let Some(Some(elem)) = arr.elems.first() {
+                let elem_type = infer_type(&elem.expr);
+                format!("Vec<{}>", elem_type)
             } else {
                 String::from("Vec<()>")
             }

@@ -72,14 +72,32 @@ impl TypeResolver {
 
         if let Some(params) = &type_ref.type_params {
             if !params.params.is_empty() {
-                let inner = self.resolve(&params.params[0]);
                 if name == "Array" {
+                    let inner = self.resolve(&params.params[0]);
                     return RustType::Vec(Box::new(inner));
                 }
+                if name == "Result" && !params.params.is_empty() && params.params.len() >= 2 {
+                    // Result<T, E> -> Result<T, String>
+                    let inner = self.resolve(&params.params[0]);
+                    return RustType::Result(Box::new(inner));
+                }
+                if name == "Option" && !params.params.is_empty() {
+                    let inner = self.resolve(&params.params[0]);
+                    return RustType::Option(Box::new(inner));
+                }
+                // For other generic types, just resolve the first param
+                let inner = self.resolve(&params.params[0]);
+                return RustType::Custom(format!("{name}<{inner}>"));
             }
         }
 
-        RustType::Custom(name)
+        // Handle common types
+        match name.as_str() {
+            "Widget" | "Task" | "Filter" | "AppState" => RustType::Custom(name),
+            "Result" => RustType::Result(Box::new(RustType::Unknown)),
+            "Option" => RustType::Option(Box::new(RustType::Unknown)),
+            _ => RustType::Custom(name),
+        }
     }
 
     /// Resolve a union type (for Option<T | null>).
