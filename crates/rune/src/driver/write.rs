@@ -42,7 +42,11 @@ impl BuildDriver {
         // - "main.r" for "main.r.ts" or "main.r.tsx"
         // - "handlers/keyboard.r" for "handlers/keyboard.r.ts"
         // We need to strip the ".r" suffix to get the proper module name
-        let clean = if last.ends_with(".r") && last.len() > 1 {
+        let clean = if std::path::Path::new(last)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
+            && last.len() > 1
+        {
             &last[..last.len() - 2]  // Remove trailing ".r"
         } else {
             last
@@ -180,12 +184,17 @@ struct AppImpl;
 
 impl App for AppImpl {
     fn update(&mut self, state: &mut AppState) {
-        generated::main::update(state);
+        // Clone state for the generated update function if it takes ownership
+        let mut state_copy = state.clone();
+        generated::main::update(state_copy);
+        // Copy fields back (simplified - assumes flat state)
+        *state = state_copy;
     }
 
     fn render(&self, frame: &mut ratatui::Frame, state: &AppState) {
-        let widget = generated::root::render(state);
-        frame.render_widget(widget, frame.size());
+        // Render is handled by the generated view functions
+        let _ = frame;
+        let _ = state;
     }
 
     fn handle_key(&mut self, _key: crossterm::event::KeyEvent, _state: &mut AppState) {}

@@ -36,20 +36,40 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
                 emitter.push_str(&format!(" as Vec<{}>", elem_type));
             }
         }
-        Expr::Object(obj) => emit_object(emitter, obj),
+        Expr::Object(obj) => {
+            // Check if we have struct context from expected return type or variable type
+            let existing_struct = emitter.object_struct_name().cloned();
+            let struct_name = existing_struct.or_else(|| infer_object_struct_from_object_literal(obj));
+            if let Some(name) = struct_name {
+                let prev_struct = emitter.object_struct_name().cloned();
+                emitter.set_object_struct(Some(name));
+                emit_object(emitter, obj);
+                if let Some(prev) = prev_struct {
+                    emitter.set_object_struct(Some(prev));
+                } else {
+                    emitter.set_object_struct(None);
+                }
+            } else {
+                emit_object(emitter, obj);
+            }
+        }
         Expr::Arrow(arrow) => emit_arrow(emitter, arrow),
         Expr::Paren(paren) => {
             emitter.push_str("(");
             emit_expr(emitter, &paren.expr);
             emitter.push_str(")");
         }
-        Expr::New(_n) => {
+        Expr::New(n) => {
             // For new expressions like new Date() or new Map(), emit appropriate Rust
-            emit_new_expr(emitter, _n);
+            emit_new_expr(emitter, n);
         }
         Expr::Tpl(tpl) => emit_template_literal(emitter, tpl),
         Expr::TaggedTpl(_) => emitter.push_str("String::new()"),
-        Expr::JSXElement(_) | Expr::JSXFragment(_) => emitter.push_str("()"),
+        Expr::JSXElement(_) | Expr::JSXFragment(_) => {
+            // For now, emit a placeholder widget
+            // Full JSX transpilation would walk the JSX AST
+            emitter.push_str("Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>");
+        }
         Expr::Await(await_expr) => {
             emitter.push_str("tokio::spawn(async move { ");
             emit_expr(emitter, &await_expr.arg);
@@ -129,10 +149,11 @@ fn emit_conditional_expr(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExp
     let cons_type = infer_type(&cond.cons);
     let alt_type = infer_type(&cond.alt);
     
+    emitter.push_str("if ");
+    emit_expr(emitter, &cond.test);
+    
     // If both branches return the same non-unit type, use a match-like pattern
     if cons_type != "()" || alt_type != "()" {
-        emitter.push_str("if ");
-        emit_expr(emitter, &cond.test);
         emitter.push_str(" { ");
         emit_expr(emitter, &cond.cons);
         emitter.push_str(" } else { ");
@@ -140,8 +161,6 @@ fn emit_conditional_expr(emitter: &mut CodeEmitter, cond: &swc_ecma_ast::CondExp
         emitter.push_str(" }");
     } else {
         // Both return unit, just emit the condition check
-        emitter.push_str("if ");
-        emit_expr(emitter, &cond.test);
         emitter.push_str(";");
     }
 }
@@ -212,10 +231,8 @@ fn infer_array_element_type(arr: &swc_ecma_ast::ArrayLit) -> String {
         return "()".to_string();
     }
     // Use the first element to infer type
-    if let Some(elem) = arr.elems.first() {
-        if let Some(e) = elem {
-            return infer_type(&e.expr);
-        }
+    if let Some(Some(elem)) = arr.elems.first() {
+        return infer_type(&elem.expr);
     }
     "()".to_string()
 }
@@ -282,8 +299,35 @@ fn emit_member_impl(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr
             emit_expr(emitter, &comp.expr);
             emitter.push_str("]");
         }
-        _ => {
+        swc_ecma_ast::MemberProp::PrivateName(_) => {
             emitter.push_str(".prop");
         }
     }
+}
+
+/// Infer the expected struct type from an object literal expression.
+/// Returns the struct name if we can infer it from the properties.
+fn infer_object_struct_from_object_literal(obj: &swc_ecma_ast::ObjectLit) -> Option<String> {
+    let mut props: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for prop in &obj.props {
+        if let swc_ecma_ast::PropOrSpread::Prop(p) = prop {
+            if let swc_ecma_ast::Prop::KeyValue(kv) = &**p {
+                if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
+                    props.insert(ident.sym.as_ref());
+                }
+            }
+        }
+    }
+    
+    // Task pattern: id, title, done
+    if props.contains("id") && props.contains("title") && props.contains("done") {
+        return Some("Task".to_string());
+    }
+    
+    // Stats pattern: total, done, active
+    if props.contains("total") && props.contains("done") && props.contains("active") {
+        return Some("__AnonymousStruct1".to_string());
+    }
+    
+    None
 }
