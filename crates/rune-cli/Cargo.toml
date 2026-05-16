@@ -7,11 +7,17 @@ license.workspace = true
 
 [[bin]]
 name = "rune"
-path = "src/main.rs"
+path = "src/bin/rune.rs"
+required-features = ["binary-rune"]
 
 [[bin]]
 name = "cargo-rune"
-path = "src/main.rs"
+path = "src/bin/cargo_rune.rs"
+required-features = ["binary-cargo"]
+
+[lib]
+name = "rune_cli"
+path = "src/lib.rs"
 
 [dependencies]
 rune = { path = "../rune", default-features = false }
@@ -23,8 +29,10 @@ tracing-subscriber.workspace = true
 pager = { version = "0.16", optional = true }
 
 [features]
-default = []
-cargo-subcommand = ["pager"]
+default = ["binary-rune"]
+cargo-subcommand = ["pager", "binary-cargo"]
+binary-rune = []
+binary-cargo = []
 
 [profile.release]
 strip = true
