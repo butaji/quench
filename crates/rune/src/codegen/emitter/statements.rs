@@ -248,13 +248,13 @@ fn emit_tagged_variant_pattern(emitter: &mut CodeEmitter, member: &swc_ecma_ast:
             return;
         }
         
+        // Emit the object first
+        emit_expr(emitter, &member.obj);
         if prop_name == "tag" {
-            // Tagged union tag access - emit enum type with ::
-            emit_expr(emitter, &member.obj);
+            // Tagged union tag access - use :: separator
             emitter.push_str("::");
         } else {
-            // Regular member access
-            emit_expr(emitter, &member.obj);
+            // Regular member access - use . separator
             emitter.push_str(".");
             emitter.push_str(prop_name);
         }
