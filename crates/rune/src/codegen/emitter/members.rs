@@ -2,7 +2,8 @@
 //!
 //! Emits Rust member expressions and object literals.
 
-use super::{CodeEmitter, emit_expr, to_snake_case};
+use super::{CodeEmitter, emit_expr};
+use super::utils::{to_snake_case, escape_rust_keyword, infer_struct_from_object};
 use swc_ecma_ast::{Expr, ObjectLit, PropName};
 
 /// Emit a member expression.
@@ -228,40 +229,10 @@ fn emit_standard_method_name(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 }
 
-/// Infer struct type from object properties.
-fn infer_struct_from_props(obj: &ObjectLit) -> Option<String> {
-    // Collect property names
-    let mut props: Vec<&str> = Vec::new();
-    for prop in &obj.props {
-        if let swc_ecma_ast::PropOrSpread::Prop(p) = prop {
-            if let swc_ecma_ast::Prop::KeyValue(kv) = &**p {
-                if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
-                    props.push(ident.sym.as_ref());
-                }
-            }
-        }
-    }
-    
-    // Match known struct patterns
-    let props_set: std::collections::HashSet<&str> = props.iter().copied().collect();
-    
-    // Task pattern: id, title, done
-    if props_set.contains("id") && props_set.contains("title") && props_set.contains("done") {
-        return Some("Task".to_string());
-    }
-    
-    // Stats pattern: total, done, active
-    if props_set.contains("total") && props_set.contains("done") && props_set.contains("active") {
-        return Some("__AnonymousStruct1".to_string());
-    }
-    
-    None
-}
-
 /// Emit an object literal, with struct name context if available.
 pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     let has_struct = emitter.object_struct_name().is_some();
-    let inferred_struct = if !has_struct { infer_struct_from_props(obj) } else { None };
+    let inferred_struct = if !has_struct { infer_struct_from_object(obj) } else { None };
     
     // Also check expected return type for struct inference
     let expected_struct = if !has_struct && inferred_struct.is_none() {
@@ -438,14 +409,11 @@ fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
     match key {
         PropName::Ident(ident) => {
             let name = ident.sym.as_ref();
-            // Escape Rust keywords
-            let escaped = escape_rust_keyword(name);
-            emitter.push_str(&escaped);
+            emitter.push_str(&escape_rust_keyword(name));
         }
         PropName::Str(s) => {
             let name = format!("{:?}", s.value);
-            let escaped = escape_rust_keyword(&to_snake_case(&name));
-            emitter.push_str(&escaped);
+            emitter.push_str(&escape_rust_keyword(&to_snake_case(&name)));
         }
         PropName::Num(n) => {
             emitter.push_str(&n.value.to_string());
@@ -454,18 +422,5 @@ fn emit_prop_key(emitter: &mut CodeEmitter, key: &PropName) {
             emitter.push_str("/* computed */ ()");
         }
         PropName::BigInt(_) => emitter.push_str("unknown"),
-    }
-}
-
-/// Escape a Rust keyword for use as an identifier.
-fn escape_rust_keyword(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
-        | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if"
-        | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut"
-        | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct"
-        | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where"
-        | "while" => format!("r#{name}"),
-        _ => to_snake_case(name),
     }
 }

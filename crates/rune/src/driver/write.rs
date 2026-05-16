@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use crate::{Result, codegen::GeneratedModule};
+use crate::codegen::emitter::utils::escape_rust_keyword_for_module;
 use super::BuildDriver;
 
 impl BuildDriver {
@@ -216,19 +217,6 @@ impl App for AppImpl {
         Ok(())
     }
 
-    /// Escape a Rust keyword for use as a module name.
-    fn escape_rust_keyword(name: &str) -> String {
-        match name {
-            "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
-            | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if"
-            | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut"
-            | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct"
-            | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where"
-            | "while" => format!("r#{name}"),
-            _ => name.to_string(),
-        }
-    }
-
     /// Collect module names from generated directory.
     /// Returns a map of directory -> list of module names in that directory.
     fn collect_modules(&self, dir: &Path) -> Result<std::collections::HashMap<String, Vec<String>>> {
@@ -274,7 +262,7 @@ impl App for AppImpl {
                     .unwrap_or_default();
                 
                 // Escape Rust keywords in module names
-                let module_decl = Self::escape_rust_keyword(&stem);
+                let module_decl = escape_rust_keyword_for_module(&stem);
                 
                 // Add to parent directory's module list
                 modules

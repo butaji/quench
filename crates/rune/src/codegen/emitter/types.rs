@@ -2,6 +2,7 @@
 //!
 //! Type information for code generation.
 
+use crate::codegen::emitter::utils::to_snake_case;
 use std::fmt;
 
 /// Type information for code generation.
@@ -62,24 +63,10 @@ pub struct EnumDefinition {
     pub variants: Vec<EnumVariant>,
 }
 
-/// Convert name to snake_case.
-#[must_use]
-pub fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_lowercase());
-    }
-    result
-}
-
 /// Check if a name looks like an enum type (PascalCase).
 /// These should be preserved as-is for enum variants.
 #[must_use]
 pub fn is_enum_type(name: &str) -> bool {
-    // PascalCase: first char is uppercase, rest is alphanumeric
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if c.is_uppercase() => chars.all(|c| c.is_alphanumeric()),
@@ -88,33 +75,11 @@ pub fn is_enum_type(name: &str) -> bool {
 }
 
 /// Convert a type/variant name to appropriate Rust form.
-/// - Enum types (PascalCase) are preserved: Filter -> Filter
-/// - Enum variants (PascalCase) become PascalCase: Active -> Active
-/// - Regular names become snake_case: filter_tasks -> filter_tasks
 #[must_use]
 pub fn to_rust_name(name: &str) -> String {
-    // Preserve case for PascalCase names (likely enum types/variants)
     if is_enum_type(name) {
         name.to_string()
     } else {
         to_snake_case(name)
     }
-}
-
-/// Convert name to PascalCase.
-#[must_use]
-pub fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' || c == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }
