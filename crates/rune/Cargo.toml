@@ -9,27 +9,12 @@ license.workspace = true
 name = "rune"
 path = "src/lib.rs"
 
-[[bin]]
-name = "rune"
-path = "src/main.rs"
-
 [dependencies]
-# SWC for parsing
-swc_common = "0.33"
-swc_ecma_parser = "0.146"
-swc_ecma_ast = "0.111"
-swc_ecma_codegen = "0.151"
-swc_ecma_visit = "0.98"
-swc_span = "0.18"
-swc_atoms = "0.6"
-
 # Error handling
-miette = "7.2"
 thiserror = "1"
 anyhow = "1"
 
 # Utilities
-tokio = { version = "1", features = ["full"] }
 notify = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -40,7 +25,3 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[features]
-default = []
-unsafe-overflow-checks = ["swc_common/unsafe_channel"]

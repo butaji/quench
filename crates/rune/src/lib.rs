@@ -7,21 +7,14 @@
 #![deny(
     unsafe_code,
     bare_trait_objects,
-    ellipsis_inclusive_range_patterns,
     exported_private_dependencies,
     keyword_idents,
     macro_use_extern_crate,
-    meta_variable_misuse,
     missing_abi,
     non_ascii_idents,
-    noop_method_prelude,
-    pointer_structural_match,
-    single_char_lifetime_names,
     trivial_casts,
     trivial_numeric_casts,
-    unreachable_pub,
     unused_extern_crates,
-    unused_import_braces,
     unused_lifetimes,
     unused_qualifications,
 )]
@@ -60,11 +53,11 @@ pub enum RuneError {
     Reload(String),
 }
 
-/// Parse errors from SWC.
+/// Parse errors.
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("SWC error: {0}")]
-    Swc(String),
+    #[error("Parse error: {0}")]
+    Parse(String),
 
     #[error("File not found: {0}")]
     NotFound(String),

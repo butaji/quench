@@ -1,9 +1,6 @@
 //! # Parse Diagnostics
 //!
-//! Collects and formats parse errors from SWC.
-
-use swc_common::{errors::Handler, ColorConfig, SourceMap};
-use swc_ecma_parser::error::Error;
+//! Collects and formats parse errors.
 
 use crate::ParseError;
 

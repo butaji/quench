@@ -26,7 +26,7 @@ impl DylibWatcher {
         let watch_dir = hot_dir.to_path_buf();
         let (tx, rx) = mpsc::channel();
 
-        let watcher = notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
+        let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                     let _ = tx.send(ReloadEvent::Changed);

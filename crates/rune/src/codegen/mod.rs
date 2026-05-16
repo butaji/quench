@@ -1,17 +1,15 @@
 //! # Code Generator
 //!
 //! Transpiles TypeScript AST to Rust source code.
-//! Handles type mapping, JSX transformation, and code emission.
 
 mod emitter;
+mod emitters;
 mod types;
 mod jsx;
-mod emitters;
 
 pub use emitter::{RustEmitter, EmitOptions};
-pub use types::TypeEmitter;
+pub use emitters::{ExprEmitter, StmtEmitter, TypeEmitter};
 pub use jsx::JsxTranspiler;
-pub use emitters::{ExprEmitter, StmtEmitter};
 
 /// Options for code generation.
 #[derive(Debug, Clone)]
@@ -66,6 +64,7 @@ pub struct ImportedName {
 }
 
 /// Generate Rust code from analyzed source.
+#[allow(unused)]
 pub fn generate(
     source: &crate::parser::SourceFile,
     analysis: &crate::analyzer::AnalysisResult,

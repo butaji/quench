@@ -2,7 +2,7 @@
 //!
 //! Manages the rune-cache directory for generated code.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Manages the cache directory.
 pub struct CacheManager {
@@ -12,7 +12,7 @@ pub struct CacheManager {
 
 impl CacheManager {
     /// Create a new cache manager.
-    pub fn new(workspace: &Path) -> std::io::Result<Self> {
+    pub fn new(workspace: &std::path::Path) -> std::io::Result<Self> {
         let cache = Self {
             workspace: workspace.to_path_buf(),
         };
@@ -68,7 +68,7 @@ impl CacheManager {
     }
 
     /// Check if cache is valid for given sources.
-    pub fn is_valid(&self, sources: &[std::path::PathBuf]) -> bool {
+    pub fn is_valid(&self, sources: &[PathBuf]) -> bool {
         if !self.generated_cargo_toml().exists() {
             return false;
         }

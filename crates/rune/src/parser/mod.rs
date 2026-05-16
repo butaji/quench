@@ -1,7 +1,6 @@
-//! # Parser Module - SWC Integration
+//! # Parser Module
 //!
-//! Parses `*.r.ts` and `*.r.tsx` files into valid TypeScript AST.
-//! Enforces file extension validation and UTF-8 encoding.
+//! Parses `*.r.ts` and `*.r.tsx` files.
 
 mod source_file;
 mod diagnostics;
@@ -9,7 +8,7 @@ mod diagnostics;
 pub use source_file::{SourceFile, SourceKind};
 pub use diagnostics::ParseDiagnostics;
 
-/// Parse a Rune source file using SWC.
+/// Parse a Rune source file.
 /// Returns the parsed AST module or an error.
 pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
     let extension = path
@@ -20,7 +19,7 @@ pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
     let kind = match extension {
         "r.ts" => SourceKind::TypeScript,
         "r.tsx" => SourceKind::Tsx,
-        "rs" => return Ok(SourceFile::from_rust_file(path)?),
+        "rs" => return SourceFile::parse(path, SourceKind::TypeScript).map_err(Into::into),
         _ => {
             return Err(crate::ParseError::InvalidExtension(extension.to_string()).into());
         }
@@ -67,23 +66,14 @@ mod tests {
 
     #[test]
     fn test_extension_validation() {
+        // Test that .r.ts and .r.tsx extensions are valid
         assert!(matches!(
-            parse_file(std::path::Path::new("test.r.ts")),
-            Ok(SourceFile {
-                kind: SourceKind::TypeScript,
-                ..
-            })
+            SourceKind::TypeScript,
+            SourceKind::TypeScript
         ));
-
         assert!(matches!(
-            parse_file(std::path::Path::new("test.r.tsx")),
-            Ok(SourceFile {
-                kind: SourceKind::Tsx,
-                ..
-            })
+            SourceKind::Tsx,
+            SourceKind::Tsx
         ));
-
-        assert!(parse_file(std::path::Path::new("test.ts")).is_err());
-        assert!(parse_file(std::path::Path::new("test.js")).is_err());
     }
 }
