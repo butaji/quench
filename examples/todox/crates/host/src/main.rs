@@ -9,7 +9,7 @@ use crossterm::{event, terminal};
 use libloading::{Library, Symbol};
 use protocol::{App, AppState};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -61,8 +61,7 @@ fn main() -> Result<()> {
     loop {
         // Render
         terminal.draw(|f| {
-            let widget = app.render(&state);
-            f.render_widget(widget, f.size());
+            app.render(f, &state);
         })?;
 
         // Handle events

@@ -1,6 +1,6 @@
 //! Generated from handlers/keyboard.r.ts
 
-use crate::protocol::{AppState, Task};
+use protocol::{AppState, Task};
 
 /// Toggle the currently selected task.
 pub fn toggle_selected_task(state: &mut AppState) {

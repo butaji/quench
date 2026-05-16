@@ -1,6 +1,6 @@
 //! Generated from state.r.ts
 
-use crate::protocol::{AppState, Filter, Task};
+use protocol::{AppState, Filter, Task};
 
 /// Create a new task.
 pub fn create_task(title: &str) -> Task {

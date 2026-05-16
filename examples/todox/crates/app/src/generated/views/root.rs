@@ -1,6 +1,6 @@
 //! Generated from views/root.r.tsx
 
-use crate::protocol::{AppState, Task};
+use protocol::{AppState, Task};
 use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     style::Style,
@@ -44,7 +44,7 @@ mod tests {
                 Task { id: 2, title: "Test 2".to_string(), done: true },
             ],
             selected: 0,
-            filter: crate::protocol::Filter::All,
+            filter: protocol::Filter::All,
             should_exit: false,
         };
 

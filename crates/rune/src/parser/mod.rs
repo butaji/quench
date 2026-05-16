@@ -8,23 +8,38 @@ mod diagnostics;
 pub use source_file::{SourceFile, SourceKind};
 pub use diagnostics::ParseDiagnostics;
 
+/// Check if a file path is a Rune source file (ending in .r.ts or .r.tsx).
+fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
+    let file_name = path.file_name()?.to_str()?;
+    if file_name.ends_with(".r.ts") {
+        Some((true, SourceKind::TypeScript))
+    } else if file_name.ends_with(".r.tsx") {
+        Some((true, SourceKind::Tsx))
+    } else {
+        None
+    }
+}
+
 /// Parse a Rune source file.
 ///
 /// # Errors
 /// Returns an error if the file cannot be parsed.
 pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
-    let extension = path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .ok_or_else(|| crate::ParseError::InvalidExtension(String::new()))?;
-
-    let kind = match extension {
-        "r.ts" => SourceKind::TypeScript,
-        "r.tsx" => SourceKind::Tsx,
-        "rs" => return SourceFile::parse(path, SourceKind::TypeScript),
-        _ => {
-            return Err(crate::ParseError::InvalidExtension(extension.to_string()).into());
+    // Check if this is a .rs file (Rust source)
+    if let Some(ext) = path.extension().and_then(std::ffi::OsStr::to_str) {
+        if ext == "rs" {
+            return SourceFile::parse(path, SourceKind::TypeScript);
         }
+    }
+
+    // Check if it's a Rune file (.r.ts or .r.tsx)
+    let Some((_, kind)) = is_rune_file(path) else {
+        return Err(crate::ParseError::InvalidExtension(
+            path.extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        ).into());
     };
 
     SourceFile::parse(path, kind).map_err(Into::into)
@@ -37,7 +52,6 @@ pub fn scan_directory(dir: &std::path::Path) -> crate::Result<Vec<std::path::Pat
     Ok(sources)
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) -> crate::Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -53,10 +67,9 @@ fn scan_directory_impl(dir: &std::path::Path, sources: &mut Vec<std::path::PathB
             continue;
         }
 
-        if let Some(ext) = path.extension().and_then(std::ffi::OsStr::to_str) {
-            if ext == "r.ts" || ext == "r.tsx" {
-                sources.push(path.to_path_buf());
-            }
+        // Check for .r.ts and .r.tsx files by filename, not just extension
+        if is_rune_file(path).is_some() {
+            sources.push(path.to_path_buf());
         }
     }
 
