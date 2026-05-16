@@ -2,6 +2,8 @@
 //!
 //! Standalone binary entry point.
 
+#![cfg_attr(not(any(feature = "binary-rune", feature = "binary-cargo")), forbid(unsafe_code))]
+
 use std::path::PathBuf;
 use rune::driver::BuildOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -31,6 +33,7 @@ fn main() -> rune::Result<()> {
 }
 
 /// Create build options from CLI arguments.
+#[must_use]
 fn create_options(cli: &rune_cli::cli::Cli) -> BuildOptions {
     let mut options = BuildOptions::new(PathBuf::from("."));
     options.verbose = cli.verbose;

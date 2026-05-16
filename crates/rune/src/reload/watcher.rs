@@ -7,6 +7,8 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
+use super::{ReloadError, ReloadResult};
+
 /// Events emitted by the dylib watcher.
 #[derive(Debug, Clone)]
 pub enum ReloadEvent {
@@ -64,31 +66,7 @@ impl DylibWatcher {
     #[must_use]
     pub fn poll(&self) -> Option<ReloadEvent> {
         match self.receiver.try_recv() {
-            Ok(Ok(event)) => {
-                let paths: Vec<PathBuf> = event
-                    .paths
-                    .into_iter()
-                    .filter(|p| {
-                        p.extension()
-                            .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
-                    })
-                    .collect();
-
-                if paths.is_empty() {
-                    return None;
-                }
-
-                // Check if protocol files changed
-                let protocol_changed = paths
-                    .iter()
-                    .any(|p| p.to_string_lossy().contains("protocol"));
-
-                if protocol_changed {
-                    Some(ReloadEvent::ProtocolChanged)
-                } else {
-                    Some(ReloadEvent::FilesChanged(paths))
-                }
-            }
+            Ok(Ok(event)) => self.process_event(event),
             Ok(Err(e)) => Some(ReloadEvent::Error(e.to_string())),
             Err(_) => None,
         }
@@ -98,30 +76,7 @@ impl DylibWatcher {
     #[must_use]
     pub fn wait_for_event(&self, timeout: Duration) -> Option<ReloadEvent> {
         match self.receiver.recv_timeout(timeout) {
-            Ok(Ok(event)) => {
-                let paths: Vec<PathBuf> = event
-                    .paths
-                    .into_iter()
-                    .filter(|p| {
-                        p.extension()
-                            .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
-                    })
-                    .collect();
-
-                if paths.is_empty() {
-                    return None;
-                }
-
-                let protocol_changed = paths
-                    .iter()
-                    .any(|p| p.to_string_lossy().contains("protocol"));
-
-                if protocol_changed {
-                    Some(ReloadEvent::ProtocolChanged)
-                } else {
-                    Some(ReloadEvent::FilesChanged(paths))
-                }
-            }
+            Ok(Ok(event)) => self.process_event(event),
             Ok(Err(e)) => Some(ReloadEvent::Error(e.to_string())),
             Err(_) => None,
         }
@@ -132,7 +87,30 @@ impl DylibWatcher {
     pub fn watched_dir(&self) -> &Path {
         &self.watched_dir
     }
-}
 
-use super::ReloadResult;
-use super::ReloadError;
+    /// Process a file system event.
+    fn process_event(&self, event: Event) -> Option<ReloadEvent> {
+        let paths: Vec<PathBuf> = event
+            .paths
+            .into_iter()
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
+            })
+            .collect();
+
+        if paths.is_empty() {
+            return None;
+        }
+
+        let protocol_changed = paths
+            .iter()
+            .any(|p| p.to_string_lossy().contains("protocol"));
+
+        if protocol_changed {
+            Some(ReloadEvent::ProtocolChanged)
+        } else {
+            Some(ReloadEvent::FilesChanged(paths))
+        }
+    }
+}
