@@ -16,10 +16,11 @@ license = "MIT"
 thiserror = "1"
 anyhow = "1"
 
-# SWC for TypeScript parsing - using latest available versions
-swc_common = "21"
-swc_ecma_parser = "39"
-swc_ecma_ast = "23"
+# SWC for TypeScript parsing - must use exact versions known to work
+# swc_ecma_parser 38.0.2 + swc_common 21.0.2 + swc_ecma_ast 23.0.1
+swc_common = "=21.0.2"
+swc_ecma_parser = "=38.0.2"
+swc_ecma_ast = "=23.0.1"
 
 # Async and utilities
 tokio = { version = "1", features = ["full"] }

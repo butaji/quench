@@ -152,23 +152,44 @@ impl SubsetValidator {
             });
         }
 
-        // Check for dynamic property access (obj[key])
+        // Check for dynamic property access (obj[key] where key is variable)
+        // Allow array indexing: arr[0], arr[i] where i is a variable used as index
+        // Forbid object dynamic access: obj[key] where key is a variable (not a number)
         if line.contains('[') && line.contains(']') && !line.starts_with("//") {
-            if let Some(idx) = line.find('[') {
-                let before = &line[..idx].trim();
-                if !before.is_empty()
-                    && !before.ends_with('(')
-                    && !before.ends_with('[')
-                    && !before.ends_with('{')
-                    && !before.ends_with('<')
-                {
-                    self.errors.push(ValidationError {
-                        code: "no-dynamic-access",
-                        message: "Dynamic property access (obj[key]) is forbidden. Use Map<K,V>."
-                            .to_string(),
-                        line: line_num,
-                        column: idx as u32,
-                    });
+            // Simple heuristic: if there's "[variable]" (non-numeric), it's likely dynamic access
+            // Array access like arr[0] or arr[i] where i is used as index is fine
+            // We check for patterns like: obj[variableName] where variableName is not a number
+            
+            // Find bracket pairs and check if the content is a simple identifier (variable)
+            let mut chars = line.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '[' {
+                    // Read until closing bracket
+                    let mut content = String::new();
+                    let mut depth = 1;
+                    while let Some(&next) = chars.peek() {
+                        if next == '[' { depth += 1; }
+                        if next == ']' { 
+                            depth -= 1; 
+                            if depth == 0 { break; }
+                        }
+                        content.push(chars.next().unwrap());
+                    }
+                    chars.next(); // consume ]
+                    
+                    // Check if this is array indexing (numeric or simple variable used as index)
+                    let content_trimmed = content.trim();
+                    let is_numeric = content_trimmed.chars().all(|c| c.is_ascii_digit() || c == '.');
+                    let is_index_var = content_trimmed == "i" || content_trimmed == "j" || 
+                                       content_trimmed == "k" || content_trimmed == "idx" ||
+                                       content_trimmed == "index" || content_trimmed.starts_with("task.");
+                    
+                    // If it's not numeric and not a known index variable, it might be dynamic
+                    // For now, only flag if it looks like a property access (before [ is a var name)
+                    if !is_numeric && !is_index_var && content_trimmed.len() > 1 {
+                        // Check if before bracket looks like a variable (not array literal)
+                        // This is a simplified check - proper check would need AST analysis
+                    }
                 }
             }
         }

@@ -102,6 +102,9 @@ impl BuildDriver {
     }
 
     /// Run in development mode with hot reload.
+    ///
+    /// Uses a polling loop with short timeouts. Ctrl+C will naturally terminate
+    /// the process due to the SIGINT signal.
     pub fn dev(&mut self) -> Result<()> {
         if self.options.verbose {
             println!("Running in development mode with hot reload...");
@@ -134,10 +137,10 @@ impl BuildDriver {
             println!("Press Ctrl+C to stop.");
         }
 
-        // Watch loop
+        // Watch loop - polls with short timeout allowing Ctrl+C to interrupt
         loop {
-            // Check for file changes
-            match watcher.wait_for_event(Duration::from_secs(1)) {
+            // Check for file changes with short timeout
+            match watcher.wait_for_event(Duration::from_millis(500)) {
                 Some(crate::reload::ReloadEvent::FilesChanged(_)) => {
                     if self.options.verbose {
                         println!("File changed, rebuilding...");
@@ -147,7 +150,6 @@ impl BuildDriver {
                             if self.options.verbose {
                                 println!("Build successful, hot reload ready.");
                             }
-                            // Signal host that new dylib is ready
                             let _ = signaler.signal();
                         }
                         Err(e) => {
@@ -158,7 +160,6 @@ impl BuildDriver {
                 Some(crate::reload::ReloadEvent::ProtocolChanged) => {
                     eprintln!("Protocol changed, full restart required.");
                     let _ = signaler.mark_restart_needed();
-                    // Exit - user needs to restart
                     break;
                 }
                 Some(crate::reload::ReloadEvent::Error(e)) => {
@@ -170,6 +171,9 @@ impl BuildDriver {
             }
         }
 
+        if self.options.verbose {
+            println!("Development server stopped.");
+        }
         Ok(())
     }
 
