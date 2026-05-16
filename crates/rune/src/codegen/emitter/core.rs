@@ -116,6 +116,7 @@ impl RustEmitter {
         // Protocol types - these are always needed for the app
         self.push_line("use protocol::{AppState, Filter, Task};");
         self.push_line("use ratatui::widgets::{Widget, Paragraph, ListItem};");
+        self.push_line("use ratatui::text::Span;");
         self.push_line("use ratatui::style::{Style, Modifier};");
         self.push_line("use crossterm::event::KeyCode;");
         self.push_line("use serde_json;");

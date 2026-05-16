@@ -106,21 +106,9 @@ impl BuildDriver {
 
         // Calculate relative path from cache to crates
         // Cache is at workspace/target/rune-cache, crates is at workspace/crates
-        // So we need to go up 2 levels (target, then to workspace) then down to crates
-        let cache_to_crates = if self.cache.root().strip_prefix(self.options.workspace.as_path()).is_ok() {
-            // Count directory depth from workspace to cache root
-            let rel_path = self.cache.root().strip_prefix(self.options.workspace.as_path())
-                .unwrap_or_else(|_| std::path::Path::new(""));
-            let depth = rel_path.components().count();
-            // "../" goes up one level, so repeat 'depth' times to go up 'depth' levels
-            "../".repeat(depth) + "crates"
-        } else {
-            // Fallback: absolute path
-            self.options.workspace
-                .join("crates")
-                .to_string_lossy()
-                .to_string()
-        };
+        // So we need to go up 2 levels then down to crates: ../../crates
+        let crates_path = self.options.workspace.join("crates");
+        let cache_to_crates = relative_path(&manifest_path, &crates_path);
 
         // Create a completely standalone manifest for the cache
         let manifest = format!(r#"[package]
@@ -191,11 +179,8 @@ struct AppImpl;
 
 impl App for AppImpl {
     fn update(&mut self, state: &mut AppState) {
-        // Clone state for the generated update function if it takes ownership
-        let mut state_copy = state.clone();
-        generated::main::update(state_copy);
-        // Copy fields back (simplified - assumes flat state)
-        *state = state_copy;
+        // Call generated update function with mutable borrow
+        generated::main::update(state);
     }
 
     fn render(&self, frame: &mut ratatui::Frame, state: &AppState) {
@@ -326,6 +311,36 @@ impl App for AppImpl {
         }
 
         Ok(())
+    }
+}
+
+/// Calculate relative path from a file to a target directory.
+fn relative_path(from_file: &Path, to_target: &Path) -> String {
+    if let Some(from_dir) = from_file.parent() {
+        let mut ups = 0;
+        let mut current = from_dir;
+        while !to_target.starts_with(current) {
+            if let Some(parent) = current.parent() {
+                ups += 1;
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        let mut parts: Vec<String> = Vec::new();
+        for _ in 0..ups {
+            parts.push(String::from(".."));
+        }
+        if let Ok(rest) = to_target.strip_prefix(current) {
+            for component in rest.components() {
+                if let std::path::Component::Normal(s) = component {
+                    parts.push(s.to_string_lossy().into_owned());
+                }
+            }
+        }
+        parts.join("/")
+    } else {
+        to_target.to_string_lossy().to_string()
     }
 }
 

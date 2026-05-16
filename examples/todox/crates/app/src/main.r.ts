@@ -1,17 +1,24 @@
 // main.r.ts - Main entry point for the app logic
 
-import { AppState } from "./state.r.ts";
+import { Task, AppState } from "./state.r.ts";
 
 /**
- * Update application state.
+ * Application update function.
  */
-export function update(state: AppState): void {
-    // Just to demonstrate: accessing state.tasks
+export function update(_state: AppState): void {
+    // Main update logic handled by host event loop
 }
 
 /**
- * Get task count.
+ * Get task count for display.
  */
 export function getTaskCount(tasks: Task[]): number {
     return tasks.length;
+}
+
+/**
+ * Check if any task is done using array.some().
+ */
+export function hasCompletedTasks(tasks: Task[]): boolean {
+    return tasks.some((task) => task.done);
 }

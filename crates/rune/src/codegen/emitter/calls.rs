@@ -132,7 +132,15 @@ pub fn emit_call(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) 
             if matches!(method, "filter" | "map" | "reduce" | "forEach" | "some" | "every" | "find" | "findIndex" | "concat" | "join" | "reverse" | "sort" | "slice") {
                 emit_expr(emitter, &member.obj);
                 emitter.push_str(".iter().");
-                emitter.push_str(method);
+                // Map JavaScript method names to Rust equivalents
+                let rust_method = match method {
+                    "forEach" => "for_each",
+                    "findIndex" => "position",
+                    "some" => "any",
+                    "every" => "all",
+                    _ => method,
+                };
+                emitter.push_str(rust_method);
                 emitter.push_str("(");
                 for (i, arg) in call_expr.args.iter().enumerate() {
                     if i > 0 {

@@ -19,6 +19,8 @@ pub enum RustType {
     Unit,
     Unknown,
     Custom(String),
+    /// Mutable borrow of a type
+    MutBorrow(Box<RustType>),
 }
 
 impl fmt::Display for RustType {
@@ -35,6 +37,7 @@ impl fmt::Display for RustType {
             RustType::HashMap(k, v) => write!(f, "std::collections::HashMap<{k}, {v}>"),
             RustType::Unit | RustType::Unknown => write!(f, "()"),
             RustType::Custom(name) => write!(f, "{name}"),
+            RustType::MutBorrow(t) => write!(f, "&mut {t}"),
         }
     }
 }
