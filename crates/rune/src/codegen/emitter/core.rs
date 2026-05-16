@@ -60,8 +60,11 @@ impl RustEmitter {
             SwcAst::parse_ts(&source_text, &file_stem)
         }.map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{}", e))))?;
 
-        // Write header
-        self.write_header();
+        // Write header with protocol and ratatui imports
+        self.push_line("use protocol::{AppState, Filter, Task};");
+        self.push_line("use ratatui::widgets::Widget;");
+        self.push_line("use crossterm::event::KeyCode;");
+        self.push_line("");
 
         // Walk the AST and emit Rust code
         let mut walker = AstWalker::new();
