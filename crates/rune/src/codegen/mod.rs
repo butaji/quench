@@ -2,11 +2,12 @@
 //!
 //! Transpiles TypeScript AST to Rust source code.
 
-mod emitter;
+pub mod emitter;
 mod types;
 mod jsx;
 
 pub use emitter::{RustEmitter, EmitOptions};
+pub use emitter::utils;
 pub use jsx::JsxTranspiler;
 
 use crate::{parser::SourceFile, analyzer::AnalysisResult};

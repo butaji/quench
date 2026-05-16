@@ -3,6 +3,7 @@
 //! Emits Rust type declarations from TypeScript types.
 
 use crate::analyzer::TypeInfo;
+use super::emitter::utils::{to_snake_case as util_snake, to_pascal_case as util_pascal};
 
 /// Emits Rust type code.
 #[allow(dead_code)]
@@ -89,35 +90,16 @@ impl TypeEmitter {
         )
     }
 
-    /// Convert to snake_case.
+    /// Convert to snake_case using shared utility.
     #[allow(dead_code)]
     fn to_snake_case(&self, s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap_or(c));
-        }
-        result
+        util_snake(s)
     }
 
-    /// Convert to PascalCase.
+    /// Convert to PascalCase using shared utility.
     #[allow(dead_code)]
     fn to_pascal_case(&self, s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in s.chars() {
-            if c == '_' || c == '-' || c == ' ' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_uppercase().next().unwrap_or(c));
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-        result
+        util_pascal(s)
     }
 }
 

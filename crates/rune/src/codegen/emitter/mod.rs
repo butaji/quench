@@ -16,7 +16,7 @@ mod statements;
 mod switch_match;
 mod type_resolver;
 mod types;
-mod utils;
+pub mod utils;
 mod variables;
 
 pub use statements::{emit_body_stmt, emit_single_stmt};
@@ -33,7 +33,8 @@ pub use infer::infer_type;
 pub use literals::emit_lit;
 pub use members::{emit_member, emit_object};
 pub use type_resolver::TypeResolver;
-pub use types::{RustType, to_snake_case, to_rust_name, is_enum_type};
+pub use types::{RustType, to_rust_name, is_enum_type};
+pub use utils::{to_snake_case, to_pascal_case, escape_rust_keyword, infer_struct_from_object};
 #[allow(unused_imports)]
 pub use ast_walker::AstWalker;
 #[allow(unused_imports)]

@@ -4,6 +4,7 @@
 
 use super::{CodeEmitter, emit_call, emit_lit, emit_member, emit_object, infer_type};
 use super::literals::emit_template_literal;
+use super::utils::infer_struct_from_object;
 use swc_ecma_ast::Expr;
 
 /// Emit an expression.
@@ -39,7 +40,7 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         Expr::Object(obj) => {
             // Check if we have struct context from expected return type or variable type
             let existing_struct = emitter.object_struct_name().cloned();
-            let struct_name = existing_struct.or_else(|| infer_object_struct_from_object_literal(obj));
+            let struct_name = existing_struct.or_else(|| infer_struct_from_object(obj));
             if let Some(name) = struct_name {
                 let prev_struct = emitter.object_struct_name().cloned();
                 emitter.set_object_struct(Some(name));
@@ -329,31 +330,4 @@ fn emit_member_impl(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr
             emitter.push_str(".prop");
         }
     }
-}
-
-/// Infer the expected struct type from an object literal expression.
-/// Returns the struct name if we can infer it from the properties.
-fn infer_object_struct_from_object_literal(obj: &swc_ecma_ast::ObjectLit) -> Option<String> {
-    let mut props: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for prop in &obj.props {
-        if let swc_ecma_ast::PropOrSpread::Prop(p) = prop {
-            if let swc_ecma_ast::Prop::KeyValue(kv) = &**p {
-                if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
-                    props.insert(ident.sym.as_ref());
-                }
-            }
-        }
-    }
-    
-    // Task pattern: id, title, done
-    if props.contains("id") && props.contains("title") && props.contains("done") {
-        return Some("Task".to_string());
-    }
-    
-    // Stats pattern: total, done, active
-    if props.contains("total") && props.contains("done") && props.contains("active") {
-        return Some("__AnonymousStruct1".to_string());
-    }
-    
-    None
 }

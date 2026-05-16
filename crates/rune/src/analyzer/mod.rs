@@ -15,6 +15,7 @@ pub use validator::SubsetValidator;
 
 use std::collections::HashMap;
 use crate::parser::SourceFile;
+use crate::codegen::emitter::utils::{to_snake_case, to_pascal_case};
 
 /// Full analysis result for a source file.
 #[derive(Debug, Clone, Default)]
@@ -334,33 +335,4 @@ pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
         exports,
         imports: Vec::new(),
     })
-}
-
-/// Convert name to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_lowercase());
-    }
-    result
-}
-
-/// Convert name to PascalCase.
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' || c == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }

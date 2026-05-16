@@ -2,14 +2,15 @@
 //!
 //! Walks SWC AST and emits Rust code.
 
-use super::{CodeEmitter, TypeResolver, RustType, to_snake_case};
-use super::types::to_pascal_case;
+use super::{CodeEmitter, TypeResolver, RustType};
+use crate::codegen::emitter::utils::{to_snake_case, to_pascal_case};
 use swc_ecma_ast::{
     Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem,
     Stmt, TsType,
 };
 use std::collections::{HashMap, HashSet};
-use super::types::{EnumDefinition, EnumVariant};
+use super::types::EnumDefinition;
+use crate::codegen::emitter::types::EnumVariant;
 
 /// Raw field for deferred type resolution.
 type RawField = (String, TsType);

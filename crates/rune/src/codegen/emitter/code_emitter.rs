@@ -2,7 +2,8 @@
 //!
 //! Emits Rust code from AST nodes.
 
-use super::types::{StructFields, EnumDefinition, RustType, to_snake_case, to_pascal_case};
+use super::types::{StructFields, EnumDefinition, RustType};
+use crate::codegen::emitter::utils::{to_snake_case, to_pascal_case};
 use swc_ecma_ast::Stmt;
 
 /// Emits Rust code for types and functions.
