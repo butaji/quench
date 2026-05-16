@@ -3,7 +3,7 @@
 //! Emits Rust statements from TypeScript AST.
 
 use super::CodeEmitter;
-use swc_ecma_ast::{Stmt, Decl};
+use swc_ecma_ast::{Stmt, Decl, SwitchCase};
 
 use super::infer::infer_type;
 use super::expressions::emit_expr;
@@ -21,46 +21,11 @@ pub fn emit_body_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
             emit_expr(emitter, &expr_stmt.expr);
             emitter.push_str(";\n");
         }
-        Stmt::Return(ret) => {
-            emitter.push_indent();
-            if let Some(arg) = &ret.arg {
-                // Check if expected return type is a custom struct
-                if let Some(expected) = emitter.expected_return() {
-                    if expected.starts_with(|c: char| c.is_uppercase()) 
-                        && !expected.starts_with("Vec")
-                        && !expected.starts_with("Option")
-                        && !expected.starts_with("Result")
-                        && expected != "String"
-                        && expected != "bool"
-                        && expected != "f64"
-                        && expected != "i32"
-                        && expected != "()"
-                    {
-                        // Expected type is a struct - set context
-                        let prev_struct = emitter.object_struct_name().cloned();
-                        emitter.set_object_struct(Some(expected.clone()));
-                        emitter.push_str("return ");
-                        emit_expr(emitter, arg);
-                        emitter.push_str(";\n");
-                        if let Some(prev) = prev_struct {
-                            emitter.set_object_struct(Some(prev));
-                        } else {
-                            emitter.set_object_struct(None);
-                        }
-                        return;
-                    }
-                }
-                emitter.push_str("return ");
-                emit_expr(emitter, arg);
-                emitter.push_str(";\n");
-            } else {
-                emitter.push_str("return ();\n");
-            }
-        }
+        Stmt::Return(ret) => emit_return(emitter, ret),
         Stmt::If(if_stmt) => emit_if(emitter, if_stmt),
         Stmt::While(while_stmt) => emit_while(emitter, while_stmt),
         Stmt::For(for_stmt) => emit_for(emitter, for_stmt),
-        Stmt::Switch(_) => emitter.push_str("// switch\n"),
+        Stmt::Switch(switch_stmt) => emit_switch(emitter, switch_stmt),
         Stmt::Break(_) => {
             emitter.push_indent();
             emitter.push_str("break;\n");
@@ -76,6 +41,42 @@ pub fn emit_body_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
     }
 }
 
+/// Emit a return statement with proper struct context handling.
+fn emit_return(emitter: &mut CodeEmitter, ret: &swc_ecma_ast::ReturnStmt) {
+    emitter.push_indent();
+    if let Some(arg) = &ret.arg {
+        if let Some(expected) = emitter.expected_return() {
+            if is_custom_struct_type(expected) {
+                let prev_struct = emitter.object_struct_name().cloned();
+                emitter.set_object_struct(Some(expected.clone()));
+                emitter.push_str("return ");
+                emit_expr(emitter, arg);
+                emitter.push_str(";\n");
+                restore_struct_context(emitter, prev_struct);
+                return;
+            }
+        }
+        emitter.push_str("return ");
+        emit_expr(emitter, arg);
+        emitter.push_str(";\n");
+    } else {
+        emitter.push_str("return ();\n");
+    }
+}
+
+/// Check if a type is a custom struct (not a built-in type).
+fn is_custom_struct_type(ty: &str) -> bool {
+    (ty.starts_with(|c: char| c.is_uppercase()) || ty.starts_with("__"))
+        && !ty.starts_with("Vec")
+        && !ty.starts_with("Option")
+        && !ty.starts_with("Result")
+        && ty != "String"
+        && ty != "bool"
+        && ty != "f64"
+        && ty != "i32"
+        && ty != "()"
+}
+
 /// Emit a single statement.
 pub fn emit_single_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
     emitter.push_indent();
@@ -88,19 +89,21 @@ pub fn emit_single_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
         Stmt::If(if_stmt) => emit_if(emitter, if_stmt),
         Stmt::While(while_stmt) => emit_while(emitter, while_stmt),
         Stmt::For(for_stmt) => emit_for(emitter, for_stmt),
-        Stmt::Switch(_) => emitter.push_str("// switch\n"),
-        Stmt::Block(block) => {
-            emitter.push_str("{\n");
-            emitter.inc_indent();
-            for s in &block.stmts {
-                emit_single_stmt(emitter, s);
-            }
-            emitter.dec_indent();
-            emitter.push_indent();
-            emitter.push_str("}\n");
-        }
+        Stmt::Switch(switch_stmt) => emit_switch(emitter, switch_stmt),
+        Stmt::Block(block) => emit_block(emitter, block),
         Stmt::Return(ret) => {
             if let Some(arg) = &ret.arg {
+                if let Some(expected) = emitter.expected_return() {
+                    if is_custom_struct_type(expected) {
+                        let prev_struct = emitter.object_struct_name().cloned();
+                        emitter.set_object_struct(Some(expected.clone()));
+                        emitter.push_str("return ");
+                        emit_expr(emitter, arg);
+                        emitter.push_str(";\n");
+                        restore_struct_context(emitter, prev_struct);
+                        return;
+                    }
+                }
                 emitter.push_str("return ");
                 emit_expr(emitter, arg);
                 emitter.push_str(";\n");
@@ -111,6 +114,131 @@ pub fn emit_single_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {
         Stmt::Break(_) => emitter.push_str("break;\n"),
         Stmt::Continue(_) => emitter.push_str("continue;\n"),
         _ => emitter.push_str("// unsupported\n"),
+    }
+}
+
+/// Emit a block statement.
+fn emit_block(emitter: &mut CodeEmitter, block: &swc_ecma_ast::BlockStmt) {
+    emitter.push_str("{\n");
+    emitter.inc_indent();
+    for s in &block.stmts {
+        emit_single_stmt(emitter, s);
+    }
+    emitter.dec_indent();
+    emitter.push_indent();
+    emitter.push_str("}\n");
+}
+
+/// Restore struct context after a return.
+fn restore_struct_context(emitter: &mut CodeEmitter, prev_struct: Option<String>) {
+    if let Some(prev) = prev_struct {
+        emitter.set_object_struct(Some(prev));
+    } else {
+        emitter.set_object_struct(None);
+    }
+}
+
+/// Emit a switch statement as Rust match.
+fn emit_switch(emitter: &mut CodeEmitter, switch_stmt: &swc_ecma_ast::SwitchStmt) {
+    emitter.push_str("match ");
+    emit_expr(emitter, &switch_stmt.discriminant);
+    emitter.push_str(" {\n");
+    emitter.inc_indent();
+
+    for case in &switch_stmt.cases {
+        emit_switch_case(emitter, case);
+    }
+
+    emitter.dec_indent();
+    emitter.push_indent();
+    emitter.push_str("}\n");
+}
+
+/// Emit a single switch case.
+fn emit_switch_case(emitter: &mut CodeEmitter, case: &SwitchCase) {
+    emitter.push_indent();
+    if let Some(test) = &case.test {
+        // Regular case: "case X:"
+        emit_case_pattern_for_test(emitter, test);
+    } else {
+        // Default case: "default:"
+        emitter.push_str("_ ");
+    }
+    emitter.push_str("=> {\n");
+
+    emitter.inc_indent();
+    for stmt in &case.cons {
+        emit_single_stmt(emitter, stmt);
+    }
+    emitter.dec_indent();
+
+    emitter.push_indent();
+    emitter.push_str("}\n");
+}
+
+/// Emit case pattern for a test expression.
+fn emit_case_pattern_for_test(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Expr) {
+    match test {
+        swc_ecma_ast::Expr::Member(member) => {
+            emit_tagged_variant_pattern(emitter, member);
+        }
+        swc_ecma_ast::Expr::Ident(ident) => {
+            emitter.push_str(&to_snake_case(ident.sym.as_ref()));
+        }
+        swc_ecma_ast::Expr::Lit(lit) => {
+            if let swc_ecma_ast::Lit::Str(s) = lit {
+                emitter.push_str(&format!("{:?}", s.value));
+            } else {
+                emit_expr(emitter, test);
+            }
+        }
+        _ => emit_expr(emitter, test),
+    }
+}
+
+/// Emit a case pattern (e.g., "Tag::Move { x, y }" or "Filter::All").
+fn emit_case_pattern(emitter: &mut CodeEmitter, case: &SwitchCase) {
+    if let Some(test) = &case.test {
+        match test.as_ref() {
+            swc_ecma_ast::Expr::Member(member) => {
+                // Tagged union access: msg.tag === "Move" -> Message::Move
+                emit_tagged_variant_pattern(emitter, member);
+            }
+            swc_ecma_ast::Expr::Ident(ident) => {
+                // Simple enum: Filter.Active -> Filter::Active
+                let name = ident.sym.as_ref();
+                emitter.push_str(&to_snake_case(name));
+            }
+            swc_ecma_ast::Expr::Lit(lit) => {
+                // String literal: "Move" -> Message::Move
+                if let swc_ecma_ast::Lit::Str(s) = lit {
+                    emitter.push_str(&format!("{:?}", s.value));
+                } else {
+                    emit_expr(emitter, test);
+                }
+            }
+            _ => emit_expr(emitter, test),
+        }
+    }
+}
+
+/// Emit a tagged variant pattern from member access.
+fn emit_tagged_variant_pattern(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr) {
+    // Pattern: msg.tag === "Move" where msg is the discriminant
+    // We extract the variant name from the discriminant's property access
+    if let swc_ecma_ast::MemberProp::Ident(prop) = &member.prop {
+        let prop_name = prop.sym.as_ref();
+        if prop_name == "tag" {
+            // This is a tag access - emit as enum variant
+            // The actual variant name should come from the comparison value
+            // For now, emit the enum type name
+            emit_expr(emitter, &member.obj);
+            emitter.push_str("::");
+        } else {
+            emit_expr(emitter, &swc_ecma_ast::Expr::Member(member.clone()));
+        }
+    } else {
+        emit_expr(emitter, &swc_ecma_ast::Expr::Member(member.clone()));
     }
 }
 
@@ -341,4 +469,16 @@ fn emit_for(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::ForStmt) {
     emitter.dec_indent();
     emitter.push_indent();
     emitter.push_str("}\n");
+}
+
+/// Convert name to snake_case.
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            result.push('_');
+        }
+        result.push(c.to_ascii_lowercase());
+    }
+    result
 }

@@ -257,6 +257,13 @@ pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     let has_struct = emitter.object_struct_name().is_some();
     let inferred_struct = if !has_struct { infer_struct_from_props(obj) } else { None };
     
+    // Also check expected return type for struct inference
+    let expected_struct = if !has_struct && inferred_struct.is_none() {
+        emitter.expected_return().cloned()
+    } else {
+        None
+    };
+    
     // Check if this object has spread syntax (struct update)
     let spread_source = find_spread_source(obj);
     
@@ -264,31 +271,38 @@ pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
         let name = emitter.object_struct_name().unwrap().clone();
         emitter.push_str(&name);
         emitter.push_str(" { ");
-        // Handle struct update: { ...task, done: true }
+        // Handle struct update: { done: true, ..task }
+        // In Rust, the base struct (..expr) must be last and has no trailing comma
+        emit_object_props(emitter, obj, false);
         if let Some(source) = spread_source {
-            emitter.push_str("..");
+            emitter.push_str(", ..");
             emit_expr(emitter, &source);
-            emitter.push_str(", ");
-            emit_object_props(emitter, obj, true);
-        } else {
-            emit_object_props(emitter, obj, false);
         }
         emitter.push_str(" }");
     } else if let Some(name) = inferred_struct {
         // Use inferred struct type
         emitter.push_str(&name);
         emitter.push_str(" { ");
+        emit_object_props(emitter, obj, false);
         if let Some(source) = spread_source {
-            emitter.push_str("..");
+            emitter.push_str(", ..");
             emit_expr(emitter, &source);
-            emitter.push_str(", ");
-            emit_object_props(emitter, obj, true);
-        } else {
-            emit_object_props(emitter, obj, false);
+        }
+        emitter.push_str(" }");
+    } else if let Some(name) = expected_struct {
+        // Use expected return type as struct name
+        // This is important for struct update syntax { ...task, field: value }
+        emitter.push_str(&name);
+        emitter.push_str(" { ");
+        emit_object_props(emitter, obj, false);
+        if let Some(source) = spread_source {
+            emitter.push_str(", ..");
+            emit_expr(emitter, &source);
         }
         emitter.push_str(" }");
     } else if spread_source.is_some() {
         // Without struct context, we can't properly handle struct updates
+        // Try to infer from spread source
         emitter.push_str("{ /* struct update without type context */ }");
     } else {
         // Without explicit struct context, try to infer from object properties
@@ -307,42 +321,49 @@ pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
         
         if is_result_pattern {
             // This looks like a Result pattern - emit Ok(...) or Err(...)
-            let has_value = obj.props.iter().any(|p| {
+            // Extract just the value or error field, not the whole object
+            let value_expr = obj.props.iter().find_map(|p| {
                 if let swc_ecma_ast::PropOrSpread::Prop(prop) = p {
                     if let swc_ecma_ast::Prop::KeyValue(kv) = &**prop {
                         if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
-                            return ident.sym.as_ref() == "value";
+                            if ident.sym.as_ref() == "value" {
+                                return Some(&kv.value);
+                            }
                         }
                     }
                 }
-                false
+                None
             });
             
-            let has_error = obj.props.iter().any(|p| {
+            let error_expr = obj.props.iter().find_map(|p| {
                 if let swc_ecma_ast::PropOrSpread::Prop(prop) = p {
                     if let swc_ecma_ast::Prop::KeyValue(kv) = &**prop {
                         if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
-                            return ident.sym.as_ref() == "error";
+                            if ident.sym.as_ref() == "error" {
+                                return Some(&kv.value);
+                            }
                         }
                     }
                 }
-                false
+                None
             });
             
-            if has_value {
+            if let Some(expr) = value_expr {
                 emitter.push_str("Ok(");
-                emit_object_props(emitter, obj, false);
+                emit_expr(emitter, expr);
                 emitter.push_str(")");
-            } else if has_error {
+            } else if let Some(expr) = error_expr {
                 emitter.push_str("Err(");
-                emit_object_props(emitter, obj, false);
+                emit_expr(emitter, expr);
                 emitter.push_str(")");
             } else {
+                // Neither value nor error found, emit as object
                 emitter.push_str("{ ");
                 emit_object_props(emitter, obj, false);
                 emitter.push_str(" }");
             }
         } else {
+            // No struct context available
             emitter.push_str("{ ");
             emit_object_props(emitter, obj, false);
             emitter.push_str(" }");
@@ -361,8 +382,8 @@ fn find_spread_source(obj: &ObjectLit) -> Option<Box<swc_ecma_ast::Expr>> {
 }
 
 /// Emit the property assignments of an object literal (excluding spread).
-fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, has_spread: bool) {
-    let mut first = !has_spread; // If we have spread, the first prop is the spread (already emitted)
+fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, _has_spread: bool) {
+    let mut first = true;
     
     for prop in &obj.props {
         match prop {
@@ -397,7 +418,7 @@ fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit, has_spread: boo
                 }
             }
             swc_ecma_ast::PropOrSpread::Spread(_) => {
-                // Skip spread - already handled
+                // Skip spread - it will be handled separately in emit_object
             }
         }
     }

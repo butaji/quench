@@ -198,8 +198,129 @@ impl AstWalker {
     }
 
     fn collect_type_alias(&mut self, name: &str, type_ann: &TsType) {
+        // Check if this is a struct type (object literal)
+        if let TsType::TsTypeLit(lit) = type_ann {
+            let mut fields: Vec<(String, TsType)> = Vec::new();
+            for member in &lit.members {
+                if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        ident.sym.to_string()
+                    } else if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) =
+                        prop.key.as_ref()
+                    {
+                        format!("{:?}", s.value)
+                    } else {
+                        "_unknown".to_string()
+                    };
+
+                    if let Some(type_ann) = &prop.type_ann {
+                        fields.push((field_name, (*type_ann.type_ann).clone()));
+                    }
+                }
+            }
+            // Store as a struct type, not just a raw field
+            let rust_name = to_pascal_case(name);
+            let resolved_fields: Vec<(String, RustType)> = fields
+                .iter()
+                .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
+                .collect();
+            self.structs.insert(
+                name.to_string(),
+                StructInfo {
+                    rust_name,
+                    fields: resolved_fields,
+                },
+            );
+            // Also store in type_fields for backward compatibility
+            self.type_fields.insert(name.to_string(), fields);
+            return;
+        }
+
+        // Check if this is a union type (tagged union)
+        if let TsType::TsUnionOrIntersectionType(
+            swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u),
+        ) = type_ann
+        {
+            if u.types.iter().all(|t| self.is_tagged_variant(t)) {
+                self.collect_tagged_union(name, &u.types);
+                return;
+            }
+        }
+
+        // For other type aliases, just store the type reference
         self.type_fields
             .insert(name.to_string(), vec![("_type".to_string(), type_ann.clone())]);
+    }
+
+    /// Check if a type is a tagged variant.
+    fn is_tagged_variant(&self, ts_type: &TsType) -> bool {
+        if let TsType::TsTypeLit(lit) = ts_type {
+            lit.members.iter().any(|m| {
+                if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = m {
+                    if let Some(type_ann) = &prop.type_ann {
+                        if let TsType::TsKeywordType(k) = type_ann.type_ann.as_ref() {
+                            return k.kind == swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword;
+                        }
+                    }
+                }
+                false
+            })
+        } else {
+            false
+        }
+    }
+
+    /// Collect a tagged union (enum).
+    fn collect_tagged_union(&mut self, name: &str, types: &[Box<TsType>]) {
+        let mut variants: Vec<EnumVariant> = Vec::new();
+
+        for ts_type in types {
+            if let TsType::TsTypeLit(lit) = ts_type.as_ref() {
+                let mut tag = String::new();
+                let mut fields: Vec<(String, RustType)> = Vec::new();
+
+                for member in &lit.members {
+                    if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                        let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                            ident.sym.to_string()
+                        } else {
+                            continue;
+                        };
+
+                        if let Some(type_ann) = &prop.type_ann {
+                            let ty = self.resolver.resolve(&type_ann.type_ann);
+                            if field_name == "tag" {
+                                // Extract the string literal value for the tag
+                                if let TsType::TsKeywordType(k) = type_ann.type_ann.as_ref() {
+                                    if k.kind == swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword {
+                                        tag = format!("{}{}",
+                                            name.chars().next().unwrap().to_uppercase(),
+                                            &name[1..]
+                                        );
+                                    }
+                                }
+                            } else {
+                                fields.push((field_name, ty));
+                            }
+                        }
+                    }
+                }
+
+                if !tag.is_empty() {
+                    variants.push(EnumVariant { name: tag, fields });
+                }
+            }
+        }
+
+        if !variants.is_empty() {
+            self.enums.insert(
+                name.to_string(),
+                EnumDefinition {
+                    name: name.to_string(),
+                    variants,
+                },
+            );
+        }
     }
 
     fn collect_ts_module(&mut self, decl: &swc_ecma_ast::TsModuleDecl) {
