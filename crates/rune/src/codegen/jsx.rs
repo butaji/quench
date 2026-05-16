@@ -45,34 +45,16 @@ impl JsxTranspiler {
     /// Transpile to Ratatui widget construction.
     fn transpile_ratatui(&self, elem: &str) -> String {
         let elem = elem.trim();
-        let (tag, rest) = if let Some(space) = elem.find(' ') {
-            (&elem[..space], Some(&elem[space..]))
-        } else if let Some(gt) = elem.find('>') {
-            (&elem[..gt], Some(&elem[gt..]))
-        } else {
-            (elem.trim_end_matches('/'), None)
-        };
+        let (tag, rest) = split_element_tag(elem);
+        let widget = map_tag_to_widget(tag);
+        apply_props_to_widget(self, &widget, rest)
+    }
 
-        let widget = match tag {
-            "Block" => "Block::default()",
-            "List" => "List::new(items)",
-            "ListItem" => "ListItem::new(text)",
-            "Paragraph" | "Text" => "Paragraph::new(text)",
-            "Button" => "Button::default()",
-            "Input" => "Paragraph::new(text)",
-            "VStack" => "Column::new()",
-            "HStack" => "Row::new()",
-            _ => &format!("{tag}::default()"),
-        };
-
-        let mut result = widget.to_string();
-
-        // Apply props if present
-        if let Some(props_str) = rest {
-            self.apply_ratatui_props(&mut result, props_str);
-        }
-
-        result
+    /// Transpile to Iced widget construction.
+    fn transpile_iced(&self, elem: &str) -> String {
+        let elem = elem.trim();
+        let (tag, _rest) = split_element_tag(elem);
+        map_iced_tag(tag)
     }
 
     /// Apply Ratatui props to widget chain.
@@ -81,134 +63,143 @@ impl JsxTranspiler {
         let props = props.trim_end_matches('>');
 
         for prop in props.split_whitespace() {
-            let prop = prop.trim();
-            if prop.is_empty() || prop.starts_with('<') {
-                continue;
-            }
-
             if let Some((key, value)) = prop.split_once('=') {
-                let key = key.trim();
-                let value = value.trim_matches('"').trim_matches('\'');
-
-                let setter = match key {
-                    "title" => format!(".title(\"{}\")", value),
-                    "borders" => ".block()".to_string(),
-                    "style" => format!(".style({})", value),
-                    "width" => format!(".width({})", value),
-                    "height" => format!(".height({})", value),
-                    "align" => format!(".alignment({})", value),
-                    _ => String::new(),
-                };
-
+                let setter = build_prop_setter(key.trim(), value.trim_matches('"').trim_matches('\''));
                 let _ = write!(result, "{setter}");
             }
-        }
-    }
-
-    /// Transpile to Iced widget construction.
-    fn transpile_iced(&self, elem: &str) -> String {
-        let elem = elem.trim();
-        let (tag, _rest) = if let Some(space) = elem.find(' ') {
-            (&elem[..space], Some(&elem[space..]))
-        } else {
-            (elem.trim_end_matches('/'), None)
-        };
-
-        match tag {
-            "Button" => "button::Button::new(text)".to_string(),
-            "Text" => "text::Text::new(text)".to_string(),
-            "Column" => "Column::new()".to_string(),
-            "Row" => "Row::new()".to_string(),
-            "Container" => "Container::new(content)".to_string(),
-            _ => format!("{tag}::new()"),
         }
     }
 
     /// Transpile JSX children.
     #[must_use]
     pub fn transpile_children(&self, children: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut element_content = String::new();
-        let mut in_tag = false;
-        let mut pending_open_tag: Option<String> = None;
-
-        for c in children.chars() {
-            if !in_tag {
-                if c == '<' {
-                    // Start of a new tag - begin collecting element
-                    in_tag = true;
-                    // Clear any previous element content
-                    element_content.clear();
-                    element_content.push(c);
-                }
-                // Skip text content between tags - we don't want to include it
-            } else {
-                // Inside a tag
-                element_content.push(c);
-
-                if c == '>' {
-                    // Determine tag type - find the content between < and this >
-                    let tag_str = if let Some(end_idx) = element_content.find('>') {
-                        element_content[1..end_idx].to_string()
-                    } else {
-                        element_content.trim().trim_start_matches('<').to_string()
-                    };
-
-                    if tag_str.starts_with('/') {
-                        // Closing tag
-                        let closing_name = tag_str.trim_start_matches('/');
-                        if pending_open_tag.as_ref().is_some_and(|n| n == closing_name) {
-                            // Match found - complete the element
-                            // element_content now has full element, push it
-                            let element = element_content.trim().to_string();
-                            result.push(element);
-                            element_content.clear();
-                            pending_open_tag = None;
-                        }
-                    } else if tag_str.ends_with('/') {
-                        // Self-closing tag - element is complete
-                        let element = element_content.trim().to_string();
-                        result.push(element);
-                        element_content.clear();
-                        pending_open_tag = None;
-                    } else {
-                        // Opening tag - remember it
-                        pending_open_tag = Some(tag_str.clone());
-                    }
-
-                    in_tag = false;
-                }
-            }
-        }
-
-        // Handle any remaining content (unclosed element)
-        if !element_content.trim().is_empty() {
-            result.push(element_content.trim().to_string());
-        }
-
-        result
+        parse_jsx_children(children)
     }
 
     /// Extract props from JSX attributes.
     #[must_use]
     pub fn extract_props<'a>(&self, attrs: &'a str) -> Vec<(&'a str, &'a str)> {
-        let attrs = attrs.trim();
-        if attrs.is_empty() {
-            return Vec::new();
-        }
-
-        attrs
-            .split_whitespace()
-            .filter_map(|attr| {
-                let parts: Vec<&str> = attr.split('=').collect();
-                if parts.len() == 2 {
-                    Some((parts[0], parts[1].trim_matches('"').trim_matches('\'')))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        parse_jsx_props(attrs)
     }
+}
+
+fn split_element_tag(elem: &str) -> (&str, Option<&str>) {
+    if let Some(space) = elem.find(' ') {
+        (&elem[..space], Some(&elem[space..]))
+    } else if let Some(gt) = elem.find('>') {
+        (&elem[..gt], Some(&elem[gt..]))
+    } else {
+        (elem.trim_end_matches('/'), None)
+    }
+}
+
+fn map_tag_to_widget(tag: &str) -> String {
+    match tag {
+        "Block" => "Block::default()".to_string(),
+        "List" => "List::new(items)".to_string(),
+        "ListItem" => "ListItem::new(text)".to_string(),
+        "Paragraph" | "Text" => "Paragraph::new(text)".to_string(),
+        "Button" => "Button::default()".to_string(),
+        "Input" => "Paragraph::new(text)".to_string(),
+        "VStack" => "Column::new()".to_string(),
+        "HStack" => "Row::new()".to_string(),
+        _ => format!("{tag}::default()"),
+    }
+}
+
+fn apply_props_to_widget(transpiler: &JsxTranspiler, widget: &str, props: Option<&str>) -> String {
+    let mut result = widget.to_string();
+    if let Some(props_str) = props {
+        transpiler.apply_ratatui_props(&mut result, props_str);
+    }
+    result
+}
+
+fn build_prop_setter(key: &str, value: &str) -> String {
+    match key {
+        "title" => format!(".title(\"{}\")", value),
+        "borders" => ".block()".to_string(),
+        "style" => format!(".style({})", value),
+        "width" => format!(".width({})", value),
+        "height" => format!(".height({})", value),
+        "align" => format!(".alignment({})", value),
+        _ => String::new(),
+    }
+}
+
+fn map_iced_tag(tag: &str) -> String {
+    match tag {
+        "Button" => "button::Button::new(text)".to_string(),
+        "Text" => "text::Text::new(text)".to_string(),
+        "Column" => "Column::new()".to_string(),
+        "Row" => "Row::new()".to_string(),
+        "Container" => "Container::new(content)".to_string(),
+        _ => format!("{tag}::new()"),
+    }
+}
+
+fn parse_jsx_children(children: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut in_tag = false;
+    let mut element_buffer = String::new();
+    let mut pending_tag: Option<String> = None;
+    let mut tag_content = String::new();
+
+    for c in children.chars() {
+        if c == '<' {
+            in_tag = true;
+            tag_content.clear();
+            tag_content.push(c);
+        } else if c == '>' {
+            tag_content.push(c);
+            in_tag = false;
+
+            let tag_str = tag_content.trim().trim_matches('<').trim().to_string();
+
+            if tag_str.starts_with('/') {
+                let closing = tag_str.trim_start_matches('/');
+                if pending_tag.as_ref().is_some_and(|t| t == closing) {
+                    element_buffer.push_str(&tag_content);
+                    result.push(element_buffer.clone());
+                    element_buffer.clear();
+                    pending_tag = None;
+                }
+            } else if tag_str.ends_with('/') {
+                element_buffer.push_str(&tag_content);
+                result.push(element_buffer.clone());
+                element_buffer.clear();
+                pending_tag = None;
+            } else {
+                element_buffer.push_str(&tag_content);
+                pending_tag = Some(tag_str);
+            }
+        } else if in_tag {
+            tag_content.push(c);
+        } else {
+            element_buffer.push(c);
+        }
+    }
+
+    result
+}
+
+fn parse_jsx_props(attrs: &str) -> Vec<(&str, &str)> {
+    let attrs = attrs.trim();
+    if attrs.is_empty() {
+        return Vec::new();
+    }
+
+    attrs
+        .split_whitespace()
+        .filter_map(|attr| {
+            let parts: Vec<&str> = attr.split('=').collect();
+            if parts.len() == 2 {
+                Some((parts[0], parts[1].trim_matches('"').trim_matches('\'')))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
