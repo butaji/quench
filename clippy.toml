@@ -1,7 +1,7 @@
 # Clippy Configuration for Rune
 # Enforces code quality standards
 
-# Maximum function length (per spec: 40 lines)
+# Maximum function size (per spec: 40 lines)
 too-many-lines-threshold = 40
 
 # Cyclomatic complexity (per spec: 10)

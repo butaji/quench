@@ -2,14 +2,11 @@
 //!
 //! Main compilation orchestration with clean separation of concerns.
 
-use std::path::{Path, PathBuf};
-use std::process::Command as ProcCommand;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
 use super::cache::CacheManager;
 use super::config::RuneConfig;
-use crate::reload::{DylibWatcher, HostSignaler};
 use crate::{analyzer, codegen, parser, Result};
+use std::path::PathBuf;
+use std::process::Command as ProcCommand;
 
 /// Build mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -92,8 +89,7 @@ impl BuildDriver {
     /// Run in development mode with hot reload.
     pub fn dev(&mut self) -> Result<()> {
         init_dev_mode(self)?;
-        run_watch_loop(self)?;
-        Ok(())
+        self.watch()
     }
 
     /// Run in release mode.
@@ -126,7 +122,7 @@ impl BuildDriver {
     }
 
     /// Transpile a single file to stdout.
-    pub fn transpile(&mut self) -> Result<()> {
+    pub fn transpile(&self) -> Result<()> {
         let file = self
             .options
             .transpile_file
@@ -188,7 +184,9 @@ impl BuildDriver {
             .collect()
     }
 
-    fn analyze_sources(sources: &[parser::SourceFile]) -> Result<Vec<analyzer::AnalysisResult>> {
+    fn analyze_sources(
+        sources: &[parser::SourceFile],
+    ) -> Result<Vec<analyzer::AnalysisResult>> {
         sources.iter().map(analyzer::analyze).collect()
     }
 
@@ -230,27 +228,29 @@ impl BuildDriver {
     }
 
     fn setup_hot_reload(&self) -> Result<()> {
+        use super::artifacts;
         let hot_dir = self.options.workspace.join("target/hot");
         std::fs::create_dir_all(&hot_dir)?;
 
-        let profile = match self.options.mode {
-            BuildMode::Dev => "debug",
-            BuildMode::Release => "release",
-        };
-
         let target_crate = &self.config.build.target_crate;
-        let artifact_name = format!("lib{target_crate}.so");
         let artifact = self
             .options
             .workspace
             .join("target")
-            .join(profile)
-            .join(&artifact_name);
+            .join(self.get_profile())
+            .join(format!("lib{target_crate}.so"));
 
         if artifact.exists() {
-            copy_artifact_to_hot_dir(&hot_dir, &artifact, target_crate)?;
+            artifacts::copy_artifact_to_hot_dir(&hot_dir, &artifact, target_crate)?;
         }
         Ok(())
+    }
+
+    fn get_profile(&self) -> &'static str {
+        match self.options.mode {
+            BuildMode::Dev => "debug",
+            BuildMode::Release => "release",
+        }
     }
 }
 
@@ -273,168 +273,5 @@ fn init_dev_mode(driver: &mut BuildDriver) -> Result<()> {
         println!("Running in development mode with hot reload...");
     }
     driver.build_once()?;
-    Ok(())
-}
-
-fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
-    let src_dir = find_src_dir(driver);
-    let hot_dir = driver.options.workspace.join("target/hot");
-    std::fs::create_dir_all(&hot_dir)?;
-
-    let signaler = setup_signaler(&hot_dir)?;
-    let watcher = setup_watcher(&src_dir, driver.config.dev.debounce)?;
-
-    if driver.options.verbose {
-        println!("Watching for changes in {}...", src_dir.display());
-        println!("Press Ctrl+C to stop.");
-    }
-
-    loop {
-        let event = watcher.wait_for_event(Duration::from_millis(500));
-        if let Some(reload_event) = event {
-            if !process_reload_event(reload_event, driver, &signaler) {
-                break;
-            }
-        }
-    }
-
-    if driver.options.verbose {
-        println!("Development server stopped.");
-    }
-    Ok(())
-}
-
-fn setup_signaler(hot_dir: &Path) -> Result<HostSignaler> {
-    HostSignaler::new(hot_dir).map_err(|e| crate::RuneError::Reload(e.to_string()))
-}
-
-fn setup_watcher(src_dir: &Path, debounce: u64) -> Result<DylibWatcher> {
-    DylibWatcher::new(src_dir, debounce).map_err(|e| crate::RuneError::Reload(e.to_string()))
-}
-
-fn process_reload_event(
-    event: crate::reload::ReloadEvent,
-    driver: &mut BuildDriver,
-    signaler: &HostSignaler,
-) -> bool {
-    match event {
-        crate::reload::ReloadEvent::FilesChanged(_) => {
-            handle_file_change(driver, signaler);
-            true
-        }
-        crate::reload::ReloadEvent::ProtocolChanged => {
-            eprintln!("Protocol changed, full restart required.");
-            let _ = signaler.mark_restart_needed();
-            false
-        }
-        crate::reload::ReloadEvent::Error(e) => {
-            eprintln!("Watcher error: {}", e);
-            true
-        }
-    }
-}
-
-fn find_src_dir(driver: &BuildDriver) -> PathBuf {
-    driver
-        .options
-        .workspace
-        .join("crates")
-        .join(&driver.config.build.target_crate)
-        .join("src")
-}
-
-fn handle_file_change(driver: &mut BuildDriver, signaler: &HostSignaler) {
-    if driver.options.verbose {
-        println!("File changed, rebuilding...");
-    }
-    match driver.build_once() {
-        Ok(()) => {
-            if driver.options.verbose {
-                println!("Build successful, hot reload ready.");
-            }
-            let _ = signaler.signal();
-        }
-        Err(e) => {
-            eprintln!("Build failed: {}", e);
-        }
-    }
-}
-
-/// Copy artifact to hot dir with atomic symlink update.
-fn copy_artifact_to_hot_dir(
-    hot_dir: &Path,
-    artifact: &PathBuf,
-    target_crate: &str,
-) -> Result<()> {
-    let hot_path = create_timestamped_copy(hot_dir, artifact, target_crate)?;
-    update_atomic_symlink(hot_dir, &hot_path)?;
-    cleanup_old_artifacts(hot_dir, &target_crate.replace('-', "_"), 5)?;
-    println!("Hot reload ready: {}", hot_path.file_name().unwrap().to_string_lossy());
-    Ok(())
-}
-
-fn create_timestamped_copy(
-    hot_dir: &Path,
-    artifact: &PathBuf,
-    target_crate: &str,
-) -> Result<PathBuf> {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let safe_name = target_crate.replace('-', "_");
-    let hot_name = format!("{safe_name}_{timestamp}.so");
-    let hot_path = hot_dir.join(&hot_name);
-    std::fs::copy(artifact, &hot_path)?;
-    Ok(hot_path)
-}
-
-fn update_atomic_symlink(hot_dir: &Path, hot_path: &Path) -> Result<()> {
-    let current = hot_dir.join(".current");
-    let tmp_link = hot_dir.join(".current.tmp");
-
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(hot_path, &tmp_link)?;
-        std::fs::rename(&tmp_link, &current)?;
-    }
-
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_file(hot_path, &tmp_link)?;
-        std::fs::rename(&tmp_link, &current)?;
-    }
-
-    Ok(())
-}
-
-/// Clean up old dylib artifacts.
-fn cleanup_old_artifacts(hot_dir: &Path, prefix: &str, keep: usize) -> Result<()> {
-    let mut artifacts: Vec<_> = std::fs::read_dir(hot_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name();
-            let name_str = name.to_string_lossy();
-            name_str.starts_with(prefix) && name_str.ends_with(".so")
-        })
-        .collect();
-
-    if artifacts.len() <= keep {
-        return Ok(());
-    }
-
-    artifacts.sort_by_key(|e| {
-        e.path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| s.split('_').next_back()?.parse::<u64>().ok())
-    });
-
-    // Keep only the last `keep` artifacts
-    let to_remove = artifacts.len() - keep;
-    for artifact in artifacts.into_iter().take(to_remove) {
-        let _ = std::fs::remove_file(artifact.path());
-    }
-
     Ok(())
 }
