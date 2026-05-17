@@ -41,5 +41,6 @@ fn main() {
 fn create_options(cli: &rune_cli::cli::Cli) -> BuildOptions {
     let mut options = BuildOptions::new(PathBuf::from("."));
     options.verbose = cli.verbose;
+    options.json = cli.json;
     options
 }

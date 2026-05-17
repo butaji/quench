@@ -175,17 +175,5 @@ mod error_tests {
 
 #[cfg(test)]
 mod known_struct_tests {
-    use crate::utils::KnownStruct;
-
-    #[test]
-    fn test_known_struct_task() {
-        let k = KnownStruct::Task;
-        assert!(k.is_known());
-    }
-
-    #[test]
-    fn test_known_struct_unknown() {
-        let k = KnownStruct::Unknown;
-        assert!(!k.is_known());
-    }
+    // Removed KnownStruct tests - the enum was project-specific and has been deleted.
 }

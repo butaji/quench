@@ -68,6 +68,7 @@ mod driver_tests {
             transpile_file: None,
             watch_transpile: false,
             verbose: true,
+            json: false,
         };
 
         assert_eq!(config_path, options.config.unwrap());

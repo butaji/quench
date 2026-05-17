@@ -3,25 +3,6 @@
 //! Common utilities for TypeScript to Rust transpilation.
 //! This module is shared by both analyzer and codegen layers.
 
-/// Known struct patterns for type inference.
-#[derive(Debug, Clone, Copy)]
-pub enum KnownStruct {
-    /// Task pattern: { id, title, done }
-    Task,
-    /// Stats pattern: { total, done, active }
-    Stats,
-    /// Unknown
-    Unknown,
-}
-
-impl KnownStruct {
-    /// Check if this is a known struct.
-    #[must_use]
-    pub const fn is_known(self) -> bool {
-        !matches!(self, KnownStruct::Unknown)
-    }
-}
-
 // Extended Rust keyword set covering all reserved words
 const RUST_KEYWORDS: &[&str] = &[
     "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
@@ -104,17 +85,7 @@ pub fn to_rust_name(name: &str) -> String {
 /// Escape a Rust keyword for use as an identifier in AST walker.
 #[must_use]
 pub fn escape_keyword(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn" | "else"
-        | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop"
-        | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use"
-        | "where" | "while" | "abstract" | "become" | "box" | "do" | "final" | "macro"
-        | "override" | "priv" | "try" | "typeof" | "unsized" | "virtual" | "yield" => {
-            format!("r#{name}")
-        }
-        _ => name.to_string(),
-    }
+    escape_rust_keyword(name)
 }
 
 #[cfg(test)]
