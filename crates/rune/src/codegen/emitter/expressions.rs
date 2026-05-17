@@ -2,9 +2,9 @@
 //!
 //! Emits Rust expressions from TypeScript AST.
 
-use super::{CodeEmitter, emit_call, emit_lit, emit_member, emit_object, infer_type};
 use super::literals::emit_template_literal;
 use super::utils::infer_struct_from_object;
+use super::{emit_call, emit_lit, emit_member, emit_object, infer_type, CodeEmitter};
 use swc_ecma_ast::Expr;
 
 /// Emit an expression.
@@ -80,9 +80,7 @@ fn emit_paren_expr(emitter: &mut CodeEmitter, paren: &swc_ecma_ast::ParenExpr) {
 }
 
 fn emit_jsx_placeholder(emitter: &mut CodeEmitter) {
-    emitter.push_str(
-        "Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>",
-    );
+    emitter.push_str("Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>");
 }
 
 fn emit_await_expr(emitter: &mut CodeEmitter, await_expr: &swc_ecma_ast::AwaitExpr) {
@@ -325,10 +323,7 @@ fn emit_assign_target(emitter: &mut CodeEmitter, target: &swc_ecma_ast::AssignTa
     }
 }
 
-fn emit_simple_target(
-    emitter: &mut CodeEmitter,
-    simple: &swc_ecma_ast::SimpleAssignTarget,
-) {
+fn emit_simple_target(emitter: &mut CodeEmitter, simple: &swc_ecma_ast::SimpleAssignTarget) {
     match simple {
         swc_ecma_ast::SimpleAssignTarget::Ident(ident) => {
             emitter.push_str(&super::to_snake_case(ident.id.sym.as_ref()));

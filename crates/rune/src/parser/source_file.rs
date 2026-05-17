@@ -2,9 +2,9 @@
 //!
 //! Manages source file parsing with SWC.
 
+use crate::{ParseError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::{ParseError, Result};
 
 /// Kind of source file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

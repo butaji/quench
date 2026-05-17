@@ -2,8 +2,8 @@
 //!
 //! Type inference for TypeScript type annotations.
 
-use crate::analyzer::{TypeInferrer, TypeInfo, EnumVariant};
-use crate::analyzer::{StructInfo, EnumInfo};
+use crate::analyzer::{EnumInfo, StructInfo};
+use crate::analyzer::{EnumVariant, TypeInferrer, TypeInfo};
 
 impl TypeInferrer {
     /// Parse a type annotation string.
@@ -47,10 +47,7 @@ impl TypeInferrer {
 
         // Handle Result pattern
         if trimmed.contains("ok:") && trimmed.contains("error:") {
-            return TypeInfo::Result(
-                Box::new(TypeInfo::Unknown),
-                Box::new(TypeInfo::String),
-            );
+            return TypeInfo::Result(Box::new(TypeInfo::Unknown), Box::new(TypeInfo::String));
         }
 
         // Handle generic types: Name<T>
@@ -130,12 +127,8 @@ impl TypeInferrer {
     /// Parse a generic type.
     fn parse_generic_type(&self, base: &str, args: &str) -> TypeInfo {
         match base {
-            "Array" | "Vec" => {
-                TypeInfo::Array(Box::new(self.parse_ts_type(args)))
-            }
-            "Option" => {
-                TypeInfo::Option(Box::new(self.parse_ts_type(args)))
-            }
+            "Array" | "Vec" => TypeInfo::Array(Box::new(self.parse_ts_type(args))),
+            "Option" => TypeInfo::Option(Box::new(self.parse_ts_type(args))),
             "Result" => {
                 if let Some((ok, err)) = args.split_once(", ") {
                     return TypeInfo::Result(

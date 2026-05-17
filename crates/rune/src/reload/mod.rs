@@ -2,13 +2,13 @@
 //!
 //! Provides hot reload functionality for dylib-based development.
 
-mod watcher;
-mod host;
 mod error_translator;
+mod host;
+mod watcher;
 
-pub use watcher::{DylibWatcher, ReloadEvent};
+pub use error_translator::{ErrorTranslator, TranslatedError};
 pub use host::HostSignaler;
-pub use error_translator::ErrorTranslator;
+pub use watcher::{DylibWatcher, ReloadEvent};
 
 use thiserror::Error;
 

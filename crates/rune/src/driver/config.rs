@@ -2,8 +2,8 @@
 //!
 //! Project configuration for the Rune compiler.
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Project metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,11 +36,11 @@ pub struct BuildConfig {
 }
 
 fn default_target_crate() -> String {
-    "app".to_string()
+    String::from("app")
 }
 
 fn default_host_crate() -> String {
-    "host".to_string()
+    String::from("host")
 }
 
 impl Default for BuildConfig {
@@ -63,7 +63,7 @@ pub struct DevConfig {
     pub debounce: u64,
 }
 
-fn default_debounce() -> u64 {
+const fn default_debounce() -> u64 {
     100
 }
 

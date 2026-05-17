@@ -64,7 +64,8 @@ impl JsxTranspiler {
 
         for prop in props.split_whitespace() {
             if let Some((key, value)) = prop.split_once('=') {
-                let setter = build_prop_setter(key.trim(), value.trim_matches('"').trim_matches('\''));
+                let setter =
+                    build_prop_setter(key.trim(), value.trim_matches('"').trim_matches('\''));
                 let _ = write!(result, "{setter}");
             }
         }
