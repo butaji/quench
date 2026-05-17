@@ -205,13 +205,36 @@ fn try_parse_counting_loop(stmt: &ForStmt) -> Option<(String, String, String, St
 fn expr_to_string(expr: &Expr) -> String {
     match expr {
         Expr::Lit(lit) => match lit {
-            swc_ecma_ast::Lit::Num(n) => n.value.to_string(),
-            swc_ecma_ast::Lit::BigInt(_) => "0".to_string(),
+            swc_ecma_ast::Lit::Num(n) => {
+                if n.value.fract() == 0.0 {
+                    format!("{}i32", n.value as i64)
+                } else {
+                    n.value.to_string()
+                }
+            }
+            swc_ecma_ast::Lit::BigInt(_) => "0i64".to_string(),
             swc_ecma_ast::Lit::Str(s) => format!("{:?}", s.value),
             swc_ecma_ast::Lit::Bool(b) => b.value.to_string(),
             _ => "0".to_string(),
         },
-        Expr::Ident(ident) => ident.sym.to_string(),
+        Expr::Ident(ident) => to_snake_case(ident.sym.as_ref()),
+        Expr::Member(member) => {
+            let obj = expr_to_string(&member.obj);
+            match &member.prop {
+                swc_ecma_ast::MemberProp::Ident(ident) => {
+                    let prop = to_snake_case(ident.sym.as_ref());
+                    if prop == "length" {
+                        format!("({obj}.len())")
+                    } else {
+                        format!("{obj}.{prop}")
+                    }
+                }
+                swc_ecma_ast::MemberProp::Computed(comp) => {
+                    format!("{obj}[{}]", expr_to_string(&comp.expr))
+                }
+                swc_ecma_ast::MemberProp::PrivateName(_) => obj,
+            }
+        }
         Expr::Bin(bin) => {
             let left = expr_to_string(&bin.left);
             let right = expr_to_string(&bin.right);
@@ -220,6 +243,7 @@ fn expr_to_string(expr: &Expr) -> String {
                 swc_ecma_ast::BinaryOp::Sub => "-",
                 swc_ecma_ast::BinaryOp::Mul => "*",
                 swc_ecma_ast::BinaryOp::Div => "/",
+                swc_ecma_ast::BinaryOp::Mod => "%",
                 _ => "+",
             };
             format!("({left} {op} {right})")
