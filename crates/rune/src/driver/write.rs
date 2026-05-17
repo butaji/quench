@@ -257,11 +257,7 @@ fn write_root_mod_file(
     modules: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let mut content = String::new();
-    
-    // Re-export protocol types for use by generated modules
-    content.push_str("// Protocol types re-exported for generated modules\n");
-    content.push_str("pub use protocol::{AppState, Filter, Task};\n\n");
-    
+
     // Module declarations
     let mod_decls: String = modules
         .get("")
@@ -272,7 +268,7 @@ fn write_root_mod_file(
         .collect::<Vec<_>>()
         .join("\n");
     content.push_str(&mod_decls);
-    
+
     atomic_write(&generated_dir.join("mod.rs"), &content)?;
     Ok(())
 }
