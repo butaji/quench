@@ -35,7 +35,6 @@ pub use expressions::emit_expr;
 pub use infer::infer_type;
 pub use literals::emit_lit;
 pub use members::{emit_member, emit_object};
-pub use module::emit_module;
 pub use statements::emit_body_stmt;
 pub use stmt_control::emit_single_stmt;
 pub use switch_match::emit_switch;

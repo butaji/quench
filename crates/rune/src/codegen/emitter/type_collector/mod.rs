@@ -54,7 +54,6 @@ impl EmissionTracker {
 
 /// Collects types from AST.
 pub(super) struct TypeCollector {
-    type_fields: HashMap<String, Vec<(String, swc_ecma_ast::TsType)>>,
     enums: HashMap<String, EnumDefinition>,
     structs: HashMap<String, StructInfo>,
     resolver: TypeResolver,
@@ -68,7 +67,6 @@ impl TypeCollector {
     #[must_use]
     pub(super) fn new() -> Self {
         Self {
-            type_fields: HashMap::new(),
             enums: HashMap::new(),
             structs: HashMap::new(),
             resolver: TypeResolver::new(),
@@ -128,13 +126,9 @@ impl TypeCollector {
         if let swc_ecma_ast::TsType::TsTypeLit(lit) = type_ann {
             self.structs_impl
                 .collect_struct_from_literal(name, lit, &mut self.structs, &mut self.resolver);
-            return;
         }
 
-        self.type_fields.insert(
-            name.to_string(),
-            vec![("_type".to_string(), type_ann.clone())],
-        );
+        // Unhandled type alias - not a struct, enum, result, or tagged union
     }
 
     pub(super) fn collect_ts_module(&mut self, decl: &swc_ecma_ast::TsModuleDecl) {

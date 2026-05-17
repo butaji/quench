@@ -249,51 +249,6 @@ mod tests {
     }
 }
 
-// Module emitter functions for module-level constructs.
-
-/// Emit module-level code (types, functions, imports).
-///
-/// This function is part of the public API for module emission.
-/// Actual module header writing is handled by RustEmitter::emit.
-#[allow(clippy::unused_self, clippy::needless_pass_by_ref_mut)]
-#[allow(dead_code)]
-pub fn emit_module(_emitter: &mut super::RustEmitter, _source: &crate::parser::SourceFile) {
-    // Module header is already written by RustEmitter::emit
-    // This function handles any additional module-level processing
-    // Types are emitted during AST walking
-}
-
-/// Write type definitions.
-#[allow(dead_code)]
-pub fn write_types(
-    emitter: &mut super::RustEmitter,
-    types: &[(String, crate::analyzer::TypeInfo)],
-) {
-    for (_, info) in types {
-        match info {
-            crate::analyzer::TypeInfo::Struct(s) => {
-                emitter.push_line(&s.to_rust());
-                emitter.push_line("");
-            }
-            crate::analyzer::TypeInfo::Enum(e) => {
-                emitter.push_line(&e.to_rust());
-                emitter.push_line("");
-            }
-            crate::analyzer::TypeInfo::Function(_)
-            | crate::analyzer::TypeInfo::Option(_)
-            | crate::analyzer::TypeInfo::Result(_, _) => {}
-            crate::analyzer::TypeInfo::Unknown
-            | crate::analyzer::TypeInfo::Integer(_)
-            | crate::analyzer::TypeInfo::Float
-            | crate::analyzer::TypeInfo::String
-            | crate::analyzer::TypeInfo::StringLiteral(_)
-            | crate::analyzer::TypeInfo::Boolean
-            | crate::analyzer::TypeInfo::Array(_)
-            | crate::analyzer::TypeInfo::Generic(_) => {}
-        }
-    }
-}
-
 #[cfg(test)]
 mod module_tests {
     use crate::analyzer::{EnumInfo, EnumVariant, StructInfo, TypeInfo};

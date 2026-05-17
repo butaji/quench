@@ -37,7 +37,9 @@ pub fn create_timestamped_copy(
         .unwrap()
         .as_millis();
     let safe_name = target_crate.replace('-', "_");
-    let hot_name = format!("{safe_name}_{timestamp}.so");
+    let ext = std::env::consts::DLL_EXTENSION;
+    let prefix = if cfg!(windows) { "" } else { "lib" };
+    let hot_name = format!("{prefix}{safe_name}_{timestamp}.{ext}");
     let hot_path = hot_dir.join(&hot_name);
     fs::copy(artifact, &hot_path)?;
     Ok(hot_path)
@@ -70,7 +72,8 @@ pub fn cleanup_old_artifacts(hot_dir: &Path, prefix: &str, keep: usize) -> Resul
         .filter(|e| {
             let name = e.file_name();
             let name_str = name.to_string_lossy();
-            name_str.starts_with(prefix) && name_str.ends_with(".so")
+            let ext = std::env::consts::DLL_EXTENSION;
+            name_str.starts_with(prefix) && name_str.ends_with(ext)
         })
         .collect();
 
@@ -82,7 +85,7 @@ pub fn cleanup_old_artifacts(hot_dir: &Path, prefix: &str, keep: usize) -> Resul
         e.path()
             .file_stem()
             .and_then(|s| s.to_str())
-            .and_then(|s| s.split('_').next_back()?.parse::<u64>().ok())
+            .and_then(|s| s.rsplit_once('_').map(|(_, tail)| tail).and_then(|t| t.parse::<u64>().ok()))
     });
 
     let to_remove = artifacts.len() - keep;
@@ -107,7 +110,9 @@ pub fn get_artifact_path(workspace: &Path, target_crate: &str, mode: BuildMode) 
         BuildMode::Dev => "debug",
         BuildMode::Release => "release",
     };
-    let artifact_name = format!("lib{target_crate}.so");
+    let ext = std::env::consts::DLL_EXTENSION;
+    let prefix = if cfg!(windows) { "" } else { "lib" };
+    let artifact_name = format!("{prefix}{target_crate}.{ext}");
     let artifact = workspace.join("target").join(profile).join(&artifact_name);
     if artifact.exists() {
         Some(artifact)

@@ -34,13 +34,7 @@ impl EmitOptions {
         self
     }
 
-    /// Add protocol import.
-    #[must_use]
-    pub fn with_protocol_import(mut self) -> Self {
-        self.custom_imports
-            .push("use protocol::{AppState, Filter, Task};".into());
-        self
-    }
+
 }
 
 /// Emits Rust code from TypeScript source.
@@ -67,8 +61,7 @@ impl RustEmitter {
     /// Create a new emitter.
     #[allow(clippy::unused_self)]
     pub fn new(_source: &SourceFile, analysis: &AnalysisResult) -> Self {
-        // Add protocol imports by default so generated code can reference Task, Filter, AppState
-        let emit_options = EmitOptions::new().with_protocol_import();
+        let emit_options = EmitOptions::new();
         Self {
             analysis: analysis.clone(),
             imports: Vec::new(),
@@ -133,7 +126,7 @@ impl RustEmitter {
 
     /// Walk AST and emit Rust code.
     fn walk_and_emit(&self, ast: &SwcAst) -> crate::Result<(HashSet<String>, String)> {
-        let mut walker = AstWalker::new();
+        let mut walker = AstWalker::with_analysis(self.analysis.clone());
         walker.walk_module(&ast.module);
         let native_imports = walker.native_imports().clone();
         let output = walker.into_output();
