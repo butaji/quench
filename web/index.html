@@ -94,7 +94,7 @@
 
         .bottom-row {
             display: grid;
-            grid-template-columns: 1fr 3fr;
+            grid-template-columns: minmax(0, 0.75fr) minmax(0, 3fr);
             gap: 4px;
             background: #111716;
             flex: 1;
@@ -179,7 +179,6 @@
             background: #F0F0F0;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
             padding: 1.75rem 2rem 2.25rem;
             border-radius: 10px;
         }
@@ -245,8 +244,10 @@
             background: #E8E8E8;
             padding: 1rem 1.25rem;
             border-radius: 8px;
-            margin-top: 1.25rem;
+            margin-top: auto;
             line-height: 1.6;
+            white-space: pre;
+            overflow: hidden;
         }
 
         .code-block .keyword {
@@ -322,7 +323,7 @@
                         </span>
                         <span class="nav-arrow" id="next-arrow">→</span>
                     </div>
-                    <div class="code-block" id="code-example"></div>
+                    <pre class="code-block" id="code-example"></pre>
                 </div>
             </div>
         </div>
@@ -333,41 +334,53 @@
             {
                 framework: 'Ratatui',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> terminal = <span class="type">Terminal</span>.<span class="fn">new</span>(<span class="type">Backend</span>.<span class="fn">new</span>());<br><span class="keyword">while</span> (app.running) {<br>  terminal.<span class="fn">draw</span>((frame) => {<br>    frame.<span class="fn">render</span>(view, frame.<span class="fn">area</span>());<br>  });<br>}'
+                code: '<span class="keyword">function</span> <span class="type">App</span>() {\n  <span class="keyword">const</span> tasks = <span class="fn">useState</span>(<span class="type">Task</span>[])([]);\n\n  <span class="keyword">return</span> (\n    <span class="type">&lt;Layout></span>\n      <span class="type">&lt;Header></span>Task Manager<span class="type">&lt;/Header></span>\n      <span class="type">&lt;List></span>\n        {tasks.<span class="fn">map</span>(t => (\n          <span class="type">&lt;ListItem></span>\n            {t.done ? <span class="string">"[x]"</span> : <span class="string">"[ ]"</span>} {t.title}\n          <span class="type">&lt;/ListItem></span>\n        ))}\n      <span class="type">&lt;/List></span>\n    <span class="type">&lt;/Layout></span>\n  );\n}'
             },
             {
                 framework: 'Axum',
                 label: 'framework: ',
-                code: '<span class="keyword">return</span> <span class="type">Router</span>.<span class="fn">new</span>()<br>  .<span class="fn">route</span>(<span class="string">"/tasks"</span>, { <span class="fn">get</span>: list })<br>  .<span class="fn">layer</span>(TraceLayer.<span class="fn">new</span>());'
+                code: '<span class="keyword">const</span> router = <span class="type">Router</span>.<span class="fn">new</span>()\n  .<span class="fn">route</span>(<span class="string">"/tasks"</span>, {\n    <span class="fn">get</span>: listTasks,\n    <span class="fn">post</span>: createTask\n  })\n  .<span class="fn">layer</span>(TraceLayer.<span class="fn">new</span>())\n  .<span class="fn">with_state</span>(state);'
             },
             {
                 framework: 'Dioxus',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> tasks = <span class="fn">useSignal</span>&lt;<span class="type">Task</span>[]&gt;([]);<br><span class="keyword">const</span> filter = <span class="fn">useSignal</span>(<span class="string">"all"</span>);<br><br><span class="keyword">const</span> filtered = <span class="fn">useMemo</span>(() => {<br>  <span class="keyword">return</span> tasks().<span class="fn">filter</span>((t) => !t.done);<br>});'
+                code: '<span class="keyword">const</span> tasks = <span class="fn">useSignal</span>&lt;<span class="type">Task</span>[]&gt;([]);\n<span class="keyword">const</span> filter = <span class="fn">useSignal</span>(<span class="string">"all"</span>);\n\n<span class="keyword">const</span> visible = <span class="fn">useMemo</span>(() => {\n  <span class="keyword">return</span> tasks().<span class="fn">filter</span>(t => {\n    <span class="keyword">if</span> (filter() === <span class="string">"active"</span>) <span class="keyword">return</span> !t.done;\n  });\n});'
             },
             {
                 framework: 'SQLx',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> rows = <span class="keyword">await</span> <span class="fn">queryAs</span>&lt;<span class="type">Task</span>&gt;(pool, <span class="string">"SELECT * FROM tasks"</span>);'
+                code: '<span class="keyword">const</span> pool = <span class="keyword">await</span> <span class="type">PgPool</span>.<span class="fn">connect</span>(url);\n\n<span class="keyword">const</span> rows = <span class="keyword">await</span> <span class="fn">sqlx</span>.<span class="fn">queryAs</span>&lt;<span class="type">Task</span>&gt;(\n  pool,\n  <span class="string">"SELECT * FROM tasks WHERE done = false"</span>\n);'
             },
             {
                 framework: 'Bevy',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> state: <span class="type">GameState</span> = { score: <span class="num">0</span>, paused: <span class="keyword">false</span> };<br>app.<span class="fn">addPlugins</span>(DefaultPlugins)<br>  .<span class="fn">insertResource</span>(state)<br>  .<span class="fn">addSystem</span>(update);'
+                code: '<span class="type">App</span>.<span class="fn">new</span>()\n  .<span class="fn">addPlugins</span>(DefaultPlugins)\n  .<span class="fn">insertResource</span>({ score: <span class="num">0</span> })\n  .<span class="fn">addSystem</span>(update)\n  .<span class="fn">run</span>();'
             },
             {
                 framework: 'Candle',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> logits = <span class="fn">forward</span>(model, tokens);<br><span class="keyword">const</span> next = logits.<span class="fn">argmax</span>(<span class="num">1</span>);<br><span class="keyword">if</span> (next === eos) <span class="keyword">break</span>;'
+                code: '<span class="keyword">const</span> tokens = tokenizer.<span class="fn">encode</span>(prompt);\n\n<span class="keyword">for</span> (<span class="keyword">let</span> i = <span class="num">0</span>; i < maxLen; i++) {\n  <span class="keyword">const</span> logits = <span class="fn">forward</span>(model, tokens);\n  <span class="keyword">const</span> next = logits.<span class="fn">argmax</span>(1);\n  <span class="keyword">if</span> (next === eosId) <span class="keyword">break</span>;\n}'
             }
         ];
 
         let currentIndex = 0;
 
+        function slugify(str) {
+            return str.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        }
+
         function updateExample() {
             const example = examples[currentIndex];
             document.getElementById('framework-name').textContent = example.framework;
             document.getElementById('code-example').innerHTML = example.code;
+            location.hash = slugify(example.framework);
+        }
+
+        function fromHash() {
+            const hash = location.hash.replace('#', '');
+            if (!hash) return 0;
+            const idx = examples.findIndex(e => slugify(e.framework) === hash);
+            return idx >= 0 ? idx : 0;
         }
 
         document.getElementById('prev-arrow').addEventListener('click', () => {
@@ -380,6 +393,14 @@
             updateExample();
         });
 
+        window.addEventListener('hashchange', () => {
+            currentIndex = fromHash();
+            const example = examples[currentIndex];
+            document.getElementById('framework-name').textContent = example.framework;
+            document.getElementById('code-example').innerHTML = example.code;
+        });
+
+        currentIndex = fromHash();
         updateExample();
     </script>
 
