@@ -2,6 +2,7 @@
 //!
 //! Manages source file parsing with SWC.
 
+use crate::parser::swc_parser::SwcAst;
 use crate::{ParseError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,19 +65,31 @@ impl SourceFile {
 
     /// Validate source using SWC.
     fn validate_with_swc(source: &str, path: &Path, kind: SourceKind) -> Vec<ParseError> {
-        use crate::parser::swc_parser::SwcAst;
-
         let file_name = path.to_string_lossy();
+        Self::parse_and_collect_errors(source, &file_name, kind)
+    }
 
-        let result = match kind {
-            SourceKind::TypeScript => SwcAst::parse_ts(source, &file_name),
-            SourceKind::Tsx => SwcAst::parse_tsx(source, &file_name),
-        };
-
-        match result {
-            Ok(_ast) => Vec::new(),
-            Err(e) => vec![ParseError::Parse(format!("{:?}", e))],
+    /// Parse and collect any errors.
+    fn parse_and_collect_errors(source: &str, file_name: &str, kind: SourceKind) -> Vec<ParseError> {
+        let parse_result = Self::try_parse(source, file_name, kind);
+        match parse_result {
+            Ok(()) => Vec::new(),
+            Err(e) => Self::single_error(e),
         }
+    }
+
+    /// Try to parse source.
+    fn try_parse(source: &str, file_name: &str, kind: SourceKind) -> std::result::Result<(), String> {
+        match kind {
+            SourceKind::TypeScript => SwcAst::parse_ts(source, file_name).map(|_| ()),
+            SourceKind::Tsx => SwcAst::parse_tsx(source, file_name).map(|_| ()),
+        }
+        .map_err(|e| format!("{:?}", e))
+    }
+
+    /// Create a single error vec.
+    fn single_error(msg: String) -> Vec<ParseError> {
+        vec![ParseError::Parse(msg)]
     }
 
     /// Get line and column from byte offset.

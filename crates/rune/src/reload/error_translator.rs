@@ -113,29 +113,55 @@ impl ErrorTranslator {
     #[must_use]
     fn translate_message(&self, message: &str) -> String {
         let msg = message.trim();
+        self.try_translate_move_error(msg)
+            .or_else(|| self.try_translate_borrow_error(msg))
+            .or_else(|| self.try_translate_trait_error(msg))
+            .or_else(|| self.try_translate_type_mismatch(msg))
+            .or_else(|| self.try_translate_integer_division_warning(msg))
+            .unwrap_or_else(|| msg.to_string())
+    }
 
+    fn try_translate_move_error(&self, msg: &str) -> Option<String> {
         if msg.contains("cannot move") {
-            return "Move error: value was already moved. Use .clone() to explicitly copy."
-                .to_string();
+            Some("Move error: value was already moved. Use .clone() to explicitly copy.".into())
+        } else {
+            None
         }
+    }
+
+    fn try_translate_borrow_error(&self, msg: &str) -> Option<String> {
         if msg.contains("borrow of moved value") {
-            return "Borrow error: value was moved. Consider using a reference or .clone()."
-                .to_string();
+            Some("Borrow error: value was moved. Consider using a reference or .clone().".into())
+        } else {
+            None
         }
+    }
+
+    fn try_translate_trait_error(&self, msg: &str) -> Option<String> {
         if msg.contains("does not implement") {
-            return format!("Type error: {}", msg.lines().next().unwrap_or(msg));
+            Some(format!("Type error: {}", msg.lines().next().unwrap_or(msg)))
+        } else {
+            None
         }
+    }
+
+    fn try_translate_type_mismatch(&self, msg: &str) -> Option<String> {
         if msg.contains("expected") && msg.contains("found") {
-            return self.extract_type_mismatch(msg);
+            Some(self.extract_type_mismatch(msg))
+        } else {
+            None
         }
+    }
+
+    fn try_translate_integer_division_warning(&self, msg: &str) -> Option<String> {
         if msg.contains("integer") && msg.contains("division") {
-            return format!(
+            Some(format!(
                 "Warning: {} (Integer division produces i32 result, not f64)",
                 msg
-            );
+            ))
+        } else {
+            None
         }
-
-        msg.to_string()
     }
 
     /// Extract type mismatch information from error message.

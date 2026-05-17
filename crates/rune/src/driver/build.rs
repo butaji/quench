@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::cache::CacheManager;
 use super::config::RuneConfig;
@@ -281,12 +281,8 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
     let hot_dir = driver.options.workspace.join("target/hot");
     std::fs::create_dir_all(&hot_dir)?;
 
-    let signaler =
-        HostSignaler::new(&hot_dir).map_err(|e| crate::RuneError::Reload(e.to_string()))?;
-
-    let debounce = driver.config.dev.debounce;
-    let watcher = DylibWatcher::new(&src_dir, debounce)
-        .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+    let signaler = setup_signaler(&hot_dir)?;
+    let watcher = setup_watcher(&src_dir, driver.config.dev.debounce)?;
 
     if driver.options.verbose {
         println!("Watching for changes in {}...", src_dir.display());
@@ -294,19 +290,11 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
     }
 
     loop {
-        match watcher.wait_for_event(Duration::from_millis(500)) {
-            Some(crate::reload::ReloadEvent::FilesChanged(_)) => {
-                handle_file_change(driver, &signaler);
-            }
-            Some(crate::reload::ReloadEvent::ProtocolChanged) => {
-                eprintln!("Protocol changed, full restart required.");
-                let _ = signaler.mark_restart_needed();
+        let event = watcher.wait_for_event(Duration::from_millis(500));
+        if let Some(reload_event) = event {
+            if !process_reload_event(reload_event, driver, &signaler) {
                 break;
             }
-            Some(crate::reload::ReloadEvent::Error(e)) => {
-                eprintln!("Watcher error: {}", e);
-            }
-            None => {}
         }
     }
 
@@ -314,6 +302,36 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
         println!("Development server stopped.");
     }
     Ok(())
+}
+
+fn setup_signaler(hot_dir: &Path) -> Result<HostSignaler> {
+    HostSignaler::new(hot_dir).map_err(|e| crate::RuneError::Reload(e.to_string()))
+}
+
+fn setup_watcher(src_dir: &Path, debounce: u64) -> Result<DylibWatcher> {
+    DylibWatcher::new(src_dir, debounce).map_err(|e| crate::RuneError::Reload(e.to_string()))
+}
+
+fn process_reload_event(
+    event: crate::reload::ReloadEvent,
+    driver: &mut BuildDriver,
+    signaler: &HostSignaler,
+) -> bool {
+    match event {
+        crate::reload::ReloadEvent::FilesChanged(_) => {
+            handle_file_change(driver, signaler);
+            true
+        }
+        crate::reload::ReloadEvent::ProtocolChanged => {
+            eprintln!("Protocol changed, full restart required.");
+            let _ = signaler.mark_restart_needed();
+            false
+        }
+        crate::reload::ReloadEvent::Error(e) => {
+            eprintln!("Watcher error: {}", e);
+            true
+        }
+    }
 }
 
 fn find_src_dir(driver: &BuildDriver) -> PathBuf {
@@ -343,39 +361,50 @@ fn handle_file_change(driver: &mut BuildDriver, signaler: &HostSignaler) {
 }
 
 /// Copy artifact to hot dir with atomic symlink update.
-fn copy_artifact_to_hot_dir(hot_dir: &Path, artifact: &PathBuf, target_crate: &str) -> Result<()> {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+fn copy_artifact_to_hot_dir(
+    hot_dir: &Path,
+    artifact: &PathBuf,
+    target_crate: &str,
+) -> Result<()> {
+    let hot_path = create_timestamped_copy(hot_dir, artifact, target_crate)?;
+    update_atomic_symlink(hot_dir, &hot_path)?;
+    cleanup_old_artifacts(hot_dir, &target_crate.replace('-', "_"), 5)?;
+    println!("Hot reload ready: {}", hot_path.file_name().unwrap().to_string_lossy());
+    Ok(())
+}
+
+fn create_timestamped_copy(
+    hot_dir: &Path,
+    artifact: &PathBuf,
+    target_crate: &str,
+) -> Result<PathBuf> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-
     let safe_name = target_crate.replace('-', "_");
     let hot_name = format!("{safe_name}_{timestamp}.so");
     let hot_path = hot_dir.join(&hot_name);
-
-    // Copy artifact first
     std::fs::copy(artifact, &hot_path)?;
+    Ok(hot_path)
+}
 
-    // Atomic symlink update: create new symlink at temp location, then rename
+fn update_atomic_symlink(hot_dir: &Path, hot_path: &Path) -> Result<()> {
     let current = hot_dir.join(".current");
     let tmp_link = hot_dir.join(".current.tmp");
 
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&hot_path, &tmp_link)?;
+        std::os::unix::fs::symlink(hot_path, &tmp_link)?;
         std::fs::rename(&tmp_link, &current)?;
     }
 
     #[cfg(windows)]
     {
-        std::os::windows::fs::symlink_file(&hot_path, &tmp_link)?;
+        std::os::windows::fs::symlink_file(hot_path, &tmp_link)?;
         std::fs::rename(&tmp_link, &current)?;
     }
 
-    // Clean up old artifacts (keep last 5)
-    cleanup_old_artifacts(hot_dir, &safe_name, 5)?;
-
-    println!("Hot reload ready: {hot_name}");
     Ok(())
 }
 

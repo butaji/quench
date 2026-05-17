@@ -1,70 +1,45 @@
-// task_list.r.tsx - Task list component
-// Demonstrates conditional rendering and array methods
+//! task_list.r.tsx - Task list component
+//!
+//! Displays a filtered list of tasks.
 
-import { Task } from "../state.r.ts";
+import { Task, Filter } from "../state.r.ts";
+import { task_matches_filter } from "../main.r.ts";
 
-/**
- * Task item row with toggle capability.
- */
-export function TaskRow(props: {
-  task: Task;
-  index: number;
-  selected: boolean;
-}): Widget {
-  const { task, index, selected } = props;
-  const prefix = task.done ? "[x]" : "[ ]";
-  const style = selected ? "bold" : "normal";
+/// Task list view props.
+export type TaskListProps = {
+    tasks: Task[];
+    selected: number;
+    filter: Filter;
+};
 
-  return (
-    <ListItem
-      index={index}
-      selected={selected}
-      style={style}
-    >
-      {prefix} {task.title}
-    </ListItem>
-  );
+/// Render a list of filtered tasks.
+export function task_list(props: TaskListProps): TaskItem[] {
+    const items: TaskItem[] = [];
+    
+    for (let i = 0; i < props.tasks.length; i++) {
+        const task = props.tasks[i];
+        if (task_matches_filter(task, props.filter)) {
+            items.push({
+                task,
+                index: i,
+                is_selected: i === props.selected,
+            });
+        }
+    }
+    
+    return items;
 }
 
-/**
- * Render a list of tasks with selection highlighting.
- */
-export function renderTaskList(
-  tasks: Task[],
-  selected: number
-): Widget[] {
-  return tasks.map((task, i) => (
-    <TaskRow
-      task={task}
-      index={i}
-      selected={i === selected}
-    />
-  ));
-}
+/// A single task item for rendering.
+export type TaskItem = {
+    task: Task;
+    index: number;
+    is_selected: boolean;
+};
 
-/**
- * Empty state when no tasks exist.
- */
-export function renderEmptyState(message: string): Widget {
-  return (
-    <Block title="Tasks" borders="single">
-      <Paragraph text={message} align="center" />
-    </Block>
-  );
+/// Get the display text for a task item.
+export function task_display_text(item: TaskItem): string {
+    const checkbox = item.task.done ? "[x]" : "[ ]";
+    const prefix = item.is_selected ? "> " : "  ";
+    return `${prefix}${checkbox} ${item.task.title}`;
 }
-
-/**
- * Batch task operations view.
- */
-export function renderBatchActions(): Widget {
-  return (
-    <Block title="Actions" borders="single">
-      <Text>
-        [a] Add task | [d] Delete | [t] Toggle | [q] Quit
-      </Text>
-    </Block>
-  );
-}
-
-// Widget type from Ratatui
-import type { Widget } from "protocol";

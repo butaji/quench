@@ -1,72 +1,47 @@
-// root.r.tsx - Main view component
-// Transpiles JSX to Ratatui widget construction
+//! root.r.tsx - Main view component
+//!
+//! Renders the main application UI using Ratatui widget patterns.
+//! JSX syntax transpiles to Rust builder pattern calls.
 
-import { Task, Filter } from "../state.r.ts";
+import { AppState, Filter, Task } from "../state.r.ts";
+import { task_matches_filter, get_filtered_count } from "../main.r.ts";
 
-interface RootViewProps {
-  tasks: Task[];
-  selected: usize;
-  filter: Filter;
+/// Main root view component.
+export function render(state: AppState): Widget {
+    const title = `TODOX - ${get_filtered_count(state)} / ${state.tasks.length}`;
+    
+    return (
+        <Block title={title} borders="single">
+            <List selected={state.selected}>
+                {state.tasks.map((task, i) => (
+                    task_matches_filter(task, state.filter) ? (
+                        <ListItem bold={i === state.selected}>
+                            {task.done ? "[x] " : "[ ] "}
+                            {task.title}
+                        </ListItem>
+                    ) : null
+                ))}
+            </List>
+        </Block>
+    );
 }
 
-/**
- * Main application view - renders the task list.
- * JSX transpiles to Ratatui builder patterns.
- */
-export function renderRootView(props: RootViewProps): Widget {
-  const { tasks, selected, filter } = props;
-  const visibleTasks = filterTasks(tasks, filter);
-  const title = getTitle(filter);
+/// Widget placeholder type.
+type Widget = {
+    render(): string;
+};
 
-  return (
-    <Block title={title} borders="single">
-      <List selected={selected}>
-        {visibleTasks.map((task, i) => (
-          <ListItem
-            bold={i === selected}
-            fg={task.done ? "green" : "white"}
-          >
-            {task.done ? "[x] " : "[ ] "}
-            {task.title}
-          </ListItem>
-        ))}
-      </List>
-      <Paragraph text={`Tasks: ${visibleTasks.length}`} />
-    </Block>
-  );
+/// Block widget.
+function Block(props: { title: string; borders: string }): Widget {
+    return { render: () => `Block(${props.title})` };
 }
 
-/**
- * Get title based on filter mode.
- */
-function getTitle(filter: Filter): string {
-  switch (filter) {
-    case Filter.All:
-      return "TODOX - All Tasks";
-    case Filter.Active:
-      return "TODOX - Active Tasks";
-    case Filter.Completed:
-      return "TODOX - Completed Tasks";
-  }
+/// List widget.
+function List(props: { selected: number; children: Widget[] }): Widget {
+    return { render: () => `List(selected=${props.selected})` };
 }
 
-/**
- * Render footer with task counts.
- */
-export function renderFooter(tasks: Task[]): Widget {
-  const total = tasks.length;
-  const completed = tasks.filter(t => t.done).length;
-  const active = total - completed;
-
-  return (
-    <Block title="Stats" borders="bottom">
-      <Text>
-        Total: {total} | Active: {active} | Done: {completed}
-      </Text>
-    </Block>
-  );
+/// ListItem widget.
+function ListItem(props: { bold?: boolean; children: string }): Widget {
+    return { render: () => `ListItem(${props.children})` };
 }
-
-// Import Ratatui widget types
-// These are re-exported from protocol via the wiring layer
-import type { Widget } from "protocol";

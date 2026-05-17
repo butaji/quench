@@ -1,12 +1,9 @@
 //! # Protocol
 //!
 //! Shared protocol between host and app dylib.
-//! Contains AppState and App trait.
 
 use serde::{Deserialize, Serialize};
-
-/// Widget type alias for convenience.
-pub type Widget = Box<dyn ratatui::widgets::Widget>;
+use ratatui::Frame;
 
 /// Application state - owned by host, shared with app.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -42,31 +39,13 @@ pub enum Filter {
 }
 
 /// Application trait - implemented by app dylib.
-/// Renders directly to terminal frame for dyn-compatibility.
 pub trait App {
     /// Update application state.
     fn update(&mut self, state: &mut AppState);
 
     /// Render the application to a terminal frame.
-    fn render(&self, f: &mut ratatui::Frame<'_>, state: &AppState);
+    fn render(&self, f: &mut Frame<'_>, state: &AppState);
 
     /// Handle key events.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, state: &mut AppState);
-}
-
-/// Message types for the application.
-#[derive(Debug, Clone)]
-pub enum Message {
-    /// Add a new task
-    AddTask(String),
-    /// Toggle task completion
-    ToggleTask(i32),
-    /// Delete a task
-    DeleteTask(i32),
-    /// Select a task
-    SelectTask(usize),
-    /// Filter tasks
-    SetFilter(Filter),
-    /// Quit the application
-    Quit,
 }

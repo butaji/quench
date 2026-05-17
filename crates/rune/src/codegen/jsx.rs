@@ -147,41 +147,86 @@ fn parse_jsx_children(children: &str) -> Vec<String> {
     let mut tag_content = String::new();
 
     for c in children.chars() {
-        if c == '<' {
-            in_tag = true;
-            tag_content.clear();
-            tag_content.push(c);
-        } else if c == '>' {
-            tag_content.push(c);
-            in_tag = false;
-
-            let tag_str = tag_content.trim().trim_matches('<').trim().to_string();
-
-            if tag_str.starts_with('/') {
-                let closing = tag_str.trim_start_matches('/');
-                if pending_tag.as_ref().is_some_and(|t| t == closing) {
-                    element_buffer.push_str(&tag_content);
-                    result.push(element_buffer.clone());
-                    element_buffer.clear();
-                    pending_tag = None;
-                }
-            } else if tag_str.ends_with('/') {
-                element_buffer.push_str(&tag_content);
-                result.push(element_buffer.clone());
-                element_buffer.clear();
-                pending_tag = None;
-            } else {
-                element_buffer.push_str(&tag_content);
-                pending_tag = Some(tag_str);
-            }
-        } else if in_tag {
-            tag_content.push(c);
-        } else {
-            element_buffer.push(c);
-        }
+        process_char(c, &mut in_tag, &mut element_buffer, &mut pending_tag,
+            &mut tag_content, &mut result);
     }
 
     result
+}
+
+fn process_char(
+    c: char,
+    in_tag: &mut bool,
+    element_buffer: &mut String,
+    pending_tag: &mut Option<String>,
+    tag_content: &mut String,
+    result: &mut Vec<String>,
+) {
+    if c == '<' {
+        *in_tag = true;
+        tag_content.clear();
+        tag_content.push(c);
+    } else if c == '>' {
+        tag_content.push(c);
+        *in_tag = false;
+        handle_tag_end(tag_content, element_buffer, pending_tag, result);
+    } else if *in_tag {
+        tag_content.push(c);
+    } else {
+        element_buffer.push(c);
+    }
+}
+
+fn handle_tag_end(
+    tag_content: &str,
+    element_buffer: &mut String,
+    pending_tag: &mut Option<String>,
+    result: &mut Vec<String>,
+) {
+    let tag_str = tag_content.trim().trim_matches('<').trim().to_string();
+
+    if tag_str.starts_with('/') {
+        handle_closing_tag(&tag_str, element_buffer, pending_tag, result);
+    } else if tag_str.ends_with('/') {
+        handle_self_closing_tag(tag_content, element_buffer, result, pending_tag);
+    } else {
+        handle_opening_tag(tag_content, element_buffer, pending_tag);
+    }
+}
+
+fn handle_closing_tag(
+    tag_str: &str,
+    element_buffer: &mut String,
+    pending_tag: &mut Option<String>,
+    result: &mut Vec<String>,
+) {
+    let closing = tag_str.trim_start_matches('/');
+    if pending_tag.as_ref().is_some_and(|t| t == closing) {
+        result.push(std::mem::take(element_buffer));
+        *pending_tag = None;
+    }
+}
+
+fn handle_self_closing_tag(
+    tag_content: &str,
+    element_buffer: &mut String,
+    result: &mut Vec<String>,
+    pending_tag: &mut Option<String>,
+) {
+    element_buffer.push_str(tag_content);
+    result.push(element_buffer.clone());
+    element_buffer.clear();
+    *pending_tag = None;
+}
+
+fn handle_opening_tag(
+    tag_content: &str,
+    element_buffer: &mut String,
+    pending_tag: &mut Option<String>,
+) {
+    element_buffer.push_str(tag_content);
+    let tag_str = tag_content.trim().trim_matches('<').trim().to_string();
+    *pending_tag = Some(tag_str);
 }
 
 fn parse_jsx_props(attrs: &str) -> Vec<(&str, &str)> {

@@ -127,19 +127,32 @@ impl TypeInferrer {
     /// Parse a generic type.
     fn parse_generic_type(&self, base: &str, args: &str) -> TypeInfo {
         match base {
-            "Array" | "Vec" => TypeInfo::Array(Box::new(self.parse_ts_type(args))),
-            "Option" => TypeInfo::Option(Box::new(self.parse_ts_type(args))),
-            "Result" => {
-                if let Some((ok, err)) = args.split_once(", ") {
-                    return TypeInfo::Result(
-                        Box::new(self.parse_ts_type(ok)),
-                        Box::new(self.parse_ts_type(err)),
-                    );
-                }
-                TypeInfo::Unknown
-            }
+            "Array" | "Vec" => self.parse_array_type(args),
+            "Option" => self.parse_option_type(args),
+            "Result" => self.parse_result_type(args),
             _ => TypeInfo::Generic(base.to_string()),
         }
+    }
+
+    /// Parse Array<T> or Vec<T>.
+    fn parse_array_type(&self, args: &str) -> TypeInfo {
+        TypeInfo::Array(Box::new(self.parse_ts_type(args)))
+    }
+
+    /// Parse Option<T>.
+    fn parse_option_type(&self, args: &str) -> TypeInfo {
+        TypeInfo::Option(Box::new(self.parse_ts_type(args)))
+    }
+
+    /// Parse Result<T, E>.
+    fn parse_result_type(&self, args: &str) -> TypeInfo {
+        if let Some((ok, err)) = args.split_once(", ") {
+            return TypeInfo::Result(
+                Box::new(self.parse_ts_type(ok)),
+                Box::new(self.parse_ts_type(err)),
+            );
+        }
+        TypeInfo::Unknown
     }
 
     /// Infer struct fields from an object literal.

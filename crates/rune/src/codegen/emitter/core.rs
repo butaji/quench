@@ -173,18 +173,23 @@ impl RustEmitter {
     fn write_header(&mut self, module_name: &str, native_imports: &HashSet<String>) {
         self.push_line(&format!("// Module: {module_name}"));
         self.push_line("");
+        self.write_custom_imports();
+        self.write_native_imports(native_imports);
+    }
 
-        // Add custom imports (framework-specific imports come from config)
-        let custom_imports = self.emit_options.custom_imports.clone();
-        for import in custom_imports {
-            self.push_line(&import);
+    /// Write custom imports from emit options.
+    fn write_custom_imports(&mut self) {
+        let imports = self.emit_options.custom_imports.clone();
+        for import in &imports {
+            self.push_line(import);
         }
-
-        if !self.emit_options.custom_imports.is_empty() {
+        if !imports.is_empty() {
             self.push_line("");
         }
+    }
 
-        // Native module import for hand-written Rust functions
+    /// Write native module imports.
+    fn write_native_imports(&mut self, native_imports: &HashSet<String>) {
         if !native_imports.is_empty() {
             self.push_line("use crate::native;");
             for module in native_imports {

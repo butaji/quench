@@ -140,43 +140,48 @@ fn restore_struct_context(emitter: &mut CodeEmitter, prev_struct: Option<String>
 fn emit_if(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::IfStmt) {
     emitter.push_str("if ");
     emit_expr(emitter, &stmt.test);
+    emit_if_body(emitter, &stmt.cons);
+    if let Some(alt) = &stmt.alt {
+        emit_if_else(emitter, alt);
+    }
+    emitter.push_indent();
+    emitter.push_str("}\n");
+}
 
+/// Emit if body.
+fn emit_if_body(emitter: &mut CodeEmitter, cons: &Stmt) {
     emitter.push_str(" {\n");
     emitter.inc_indent();
-    if let Stmt::Block(block) = &*stmt.cons {
+    if let Stmt::Block(block) = cons {
         for s in &block.stmts {
             emit_single_stmt(emitter, s);
         }
     } else {
         emitter.push_indent();
-        emit_simple_stmt(emitter, &stmt.cons);
+        emit_simple_stmt(emitter, cons);
     }
     emitter.dec_indent();
+}
 
-    if let Some(alt) = &stmt.alt {
-        emitter.push_indent();
-        emitter.push_str("} else ");
-        if matches!(&**alt, Stmt::If(_)) {
-            if let Stmt::If(else_if) = &**alt {
-                emit_if(emitter, else_if);
+/// Emit else clause.
+fn emit_if_else(emitter: &mut CodeEmitter, alt_stmt: &Stmt) {
+    emitter.push_indent();
+    emitter.push_str("} else ");
+    if let Stmt::If(else_if) = alt_stmt {
+        emit_if(emitter, else_if);
+    } else {
+        emitter.push_str("{\n");
+        emitter.inc_indent();
+        if let Stmt::Block(block) = alt_stmt {
+            for s in &block.stmts {
+                emit_single_stmt(emitter, s);
             }
         } else {
-            emitter.push_str("{\n");
-            emitter.inc_indent();
-            if let Stmt::Block(block) = &**alt {
-                for s in &block.stmts {
-                    emit_single_stmt(emitter, s);
-                }
-            } else {
-                emitter.push_indent();
-                emit_simple_stmt(emitter, alt);
-            }
-            emitter.dec_indent();
+            emitter.push_indent();
+            emit_simple_stmt(emitter, alt_stmt);
         }
+        emitter.dec_indent();
     }
-
-    emitter.push_indent();
-    emitter.push_str("}\n");
 }
 
 /// Emit a simple statement (no block, no extra newlines).

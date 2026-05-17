@@ -1,18 +1,16 @@
 [package]
 name = "host"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2021"
 
 [[bin]]
-name = "todox"
+name = "host"
 path = "src/main.rs"
 
 [dependencies]
 protocol = { path = "../protocol" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
-libloading = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
-tracing = "0.1"
-anyhow = "1"
+libloading = { workspace = true }

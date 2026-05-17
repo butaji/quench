@@ -5,9 +5,10 @@
 use super::BuildDriver;
 use crate::codegen::emitter::utils::escape_rust_keyword_for_module;
 use crate::{codegen::GeneratedModule, Result};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Atomic file writer - writes to temp file then renames.
 fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
@@ -44,16 +45,9 @@ impl BuildDriver {
     /// Write mod.rs files for directory structure.
     fn write_mod_files(&self, cache_dir: &Path, modules: &[GeneratedModule]) -> Result<()> {
         let dirs = collect_unique_dirs(modules);
-
-        for dir in dirs {
-            let dir_path = cache_dir.join(&dir);
-            fs::create_dir_all(&dir_path)?;
-            let mod_rs = dir_path.join("mod.rs");
-            if !mod_rs.exists() {
-                atomic_write(&mod_rs, "")?;
-            }
+        for dir in &dirs {
+            create_dir_mod_file(cache_dir, dir)?;
         }
-
         Ok(())
     }
 
@@ -93,12 +87,8 @@ impl BuildDriver {
     }
 
     /// Collect module names from generated directory.
-    fn collect_modules(
-        &self,
-        dir: &Path,
-    ) -> Result<std::collections::HashMap<String, Vec<String>>> {
-        let mut modules: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
+    fn collect_modules(&self, dir: &Path) -> Result<HashMap<String, Vec<String>>> {
+        let mut modules: HashMap<String, Vec<String>> = HashMap::new();
 
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(true)
@@ -118,12 +108,23 @@ impl BuildDriver {
     fn write_directory_mod_files(
         &self,
         generated_dir: &Path,
-        modules: &std::collections::HashMap<String, Vec<String>>,
+        modules: &HashMap<String, Vec<String>>,
     ) -> Result<()> {
         write_root_mod_file(generated_dir, modules)?;
         write_subdirectory_mod_files(generated_dir, modules)?;
         Ok(())
     }
+}
+
+/// Create a directory with mod.rs if needed.
+fn create_dir_mod_file(cache_dir: &Path, dir: &str) -> Result<()> {
+    let dir_path = cache_dir.join(dir);
+    fs::create_dir_all(&dir_path)?;
+    let mod_rs = dir_path.join("mod.rs");
+    if !mod_rs.exists() {
+        atomic_write(&mod_rs, "")?;
+    }
+    Ok(())
 }
 
 fn write_single_module(generated_dir: &Path, module: &GeneratedModule) -> Result<()> {
@@ -254,7 +255,7 @@ fn process_module_entry(path: &Path, base_dir: &Path) -> Option<(String, String)
 
 fn write_root_mod_file(
     generated_dir: &Path,
-    modules: &std::collections::HashMap<String, Vec<String>>,
+    modules: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let mut content = String::new();
 
@@ -275,7 +276,7 @@ fn write_root_mod_file(
 
 fn write_subdirectory_mod_files(
     generated_dir: &Path,
-    modules: &std::collections::HashMap<String, Vec<String>>,
+    modules: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     for (dir, mods) in modules {
         if dir.is_empty() {
@@ -317,28 +318,40 @@ fn relative_path(from_file: &Path, to_target: &Path) -> String {
         return to_target.to_string_lossy().to_string();
     };
 
+    let (ups, common_base) = count_ups_to_common_base(from_dir, to_target);
+    let mut parts: Vec<String> = vec![String::from(".."); ups];
+
+    if let Ok(rest) = to_target.strip_prefix(&common_base) {
+        parts.extend(extract_path_components(rest));
+    }
+
+    parts.join("/")
+}
+
+fn count_ups_to_common_base(from_dir: &Path, to_target: &Path) -> (usize, PathBuf) {
     let mut ups = 0;
-    let mut current = from_dir;
-    while !to_target.starts_with(current) {
+    let mut current = from_dir.to_path_buf();
+    while !to_target.starts_with(&current) {
         if let Some(parent) = current.parent() {
             ups += 1;
-            current = parent;
+            current = parent.to_path_buf();
         } else {
             break;
         }
     }
+    (ups, current)
+}
 
-    let mut parts: Vec<String> = vec![String::from(".."); ups];
-
-    if let Ok(rest) = to_target.strip_prefix(current) {
-        for component in rest.components() {
-            if let std::path::Component::Normal(s) = component {
-                parts.push(s.to_string_lossy().into_owned());
+fn extract_path_components(rest: &Path) -> Vec<String> {
+    rest.components()
+        .filter_map(|c| {
+            if let std::path::Component::Normal(s) = c {
+                Some(s.to_string_lossy().into_owned())
+            } else {
+                None
             }
-        }
-    }
-
-    parts.join("/")
+        })
+        .collect()
 }
 
 /// Copy directory recursively.

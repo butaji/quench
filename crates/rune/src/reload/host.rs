@@ -52,15 +52,26 @@ impl HostSignaler {
 
     /// Clean up signal files older than the last N.
     fn cleanup_old_signals(&self, keep_last: usize) -> ReloadResult<()> {
-        let mut signals: Vec<_> = fs::read_dir(&self.hot_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "signal"))
-            .collect();
-
+        let mut signals = self.collect_signal_files()?;
         if signals.len() <= keep_last {
             return Ok(());
         }
+        self.sort_signals_by_timestamp(&mut signals);
+        let to_remove = signals.len() - keep_last;
+        self.remove_old_signals(signals, to_remove);
+        Ok(())
+    }
 
+    /// Collect all signal files from the hot directory.
+    fn collect_signal_files(&self) -> ReloadResult<Vec<std::fs::DirEntry>> {
+        Ok(fs::read_dir(&self.hot_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "signal"))
+            .collect())
+    }
+
+    /// Sort signals by timestamp (oldest first).
+    fn sort_signals_by_timestamp(&self, signals: &mut [std::fs::DirEntry]) {
         signals.sort_by_key(|e| {
             e.path()
                 .file_stem()
@@ -68,14 +79,14 @@ impl HostSignaler {
                 .and_then(|s| s.strip_prefix("reload_"))
                 .and_then(|s| s.parse::<u64>().ok())
         });
+    }
 
-        // Keep only the last `keep_last` signals
-        let to_remove = signals.len() - keep_last;
-        for signal in signals.into_iter().take(to_remove) {
-            let _ = fs::remove_file(signal.path());
+    /// Remove the oldest N signals.
+    fn remove_old_signals(&self, signals: Vec<std::fs::DirEntry>, to_remove: usize) {
+        let to_drop: Vec<_> = signals.into_iter().take(to_remove).collect();
+        for signal in to_drop {
+            drop_signal_file(&signal);
         }
-
-        Ok(())
     }
 
     /// Clear all reload signals.
@@ -134,4 +145,9 @@ impl HostSignaler {
         }
         Ok(())
     }
+}
+
+/// Drop a single signal file.
+fn drop_signal_file(entry: &std::fs::DirEntry) {
+    let _ = fs::remove_file(entry.path());
 }

@@ -85,25 +85,18 @@ impl OwnershipAnalyzer {
         ownership
     }
 
-    /// Infer borrow mode from type info and usage patterns.
+    /// Infer borrow mode from type info.
     fn infer_mode(&self, _name: &str, info: &TypeInfo) -> BorrowMode {
+        use TypeInfo::*;
         match info {
-            // Functions that take &mut self are mutable
-            TypeInfo::Function(_) => BorrowMode::Owned,
-            // Strings are usually borrowed unless mutated
-            TypeInfo::String | TypeInfo::StringLiteral(_) => BorrowMode::Shared,
-            // Arrays can be borrowed or owned
-            TypeInfo::Array(_) => BorrowMode::Owned,
-            // Primitives are usually owned or small-copied
-            TypeInfo::Integer(_) | TypeInfo::Float | TypeInfo::Boolean => BorrowMode::Owned,
-            // Complex types are usually owned
-            TypeInfo::Struct(_) | TypeInfo::Enum(_) => BorrowMode::Owned,
-            // Options and Results are usually owned
-            TypeInfo::Option(_) | TypeInfo::Result(_, _) => BorrowMode::Owned,
-            // Unknown defaults to shared
-            TypeInfo::Unknown => BorrowMode::Unknown,
-            // Generics default to owned
-            TypeInfo::Generic(_) => BorrowMode::Owned,
+            Function(_) => BorrowMode::Owned,
+            String | StringLiteral(_) => BorrowMode::Shared,
+            Array(_) => BorrowMode::Owned,
+            Integer(_) | Float | Boolean => BorrowMode::Owned,
+            Struct(_) | Enum(_) => BorrowMode::Owned,
+            Option(_) | Result(_, _) => BorrowMode::Owned,
+            Unknown => BorrowMode::Unknown,
+            Generic(_) => BorrowMode::Owned,
         }
     }
 

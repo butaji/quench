@@ -1,14 +1,10 @@
 [package]
 name = "protocol"
-version.workspace = true
-edition.workspace = true
-
-[lib]
-name = "protocol"
-path = "src/lib.rs"
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

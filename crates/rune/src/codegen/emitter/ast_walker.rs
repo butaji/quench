@@ -176,8 +176,19 @@ impl AstWalker {
 
     fn emit_function(&mut self, fn_decl: &FnDecl) {
         let rust_name = to_snake_case(fn_decl.ident.sym.as_ref());
+        let params = self.extract_function_params(fn_decl);
+        let return_type = self.extract_return_type(fn_decl);
+        let is_async = fn_decl.function.is_async;
+        let body = fn_decl.function.body.as_ref().map(|block| Stmt::Block(block.clone()));
 
-        let params: Vec<(String, RustType)> = fn_decl.function.params.iter()
+        self.emitter.set_expected_return(Some(return_type.to_string()));
+        self.emitter.emit_function_with_body(&rust_name, &params, &return_type, is_async, body);
+        self.emitter.set_expected_return(None);
+    }
+
+    /// Extract function parameters with types.
+    fn extract_function_params(&mut self, fn_decl: &FnDecl) -> Vec<(String, RustType)> {
+        fn_decl.function.params.iter()
             .filter_map(|p| {
                 if let swc_ecma_ast::Pat::Ident(ident) = &p.pat {
                     let ty = ident.type_ann.as_ref()
@@ -187,17 +198,13 @@ impl AstWalker {
                     None
                 }
             })
-            .collect();
+            .collect()
+    }
 
-        let return_type = fn_decl.function.return_type.as_ref()
-            .map_or(RustType::Unit, |ann| self.collector.resolver_mut().resolve(&ann.type_ann));
-
-        let is_async = fn_decl.function.is_async;
-        let body = fn_decl.function.body.as_ref().map(|block| Stmt::Block(block.clone()));
-
-        self.emitter.set_expected_return(Some(return_type.to_string()));
-        self.emitter.emit_function_with_body(&rust_name, &params, &return_type, is_async, body);
-        self.emitter.set_expected_return(None);
+    /// Extract the return type of a function.
+    fn extract_return_type(&mut self, fn_decl: &FnDecl) -> RustType {
+        fn_decl.function.return_type.as_ref()
+            .map_or(RustType::Unit, |ann| self.collector.resolver_mut().resolve(&ann.type_ann))
     }
 
     /// Get the generated output.

@@ -65,19 +65,27 @@ impl CacheManager {
     }
 
     /// Check if ANY source file is newer than the cache.
-    /// Scans ALL source files, not just one.
     pub fn needs_regeneration(&self, sources: &[PathBuf]) -> bool {
         let cache_mtime = Self::mtime(&self.generated_cargo_toml());
+        Self::cache_missing_or_stale(sources, cache_mtime)
+    }
 
-        // If no cache exists, need regeneration
+    /// Check if cache is missing or source is newer.
+    fn cache_missing_or_stale(sources: &[PathBuf], cache_mtime: Option<SystemTime>) -> bool {
         let Some(cache_modified) = cache_mtime else {
             return true;
         };
+        Self::any_source_newer_than(sources, cache_modified)
+    }
 
-        // Check all sources against cache time
-        sources.iter().any(|source_path| {
-            Self::mtime(source_path).is_some_and(|source_modified| source_modified > cache_modified)
-        })
+    /// Check if any source file is newer than cache.
+    fn any_source_newer_than(sources: &[PathBuf], cache_modified: SystemTime) -> bool {
+        sources.iter().any(|src| Self::source_newer(src, cache_modified))
+    }
+
+    /// Check if a single source is newer than cache.
+    fn source_newer(source: &Path, cache_modified: SystemTime) -> bool {
+        Self::mtime(source).is_some_and(|modified| modified > cache_modified)
     }
 
     /// Clean the cache.

@@ -1,35 +1,41 @@
-//! Fast Math
+//! Fast math utilities written in Rust.
 //!
-//! Hand-written Rust math functions for performance-critical operations.
+//! These functions are callable from Rune files via:
+//! `import { fast_sqrt } from "native:fast_math";`
 
-/// Fast square root using native Rust.
+use protocol::Task;
+
+/// Fast square root approximation using Newton's method.
 pub fn fast_sqrt(x: f64) -> f64 {
-    x.sqrt()
-}
-
-/// Batch add operation.
-pub fn batch_add(values: &[f64], n: f64) -> Vec<f64> {
-    values.iter().map(|v| v + n).collect()
-}
-
-/// Calculate mean of values.
-pub fn mean(values: &[f64]) -> f64 {
-    if values.is_empty() {
+    if x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
         return 0.0;
     }
-    values.iter().sum::<f64>() / values.len() as f64
-}
-
-/// Calculate variance of values.
-pub fn variance(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
+    
+    let mut guess = x / 2.0;
+    for _ in 0..10 {
+        guess = (guess + x / guess) / 2.0;
     }
-    let m = mean(values);
-    values.iter().map(|v| (v - m).powi(2)).sum::<f64>() / values.len() as f64
+    guess
 }
 
-/// Standard deviation.
-pub fn std_dev(values: &[f64]) -> f64 {
-    variance(values).sqrt()
+/// Calculate task priority score based on properties.
+pub fn task_priority(task: &Task) -> f64 {
+    let mut score = 0.0;
+    if task.done {
+        score -= 10.0;
+    }
+    score += (task.title.len() as f64).sqrt() * 0.5;
+    score
+}
+
+/// Batch toggle tasks by IDs.
+pub fn batch_toggle_by_id(tasks: &mut Vec<Task>, ids: &[i32]) {
+    for id in ids {
+        if let Some(task) = tasks.iter_mut().find(|t| t.id == *id) {
+            task.done = !task.done;
+        }
+    }
 }
