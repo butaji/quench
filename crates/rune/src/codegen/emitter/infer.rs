@@ -85,10 +85,37 @@ fn resolve_common_type(cons_type: &str, alt_type: &str) -> String {
 fn infer_bin_type(bin_expr: &swc_ecma_ast::BinExpr) -> String {
     let left = infer_type(&bin_expr.left);
     let right = infer_type(&bin_expr.right);
-    infer_bin_op_type(&left, &right)
+    infer_bin_op_type(bin_expr.op, &left, &right)
 }
 
-fn infer_bin_op_type(left: &str, right: &str) -> String {
+fn infer_bin_op_type(op: swc_ecma_ast::BinaryOp, left: &str, right: &str) -> String {
+    use swc_ecma_ast::BinaryOp;
+
+    // Comparison and logical operators always return bool
+    if matches!(
+        op,
+        BinaryOp::EqEq
+            | BinaryOp::NotEq
+            | BinaryOp::EqEqEq
+            | BinaryOp::NotEqEq
+            | BinaryOp::Lt
+            | BinaryOp::LtEq
+            | BinaryOp::Gt
+            | BinaryOp::GtEq
+            | BinaryOp::LogicalAnd
+            | BinaryOp::LogicalOr
+    ) {
+        return "bool".to_string();
+    }
+
+    // Bitwise operators return i32
+    if matches!(
+        op,
+        BinaryOp::BitOr | BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::LShift | BinaryOp::RShift
+    ) {
+        return "i32".to_string();
+    }
+
     // Handle arithmetic on usize (e.g., names.len() - 1)
     if left == "usize" || right == "usize" {
         return "usize".to_string();
@@ -127,23 +154,7 @@ fn infer_call_type(call_expr: &swc_ecma_ast::CallExpr) -> String {
 
 fn infer_direct_call_type(fn_name: &str) -> String {
     match fn_name {
-        "filter_tasks" => "Vec<Task>".to_string(),
-        "create_task" => "Task".to_string(),
-        "toggle_task" => "Task".to_string(),
-        "validate_title" => "Result<String, String>".to_string(),
-        "validate_task" => "Result<Task, String>".to_string(),
-        "parse_json" => "Result<JsonValue, String>".to_string(),
-        "serialize_tasks" => "String".to_string(),
-        "deserialize_tasks" => "Result<Vec<Task>, String>".to_string(),
-        "merge_tasks" => "Vec<Task>".to_string(),
-        "find_task" => "Option<Task>".to_string(),
-        "sort_tasks" => "Vec<Task>".to_string(),
-        "get_stats" => "Stats".to_string(),
-        "is_number" | "is_string" | "is_boolean" | "is_object" => "bool".to_string(),
-        "fast_sqrt" => "f64".to_string(),
-        "batch_add" => "Vec<f64>".to_string(),
-        "mean" | "variance" | "std_dev" => "f64".to_string(),
-        // Built-in function mappings
+        // Built-in JavaScript function mappings
         "parseFloat" => "Option<f64>".to_string(),
         "parseInt" => "Option<i32>".to_string(),
         "String" => "String".to_string(),
@@ -151,7 +162,9 @@ fn infer_direct_call_type(fn_name: &str) -> String {
         "Number" => "f64".to_string(),
         "isNaN" => "bool".to_string(),
         "isFinite" => "bool".to_string(),
-        _ => "()".to_string(),
+        // Type-checking helpers
+        "is_number" | "is_string" | "is_boolean" | "is_object" => "bool".to_string(),
+        _ => UNKNOWN_TYPE.to_string(),
     }
 }
 
@@ -282,17 +295,7 @@ fn is_hashmap_type(ty: &str) -> bool {
     ty.contains("HashMap") || ty.contains("Record<") || ty.contains("Map<")
 }
 
-fn infer_property_type(obj_type: &str, prop_name: &str) -> String {
-    // Task properties
-    if let Some(t) = try_task_property(obj_type, prop_name) {
-        return t;
-    }
-
-    // AppState properties
-    if let Some(t) = try_appstate_property(obj_type, prop_name) {
-        return t;
-    }
-
+fn infer_property_type(_obj_type: &str, prop_name: &str) -> String {
     // Result pattern
     if let Some(t) = try_result_property(prop_name) {
         return t;
@@ -303,26 +306,7 @@ fn infer_property_type(obj_type: &str, prop_name: &str) -> String {
         return t;
     }
 
-    "()".to_string()
-}
-
-fn try_task_property(obj_type: &str, prop: &str) -> Option<String> {
-    match (obj_type, prop) {
-        ("Task", "id") => Some("i32".to_string()),
-        ("Task", "title") => Some("String".to_string()),
-        ("Task", "done") => Some("bool".to_string()),
-        _ => None,
-    }
-}
-
-fn try_appstate_property(obj_type: &str, prop: &str) -> Option<String> {
-    match (obj_type, prop) {
-        ("AppState", "tasks") => Some("Vec<Task>".to_string()),
-        ("AppState", "selected") => Some("usize".to_string()),
-        ("AppState", "filter") => Some("Filter".to_string()),
-        ("AppState", "shouldExit") => Some("bool".to_string()),
-        _ => None,
-    }
+    UNKNOWN_TYPE.to_string()
 }
 
 fn try_result_property(prop: &str) -> Option<String> {

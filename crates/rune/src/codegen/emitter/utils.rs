@@ -6,42 +6,11 @@ use crate::utils::{
     escape_rust_keyword as base_escape, escape_rust_keyword_for_module as base_escape_module,
     to_pascal_case as base_pascal_case, to_snake_case as base_snake_case,
 };
-use swc_ecma_ast::{ObjectLit, Prop, PropName, PropOrSpread};
+use swc_ecma_ast::ObjectLit;
 
 /// Infer a struct name from object literal properties.
-pub fn infer_struct_from_object(obj: &ObjectLit) -> Option<String> {
-    let props = collect_prop_names(obj);
-
-    let has_id = props.contains(&"id".to_string());
-    let has_title = props.contains(&"title".to_string());
-    let has_done = props.contains(&"done".to_string());
-    let has_total = props.contains(&"total".to_string());
-    let has_active = props.contains(&"active".to_string());
-
-    if has_id && has_title && has_done {
-        return Some("Task".to_string());
-    }
-
-    if has_total && has_done && has_active {
-        return Some("__AnonymousStruct1".to_string());
-    }
-
+pub fn infer_struct_from_object(_obj: &ObjectLit) -> Option<String> {
     None
-}
-
-/// Collect property names from an object literal.
-fn collect_prop_names(obj: &ObjectLit) -> Vec<String> {
-    let mut props = Vec::new();
-    for prop in &obj.props {
-        if let PropOrSpread::Prop(p) = prop {
-            if let Prop::KeyValue(kv) = &**p {
-                if let PropName::Ident(ident) = &kv.key {
-                    props.push(ident.sym.to_string());
-                }
-            }
-        }
-    }
-    props
 }
 
 /// Convert name to snake_case.
