@@ -4,7 +4,11 @@
 
 use swc_ecma_ast::{Callee, Expr, Lit};
 
+/// Special marker for unknown types.
+pub const UNKNOWN_TYPE: &str = "?";
+
 /// Infer the type of an expression as a Rust type string.
+/// Returns UNKNOWN_TYPE ("?") if the type cannot be determined.
 #[allow(clippy::too_many_lines)]
 pub fn infer_type(expr: &Expr) -> String {
     match expr {
@@ -20,7 +24,9 @@ pub fn infer_type(expr: &Expr) -> String {
         Expr::Arrow(_) => "()".to_string(),
         Expr::Paren(paren) => infer_type(&paren.expr),
         Expr::Await(await_expr) => infer_type(&await_expr.arg),
-        _ => "()".to_string(),
+        // Identifiers require context to resolve - return UNKNOWN_TYPE
+        Expr::Ident(_) => UNKNOWN_TYPE.to_string(),
+        _ => UNKNOWN_TYPE.to_string(),
     }
 }
 
@@ -79,20 +85,25 @@ fn resolve_common_type(cons_type: &str, alt_type: &str) -> String {
 fn infer_bin_type(bin_expr: &swc_ecma_ast::BinExpr) -> String {
     let left = infer_type(&bin_expr.left);
     let right = infer_type(&bin_expr.right);
-    infer_bin_op_type(&left, &right, bin_expr.op)
+    infer_bin_op_type(&left, &right)
 }
 
-fn infer_bin_op_type(left: &str, right: &str, op: swc_ecma_ast::BinaryOp) -> String {
-    if op == swc_ecma_ast::BinaryOp::Add && (left == "String" || right == "String") {
+fn infer_bin_op_type(left: &str, right: &str) -> String {
+    // Handle arithmetic on usize (e.g., names.len() - 1)
+    if left == "usize" || right == "usize" {
+        return "usize".to_string();
+    }
+
+    // Handle Vec slicing: keep Vec type
+    if left.starts_with("Vec<") {
+        return left.to_string();
+    }
+    if right.starts_with("Vec<") {
+        return right.to_string();
+    }
+
+    if left == "String" || right == "String" {
         return "String".to_string();
-    }
-
-    if is_comparison_op(op) || is_logical_op(op) {
-        return "bool".to_string();
-    }
-
-    if is_bitwise_op(op) {
-        return "i32".to_string();
     }
 
     if left == "i32" || right == "i32" {
@@ -100,36 +111,6 @@ fn infer_bin_op_type(left: &str, right: &str, op: swc_ecma_ast::BinaryOp) -> Str
     } else {
         "f64".to_string()
     }
-}
-
-fn is_comparison_op(op: swc_ecma_ast::BinaryOp) -> bool {
-    matches!(
-        op,
-        swc_ecma_ast::BinaryOp::EqEqEq
-            | swc_ecma_ast::BinaryOp::NotEqEq
-            | swc_ecma_ast::BinaryOp::Lt
-            | swc_ecma_ast::BinaryOp::LtEq
-            | swc_ecma_ast::BinaryOp::Gt
-            | swc_ecma_ast::BinaryOp::GtEq
-    )
-}
-
-fn is_logical_op(op: swc_ecma_ast::BinaryOp) -> bool {
-    matches!(
-        op,
-        swc_ecma_ast::BinaryOp::LogicalAnd | swc_ecma_ast::BinaryOp::LogicalOr
-    )
-}
-
-fn is_bitwise_op(op: swc_ecma_ast::BinaryOp) -> bool {
-    matches!(
-        op,
-        swc_ecma_ast::BinaryOp::BitAnd
-            | swc_ecma_ast::BinaryOp::BitOr
-            | swc_ecma_ast::BinaryOp::BitXor
-            | swc_ecma_ast::BinaryOp::LShift
-            | swc_ecma_ast::BinaryOp::RShift
-    )
 }
 
 fn infer_call_type(call_expr: &swc_ecma_ast::CallExpr) -> String {
@@ -237,11 +218,25 @@ fn unwrap_hashmap_value(obj_type: &str) -> String {
 }
 
 fn unwrap_vec_element(obj_type: &str) -> String {
-    if obj_type.starts_with("Vec") && obj_type.ends_with('>') {
+    format!("Option<{}>", unwrap_vec_element_raw(obj_type))
+}
+
+fn unwrap_vec_element_raw(obj_type: &str) -> String {
+    if obj_type.starts_with("Vec<") && obj_type.ends_with('>') {
         let inner = &obj_type[4..obj_type.len() - 1];
-        format!("Option<{}>", inner)
+        inner.to_string()
     } else {
-        "Option<()>".to_string()
+        "()".to_string()
+    }
+}
+
+fn extract_slice_element(slice_type: &str) -> String {
+    // slice_type is like "&[String]" - extract "String"
+    if slice_type.starts_with("&[") && slice_type.ends_with(']') {
+        let inner = &slice_type[2..slice_type.len() - 1];
+        inner.to_string()
+    } else {
+        "()".to_string()
     }
 }
 
@@ -256,18 +251,28 @@ fn infer_member_type(member_expr: &swc_ecma_ast::MemberExpr) -> String {
     let obj_type = infer_type(&member_expr.obj);
     let prop_name = extract_method_name(&member_expr.prop);
     
-    // Handle computed property access on HashMaps (vars[key]) -> .get(&key)
+    // Handle computed property access (subscript) for various collection types
     if member_expr.prop.is_computed() {
-        // This is array/map subscript access
+        // For HashMap/Record, return Option<value>
         if is_hashmap_type(&obj_type) {
             return unwrap_hashmap_value(&obj_type);
         }
-        // For Vec/arrays, return Option<element>
-        if obj_type.starts_with("Vec") {
-            return unwrap_vec_element(&obj_type);
+        // For Vec<T>, return T (the element type)
+        if obj_type.starts_with("Vec<") {
+            return unwrap_vec_element_raw(&obj_type);
+        }
+        // For &[T] slices, return T (the element type)
+        if obj_type.starts_with("&[") {
+            return extract_slice_element(&obj_type);
         }
         // Unknown subscript type
-        return "Option<()>".to_string();
+        return UNKNOWN_TYPE.to_string();
+    }
+    
+    // Handle slice/iter methods that return slice types
+    if (prop_name == "as_slice" || prop_name == "iter") && obj_type.starts_with("Vec<") {
+        let inner = &obj_type[4..obj_type.len() - 1];
+        return format!("&[{}]", inner);
     }
     
     infer_property_type(&obj_type, prop_name)

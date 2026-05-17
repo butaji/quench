@@ -19,17 +19,17 @@ export function TaskList(props: TaskListProps): Widget {
     const items: ListItem[] = [];
     for (let i = 0; i < filtered.length; i++) {
         const task = filtered[i];
-        const text = `${task.done ? "[x]" : "[ ]"} ${task.title}`;
+        const text = task.done ? "[x] " + task.title : "[ ] " + task.title;
         const style = i === props.selected 
-            ? Style::new().fg(Color::Yellow) 
-            : Style::default();
-        items.push(ListItem::new(text).style(style));
+            ? Style.new().fg(Color.Yellow) 
+            : Style.default();
+        items.push(ListItem.new(text).style(style));
     }
     
-    // Create list widget
-    const list = List::new(items)
-        .block(Block::default().title("Tasks").borders(Borders::SINGLE))
-        .highlight_style(Style::new().add_modifier(Modifier::Reverse));
+    // Create list widget using Ratatui builder pattern
+    const list = List.new(items)
+        .block(Block.default().title("Tasks").borders(Borders.SINGLE))
+        .highlight_style(Style.new().add_modifier(Modifier.Reverse));
     
     return list;
 }

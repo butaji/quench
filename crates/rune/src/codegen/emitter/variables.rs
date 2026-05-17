@@ -2,7 +2,7 @@
 //!
 //! Emits Rust variable declarations from TypeScript var/let/const.
 
-use super::{emit_expr, infer_type, CodeEmitter};
+use super::{emit_expr, infer_type, infer::UNKNOWN_TYPE, CodeEmitter};
 
 /// Emit a variable declaration.
 pub fn emit_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::Decl) {
@@ -39,7 +39,12 @@ fn emit_single_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::VarDecla
     if let Some(init) = &decl.init {
         emit_var_with_init(emitter, &name, &ty, init, explicit_type.as_ref());
     } else {
-        emitter.push_str(&format!("let {}: {};\n", name, ty));
+        // Only emit type annotation if we have one
+        if ty != UNKNOWN_TYPE {
+            emitter.push_str(&format!("let {}: {};\n", name, ty));
+        } else {
+            emitter.push_str(&format!("let {};\n", name));
+        }
     }
 
     emitter.set_object_struct(None);
@@ -72,20 +77,18 @@ fn resolve_var_type(
     init: Option<&swc_ecma_ast::Expr>,
 ) -> String {
     if let Some(explicit) = explicit_type {
-        eprintln!("DEBUG resolve_var_type: using explicit={}", explicit);
         return explicit.clone();
     }
     if let Some(inferred) = inferred_struct {
-        eprintln!("DEBUG resolve_var_type: using inferred_struct={}", inferred);
         return inferred.clone();
     }
     if let Some(init_expr) = init {
         let inferred = infer_type(init_expr);
-        eprintln!("DEBUG resolve_var_type: using inferred from init={}", inferred);
+        // Don't use UNKNOWN_TYPE as default - return known type or UNKNOWN
         return inferred;
     }
 
-    "()".to_string()
+    UNKNOWN_TYPE.to_string()
 }
 
 fn emit_var_with_init(
@@ -97,7 +100,12 @@ fn emit_var_with_init(
 ) {
     let needs_cast = needs_type_cast(init, explicit_type);
 
-    emitter.push_str(&format!("let {}: {} = ", name, ty));
+    // Only emit type annotation if we have a known type
+    if ty != UNKNOWN_TYPE {
+        emitter.push_str(&format!("let {}: {} = ", name, ty));
+    } else {
+        emitter.push_str(&format!("let {} = ", name));
+    }
 
     if needs_cast {
         emit_with_cast(emitter, ty, init);

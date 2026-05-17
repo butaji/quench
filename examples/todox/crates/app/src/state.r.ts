@@ -10,9 +10,9 @@ export type Task = {
 
 /// Filter enum for showing active/completed/all tasks.
 export enum Filter {
-    All = "all",
-    Active = "active",
-    Completed = "completed",
+    All = 0,
+    Active = 1,
+    Completed = 2,
 }
 
 /// Application state owned by the host.
@@ -45,7 +45,7 @@ export function filterTasks(tasks: Task[], filter: Filter): Task[] {
         case Filter.Completed:
             return tasks.filter(t => t.done);
         default:
-            return tasks;
+            return [...tasks];
     }
 }
 

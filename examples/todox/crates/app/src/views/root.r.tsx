@@ -52,9 +52,9 @@ export function render(f: Frame, state: AppState): void {
     
     // Render using Ratatui widgets via JSX
     const content = lines.join("\n");
-    const para = <Paragraph text={content} />;
-    const block = <Block title="TODOX" borders={Borders.ALL} />;
-    f.render_widget(para.withBlock(block), f.size());
+    const para = Paragraph.new(content);
+    const block = Block.default().title("TODOX").borders(Borders.ALL);
+    f.render_widget(para.block(block), f.size());
 }
 
 /// Get original index in full task list from filtered index.
