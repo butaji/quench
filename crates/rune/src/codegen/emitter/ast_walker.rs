@@ -4,6 +4,7 @@
 
 use super::type_collector::{EmissionTracker, TypeCollector};
 use super::{CodeEmitter, RustType};
+use crate::analyzer::AnalysisResult;
 use crate::utils::to_snake_case;
 use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::{Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem, Stmt};
@@ -17,6 +18,8 @@ pub struct AstWalker {
     imports: HashMap<String, Vec<String>>,
     native_imports: HashSet<String>,
     emission_tracker: EmissionTracker,
+    #[allow(dead_code)]
+    analysis: AnalysisResult,
 }
 
 impl AstWalker {
@@ -29,6 +32,20 @@ impl AstWalker {
             imports: HashMap::new(),
             native_imports: HashSet::new(),
             emission_tracker: EmissionTracker::default(),
+            analysis: AnalysisResult::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_analysis(analysis: AnalysisResult) -> Self {
+        Self {
+            emitter: CodeEmitter::new(),
+            collector: TypeCollector::new(),
+            module_name: String::new(),
+            imports: HashMap::new(),
+            native_imports: HashSet::new(),
+            emission_tracker: EmissionTracker::default(),
+            analysis,
         }
     }
 
@@ -84,25 +101,18 @@ impl AstWalker {
     }
 
     fn emit_imports(&mut self) {
-        let protocol_types = ["Task", "AppState", "Filter"];
         for (path, names) in &self.imports {
             let clean_path = path.trim_matches('"');
             if clean_path.starts_with("native:") {
                 continue;
             }
 
-            // Filter out types that are in protocol (already imported via protocol)
-            let filtered_names: Vec<&String> = names
-                .iter()
-                .filter(|n| !protocol_types.contains(&n.as_str()))
-                .collect();
-
-            if filtered_names.is_empty() {
+            if names.is_empty() {
                 continue;
             }
 
             let rust_path = self.convert_import_path(clean_path);
-            let names_str = filtered_names
+            let names_str = names
                 .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>()

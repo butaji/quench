@@ -151,8 +151,6 @@ impl TypeResolver {
         }
 
         match name {
-            "Widget" | "Task" | "Filter" => RustType::Custom(name.to_string()),
-            "AppState" => RustType::MutBorrow(Box::new(RustType::Custom(name.to_string()))),
             "Result" => RustType::Result(Box::new(RustType::Unknown)),
             "Option" => RustType::Option(Box::new(RustType::Unknown)),
             _ => RustType::Custom(name.to_string()),
