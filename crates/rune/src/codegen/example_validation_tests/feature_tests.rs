@@ -7,7 +7,7 @@ use crate::{analyzer, codegen, parser};
 /// Test array methods.
 #[test]
 fn test_array_methods() {
-    let source = r#"
+    let source = "
 export function processNumbers(nums: number[]): {
     sum: number,
     filtered: number[],
@@ -25,7 +25,7 @@ export function findMax(nums: number[]): number | null {
     }
     return nums.reduce((a, b) => a > b ? a : b);
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "arrays.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -38,7 +38,7 @@ export function findMax(nums: number[]): number | null {
 /// Test string methods.
 #[test]
 fn test_string_methods() {
-    let source = r#"
+    let source = "
 export function processText(text: string): {
     upper: string,
     trimmed: string,
@@ -48,7 +48,7 @@ export function processText(text: string): {
     return {
         upper: text.toUpperCase(),
         trimmed: text.trim(),
-        words: text.split(" "),
+        words: text.split(\" \"),
         len: text.length,
     };
 }
@@ -57,10 +57,10 @@ export function slugify(text: string): string {
     return text
         .toLowerCase()
         .trim()
-        .replace(/\s+/g, "-")
-        .replace(/[^\w-]+/g, "");
+        .replace(/\\s+/g, \"-\")
+        .replace(/[^\\w-]+/g, \"\");
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "strings.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -73,7 +73,7 @@ export function slugify(text: string): string {
 /// Test closure capture patterns.
 #[test]
 fn test_closure_capture() {
-    let source = r#"
+    let source = "
 export function createCounter(): () => number {
     let count = 0;
     const increment = () => {
@@ -86,7 +86,7 @@ export function createCounter(): () => number {
 export function createAdder(a: number): (b: number) => number {
     return (b) => a + b;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "closures.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -98,16 +98,16 @@ export function createAdder(a: number): (b: number) => number {
 /// Test control flow patterns.
 #[test]
 fn test_control_flow() {
-    let source = r#"
+    let source = "
 export function fizzbuzz(n: number): string[] {
     const result: string[] = [];
     for (let i = 1; i <= n; i++) {
         if (i % 15 === 0) {
-            result.push("FizzBuzz");
+            result.push(\"FizzBuzz\");
         } else if (i % 3 === 0) {
-            result.push("Fizz");
+            result.push(\"Fizz\");
         } else if (i % 5 === 0) {
-            result.push("Buzz");
+            result.push(\"Buzz\");
         } else {
             result.push(String(i));
         }
@@ -134,7 +134,7 @@ export function binarySearch(
     }
     return -1;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "control.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -148,7 +148,7 @@ export function binarySearch(
 /// Test object operations.
 #[test]
 fn test_object_operations() {
-    let source = r#"
+    let source = "
 export type Config = {
     name: string,
     value: number,
@@ -175,7 +175,7 @@ export function pick<T extends object, K extends keyof T>(
     }
     return result as Pick<T, K>;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "objects.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -188,7 +188,7 @@ export function pick<T extends object, K extends keyof T>(
 /// Test map operations.
 #[test]
 fn test_map_operations() {
-    let source = r#"
+    let source = "
 export type Entry = {
     key: string,
     value: number,
@@ -210,7 +210,7 @@ export function groupBy<T>(
     }
     return result;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "maps.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();

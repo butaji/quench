@@ -152,7 +152,7 @@ mod codegen_tests {
         let file = parse_file_from_str(&src, "arr.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
-        assert!(result.source.contains("["), "Should use direct [idx] indexing");
+        assert!(result.source.contains('['), "Should use direct [idx] indexing");
         assert!(!result.source.contains(".get("), "Should not use .get()");
     }
 
@@ -162,7 +162,7 @@ mod codegen_tests {
         let file = parse_file_from_str(src, "get.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
-        assert!(result.source.contains("["), "arr.get(idx) should emit [idx]");
+        assert!(result.source.contains('['), "arr.get(idx) should emit [idx]");
         assert!(!result.source.contains(".get("), "Should not use .get() method");
     }
 
@@ -186,15 +186,15 @@ mod codegen_tests {
 
     #[test]
     fn test_result_pattern_ok_err() {
-        let src = r#"
+        let src = "
             export function divide(a: number, b: number):
                 | { ok: true; value: number }
                 | { ok: false; error: string }
             {
-                if (b === 0) return { ok: false, error: "zero" };
+                if (b === 0) return { ok: false, error: \"zero\" };
                 return { ok: true, value: a / b };
             }
-        "#;
+        ";
         let file = parse_file_from_str(src, "result.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
@@ -204,15 +204,15 @@ mod codegen_tests {
 
     #[test]
     fn test_tagged_union_switch_match() {
-        let src = r#"
-            export type Message = | { tag: "Move"; x: number } | { tag: "Stop" };
+        let src = "
+            export type Message = | { tag: \"Move\"; x: number } | { tag: \"Stop\" };
             export function handle(msg: Message): number {
                 switch (msg.tag) {
-                    case "Move": return msg.x;
-                    case "Stop": return 0;
+                    case \"Move\": return msg.x;
+                    case \"Stop\": return 0;
                 }
             }
-        "#;
+        ";
         let file = parse_file_from_str(src, "enum.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
@@ -222,13 +222,13 @@ mod codegen_tests {
 
     #[test]
     fn test_for_of_iter() {
-        let src = r#"
+        let src = "
             export function sum(nums: number[]): number {
                 let sum = 0;
                 for (const n of nums) { sum = sum + n; }
                 return sum;
             }
-        "#;
+        ";
         let file = parse_file_from_str(src, "forof.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
@@ -248,14 +248,14 @@ mod codegen_tests {
 
     #[test]
     fn test_option_type_generated() {
-        let src = r#"
+        let src = "
             export function find(items: string[], target: string): string | null {
                 for (let i = 0; i < items.length; i++) {
                     if (items[i] === target) return items[i];
                 }
                 return null;
             }
-        "#;
+        ";
         let file = parse_file_from_str(src, "opt.r.ts").unwrap();
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();

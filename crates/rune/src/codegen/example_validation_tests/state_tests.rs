@@ -7,7 +7,7 @@ use crate::{analyzer, codegen, parser};
 /// Test todox example with state management.
 #[test]
 fn test_example_todox_state() {
-    let source = r#"
+    let source = "
 export type Task = {
     id: number,
     title: string,
@@ -15,9 +15,9 @@ export type Task = {
 };
 
 export enum Filter {
-    All = "all",
-    Active = "active",
-    Completed = "completed",
+    All = \"all\",
+    Active = \"active\",
+    Completed = \"completed\",
 }
 
 export type AppState = {
@@ -49,7 +49,7 @@ export function filterTasks(tasks: Task[], filter: Filter): Task[] {
             return tasks;
     }
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "state.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -65,7 +65,7 @@ export function filterTasks(tasks: Task[], filter: Filter): Task[] {
 /// Test UI demo with counter and state.
 #[test]
 fn test_example_ui_demo() {
-    let source = r#"
+    let source = "
 export type State = {
     counter: number,
     items: string[],
@@ -76,9 +76,9 @@ export type State = {
 export function createInitialState(): State {
     return {
         counter: 0,
-        items: ["Learn Rust", "Build UI", "Ship product"],
+        items: [\"Learn Rust\", \"Build UI\", \"Ship product\"],
         selectedIndex: 0,
-        inputBuffer: "",
+        inputBuffer: \"\",
     };
 }
 
@@ -95,7 +95,7 @@ export function removeItem(state: State, index: number): void {
         state.items.splice(index, 1);
     }
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "ui_demo.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -110,7 +110,7 @@ export function removeItem(state: State, index: number): void {
 /// Test data processing with generics.
 #[test]
 fn test_example_data_processing() {
-    let source = r#"
+    let source = "
 export type Person = {
     id: number,
     name: string,
@@ -154,7 +154,7 @@ export function mapItems<T, U>(
     }
     return result;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "data.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -168,7 +168,7 @@ export function mapItems<T, U>(
 /// Test ratatui UI patterns.
 #[test]
 fn test_example_ratatui_ui() {
-    let source = r#"
+    let source = "
 export type Item = {
     id: number,
     name: string,
@@ -177,9 +177,9 @@ export type Item = {
 };
 
 export type ViewState =
-    | { tag: "List" }
-    | { tag: "Add" }
-    | { tag: "Edit"; itemId: number };
+    | { tag: \"List\" }
+    | { tag: \"Add\" }
+    | { tag: \"Edit\"; itemId: number };
 
 export type AppState = {
     items: Item[],
@@ -209,7 +209,7 @@ export function filterByName(items: Item[], query: string): Item[] {
     const q = query.toLowerCase();
     return items.filter(item => item.name.toLowerCase().includes(q));
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "ratatui.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -225,7 +225,7 @@ export function filterByName(items: Item[], query: string): Item[] {
 /// Test async HTTP patterns.
 #[test]
 fn test_example_async_http() {
-    let source = r#"
+    let source = "
 export type HttpResponse<T> = {
     ok: boolean,
     status: number,
@@ -256,9 +256,9 @@ export async function fetchPosts(userId: number): Promise<Post[]> {
 }
 
 export function validateEmail(email: string): boolean {
-    return email.includes("@");
+    return email.includes(\"@\");
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "http.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();

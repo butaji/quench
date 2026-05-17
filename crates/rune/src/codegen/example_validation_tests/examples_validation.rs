@@ -9,7 +9,7 @@ use crate::parser;
 /// Test: Basic struct and function transpilation
 #[test]
 fn test_basic_struct_transpilation() {
-    let source = r#"
+    let source = "
 export type Task = {
     id: number;
     title: string;
@@ -19,7 +19,7 @@ export type Task = {
 export function createTask(title: string): Task {
     return { id: 1, title, done: false };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -31,12 +31,12 @@ export function createTask(title: string): Task {
 /// Test: Tagged union enum transpilation
 #[test]
 fn test_tagged_union_transpilation() {
-    let source = r#"
+    let source = "
 export type Filter = 
-    | { tag: "All" }
-    | { tag: "Active" }
-    | { tag: "Completed" };
-"#;
+    | { tag: \"All\" }
+    | { tag: \"Active\" }
+    | { tag: \"Completed\" };
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -50,17 +50,17 @@ export type Filter =
 /// Test: Result pattern transpilation
 #[test]
 fn test_result_pattern_transpilation() {
-    let source = r#"
+    let source = "
 export function validate(value: number): 
     | { ok: true; value: number }
     | { ok: false; error: string }
 {
     if (value < 0) {
-        return { ok: false, error: "Negative" };
+        return { ok: false, error: \"Negative\" };
     }
     return { ok: true, value };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -72,7 +72,7 @@ export function validate(value: number):
 /// Test: Array and loop transpilation
 #[test]
 fn test_array_loop_transpilation() {
-    let source = r#"
+    let source = "
 export function sumArray(arr: number[]): number {
     let sum = 0;
     for (let i = 0; i < arr.length; i++) {
@@ -80,7 +80,7 @@ export function sumArray(arr: number[]): number {
     }
     return sum;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -92,7 +92,7 @@ export function sumArray(arr: number[]): number {
 /// Test: Option type transpilation
 #[test]
 fn test_option_type_transpilation() {
-    let source = r#"
+    let source = "
 export function findItem(items: string[], target: string): string | null {
     for (let i = 0; i < items.length; i++) {
         if (items[i] === target) {
@@ -101,7 +101,7 @@ export function findItem(items: string[], target: string): string | null {
     }
     return null;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -113,8 +113,8 @@ export function findItem(items: string[], target: string): string | null {
 /// Test: Native import pattern
 #[test]
 fn test_native_import_transpilation() {
-    let source = r#"
-import { fastSqrt } from "native:math";
+    let source = "
+import { fastSqrt } from \"native:math\";
 
 export function sqrtAll(values: number[]): number[] {
     const result: number[] = [];
@@ -123,7 +123,7 @@ export function sqrtAll(values: number[]): number[] {
     }
     return result;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -135,18 +135,18 @@ export function sqrtAll(values: number[]): number[] {
 /// Test: Switch/match transpilation
 #[test]
 fn test_switch_transpilation() {
-    let source = r#"
+    let source = "
 export function getStatusMessage(status: Filter): string {
     switch (status.tag) {
-        case "All":
-            return "Showing all";
-        case "Active":
-            return "Showing active";
-        case "Completed":
-            return "Showing completed";
+        case \"All\":
+            return \"Showing all\";
+        case \"Active\":
+            return \"Showing active\";
+        case \"Completed\":
+            return \"Showing completed\";
     }
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -157,11 +157,11 @@ export function getStatusMessage(status: Filter): string {
 /// Test: Async function transpilation
 #[test]
 fn test_async_function_transpilation() {
-    let source = r#"
+    let source = "
 export async function fetchData(url: string): Promise<string> {
-    return "data";
+    return \"data\";
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -173,11 +173,11 @@ export async function fetchData(url: string): Promise<string> {
 /// Test: Object spread transpilation
 #[test]
 fn test_spread_transpilation() {
-    let source = r#"
+    let source = "
 export function mergeTasks(a: Task, b: Task): Task {
     return { ...a, ...b };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -188,10 +188,10 @@ export function mergeTasks(a: Task, b: Task): Task {
 /// Test: Arrow function transpilation
 #[test]
 fn test_arrow_function_transpilation() {
-    let source = r#"
+    let source = "
 export const multiply = (a: number, b: number): number => a * b;
 export const addOne = (x: number): number => x + 1;
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -203,11 +203,11 @@ export const addOne = (x: number): number => x + 1;
 /// Test: Conditional expression transpilation
 #[test]
 fn test_conditional_transpilation() {
-    let source = r#"
+    let source = "
 export function max(a: number, b: number): number {
     return a > b ? a : b;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -230,7 +230,7 @@ fn test_empty_source() {
 /// Test: TSX file handling
 #[test]
 fn test_tsx_file_handling() {
-    let source = r#"
+    let source = "
 export type Widget = {
     id: string;
     children?: Widget[];
@@ -239,7 +239,7 @@ export type Widget = {
 export function createWidget(id: string): Widget {
     return { id };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "widget.r.tsx").unwrap();
     assert!(file.is_tsx());
     
@@ -252,14 +252,14 @@ export function createWidget(id: string): Widget {
 /// Test: Type alias transpilation
 #[test]
 fn test_type_alias_transpilation() {
-    let source = r#"
+    let source = "
 export type UserId = number;
 export type Username = string;
 export type User = {
     id: UserId;
     name: Username;
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -270,7 +270,7 @@ export type User = {
 /// Test: Generic type transpilation
 #[test]
 fn test_generic_type_transpilation() {
-    let source = r#"
+    let source = "
 export type Pair<A, B> = {
     first: A;
     second: B;
@@ -279,7 +279,7 @@ export type Pair<A, B> = {
 export function createPair<A, B>(a: A, b: B): Pair<A, B> {
     return { first: a, second: b };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
