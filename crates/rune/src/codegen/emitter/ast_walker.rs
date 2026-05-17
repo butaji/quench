@@ -53,11 +53,12 @@ impl AstWalker {
     fn emit_imports(&mut self) {
         // Protocol types (Task, AppState, Filter) are re-exported by mod.rs
         // No need to import them here
-        
+        // Native imports are handled by RustEmitter::write_native_imports in core.rs
+
         for (path, names) in &self.imports {
             let clean_path = path.trim_matches('"');
 
-            // Skip native imports - they're handled separately
+            // Skip native imports - they're handled separately in core.rs
             if clean_path.starts_with("native:") {
                 continue;
             }
@@ -73,16 +74,6 @@ impl AstWalker {
             let rust_path = self.convert_import_path(clean_path);
             let names_str = names.join(", ");
             self.emitter.push_line(&format!("use {}::{{{}}};", rust_path, names_str));
-        }
-
-        // Emit native imports
-        for module_name in &self.native_imports {
-            self.emitter.push_line("use crate::native;");
-            self.emitter.push_line(&format!("use crate::native::{};", module_name));
-        }
-
-        if !self.native_imports.is_empty() {
-            self.emitter.push_line("");
         }
     }
 
