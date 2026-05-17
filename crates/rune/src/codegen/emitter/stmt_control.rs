@@ -82,7 +82,11 @@ pub fn emit_while_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::WhileStmt
     emit_expr(emitter, &stmt.test);
     emitter.push_str(" {\n");
     emitter.inc_indent();
-    emit_single_stmt(emitter, &stmt.body);
+    if let Stmt::Block(block) = &*stmt.body {
+        emit_block_stmts(emitter, block);
+    } else {
+        emit_single_stmt(emitter, &stmt.body);
+    }
     emitter.dec_indent();
     emitter.push_indent();
     emitter.push_str("}\n");
@@ -100,14 +104,18 @@ pub fn emit_for_stmt(emitter: &mut CodeEmitter, stmt: &ForStmt) {
 fn emit_counting_loop(
     emitter: &mut CodeEmitter,
     var_name: &str,
-    var_type: &str,
+    _var_type: &str,
     start: &str,
     end: &str,
     body: &Stmt,
 ) {
-    emitter.push_str(&format!("for {var_name}: {var_type} in {start}..{end} {{\n"));
+    emitter.push_str(&format!("for {var_name} in {start}..{end} {{\n"));
     emitter.inc_indent();
-    emit_single_stmt(emitter, body);
+    if let Stmt::Block(block) = body {
+        emit_block_stmts(emitter, block);
+    } else {
+        emit_single_stmt(emitter, body);
+    }
     emitter.dec_indent();
     emitter.push_indent();
     emitter.push_str("}\n");
@@ -159,7 +167,11 @@ fn emit_while_with_update(emitter: &mut CodeEmitter, test: Option<&Expr>, body: 
     emit_loop_condition(emitter, test);
     emitter.push_str(" {\n");
     emitter.inc_indent();
-    emit_single_stmt(emitter, body);
+    if let Stmt::Block(block) = body {
+        emit_block_stmts(emitter, block);
+    } else {
+        emit_single_stmt(emitter, body);
+    }
     emit_update_expr(emitter, update);
     emitter.dec_indent();
     emitter.push_indent();
@@ -434,7 +446,11 @@ fn emit_for_of_loop(emitter: &mut CodeEmitter, var_name: &str, right: &Expr, bod
     emit_expr(emitter, right);
     emitter.push_str(".iter().cloned() {\n");
     emitter.inc_indent();
-    emit_single_stmt(emitter, body);
+    if let Stmt::Block(block) = body {
+        emit_block_stmts(emitter, block);
+    } else {
+        emit_single_stmt(emitter, body);
+    }
     emitter.dec_indent();
     emitter.push_indent();
     emitter.push_str("}\n");

@@ -149,10 +149,8 @@ fn handle_events(
     state: &mut AppState,
 ) -> Option<bool> {
     // Use non-blocking poll for hot reload compatibility
-    if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::event_poll(
-        std::time::Duration::from_millis(50)
-    ) {
-        if let crossterm::event::Event::Key(key) = key {
+    if crossterm::event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+        if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
             if key.code == crossterm::event::KeyCode::Char('q') {
                 return Some(true);
             }

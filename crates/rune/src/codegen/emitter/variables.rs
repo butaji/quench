@@ -126,12 +126,14 @@ fn needs_type_cast(init: &swc_ecma_ast::Expr, explicit_type: Option<&String>) ->
 }
 
 fn emit_with_cast(emitter: &mut CodeEmitter, ty: &str, init: &swc_ecma_ast::Expr) {
+    emit_expr(emitter, init);
     match ty {
-        "f64" => emitter.push_str("0.0"),
-        "i32" => emitter.push_str("0i32"),
-        "String" => emitter.push_str("String::new()"),
-        "bool" => emitter.push_str("false"),
-        _ => emit_expr(emitter, init),
+        "f64" => emitter.push_str(" as f64"),
+        "i32" => emitter.push_str(" as i32"),
+        "usize" => emitter.push_str(" as usize"),
+        "String" => emitter.push_str(".to_string()"),
+        "bool" => emitter.push_str(" as bool"),
+        _ => {}
     }
 }
 
@@ -212,8 +214,7 @@ fn resolve_type_ref(type_ref: &swc_ecma_ast::TsTypeRef) -> String {
     }
 
     match name.as_str() {
-        "Task" | "Filter" | "AppState" => name,
-        "Result" => "Result<String, String>".to_string(),
+        "Result" => "Result<(), ()>".to_string(),
         "Option" => "Option<()>".to_string(),
         "Record" => "std::collections::HashMap<String, ()>".to_string(),
         _ => name,
@@ -280,36 +281,8 @@ fn resolve_generic_type_ref(
 }
 
 /// Infer struct type from an object expression.
-pub fn infer_struct_type_from_object(obj: &swc_ecma_ast::ObjectLit) -> Option<String> {
-    let props = collect_object_props(obj);
-
-    if props.iter().any(|p| p == "id")
-        && props.iter().any(|p| p == "title")
-        && props.iter().any(|p| p == "done")
-    {
-        return Some("Task".to_string());
-    }
-
-    if props.iter().any(|p| p == "total")
-        && props.iter().any(|p| p == "done")
-        && props.iter().any(|p| p == "active")
-    {
-        return Some("__AnonymousStruct1".to_string());
-    }
-
+pub fn infer_struct_type_from_object(_obj: &swc_ecma_ast::ObjectLit) -> Option<String> {
     None
 }
 
-fn collect_object_props(obj: &swc_ecma_ast::ObjectLit) -> Vec<String> {
-    let mut props = Vec::new();
-    for prop in &obj.props {
-        if let swc_ecma_ast::PropOrSpread::Prop(p) = prop {
-            if let swc_ecma_ast::Prop::KeyValue(kv) = &**p {
-                if let swc_ecma_ast::PropName::Ident(ident) = &kv.key {
-                    props.push(ident.sym.to_string());
-                }
-            }
-        }
-    }
-    props
-}
+

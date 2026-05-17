@@ -35,6 +35,8 @@ pub struct BuildOptions {
     pub watch_transpile: bool,
     /// Verbose output
     pub verbose: bool,
+    /// Output JSON format
+    pub json: bool,
 }
 
 impl BuildOptions {
@@ -49,6 +51,7 @@ impl BuildOptions {
             transpile_file: None,
             watch_transpile: false,
             verbose: false,
+            json: false,
         }
     }
 
@@ -149,6 +152,8 @@ impl BuildDriver {
     }
 
     fn transpile_watch(&self, file: &Path) -> Result<()> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
         use std::time::Duration;
 
         println!(
@@ -157,7 +162,13 @@ impl BuildDriver {
         );
         let mut last_modified = std::fs::metadata(file).and_then(|m| m.modified()).ok();
 
-        loop {
+        let running = Arc::new(AtomicBool::new(true));
+        let r = running.clone();
+        let _ = ctrlc::set_handler(move || {
+            r.store(false, Ordering::SeqCst);
+        });
+
+        while running.load(Ordering::SeqCst) {
             // Check for file changes
             if let Ok(current_modified) = std::fs::metadata(file).and_then(|m| m.modified()) {
                 if last_modified != Some(current_modified) {
@@ -170,6 +181,9 @@ impl BuildDriver {
             }
             std::thread::sleep(Duration::from_millis(500));
         }
+
+        println!("\nWatch stopped.");
+        Ok(())
     }
 
     /// Initialize a new project.
@@ -239,6 +253,9 @@ impl BuildDriver {
         let output = self.run_cargo_build(release)?;
         if !output.status.success() {
             self.handle_build_failure(&output);
+            return Err(crate::RuneError::Cargo(
+                "cargo build failed - see stderr above".into(),
+            ));
         }
         Ok(())
     }
