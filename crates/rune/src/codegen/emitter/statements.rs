@@ -196,53 +196,171 @@ fn emit_while_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::WhileStmt) {
 }
 
 fn emit_for_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::ForStmt) {
-    emitter.push_str("for ");
-    emit_for_init(emitter, stmt.init.as_ref());
-    emitter.push_str("; ");
+    // Try to convert to Rust range-based loop if it's a simple counting loop
+    if let Some((var_name, var_type, start, end)) = try_parse_counting_loop(stmt) {
+        emitter.push_str(&format!("for {var_name}: {var_type} in {start}..{end} {{\n"));
+        emitter.inc_indent();
+        emit_single_stmt(emitter, &stmt.body);
+        emitter.dec_indent();
+        emitter.push_indent();
+        emitter.push_str("}\n");
+        return;
+    }
+    
+    // Fall back: Convert to while loop with init before it
+    // for (init; test; update) { body } -> init; while (test) { body; update; }
+    if let Some(init) = &stmt.init {
+        match init {
+            swc_ecma_ast::VarDeclOrExpr::VarDecl(d) => {
+                for decl in &d.decls {
+                    if let Some(name) = extract_var_name(&decl.name) {
+                        let ty = extract_var_type(&decl.name);
+                        if let Some(init_expr) = &decl.init {
+                            let start_len = emitter.output().len();
+                            emit_expr(emitter, init_expr);
+                            let end_len = emitter.output().len();
+                            let init_str = emitter.output()[start_len..end_len].to_string();
+                            emitter.output_mut().truncate(start_len);
+                            emitter.push_str(&format!("let mut {name}: {ty} = {init_str};\n"));
+                        }
+                    }
+                }
+            }
+            swc_ecma_ast::VarDeclOrExpr::Expr(e) => {
+                emitter.push_indent();
+                emit_expr(emitter, e);
+                emitter.push_str(";\n");
+            }
+        }
+    }
+    
+    // Emit while loop
+    emitter.push_str("while ");
     if let Some(test) = &stmt.test {
         emit_expr(emitter, test);
-    }
-    emitter.push_str("; ");
-    if let Some(update) = &stmt.update {
-        emit_expr(emitter, update);
+    } else {
+        emitter.push_str("true");
     }
     emitter.push_str(" {\n");
     emitter.inc_indent();
     emit_single_stmt(emitter, &stmt.body);
+    
+    // Emit update expression
+    if let Some(update) = &stmt.update {
+        emitter.push_indent();
+        emit_expr(emitter, update);
+        emitter.push_str(";\n");
+    }
+    
     emitter.dec_indent();
     emitter.push_indent();
     emitter.push_str("}\n");
 }
 
-fn emit_for_init(emitter: &mut CodeEmitter, init: Option<&swc_ecma_ast::VarDeclOrExpr>) {
-    if let Some(init) = init {
-        match init {
-            swc_ecma_ast::VarDeclOrExpr::Expr(e) => emit_expr(emitter, e),
-            swc_ecma_ast::VarDeclOrExpr::VarDecl(d) => {
-                // Extract just the variable name and type, not the 'let' keyword
-                for decl in &d.decls {
-                    if let Some(name) = extract_var_name(&decl.name) {
-                        let ty = extract_var_type(&decl.name);
-                        if let Some(init_expr) = &decl.init {
-                            // Store current output length to capture init emission
-                            let start_len = emitter.output().len();
-                            let prev_struct = emitter.object_struct_name().cloned();
-                            emit_expr(emitter, init_expr);
-                            restore_struct_context(emitter, prev_struct);
-                            let end_len = emitter.output().len();
-                            // Clone the init string to avoid borrow issues
-                            let init_str = emitter.output()[start_len..end_len].to_string();
-                            // Remove the emitted content
-                            emitter.output_mut().truncate(start_len);
-                            // Now emit the proper format
-                            emitter.push_str(&format!("{}: {} = {}", name, ty, init_str));
-                        } else {
-                            emitter.push_str(&format!("{}: {}", name, ty));
-                        }
-                    }
-                }
+/// Try to parse a counting loop pattern: `for (let i = start; i < end; i++)`
+fn try_parse_counting_loop(
+    stmt: &swc_ecma_ast::ForStmt,
+) -> Option<(String, String, String, String)> {
+    // Check init is a variable declaration
+    let swc_ecma_ast::VarDeclOrExpr::VarDecl(var_decl) = stmt.init.as_ref()? else { return None; };
+    if var_decl.decls.len() != 1 {
+        return None;
+    }
+    
+    let decl = &var_decl.decls[0];
+    let var_name = extract_var_name(&decl.name)?;
+    let var_type = extract_var_type(&decl.name);
+    
+    // Check init expression
+    let Some(init_expr) = &decl.init else { return None; };
+    let start_str = expr_to_string(init_expr);
+    
+    // Check test is a comparison
+    let test_expr = stmt.test.as_ref()?;
+    let (compare_var, op, limit_str) = extract_comparison(test_expr)?;
+    if compare_var != var_name || op != "<" {
+        return None;
+    }
+    
+    // Check update is an increment
+    let update_expr = stmt.update.as_ref()?;
+    if !is_increment(update_expr, &var_name) {
+        return None;
+    }
+    
+    Some((var_name, var_type, start_str, limit_str))
+}
+
+fn expr_to_string(expr: &swc_ecma_ast::Expr) -> String {
+    match expr {
+        swc_ecma_ast::Expr::Lit(lit) => match lit {
+            swc_ecma_ast::Lit::Num(n) => n.value.to_string(),
+            swc_ecma_ast::Lit::BigInt(_) => "0".to_string(),
+            swc_ecma_ast::Lit::Str(s) => format!("{:?}", s.value),
+            swc_ecma_ast::Lit::Bool(b) => b.value.to_string(),
+            _ => "0".to_string(),
+        },
+        swc_ecma_ast::Expr::Ident(ident) => ident.sym.to_string(),
+        swc_ecma_ast::Expr::Bin(bin) => {
+            let left = expr_to_string(&bin.left);
+            let right = expr_to_string(&bin.right);
+            let op = match bin.op {
+                swc_ecma_ast::BinaryOp::Add => "+",
+                swc_ecma_ast::BinaryOp::Sub => "-",
+                swc_ecma_ast::BinaryOp::Mul => "*",
+                swc_ecma_ast::BinaryOp::Div => "/",
+                _ => "+",
+            };
+            format!("({left} {op} {right})")
+        }
+        _ => "0".to_string(),
+    }
+}
+
+fn extract_comparison(expr: &swc_ecma_ast::Expr) -> Option<(String, &str, String)> {
+    let swc_ecma_ast::Expr::Bin(bin) = expr else { return None };
+    let op_str = match bin.op {
+        swc_ecma_ast::BinaryOp::Lt => "<",
+        swc_ecma_ast::BinaryOp::LtEq => "<=",
+        swc_ecma_ast::BinaryOp::Gt => ">",
+        swc_ecma_ast::BinaryOp::GtEq => ">=",
+        _ => return None,
+    };
+    
+    let (compare_var, compare_expr) = match (&*bin.left, &*bin.right) {
+        (swc_ecma_ast::Expr::Ident(ident), right) => (ident.sym.to_string(), right),
+        (left, swc_ecma_ast::Expr::Ident(ident)) => (ident.sym.to_string(), left),
+        _ => return None,
+    };
+    
+    Some((compare_var, op_str, expr_to_string(compare_expr)))
+}
+
+fn is_increment(expr: &swc_ecma_ast::Expr, var_name: &str) -> bool {
+    match expr {
+        swc_ecma_ast::Expr::Update(update) => {
+            if let swc_ecma_ast::Expr::Ident(ident) = &*update.arg {
+                ident.sym.as_ref() == var_name
+                    && update.op == swc_ecma_ast::UpdateOp::PlusPlus
+            } else {
+                false
             }
         }
+        swc_ecma_ast::Expr::Assign(assign) => {
+            if let swc_ecma_ast::AssignTarget::Simple(
+                swc_ecma_ast::SimpleAssignTarget::Ident(ident),
+            ) = &assign.left
+            {
+                ident.id.sym.as_ref() == var_name
+                    && matches!(
+                        assign.op,
+                        swc_ecma_ast::AssignOp::AddAssign | swc_ecma_ast::AssignOp::SubAssign
+                    )
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
