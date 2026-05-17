@@ -30,13 +30,6 @@ pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
 /// # Errors
 /// Returns an error if the file cannot be parsed.
 pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
-    // Check if this is a .rs file (Rust source)
-    if let Some(ext) = path.extension().and_then(std::ffi::OsStr::to_str) {
-        if ext == "rs" {
-            return SourceFile::parse(path, SourceKind::TypeScript);
-        }
-    }
-
     // Check if it's a Rune file (.r.ts or .r.tsx)
     let Some((_, kind)) = is_rune_file(path) else {
         return Err(crate::ParseError::InvalidExtension(

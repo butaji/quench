@@ -121,7 +121,7 @@ impl TypeInfo {
             TypeInfo::Struct(s) => s.name.clone(),
             TypeInfo::Enum(e) => e.name.clone(),
             TypeInfo::Option(inner) => format!("Option<{}>", inner.to_rust_type()),
-            TypeInfo::Result(ok, _) => format!("Result<{}, String>", ok.to_rust_type()),
+            TypeInfo::Result(ok, err) => format!("Result<{}, {}>", ok.to_rust_type(), err.to_rust_type()),
             TypeInfo::Function(f) => f.to_rust_signature(),
             TypeInfo::Generic(name) => name.clone(),
             TypeInfo::Unknown => "()".to_string(),
@@ -305,8 +305,15 @@ pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
     let mut ownership_analyzer = OwnershipAnalyzer::new();
     let mut validator = SubsetValidator::new();
 
-    collect_parse_errors(source, &mut ctx);
-    validate_subset(source, &mut validator, &mut ctx);
+    if !source.valid {
+        collect_parse_errors(source, &mut ctx);
+        return Err(crate::RuneError::Analysis {
+            location: source.path.display().to_string(),
+            message: format!("Parse errors: {:?}", source.errors),
+        });
+    }
+
+    validate_subset(source, &mut validator, &mut ctx)?;
     let types = type_inferrer.infer_from_source(source)?;
     let ownership = ownership_analyzer.analyze(&types);
     let exports = build_exports(&types);
@@ -333,13 +340,19 @@ fn collect_parse_errors(source: &SourceFile, ctx: &mut AnalysisContext) {
 fn validate_subset(
     source: &SourceFile,
     validator: &mut SubsetValidator,
-    ctx: &mut AnalysisContext,
-) {
+    _ctx: &mut AnalysisContext,
+) -> crate::Result<()> {
     if let Err(errors) = validator.validate(source) {
-        for e in errors {
-            ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
-        }
+        let messages: Vec<String> = errors
+            .iter()
+            .map(|e| format!("[{}] {} (line {})", e.code, e.message, e.line))
+            .collect();
+        return Err(crate::RuneError::Analysis {
+            location: source.path.display().to_string(),
+            message: messages.join("; "),
+        });
     }
+    Ok(())
 }
 
 fn build_exports(types: &TypeMap) -> Vec<ExportInfo> {

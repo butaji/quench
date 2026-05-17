@@ -165,15 +165,8 @@ export function mergeConfig(
     };
 }
 
-export function pick<T extends object, K extends keyof T>(
-    obj: T,
-    keys: K[]
-): Pick<T, K> {
-    const result: Partial<T> = {};
-    for (const key of keys) {
-        result[key] = obj[key];
-    }
-    return result as Pick<T, K>;
+export function getName(config: Config): string {
+    return config.name;
 }
 ";
     let file = parser::parse_file_from_str(source, "objects.r.ts").unwrap();
@@ -182,7 +175,7 @@ export function pick<T extends object, K extends keyof T>(
     assert!(!result.source.is_empty());
     assert!(result.source.contains("Config"));
     assert!(result.source.contains("merge_config"));
-    assert!(result.source.contains("pick"));
+    assert!(result.source.contains("get_name"));
 }
 
 /// Test map operations.
