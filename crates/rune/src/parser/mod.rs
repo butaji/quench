@@ -9,7 +9,7 @@ pub mod swc_parser;
 mod tests;
 
 pub use diagnostics::ParseDiagnostics;
-pub use source_file::{SourceFile, SourceKind};
+pub use source_file::{parse_file_from_str, SourceFile, SourceKind};
 
 /// Check if a file path is a Rune source file (ending in .r.ts or .r.tsx).
 pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {

@@ -125,3 +125,36 @@ impl SourceFile {
         self.kind == SourceKind::Tsx
     }
 }
+
+/// Parse source from a string (for testing).
+///
+/// # Errors
+/// Returns an error if the source cannot be parsed.
+#[must_use]
+pub fn parse_file_from_str(source: &str, name: &str) -> Result<SourceFile> {
+    let is_tsx = std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("tsx"));
+    let kind = if is_tsx || name.ends_with(".r.tsx") {
+        SourceKind::Tsx
+    } else {
+        SourceKind::TypeScript
+    };
+
+    let file_name = if name.contains('.') {
+        name.to_string()
+    } else {
+        format!("{}.r.ts", name)
+    };
+
+    let errors = SourceFile::parse_and_collect_errors(source, &file_name, kind);
+
+    Ok(SourceFile {
+        path: PathBuf::from(&file_name),
+        kind,
+        source: source.to_string(),
+        name: name.to_string(),
+        valid: errors.is_empty(),
+        errors,
+    })
+}

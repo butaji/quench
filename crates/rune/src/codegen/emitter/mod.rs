@@ -21,6 +21,8 @@ pub mod utils;
 mod variables;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod integration_tests;
 
 pub use ast_walker::AstWalker;
 pub use calls::emit_call;
