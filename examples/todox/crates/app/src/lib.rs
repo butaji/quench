@@ -1,13 +1,14 @@
 //! App library - hot-reloadable app logic.
+//!
+//! ~15 lines of hand-written wiring. Logic is in .r.ts files.
+
+#![allow(improper_ctypes_definitions)]
 
 mod native;
 
-// Generated modules will be added here by rune compiler
-// For now, provide stub implementations
-
 use protocol::{App, AppState};
 
-/// Create new app instance.
+/// Create new app instance - called by host binary.
 #[no_mangle]
 pub extern "C" fn create_app() -> *mut dyn App {
     Box::into_raw(Box::new(AppImpl::default()))

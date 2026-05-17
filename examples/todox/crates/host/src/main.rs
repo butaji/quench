@@ -1,4 +1,8 @@
 //! Host binary - loads and manages the app dylib.
+//!
+//! Thin state owner (~80 lines). Rarely edited.
+
+#![allow(improper_ctypes_definitions)]
 
 use libloading::Library;
 use protocol::{App, AppState};
