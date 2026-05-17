@@ -24,7 +24,8 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         Expr::New(n) => emit_new_expr(emitter, n),
         Expr::Tpl(tpl) => emit_template_literal(emitter, tpl),
         Expr::TaggedTpl(_) => emitter.push_str("String::new()"),
-        Expr::JSXElement(_) | Expr::JSXFragment(_) => emit_jsx_placeholder(emitter),
+        Expr::JSXElement(elem) => emit_jsx_element(emitter, elem),
+        Expr::JSXFragment(frag) => emit_jsx_fragment(emitter, frag),
         Expr::Await(await_expr) => emit_await_expr(emitter, await_expr),
         Expr::Yield(_) => emitter.push_str("()"),
         Expr::Update(update_expr) => emit_update_expr(emitter, update_expr),
@@ -304,16 +305,384 @@ fn emit_paren_expr(emitter: &mut CodeEmitter, paren: &swc_ecma_ast::ParenExpr) {
     emitter.push_str(")");
 }
 
-/// Emit a JSX placeholder widget.
-fn emit_jsx_placeholder(emitter: &mut CodeEmitter) {
-    emitter.push_str("Box::new(ratatui::widgets::Block::default()) as Box<dyn Widget>");
+// ------------------------------------------------------------------
+// Ratatui JSX emitter
+// ------------------------------------------------------------------
+
+/// Emit a JSX element as a ratatui widget builder chain.
+fn emit_jsx_element(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    let tag = jsx_tag_name(&elem.opening.name);
+    match tag.as_str() {
+        "Paragraph" => emit_paragraph_element(emitter, elem),
+        "Block" => emit_block_element(emitter, elem),
+        "List" => emit_list_element(emitter, elem),
+        "ListItem" => emit_list_item_element(emitter, elem),
+        _ => emit_generic_widget_element(emitter, elem, &tag),
+    }
+}
+
+/// Emit a JSX fragment as a `vec!` of its children.
+fn emit_jsx_fragment(emitter: &mut CodeEmitter, frag: &swc_ecma_ast::JSXFragment) {
+    let child_exprs: Vec<String> = frag
+        .children
+        .iter()
+        .filter_map(jsx_child_to_string)
+        .collect();
+    emitter.push_str("vec![");
+    for (i, child) in child_exprs.iter().enumerate() {
+        if i > 0 {
+            emitter.push_str(", ");
+        }
+        emitter.push_str(child);
+    }
+    emitter.push_str("]");
+}
+
+// -- Paragraph -----------------------------------------------------
+
+fn emit_paragraph_element(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    emitter.push_str("Paragraph::new(");
+    if let Some(text_expr) = get_jsx_text_attr(elem) {
+        emit_expr(emitter, text_expr);
+    } else {
+        emit_jsx_text_content(emitter, elem);
+    }
+    emitter.push_str(")");
+    emit_jsx_builder_chain(emitter, elem, &["text"]);
+}
+
+// -- Block ---------------------------------------------------------
+
+fn emit_block_element(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    if let Some(child) = find_single_widget_child(elem) {
+        // Block wraps a child widget: emit child + .block(...)
+        emit_jsx_element(emitter, child);
+        emitter.push_str(".block(");
+        emit_block_builder(emitter, elem);
+        emitter.push_str(")");
+    } else {
+        emit_block_builder(emitter, elem);
+    }
+}
+
+fn emit_block_builder(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    let has_borders = has_jsx_attr(elem, "borders");
+    if has_borders {
+        emitter.push_str("Block::new()");
+    } else {
+        emitter.push_str("Block::bordered()");
+    }
+    emit_jsx_builder_chain(emitter, elem, &[]);
+}
+
+// -- List ----------------------------------------------------------
+
+fn emit_list_element(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    emitter.push_str("List::new(");
+    if let Some(expr_child) = find_expr_child(elem) {
+        // e.g. {items.map(...)} → use the expression directly
+        emit_expr(emitter, expr_child);
+    } else {
+        emitter.push_str("vec![");
+        let mut first = true;
+        for child in &elem.children {
+            if let swc_ecma_ast::JSXElementChild::JSXElement(child_elem) = child {
+                if !first {
+                    emitter.push_str(", ");
+                }
+                first = false;
+                emit_jsx_element(emitter, child_elem);
+            }
+        }
+        emitter.push_str("]");
+    }
+    emitter.push_str(")");
+    emit_jsx_builder_chain(emitter, elem, &["selected"]);
+}
+
+// -- ListItem ------------------------------------------------------
+
+fn emit_list_item_element(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    emitter.push_str("ListItem::new(");
+    emit_jsx_text_content(emitter, elem);
+    emitter.push_str(")");
+    emit_jsx_builder_chain(emitter, elem, &[]);
+}
+
+// -- Generic fallback ----------------------------------------------
+
+fn emit_generic_widget_element(
+    emitter: &mut CodeEmitter,
+    elem: &swc_ecma_ast::JSXElement,
+    tag: &str,
+) {
+    emitter.push_str(&format!("{tag}::new("));
+    if let Some(text_expr) = get_jsx_text_attr(elem) {
+        emit_expr(emitter, text_expr);
+    } else {
+        emit_jsx_text_content(emitter, elem);
+    }
+    emitter.push_str(")");
+    emit_jsx_builder_chain(emitter, elem, &["text"]);
+}
+
+// -- Builder chain emission ----------------------------------------
+
+/// Emit `.setter(value)` builder methods for every JSX attribute except those
+/// listed in `skip`.
+fn emit_jsx_builder_chain(
+    emitter: &mut CodeEmitter,
+    elem: &swc_ecma_ast::JSXElement,
+    skip: &[&str],
+) {
+    for attr in &elem.opening.attrs {
+        if let swc_ecma_ast::JSXAttrOrSpread::JSXAttr(attr) = attr {
+            let key = jsx_attr_name(&attr.name);
+            if skip.contains(&key.as_str()) {
+                continue;
+            }
+            if let Some(setter) = build_ratatui_setter(&key) {
+                emitter.push_str(&setter);
+                if let Some(value) = &attr.value {
+                    emit_ratatui_attr_value(emitter, &key, value);
+                }
+                emitter.push_str(")");
+            }
+        }
+    }
+}
+
+fn build_ratatui_setter(key: &str) -> Option<String> {
+    match key {
+        "title" => Some(".title(".to_string()),
+        "borders" => Some(".borders(".to_string()),
+        "border_type" => Some(".border_type(".to_string()),
+        "style" => Some(".style(".to_string()),
+        "alignment" | "align" => Some(".alignment(".to_string()),
+        "wrap" => Some(".wrap(".to_string()),
+        "highlight_symbol" => Some(".highlight_symbol(".to_string()),
+        "padding" => Some(".padding(".to_string()),
+        _ => None,
+    }
+}
+
+fn emit_ratatui_attr_value(
+    emitter: &mut CodeEmitter,
+    key: &str,
+    value: &swc_ecma_ast::JSXAttrValue,
+) {
+    match value {
+        swc_ecma_ast::JSXAttrValue::Str(s) => {
+            let mapped = map_ratatui_str_value(key, s.value.as_str().unwrap_or(""));
+            emitter.push_str(&mapped);
+        }
+        swc_ecma_ast::JSXAttrValue::JSXExprContainer(cont) => {
+            if let swc_ecma_ast::JSXExpr::Expr(expr) = &cont.expr {
+                emit_expr(emitter, expr);
+            }
+        }
+        swc_ecma_ast::JSXAttrValue::JSXElement(elem) => {
+            emit_jsx_element(emitter, elem);
+        }
+        swc_ecma_ast::JSXAttrValue::JSXFragment(frag) => {
+            emit_jsx_fragment(emitter, frag);
+        }
+    }
+}
+
+fn map_ratatui_str_value(key: &str, value: &str) -> String {
+    match key {
+        "borders" => match value {
+            "ALL" => "Borders::ALL".to_string(),
+            "NONE" => "Borders::NONE".to_string(),
+            "LEFT" => "Borders::LEFT".to_string(),
+            "RIGHT" => "Borders::RIGHT".to_string(),
+            "TOP" => "Borders::TOP".to_string(),
+            "BOTTOM" => "Borders::BOTTOM".to_string(),
+            _ => format!("Borders::{value}"),
+        },
+        "border_type" => match value {
+            "plain" | "single" => "BorderType::Plain".to_string(),
+            "rounded" => "BorderType::Rounded".to_string(),
+            "double" => "BorderType::Double".to_string(),
+            "thick" => "BorderType::Thick".to_string(),
+            _ => format!("BorderType::{value}"),
+        },
+        "alignment" | "align" => match value {
+            "left" => "Alignment::Left".to_string(),
+            "center" => "Alignment::Center".to_string(),
+            "right" => "Alignment::Right".to_string(),
+            _ => format!("Alignment::{value}"),
+        },
+        _ => format!("{:?}", value),
+    }
+}
+
+// -- Helpers -------------------------------------------------------
+
+/// Extract the tag name from a JSX element name.
+fn jsx_tag_name(name: &swc_ecma_ast::JSXElementName) -> String {
+    match name {
+        swc_ecma_ast::JSXElementName::Ident(ident) => ident.sym.to_string(),
+        _ => "Unknown".to_string(),
+    }
+}
+
+fn jsx_attr_name(name: &swc_ecma_ast::JSXAttrName) -> String {
+    match name {
+        swc_ecma_ast::JSXAttrName::Ident(ident) => ident.sym.to_string(),
+        swc_ecma_ast::JSXAttrName::JSXNamespacedName(ns) => {
+            format!("{}_{}", ns.ns.sym, ns.name.sym)
+        }
+    }
+}
+
+fn has_jsx_attr(elem: &swc_ecma_ast::JSXElement, key: &str) -> bool {
+    elem.opening.attrs.iter().any(|attr| {
+        if let swc_ecma_ast::JSXAttrOrSpread::JSXAttr(attr) = attr {
+            jsx_attr_name(&attr.name) == key
+        } else {
+            false
+        }
+    })
+}
+
+fn get_jsx_text_attr(elem: &swc_ecma_ast::JSXElement) -> Option<&swc_ecma_ast::Expr> {
+    elem.opening.attrs.iter().find_map(|attr| {
+        if let swc_ecma_ast::JSXAttrOrSpread::JSXAttr(attr) = attr {
+            if jsx_attr_name(&attr.name) == "text" {
+                if let Some(swc_ecma_ast::JSXAttrValue::JSXExprContainer(cont)) = &attr.value {
+                    if let swc_ecma_ast::JSXExpr::Expr(expr) = &cont.expr {
+                        return Some(expr.as_ref());
+                    }
+                }
+            }
+        }
+        None
+    })
+}
+
+fn find_single_widget_child(elem: &swc_ecma_ast::JSXElement) -> Option<&swc_ecma_ast::JSXElement> {
+    let widgets: Vec<&swc_ecma_ast::JSXElement> = elem
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            swc_ecma_ast::JSXElementChild::JSXElement(e) => Some(e.as_ref()),
+            _ => None,
+        })
+        .collect();
+    if widgets.len() == 1 {
+        widgets.first().copied()
+    } else {
+        None
+    }
+}
+
+fn find_expr_child(elem: &swc_ecma_ast::JSXElement) -> Option<&swc_ecma_ast::Expr> {
+    elem.children.iter().find_map(|child| match child {
+        swc_ecma_ast::JSXElementChild::JSXExprContainer(cont) => {
+            if let swc_ecma_ast::JSXExpr::Expr(expr) = &cont.expr {
+                Some(expr.as_ref())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    })
+}
+
+/// Emit text/expression children as a single Rust expression.
+fn emit_jsx_text_content(emitter: &mut CodeEmitter, elem: &swc_ecma_ast::JSXElement) {
+    let parts: Vec<String> = elem
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            swc_ecma_ast::JSXElementChild::JSXText(text) => {
+                let trimmed = text.value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(format!("{:?}", trimmed))
+                }
+            }
+            swc_ecma_ast::JSXElementChild::JSXExprContainer(cont) => {
+                if let swc_ecma_ast::JSXExpr::Expr(expr) = &cont.expr {
+                    Some(expr_to_string(expr))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    match parts.len() {
+        0 => emitter.push_str("\"\""),
+        1 => emitter.push_str(&parts[0]),
+        _ => {
+            let fmt = parts.iter().map(|_| "{}").collect::<String>();
+            emitter.push_str(&format!("format!(\"{fmt}\", "));
+            for (i, part) in parts.iter().enumerate() {
+                if i > 0 {
+                    emitter.push_str(", ");
+                }
+                emitter.push_str(part);
+            }
+            emitter.push_str(")");
+        }
+    }
+}
+
+/// Convert a JSX child to a Rust expression string.
+fn jsx_child_to_string(child: &swc_ecma_ast::JSXElementChild) -> Option<String> {
+    match child {
+        swc_ecma_ast::JSXElementChild::JSXText(text) => {
+            let trimmed = text.value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!("{:?}", trimmed))
+            }
+        }
+        swc_ecma_ast::JSXElementChild::JSXExprContainer(cont) => {
+            if let swc_ecma_ast::JSXExpr::Expr(expr) = &cont.expr {
+                Some(expr_to_string(expr))
+            } else {
+                None
+            }
+        }
+        swc_ecma_ast::JSXElementChild::JSXElement(elem) => {
+            Some(jsx_element_to_string(elem))
+        }
+        swc_ecma_ast::JSXElementChild::JSXFragment(frag) => {
+            Some(jsx_fragment_to_string(frag))
+        }
+        swc_ecma_ast::JSXElementChild::JSXSpreadChild(_) => None,
+    }
+}
+
+fn jsx_element_to_string(elem: &swc_ecma_ast::JSXElement) -> String {
+    let mut e = CodeEmitter::new();
+    emit_jsx_element(&mut e, elem);
+    e.into_output()
+}
+
+fn jsx_fragment_to_string(frag: &swc_ecma_ast::JSXFragment) -> String {
+    let mut e = CodeEmitter::new();
+    emit_jsx_fragment(&mut e, frag);
+    e.into_output()
+}
+
+fn expr_to_string(expr: &swc_ecma_ast::Expr) -> String {
+    let mut e = CodeEmitter::new();
+    emit_expr(&mut e, expr);
+    e.into_output()
 }
 
 /// Emit an await expression.
 fn emit_await_expr(emitter: &mut CodeEmitter, await_expr: &swc_ecma_ast::AwaitExpr) {
-    emitter.push_str("tokio::spawn(async move { ");
     emit_expr(emitter, &await_expr.arg);
-    emitter.push_str(" }).await");
+    emitter.push_str(".await");
 }
 
 /// Emit an arrow function with proper closure syntax.
