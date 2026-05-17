@@ -41,9 +41,9 @@ export type Message =
 
 #[test]
 fn test_transpile_result_pattern() {
-    let source = r#"
+    let source = "
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -56,11 +56,11 @@ export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
 #[test]
 fn test_function_with_params() {
-    let source = r#"
+    let source = "
 export function add(a: number, b: number): number {
     return a + b;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -69,9 +69,9 @@ export function add(a: number, b: number): number {
 
 #[test]
 fn test_arrow_function() {
-    let source = r#"
+    let source = "
 export const multiply = (a: number, b: number): number => a * b;
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -80,11 +80,11 @@ export const multiply = (a: number, b: number): number => a * b;
 
 #[test]
 fn test_async_function() {
-    let source = r#"
+    let source = "
 export async function fetchData(url: string): Promise<string> {
-    return "data";
+    return \"data\";
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -97,7 +97,7 @@ export async function fetchData(url: string): Promise<string> {
 
 #[test]
 fn test_if_else() {
-    let source = r#"
+    let source = "
 export function max(a: number, b: number): number {
     if (a > b) {
         return a;
@@ -105,7 +105,7 @@ export function max(a: number, b: number): number {
         return b;
     }
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -114,13 +114,13 @@ export function max(a: number, b: number): number {
 
 #[test]
 fn test_while_loop() {
-    let source = r#"
+    let source = "
 export function countDown(n: number): void {
     while (n > 0) {
         n = n - 1;
     }
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -129,7 +129,7 @@ export function countDown(n: number): void {
 
 #[test]
 fn test_for_loop() {
-    let source = r#"
+    let source = "
 export function sumTo(n: number): number {
     let sum = 0;
     for (let i = 0; i < n; i++) {
@@ -137,7 +137,7 @@ export function sumTo(n: number): number {
     }
     return sum;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -147,7 +147,7 @@ export function sumTo(n: number): number {
 
 #[test]
 fn test_for_of_loop() {
-    let source = r#"
+    let source = "
 export function sumArray(arr: number[]): number {
     let sum = 0;
     for (const item of arr) {
@@ -155,7 +155,7 @@ export function sumArray(arr: number[]): number {
     }
     return sum;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -168,24 +168,24 @@ export function sumArray(arr: number[]): number {
 
 #[test]
 fn test_binary_operators() {
-    let source = r#"
+    let source = "
 export function ops(a: number, b: number): number {
     return a + b - 1 * 2 / 3;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-    assert!(result.source.contains("+") || result.source.contains("-"));
+    assert!(result.source.contains('+') || result.source.contains('-'));
 }
 
 #[test]
 fn test_comparison_operators() {
-    let source = r#"
+    let source = "
 export function compare(a: number, b: number): boolean {
     return a === b && a !== b;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -194,11 +194,11 @@ export function compare(a: number, b: number): boolean {
 
 #[test]
 fn test_ternary_expression() {
-    let source = r#"
+    let source = "
 export function abs(n: number): number {
     return n >= 0 ? n : -n;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -211,9 +211,9 @@ export function abs(n: number): number {
 
 #[test]
 fn test_array_literal() {
-    let source = r#"
+    let source = "
 export const numbers: number[] = [1, 2, 3, 4, 5];
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -222,11 +222,11 @@ export const numbers: number[] = [1, 2, 3, 4, 5];
 
 #[test]
 fn test_object_literal() {
-    let source = r#"
+    let source = "
 export function createPoint(x: number, y: number): { x: number; y: number } {
     return { x, y };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -235,11 +235,11 @@ export function createPoint(x: number, y: number): { x: number; y: number } {
 
 #[test]
 fn test_spread_operator() {
-    let source = r#"
+    let source = "
 export function merge(a: { x: number }, b: { y: number }): { x: number; y: number } {
     return { ...a, ...b };
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -252,14 +252,14 @@ export function merge(a: { x: number }, b: { y: number }): { x: number; y: numbe
 
 #[test]
 fn test_option_type() {
-    let source = r#"
+    let source = "
 export function findItem(arr: string[], target: string): string | null {
     for (let i = 0; i < arr.length; i++) {
         if (arr[i] === target) return arr[i];
     }
     return null;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -268,9 +268,9 @@ export function findItem(arr: string[], target: string): string | null {
 
 #[test]
 fn test_enum_like_union() {
-    let source = r#"
-export type Status = "pending" | "active" | "completed";
-"#;
+    let source = "
+export type Status = \"pending\" | \"active\" | \"completed\";
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -279,11 +279,11 @@ export type Status = "pending" | "active" | "completed";
 
 #[test]
 fn test_generic_function() {
-    let source = r#"
+    let source = "
 export function identity<T>(value: T): T {
     return value;
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -296,12 +296,12 @@ export function identity<T>(value: T): T {
 
 #[test]
 fn test_import_statement() {
-    let source = r#"
-import { Task, createTask } from "./state.r.ts";
+    let source = "
+import { Task, createTask } from \"./state.r.ts\";
 export function process(task: Task): Task {
     return createTask(task.title);
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "main.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -310,12 +310,12 @@ export function process(task: Task): Task {
 
 #[test]
 fn test_native_import() {
-    let source = r#"
-import { fastSqrt } from "native:math";
+    let source = "
+import { fastSqrt } from \"native:math\";
 export function sqrtAll(values: number[]): number[] {
     return values.map(v => fastSqrt(v));
 }
-"#;
+";
     let file = parser::parse_file_from_str(source, "main.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -347,7 +347,7 @@ fn test_comment_only_source() {
 
 #[test]
 fn test_nested_types() {
-    let source = r#"
+    let source = "
 export type Nested = {
     outer: {
         middle: {
@@ -355,7 +355,7 @@ export type Nested = {
         },
     },
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -364,15 +364,15 @@ export type Nested = {
 
 #[test]
 fn test_large_union() {
-    let source = r#"
+    let source = "
 export type Color =
-    | { tag: "Red" }
-    | { tag: "Green" }
-    | { tag: "Blue" }
-    | { tag: "Yellow" }
-    | { tag: "Orange" }
-    | { tag: "Purple" };
-"#;
+    | { tag: \"Red\" }
+    | { tag: \"Green\" }
+    | { tag: \"Blue\" }
+    | { tag: \"Yellow\" }
+    | { tag: \"Orange\" }
+    | { tag: \"Purple\" };
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -405,7 +405,7 @@ fn test_typescript_file_kind() {
 fn test_location_from_offset() {
     let source = "line1\nline2\nline3";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let (line, col) = file.location_from_offset(0);
+    let (line, _col) = file.location_from_offset(0);
     assert_eq!(line, 1);
     let (line2, _) = file.location_from_offset(6);
     assert_eq!(line2, 2);
@@ -436,13 +436,13 @@ fn test_generate_module_has_name() {
 
 #[test]
 fn test_optional_field() {
-    let source = r#"
+    let source = "
 export type User = {
     id: number,
     name: string,
     email?: string,
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "user.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
