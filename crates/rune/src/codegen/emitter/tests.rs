@@ -4,9 +4,7 @@
 
 #[cfg(test)]
 mod utils_tests {
-    use crate::codegen::emitter::utils::{
-        escape_rust_keyword, to_pascal_case, to_snake_case,
-    };
+    use crate::codegen::emitter::utils::{escape_rust_keyword, to_pascal_case, to_snake_case};
 
     #[test]
     fn test_to_snake_case_simple() {

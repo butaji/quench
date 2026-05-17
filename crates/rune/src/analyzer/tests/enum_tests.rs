@@ -9,9 +9,18 @@ mod enum_info_tests {
         let info = EnumInfo {
             name: "Color".to_string(),
             variants: vec![
-                EnumVariant { tag: "Red".to_string(), fields: vec![] },
-                EnumVariant { tag: "Green".to_string(), fields: vec![] },
-                EnumVariant { tag: "Blue".to_string(), fields: vec![] },
+                EnumVariant {
+                    tag: "Red".to_string(),
+                    fields: vec![],
+                },
+                EnumVariant {
+                    tag: "Green".to_string(),
+                    fields: vec![],
+                },
+                EnumVariant {
+                    tag: "Blue".to_string(),
+                    fields: vec![],
+                },
             ],
         };
         assert_eq!("Color", info.name);
@@ -30,7 +39,10 @@ mod enum_info_tests {
                         ("y".to_string(), TypeInfo::Integer(0)),
                     ],
                 },
-                EnumVariant { tag: "Quit".to_string(), fields: vec![] },
+                EnumVariant {
+                    tag: "Quit".to_string(),
+                    fields: vec![],
+                },
             ],
         };
         assert_eq!("Message", info.name);

@@ -150,7 +150,10 @@ mod error_tests {
 
     #[test]
     fn test_rune_error_io() {
-        let error = RuneError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        let error = RuneError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
         assert!(error.to_string().contains("not found"));
     }
 

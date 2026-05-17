@@ -24,13 +24,12 @@ impl KnownStruct {
 
 // Extended Rust keyword set covering all reserved words
 const RUST_KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
-    "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
-    "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
-    "trait", "true", "type", "unsafe", "use", "where", "while",
-    // Extended set for compatibility
-    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try",
-    "typeof", "unsized", "virtual", "yield",
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
+    "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while", // Extended set for compatibility
+    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try", "typeof",
+    "unsized", "virtual", "yield",
 ];
 
 /// Escape a Rust keyword for use as an identifier.

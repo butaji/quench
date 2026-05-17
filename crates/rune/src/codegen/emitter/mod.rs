@@ -9,20 +9,20 @@ mod core;
 mod expr;
 mod expressions;
 mod infer;
+#[cfg(test)]
+mod integration_tests;
 mod literals;
 mod members;
 mod module;
 mod statements;
 mod switch_match;
+#[cfg(test)]
+mod tests;
 mod type_collector;
 mod type_resolver;
 mod types;
 pub mod utils;
 mod variables;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod integration_tests;
 
 pub use ast_walker::AstWalker;
 pub use calls::emit_call;

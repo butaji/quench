@@ -12,7 +12,10 @@ mod function_info_tests {
     ) -> FunctionInfo {
         FunctionInfo {
             name: name.to_string(),
-            params: params.into_iter().map(|(n, t)| (n.to_string(), t)).collect(),
+            params: params
+                .into_iter()
+                .map(|(n, t)| (n.to_string(), t))
+                .collect(),
             return_type: Box::new(return_type),
             is_async,
             is_method: false,
@@ -23,10 +26,7 @@ mod function_info_tests {
     fn test_function_info() {
         let info = make_function_info(
             "add",
-            vec![
-                ("a", TypeInfo::Integer(0)),
-                ("b", TypeInfo::Integer(0)),
-            ],
+            vec![("a", TypeInfo::Integer(0)), ("b", TypeInfo::Integer(0))],
             TypeInfo::Integer(0),
             false,
         );

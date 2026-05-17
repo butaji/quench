@@ -114,7 +114,11 @@ impl ErrorTranslator {
         let before_arrow = rust_error[..idx].trim();
         let after_arrow = rust_error[idx + 3..].trim();
 
-        let message = before_arrow.lines().last().unwrap_or(before_arrow).to_string();
+        let message = before_arrow
+            .lines()
+            .last()
+            .unwrap_or(before_arrow)
+            .to_string();
         self.parse_location_parts(after_arrow, message)
     }
 

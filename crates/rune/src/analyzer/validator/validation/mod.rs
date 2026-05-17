@@ -61,36 +61,64 @@ impl SubsetValidator {
     /// Check for forbidden type restrictions.
     fn check_type_restrictions(&mut self, line: &str, line_num: u32) {
         if line.contains(": any") || line.contains("<any>") {
-            self.push_error("no-any", "Type 'any' requires dynamic dispatch. Use concrete types.", line_num);
+            self.push_error(
+                "no-any",
+                "Type 'any' requires dynamic dispatch. Use concrete types.",
+                line_num,
+            );
         }
         if line.contains(": unknown") {
-            self.push_error("no-unknown", "Type 'unknown' requires dynamic dispatch. Use concrete types.", line_num);
+            self.push_error(
+                "no-unknown",
+                "Type 'unknown' requires dynamic dispatch. Use concrete types.",
+                line_num,
+            );
         }
     }
 
     /// Check for forbidden keywords.
     fn check_keyword_restrictions(&mut self, line: &str, line_num: u32) {
         if line.contains(" class ") || line.starts_with("class ") {
-            self.push_error("no-class", "Classes are forbidden. Use plain objects and functions.", line_num);
+            self.push_error(
+                "no-class",
+                "Classes are forbidden. Use plain objects and functions.",
+                line_num,
+            );
         }
         if line.contains("new ") && !line.contains("new Array") {
-            self.push_error("no-new", "Constructors (new) are forbidden. Use factory functions.", line_num);
+            self.push_error(
+                "no-new",
+                "Constructors (new) are forbidden. Use factory functions.",
+                line_num,
+            );
         }
         if line.contains("this.") || line.starts_with("this;") {
-            self.push_error("no-this", "'this' keyword is forbidden. Use explicit parameters.", line_num);
+            self.push_error(
+                "no-this",
+                "'this' keyword is forbidden. Use explicit parameters.",
+                line_num,
+            );
         }
         if line.starts_with("var ") {
             self.push_error("no-var", "Use 'const' or 'let' instead of 'var'.", line_num);
         }
         if line.contains(" delete ") || line.starts_with("delete ") {
-            self.push_error("no-delete", "delete is forbidden. Use ownership and explicit drops.", line_num);
+            self.push_error(
+                "no-delete",
+                "delete is forbidden. Use ownership and explicit drops.",
+                line_num,
+            );
         }
     }
 
     /// Check for forbidden operators.
     fn check_operators(&mut self, line: &str, line_num: u32) {
         if Self::has_loose_equality(line) {
-            self.push_error("no-loose-equality", "Use strict equality (=== or !==).", line_num);
+            self.push_error(
+                "no-loose-equality",
+                "Use strict equality (=== or !==).",
+                line_num,
+            );
         }
         self.check_implicit_coercion(line, line_num);
     }
@@ -114,7 +142,11 @@ impl SubsetValidator {
     /// Check for forbidden statements.
     fn check_statements(&mut self, line: &str, line_num: u32) {
         if line.contains("try") || line.contains("catch") || line.starts_with("throw") {
-            self.push_error("no-exceptions", "Use Result<T,E> return pattern instead of try/catch/throw.", line_num);
+            self.push_error(
+                "no-exceptions",
+                "Use Result<T,E> return pattern instead of try/catch/throw.",
+                line_num,
+            );
         }
         if line.contains("eval(") {
             self.push_error("no-eval", "eval() is forbidden.", line_num);
@@ -123,20 +155,36 @@ impl SubsetValidator {
             self.push_error("no-with", "with statement is forbidden.", line_num);
         }
         if line.contains("for (") && line.contains(" in ") {
-            self.push_error("no-for-in", "for...in is forbidden. Use for...of with Object.keys() or Map.", line_num);
+            self.push_error(
+                "no-for-in",
+                "for...in is forbidden. Use for...of with Object.keys() or Map.",
+                line_num,
+            );
         }
         if line.contains(" arguments") || line.contains("(arguments") {
-            self.push_error("no-arguments", "Use rest parameters (...args) instead of 'arguments'.", line_num);
+            self.push_error(
+                "no-arguments",
+                "Use rest parameters (...args) instead of 'arguments'.",
+                line_num,
+            );
         }
     }
 
     /// Check for runtime type inspection.
     fn check_runtime_inspection(&mut self, line: &str, line_num: u32) {
         if line.contains("typeof ") {
-            self.push_error("no-typeof", "typeof is forbidden. Runtime type inspection is not allowed.", line_num);
+            self.push_error(
+                "no-typeof",
+                "typeof is forbidden. Runtime type inspection is not allowed.",
+                line_num,
+            );
         }
         if line.contains(" instanceof ") {
-            self.push_error("no-instanceof", "instanceof is forbidden. Use explicit type checking.", line_num);
+            self.push_error(
+                "no-instanceof",
+                "instanceof is forbidden. Use explicit type checking.",
+                line_num,
+            );
         }
     }
 
@@ -245,12 +293,20 @@ impl SubsetValidator {
 
     /// Match loose equality pattern " == ".
     fn matches_loose_eq(slice: &[u8]) -> bool {
-        slice.len() >= 4 && slice[0] == b' ' && slice[1] == b'=' && slice[2] == b'=' && slice[3] == b' '
+        slice.len() >= 4
+            && slice[0] == b' '
+            && slice[1] == b'='
+            && slice[2] == b'='
+            && slice[3] == b' '
     }
 
     /// Match loose inequality pattern " != ".
     fn matches_loose_neq(slice: &[u8]) -> bool {
-        slice.len() >= 4 && slice[0] == b' ' && slice[1] == b'!' && slice[2] == b'=' && slice[3] == b' '
+        slice.len() >= 4
+            && slice[0] == b' '
+            && slice[1] == b'!'
+            && slice[2] == b'='
+            && slice[3] == b' '
     }
 
     /// Push a validation error.

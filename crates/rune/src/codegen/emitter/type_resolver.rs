@@ -33,12 +33,8 @@ impl TypeResolver {
             swc_ecma_ast::TsType::TsKeywordType(k) => self.resolve_keyword(k.kind),
             swc_ecma_ast::TsType::TsArrayType(arr) => self.resolve_array(&arr.elem_type),
             swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.resolve_type_ref(type_ref),
-            swc_ecma_ast::TsType::TsUnionOrIntersectionType(union) => {
-                self.resolve_union(union)
-            }
-            swc_ecma_ast::TsType::TsParenthesizedType(paren) => {
-                self.resolve(&paren.type_ann)
-            }
+            swc_ecma_ast::TsType::TsUnionOrIntersectionType(union) => self.resolve_union(union),
+            swc_ecma_ast::TsType::TsParenthesizedType(paren) => self.resolve(&paren.type_ann),
             swc_ecma_ast::TsType::TsTupleType(_) => RustType::Unknown,
             swc_ecma_ast::TsType::TsTypeLit(lit) => self.resolve_type_literal(lit),
             _ => RustType::Unknown,
@@ -66,7 +62,11 @@ impl TypeResolver {
         self.resolve_named_type(&name, type_ref.type_params.as_deref())
     }
 
-    fn resolve_named_type(&mut self, name: &str, params: Option<&swc_ecma_ast::TsTypeParamInstantiation>) -> RustType {
+    fn resolve_named_type(
+        &mut self,
+        name: &str,
+        params: Option<&swc_ecma_ast::TsTypeParamInstantiation>,
+    ) -> RustType {
         if name == "null" {
             return RustType::Unknown;
         }
@@ -80,7 +80,11 @@ impl TypeResolver {
         self.resolve_simple_type(name)
     }
 
-    fn resolve_generic_type(&mut self, name: &str, params: &swc_ecma_ast::TsTypeParamInstantiation) -> RustType {
+    fn resolve_generic_type(
+        &mut self,
+        name: &str,
+        params: &swc_ecma_ast::TsTypeParamInstantiation,
+    ) -> RustType {
         match name {
             "Array" => self.resolve_vec_param(&params.params[0]),
             "Result" if params.params.len() >= 2 => {
@@ -185,7 +189,11 @@ impl TypeResolver {
         fields
     }
 
-    fn extract_field(&mut self, prop: &swc_ecma_ast::TsPropertySignature, counter: &mut usize) -> (Option<String>, Option<RustType>) {
+    fn extract_field(
+        &mut self,
+        prop: &swc_ecma_ast::TsPropertySignature,
+        counter: &mut usize,
+    ) -> (Option<String>, Option<RustType>) {
         let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
             Some(ident.sym.to_string())
         } else {
@@ -193,7 +201,10 @@ impl TypeResolver {
             Some(format!("_field{counter}"))
         };
 
-        let field_type = prop.type_ann.as_ref().map(|ann| self.resolve(&ann.type_ann));
+        let field_type = prop
+            .type_ann
+            .as_ref()
+            .map(|ann| self.resolve(&ann.type_ann));
 
         (field_name, field_type)
     }

@@ -70,19 +70,30 @@ impl TypeCollector {
             .collect();
         self.structs.insert(
             name.to_string(),
-            StructInfo { rust_name, fields: resolved_fields },
+            StructInfo {
+                rust_name,
+                fields: resolved_fields,
+            },
         );
     }
 
-    fn extract_interface_fields(&self, body: &swc_ecma_ast::TsInterfaceBody) -> Vec<(String, TsType)> {
-        body.body.iter().filter_map(|member| {
-            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
-                let field_name = self.extract_field_name(&prop.key);
-                prop.type_ann.as_ref().map(|ann| (field_name, (*ann.type_ann).clone()))
-            } else {
-                None
-            }
-        }).collect()
+    fn extract_interface_fields(
+        &self,
+        body: &swc_ecma_ast::TsInterfaceBody,
+    ) -> Vec<(String, TsType)> {
+        body.body
+            .iter()
+            .filter_map(|member| {
+                if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                    let field_name = self.extract_field_name(&prop.key);
+                    prop.type_ann
+                        .as_ref()
+                        .map(|ann| (field_name, (*ann.type_ann).clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn extract_field_name(&self, key: &swc_ecma_ast::Expr) -> String {
@@ -94,13 +105,21 @@ impl TypeCollector {
     }
 
     pub(super) fn collect_enum(&mut self, name: &str, decl: &swc_ecma_ast::TsEnumDecl) {
-        let variants: Vec<super::types::EnumVariant> = decl.members.iter()
+        let variants: Vec<super::types::EnumVariant> = decl
+            .members
+            .iter()
             .map(|m| super::types::EnumVariant {
                 name: self.extract_enum_member_name(m),
                 fields: Vec::new(),
             })
             .collect();
-        self.enums.insert(name.to_string(), EnumDefinition { name: name.to_string(), variants });
+        self.enums.insert(
+            name.to_string(),
+            EnumDefinition {
+                name: name.to_string(),
+                variants,
+            },
+        );
     }
 
     fn extract_enum_member_name(&self, member: &swc_ecma_ast::TsEnumMember) -> String {
@@ -119,7 +138,8 @@ impl TypeCollector {
         // Check for Result pattern first (more specific than tagged union)
         if let TsType::TsUnionOrIntersectionType(
             swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u),
-        ) = type_ann {
+        ) = type_ann
+        {
             if self.is_result_pattern(u) {
                 self.collect_result_type(name, u);
                 return;
@@ -128,14 +148,18 @@ impl TypeCollector {
 
         if let TsType::TsUnionOrIntersectionType(
             swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u),
-        ) = type_ann {
+        ) = type_ann
+        {
             if u.types.iter().all(|t| self.is_tagged_variant(t)) {
                 self.collect_tagged_union(name, &u.types);
                 return;
             }
         }
 
-        self.type_fields.insert(name.to_string(), vec![("_type".to_string(), type_ann.clone())]);
+        self.type_fields.insert(
+            name.to_string(),
+            vec![("_type".to_string(), type_ann.clone())],
+        );
     }
 
     fn collect_struct_from_literal(&mut self, name: &str, lit: &swc_ecma_ast::TsTypeLit) {
@@ -145,19 +169,31 @@ impl TypeCollector {
             .iter()
             .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
             .collect();
-        self.structs.insert(name.to_string(), StructInfo { rust_name, fields: resolved_fields });
+        self.structs.insert(
+            name.to_string(),
+            StructInfo {
+                rust_name,
+                fields: resolved_fields,
+            },
+        );
     }
 
     fn extract_literal_fields(&self, lit: &swc_ecma_ast::TsTypeLit) -> Vec<(String, TsType)> {
-        lit.members.iter().filter_map(|member| {
-            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
-                if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
-                    let field_name = ident.sym.to_string();
-                    return prop.type_ann.as_ref().map(|ann| (field_name, (*ann.type_ann).clone()));
+        lit.members
+            .iter()
+            .filter_map(|member| {
+                if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                    if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        let field_name = ident.sym.to_string();
+                        return prop
+                            .type_ann
+                            .as_ref()
+                            .map(|ann| (field_name, (*ann.type_ann).clone()));
+                    }
                 }
-            }
-            None
-        }).collect()
+                None
+            })
+            .collect()
     }
 
     pub(super) fn collect_ts_module(&mut self, decl: &swc_ecma_ast::TsModuleDecl) {
@@ -224,7 +260,9 @@ impl TypeCollector {
     }
 
     fn is_ok_variant(&self, ts_type: &TsType) -> bool {
-        let TsType::TsTypeLit(lit) = ts_type else { return false };
+        let TsType::TsTypeLit(lit) = ts_type else {
+            return false;
+        };
         let mut has_ok_true = false;
         let mut has_value = false;
 
@@ -251,7 +289,9 @@ impl TypeCollector {
     }
 
     fn is_error_variant(&self, ts_type: &TsType) -> bool {
-        let TsType::TsTypeLit(lit) = ts_type else { return false };
+        let TsType::TsTypeLit(lit) = ts_type else {
+            return false;
+        };
         let mut has_ok_false = false;
         let mut has_error = false;
 
@@ -279,14 +319,20 @@ impl TypeCollector {
 
     fn is_true_literal(&self, ty: &TsType) -> bool {
         if let TsType::TsLitType(lit) = ty {
-            return matches!(lit.lit, swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: true, .. }));
+            return matches!(
+                lit.lit,
+                swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: true, .. })
+            );
         }
         false
     }
 
     fn is_false_literal(&self, ty: &TsType) -> bool {
         if let TsType::TsLitType(lit) = ty {
-            return matches!(lit.lit, swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: false, .. }));
+            return matches!(
+                lit.lit,
+                swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: false, .. })
+            );
         }
         false
     }
@@ -356,13 +402,19 @@ impl TypeCollector {
     }
 
     fn is_tagged_variant(&self, ts_type: &TsType) -> bool {
-        let TsType::TsTypeLit(lit) = ts_type else { return false };
+        let TsType::TsTypeLit(lit) = ts_type else {
+            return false;
+        };
         lit.members.iter().any(|m| self.has_string_tag(m))
     }
 
     fn has_string_tag(&self, member: &swc_ecma_ast::TsTypeElement) -> bool {
-        let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member else { return false };
-        let Some(type_ann) = &prop.type_ann else { return false };
+        let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member else {
+            return false;
+        };
+        let Some(type_ann) = &prop.type_ann else {
+            return false;
+        };
         self.is_string_type(&type_ann.type_ann)
     }
 
@@ -373,17 +425,33 @@ impl TypeCollector {
             .collect();
 
         if !variants.is_empty() {
-            self.enums.insert(name.to_string(), EnumDefinition { name: name.to_string(), variants });
+            self.enums.insert(
+                name.to_string(),
+                EnumDefinition {
+                    name: name.to_string(),
+                    variants,
+                },
+            );
         }
     }
 
-    fn extract_variant(&mut self, ts_type: &TsType, enum_name: &str) -> Option<super::types::EnumVariant> {
-        let TsType::TsTypeLit(lit) = ts_type else { return None };
+    fn extract_variant(
+        &mut self,
+        ts_type: &TsType,
+        enum_name: &str,
+    ) -> Option<super::types::EnumVariant> {
+        let TsType::TsTypeLit(lit) = ts_type else {
+            return None;
+        };
         let (tag, fields) = self.extract_tag_and_fields(lit, enum_name)?;
         Some(super::types::EnumVariant { name: tag, fields })
     }
 
-    fn extract_tag_and_fields(&mut self, lit: &swc_ecma_ast::TsTypeLit, enum_name: &str) -> Option<(String, Vec<(String, RustType)>)> {
+    fn extract_tag_and_fields(
+        &mut self,
+        lit: &swc_ecma_ast::TsTypeLit,
+        enum_name: &str,
+    ) -> Option<(String, Vec<(String, RustType)>)> {
         let mut tag = String::new();
         let mut fields = Vec::new();
 
@@ -395,11 +463,22 @@ impl TypeCollector {
             }
         }
 
-        if tag.is_empty() { None } else { Some((tag, fields)) }
+        if tag.is_empty() {
+            None
+        } else {
+            Some((tag, fields))
+        }
     }
 
-    fn extract_property(&mut self, prop: &swc_ecma_ast::TsPropertySignature, _enum_name: &str, tag_buffer: &mut String) -> Option<(String, RustType)> {
-        let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() else { return None };
+    fn extract_property(
+        &mut self,
+        prop: &swc_ecma_ast::TsPropertySignature,
+        _enum_name: &str,
+        tag_buffer: &mut String,
+    ) -> Option<(String, RustType)> {
+        let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() else {
+            return None;
+        };
         let field_name = ident.sym.to_string();
         let type_ann = prop.type_ann.as_ref()?;
         let ty = self.resolver.resolve(&type_ann.type_ann);

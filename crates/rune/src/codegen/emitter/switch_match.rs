@@ -2,9 +2,9 @@
 //!
 //! Emits Rust match expressions from TypeScript switch statements.
 
-use super::{emit_expr, CodeEmitter};
 use super::types::{is_enum_type, to_rust_name};
 use super::utils::to_pascal_case;
+use super::{emit_expr, CodeEmitter};
 use swc_ecma_ast::{Stmt, SwitchCase};
 
 /// Emit a switch statement as Rust match.
@@ -12,7 +12,7 @@ pub fn emit_switch(emitter: &mut CodeEmitter, switch_stmt: &swc_ecma_ast::Switch
     // Determine if we're switching on a tag field (e.g., status.tag)
     let discriminant = &switch_stmt.discriminant;
     let (is_tag_access, type_name) = extract_tag_access_info(discriminant);
-    
+
     if is_tag_access {
         // We're switching on .tag, so emit variant patterns
         emit_switch_as_enum_match(emitter, switch_stmt, type_name.as_deref());
@@ -62,16 +62,16 @@ fn emit_switch_as_enum_match(
     // For a tagged union switch, we match on the variant directly
     // e.g., switch (status.tag) { case "Move": ... }
     // becomes match status { Status::Move => ... }
-    
+
     emitter.push_str("match ");
-    
+
     // Emit the discriminant (the enum variable, not the tag)
     if let swc_ecma_ast::Expr::Member(member) = &*switch_stmt.discriminant {
         emit_expr(emitter, &member.obj);
     } else {
         emit_expr(emitter, &switch_stmt.discriminant);
     }
-    
+
     emitter.push_str(" {\n");
     emitter.inc_indent();
 
@@ -107,7 +107,11 @@ fn emit_enum_case(emitter: &mut CodeEmitter, case: &SwitchCase, type_name: Optio
 }
 
 /// Emit a case test as enum variant pattern.
-fn emit_variant_pattern(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Expr, type_name: Option<&str>) {
+fn emit_variant_pattern(
+    emitter: &mut CodeEmitter,
+    test: &swc_ecma_ast::Expr,
+    type_name: Option<&str>,
+) {
     match test {
         swc_ecma_ast::Expr::Lit(lit) => {
             if let swc_ecma_ast::Lit::Str(s) = lit {
@@ -261,7 +265,10 @@ pub fn emit_module(_emitter: &mut super::RustEmitter, _source: &crate::parser::S
 
 /// Write type definitions.
 #[allow(dead_code)]
-pub fn write_types(emitter: &mut super::RustEmitter, types: &[(String, crate::analyzer::TypeInfo)]) {
+pub fn write_types(
+    emitter: &mut super::RustEmitter,
+    types: &[(String, crate::analyzer::TypeInfo)],
+) {
     for (_, info) in types {
         match info {
             crate::analyzer::TypeInfo::Struct(s) => {

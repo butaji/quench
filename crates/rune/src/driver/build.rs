@@ -151,10 +151,11 @@ impl BuildDriver {
     fn transpile_watch(&self, file: &Path) -> Result<()> {
         use std::time::Duration;
 
-        println!("Watching {} for changes... (Ctrl+C to exit)", file.display());
-        let mut last_modified = std::fs::metadata(file)
-            .and_then(|m| m.modified())
-            .ok();
+        println!(
+            "Watching {} for changes... (Ctrl+C to exit)",
+            file.display()
+        );
+        let mut last_modified = std::fs::metadata(file).and_then(|m| m.modified()).ok();
 
         loop {
             // Check for file changes
@@ -218,9 +219,7 @@ impl BuildDriver {
             .collect()
     }
 
-    fn analyze_sources(
-        sources: &[parser::SourceFile],
-    ) -> Result<Vec<analyzer::AnalysisResult>> {
+    fn analyze_sources(sources: &[parser::SourceFile]) -> Result<Vec<analyzer::AnalysisResult>> {
         sources.iter().map(analyzer::analyze).collect()
     }
 

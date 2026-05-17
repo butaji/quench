@@ -70,7 +70,11 @@ impl SourceFile {
     }
 
     /// Parse and collect any errors.
-    fn parse_and_collect_errors(source: &str, file_name: &str, kind: SourceKind) -> Vec<ParseError> {
+    fn parse_and_collect_errors(
+        source: &str,
+        file_name: &str,
+        kind: SourceKind,
+    ) -> Vec<ParseError> {
         let parse_result = Self::try_parse(source, file_name, kind);
         match parse_result {
             Ok(()) => Vec::new(),
@@ -79,7 +83,11 @@ impl SourceFile {
     }
 
     /// Try to parse source.
-    fn try_parse(source: &str, file_name: &str, kind: SourceKind) -> std::result::Result<(), String> {
+    fn try_parse(
+        source: &str,
+        file_name: &str,
+        kind: SourceKind,
+    ) -> std::result::Result<(), String> {
         match kind {
             SourceKind::TypeScript => SwcAst::parse_ts(source, file_name).map(|_| ()),
             SourceKind::Tsx => SwcAst::parse_tsx(source, file_name).map(|_| ()),

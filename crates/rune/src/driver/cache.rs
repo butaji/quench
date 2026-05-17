@@ -80,7 +80,9 @@ impl CacheManager {
 
     /// Check if any source file is newer than cache.
     fn any_source_newer_than(sources: &[PathBuf], cache_modified: SystemTime) -> bool {
-        sources.iter().any(|src| Self::source_newer(src, cache_modified))
+        sources
+            .iter()
+            .any(|src| Self::source_newer(src, cache_modified))
     }
 
     /// Check if a single source is newer than cache.

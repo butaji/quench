@@ -23,7 +23,8 @@ mod parser_tests {
         let file = SourceFile {
             path: std::path::PathBuf::from("test.r.ts"),
             kind: SourceKind::TypeScript,
-            source: "export function add(a: number, b: number): number { return a + b; }".to_string(),
+            source: "export function add(a: number, b: number): number { return a + b; }"
+                .to_string(),
             name: "test".to_string(),
             valid: true,
             errors: Vec::new(),
@@ -119,7 +120,8 @@ mod parser_tests {
         let file = SourceFile {
             path: std::path::PathBuf::from("test.r.ts"),
             kind: SourceKind::TypeScript,
-            source: "export type Message = | { tag: 'Move', x: number } | { tag: 'Quit' };".to_string(),
+            source: "export type Message = | { tag: 'Move', x: number } | { tag: 'Quit' };"
+                .to_string(),
             name: "test".to_string(),
             valid: true,
             errors: Vec::new(),
@@ -132,7 +134,9 @@ mod parser_tests {
         let file = SourceFile {
             path: std::path::PathBuf::from("test.r.ts"),
             kind: SourceKind::TypeScript,
-            source: "export type Result = | { ok: true, value: number } | { ok: false, error: string };".to_string(),
+            source:
+                "export type Result = | { ok: true, value: number } | { ok: false, error: string };"
+                    .to_string(),
             name: "test".to_string(),
             valid: true,
             errors: Vec::new(),
@@ -159,7 +163,8 @@ mod parser_tests {
         let file = SourceFile {
             path: std::path::PathBuf::from("test.r.ts"),
             kind: SourceKind::TypeScript,
-            source: "export async function fetchData(url: string): Promise<string> { return ''; }".to_string(),
+            source: "export async function fetchData(url: string): Promise<string> { return ''; }"
+                .to_string(),
             name: "test".to_string(),
             valid: true,
             errors: Vec::new(),

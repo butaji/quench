@@ -61,7 +61,7 @@ fn test_subset_validator_valid_code() {
     let mut validator = SubsetValidator::new();
     let file = create_test_file(
         "export function add(a: number, b: number): number { return a + b; } \
-         const x: number = 5; let y: number = 10; if (x === y) {}"
+         const x: number = 5; let y: number = 10; if (x === y) {}",
     );
     let result = validator.validate(&file);
     assert!(result.is_ok());
@@ -124,7 +124,7 @@ fn test_subset_validator_implicit_coercion() {
     let file = create_test_file("if (isActive) {}");
     let result = validator.validate(&file);
     assert!(result.is_ok());
-    
+
     // Null/undefined in condition is flagged
     let file = create_test_file("if (null) {}");
     let result = validator.validate(&file);

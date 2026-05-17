@@ -22,7 +22,11 @@ export type Point = {
     let result = codegen::generate(&file, &analysis).unwrap();
 
     // Should emit some struct-related content
-    assert!(result.source.contains("struct") || result.source.contains("Struct") || !result.source.is_empty());
+    assert!(
+        result.source.contains("struct")
+            || result.source.contains("Struct")
+            || !result.source.is_empty()
+    );
 }
 
 /// Test: Tagged union transpilation
@@ -38,7 +42,11 @@ export type Message =
     let result = codegen::generate(&file, &analysis).unwrap();
 
     // Should emit some enum-like content
-    assert!(result.source.contains("enum") || result.source.contains("Enum") || !result.source.is_empty());
+    assert!(
+        result.source.contains("enum")
+            || result.source.contains("Enum")
+            || !result.source.is_empty()
+    );
 }
 
 /// Test: Basic type alias (structural check)
@@ -329,9 +337,12 @@ export function sumArray(arr: number[]): number {
     let result = codegen::generate(&file, &analysis).unwrap();
 
     println!("Generated code:\n{}", result.source);
-    
+
     // Should have generated some code
     assert!(!result.source.is_empty());
     // The for loop should NOT emit "for let" pattern - that's invalid Rust
-    assert!(!result.source.contains("for let"), "Should not emit 'for let' pattern");
+    assert!(
+        !result.source.contains("for let"),
+        "Should not emit 'for let' pattern"
+    );
 }

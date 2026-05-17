@@ -19,7 +19,11 @@ pub fn emit_call(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) 
     }
 }
 
-fn handle_member_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn handle_member_call(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     let Expr::Ident(ident) = &*member.obj else {
         emit_method_or_generic_call(emitter, member, call_expr);
         return;
@@ -96,7 +100,11 @@ fn emit_math_call(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_
     emitter.push_str(")");
 }
 
-fn emit_method_or_generic_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_method_or_generic_call(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     let MemberProp::Ident(prop) = &member.prop else {
         emit_generic_member_call(emitter, member, call_expr);
         return;
@@ -115,9 +123,21 @@ fn emit_method_or_generic_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast:
 fn is_array_method(method: &str) -> bool {
     matches!(
         method,
-        "filter" | "map" | "reduce" | "forEach" | "some" | "every"
-            | "find" | "findIndex" | "concat" | "join" | "reverse"
-            | "sort" | "slice" | "splice" | "get"
+        "filter"
+            | "map"
+            | "reduce"
+            | "forEach"
+            | "some"
+            | "every"
+            | "find"
+            | "findIndex"
+            | "concat"
+            | "join"
+            | "reverse"
+            | "sort"
+            | "slice"
+            | "splice"
+            | "get"
     )
 }
 
@@ -125,7 +145,12 @@ fn is_string_method(method: &str) -> bool {
     matches!(method, "localeCompare" | "includes" | "indexOf")
 }
 
-fn emit_array_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_array_call(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    method: &str,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     match method {
         "slice" => {
             emit_array_slice(emitter, member, call_expr);
@@ -145,14 +170,18 @@ fn emit_array_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr,
     }
 }
 
-fn emit_array_slice(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_array_slice(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emit_expr(emitter, &member.obj);
     emitter.push_str(".as_slice()[");
-    
+
     if let Some(start_arg) = call_expr.args.first() {
         emit_expr(emitter, &start_arg.expr);
         emitter.push_str(" as usize..");
-        
+
         if call_expr.args.len() >= 2 {
             let end_arg = &call_expr.args[1].expr;
             // Check if the end argument is a negative number (slice with negative end)
@@ -214,7 +243,11 @@ fn emit_array_get(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr)
     emitter.push_str(")");
 }
 
-fn emit_array_iter_method(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_array_iter_method(
+    emitter: &mut CodeEmitter,
+    method: &str,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emitter.push_str(".iter().");
     let rust_method = match method {
         "forEach" => "for_each",
@@ -235,7 +268,12 @@ fn emit_array_iter_method(emitter: &mut CodeEmitter, method: &str, call_expr: &s
     emitter.push_str(")");
 }
 
-fn emit_string_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_string_call(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    method: &str,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     match method {
         "localeCompare" => emit_string_locale_compare(emitter, member, call_expr),
         "includes" => emit_string_includes(emitter, member, call_expr),
@@ -244,7 +282,11 @@ fn emit_string_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr
     }
 }
 
-fn emit_string_locale_compare(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_string_locale_compare(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emitter.push_str("(");
     emit_expr(emitter, &member.obj);
     emitter.push_str(".cmp(");
@@ -254,7 +296,11 @@ fn emit_string_locale_compare(emitter: &mut CodeEmitter, member: &swc_ecma_ast::
     emitter.push_str(") as i32)");
 }
 
-fn emit_string_includes(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_string_includes(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emitter.push_str("(");
     emit_expr(emitter, &member.obj);
     emitter.push_str(".contains(");
@@ -264,7 +310,11 @@ fn emit_string_includes(emitter: &mut CodeEmitter, member: &swc_ecma_ast::Member
     emitter.push_str("))");
 }
 
-fn emit_string_index_of(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_string_index_of(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emitter.push_str("(");
     emit_expr(emitter, &member.obj);
     emitter.push_str(".find(");
@@ -274,7 +324,11 @@ fn emit_string_index_of(emitter: &mut CodeEmitter, member: &swc_ecma_ast::Member
     emitter.push_str(").is_some() as i32)");
 }
 
-fn emit_generic_member_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_generic_member_call(
+    emitter: &mut CodeEmitter,
+    member: &swc_ecma_ast::MemberExpr,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emit_expr(emitter, &member.obj);
     match &member.prop {
         MemberProp::Ident(prop) => {
@@ -288,7 +342,11 @@ fn emit_generic_member_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::Me
     emitter.push_str(")");
 }
 
-fn emit_direct_call(emitter: &mut CodeEmitter, ident: &swc_ecma_ast::Ident, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_direct_call(
+    emitter: &mut CodeEmitter,
+    ident: &swc_ecma_ast::Ident,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     let fn_name = super::to_snake_case(ident.sym.as_ref());
     emitter.push_str(&fn_name);
     emitter.push_str("(");

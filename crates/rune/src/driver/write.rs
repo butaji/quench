@@ -65,12 +65,10 @@ impl BuildDriver {
     pub fn write_cache_lib(&self, cache_src: &Path) -> Result<()> {
         // Hoist parent path computation once
         let Some(cache_parent) = cache_src.parent() else {
-            return Err(crate::RuneError::Io(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Invalid cache path",
-                ),
-            ));
+            return Err(crate::RuneError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid cache path",
+            )));
         };
 
         let lib_path = cache_parent.join("lib.rs");

@@ -53,11 +53,17 @@ impl AstWalker {
         let path_str = format!("{:?}", import.src.value);
 
         if path_str.starts_with("\"native:") {
-            let module_name = path_str.trim_start_matches("\"native:").trim_end_matches('"');
+            let module_name = path_str
+                .trim_start_matches("\"native:")
+                .trim_end_matches('"');
             self.native_imports.insert(module_name.to_string());
         }
 
-        let names: Vec<String> = import.specifiers.iter().map(|spec| self.extract_spec_name(spec)).collect();
+        let names: Vec<String> = import
+            .specifiers
+            .iter()
+            .map(|spec| self.extract_spec_name(spec))
+            .collect();
         self.imports.insert(path_str, names);
     }
 
@@ -101,7 +107,8 @@ impl AstWalker {
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.emitter.push_line(&format!("use {rust_path}::{{{names_str}}};"));
+            self.emitter
+                .push_line(&format!("use {rust_path}::{{{names_str}}};"));
         }
     }
 
@@ -160,7 +167,10 @@ impl AstWalker {
     fn emit_item(&mut self, item: &ModuleItem) {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => self.emit_function(fn_decl),
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl { decl: Decl::Fn(fn_decl), .. })) => {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Fn(fn_decl),
+                ..
+            })) => {
                 self.emit_function(fn_decl);
             }
             _ => {}
@@ -172,19 +182,29 @@ impl AstWalker {
         let params = self.extract_function_params(fn_decl);
         let return_type = self.extract_return_type(fn_decl);
         let is_async = fn_decl.function.is_async;
-        let body = fn_decl.function.body.as_ref().map(|block| Stmt::Block(block.clone()));
+        let body = fn_decl
+            .function
+            .body
+            .as_ref()
+            .map(|block| Stmt::Block(block.clone()));
 
-        self.emitter.set_expected_return(Some(return_type.to_string()));
-        self.emitter.emit_function_with_body(&rust_name, &params, &return_type, is_async, body);
+        self.emitter
+            .set_expected_return(Some(return_type.to_string()));
+        self.emitter
+            .emit_function_with_body(&rust_name, &params, &return_type, is_async, body);
         self.emitter.set_expected_return(None);
     }
 
     fn extract_function_params(&mut self, fn_decl: &FnDecl) -> Vec<(String, RustType)> {
-        fn_decl.function.params.iter()
+        fn_decl
+            .function
+            .params
+            .iter()
             .filter_map(|p| {
                 if let swc_ecma_ast::Pat::Ident(ident) = &p.pat {
-                    let ty = ident.type_ann.as_ref()
-                        .map_or(RustType::Unknown, |ann| self.collector.resolver_mut().resolve(&ann.type_ann));
+                    let ty = ident.type_ann.as_ref().map_or(RustType::Unknown, |ann| {
+                        self.collector.resolver_mut().resolve(&ann.type_ann)
+                    });
                     Some((ident.id.sym.to_string(), ty))
                 } else {
                     None
@@ -194,8 +214,13 @@ impl AstWalker {
     }
 
     fn extract_return_type(&mut self, fn_decl: &FnDecl) -> RustType {
-        fn_decl.function.return_type.as_ref()
-            .map_or(RustType::Unit, |ann| self.collector.resolver_mut().resolve(&ann.type_ann))
+        fn_decl
+            .function
+            .return_type
+            .as_ref()
+            .map_or(RustType::Unit, |ann| {
+                self.collector.resolver_mut().resolve(&ann.type_ann)
+            })
     }
 
     #[must_use]

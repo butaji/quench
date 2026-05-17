@@ -73,12 +73,16 @@ fn emit_top_level_property(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 }
 
-fn emit_computed_property(emitter: &mut CodeEmitter, obj: &Expr, comp: &swc_ecma_ast::ComputedPropName) {
+fn emit_computed_property(
+    emitter: &mut CodeEmitter,
+    obj: &Expr,
+    comp: &swc_ecma_ast::ComputedPropName,
+) {
     let obj_type = infer_type_from_expr(obj);
-    let is_array_like = obj_type.starts_with("Vec") 
+    let is_array_like = obj_type.starts_with("Vec")
         || obj_type.contains("[]")
         || is_identifier_with_array_type(obj);
-    
+
     if is_array_like {
         emitter.push_str("[");
         emit_expr(emitter, &comp.expr);
@@ -220,7 +224,12 @@ fn resolve_struct_name(emitter: &CodeEmitter, obj: &ObjectLit) -> StructNameKind
     StructNameKind::Anonymous
 }
 
-fn emit_struct_literal(emitter: &mut CodeEmitter, name: &str, obj: &ObjectLit, spread: Option<&Expr>) {
+fn emit_struct_literal(
+    emitter: &mut CodeEmitter,
+    name: &str,
+    obj: &ObjectLit,
+    spread: Option<&Expr>,
+) {
     emitter.push_str(name);
     emitter.push_str(" { ");
     emit_object_props(emitter, obj);
@@ -262,25 +271,41 @@ fn is_result_pattern_object(obj: &ObjectLit) -> bool {
 }
 
 fn is_result_key(p: &PropOrSpread) -> bool {
-    let PropOrSpread::Prop(prop) = p else { return false };
-    let Prop::KeyValue(kv) = &**prop else { return false };
-    let PropName::Ident(ident) = &kv.key else { return false };
+    let PropOrSpread::Prop(prop) = p else {
+        return false;
+    };
+    let Prop::KeyValue(kv) = &**prop else {
+        return false;
+    };
+    let PropName::Ident(ident) = &kv.key else {
+        return false;
+    };
     let name = ident.sym.as_ref();
     name == "ok" || name == "value" || name == "error"
 }
 
 fn extract_result_value(obj: &ObjectLit) -> Option<&Expr> {
-    obj.props.iter().find_map(|p| extract_prop_value(p, "value"))
+    obj.props
+        .iter()
+        .find_map(|p| extract_prop_value(p, "value"))
 }
 
 fn extract_result_error(obj: &ObjectLit) -> Option<&Expr> {
-    obj.props.iter().find_map(|p| extract_prop_value(p, "error"))
+    obj.props
+        .iter()
+        .find_map(|p| extract_prop_value(p, "error"))
 }
 
 fn extract_prop_value<'a>(p: &'a PropOrSpread, field: &str) -> Option<&'a Expr> {
-    let PropOrSpread::Prop(prop) = p else { return None };
-    let Prop::KeyValue(kv) = &**prop else { return None };
-    let PropName::Ident(ident) = &kv.key else { return None };
+    let PropOrSpread::Prop(prop) = p else {
+        return None;
+    };
+    let Prop::KeyValue(kv) = &**prop else {
+        return None;
+    };
+    let PropName::Ident(ident) = &kv.key else {
+        return None;
+    };
     if ident.sym.as_ref() == field {
         return Some(&*kv.value);
     }

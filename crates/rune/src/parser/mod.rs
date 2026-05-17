@@ -3,10 +3,10 @@
 //! Parses `*.r.ts` and `*.r.tsx` files using SWC.
 
 mod diagnostics;
-mod source_file;
-pub mod swc_parser;
 #[cfg(test)]
 mod integration_tests;
+mod source_file;
+pub mod swc_parser;
 #[cfg(test)]
 mod tests;
 

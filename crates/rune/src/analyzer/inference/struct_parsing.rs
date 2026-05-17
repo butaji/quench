@@ -162,11 +162,7 @@ fn extract_fields_from_line(line: &str, fields: &mut Vec<(String, TypeInfo)>) {
     }
 }
 
-fn finalize_interface(
-    types: &mut TypeMap,
-    name: &str,
-    fields: &[(String, TypeInfo)],
-) {
+fn finalize_interface(types: &mut TypeMap, name: &str, fields: &[(String, TypeInfo)]) {
     types.insert(
         name.to_string(),
         TypeInfo::Struct(StructInfo {

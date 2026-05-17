@@ -47,10 +47,12 @@ fn infer_array_type(arr: &swc_ecma_ast::ArrayLit) -> String {
     if arr.elems.is_empty() {
         return String::from("Vec<()>");
     }
-    arr.elems.first().and_then(|e| e.as_ref()).map_or(
-        String::from("Vec<()>"),
-        |elem| format!("Vec<{}>", infer_type(&elem.expr)),
-    )
+    arr.elems
+        .first()
+        .and_then(|e| e.as_ref())
+        .map_or(String::from("Vec<()>"), |elem| {
+            format!("Vec<{}>", infer_type(&elem.expr))
+        })
 }
 
 fn infer_unary_type(unary_expr: &swc_ecma_ast::UnaryExpr) -> String {
@@ -113,7 +115,10 @@ fn is_comparison_op(op: swc_ecma_ast::BinaryOp) -> bool {
 }
 
 fn is_logical_op(op: swc_ecma_ast::BinaryOp) -> bool {
-    matches!(op, swc_ecma_ast::BinaryOp::LogicalAnd | swc_ecma_ast::BinaryOp::LogicalOr)
+    matches!(
+        op,
+        swc_ecma_ast::BinaryOp::LogicalAnd | swc_ecma_ast::BinaryOp::LogicalOr
+    )
 }
 
 fn is_bitwise_op(op: swc_ecma_ast::BinaryOp) -> bool {
@@ -190,8 +195,8 @@ fn infer_array_or_string_method(
         "push" => "usize".to_string(),
         "pop" | "shift" => "Option<()>".to_string(),
         "reduce" => infer_reduce_return_type(call_expr),
-        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd"
-        | "substring" | "substr" | "toString" => "String".to_string(),
+        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd" | "substring"
+        | "substr" | "toString" => "String".to_string(),
         "indexOf" | "lastIndexOf" => "Option<usize>".to_string(),
         "charAt" => "Option<char>".to_string(),
         "join" => "String".to_string(),
@@ -284,8 +289,8 @@ fn try_common_method_property(prop: &str) -> Option<String> {
         "filter" | "map" | "concat" | "slice" => Some("()".to_string()),
         "find" | "findIndex" => Some("Option<()>".to_string()),
         "some" | "every" | "includes" | "startsWith" | "endsWith" => Some("bool".to_string()),
-        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd"
-        | "substring" | "substr" | "toString" => Some("String".to_string()),
+        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd" | "substring"
+        | "substr" | "toString" => Some("String".to_string()),
         _ => None,
     }
 }

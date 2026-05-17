@@ -39,11 +39,7 @@ pub fn create_dir_mod_file(cache_dir: &Path, dir: &str) -> std::io::Result<()> {
 }
 
 /// Write a single generated module to file.
-pub fn write_single_module(
-    generated_dir: &Path,
-    module: &GeneratedModule,
-) -> crate::Result<()> {
-
+pub fn write_single_module(generated_dir: &Path, module: &GeneratedModule) -> crate::Result<()> {
     let rel_path = module
         .name
         .split('/')
@@ -90,7 +86,6 @@ pub fn write_root_mod_file(
     generated_dir: &Path,
     modules: &HashMap<String, Vec<String>>,
 ) -> crate::Result<()> {
-
     let mut content = String::new();
 
     // Module declarations
@@ -113,7 +108,6 @@ pub fn write_subdirectory_mod_files(
     generated_dir: &Path,
     modules: &HashMap<String, Vec<String>>,
 ) -> crate::Result<()> {
-
     for (dir, mods) in modules {
         if dir.is_empty() {
             continue;

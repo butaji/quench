@@ -147,8 +147,14 @@ fn parse_jsx_children(children: &str) -> Vec<String> {
     let mut tag_content = String::new();
 
     for c in children.chars() {
-        process_char(c, &mut in_tag, &mut element_buffer, &mut pending_tag,
-            &mut tag_content, &mut result);
+        process_char(
+            c,
+            &mut in_tag,
+            &mut element_buffer,
+            &mut pending_tag,
+            &mut tag_content,
+            &mut result,
+        );
     }
 
     result

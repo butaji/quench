@@ -6,9 +6,9 @@
 mod context;
 mod inference;
 mod ownership;
-pub mod validator;
 #[cfg(test)]
 mod tests;
+pub mod validator;
 
 pub use context::AnalysisContext;
 pub use inference::TypeInferrer;

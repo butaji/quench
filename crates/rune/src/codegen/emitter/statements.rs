@@ -299,7 +299,10 @@ fn emit_for_of_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::ForOfStmt) {
 }
 
 fn extract_for_of_var_name(var_decl: &swc_ecma_ast::VarDecl) -> Option<String> {
-    var_decl.decls.iter().find_map(|decl| extract_var_name(&decl.name))
+    var_decl
+        .decls
+        .iter()
+        .find_map(|decl| extract_var_name(&decl.name))
 }
 
 fn emit_for_of_loop(

@@ -18,8 +18,10 @@ pub fn copy_artifact_to_hot_dir(
     let hot_path = create_timestamped_copy(hot_dir, artifact, target_crate)?;
     update_atomic_symlink(hot_dir, &hot_path)?;
     cleanup_old_artifacts(hot_dir, &target_crate.replace('-', "_"), 5)?;
-    let filename = hot_path.file_name()
-        .map_or_else(|| "unknown".to_string(), |n| n.to_string_lossy().to_string());
+    let filename = hot_path.file_name().map_or_else(
+        || "unknown".to_string(),
+        |n| n.to_string_lossy().to_string(),
+    );
     println!("Hot reload ready: {}", filename);
     Ok(())
 }
@@ -100,11 +102,7 @@ pub fn setup_hot_reload_directory(workspace: &Path) -> Result<PathBuf> {
 
 /// Get the artifact path for the current build mode.
 #[allow(dead_code)]
-pub fn get_artifact_path(
-    workspace: &Path,
-    target_crate: &str,
-    mode: BuildMode,
-) -> Option<PathBuf> {
+pub fn get_artifact_path(workspace: &Path, target_crate: &str, mode: BuildMode) -> Option<PathBuf> {
     let profile = match mode {
         BuildMode::Dev => "debug",
         BuildMode::Release => "release",

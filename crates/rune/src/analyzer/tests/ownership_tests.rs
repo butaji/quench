@@ -73,8 +73,14 @@ mod borrow_mode_tests {
 
     #[test]
     fn test_borrow_mode_combine() {
-        assert_eq!(BorrowMode::Shared, BorrowMode::Shared.combine(BorrowMode::Shared));
+        assert_eq!(
+            BorrowMode::Shared,
+            BorrowMode::Shared.combine(BorrowMode::Shared)
+        );
         assert_eq!(BorrowMode::Mut, BorrowMode::Mut.combine(BorrowMode::Shared));
-        assert_eq!(BorrowMode::Owned, BorrowMode::Owned.combine(BorrowMode::Owned));
+        assert_eq!(
+            BorrowMode::Owned,
+            BorrowMode::Owned.combine(BorrowMode::Owned)
+        );
     }
 }
