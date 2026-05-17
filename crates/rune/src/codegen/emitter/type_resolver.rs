@@ -87,6 +87,7 @@ impl TypeResolver {
     ) -> RustType {
         match name {
             "Array" => self.resolve_vec_param(&params.params[0]),
+            "Record" => self.resolve_record_type(params),
             "Result" if params.params.len() >= 2 => {
                 let inner = self.resolve(&params.params[0]);
                 RustType::Result(Box::new(inner))
@@ -95,10 +96,47 @@ impl TypeResolver {
                 let inner = self.resolve(&params.params[0]);
                 RustType::Option(Box::new(inner))
             }
+            "Map" => self.resolve_map_type(params),
+            "Set" => self.resolve_set_type(params),
             _ => {
                 let inner = self.resolve(&params.params[0]);
                 RustType::Custom(format!("{name}<{inner}>"))
             }
+        }
+    }
+
+    fn resolve_record_type(&mut self, params: &swc_ecma_ast::TsTypeParamInstantiation) -> RustType {
+        // Record<K, V> maps to std::collections::HashMap<K, V> or IndexMap
+        if params.params.len() >= 2 {
+            let key = self.resolve(&params.params[0]);
+            let value = self.resolve(&params.params[1]);
+            let key_str = key.to_rust_type_string();
+            let value_str = value.to_rust_type_string();
+            RustType::Custom(format!("std::collections::HashMap<{key_str}, {value_str}>"))
+        } else {
+            RustType::Custom("std::collections::HashMap<String, ()>".to_string())
+        }
+    }
+
+    fn resolve_map_type(&mut self, params: &swc_ecma_ast::TsTypeParamInstantiation) -> RustType {
+        if params.params.len() >= 2 {
+            let key = self.resolve(&params.params[0]);
+            let value = self.resolve(&params.params[1]);
+            let key_str = key.to_rust_type_string();
+            let value_str = value.to_rust_type_string();
+            RustType::Custom(format!("std::collections::HashMap<{key_str}, {value_str}>"))
+        } else {
+            RustType::Custom("std::collections::HashMap<String, ()>".to_string())
+        }
+    }
+
+    fn resolve_set_type(&mut self, params: &swc_ecma_ast::TsTypeParamInstantiation) -> RustType {
+        if !params.params.is_empty() {
+            let elem = self.resolve(&params.params[0]);
+            let elem_str = elem.to_rust_type_string();
+            RustType::Custom(format!("std::collections::HashSet<{elem_str}>"))
+        } else {
+            RustType::Custom("std::collections::HashSet<()>" .to_string())
         }
     }
 
@@ -142,11 +180,127 @@ impl TypeResolver {
             return RustType::Unknown;
         }
 
-        if !self.has_null_type(&u.types) {
-            return RustType::Unknown;
+        // Check for Result pattern: { ok: true, value: T } | { ok: false, error: E }
+        if let Some(result_type) = self.try_extract_result_type(&u.types) {
+            return result_type;
         }
 
-        self.extract_option_from_union(&u.types)
+        // Check for Option pattern: T | null
+        if self.has_null_type(&u.types) {
+            return self.extract_option_from_union(&u.types);
+        }
+
+        RustType::Unknown
+    }
+
+    /// Try to extract Result<T, E> from a union type.
+    /// Returns Some(Result) if the union is { ok: true, value: T } | { ok: false, error: E }.
+    fn try_extract_result_type(
+        &mut self,
+        types: &[Box<swc_ecma_ast::TsType>],
+    ) -> Option<RustType> {
+        // Both variants must exist for a valid Result pattern
+        let has_ok = types.iter().any(|t| self.is_ok_variant(t));
+        let has_err = types.iter().any(|t| self.is_err_variant(t));
+        if !has_ok || !has_err {
+            return None;
+        }
+        let ok_variant = types.iter().find(|t| self.is_ok_variant(t))?;
+        let value_type = self.extract_result_value_type(ok_variant)?;
+        Some(RustType::Result(Box::new(value_type)))
+    }
+
+    fn is_ok_variant(&self, ts_type: &swc_ecma_ast::TsType) -> bool {
+        let swc_ecma_ast::TsType::TsTypeLit(lit) = &ts_type else {
+            return false;
+        };
+        let mut has_ok_true = false;
+        let mut has_value = false;
+
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                if let Some(type_ann) = &prop.type_ann {
+                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        ident.sym.as_ref()
+                    } else {
+                        continue;
+                    };
+                    if field_name == "ok" && self.is_true_literal(&type_ann.type_ann) {
+                        has_ok_true = true;
+                    }
+                    if field_name == "value" {
+                        has_value = true;
+                    }
+                }
+            }
+        }
+        has_ok_true && has_value
+    }
+
+    fn is_err_variant(&self, ts_type: &swc_ecma_ast::TsType) -> bool {
+        let swc_ecma_ast::TsType::TsTypeLit(lit) = &ts_type else {
+            return false;
+        };
+        let mut has_ok_false = false;
+        let mut has_error = false;
+
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                if let Some(type_ann) = &prop.type_ann {
+                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        ident.sym.as_ref()
+                    } else {
+                        continue;
+                    };
+                    if field_name == "ok" && self.is_false_literal(&type_ann.type_ann) {
+                        has_ok_false = true;
+                    }
+                    if field_name == "error" {
+                        has_error = true;
+                    }
+                }
+            }
+        }
+        has_ok_false && has_error
+    }
+
+    fn is_true_literal(&self, ty: &swc_ecma_ast::TsType) -> bool {
+        if let swc_ecma_ast::TsType::TsLitType(lit) = ty {
+            return matches!(
+                lit.lit,
+                swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: true, .. })
+            );
+        }
+        false
+    }
+
+    fn is_false_literal(&self, ty: &swc_ecma_ast::TsType) -> bool {
+        if let swc_ecma_ast::TsType::TsLitType(lit) = ty {
+            return matches!(
+                lit.lit,
+                swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: false, .. })
+            );
+        }
+        false
+    }
+
+    fn extract_result_value_type(&mut self, ok_variant: &swc_ecma_ast::TsType) -> Option<RustType> {
+        let swc_ecma_ast::TsType::TsTypeLit(lit) = &ok_variant else {
+            return None;
+        };
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                    ident.sym.as_ref()
+                } else {
+                    continue;
+                };
+                if field_name == "value" {
+                    return prop.type_ann.as_ref().map(|ann| self.resolve(&ann.type_ann));
+                }
+            }
+        }
+        Some(RustType::Unit)
     }
 
     fn has_null_type(&self, types: &[Box<swc_ecma_ast::TsType>]) -> bool {

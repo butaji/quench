@@ -15,6 +15,7 @@ mod literals;
 mod members;
 mod module;
 mod statements;
+mod stmt_control;
 mod switch_match;
 #[cfg(test)]
 mod tests;
@@ -33,7 +34,8 @@ pub use infer::infer_type;
 pub use literals::emit_lit;
 pub use members::{emit_member, emit_object};
 pub use module::emit_module;
-pub use statements::{emit_body_stmt, emit_single_stmt};
+pub use statements::emit_body_stmt;
+pub use stmt_control::emit_single_stmt;
 pub use switch_match::emit_switch;
 pub use type_resolver::TypeResolver;
 pub use types::{is_enum_type, to_rust_name, EnumDefinition, EnumVariant, RustType, StructFields};

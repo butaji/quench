@@ -162,6 +162,14 @@ fn infer_direct_call_type(fn_name: &str) -> String {
         "fast_sqrt" => "f64".to_string(),
         "batch_add" => "Vec<f64>".to_string(),
         "mean" | "variance" | "std_dev" => "f64".to_string(),
+        // Built-in function mappings
+        "parseFloat" => "Option<f64>".to_string(),
+        "parseInt" => "Option<i32>".to_string(),
+        "String" => "String".to_string(),
+        "Boolean" => "bool".to_string(),
+        "Number" => "f64".to_string(),
+        "isNaN" => "bool".to_string(),
+        "isFinite" => "bool".to_string(),
         _ => "()".to_string(),
     }
 }
@@ -194,6 +202,7 @@ fn infer_array_or_string_method(
         "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
         "push" => "usize".to_string(),
         "pop" | "shift" => "Option<()>".to_string(),
+        "get" => unwrap_hashmap_value(obj_type),
         "reduce" => infer_reduce_return_type(call_expr),
         "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd" | "substring"
         | "substr" | "toString" => "String".to_string(),
@@ -205,6 +214,26 @@ fn infer_array_or_string_method(
         "forEach" => "()".to_string(),
         _ => "()".to_string(),
     }
+}
+
+fn unwrap_hashmap_value(obj_type: &str) -> String {
+    if obj_type.contains("HashMap<") {
+        if let Some(inner) = obj_type.strip_prefix("std::collections::HashMap<") {
+            if let Some(comma_idx) = inner.find(',') {
+                let value_type = inner[comma_idx + 1..].trim();
+                let value_type = value_type.trim_end_matches('>');
+                return format!("Option<{}>", value_type);
+            }
+        }
+        if let Some(inner) = obj_type.strip_prefix("HashMap<") {
+            if let Some(comma_idx) = inner.find(',') {
+                let value_type = inner[comma_idx + 1..].trim();
+                let value_type = value_type.trim_end_matches('>');
+                return format!("Option<{}>", value_type);
+            }
+        }
+    }
+    "Option<()>".to_string()
 }
 
 fn unwrap_vec_element(obj_type: &str) -> String {
@@ -226,7 +255,26 @@ fn infer_reduce_return_type(call_expr: &swc_ecma_ast::CallExpr) -> String {
 fn infer_member_type(member_expr: &swc_ecma_ast::MemberExpr) -> String {
     let obj_type = infer_type(&member_expr.obj);
     let prop_name = extract_method_name(&member_expr.prop);
+    
+    // Handle computed property access on HashMaps (vars[key]) -> .get(&key)
+    if member_expr.prop.is_computed() {
+        // This is array/map subscript access
+        if is_hashmap_type(&obj_type) {
+            return unwrap_hashmap_value(&obj_type);
+        }
+        // For Vec/arrays, return Option<element>
+        if obj_type.starts_with("Vec") {
+            return unwrap_vec_element(&obj_type);
+        }
+        // Unknown subscript type
+        return "Option<()>".to_string();
+    }
+    
     infer_property_type(&obj_type, prop_name)
+}
+
+fn is_hashmap_type(ty: &str) -> bool {
+    ty.contains("HashMap") || ty.contains("Record<") || ty.contains("Map<")
 }
 
 fn infer_property_type(obj_type: &str, prop_name: &str) -> String {

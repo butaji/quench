@@ -6,7 +6,9 @@ use super::{emit_expr, infer_type, CodeEmitter};
 
 /// Emit a variable declaration.
 pub fn emit_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::Decl) {
+
     let swc_ecma_ast::Decl::Var(var_decl) = decl else {
+        eprintln!("DEBUG emit_var_decl: not a Var decl");
         return;
     };
 
@@ -16,8 +18,11 @@ pub fn emit_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::Decl) {
 }
 
 fn emit_single_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::VarDeclarator) {
+
     let explicit_type = extract_type_annotation(&decl.name);
+
     let inferred_struct = infer_struct_from_init(&decl.name, decl.init.as_deref());
+
     let struct_type_name = explicit_type.clone().or(inferred_struct.clone());
 
     if let Some(ref type_name) = struct_type_name {
@@ -67,14 +72,20 @@ fn resolve_var_type(
     init: Option<&swc_ecma_ast::Expr>,
 ) -> String {
     if let Some(explicit) = explicit_type {
-        explicit.clone()
-    } else if let Some(inferred) = inferred_struct {
-        inferred.clone()
-    } else if let Some(init) = init {
-        infer_type(init)
-    } else {
-        "()".to_string()
+        eprintln!("DEBUG resolve_var_type: using explicit={}", explicit);
+        return explicit.clone();
     }
+    if let Some(inferred) = inferred_struct {
+        eprintln!("DEBUG resolve_var_type: using inferred_struct={}", inferred);
+        return inferred.clone();
+    }
+    if let Some(init_expr) = init {
+        let inferred = infer_type(init_expr);
+        eprintln!("DEBUG resolve_var_type: using inferred from init={}", inferred);
+        return inferred;
+    }
+
+    "()".to_string()
 }
 
 fn emit_var_with_init(
@@ -134,7 +145,40 @@ fn resolve_type_name(ts_type: &swc_ecma_ast::TsType) -> String {
             let inner = resolve_type_name(&arr.elem_type);
             format!("Vec<{}>", inner)
         }
+        swc_ecma_ast::TsType::TsUnionOrIntersectionType(union) => {
+            resolve_union_type(union)
+        }
         _ => "()".to_string(),
+    }
+}
+
+/// Resolve a union type like `number | null` to `Option<f64>`.
+fn resolve_union_type(union: &swc_ecma_ast::TsUnionOrIntersectionType) -> String {
+    let swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u) = union else {
+        return "()".to_string();
+    };
+
+    // Check for Option pattern: T | null
+    if u.types.len() == 2 {
+        let has_null = u.types.iter().any(|t| is_null_type(t));
+        if has_null {
+            let non_null = u.types.iter().find(|t| !is_null_type(t));
+            if let Some(t) = non_null {
+                let inner = resolve_type_name(t.as_ref());
+                return format!("Option<{}>", inner);
+            }
+        }
+    }
+
+    "()".to_string()
+}
+
+/// Check if a type is the null keyword type.
+fn is_null_type(ts_type: &swc_ecma_ast::TsType) -> bool {
+    if let swc_ecma_ast::TsType::TsKeywordType(k) = ts_type {
+        k.kind == swc_ecma_ast::TsKeywordTypeKind::TsNullKeyword
+    } else {
+        false
     }
 }
 
@@ -153,11 +197,77 @@ fn resolve_type_ref(type_ref: &swc_ecma_ast::TsTypeRef) -> String {
         swc_ecma_ast::TsEntityName::Ident(ident) => ident.sym.to_string(),
         swc_ecma_ast::TsEntityName::TsQualifiedName(_) => "Unknown".to_string(),
     };
+
+    // Handle generic types with parameters
+    if let Some(params) = &type_ref.type_params {
+        return resolve_generic_type_ref(&name, params);
+    }
+
     match name.as_str() {
         "Task" | "Filter" | "AppState" => name,
         "Result" => "Result<String, String>".to_string(),
         "Option" => "Option<()>".to_string(),
+        "Record" => "std::collections::HashMap<String, ()>".to_string(),
         _ => name,
+    }
+}
+
+fn resolve_generic_type_ref(
+    name: &str,
+    params: &swc_ecma_ast::TsTypeParamInstantiation,
+) -> String {
+    let params_str: Vec<String> = params
+        .params
+        .iter()
+        .map(|p| resolve_type_name(p))
+        .collect();
+
+    match name {
+        "Record" | "Map" => {
+            if params_str.len() >= 2 {
+                format!(
+                    "std::collections::HashMap<{}, {}>",
+                    params_str[0], params_str[1]
+                )
+            } else {
+                "std::collections::HashMap<String, ()>".to_string()
+            }
+        }
+        "Set" => {
+            if !params_str.is_empty() {
+                format!("std::collections::HashSet<{}>", params_str[0])
+            } else {
+                "std::collections::HashSet<()>".to_string()
+            }
+        }
+        "Array" | "Vec" => {
+            if !params_str.is_empty() {
+                format!("Vec<{}>", params_str[0])
+            } else {
+                "Vec<()>".to_string()
+            }
+        }
+        "Option" => {
+            if !params_str.is_empty() {
+                format!("Option<{}>", params_str[0])
+            } else {
+                "Option<()>".to_string()
+            }
+        }
+        "Result" => {
+            if !params_str.is_empty() {
+                format!("Result<{}, String>", params_str[0])
+            } else {
+                "Result<(), String>".to_string()
+            }
+        }
+        _ => {
+            if params_str.is_empty() {
+                name.to_string()
+            } else {
+                params_str.join(", ")
+            }
+        }
     }
 }
 

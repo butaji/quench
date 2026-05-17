@@ -42,6 +42,33 @@ impl fmt::Display for RustType {
     }
 }
 
+impl RustType {
+    /// Convert to a string representation suitable for use in generic parameters.
+    #[must_use]
+    pub fn to_rust_type_string(&self) -> String {
+        match self {
+            RustType::I32 => "i32".to_string(),
+            RustType::F64 => "f64".to_string(),
+            RustType::Bool => "bool".to_string(),
+            RustType::String => "String".to_string(),
+            RustType::Str => "&str".to_string(),
+            RustType::Vec(t) => format!("Vec<{}>", t.to_rust_type_string()),
+            RustType::Option(t) => format!("Option<{}>", t.to_rust_type_string()),
+            RustType::Result(t) => format!("Result<{}, String>", t.to_rust_type_string()),
+            RustType::HashMap(k, v) => {
+                format!(
+                    "std::collections::HashMap<{}, {}>",
+                    k.to_rust_type_string(),
+                    v.to_rust_type_string()
+                )
+            }
+            RustType::Unit | RustType::Unknown => "()".to_string(),
+            RustType::Custom(name) => name.clone(),
+            RustType::MutBorrow(t) => format!("&mut {}", t.to_rust_type_string()),
+        }
+    }
+}
+
 /// Raw field for deferred type resolution.
 #[allow(dead_code)]
 pub type RawField = (String, swc_ecma_ast::TsType);

@@ -4,7 +4,7 @@
 
 use super::types::is_enum_type;
 use super::utils::{escape_rust_keyword, infer_struct_from_object, to_snake_case};
-use super::{emit_expr, CodeEmitter};
+use super::{emit_expr, infer_type, CodeEmitter};
 use swc_ecma_ast::{Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread};
 
 /// Emit a member expression.
@@ -73,108 +73,42 @@ fn emit_top_level_property(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 }
 
+/// Emit computed property access (array subscript or map key).
+///
+/// In JavaScript, `arr[idx]` always returns the element type T, never Option<T>.
+/// We emit:
+/// - `[idx as usize]` for Vec/array-like access (default JavaScript semantics)
+/// - `.get(&key).copied().unwrap_or_default()` for HashMap/Record access
 fn emit_computed_property(
     emitter: &mut CodeEmitter,
     obj: &Expr,
     comp: &swc_ecma_ast::ComputedPropName,
 ) {
-    let obj_type = infer_type_from_expr(obj);
-    let is_array_like = obj_type.starts_with("Vec")
-        || obj_type.contains("[]")
-        || is_identifier_with_array_type(obj);
+    let obj_type = infer_type(obj);
 
-    if is_array_like {
+    // Check if this is a HashMap/Record type
+    if is_hashmap_type(&obj_type) {
+        // For HashMap, use .get(&key).copied().unwrap_or_default()
+        // This handles string keys and returns a default value if not found
+        emitter.push_str(".get(");
+        emit_expr(emitter, &comp.expr);
+        emitter.push_str(").copied().unwrap_or_default()");
+    } else {
+        // Default: use direct indexing [idx as usize] (JavaScript array semantics)
+        // This works for Vec, arrays, and other indexable types
         emitter.push_str("[");
         emit_expr(emitter, &comp.expr);
         emitter.push_str(" as usize]");
-    } else {
-        emitter.push_str(".get(");
-        emit_expr(emitter, &comp.expr);
-        emitter.push_str(")");
     }
 }
 
-/// Check if an expression is an identifier that likely refers to an array.
-/// This is a heuristic based on common naming patterns and variable declarations.
-fn is_identifier_with_array_type(expr: &Expr) -> bool {
-    match expr {
-        Expr::Ident(ident) => {
-            let name = ident.sym.as_ref();
-            // Common array variable names
-            name.ends_with('s')  // items, tasks, names, etc.
-            || name.ends_with("List")
-            || name.ends_with("Array")
-            || name.contains("indices")
-            || name.contains("keys")
-        }
-        _ => false,
-    }
+/// Check if a type is a HashMap or similar collection.
+#[must_use]
+fn is_hashmap_type(ty: &str) -> bool {
+    ty.contains("HashMap") || ty.contains("Record<") || ty.contains("Map<")
 }
 
-fn infer_type_from_expr(expr: &Expr) -> String {
-    match expr {
-        Expr::Lit(lit) => infer_literal_type(lit),
-        Expr::Array(_) => "Vec<()>".to_string(),
-        Expr::Object(_) => "()".to_string(),
-        Expr::Call(call_expr) => infer_type_from_call(call_expr),
-        Expr::Member(member_expr) => infer_type_from_member(member_expr),
-        _ => "()".to_string(),
-    }
-}
 
-fn infer_literal_type(lit: &swc_ecma_ast::Lit) -> String {
-    match lit {
-        swc_ecma_ast::Lit::Num(_) => "f64".to_string(),
-        swc_ecma_ast::Lit::Str(_) => "String".to_string(),
-        swc_ecma_ast::Lit::Bool(_) => "bool".to_string(),
-        _ => "()".to_string(),
-    }
-}
-
-fn infer_type_from_call(call_expr: &swc_ecma_ast::CallExpr) -> String {
-    let swc_ecma_ast::Callee::Expr(callee) = &call_expr.callee else {
-        return "()".to_string();
-    };
-
-    if let Expr::Member(member) = &**callee {
-        return infer_method_return_type(member);
-    }
-
-    "()".to_string()
-}
-
-fn infer_method_return_type(member: &swc_ecma_ast::MemberExpr) -> String {
-    let swc_ecma_ast::MemberProp::Ident(prop) = &member.prop else {
-        return "()".to_string();
-    };
-
-    let method = prop.sym.as_ref();
-    match method {
-        "filter" | "map" | "concat" | "slice" | "flat" | "flatMap" => {
-            infer_type_from_expr(&member.obj)
-        }
-        "find" | "findIndex" => "Option<()>".to_string(),
-        "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
-        "push" => "usize".to_string(),
-        "pop" | "shift" => "Option<()>".to_string(),
-        "length" => "usize".to_string(),
-        _ => "()".to_string(),
-    }
-}
-
-fn infer_type_from_member(member_expr: &swc_ecma_ast::MemberExpr) -> String {
-    let swc_ecma_ast::MemberProp::Ident(prop) = &member_expr.prop else {
-        return "()".to_string();
-    };
-
-    match prop.sym.as_ref() {
-        "length" => "usize".to_string(),
-        "id" => "i32".to_string(),
-        "title" | "error" => "String".to_string(),
-        "done" | "ok" => "bool".to_string(),
-        _ => "()".to_string(),
-    }
-}
 
 /// Emit an object literal, with struct name context if available.
 pub fn emit_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
@@ -205,23 +139,40 @@ enum StructNameKind {
 }
 
 fn resolve_struct_name(emitter: &CodeEmitter, obj: &ObjectLit) -> StructNameKind {
+    // Check explicit struct context first (set by emit_return_with_value)
     if let Some(name) = emitter.object_struct_name().cloned() {
+        // If it's a Result type, use ResultPattern to emit Ok/Err
+        if is_result_type_name(&name) {
+            return StructNameKind::ResultPattern;
+        }
         return StructNameKind::Explicit(name);
     }
 
+    // Infer from object literal
     if let Some(name) = infer_struct_from_object(obj) {
         return StructNameKind::Inferred(name);
     }
 
+    // Fall back to expected return type
     if let Some(name) = emitter.expected_return().cloned() {
+        if is_result_type_name(&name) {
+            return StructNameKind::ResultPattern;
+        }
         return StructNameKind::Inferred(name);
     }
 
+    // Check for inline result pattern
     if is_result_pattern_object(obj) {
         return StructNameKind::ResultPattern;
     }
 
     StructNameKind::Anonymous
+}
+
+/// Check if a type name represents a Result type.
+#[must_use]
+fn is_result_type_name(name: &str) -> bool {
+    name.starts_with("Result<")
 }
 
 fn emit_struct_literal(

@@ -33,8 +33,3 @@ default = ["binary-rune"]
 cargo-subcommand = ["pager", "binary-cargo"]
 binary-rune = []
 binary-cargo = []
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1

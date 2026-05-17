@@ -82,22 +82,71 @@ fn emit_json_parse(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr
 }
 
 fn emit_math_call(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
-    let fn_path = match method {
-        "floor" => "f64::floor",
-        "ceil" => "f64::ceil",
-        "round" => "f64::round",
-        "abs" => "f64::abs",
-        "sqrt" => "f64::sqrt",
-        "pow" => "f64::powf",
-        "max" => "std::cmp::max",
-        "min" => "std::cmp::min",
-        "random" => "rand::random::<f64>",
-        m => m,
-    };
+    match method {
+        "floor" => emit_math_unary(emitter, "f64::floor", call_expr),
+        "ceil" => emit_math_unary(emitter, "f64::ceil", call_expr),
+        "round" => emit_math_unary(emitter, "f64::round", call_expr),
+        "abs" => emit_math_unary(emitter, "f64::abs", call_expr),
+        "sqrt" => emit_math_unary(emitter, "f64::sqrt", call_expr),
+        "pow" => emit_math_binary_pow(emitter, call_expr),
+        "max" => emit_math_binary(emitter, "std::cmp::max", call_expr),
+        "min" => emit_math_binary(emitter, "std::cmp::min", call_expr),
+        "random" => emitter.push_str("rand::random::<f64>()"),
+        "parseFloat" => emit_parse_float(emitter, call_expr),
+        "parseInt" => emit_parse_int(emitter, call_expr),
+        _ => {
+            emitter.push_str(method);
+            emitter.push_str("(");
+            emit_call_args(emitter, call_expr);
+            emitter.push_str(")");
+        }
+    }
+}
+
+fn emit_math_unary(emitter: &mut CodeEmitter, fn_path: &str, call_expr: &swc_ecma_ast::CallExpr) {
     emitter.push_str(fn_path);
     emitter.push_str("(");
     emit_call_args(emitter, call_expr);
     emitter.push_str(")");
+}
+
+fn emit_math_binary(emitter: &mut CodeEmitter, fn_path: &str, call_expr: &swc_ecma_ast::CallExpr) {
+    emitter.push_str(fn_path);
+    emitter.push_str("(");
+    emit_call_args(emitter, call_expr);
+    emitter.push_str(")");
+}
+
+fn emit_math_binary_pow(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {
+    emitter.push_str("f64::powf(");
+    emit_call_args(emitter, call_expr);
+    emitter.push_str(")");
+}
+
+/// Emit parseFloat: converts string to Option<f64>
+fn emit_parse_float(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {
+    if let Some(arg) = call_expr.args.first() {
+        emitter.push_str("{");
+        emitter.push_str(" let s = ");
+        emit_expr(emitter, &arg.expr);
+        emitter.push_str("; s.trim().parse::<f64>().ok() ");
+        emitter.push_str("}");
+    } else {
+        emitter.push_str("None");
+    }
+}
+
+/// Emit parseInt: converts string to Option<i32>
+fn emit_parse_int(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {
+    if let Some(arg) = call_expr.args.first() {
+        emitter.push_str("{");
+        emitter.push_str(" let s = ");
+        emit_expr(emitter, &arg.expr);
+        emitter.push_str("; s.trim().parse::<i32>().ok() ");
+        emitter.push_str("}");
+    } else {
+        emitter.push_str("None");
+    }
 }
 
 fn emit_method_or_generic_call(
@@ -204,7 +253,12 @@ fn emit_array_slice(
             emit_expr(emitter, end_arg);
             emitter.push_str(" as usize");
         } else {
+            // Single arg: slice from start to end of array
             emitter.push_str(")");
+            // No close bracket needed - already open, use range to end
+            emitter.push_str("..");
+            emit_expr(emitter, &member.obj);
+            emitter.push_str(".len() as usize]");
             return;
         }
     }
@@ -234,13 +288,18 @@ fn emit_array_splice(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallEx
     emitter.push_str(", vec![])");
 }
 
+/// Emit array index access.
+///
+/// In JavaScript, `arr.get(idx)` is syntactic sugar for `arr[idx]`.
+/// Unlike Rust's `.get()`, JavaScript's array access always returns T, not Option<T>.
+/// We emit `arr[idx]` (direct indexing) to match JavaScript semantics.
 fn emit_array_get(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {
-    emitter.push_str(".get(");
+    emitter.push_str("[");
     if let Some(arg) = call_expr.args.first() {
         emit_expr(emitter, &arg.expr);
         emitter.push_str(" as usize");
     }
-    emitter.push_str(")");
+    emitter.push_str("]");
 }
 
 fn emit_array_iter_method(

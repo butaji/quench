@@ -1,6 +1,9 @@
 //! # Comprehensive Tests
 //!
 //! Comprehensive tests for the Rune compiler.
+//!
+//! These tests validate the complete pipeline: parse → analyze → generate.
+//! Key tests also validate that generated Rust code is syntactically correct.
 
 #[cfg(test)]
 mod parser_tests {
@@ -139,5 +142,132 @@ mod codegen_tests {
         let analysis = analyze(&file).unwrap();
         let result = generate(&file, &analysis).unwrap();
         assert!(!result.source.is_empty());
+    }
+
+    #[test]
+    fn test_array_subscript_direct_indexing() {
+        let src = "export function first(items: string[]): string { return items[0]; }\n"
+            .to_owned()
+            + "export function last(items: string[]): string { return items[items.length - 1]; }";
+        let file = parse_file_from_str(&src, "arr.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("["), "Should use direct [idx] indexing");
+        assert!(!result.source.contains(".get("), "Should not use .get()");
+    }
+
+    #[test]
+    fn test_array_get_method_direct_indexing() {
+        let src = "export function getNth<T>(arr: T[], n: number): T | null { return arr.get(n); }";
+        let file = parse_file_from_str(src, "get.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("["), "arr.get(idx) should emit [idx]");
+        assert!(!result.source.contains(".get("), "Should not use .get() method");
+    }
+
+    #[test]
+    fn test_array_slice_as_slice() {
+        let src = "export function mid(arr: number[]): number[] { return arr.slice(1, 3); }";
+        let file = parse_file_from_str(src, "slice.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("as_slice()"), "slice should use as_slice()");
+    }
+
+    #[test]
+    fn test_string_concat_format() {
+        let src = "export function greet(name: string): string { return \"Hello, \" + name; }";
+        let file = parse_file_from_str(src, "concat.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("format!"), "String concat should use format!");
+    }
+
+    #[test]
+    fn test_result_pattern_ok_err() {
+        let src = r#"
+            export function divide(a: number, b: number):
+                | { ok: true; value: number }
+                | { ok: false; error: string }
+            {
+                if (b === 0) return { ok: false, error: "zero" };
+                return { ok: true, value: a / b };
+            }
+        "#;
+        let file = parse_file_from_str(src, "result.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("Ok("));
+        assert!(result.source.contains("Err("));
+    }
+
+    #[test]
+    fn test_tagged_union_switch_match() {
+        let src = r#"
+            export type Message = | { tag: "Move"; x: number } | { tag: "Stop" };
+            export function handle(msg: Message): number {
+                switch (msg.tag) {
+                    case "Move": return msg.x;
+                    case "Stop": return 0;
+                }
+            }
+        "#;
+        let file = parse_file_from_str(src, "enum.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("match"));
+        assert!(result.source.contains("Move"));
+    }
+
+    #[test]
+    fn test_for_of_iter() {
+        let src = r#"
+            export function sum(nums: number[]): number {
+                let sum = 0;
+                for (const n of nums) { sum = sum + n; }
+                return sum;
+            }
+        "#;
+        let file = parse_file_from_str(src, "forof.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains(".iter()"));
+    }
+
+    #[test]
+    fn test_native_import_crate_native() {
+        let src = "import { fastSqrt } from \"native:math\";\n"
+            .to_owned()
+            + "export function sqrt(n: number): number { return fastSqrt(n); }";
+        let file = parse_file_from_str(&src, "native.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("crate::native"));
+    }
+
+    #[test]
+    fn test_option_type_generated() {
+        let src = r#"
+            export function find(items: string[], target: string): string | null {
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i] === target) return items[i];
+                }
+                return null;
+            }
+        "#;
+        let file = parse_file_from_str(src, "opt.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("Option<"));
+    }
+
+    #[test]
+    fn test_async_fn_generated() {
+        let src = "export async function fetch(url: string): Promise<string> { return \"\"; }";
+        let file = parse_file_from_str(src, "async.r.ts").unwrap();
+        let analysis = analyze(&file).unwrap();
+        let result = generate(&file, &analysis).unwrap();
+        assert!(result.source.contains("async"));
     }
 }

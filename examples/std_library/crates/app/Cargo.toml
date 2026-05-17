@@ -1,0 +1,12 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
