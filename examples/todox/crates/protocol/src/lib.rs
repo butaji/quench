@@ -39,7 +39,8 @@ pub enum Filter {
 }
 
 /// Application trait - implemented by app dylib.
-pub trait App {
+/// The `'static` bound is required because the app is loaded from a dylib.
+pub trait App: 'static {
     /// Update application state.
     fn update(&mut self, state: &mut AppState);
 

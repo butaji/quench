@@ -1,6 +1,6 @@
 //! # CLI Module
 //!
-//! Shared CLI parsing and execution logic.
+//! Command-line interface for the Rune compiler driver.
 
 use clap::{Parser, Subcommand, ValueHint};
 use rune::driver::{BuildDriver, BuildMode, BuildOptions};

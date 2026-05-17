@@ -225,33 +225,46 @@ fn emit_for_init(emitter: &mut CodeEmitter, init: Option<&swc_ecma_ast::VarDeclO
 
 fn emit_for_of_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::ForOfStmt) {
     match &stmt.left {
-        swc_ecma_ast::ForHead::VarDecl(var_decl) => emit_for_of_var(emitter, var_decl, &stmt.right),
+        swc_ecma_ast::ForHead::VarDecl(var_decl) => {
+            let var_name = extract_for_of_var_name(var_decl);
+            if let Some(name) = &var_name {
+                let is_const = var_decl.kind == swc_ecma_ast::VarDeclKind::Const;
+                emit_for_of_loop(emitter, name, is_const, &stmt.right, &stmt.body);
+            } else {
+                emitter.push_str("// unsupported for-of pattern\n");
+            }
+        }
         swc_ecma_ast::ForHead::Pat(_pat) => emit_for_of_pattern(emitter, &stmt.right),
         swc_ecma_ast::ForHead::UsingDecl(_) => emitter.push_str("// using not supported\n"),
     }
 }
 
-fn emit_for_of_var(
+fn extract_for_of_var_name(var_decl: &swc_ecma_ast::VarDecl) -> Option<String> {
+    var_decl.decls.iter().find_map(|decl| extract_var_name(&decl.name))
+}
+
+fn emit_for_of_loop(
     emitter: &mut CodeEmitter,
-    var_decl: &swc_ecma_ast::VarDecl,
+    var_name: &str,
+    _is_const: bool,
     right: &swc_ecma_ast::Expr,
+    body: &swc_ecma_ast::Stmt,
 ) {
-    for decl in &var_decl.decls {
-        if let Some(var_name) = extract_var_name(&decl.name) {
-            emitter.push_str(&format!(
-                "let {}{} = ",
-                if var_decl.kind == swc_ecma_ast::VarDeclKind::Const {
-                    "mut "
-                } else {
-                    ""
-                },
-                var_name
-            ));
-            emit_expr(emitter, right);
-            emitter.push_str(".iter().cloned().next().unwrap();\n");
-            break;
-        }
-    }
+    // Save context for nested expressions
+    let prev_struct = emitter.object_struct_name().cloned();
+    emitter.set_object_struct(None);
+
+    emitter.push_str(&format!("for {var_name} in "));
+    emit_expr(emitter, right);
+    emitter.push_str(".iter().cloned() {\n");
+    emitter.inc_indent();
+    emit_single_stmt(emitter, body);
+    emitter.dec_indent();
+    emitter.push_indent();
+    emitter.push_str("}\n");
+
+    // Restore context
+    restore_struct_context(emitter, prev_struct);
 }
 
 fn emit_for_of_pattern(emitter: &mut CodeEmitter, right: &swc_ecma_ast::Expr) {

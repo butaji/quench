@@ -5,6 +5,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Parsed location from rustc output.
+struct ParsedLocation {
+    file: String,
+    line: u32,
+    column: u32,
+    message: String,
+}
+
 /// A translated error with TypeScript location.
 #[derive(Debug, Clone)]
 pub struct TranslatedError {
@@ -64,49 +72,62 @@ impl ErrorTranslator {
     /// Translate a Rust error message to a TypeScript location.
     #[must_use]
     pub fn translate(&self, rust_error: &str) -> TranslatedError {
-        // Try to extract file path and line number from rustc output
-        let parts: Vec<&str> = rust_error.split("-->").collect();
+        if let Some(parsed) = self.parse_rustc_location(rust_error) {
+            let source_file = self
+                .source_map
+                .get(parsed.file.as_str())
+                .cloned()
+                .unwrap_or_else(|| parsed.file.clone());
 
-        if parts.len() >= 2 {
-            let location = parts[1].trim();
-            let message = parts[0].trim();
+            let source_line = self
+                .line_maps
+                .get(parsed.file.as_str())
+                .and_then(|map| map.get(parsed.line as usize - 1).copied())
+                .unwrap_or(parsed.line);
 
-            // Parse location: file:line:col
-            let loc_parts: Vec<&str> = location.split(':').collect();
-            if loc_parts.len() >= 3 {
-                let file = loc_parts[0].trim();
-                let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
-                let col: u32 = loc_parts[2].trim().parse().unwrap_or(0);
-
-                let source_file = self
-                    .source_map
-                    .get(file)
-                    .cloned()
-                    .unwrap_or_else(|| file.to_string());
-
-                let source_line = self
-                    .line_maps
-                    .get(file)
-                    .and_then(|map| map.get(line as usize - 1).copied())
-                    .unwrap_or(line);
-
-                return TranslatedError {
-                    file: source_file,
-                    line: source_line,
-                    column: col,
-                    message: self.translate_message(message),
-                    original: rust_error.to_string(),
-                };
+            TranslatedError {
+                file: source_file,
+                line: source_line,
+                column: parsed.column,
+                message: self.translate_message(&parsed.message),
+                original: rust_error.to_string(),
+            }
+        } else {
+            TranslatedError {
+                file: "unknown".to_string(),
+                line: 0,
+                column: 0,
+                message: self.translate_message(rust_error),
+                original: rust_error.to_string(),
             }
         }
+    }
 
-        TranslatedError {
-            file: "unknown".to_string(),
-            line: 0,
-            column: 0,
-            message: self.translate_message(rust_error),
-            original: rust_error.to_string(),
+    /// Parse location info from rustc error output.
+    fn parse_rustc_location(&self, rust_error: &str) -> Option<ParsedLocation> {
+        let parts: Vec<&str> = rust_error.split("--> ").collect();
+        if parts.len() < 2 {
+            return None;
         }
+
+        let location = parts[1].trim();
+        let message = parts[0].trim().to_string();
+
+        let loc_parts: Vec<&str> = location.split(':').collect();
+        if loc_parts.len() < 3 {
+            return None;
+        }
+
+        let file = loc_parts[0].trim().to_string();
+        let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
+        let column: u32 = loc_parts[2].trim().parse().unwrap_or(0);
+
+        Some(ParsedLocation {
+            file,
+            line,
+            column,
+            message,
+        })
     }
 
     /// Translate Rust error messages to TypeScript-focused messages.
