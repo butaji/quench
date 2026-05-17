@@ -38,8 +38,7 @@ impl HostSignaler {
     pub fn signal(&self) -> ReloadResult<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+            .map_or(0, |d| d.as_millis() as u64);
 
         let signal_file = self.hot_dir.join(format!("reload_{timestamp}.signal"));
         fs::write(&signal_file, "")?;

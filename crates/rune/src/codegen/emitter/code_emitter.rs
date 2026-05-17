@@ -218,6 +218,11 @@ impl CodeEmitter {
         &self.output
     }
 
+    /// Get mutable reference to output buffer.
+    pub fn output_mut(&mut self) -> &mut String {
+        &mut self.output
+    }
+
     /// Consume emitter and return output.
     #[must_use]
     pub fn into_output(self) -> String {

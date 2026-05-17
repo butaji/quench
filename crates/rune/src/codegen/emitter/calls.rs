@@ -126,13 +126,42 @@ fn is_string_method(method: &str) -> bool {
 }
 
 fn emit_array_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
-    emit_expr(emitter, &member.obj);
-
     match method {
-        "splice" => emit_array_splice(emitter, call_expr),
-        "get" => emit_array_get(emitter, call_expr),
-        _ => emit_array_iter_method(emitter, method, call_expr),
+        "slice" => {
+            emit_array_slice(emitter, member, call_expr);
+        }
+        "splice" => {
+            emit_expr(emitter, &member.obj);
+            emit_array_splice(emitter, call_expr);
+        }
+        "get" => {
+            emit_expr(emitter, &member.obj);
+            emit_array_get(emitter, call_expr);
+        }
+        _ => {
+            emit_expr(emitter, &member.obj);
+            emit_array_iter_method(emitter, method, call_expr);
+        }
     }
+}
+
+fn emit_array_slice(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr, call_expr: &swc_ecma_ast::CallExpr) {
+    emit_expr(emitter, &member.obj);
+    emitter.push_str(".as_slice()[");
+    
+    if let Some(start_arg) = call_expr.args.first() {
+        emit_expr(emitter, &start_arg.expr);
+        emitter.push_str(" as usize..");
+        
+        if call_expr.args.len() >= 2 {
+            emit_expr(emitter, &call_expr.args[1].expr);
+            emitter.push_str(" as usize");
+        } else {
+            emitter.push_str("]");
+            return;
+        }
+    }
+    emitter.push_str("]");
 }
 
 fn emit_array_splice(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {

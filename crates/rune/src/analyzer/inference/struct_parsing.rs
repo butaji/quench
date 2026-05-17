@@ -120,7 +120,7 @@ pub fn parse_interfaces(source: &str, types: &mut TypeMap) {
 
         if line.starts_with("export type ") && (line.contains("= {") || line.contains(" ={")) {
             in_interface = true;
-            let name_part = line.strip_prefix("export type ").unwrap();
+            let name_part = line.strip_prefix("export type ").unwrap_or(line);
             let name_end = name_part
                 .find(|c: char| !c.is_alphanumeric() && c != '_')
                 .unwrap_or(name_part.len());

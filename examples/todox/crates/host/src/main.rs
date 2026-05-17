@@ -32,10 +32,16 @@ impl AppLoader {
     }
 
     /// Create new app instance.
+    ///
+    /// # Panics
+    /// Panics if `create_app` returns a null pointer.
     #[must_use]
     fn create_app(&self) -> Box<dyn App> {
         unsafe {
             let ptr = (self.creator)();
+            if ptr.is_null() {
+                panic!("create_app() returned null pointer - dylib may be malformed");
+            }
             Box::from_raw(ptr)
         }
     }

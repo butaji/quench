@@ -16,6 +16,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub verbose: bool,
 
+    /// Output JSON format for machine consumption
+    #[arg(long)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -51,6 +55,10 @@ pub enum Commands {
     Transpile {
         /// File to transpile
         file: PathBuf,
+
+        /// Watch for changes and re-transpile
+        #[arg(short, long)]
+        watch: bool,
     },
 
     /// Initialize a new project
@@ -90,8 +98,9 @@ pub fn run_command(command: &Commands, options: &mut BuildOptions) -> Result<()>
             driver.options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
             driver.check()
         }
-        Commands::Transpile { file } => {
+        Commands::Transpile { file, watch } => {
             driver.options.transpile_file = Some(file.clone());
+            driver.options.watch_transpile = *watch;
             driver.transpile()
         }
         Commands::Init { name } => {

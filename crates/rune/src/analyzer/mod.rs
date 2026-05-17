@@ -317,8 +317,10 @@ fn validate_subset(
     validator: &mut SubsetValidator,
     ctx: &mut AnalysisContext,
 ) {
-    if let Err(e) = validator.validate(source) {
-        ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
+    if let Err(errors) = validator.validate(source) {
+        for e in errors {
+            ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
+        }
     }
 }
 

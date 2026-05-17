@@ -5,7 +5,7 @@
 use super::cache::CacheManager;
 use super::config::RuneConfig;
 use crate::{analyzer, codegen, parser, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 
 /// Build mode.
@@ -31,6 +31,8 @@ pub struct BuildOptions {
     pub config: Option<PathBuf>,
     /// File to transpile (for transpile command)
     pub transpile_file: Option<PathBuf>,
+    /// Watch transpile file for changes
+    pub watch_transpile: bool,
     /// Verbose output
     pub verbose: bool,
 }
@@ -45,6 +47,7 @@ impl BuildOptions {
             target_crate: None,
             config: None,
             transpile_file: None,
+            watch_transpile: false,
             verbose: false,
         }
     }
@@ -129,12 +132,43 @@ impl BuildDriver {
             .as_ref()
             .ok_or_else(|| crate::RuneError::Codegen("No file specified".into()))?;
 
+        if self.options.watch_transpile {
+            self.transpile_watch(file)
+        } else {
+            self.transpile_once(file)
+        }
+    }
+
+    fn transpile_once(&self, file: &Path) -> Result<()> {
         let source = parser::parse_file(file)?;
         let analysis = analyzer::analyze(&source)?;
         let module = codegen::generate(&source, &analysis)?;
 
         println!("{}", module.source);
         Ok(())
+    }
+
+    fn transpile_watch(&self, file: &Path) -> Result<()> {
+        use std::time::Duration;
+
+        println!("Watching {} for changes... (Ctrl+C to exit)", file.display());
+        let mut last_modified = std::fs::metadata(file)
+            .and_then(|m| m.modified())
+            .ok();
+
+        loop {
+            // Check for file changes
+            if let Ok(current_modified) = std::fs::metadata(file).and_then(|m| m.modified()) {
+                if last_modified != Some(current_modified) {
+                    last_modified = Some(current_modified);
+                    println!("\n--- Re-transpiling {} ---\n", file.display());
+                    if let Err(e) = self.transpile_once(file) {
+                        eprintln!("Error: {}", e);
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
     }
 
     /// Initialize a new project.

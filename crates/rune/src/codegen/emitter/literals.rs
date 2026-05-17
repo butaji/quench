@@ -13,7 +13,7 @@ pub fn emit_lit(emitter: &mut CodeEmitter, lit: &Lit) {
             if n.value.fract() == 0.0 && n.value.abs() < f64::from(i32::MAX) {
                 emitter.push_str(&format!("{}i32", n.value as i32));
             } else {
-                emitter.push_str(&n.value.to_string());
+                emitter.push_str(&format!("{}_f64", n.value));
             }
         }
         Lit::Bool(b) => emitter.push_str(if b.value { "true" } else { "false" }),

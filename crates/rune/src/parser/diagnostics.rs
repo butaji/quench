@@ -1,6 +1,7 @@
 //! # Parse Diagnostics
 //!
 //! Collects and formats parse errors.
+#![allow(dead_code)]
 
 use crate::ParseError;
 

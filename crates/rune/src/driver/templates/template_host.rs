@@ -37,11 +37,17 @@ impl AppLoader {
     }
 
     /// Create a new app instance.
+    ///
+    /// # Panics
+    /// Panics if `create_app` returns a null pointer.
     #[must_use]
     pub fn create_app(&self) -> Box<dyn App> {
         unsafe {
             let creator = self.creator.expect("creator not set");
             let ptr = creator();
+            if ptr.is_null() {
+                panic!("create_app() returned null pointer - dylib may be malformed");
+            }
             Box::from_raw(ptr)
         }
     }
@@ -58,17 +64,23 @@ pub fn run_host() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = setup_terminal()?;
     let mut state = AppState::default();
     let mut app_loader: Option<AppLoader> = None;
+    let mut current_app: Option<Box<dyn App>> = None;
     let hot_dir = PathBuf::from("target/hot");
     let current_link = hot_dir.join(".current");
 
     loop {
-        app_loader = check_and_reload(&current_link, app_loader);
-        
-        if let Some(ref loader) = app_loader {
-            run_app_frame(loader, &mut state, &mut terminal);
+        // Check for dylib reload
+        let (new_loader, new_app) = check_and_reload(&current_link, app_loader.take(), current_app.take());
+        app_loader = new_loader;
+        current_app = new_app;
+
+        // Run one frame with current app
+        if let Some(ref mut app) = current_app {
+            run_app_frame(app, &mut state, &mut terminal);
         }
-        
-        if let Some(should_exit) = handle_events(&app_loader, &mut state) {
+
+        // Handle input events
+        if let Some(should_exit) = handle_events(current_app.as_ref(), &mut state) {
             if should_exit {
                 break;
             }
@@ -94,10 +106,11 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>, Box<d
 #[allow(unsafe_code)]
 fn check_and_reload(
     current_link: &PathBuf,
-    mut app_loader: Option<AppLoader>,
-) -> Option<AppLoader> {
+    app_loader: Option<AppLoader>,
+    _current_app: Option<Box<dyn App>>,
+) -> (Option<AppLoader>, Option<Box<dyn App>>) {
     if !current_link.exists() {
-        return app_loader;
+        return (app_loader, None);
     }
 
     if let Ok(target) = std::fs::read_link(current_link) {
@@ -108,18 +121,23 @@ fn check_and_reload(
             .unwrap_or(true);
 
         if needs_reload {
-            app_loader = unsafe { AppLoader::load(&target).ok() };
+            if let Ok(loader) = unsafe { AppLoader::load(&target) } {
+                let app = Some(loader.create_app());
+                return (Some(loader), app);
+            }
+        } else if let Some(loader) = &app_loader {
+            // Same dylib, reuse app instance
+            return (app_loader, Some(loader.create_app()));
         }
     }
-    app_loader
+    (app_loader, None)
 }
 
 fn run_app_frame(
-    loader: &AppLoader,
+    app: &mut dyn App,
     state: &mut AppState,
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
 ) {
-    let mut app = loader.create_app();
     app.update(state);
     let _ = terminal.draw(|f| {
         app.render(f, state);
@@ -127,16 +145,18 @@ fn run_app_frame(
 }
 
 fn handle_events(
-    app_loader: &Option<AppLoader>,
+    app: Option<&dyn App>,
     state: &mut AppState,
 ) -> Option<bool> {
-    if let Ok(event) = crossterm::event::read() {
-        if let crossterm::event::Event::Key(key) = event {
+    // Use non-blocking poll for hot reload compatibility
+    if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::event_poll(
+        std::time::Duration::from_millis(50)
+    ) {
+        if let crossterm::event::Event::Key(key) = key {
             if key.code == crossterm::event::KeyCode::Char('q') {
                 return Some(true);
             }
-            if let Some(ref loader) = app_loader {
-                let mut app = loader.create_app();
+            if let Some(app) = app {
                 app.handle_key(key, state);
             }
         }

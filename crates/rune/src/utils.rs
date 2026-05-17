@@ -22,30 +22,33 @@ impl KnownStruct {
     }
 }
 
+// Extended Rust keyword set covering all reserved words
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+    "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
+    "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+    "trait", "true", "type", "unsafe", "use", "where", "while",
+    // Extended set for compatibility
+    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try",
+    "typeof", "unsized", "virtual", "yield",
+];
+
 /// Escape a Rust keyword for use as an identifier.
+/// Uses the extended keyword set covering all Rust reserved words.
 #[must_use]
 pub fn escape_rust_keyword(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn" | "else"
-        | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop"
-        | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use"
-        | "where" | "while" => format!("r#{name}"),
-        _ => name.to_string(),
+    if RUST_KEYWORDS.contains(&name) {
+        format!("r#{name}")
+    } else {
+        name.to_string()
     }
 }
 
 /// Escape a Rust keyword for module names.
+/// Alias for escape_rust_keyword since both use the same rules.
 #[must_use]
 pub fn escape_rust_keyword_for_module(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn" | "else"
-        | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop"
-        | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use"
-        | "where" | "while" => format!("r#{name}"),
-        _ => name.to_string(),
-    }
+    escape_rust_keyword(name)
 }
 
 /// Convert name to snake_case.

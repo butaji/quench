@@ -116,12 +116,7 @@ pub fn parse_type(type_str: &str) -> Box<TypeInfo> {
 
 /// Parse a type alias or interface.
 pub fn parse_type_alias(line: &str, _source: &str) -> Option<StructInfo> {
-    let prefix = if line.starts_with("export") {
-        line.strip_prefix("export ")?
-    } else {
-        line
-    };
-
+    let prefix = line.strip_prefix("export ").unwrap_or(line);
     let prefix = prefix.strip_prefix("type ")?;
     let name_end = prefix
         .find(|c: char| !c.is_alphanumeric() && c != '_')
@@ -148,17 +143,12 @@ pub fn parse_type_alias(line: &str, _source: &str) -> Option<StructInfo> {
 
 /// Parse an enum declaration.
 pub fn parse_enum(line: &str) -> Option<EnumInfo> {
-    let prefix = if line.starts_with("export ") {
-        line.strip_prefix("export ")?
-    } else {
-        line
-    };
-
+    let prefix = line.strip_prefix("export ").unwrap_or(line);
     if !prefix.starts_with("enum ") {
         return None;
     }
 
-    let rest = prefix.strip_prefix("enum ").unwrap();
+    let rest = prefix.strip_prefix("enum ")?;
     let name_end = rest
         .find(|c: char| !c.is_alphanumeric() && c != '_')
         .unwrap_or(rest.len());

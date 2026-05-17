@@ -2,7 +2,10 @@
 //!
 //! Common utilities for TypeScript to Rust transpilation.
 
-use crate::utils::{escape_rust_keyword as base_escape, to_snake_case as base_snake_case};
+use crate::utils::{
+    escape_rust_keyword as base_escape, escape_rust_keyword_for_module as base_escape_module,
+    to_pascal_case as base_pascal_case, to_snake_case as base_snake_case,
+};
 use swc_ecma_ast::{ObjectLit, Prop, PropName, PropOrSpread};
 
 /// Infer a struct name from object literal properties.
@@ -50,7 +53,7 @@ pub fn to_snake_case(s: &str) -> String {
 /// Convert name to PascalCase.
 #[must_use]
 pub fn to_pascal_case(s: &str) -> String {
-    crate::utils::to_pascal_case(s)
+    base_pascal_case(s)
 }
 
 /// Escape a Rust keyword for use as an identifier.
@@ -62,28 +65,13 @@ pub fn escape_rust_keyword(name: &str) -> String {
 /// Escape a Rust keyword for module names.
 #[must_use]
 pub fn escape_rust_keyword_for_module(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn" | "else"
-        | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop"
-        | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use"
-        | "where" | "while" => format!("r#{name}"),
-        _ => name.to_string(),
-    }
+    base_escape_module(name)
 }
 
 /// Escape a Rust keyword for use as an identifier in AST walker.
+#[allow(clippy::use_self)]
 #[must_use]
 pub fn escape_keyword(name: &str) -> String {
-    match name {
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn" | "else"
-        | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop"
-        | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use"
-        | "where" | "while" | "abstract" | "become" | "box" | "do" | "final" | "macro"
-        | "override" | "priv" | "try" | "typeof" | "unsized" | "virtual" | "yield" => {
-            format!("r#{name}")
-        }
-        _ => name.to_string(),
-    }
+    // Delegate to the unified function in utils
+    base_escape(name)
 }

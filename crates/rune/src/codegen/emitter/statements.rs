@@ -5,7 +5,7 @@
 use super::switch_match::emit_switch;
 use super::variables::emit_var_decl;
 use super::{emit_expr, CodeEmitter};
-use swc_ecma_ast::{Decl, Stmt};
+use swc_ecma_ast::Stmt;
 
 /// Emit a function body statement.
 #[allow(clippy::too_many_lines)]
@@ -218,8 +218,67 @@ fn emit_for_init(emitter: &mut CodeEmitter, init: Option<&swc_ecma_ast::VarDeclO
     if let Some(init) = init {
         match init {
             swc_ecma_ast::VarDeclOrExpr::Expr(e) => emit_expr(emitter, e),
-            swc_ecma_ast::VarDeclOrExpr::VarDecl(d) => emit_var_decl(emitter, &Decl::Var(d.clone())),
+            swc_ecma_ast::VarDeclOrExpr::VarDecl(d) => {
+                // Extract just the variable name and type, not the 'let' keyword
+                for decl in &d.decls {
+                    if let Some(name) = extract_var_name(&decl.name) {
+                        let ty = extract_var_type(&decl.name);
+                        if let Some(init_expr) = &decl.init {
+                            // Store current output length to capture init emission
+                            let start_len = emitter.output().len();
+                            let prev_struct = emitter.object_struct_name().cloned();
+                            emit_expr(emitter, init_expr);
+                            restore_struct_context(emitter, prev_struct);
+                            let end_len = emitter.output().len();
+                            // Clone the init string to avoid borrow issues
+                            let init_str = emitter.output()[start_len..end_len].to_string();
+                            // Remove the emitted content
+                            emitter.output_mut().truncate(start_len);
+                            // Now emit the proper format
+                            emitter.push_str(&format!("{}: {} = {}", name, ty, init_str));
+                        } else {
+                            emitter.push_str(&format!("{}: {}", name, ty));
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+fn extract_var_name(name: &swc_ecma_ast::Pat) -> Option<String> {
+    if let swc_ecma_ast::Pat::Ident(ident) = name {
+        Some(super::to_snake_case(ident.id.sym.as_ref()))
+    } else {
+        None
+    }
+}
+
+fn extract_var_type(name: &swc_ecma_ast::Pat) -> String {
+    if let swc_ecma_ast::Pat::Ident(ident) = name {
+        if let Some(type_ann) = &ident.type_ann {
+            resolve_type_to_rust(&type_ann.type_ann)
+        } else {
+            "i32".to_string()
+        }
+    } else {
+        "i32".to_string()
+    }
+}
+
+fn resolve_type_to_rust(ts_type: &swc_ecma_ast::TsType) -> String {
+    match ts_type {
+        swc_ecma_ast::TsType::TsKeywordType(k) => match k.kind {
+            swc_ecma_ast::TsKeywordTypeKind::TsNumberKeyword => "i32".to_string(),
+            swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword => "String".to_string(),
+            swc_ecma_ast::TsKeywordTypeKind::TsBooleanKeyword => "bool".to_string(),
+            _ => "()".to_string(),
+        },
+        swc_ecma_ast::TsType::TsArrayType(arr) => {
+            let inner = resolve_type_to_rust(&arr.elem_type);
+            format!("Vec<{}>", inner)
+        }
+        _ => "i32".to_string(),
     }
 }
 
@@ -271,14 +330,6 @@ fn emit_for_of_pattern(emitter: &mut CodeEmitter, right: &swc_ecma_ast::Expr) {
     emitter.push_str("// pattern: ");
     emit_expr(emitter, right);
     emitter.push_str(";\n");
-}
-
-fn extract_var_name(name: &swc_ecma_ast::Pat) -> Option<String> {
-    if let swc_ecma_ast::Pat::Ident(ident) = name {
-        Some(super::to_snake_case(ident.id.sym.as_ref()))
-    } else {
-        None
-    }
 }
 
 fn emit_break(emitter: &mut CodeEmitter) {

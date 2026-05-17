@@ -63,8 +63,18 @@ impl BuildDriver {
 
     /// Write the cache lib.rs.
     pub fn write_cache_lib(&self, cache_src: &Path) -> Result<()> {
-        let lib_path = cache_src.parent().unwrap().join("lib.rs");
-        fs::create_dir_all(lib_path.parent().unwrap())?;
+        // Hoist parent path computation once
+        let Some(cache_parent) = cache_src.parent() else {
+            return Err(crate::RuneError::Io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Invalid cache path",
+                ),
+            ));
+        };
+
+        let lib_path = cache_parent.join("lib.rs");
+        fs::create_dir_all(cache_parent)?;
 
         let generated_dir = cache_src;
         let modules = write_impl::modules::collect_modules(generated_dir);
@@ -74,20 +84,20 @@ impl BuildDriver {
 
         write_impl::modules::write_directory_mod_files(generated_dir, &modules)?;
 
-        self.copy_native_module(cache_src)?;
+        self.copy_native_module(cache_parent)?;
 
         Ok(())
     }
 
     /// Copy native module to cache.
-    fn copy_native_module(&self, cache_src: &Path) -> Result<()> {
+    fn copy_native_module(&self, cache_parent: &Path) -> Result<()> {
         let native_src = self
             .options
             .workspace
             .join("crates")
             .join(&self.config.build.target_crate)
             .join("src/native");
-        let native_dest = cache_src.parent().unwrap().join("native");
+        let native_dest = cache_parent.join("native");
 
         if native_src.exists() {
             write_impl::paths::copy_dir_recursive(&native_src, &native_dest)?;

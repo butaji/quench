@@ -22,39 +22,35 @@ impl SubsetValidator {
     /// Validate a source file.
     ///
     /// # Errors
-    /// Returns an error if validation fails.
-    pub fn validate(&mut self, source: &SourceFile) -> Result<(), ValidationError> {
+    /// Returns all validation errors if validation fails.
+    pub fn validate(&mut self, source: &SourceFile) -> Result<(), Vec<ValidationError>> {
         self.errors.clear();
         let content = &source.source;
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
             let line_num = (line_num + 1) as u32;
-            self.check_forbidden_features(line, line_num)?;
+            self.check_forbidden_features(line, line_num);
         }
 
         if self.errors.is_empty() {
             Ok(())
         } else {
-            Err(self.errors[0].clone())
+            Err(self.errors.clone())
         }
     }
 
     /// Check for forbidden TypeScript features.
-    fn check_forbidden_features(
-        &mut self,
-        line: &str,
-        line_num: u32,
-    ) -> Result<(), ValidationError> {
+    fn check_forbidden_features(&mut self, line: &str, line_num: u32) {
         if Self::is_comment_line(line) {
-            return Ok(());
+            return;
         }
-        self.check_type_restrictions(line, line_num)?;
-        self.check_keyword_restrictions(line, line_num)?;
-        self.check_operators(line, line_num)?;
-        self.check_statements(line, line_num)?;
-        self.check_runtime_inspection(line, line_num)?;
-        self.check_dynamic_access(line, line_num)
+        self.check_type_restrictions(line, line_num);
+        self.check_keyword_restrictions(line, line_num);
+        self.check_operators(line, line_num);
+        self.check_statements(line, line_num);
+        self.check_runtime_inspection(line, line_num);
+        self.check_dynamic_access(line, line_num);
     }
 
     /// Check if line is a comment.
@@ -63,18 +59,17 @@ impl SubsetValidator {
     }
 
     /// Check for forbidden type restrictions.
-    fn check_type_restrictions(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_type_restrictions(&mut self, line: &str, line_num: u32) {
         if line.contains(": any") || line.contains("<any>") {
             self.push_error("no-any", "Type 'any' requires dynamic dispatch. Use concrete types.", line_num);
         }
         if line.contains(": unknown") {
             self.push_error("no-unknown", "Type 'unknown' requires dynamic dispatch. Use concrete types.", line_num);
         }
-        Ok(())
     }
 
     /// Check for forbidden keywords.
-    fn check_keyword_restrictions(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_keyword_restrictions(&mut self, line: &str, line_num: u32) {
         if line.contains(" class ") || line.starts_with("class ") {
             self.push_error("no-class", "Classes are forbidden. Use plain objects and functions.", line_num);
         }
@@ -90,19 +85,18 @@ impl SubsetValidator {
         if line.contains(" delete ") || line.starts_with("delete ") {
             self.push_error("no-delete", "delete is forbidden. Use ownership and explicit drops.", line_num);
         }
-        Ok(())
     }
 
     /// Check for forbidden operators.
-    fn check_operators(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_operators(&mut self, line: &str, line_num: u32) {
         if Self::has_loose_equality(line) {
             self.push_error("no-loose-equality", "Use strict equality (=== or !==).", line_num);
         }
-        self.check_implicit_coercion(line, line_num)
+        self.check_implicit_coercion(line, line_num);
     }
 
     /// Check for implicit coercion patterns like `if ("")` or `if (0)`.
-    fn check_implicit_coercion(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_implicit_coercion(&mut self, line: &str, line_num: u32) {
         // Check for falsy value in condition without comparison
         // e.g., `if (str)` or `if (num)` where str/num are direct identifiers
         if line.starts_with("if (") {
@@ -115,11 +109,10 @@ impl SubsetValidator {
                 );
             }
         }
-        Ok(())
     }
 
     /// Check for forbidden statements.
-    fn check_statements(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_statements(&mut self, line: &str, line_num: u32) {
         if line.contains("try") || line.contains("catch") || line.starts_with("throw") {
             self.push_error("no-exceptions", "Use Result<T,E> return pattern instead of try/catch/throw.", line_num);
         }
@@ -135,22 +128,20 @@ impl SubsetValidator {
         if line.contains(" arguments") || line.contains("(arguments") {
             self.push_error("no-arguments", "Use rest parameters (...args) instead of 'arguments'.", line_num);
         }
-        Ok(())
     }
 
     /// Check for runtime type inspection.
-    fn check_runtime_inspection(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_runtime_inspection(&mut self, line: &str, line_num: u32) {
         if line.contains("typeof ") {
             self.push_error("no-typeof", "typeof is forbidden. Runtime type inspection is not allowed.", line_num);
         }
         if line.contains(" instanceof ") {
             self.push_error("no-instanceof", "instanceof is forbidden. Use explicit type checking.", line_num);
         }
-        Ok(())
     }
 
     /// Check for dynamic property access.
-    fn check_dynamic_access(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+    fn check_dynamic_access(&mut self, line: &str, line_num: u32) {
         // Match obj[key] pattern where key is not a number literal
         if Self::has_dynamic_bracket_access(line) {
             self.push_error(
@@ -159,7 +150,6 @@ impl SubsetValidator {
                 line_num,
             );
         }
-        Ok(())
     }
 
     /// Extract condition from statement.
@@ -217,23 +207,25 @@ impl SubsetValidator {
             if bytes[i] == b'[' {
                 // Find matching ]
                 let mut depth = 0;
-                let mut j = i;
-                for c in &bytes[i..] {
+                let mut end = i;
+                for (j, c) in bytes.iter().enumerate().skip(i) {
                     match c {
                         b'[' | b'(' | b'{' => depth += 1,
                         b']' | b')' | b'}' => depth -= 1,
                         _ => {}
                     }
                     if depth == 0 {
+                        end = j;
                         break;
                     }
-                    j += 1;
                 }
                 // Check if content is not a simple number (allowed for arrays)
-                let inner = &line[i + 1..i + j.min(bytes.len())];
-                if !inner.is_empty() && inner.trim().parse::<f64>().is_err() {
-                    // This is likely a dynamic key access
-                    return true;
+                if i + 1 < end {
+                    let inner = &line[i + 1..end];
+                    if !inner.is_empty() && inner.trim().parse::<f64>().is_err() {
+                        // This is likely a dynamic key access
+                        return true;
+                    }
                 }
             }
         }

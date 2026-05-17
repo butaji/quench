@@ -6,6 +6,8 @@ use super::BuildDriver;
 use crate::reload::{DylibWatcher, HostSignaler};
 use crate::Result;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 impl BuildDriver {
@@ -18,9 +20,21 @@ impl BuildDriver {
         let signaler = create_signaler(&hot_dir)?;
         let watcher = create_watcher(&src_dir, self.config.dev.debounce)?;
 
+        // Setup signal handler for graceful shutdown
+        let running = Arc::new(AtomicBool::new(true));
+        let r = running.clone();
+
+        if let Err(e) = ctrlc::set_handler(move || {
+            r.store(false, Ordering::SeqCst);
+        }) {
+            if self.options.verbose {
+                eprintln!("Warning: Could not set Ctrl-C handler: {e}");
+            }
+        }
+
         print_watch_status(&src_dir, self.options.verbose);
 
-        loop {
+        while running.load(Ordering::SeqCst) {
             let event = watcher.wait_for_event(Duration::from_millis(500));
             if let Some(reload_event) = event {
                 if !process_event(reload_event, self, &signaler) {
@@ -30,7 +44,7 @@ impl BuildDriver {
         }
 
         if self.options.verbose {
-            println!("Development server stopped.");
+            println!("\nDevelopment server stopped.");
         }
         Ok(())
     }

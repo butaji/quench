@@ -104,7 +104,44 @@ impl ErrorTranslator {
     }
 
     /// Parse location info from rustc error output.
+    /// Handles multi-line rustc output where --> can be on next line.
     fn parse_rustc_location(&self, rust_error: &str) -> Option<ParsedLocation> {
+        // Handle multi-line format:
+        // error[E0382]: borrow of moved value: `x`
+        //   --> src/main.rs:10:5
+        //    |
+        // 10 | let x = s;
+        //    |         ^ value moved here
+
+        // First, look for --> pattern which indicates the location
+        if let Some(idx) = rust_error.find("-->") {
+            let before_arrow = rust_error[..idx].trim();
+            let after_arrow = rust_error[idx + 3..].trim();
+
+            // Extract message from before arrow
+            let message = before_arrow
+                .lines()
+                .last()
+                .unwrap_or(before_arrow)
+                .to_string();
+
+            // Parse location after arrow (format: filename:line:col)
+            let loc_parts: Vec<&str> = after_arrow.split(':').collect();
+            if loc_parts.len() >= 3 {
+                let file = loc_parts[0].trim().to_string();
+                let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
+                let column: u32 = loc_parts[2].trim().parse().unwrap_or(0);
+
+                return Some(ParsedLocation {
+                    file,
+                    line,
+                    column,
+                    message,
+                });
+            }
+        }
+
+        // Fallback: try to parse as single-line format
         let parts: Vec<&str> = rust_error.split("--> ").collect();
         if parts.len() < 2 {
             return None;
