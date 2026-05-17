@@ -254,8 +254,6 @@ fn emit_array_slice(
             emitter.push_str(" as usize");
         } else {
             // Single arg: slice from start to end of array
-            emitter.push_str(")");
-            // No close bracket needed - already open, use range to end
             emitter.push_str("..");
             emit_expr(emitter, &member.obj);
             emitter.push_str(".len() as usize]");
