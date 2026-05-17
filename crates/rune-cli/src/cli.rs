@@ -67,6 +67,7 @@ pub fn build_cli(args: &[String]) -> Cli {
 }
 
 /// Run command based on CLI arguments.
+#[allow(clippy::missing_errors_doc)]
 pub fn run_command(command: &Commands, options: &mut BuildOptions) -> Result<()> {
     let mut driver = BuildDriver::new(options.clone())?;
 
@@ -94,8 +95,8 @@ pub fn run_command(command: &Commands, options: &mut BuildOptions) -> Result<()>
             driver.transpile()
         }
         Commands::Init { name } => {
-            if let Some(_n) = name {
-                println!("Initializing project: {}", _n);
+            if let Some(n) = name {
+                println!("Initializing project: {n}");
             }
             driver.init()
         }

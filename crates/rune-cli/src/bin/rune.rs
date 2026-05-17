@@ -14,6 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use rune_cli::cli::{build_cli, run_command};
 
 /// Main entry point for the `rune` binary.
+#[allow(clippy::unnecessary_wraps)]
 fn main() -> rune::Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -25,14 +26,7 @@ fn main() -> rune::Result<()> {
     let cli = build_cli(&args);
     let mut options = create_options(&cli);
 
-    let result = run_command(&cli.command, &mut options);
-
-    if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
-    }
-
-    Ok(())
+    run_command(&cli.command, &mut options)
 }
 
 /// Create build options from CLI arguments.
