@@ -30,7 +30,6 @@ impl SubsetValidator {
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
             let line_num = (line_num + 1) as u32;
-
             self.check_forbidden_features(line, line_num)?;
         }
 
@@ -47,194 +46,99 @@ impl SubsetValidator {
         line: &str,
         line_num: u32,
     ) -> Result<(), ValidationError> {
-        // Skip comments
-        if line.starts_with("//") || line.starts_with("/*") || line.starts_with('*') {
+        if Self::is_comment_line(line) {
             return Ok(());
         }
+        self.check_type_restrictions(line, line_num)?;
+        self.check_keyword_restrictions(line, line_num)?;
+        self.check_operators(line, line_num)?;
+        self.check_statements(line, line_num)
+    }
 
-        // Check for 'any' type
+    /// Check if line is a comment.
+    fn is_comment_line(line: &str) -> bool {
+        line.starts_with("//") || line.starts_with("/*") || line.starts_with('*')
+    }
+
+    /// Check for forbidden type restrictions.
+    fn check_type_restrictions(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
         if line.contains(": any") || line.contains("<any>") {
-            self.errors.push(ValidationError {
-                code: "no-any",
-                message: "Type 'any' requires dynamic dispatch. Use concrete types.".to_string(),
-                line: line_num,
-                column: 0,
-            });
+            self.push_error("no-any", "Type 'any' requires dynamic dispatch. Use concrete types.", line_num);
         }
-
-        // Check for 'unknown' type
         if line.contains(": unknown") {
-            self.errors.push(ValidationError {
-                code: "no-unknown",
-                message: "Type 'unknown' requires dynamic dispatch. Use concrete types."
-                    .to_string(),
-                line: line_num,
-                column: 0,
-            });
+            self.push_error("no-unknown", "Type 'unknown' requires dynamic dispatch. Use concrete types.", line_num);
         }
-
-        // Check for 'class' keyword
-        if line.contains(" class ") || line.starts_with("class ") {
-            self.errors.push(ValidationError {
-                code: "no-class",
-                message: "Classes are forbidden. Use plain objects and functions.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for 'new' keyword (except in array new)
-        if line.contains("new ") && !line.contains("new Array") {
-            self.errors.push(ValidationError {
-                code: "no-new",
-                message: "Constructors (new) are forbidden. Use factory functions.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for 'this' keyword
-        if line.contains("this.") || line.starts_with("this;") {
-            self.errors.push(ValidationError {
-                code: "no-this",
-                message: "'this' keyword is forbidden. Use explicit parameters.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for 'var' keyword
-        if line.starts_with("var ") {
-            self.errors.push(ValidationError {
-                code: "no-var",
-                message: "Use 'const' or 'let' instead of 'var'.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for loose equality (== and !=) - must be careful not to match === or !==
-        // We only flag double-equals operators, not single assignment =
-        // Pattern: " == " (two equals with spaces) - loose equality
-        // Pattern: " != " (not-equals with spaces) - loose inequality
-        // Note: single " = " (assignment) is OK
-        let has_loose_eq = {
-            let bytes = line.as_bytes();
-            let mut found = false;
-            for i in 0..bytes.len().saturating_sub(3) {
-                // Check for " == " (space, equals, equals, space)
-                if bytes[i] == b' '
-                    && bytes.get(i + 1) == Some(&b'=')
-                    && bytes.get(i + 2) == Some(&b'=')
-                    && bytes.get(i + 3) == Some(&b' ')
-                {
-                    found = true;
-                    break;
-                }
-                // Check for " != " (space, !, equals, space)
-                if bytes[i] == b' '
-                    && bytes.get(i + 1) == Some(&b'!')
-                    && bytes.get(i + 2) == Some(&b'=')
-                    && bytes.get(i + 3) == Some(&b' ')
-                {
-                    found = true;
-                    break;
-                }
-            }
-            found
-        };
-
-        if has_loose_eq {
-            self.errors.push(ValidationError {
-                code: "no-loose-equality",
-                message: "Use strict equality (=== or !==).".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for try/catch/throw
-        if line.contains("try") || line.contains("catch") || line.starts_with("throw") {
-            self.errors.push(ValidationError {
-                code: "no-exceptions",
-                message: "Use Result<T,E> return pattern instead of try/catch/throw.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for eval
-        if line.contains("eval(") {
-            self.errors.push(ValidationError {
-                code: "no-eval",
-                message: "eval() is forbidden.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for 'with' statement
-        if line.starts_with("with ") {
-            self.errors.push(ValidationError {
-                code: "no-with",
-                message: "with statement is forbidden.".to_string(),
-                line: line_num,
-                column: 0,
-            });
-        }
-
-        // Check for dynamic property access (obj[key] where key is variable)
-        // Allow array indexing: arr[0], arr[i] where i is a variable used as index
-        // Forbid object dynamic access: obj[key] where key is a variable (not a number)
-        if line.contains('[') && line.contains(']') && !line.starts_with("//") {
-            // Simple heuristic: if there's "[variable]" (non-numeric), it's likely dynamic access
-            // Array access like arr[0] or arr[i] where i is used as index is fine
-            // We check for patterns like: obj[variableName] where variableName is not a number
-
-            // Find bracket pairs and check if the content is a simple identifier (variable)
-            let mut chars = line.chars().peekable();
-            while let Some(c) = chars.next() {
-                if c == '[' {
-                    // Read until closing bracket
-                    let mut content = String::new();
-                    let mut depth = 1;
-                    while let Some(&next) = chars.peek() {
-                        if next == '[' {
-                            depth += 1;
-                        }
-                        if next == ']' {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        content.push(chars.next().unwrap());
-                    }
-                    chars.next(); // consume ]
-
-                    // Check if this is array indexing (numeric or simple variable used as index)
-                    let content_trimmed = content.trim();
-                    let is_numeric = content_trimmed
-                        .chars()
-                        .all(|c| c.is_ascii_digit() || c == '.');
-                    let is_index_var = content_trimmed == "i"
-                        || content_trimmed == "j"
-                        || content_trimmed == "k"
-                        || content_trimmed == "idx"
-                        || content_trimmed == "index"
-                        || content_trimmed.starts_with("task.");
-
-                    // If it's not numeric and not a known index variable, it might be dynamic
-                    // For now, only flag if it looks like a property access (before [ is a var name)
-                    if !is_numeric && !is_index_var && content_trimmed.len() > 1 {
-                        // Check if before bracket looks like a variable (not array literal)
-                        // This is a simplified check - proper check would need AST analysis
-                    }
-                }
-            }
-        }
-
         Ok(())
+    }
+
+    /// Check for forbidden keywords.
+    fn check_keyword_restrictions(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        if line.contains(" class ") || line.starts_with("class ") {
+            self.push_error("no-class", "Classes are forbidden. Use plain objects and functions.", line_num);
+        }
+        if line.contains("new ") && !line.contains("new Array") {
+            self.push_error("no-new", "Constructors (new) are forbidden. Use factory functions.", line_num);
+        }
+        if line.contains("this.") || line.starts_with("this;") {
+            self.push_error("no-this", "'this' keyword is forbidden. Use explicit parameters.", line_num);
+        }
+        if line.starts_with("var ") {
+            self.push_error("no-var", "Use 'const' or 'let' instead of 'var'.", line_num);
+        }
+        Ok(())
+    }
+
+    /// Check for forbidden operators.
+    fn check_operators(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        if Self::has_loose_equality(line) {
+            self.push_error("no-loose-equality", "Use strict equality (=== or !==).", line_num);
+        }
+        Ok(())
+    }
+
+    /// Check for forbidden statements.
+    fn check_statements(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        if line.contains("try") || line.contains("catch") || line.starts_with("throw") {
+            self.push_error("no-exceptions", "Use Result<T,E> return pattern instead of try/catch/throw.", line_num);
+        }
+        if line.contains("eval(") {
+            self.push_error("no-eval", "eval() is forbidden.", line_num);
+        }
+        if line.starts_with("with ") {
+            self.push_error("no-with", "with statement is forbidden.", line_num);
+        }
+        Ok(())
+    }
+
+    /// Check for loose equality operators (== and !=).
+    fn has_loose_equality(line: &str) -> bool {
+        let bytes = line.as_bytes();
+        for i in 0..bytes.len().saturating_sub(3) {
+            if Self::matches_loose_eq(&bytes[i..]) || Self::matches_loose_neq(&bytes[i..]) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Match loose equality pattern " == ".
+    fn matches_loose_eq(slice: &[u8]) -> bool {
+        slice.len() >= 4 && slice[0] == b' ' && slice[1] == b'=' && slice[2] == b'=' && slice[3] == b' '
+    }
+
+    /// Match loose inequality pattern " != ".
+    fn matches_loose_neq(slice: &[u8]) -> bool {
+        slice.len() >= 4 && slice[0] == b' ' && slice[1] == b'!' && slice[2] == b'=' && slice[3] == b' '
+    }
+
+    /// Push a validation error.
+    fn push_error(&mut self, code: &'static str, message: &str, line: u32) {
+        self.errors.push(ValidationError {
+            code,
+            message: message.to_string(),
+            line,
+            column: 0,
+        });
     }
 
     /// Get all validation errors.

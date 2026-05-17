@@ -14,6 +14,7 @@ mod members;
 mod module;
 mod statements;
 mod switch_match;
+mod type_collector;
 mod type_resolver;
 mod types;
 pub mod utils;
