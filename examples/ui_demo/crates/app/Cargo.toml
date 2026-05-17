@@ -2,14 +2,11 @@
 name = "app"
 version.workspace = true
 edition.workspace = true
-authors.workspace = true
-license.workspace = true
-rust-version.workspace = true
 
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
-ratatui.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

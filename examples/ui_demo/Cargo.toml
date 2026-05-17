@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/protocol",
     "crates/app",
 ]
 
@@ -8,11 +9,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Rune Team"]
-license = "MIT"
-rust-version = "1.75"
 
 [workspace.dependencies]
-ratatui = "0.26"
-crossterm = "0.27"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+protocol = { path = "crates/protocol" }

@@ -11,12 +11,12 @@ use crate::parser;
 /// Test: Object type transpilation
 #[test]
 fn test_transpile_struct_type() {
-    let source = r#"
+    let source = "
 export type Point = {
     x: number,
     y: number,
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -28,11 +28,11 @@ export type Point = {
 /// Test: Tagged union transpilation
 #[test]
 fn test_transpile_tagged_union() {
-    let source = r#"
+    let source = "
 export type Message =
-    | { tag: "Move"; x: number; y: number }
-    | { tag: "Stop" };
-"#;
+    | { tag: \"Move\"; x: number; y: number }
+    | { tag: \"Stop\" };
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -44,9 +44,7 @@ export type Message =
 /// Test: Basic type alias (structural check)
 #[test]
 fn test_transpile_type_alias() {
-    let source = r#"
-export type UserId = number;
-"#;
+    let source = "export type UserId = number;";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -58,9 +56,7 @@ export type UserId = number;
 /// Test: Array type
 #[test]
 fn test_transpile_array_type() {
-    let source = r#"
-export type Numbers = number[];
-"#;
+    let source = "export type Numbers = number[];";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -72,7 +68,7 @@ export type Numbers = number[];
 /// Test: Nested object type
 #[test]
 fn test_transpile_nested_object() {
-    let source = r#"
+    let source = "
 export type Config = {
     name: string,
     settings: {
@@ -80,7 +76,7 @@ export type Config = {
         level: number,
     },
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -92,11 +88,11 @@ export type Config = {
 /// Test: Multiple exports
 #[test]
 fn test_transpile_multiple_types() {
-    let source = r#"
+    let source = "
 export type Point = { x: number, y: number };
 export type Line = { start: Point, end: Point };
 export type Shape = { name: string, perimeter: number };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -108,9 +104,7 @@ export type Shape = { name: string, perimeter: number };
 /// Test: Option type with null
 #[test]
 fn test_transpile_option_type() {
-    let source = r#"
-export type Maybe<T> = T | null;
-"#;
+    let source = "export type Maybe<T> = T | null;";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -122,9 +116,9 @@ export type Maybe<T> = T | null;
 /// Test: Result-like pattern
 #[test]
 fn test_transpile_result_pattern() {
-    let source = r#"
+    let source = "
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
-"#;
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -136,13 +130,13 @@ export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 /// Test: Complex enum
 #[test]
 fn test_transpile_complex_enum() {
-    let source = r#"
+    let source = "
 export type Event =
-    | { tag: "Click"; x: number; y: number }
-    | { tag: "KeyPress"; key: string }
-    | { tag: "Resize"; width: number; height: number }
-    | { tag: "Close" };
-"#;
+    | { tag: \"Click\"; x: number; y: number }
+    | { tag: \"KeyPress\"; key: string }
+    | { tag: \"Resize\"; width: number; height: number }
+    | { tag: \"Close\" };
+";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -154,9 +148,7 @@ export type Event =
 /// Test: TSX file is recognized
 #[test]
 fn test_tsx_file_kind() {
-    let source = r#"
-export type Widget = { id: string };
-"#;
+    let source = "export type Widget = { id: string };";
     let file = parser::parse_file_from_str(source, "widget.r.tsx").unwrap();
     assert!(file.is_tsx());
 }
@@ -164,9 +156,7 @@ export type Widget = { id: string };
 /// Test: TypeScript file is recognized
 #[test]
 fn test_typescript_file_kind() {
-    let source = r#"
-export type Item = { name: string };
-"#;
+    let source = "export type Item = { name: string };";
     let file = parser::parse_file_from_str(source, "item.r.ts").unwrap();
     assert!(!file.is_tsx());
 }
@@ -189,9 +179,7 @@ fn test_location_from_offset() {
 /// Test: Generated module has source
 #[test]
 fn test_generate_module_has_source() {
-    let source = r#"
-export type Point = { x: number; y: number };
-"#;
+    let source = "export type Point = { x: number; y: number };";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -204,9 +192,7 @@ export type Point = { x: number; y: number };
 /// Test: Generated module has name
 #[test]
 fn test_generate_module_has_name() {
-    let source = r#"
-export type Point = { x: number; y: number };
-"#;
+    let source = "export type Point = { x: number; y: number };";
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -229,10 +215,10 @@ fn test_empty_source() {
 /// Test: Comment-only source is handled
 #[test]
 fn test_comment_only_source() {
-    let source = r#"
+    let source = "
 // This is a comment
 // Another comment
-"#;
+";
     let file = parser::parse_file_from_str(source, "comment.r.ts").unwrap();
     let result = analyzer::analyze(&file).unwrap();
 
@@ -243,13 +229,13 @@ fn test_comment_only_source() {
 /// Test: Type with optional field
 #[test]
 fn test_optional_field() {
-    let source = r#"
+    let source = "
 export type User = {
     id: number,
     name: string,
     email?: string,
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "user.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -261,9 +247,7 @@ export type User = {
 /// Test: Generic type alias
 #[test]
 fn test_generic_type_alias() {
-    let source = r#"
-export type Pair<A, B> = { first: A, second: B };
-"#;
+    let source = "export type Pair<A, B> = { first: A, second: B };";
     let file = parser::parse_file_from_str(source, "pair.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -275,7 +259,7 @@ export type Pair<A, B> = { first: A, second: B };
 /// Test: Large number of fields
 #[test]
 fn test_large_struct() {
-    let source = r#"
+    let source = "
 export type Config = {
     field1: number,
     field2: number,
@@ -286,7 +270,7 @@ export type Config = {
     field7: number,
     field8: number,
 };
-"#;
+";
     let file = parser::parse_file_from_str(source, "config.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -298,14 +282,14 @@ export type Config = {
 /// Test: Multiple union variants
 #[test]
 fn test_large_union() {
-    let source = r#"
+    let source = "
 export type Status =
-    | { tag: "A"; value: number }
-    | { tag: "B"; value: number }
-    | { tag: "C"; value: number }
-    | { tag: "D"; value: number }
-    | { tag: "E"; value: number };
-"#;
+    | { tag: \"A\"; value: number }
+    | { tag: \"B\"; value: number }
+    | { tag: \"C\"; value: number }
+    | { tag: \"D\"; value: number }
+    | { tag: \"E\"; value: number };
+";
     let file = parser::parse_file_from_str(source, "status.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
@@ -317,9 +301,9 @@ export type Status =
 /// Test: Type with string union
 #[test]
 fn test_string_union() {
-    let source = r#"
-export type Direction = "north" | "south" | "east" | "west";
-"#;
+    let source = "
+export type Direction = \"north\" | \"south\" | \"east\" | \"west\";
+";
     let file = parser::parse_file_from_str(source, "direction.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();

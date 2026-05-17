@@ -1,12 +1,16 @@
-[package]
-name = "data-processing-demo"
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/app",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+authors = ["Rune Team"]
 
-[dependencies]
+[workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = "0.4"
-
-[lib]
-crate-type = ["cdylib"]
+protocol = { path = "crates/protocol" }
