@@ -311,3 +311,27 @@ export type Direction = \"north\" | \"south\" | \"east\" | \"west\";
     // Should have generated some code
     assert!(!result.source.is_empty());
 }
+
+/// Test: For loop transpilation
+#[test]
+fn test_for_loop_transpilation() {
+    let source = "
+export function sumArray(arr: number[]): number {
+    let total = 0;
+    for (let i = 0; i < arr.length; i++) {
+        total = total + arr[i];
+    }
+    return total;
+}
+";
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+
+    println!("Generated code:\n{}", result.source);
+    
+    // Should have generated some code
+    assert!(!result.source.is_empty());
+    // The for loop should NOT emit "for let" pattern - that's invalid Rust
+    assert!(!result.source.contains("for let"), "Should not emit 'for let' pattern");
+}

@@ -75,7 +75,11 @@ fn emit_top_level_property(emitter: &mut CodeEmitter, prop_name: &str) {
 
 fn emit_computed_property(emitter: &mut CodeEmitter, obj: &Expr, comp: &swc_ecma_ast::ComputedPropName) {
     let obj_type = infer_type_from_expr(obj);
-    if obj_type.starts_with("Vec") {
+    let is_array_like = obj_type.starts_with("Vec") 
+        || obj_type.contains("[]")
+        || is_identifier_with_array_type(obj);
+    
+    if is_array_like {
         emitter.push_str("[");
         emit_expr(emitter, &comp.expr);
         emitter.push_str(" as usize]");
@@ -83,6 +87,23 @@ fn emit_computed_property(emitter: &mut CodeEmitter, obj: &Expr, comp: &swc_ecma
         emitter.push_str(".get(");
         emit_expr(emitter, &comp.expr);
         emitter.push_str(")");
+    }
+}
+
+/// Check if an expression is an identifier that likely refers to an array.
+/// This is a heuristic based on common naming patterns and variable declarations.
+fn is_identifier_with_array_type(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(ident) => {
+            let name = ident.sym.as_ref();
+            // Common array variable names
+            name.ends_with('s')  // items, tasks, names, etc.
+            || name.ends_with("List")
+            || name.ends_with("Array")
+            || name.contains("indices")
+            || name.contains("keys")
+        }
+        _ => false,
     }
 }
 

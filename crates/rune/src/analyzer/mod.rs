@@ -62,6 +62,18 @@ impl TypeMap {
     pub fn entries_mut(&mut self) -> &mut HashMap<String, TypeInfo> {
         &mut self.entries
     }
+
+    /// Check if the type map is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Get the number of entries.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 /// Type information inferred from TypeScript.
@@ -253,6 +265,12 @@ impl OwnershipAnalysis {
     #[must_use]
     pub const fn bindings(&self) -> &HashMap<String, BorrowMode> {
         &self.bindings
+    }
+
+    /// Check if a binding is mutable.
+    #[must_use]
+    pub fn is_mutable(&self, name: &str) -> bool {
+        self.get(name).is_some_and(|m| m.is_mutable())
     }
 }
 

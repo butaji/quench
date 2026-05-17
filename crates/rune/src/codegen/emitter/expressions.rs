@@ -63,7 +63,56 @@ fn emit_bin_expr(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
         );
     }
 
+    // Handle length comparison: usize == i32 needs cast on the integer side
+    if is_usize_type(&left_type) && is_integer_type(&right_type) {
+        emit_usize_comparison(emitter, &bin_expr.left, &bin_expr.right, bin_expr.op);
+        return;
+    }
+    if is_integer_type(&left_type) && is_usize_type(&right_type) {
+        emit_usize_comparison_rhs(emitter, &bin_expr.left, &bin_expr.right, bin_expr.op);
+        return;
+    }
+
     emit_binary_op(emitter, bin_expr);
+}
+
+/// Check if a type is usize (from .length, etc.).
+#[must_use]
+fn is_usize_type(ty: &str) -> bool {
+    ty == "usize"
+}
+
+/// Emit comparison where left side is usize and right is integer.
+fn emit_usize_comparison(
+    emitter: &mut CodeEmitter,
+    left: &swc_ecma_ast::Expr,
+    right: &swc_ecma_ast::Expr,
+    op: swc_ecma_ast::BinaryOp,
+) {
+    // left is usize, right is integer
+    // Emit: left == right as usize
+    emitter.push_str("(");
+    emit_expr(emitter, left);
+    emitter.push_str(&format!(") {} (", bin_op_str(op)));
+    emit_expr(emitter, right);
+    emitter.push_str(" as usize)");
+}
+
+/// Emit comparison where right side is usize and left is integer.
+fn emit_usize_comparison_rhs(
+    emitter: &mut CodeEmitter,
+    left: &swc_ecma_ast::Expr,
+    right: &swc_ecma_ast::Expr,
+    op: swc_ecma_ast::BinaryOp,
+) {
+    // left is integer, right is usize
+    // Emit: left as usize == right
+    emitter.push_str("(");
+    emit_expr(emitter, left);
+    emitter.push_str(" as usize) ");
+    emitter.push_str(bin_op_str(op));
+    emitter.push_str(" ");
+    emit_expr(emitter, right);
 }
 
 /// Check if a type string represents an integer.

@@ -154,10 +154,28 @@ fn emit_array_slice(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr
         emitter.push_str(" as usize..");
         
         if call_expr.args.len() >= 2 {
-            emit_expr(emitter, &call_expr.args[1].expr);
+            let end_arg = &call_expr.args[1].expr;
+            // Check if the end argument is a negative number (slice with negative end)
+            if let swc_ecma_ast::Expr::Unary(unary) = &**end_arg {
+                if unary.op == swc_ecma_ast::UnaryOp::Minus {
+                    if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Num(n)) = &*unary.arg {
+                        // Negative end: slice(0, -n) means slice(0, len - n)
+                        // For len - n, we use the object's length
+                        emitter.push_str("(");
+                        emit_expr(emitter, &member.obj);
+                        emitter.push_str(".len() - ");
+                        emitter.push_str(&format!("{}", n.value as i32));
+                        emitter.push_str(" as usize)");
+                        emitter.push_str("]");
+                        return;
+                    }
+                }
+            }
+            // Normal case: positive end index
+            emit_expr(emitter, end_arg);
             emitter.push_str(" as usize");
         } else {
-            emitter.push_str("]");
+            emitter.push_str(")");
             return;
         }
     }
