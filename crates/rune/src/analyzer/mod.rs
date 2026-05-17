@@ -7,6 +7,8 @@ mod context;
 mod inference;
 mod ownership;
 pub mod validator;
+#[cfg(test)]
+mod tests;
 
 pub use context::AnalysisContext;
 pub use inference::TypeInferrer;
@@ -285,36 +287,11 @@ pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
     let mut ownership_analyzer = OwnershipAnalyzer::new();
     let mut validator = SubsetValidator::new();
 
-    // Check for parse errors first
-    for err in &source.errors {
-        ctx.add_warning(
-            source.path.display().to_string(),
-            format!("Parse error: {err}"),
-            "parse_error",
-        );
-    }
-
-    // Validate the subset
-    if let Err(e) = validator.validate(source) {
-        ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
-    }
-
-    // Infer types from source
+    collect_parse_errors(source, &mut ctx);
+    validate_subset(source, &mut validator, &mut ctx);
     let types = type_inferrer.infer_from_source(source)?;
-
-    // Analyze ownership
     let ownership = ownership_analyzer.analyze(&types);
-
-    // Build exports from types
-    let exports = types
-        .iter()
-        .filter(|(_, info)| matches!(info, TypeInfo::Function(_)))
-        .map(|(name, info)| ExportInfo {
-            name: name.to_string(),
-            rust_name: to_snake_case(name),
-            type_info: info.clone(),
-        })
-        .collect();
+    let exports = build_exports(&types);
 
     Ok(AnalysisResult {
         types,
@@ -323,4 +300,36 @@ pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
         exports,
         imports: Vec::new(),
     })
+}
+
+fn collect_parse_errors(source: &SourceFile, ctx: &mut AnalysisContext) {
+    for err in &source.errors {
+        ctx.add_warning(
+            source.path.display().to_string(),
+            format!("Parse error: {err}"),
+            "parse_error",
+        );
+    }
+}
+
+fn validate_subset(
+    source: &SourceFile,
+    validator: &mut SubsetValidator,
+    ctx: &mut AnalysisContext,
+) {
+    if let Err(e) = validator.validate(source) {
+        ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
+    }
+}
+
+fn build_exports(types: &TypeMap) -> Vec<ExportInfo> {
+    types
+        .iter()
+        .filter(|(_, info)| matches!(info, TypeInfo::Function(_)))
+        .map(|(name, info)| ExportInfo {
+            name: name.to_string(),
+            rust_name: to_snake_case(name),
+            type_info: info.clone(),
+        })
+        .collect()
 }

@@ -1,6 +1,6 @@
-//! keyboard.r.ts - Keyboard event handler
-//!
-//! Handles keyboard input for navigation and task management.
+// keyboard.r.ts - Keyboard event handler
+//
+// Handles keyboard input for navigation and task management.
 
 import { AppState, Filter, Task, toggle_task, create_task } from "../state.r.ts";
 import { batch_toggle_by_id } from "native:fast_math";

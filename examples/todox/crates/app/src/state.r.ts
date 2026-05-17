@@ -1,24 +1,17 @@
-//! state.r.ts - Application state types
-//!
-//! Type definitions for the todo app state.
+// state.r.ts - Application state types and functions.
 
-import { fastSqrt } from "native:fast_math";
-
-/// A task item.
 export type Task = {
     id: number;
     title: string;
     done: boolean;
 };
 
-/// Filter mode for task list.
 export enum Filter {
     All = "all",
     Active = "active",
     Completed = "completed",
 }
 
-/// Application state.
 export type AppState = {
     tasks: Task[];
     selected: number;
@@ -26,23 +19,28 @@ export type AppState = {
     shouldExit: boolean;
 };
 
-/// Create a new task with generated ID.
-export function create_task(title: string): Task {
-    const id = Math.floor(Date.now() / 1000);
+/// Create a new task.
+export function createTask(title: string): Task {
     return {
-        id,
+        id: Date.now(),
         title,
         done: false,
     };
 }
 
-/// Toggle a task's completion status.
-export function toggle_task(task: Task): Task {
+/// Toggle task completion.
+export function toggleTask(task: Task): Task {
     return { ...task, done: !task.done };
 }
 
-/// Calculate importance score using native Rust function.
-export function task_importance(task: Task): number {
-    const base_score = task.title.length;
-    return fastSqrt(base_score);
+/// Filter tasks by status.
+export function filterTasks(tasks: Task[], filter: Filter): Task[] {
+    switch (filter) {
+        case Filter.Active:
+            return tasks.filter(t => !t.done);
+        case Filter.Completed:
+            return tasks.filter(t => t.done);
+        default:
+            return tasks;
+    }
 }

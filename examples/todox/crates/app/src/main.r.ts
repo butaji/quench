@@ -1,37 +1,75 @@
-//! main.r.ts - Main entry point for the app logic
-//!
-//! This is the Rune entry point that gets transpiled to Rust.
+// main.r.ts - Main entry point for app logic.
 
-import { AppState, Task, Filter } from "./state.r.ts";
-import { handle_key as kb_handle } from "./handlers/keyboard.r.ts";
+import { AppState, Filter, Task, createTask, toggleTask } from "./state.r.ts";
+import { handleKeyNative } from "native:handlers";
+
+// Key codes matching crossterm KeyCode
+export enum KeyCode {
+    Char = "char",
+    Enter = "enter",
+    Escape = "esc",
+    Left = "left",
+    Right = "right",
+    Up = "up",
+    Down = "down",
+}
+
+// Key event structure (simplified for TypeScript)
+export type KeyEvent = {
+    code: KeyCode;
+    char?: string;
+};
 
 /// Update application state.
-/// Called every frame by the host.
 export function update(state: AppState): void {
-    if (state.selected >= state.tasks.length) {
-        state.selected = Math.max(0, state.tasks.length - 1);
+    // Ensure selection is in bounds
+    if (state.selected >= state.tasks.length && state.tasks.length > 0) {
+        state.selected = state.tasks.length - 1;
     }
 }
 
-/// Check if task matches the current filter.
-export function task_matches_filter(task: Task, filter: Filter): boolean {
-    switch (filter) {
-        case Filter.Active:
-            return !task.done;
-        case Filter.Completed:
-            return task.done;
-        default:
-            return true;
+/// Handle key events - delegates to native handler.
+export function handleKey(key: KeyEvent, state: AppState): void {
+    switch (key.code) {
+        case KeyCode.Down:
+        case KeyCode.Char:
+            if (key.char === "j") {
+                state.selected = Math.min(state.selected + 1, state.tasks.length - 1);
+            }
+            break;
+        case KeyCode.Up:
+        case KeyCode.Char:
+            if (key.char === "k") {
+                state.selected = Math.max(state.selected - 1, 0);
+            }
+            break;
+        case KeyCode.Char:
+            if (key.char === "x") {
+                const task = state.tasks[state.selected];
+                if (task) {
+                    state.tasks[state.selected] = toggleTask(task);
+                }
+            } else if (key.char === "a") {
+                const newTask = createTask("New task");
+                state.tasks.push(newTask);
+                state.selected = state.tasks.length - 1;
+            } else if (key.char === "d") {
+                if (state.tasks.length > 0) {
+                    state.tasks.splice(state.selected, 1);
+                    if (state.selected >= state.tasks.length && state.tasks.length > 0) {
+                        state.selected = state.tasks.length - 1;
+                    }
+                }
+            } else if (key.char === "f") {
+                // Cycle filter
+                if (state.filter === Filter.All) {
+                    state.filter = Filter.Active;
+                } else if (state.filter === Filter.Active) {
+                    state.filter = Filter.Completed;
+                } else {
+                    state.filter = Filter.All;
+                }
+            }
+            break;
     }
-}
-
-/// Get filtered task count.
-export function get_filtered_count(state: AppState): number {
-    let count = 0;
-    for (const task of state.tasks) {
-        if (task_matches_filter(task, state.filter)) {
-            count++;
-        }
-    }
-    return count;
 }

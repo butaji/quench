@@ -2,9 +2,12 @@
 //!
 //! Infers Rust types from TypeScript source.
 
+mod complex_types;
 mod parser_helpers;
 mod primitives;
+mod struct_parsing;
 mod ts_types;
+mod type_parsing;
 
 use crate::analyzer::{TypeInfo, TypeMap};
 use crate::parser::SourceFile;

@@ -1,47 +1,33 @@
-//! root.r.tsx - Main view component
-//!
-//! Renders the main application UI using Ratatui widget patterns.
-//! JSX syntax transpiles to Rust builder pattern calls.
+// root.r.tsx - Main view component.
 
-import { AppState, Filter, Task } from "../state.r.ts";
-import { task_matches_filter, get_filtered_count } from "../main.r.ts";
+import { AppState, Filter, Task, filterTasks } from "../state.r.ts";
 
-/// Main root view component.
-export function render(state: AppState): Widget {
-    const title = `TODOX - ${get_filtered_count(state)} / ${state.tasks.length}`;
+/// Render the root view.
+export function render(f: Frame, state: AppState): void {
+    let lines: string[] = [];
+    lines.push(" TODOX - Task Manager ");
+    lines.push("=".repeat(40));
+
+    // Add header
+    const filtered = filterTasks(state.tasks, state.filter);
     
-    return (
-        <Block title={title} borders="single">
-            <List selected={state.selected}>
-                {state.tasks.map((task, i) => (
-                    task_matches_filter(task, state.filter) ? (
-                        <ListItem bold={i === state.selected}>
-                            {task.done ? "[x] " : "[ ] "}
-                            {task.title}
-                        </ListItem>
-                    ) : null
-                ))}
-            </List>
-        </Block>
-    );
-}
+    if (filtered.length === 0) {
+        lines.push("(No tasks)");
+    } else {
+        for (let i = 0; i < filtered.length; i++) {
+            const task = filtered[i];
+            const marker = task.done ? "[x]" : "[ ]";
+            const prefix = (state.selected === i) ? "> " : "  ";
+            lines.push(prefix + marker + " " + task.title);
+        }
+    }
 
-/// Widget placeholder type.
-type Widget = {
-    render(): string;
-};
+    lines.push("");
+    lines.push("-".repeat(40));
+    lines.push("j/k: Navigate  x: Toggle  a: Add  d: Delete");
+    lines.push("f: Filter    q: Quit");
 
-/// Block widget.
-function Block(props: { title: string; borders: string }): Widget {
-    return { render: () => `Block(${props.title})` };
-}
-
-/// List widget.
-function List(props: { selected: number; children: Widget[] }): Widget {
-    return { render: () => `List(selected=${props.selected})` };
-}
-
-/// ListItem widget.
-function ListItem(props: { bold?: boolean; children: string }): Widget {
-    return { render: () => `ListItem(${props.children})` };
+    const content = lines.join("\n");
+    let para = Paragraph::new(content);
+    f.render_widget(para, f.size());
 }

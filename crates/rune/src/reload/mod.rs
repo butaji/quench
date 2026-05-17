@@ -5,6 +5,8 @@
 mod error_translator;
 mod host;
 mod watcher;
+#[cfg(test)]
+mod tests;
 
 pub use error_translator::{ErrorTranslator, TranslatedError};
 pub use host::HostSignaler;

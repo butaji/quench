@@ -1,5 +1,3 @@
-//! Native Rust modules
-//!
-//! Hand-written Rust that coexists with .r.ts files.
+//! Native Rust modules.
 
 pub mod fast_math;

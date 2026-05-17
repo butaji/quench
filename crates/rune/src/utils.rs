@@ -114,3 +114,6 @@ pub fn escape_keyword(name: &str) -> String {
         _ => name.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests;

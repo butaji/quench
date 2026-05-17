@@ -136,16 +136,23 @@ fn emit_array_call(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr,
 }
 
 fn emit_array_splice(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr) {
+    // JavaScript: splice(start, deleteCount?) - removes elements starting at start
+    // If deleteCount omitted, removes from start to end of array
+    // Note: Rust's splice requires explicit range end, so we compute at runtime
     emitter.push_str(".splice(");
     if let Some(start_arg) = call_expr.args.first() {
         emit_expr(emitter, &start_arg.expr);
         emitter.push_str("..");
-        emit_expr(emitter, &start_arg.expr);
-        emitter.push_str(" + ");
         if call_expr.args.len() >= 2 {
+            // deleteCount provided: start + deleteCount
+            emitter.push_str("(");
+            emit_expr(emitter, &start_arg.expr);
+            emitter.push_str(" + ");
             emit_expr(emitter, &call_expr.args[1].expr);
+            emitter.push_str(")");
         } else {
-            emitter.push_str("1");
+            // No deleteCount: remove to end - use large value, Rust will clamp
+            emitter.push_str("usize::MAX");
         }
     }
     emitter.push_str(", vec![])");

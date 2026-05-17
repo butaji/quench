@@ -1,6 +1,6 @@
-//! task_list.r.tsx - Task list component
-//!
-//! Displays a filtered list of tasks.
+// task_list.r.tsx - Task list component
+//
+// Displays a filtered list of tasks.
 
 import { Task, Filter } from "../state.r.ts";
 import { task_matches_filter } from "../main.r.ts";

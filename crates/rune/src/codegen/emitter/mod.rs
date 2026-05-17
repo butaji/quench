@@ -19,6 +19,8 @@ mod type_resolver;
 mod types;
 pub mod utils;
 mod variables;
+#[cfg(test)]
+mod tests;
 
 pub use ast_walker::AstWalker;
 pub use calls::emit_call;
