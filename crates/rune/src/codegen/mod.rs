@@ -84,6 +84,8 @@ pub fn generate(source: &SourceFile, analysis: &AnalysisResult) -> crate::Result
 
 #[cfg(test)]
 mod comprehensive_tests;
+#[cfg(test)]
+mod example_validation_tests;
 
 #[cfg(test)]
 mod tests {
