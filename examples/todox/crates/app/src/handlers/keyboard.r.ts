@@ -1,94 +1,89 @@
-// keyboard.r.ts - Keyboard event handler
-//
-// Handles keyboard input for navigation and task management.
+// handlers/keyboard.r.ts - Keyboard event handling.
+// Demonstrates: tagged unions, message passing pattern, native interop
 
-import { AppState, Filter, Task, toggle_task, create_task } from "../state.r.ts";
-import { batch_toggle_by_id } from "native:fast_math";
+import { AppState, Filter } from "../state.r.ts";
 
-/// Message type for keyboard events.
-export type Message =
-    | { tag: "Navigate", direction: number }
+/// Keyboard message type - tagged union pattern.
+export type KeyboardMessage =
+    | { tag: "Move"; dx: number; dy: number }
+    | { tag: "Quit" }
+    | { tag: "Write"; text: string }
     | { tag: "Toggle" }
+    | { tag: "Add" }
     | { tag: "Delete" }
-    | { tag: "NewTask", title: string }
-    | { tag: "Filter", filter: Filter }
-    | { tag: "Quit" };
+    | { tag: "Filter" };
 
-/// Handle a keyboard event.
-export function handle_message(msg: Message, state: AppState): void {
+/// Handle keyboard message and update state.
+export function handleMessage(msg: KeyboardMessage, state: AppState): void {
     switch (msg.tag) {
-        case "Navigate":
-            state.selected = Math.max(0, Math.min(
-                state.tasks.length - 1,
-                state.selected + msg.direction
-            ));
-            break;
-        case "Toggle":
-            if (state.selected < state.tasks.length) {
-                state.tasks[state.selected] = toggle_task(state.tasks[state.selected]);
-            }
-            break;
-        case "Delete":
-            if (state.selected < state.tasks.length) {
-                state.tasks.splice(state.selected, 1);
-                if (state.selected >= state.tasks.length && state.selected > 0) {
-                    state.selected--;
-                }
-            }
-            break;
-        case "NewTask":
-            state.tasks.push(create_task(msg.title));
-            state.selected = state.tasks.length - 1;
-            break;
-        case "Filter":
-            state.filter = msg.filter;
+        case "Move":
+            handleMove(state, msg.dx, msg.dy);
             break;
         case "Quit":
             state.shouldExit = true;
             break;
+        case "Write":
+            handleWrite(state, msg.text);
+            break;
+        case "Toggle":
+            handleToggle(state);
+            break;
+        case "Add":
+            handleAdd(state);
+            break;
+        case "Delete":
+            handleDelete(state);
+            break;
+        case "Filter":
+            handleFilter(state);
+            break;
     }
 }
 
-/// Handle key event from host.
-export function handle_key(
-    key: { code: string, char: string },
-    state: AppState
-): void {
-    switch (key.code) {
-        case "j":
-        case "ArrowDown":
-            state.selected = Math.min(state.selected + 1, state.tasks.length - 1);
-            break;
-        case "k":
-        case "ArrowUp":
-            state.selected = Math.max(0, state.selected - 1);
-            break;
-        case "x":
-        case " ":
-            if (state.selected < state.tasks.length) {
-                state.tasks[state.selected] = toggle_task(state.tasks[state.selected]);
-            }
-            break;
-        case "d":
-            if (state.selected < state.tasks.length) {
-                state.tasks.splice(state.selected, 1);
-            }
-            break;
-        case "a":
-        case "i":
-        case "o":
-            const title = `New task ${state.tasks.length + 1}`;
-            state.tasks.push(create_task(title));
+/// Handle cursor movement.
+function handleMove(state: AppState, dx: number, dy: number): void {
+    const newIdx = state.selected + dx + dy;
+    if (newIdx >= 0 && newIdx < state.tasks.length) {
+        state.selected = newIdx;
+    }
+}
+
+/// Handle text input (placeholder).
+function handleWrite(state: AppState, text: string): void {
+    // Would be used for editing task titles
+    // Placeholder for future implementation
+}
+
+/// Handle task toggle.
+function handleToggle(state: AppState): void {
+    if (state.tasks.length > 0 && state.selected < state.tasks.length) {
+        const task = state.tasks[state.selected];
+        task.done = !task.done;
+    }
+}
+
+/// Handle adding a new task.
+function handleAdd(state: AppState): void {
+    // Placeholder - would open input mode
+}
+
+/// Handle deleting current task.
+function handleDelete(state: AppState): void {
+    if (state.tasks.length > 0) {
+        state.tasks.splice(state.selected, 1);
+        if (state.selected >= state.tasks.length && state.tasks.length > 0) {
             state.selected = state.tasks.length - 1;
-            break;
-        case "q":
-            state.shouldExit = true;
-            break;
-        case "f":
-            // Cycle filter
-            const filters: Filter[] = [Filter.All, Filter.Active, Filter.Completed];
-            const idx = filters.indexOf(state.filter);
-            state.filter = filters[(idx + 1) % filters.length];
-            break;
+        }
+    }
+}
+
+/// Cycle through filters.
+function handleFilter(state: AppState): void {
+    if (state.filter === Filter.All) {
+        state.filter = Filter.Active;
+    } else if (state.filter === Filter.Active) {
+        state.filter = Filter.Completed;
+    } else {
+        state.filter = Filter.All;
     }
 }

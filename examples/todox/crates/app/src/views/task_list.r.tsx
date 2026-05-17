@@ -1,45 +1,35 @@
-// task_list.r.tsx - Task list component
-//
-// Displays a filtered list of tasks.
+// views/task_list.r.tsx - Task list component.
+// Demonstrates: TSX component patterns, Ratatui List widget
 
-import { Task, Filter } from "../state.r.ts";
-import { task_matches_filter } from "../main.r.ts";
+import { Task, Filter, filterTasks } from "../state.r.ts";
 
-/// Task list view props.
+/// Props for the task list component.
 export type TaskListProps = {
     tasks: Task[];
     selected: number;
     filter: Filter;
+    onSelect: (index: number) => void;
 };
 
-/// Render a list of filtered tasks.
-export function task_list(props: TaskListProps): TaskItem[] {
-    const items: TaskItem[] = [];
+/// Task list component - renders a list of tasks with selection.
+export function TaskList(props: TaskListProps): Widget {
+    const filtered = filterTasks(props.tasks, props.filter);
     
-    for (let i = 0; i < props.tasks.length; i++) {
-        const task = props.tasks[i];
-        if (task_matches_filter(task, props.filter)) {
-            items.push({
-                task,
-                index: i,
-                is_selected: i === props.selected,
-            });
-        }
+    // Build list items
+    const items: ListItem[] = [];
+    for (let i = 0; i < filtered.length; i++) {
+        const task = filtered[i];
+        const text = `${task.done ? "[x]" : "[ ]"} ${task.title}`;
+        const style = i === props.selected 
+            ? Style::new().fg(Color::Yellow) 
+            : Style::default();
+        items.push(ListItem::new(text).style(style));
     }
     
-    return items;
-}
-
-/// A single task item for rendering.
-export type TaskItem = {
-    task: Task;
-    index: number;
-    is_selected: boolean;
-};
-
-/// Get the display text for a task item.
-export function task_display_text(item: TaskItem): string {
-    const checkbox = item.task.done ? "[x]" : "[ ]";
-    const prefix = item.is_selected ? "> " : "  ";
-    return `${prefix}${checkbox} ${item.task.title}`;
+    // Create list widget
+    const list = List::new(items)
+        .block(Block::default().title("Tasks").borders(Borders::SINGLE))
+        .highlight_style(Style::new().add_modifier(Modifier::Reverse));
+    
+    return list;
 }

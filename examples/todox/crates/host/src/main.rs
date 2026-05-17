@@ -6,11 +6,11 @@
 
 use libloading::Library;
 use protocol::{App, AppState};
-use ratatui::{backend::CrosstermBackend, Terminal};
 use std::path::PathBuf;
 
 /// Wrapper for loaded app dylib.
 struct AppLoader {
+    #[allow(dead_code)]
     lib: Option<Library>,
     creator: unsafe extern "C" fn() -> *mut dyn App,
 }
@@ -32,15 +32,12 @@ impl AppLoader {
     }
 
     /// Create new app instance.
-    ///
-    /// # Panics
-    /// Panics if `create_app` returns a null pointer.
     #[must_use]
     fn create_app(&self) -> Box<dyn App> {
         unsafe {
             let ptr = (self.creator)();
             if ptr.is_null() {
-                panic!("create_app() returned null pointer - dylib may be malformed");
+                panic!("create_app() returned null - dylib may be malformed");
             }
             Box::from_raw(ptr)
         }
@@ -52,12 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let backend = ratatui::backend::CrosstermBackend::new(stdout);
+    let mut terminal = ratatui::Terminal::new(backend)?;
 
-    // State and loader
+    // State and app
     let mut state = AppState::default();
-    let mut app_loader: Option<AppLoader> = None;
+    let mut app: Option<Box<dyn App>> = None;
 
     // Hot directory
     let hot_dir = PathBuf::from("target/hot");
@@ -68,21 +65,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Check for new dylib
         if current_link.exists() {
             if let Ok(target) = std::fs::read_link(&current_link) {
-                // Simple reload on every change for demo
-                app_loader = None;
                 unsafe {
                     if let Ok(loader) = AppLoader::load(&target) {
-                        app_loader = Some(loader);
+                        app = Some(loader.create_app());
                     }
                 }
             }
         }
 
         // Update and render
-        if let Some(ref loader) = app_loader {
-            let mut app = loader.create_app();
-            app.update(&mut state);
-            terminal.draw(|f| app.render(f, &state))?;
+        if let Some(ref mut a) = app {
+            a.update(&mut state);
+            terminal.draw(|f| a.render(f, &state))?;
         }
 
         // Handle events
@@ -91,9 +85,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if key.code == crossterm::event::KeyCode::Char('q') {
                     break;
                 }
-                if let Some(ref loader) = app_loader {
-                    let mut app = loader.create_app();
-                    app.handle_key(key, &mut state);
+                if let Some(ref mut a) = app {
+                    a.handle_key(key, &mut state);
                 }
             }
         }

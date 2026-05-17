@@ -4,37 +4,85 @@
 
 use protocol::{AppState, Filter};
 
-/// Handle key event from host.
-pub fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) {
-    match key.code {
-        crossterm::event::KeyCode::Char('j')
-        | crossterm::event::KeyCode::Down => {
-            state.selected = state.selected.saturating_add(1).min(state.tasks.len().saturating_sub(1));
+/// Keyboard message type - tagged union pattern.
+#[derive(Debug, Clone)]
+pub enum KeyboardMessage {
+    Move { dx: i32, dy: i32 },
+    Quit,
+    Write { text: String },
+    Toggle,
+    Add,
+    Delete,
+    Filter,
+}
+
+/// Handle keyboard message and update state.
+pub fn handle_message(msg: KeyboardMessage, state: &mut AppState) {
+    match msg {
+        KeyboardMessage::Move { dx, dy } => {
+            handle_move(state, dx, dy);
         }
-        crossterm::event::KeyCode::Char('k')
-        | crossterm::event::KeyCode::Up => {
-            state.selected = state.selected.saturating_sub(1);
-        }
-        crossterm::event::KeyCode::Char('x')
-        | crossterm::event::KeyCode::Char(' ') => {
-            if state.selected < state.tasks.len() {
-                let task = state.tasks.remove(state.selected);
-                state.tasks.insert(state.selected, toggle_task(task));
-            }
-        }
-        crossterm::event::KeyCode::Char('d') => {
-            if state.selected < state.tasks.len() {
-                state.tasks.remove(state.selected);
-            }
-        }
-        crossterm::event::KeyCode::Char('q') => {
+        KeyboardMessage::Quit => {
             state.should_exit = true;
         }
-        _ => {}
+        KeyboardMessage::Write { text } => {
+            handle_write(state, text);
+        }
+        KeyboardMessage::Toggle => {
+            handle_toggle(state);
+        }
+        KeyboardMessage::Add => {
+            handle_add(state);
+        }
+        KeyboardMessage::Delete => {
+            handle_delete(state);
+        }
+        KeyboardMessage::Filter => {
+            handle_filter(state);
+        }
     }
 }
 
-/// Toggle a task's completion status.
-fn toggle_task(task: protocol::Task) -> protocol::Task {
-    protocol::Task { done: !task.done, ..task }
+/// Handle cursor movement.
+fn handle_move(state: &mut AppState, dx: i32, dy: i32) {
+    let new_idx = (state.selected as i32 + dx + dy) as usize;
+    if new_idx < state.tasks.len() {
+        state.selected = new_idx;
+    }
+}
+
+/// Handle text input (placeholder).
+fn handle_write(_state: &mut AppState, _text: String) {
+    // Placeholder for future implementation
+}
+
+/// Handle task toggle.
+fn handle_toggle(state: &mut AppState) {
+    if !state.tasks.is_empty() && state.selected < state.tasks.len() {
+        state.tasks[state.selected].done = !state.tasks[state.selected].done;
+    }
+}
+
+/// Handle adding a new task.
+fn handle_add(_state: &mut AppState) {
+    // Placeholder - would open input mode
+}
+
+/// Handle deleting current task.
+fn handle_delete(state: &mut AppState) {
+    if !state.tasks.is_empty() {
+        state.tasks.remove(state.selected);
+        if state.selected >= state.tasks.len() && !state.tasks.is_empty() {
+            state.selected = state.tasks.len() - 1;
+        }
+    }
+}
+
+/// Cycle through filters.
+fn handle_filter(state: &mut AppState) {
+    state.filter = match state.filter {
+        Filter::All => Filter::Active,
+        Filter::Active => Filter::Completed,
+        Filter::Completed => Filter::All,
+    };
 }

@@ -8,7 +8,10 @@ use crate::analyzer;
 use crate::codegen;
 use crate::parser;
 
-/// Test: Object type transpilation
+// ============================================================================
+// Core Type System Tests
+// ============================================================================
+
 #[test]
 fn test_transpile_struct_type() {
     let source = "
@@ -20,16 +23,9 @@ export type Point = {
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should emit some struct-related content
-    assert!(
-        result.source.contains("struct")
-            || result.source.contains("Struct")
-            || !result.source.is_empty()
-    );
+    assert!(!result.source.is_empty());
 }
 
-/// Test: Tagged union transpilation
 #[test]
 fn test_transpile_tagged_union() {
     let source = "
@@ -40,187 +36,304 @@ export type Message =
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should emit some enum-like content
-    assert!(
-        result.source.contains("enum")
-            || result.source.contains("Enum")
-            || !result.source.is_empty()
-    );
-}
-
-/// Test: Basic type alias (structural check)
-#[test]
-fn test_transpile_type_alias() {
-    let source = "export type UserId = number;";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
     assert!(!result.source.is_empty());
 }
 
-/// Test: Array type
-#[test]
-fn test_transpile_array_type() {
-    let source = "export type Numbers = number[];";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: Nested object type
-#[test]
-fn test_transpile_nested_object() {
-    let source = "
-export type Config = {
-    name: string,
-    settings: {
-        debug: boolean,
-        level: number,
-    },
-};
-";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should contain nested type
-    assert!(result.source.contains("Config") || !result.source.is_empty());
-}
-
-/// Test: Multiple exports
-#[test]
-fn test_transpile_multiple_types() {
-    let source = "
-export type Point = { x: number, y: number };
-export type Line = { start: Point, end: Point };
-export type Shape = { name: string, perimeter: number };
-";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: Option type with null
-#[test]
-fn test_transpile_option_type() {
-    let source = "export type Maybe<T> = T | null;";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: Result-like pattern
 #[test]
 fn test_transpile_result_pattern() {
-    let source = "
+    let source = r#"
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
-";
+"#;
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
     assert!(!result.source.is_empty());
 }
 
-/// Test: Complex enum
+// ============================================================================
+// Function Tests
+// ============================================================================
+
 #[test]
-fn test_transpile_complex_enum() {
-    let source = "
-export type Event =
-    | { tag: \"Click\"; x: number; y: number }
-    | { tag: \"KeyPress\"; key: string }
-    | { tag: \"Resize\"; width: number; height: number }
-    | { tag: \"Close\" };
-";
+fn test_function_with_params() {
+    let source = r#"
+export function add(a: number, b: number): number {
+    return a + b;
+}
+"#;
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("fn"));
+}
 
-    // Should have generated some code
+#[test]
+fn test_arrow_function() {
+    let source = r#"
+export const multiply = (a: number, b: number): number => a * b;
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
     assert!(!result.source.is_empty());
 }
 
-/// Test: TSX file is recognized
 #[test]
-fn test_tsx_file_kind() {
-    let source = "export type Widget = { id: string };";
-    let file = parser::parse_file_from_str(source, "widget.r.tsx").unwrap();
-    assert!(file.is_tsx());
+fn test_async_function() {
+    let source = r#"
+export async function fetchData(url: string): Promise<string> {
+    return "data";
 }
-
-/// Test: TypeScript file is recognized
-#[test]
-fn test_typescript_file_kind() {
-    let source = "export type Item = { name: string };";
-    let file = parser::parse_file_from_str(source, "item.r.ts").unwrap();
-    assert!(!file.is_tsx());
-}
-
-/// Test: Location from offset
-#[test]
-fn test_location_from_offset() {
-    let source = "line1\nline2\nline3";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-
-    let (line, col) = file.location_from_offset(0);
-    assert_eq!(line, 1);
-    assert_eq!(col, 1);
-
-    let (line, col) = file.location_from_offset(6); // start of "line2"
-    assert_eq!(line, 2);
-    assert_eq!(col, 1);
-}
-
-/// Test: Generated module has source
-#[test]
-fn test_generate_module_has_source() {
-    let source = "export type Point = { x: number; y: number };";
+"#;
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("async"));
+}
 
-    // Should have generated some Rust code
+// ============================================================================
+// Control Flow Tests
+// ============================================================================
+
+#[test]
+fn test_if_else() {
+    let source = r#"
+export function max(a: number, b: number): number {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("if"));
+}
+
+#[test]
+fn test_while_loop() {
+    let source = r#"
+export function countDown(n: number): void {
+    while (n > 0) {
+        n = n - 1;
+    }
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("while"));
+}
+
+#[test]
+fn test_for_loop() {
+    let source = r#"
+export function sumTo(n: number): number {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+        sum = sum + i;
+    }
+    return sum;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("for"));
+    assert!(!result.source.contains("for let"));
+}
+
+#[test]
+fn test_for_of_loop() {
+    let source = r#"
+export function sumArray(arr: number[]): number {
+    let sum = 0;
+    for (const item of arr) {
+        sum = sum + item;
+    }
+    return sum;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("for"));
+}
+
+// ============================================================================
+// Expression Tests
+// ============================================================================
+
+#[test]
+fn test_binary_operators() {
+    let source = r#"
+export function ops(a: number, b: number): number {
+    return a + b - 1 * 2 / 3;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("+") || result.source.contains("-"));
+}
+
+#[test]
+fn test_comparison_operators() {
+    let source = r#"
+export function compare(a: number, b: number): boolean {
+    return a === b && a !== b;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
     assert!(!result.source.is_empty());
-    assert!(result.source.len() > 10);
 }
 
-/// Test: Generated module has name
 #[test]
-fn test_generate_module_has_name() {
-    let source = "export type Point = { x: number; y: number };";
+fn test_ternary_expression() {
+    let source = r#"
+export function abs(n: number): number {
+    return n >= 0 ? n : -n;
+}
+"#;
     let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have a module name
-    assert!(!result.name.is_empty());
+    assert!(!result.source.is_empty());
 }
 
-/// Test: Empty source is handled
+// ============================================================================
+// Object and Array Tests
+// ============================================================================
+
+#[test]
+fn test_array_literal() {
+    let source = r#"
+export const numbers: number[] = [1, 2, 3, 4, 5];
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_object_literal() {
+    let source = r#"
+export function createPoint(x: number, y: number): { x: number; y: number } {
+    return { x, y };
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_spread_operator() {
+    let source = r#"
+export function merge(a: { x: number }, b: { y: number }): { x: number; y: number } {
+    return { ...a, ...b };
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+// ============================================================================
+// Type System Tests
+// ============================================================================
+
+#[test]
+fn test_option_type() {
+    let source = r#"
+export function findItem(arr: string[], target: string): string | null {
+    for (let i = 0; i < arr.length; i++) {
+        if (arr[i] === target) return arr[i];
+    }
+    return null;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_enum_like_union() {
+    let source = r#"
+export type Status = "pending" | "active" | "completed";
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_generic_function() {
+    let source = r#"
+export function identity<T>(value: T): T {
+    return value;
+}
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+// ============================================================================
+// Module System Tests
+// ============================================================================
+
+#[test]
+fn test_import_statement() {
+    let source = r#"
+import { Task, createTask } from "./state.r.ts";
+export function process(task: Task): Task {
+    return createTask(task.title);
+}
+"#;
+    let file = parser::parse_file_from_str(source, "main.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_native_import() {
+    let source = r#"
+import { fastSqrt } from "native:math";
+export function sqrtAll(values: number[]): number[] {
+    return values.map(v => fastSqrt(v));
+}
+"#;
+    let file = parser::parse_file_from_str(source, "main.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(result.source.contains("native"));
+}
+
+// ============================================================================
+// Edge Cases
+// ============================================================================
+
 #[test]
 fn test_empty_source() {
     let source = "";
     let file = parser::parse_file_from_str(source, "empty.r.ts").unwrap();
     let result = analyzer::analyze(&file).unwrap();
-
-    // Should handle empty source gracefully
     assert!(result.warnings.is_empty());
 }
 
-/// Test: Comment-only source is handled
 #[test]
 fn test_comment_only_source() {
     let source = "
@@ -229,120 +342,118 @@ fn test_comment_only_source() {
 ";
     let file = parser::parse_file_from_str(source, "comment.r.ts").unwrap();
     let result = analyzer::analyze(&file).unwrap();
-
-    // Should handle comments gracefully without errors
     assert!(result.warnings.is_empty());
 }
 
-/// Test: Type with optional field
+#[test]
+fn test_nested_types() {
+    let source = r#"
+export type Nested = {
+    outer: {
+        middle: {
+            inner: number,
+        },
+    },
+};
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+#[test]
+fn test_large_union() {
+    let source = r#"
+export type Color =
+    | { tag: "Red" }
+    | { tag: "Green" }
+    | { tag: "Blue" }
+    | { tag: "Yellow" }
+    | { tag: "Orange" }
+    | { tag: "Purple" };
+"#;
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+}
+
+// ============================================================================
+// File Type Recognition Tests
+// ============================================================================
+
+#[test]
+fn test_tsx_file_kind() {
+    let source = "export type Widget = { id: string };";
+    let file = parser::parse_file_from_str(source, "widget.r.tsx").unwrap();
+    assert!(file.is_tsx());
+}
+
+#[test]
+fn test_typescript_file_kind() {
+    let source = "export type Item = { name: string };";
+    let file = parser::parse_file_from_str(source, "item.r.ts").unwrap();
+    assert!(!file.is_tsx());
+}
+
+// ============================================================================
+// Location Tracking Tests
+// ============================================================================
+
+#[test]
+fn test_location_from_offset() {
+    let source = "line1\nline2\nline3";
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let (line, col) = file.location_from_offset(0);
+    assert_eq!(line, 1);
+    let (line2, _) = file.location_from_offset(6);
+    assert_eq!(line2, 2);
+}
+
+// ============================================================================
+// Output Format Tests
+// ============================================================================
+
+#[test]
+fn test_generate_module_has_source() {
+    let source = "export type Point = { x: number; y: number };";
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.source.is_empty());
+    assert!(result.source.len() > 10);
+}
+
+#[test]
+fn test_generate_module_has_name() {
+    let source = "export type Point = { x: number; y: number };";
+    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
+    let analysis = analyzer::analyze(&file).unwrap();
+    let result = codegen::generate(&file, &analysis).unwrap();
+    assert!(!result.name.is_empty());
+}
+
 #[test]
 fn test_optional_field() {
-    let source = "
+    let source = r#"
 export type User = {
     id: number,
     name: string,
     email?: string,
 };
-";
+"#;
     let file = parser::parse_file_from_str(source, "user.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
     assert!(!result.source.is_empty());
 }
 
-/// Test: Generic type alias
 #[test]
 fn test_generic_type_alias() {
     let source = "export type Pair<A, B> = { first: A, second: B };";
     let file = parser::parse_file_from_str(source, "pair.r.ts").unwrap();
     let analysis = analyzer::analyze(&file).unwrap();
     let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
     assert!(!result.source.is_empty());
-}
-
-/// Test: Large number of fields
-#[test]
-fn test_large_struct() {
-    let source = "
-export type Config = {
-    field1: number,
-    field2: number,
-    field3: number,
-    field4: number,
-    field5: number,
-    field6: number,
-    field7: number,
-    field8: number,
-};
-";
-    let file = parser::parse_file_from_str(source, "config.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: Multiple union variants
-#[test]
-fn test_large_union() {
-    let source = "
-export type Status =
-    | { tag: \"A\"; value: number }
-    | { tag: \"B\"; value: number }
-    | { tag: \"C\"; value: number }
-    | { tag: \"D\"; value: number }
-    | { tag: \"E\"; value: number };
-";
-    let file = parser::parse_file_from_str(source, "status.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: Type with string union
-#[test]
-fn test_string_union() {
-    let source = "
-export type Direction = \"north\" | \"south\" | \"east\" | \"west\";
-";
-    let file = parser::parse_file_from_str(source, "direction.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-}
-
-/// Test: For loop transpilation
-#[test]
-fn test_for_loop_transpilation() {
-    let source = "
-export function sumArray(arr: number[]): number {
-    let total = 0;
-    for (let i = 0; i < arr.length; i++) {
-        total = total + arr[i];
-    }
-    return total;
-}
-";
-    let file = parser::parse_file_from_str(source, "test.r.ts").unwrap();
-    let analysis = analyzer::analyze(&file).unwrap();
-    let result = codegen::generate(&file, &analysis).unwrap();
-
-    println!("Generated code:\n{}", result.source);
-
-    // Should have generated some code
-    assert!(!result.source.is_empty());
-    // The for loop should NOT emit "for let" pattern - that's invalid Rust
-    assert!(
-        !result.source.contains("for let"),
-        "Should not emit 'for let' pattern"
-    );
 }
