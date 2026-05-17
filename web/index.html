@@ -5,20 +5,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Runie — TypeScript to Rust Compiler with Zero Overhead</title>
-    <meta name="description" content="Runie is the developer experience layer for Rune — the TypeScript to Rust compiler with zero runtime overhead. Write .r.ts and .r.tsx files with hot reload, ownership inference, and JSX support for Ratatui, Dioxus, Axum, Bevy, SQLx, and more. Ship static binaries." />
-    <meta name="keywords" content="TypeScript to Rust compiler, TSX transpiler, zero overhead TypeScript, Rust hot reload, .r.ts files, TypeScript native performance, Rust compiler driver, TypeScript systems programming, Ratatui JSX, Dioxus TypeScript, Bevy TypeScript, Axum TypeScript, SQLx TypeScript, ownership inference, native binary from TypeScript, Rust TUI framework, TypeScript WASM, zero cost abstraction" />
+    <meta name="description"
+        content="Runie is the developer experience layer for Rune — the TypeScript to Rust compiler with zero runtime overhead. Write .r.ts and .r.tsx files with hot reload, ownership inference, and JSX support for Ratatui, Dioxus, Axum, Bevy, SQLx, and more. Ship static binaries." />
+    <meta name="keywords"
+        content="TypeScript to Rust compiler, TSX transpiler, zero overhead TypeScript, Rust hot reload, .r.ts files, TypeScript native performance, Rust compiler driver, TypeScript systems programming, Ratatui JSX, Dioxus TypeScript, Bevy TypeScript, Axum TypeScript, SQLx TypeScript, ownership inference, native binary from TypeScript, Rust TUI framework, TypeScript WASM, zero cost abstraction" />
     <meta name="author" content="Runie" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://runie.org" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://runie.org" />
     <meta property="og:title" content="Runie — TypeScript to Rust Compiler with Zero Overhead" />
-    <meta property="og:description" content="Write TypeScript, ship native Rust. Zero runtime overhead. Hot reload in dev, static binary in release. Supports Ratatui, Dioxus, Axum, Bevy, SQLx, and 12+ frameworks." />
+    <meta property="og:description"
+        content="Write TypeScript, ship native Rust. Zero runtime overhead. Hot reload in dev, static binary in release. Supports Ratatui, Dioxus, Axum, Bevy, SQLx, and 12+ frameworks." />
     <meta property="og:image" content="https://runie.org/og-image.png" />
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content="https://runie.org" />
     <meta property="twitter:title" content="Runie — TypeScript to Rust Compiler" />
-    <meta property="twitter:description" content="TypeScript syntax, Rust performance. Zero overhead transpilation with hot reload." />
+    <meta property="twitter:description"
+        content="TypeScript syntax, Rust performance. Zero overhead transpilation with hot reload." />
     <meta property="twitter:image" content="https://runie.org/og-image.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
@@ -107,15 +111,23 @@
             content: '';
             position: absolute;
             inset: 0;
-            background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.55) 48%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0.55) 52%, transparent 70%);
+            background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.55) 48%, rgba(255, 255, 255, 0.7) 50%, rgba(255, 255, 255, 0.55) 52%, transparent 70%);
             transform: translateX(-100%);
             animation: metalShine 4.5s ease-in-out infinite;
             pointer-events: none;
         }
 
         @keyframes metalShine {
-            0%, 45% { transform: translateX(-100%); }
-            55%, 100% { transform: translateX(100%); }
+
+            0%,
+            45% {
+                transform: translateX(-100%);
+            }
+
+            55%,
+            100% {
+                transform: translateX(100%);
+            }
         }
 
         .divider {
@@ -278,18 +290,16 @@
             border-radius: 8px;
             margin-top: auto;
             line-height: 1.6;
-            white-space: pre;
-            overflow: hidden;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
         }
 
         .code-block .keyword {
             color: #EF5102;
-            font-weight: 700;
         }
 
         .code-block .type {
             color: #1C1C1E;
-            font-weight: 700;
         }
 
         .code-block .fn {
@@ -340,7 +350,7 @@
             text-decoration: none;
             letter-spacing: 0.02em;
             transition: all 0.25s ease;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
             z-index: 10;
         }
 
@@ -348,7 +358,7 @@
             background: #EF5102;
             color: #111716;
             transform: translateY(-2px);
-            box-shadow: 0 12px 32px rgba(239,81,2,0.25);
+            box-shadow: 0 12px 32px rgba(239, 81, 2, 0.25);
         }
 
         .github-link svg {
@@ -401,7 +411,8 @@
         </div>
         <a class="github-link" href="https://github.com/runie-org/runie" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                <path
+                    d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
             </svg>
             GitHub
         </a>
@@ -438,34 +449,48 @@
     }
     </script>
 
-    <div aria-hidden="true" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
-      <h1>Runie — TypeScript to Rust Compiler with Zero Overhead</h1>
-      <p>Runie is the developer experience layer for Rune, a compiler driver that makes <code>.r.ts</code> and <code>.r.tsx</code> files valid source for native Rust projects. It parses TypeScript-like syntax using SWC, validates a zero-overhead subset, and transpiles to Rust source code that compiles with rustc into static binaries with no runtime dependency.</p>
-      <h2>What Runie Does</h2>
-      <p>Write TypeScript and TSX with familiar syntax. Runie (powered by the Rune compiler) transpiles it to Rust with zero runtime overhead. Development builds use hot-reloadable cdylibs for live iteration. Release builds produce single static executables indistinguishable from hand-written Rust.</p>
-      <h2>Supported Rust Frameworks</h2>
-      <ul>
-        <li>Axum — REST APIs with extractors</li>
-        <li>Actix Web — Scope-based routing</li>
-        <li>Ratatui — Terminal UI with JSX builder patterns</li>
-        <li>Tauri — Desktop commands</li>
-        <li>Dioxus — Cross-platform reactive UI</li>
-        <li>egui — Immediate-mode GUI tools</li>
-        <li>Leptos — Full-stack reactive web</li>
-        <li>Yew — Component-based WebAssembly</li>
-        <li>Bevy — ECS game engine</li>
-        <li>SQLx — Compile-time checked database queries</li>
-        <li>Tonic — gRPC services</li>
-        <li>Candle — LLM inference</li>
-      </ul>
-      <h2>TypeScript to Rust Type Mapping</h2>
-      <p>number maps to f64 or i32. string maps to String or &amp;str. boolean maps to bool. T | null maps to Option&lt;T&gt;. Tagged unions map to Rust enums. Arrays map to Vec&lt;T&gt;. Result types replace exceptions.</p>
-      <h2>Ownership Inference</h2>
-      <p>Rune automatically infers Rust ownership: const bindings are immutable, let bindings are mutable. Function parameters that are only read become &amp;T borrows. Parameters that are mutated become &amp;mut T. Consumed values move. No manual lifetime annotations required.</p>
-      <h2>Hot Reload Development</h2>
-      <p>cargo rune dev watches .r.ts and .r.tsx files, transpiles to target/rune-cache/, compiles to a versioned dylib, and atomically swaps it while preserving AppState in the host binary. Release builds inline everything into a single static binary with LTO.</p>
-      <h2>Agent-Friendly Compiler Design</h2>
-      <p>Deterministic idempotent output. Structured JSON errors with auto-fix suggestions. One-pass-per-file architecture. Self-describing HIR. Example-driven rule engine. Test-as-spec integration suite. Full source maps from Rust errors back to .r.ts line numbers.</p>
+    <div aria-hidden="true"
+        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
+        <h1>Runie — TypeScript to Rust Compiler with Zero Overhead</h1>
+        <p>Runie is the developer experience layer for Rune, a compiler driver that makes <code>.r.ts</code> and
+            <code>.r.tsx</code> files valid source for native Rust projects. It parses TypeScript-like syntax using SWC,
+            validates a zero-overhead subset, and transpiles to Rust source code that compiles with rustc into static
+            binaries with no runtime dependency.</p>
+        <h2>What Runie Does</h2>
+        <p>Write TypeScript and TSX with familiar syntax. Runie (powered by the Rune compiler) transpiles it to Rust
+            with zero runtime overhead. Development builds use hot-reloadable cdylibs for live iteration. Release builds
+            produce single static executables indistinguishable from hand-written Rust.</p>
+        <h2>Supported Rust Frameworks</h2>
+        <ul>
+            <li>Axum — REST APIs with extractors</li>
+            <li>Actix Web — Scope-based routing</li>
+            <li>Ratatui — Terminal UI with JSX builder patterns</li>
+            <li>Tauri — Desktop commands</li>
+            <li>Dioxus — Cross-platform reactive UI</li>
+            <li>egui — Immediate-mode GUI tools</li>
+            <li>Leptos — Full-stack reactive web</li>
+            <li>Yew — Component-based WebAssembly</li>
+            <li>Bevy — ECS game engine</li>
+            <li>SQLx — Compile-time checked database queries</li>
+            <li>Tonic — gRPC services</li>
+            <li>Candle — LLM inference</li>
+        </ul>
+        <h2>TypeScript to Rust Type Mapping</h2>
+        <p>number maps to f64 or i32. string maps to String or &amp;str. boolean maps to bool. T | null maps to
+            Option&lt;T&gt;. Tagged unions map to Rust enums. Arrays map to Vec&lt;T&gt;. Result types replace
+            exceptions.</p>
+        <h2>Ownership Inference</h2>
+        <p>Rune automatically infers Rust ownership: const bindings are immutable, let bindings are mutable. Function
+            parameters that are only read become &amp;T borrows. Parameters that are mutated become &amp;mut T. Consumed
+            values move. No manual lifetime annotations required.</p>
+        <h2>Hot Reload Development</h2>
+        <p>cargo rune dev watches .r.ts and .r.tsx files, transpiles to target/rune-cache/, compiles to a versioned
+            dylib, and atomically swaps it while preserving AppState in the host binary. Release builds inline
+            everything into a single static binary with LTO.</p>
+        <h2>Agent-Friendly Compiler Design</h2>
+        <p>Deterministic idempotent output. Structured JSON errors with auto-fix suggestions. One-pass-per-file
+            architecture. Self-describing HIR. Example-driven rule engine. Test-as-spec integration suite. Full source
+            maps from Rust errors back to .r.ts line numbers.</p>
     </div>
 
     <script>
@@ -473,32 +498,32 @@
             {
                 framework: 'Ratatui',
                 label: 'framework: ',
-                code: '<span class="keyword">function</span> <span class="type">App</span>() {\n  <span class="keyword">const</span> tasks = <span class="fn">useState</span>(<span class="type">Task</span>[])([]);\n\n  <span class="keyword">return</span> (\n    <span class="type">&lt;Layout></span>\n      <span class="type">&lt;Header></span>Task Manager<span class="type">&lt;/Header></span>\n      <span class="type">&lt;List></span>\n        {tasks.<span class="fn">map</span>(t => (\n          <span class="type">&lt;ListItem></span>\n            {t.done ? <span class="string">"[x]"</span> : <span class="string">"[ ]"</span>} {t.title}\n          <span class="type">&lt;/ListItem></span>\n        ))}\n      <span class="type">&lt;/List></span>\n    <span class="type">&lt;/Layout></span>\n  );\n}'
+                code: '<span class="keyword">import</span> { <span class="type">List</span>, <span class="type">ListItem</span> } <span class="keyword">from</span> <span class="string">"ratatui"</span>;\n\n<span class="keyword">function</span> <span class="type">App</span>() {\n  <span class="keyword">const</span> tasks = [<span class="string">"Build UI"</span>, <span class="string">"Ship binary"</span>];\n\n  <span class="keyword">return</span> (\n    <span class="type">&lt;List></span>\n      {tasks.<span class="fn">map</span>(t => <span class="type">&lt;ListItem></span>{t}<span class="type">&lt;/ListItem></span>)}\n    <span class="type">&lt;/List></span>\n  );\n}'
             },
             {
                 framework: 'Axum',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> router = <span class="type">Router</span>.<span class="fn">new</span>()\n  .<span class="fn">route</span>(<span class="string">"/tasks"</span>, {\n    <span class="fn">get</span>: listTasks,\n    <span class="fn">post</span>: createTask\n  })\n  .<span class="fn">layer</span>(TraceLayer.<span class="fn">new</span>())\n  .<span class="fn">with_state</span>(state);'
+                code: '<span class="keyword">import</span> { <span class="type">Router</span>, <span class="type">TraceLayer</span> } <span class="keyword">from</span> <span class="string">"axum"</span>;\n\n<span class="keyword">const</span> router = <span class="type">Router</span>.<span class="fn">new</span>()\n  .<span class="fn">route</span>(<span class="string">"/tasks"</span>, {\n    <span class="fn">get</span>: listTasks,\n    <span class="fn">post</span>: createTask\n  })\n  .<span class="fn">layer</span>(TraceLayer.<span class="fn">new</span>())\n  .<span class="fn">with_state</span>(state);'
             },
             {
                 framework: 'Dioxus',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> tasks = <span class="fn">useSignal</span>&lt;<span class="type">Task</span>[]&gt;([]);\n<span class="keyword">const</span> filter = <span class="fn">useSignal</span>(<span class="string">"all"</span>);\n\n<span class="keyword">const</span> visible = <span class="fn">useMemo</span>(() => {\n  <span class="keyword">return</span> tasks().<span class="fn">filter</span>(t => {\n    <span class="keyword">if</span> (filter() === <span class="string">"active"</span>) <span class="keyword">return</span> !t.done;\n  });\n});'
+                code: '<span class="keyword">import</span> { <span class="fn">useSignal</span>, <span class="fn">useMemo</span> } <span class="keyword">from</span> <span class="string">"dioxus"</span>;\n\n<span class="keyword">const</span> tasks = <span class="fn">useSignal</span>&lt;<span class="type">Task</span>[]&gt;([]);\n<span class="keyword">const</span> filter = <span class="fn">useSignal</span>(<span class="string">"all"</span>);\n\n<span class="keyword">const</span> visible = <span class="fn">useMemo</span>(() => {\n  <span class="keyword">return</span> tasks().<span class="fn">filter</span>(t => {\n    <span class="keyword">if</span> (filter() === <span class="string">"active"</span>) <span class="keyword">return</span> !t.done;\n  });\n});'
             },
             {
                 framework: 'SQLx',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> pool = <span class="keyword">await</span> <span class="type">PgPool</span>.<span class="fn">connect</span>(url);\n\n<span class="keyword">const</span> rows = <span class="keyword">await</span> <span class="fn">sqlx</span>.<span class="fn">queryAs</span>&lt;<span class="type">Task</span>&gt;(\n  pool,\n  <span class="string">"SELECT * FROM tasks WHERE done = false"</span>\n);'
+                code: '<span class="keyword">import</span> { <span class="type">PgPool</span>, <span class="fn">sqlx</span> } <span class="keyword">from</span> <span class="string">"sqlx"</span>;\n\n<span class="keyword">const</span> pool = <span class="keyword">await</span> <span class="type">PgPool</span>.<span class="fn">connect</span>(url);\n\n<span class="keyword">const</span> rows = <span class="keyword">await</span> <span class="fn">sqlx</span>.<span class="fn">queryAs</span>&lt;<span class="type">Task</span>&gt;(\n  pool,\n  <span class="string">"SELECT * FROM tasks WHERE done = false"</span>\n);'
             },
             {
                 framework: 'Bevy',
                 label: 'framework: ',
-                code: '<span class="type">App</span>.<span class="fn">new</span>()\n  .<span class="fn">addPlugins</span>(DefaultPlugins)\n  .<span class="fn">insertResource</span>({ score: <span class="num">0</span> })\n  .<span class="fn">addSystem</span>(update)\n  .<span class="fn">run</span>();'
+                code: '<span class="keyword">import</span> { <span class="type">App</span>, <span class="type">DefaultPlugins</span> } <span class="keyword">from</span> <span class="string">"bevy"</span>;\n\n<span class="type">App</span>.<span class="fn">new</span>()\n  .<span class="fn">addPlugins</span>(DefaultPlugins)\n  .<span class="fn">insertResource</span>({ score: <span class="num">0</span> })\n  .<span class="fn">addSystem</span>(update)\n  .<span class="fn">run</span>();'
             },
             {
                 framework: 'Candle',
                 label: 'framework: ',
-                code: '<span class="keyword">const</span> tokens = tokenizer.<span class="fn">encode</span>(prompt);\n\n<span class="keyword">for</span> (<span class="keyword">let</span> i = <span class="num">0</span>; i < maxLen; i++) {\n  <span class="keyword">const</span> logits = <span class="fn">forward</span>(model, tokens);\n  <span class="keyword">const</span> next = logits.<span class="fn">argmax</span>(1);\n  <span class="keyword">if</span> (next === eosId) <span class="keyword">break</span>;\n}'
+                code: '<span class="keyword">import</span> { <span class="fn">forward</span> } <span class="keyword">from</span> <span class="string">"candle"</span>;\n\n<span class="keyword">const</span> tokens = tokenizer.<span class="fn">encode</span>(prompt);\n\n<span class="keyword">for</span> (<span class="keyword">let</span> i = <span class="num">0</span>; i < maxLen; i++) {\n  <span class="keyword">const</span> logits = <span class="fn">forward</span>(model, tokens);\n  <span class="keyword">const</span> next = logits.<span class="fn">argmax</span>(1);\n  <span class="keyword">if</span> (next === eosId) <span class="keyword">break</span>;\n}'
             }
         ];
 
