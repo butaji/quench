@@ -2,6 +2,7 @@
 //!
 //! Emits Rust member expressions and object literals.
 
+use super::types::is_enum_type;
 use super::utils::{escape_rust_keyword, infer_struct_from_object, to_snake_case};
 use super::{emit_expr, CodeEmitter};
 use swc_ecma_ast::{Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread};
@@ -9,12 +10,25 @@ use swc_ecma_ast::{Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread};
 /// Emit a member expression.
 pub fn emit_member(emitter: &mut CodeEmitter, member_expr: &swc_ecma_ast::MemberExpr) {
     let is_nested = matches!(&*member_expr.obj, Expr::Member(_));
-    emit_expr(emitter, &member_expr.obj);
+    emit_object_for_member(emitter, &member_expr.obj);
     match &member_expr.prop {
         MemberProp::Ident(ident) => emit_property_access(emitter, ident.sym.as_ref(), is_nested),
         MemberProp::PrivateName(_) => emitter.push_str(".prop"),
         MemberProp::Computed(comp) => emit_computed_property(emitter, &member_expr.obj, comp),
     }
+}
+
+/// Emit the object part of a member expression, handling enum types specially.
+fn emit_object_for_member(emitter: &mut CodeEmitter, obj: &Expr) {
+    if let Expr::Ident(ident) = obj {
+        let name = ident.sym.as_ref();
+        // If the name looks like a type (PascalCase), emit as-is for enum access
+        if is_enum_type(name) || name.chars().next().is_some_and(|c| c.is_uppercase()) {
+            emitter.push_str(name);
+            return;
+        }
+    }
+    emit_expr(emitter, obj);
 }
 
 fn emit_property_access(emitter: &mut CodeEmitter, prop_name: &str, is_nested: bool) {

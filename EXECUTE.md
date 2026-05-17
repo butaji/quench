@@ -2,7 +2,11 @@ Spec: rune_spec_v1.md -- readonly! echa task == commit, dont push.
 
 Build a Rust compiler driver named rune that makes *.r.ts and *.r.tsx valid source files for Rust projects with zero runtime overhead. Implement as a cargo subcommand (cargo-rune). Use latest stable rust version.
 
-Code hygiene: with linter make sure that: max file size 500 lines, max function size 40 lines, max function complexity 10.
+Code hygiene: with linter make sure that: max file size 500 lines, max function size 40 lines, max function complexity 10. 
+
+Tests coverage, we need comprehensive tests coverage to make sure everything is working as expected.
+
+Examples: have a comprehensive set of examples (/examples) with the most popular scenarios of usage (using Rust standard libraries, Ratatui, and most popular libraries). Show usage of TypeScript and TSX subsets implementing those scenarios. Validate all of them.
 
 Eventually make code and arch review, fix critical and major issues, as well quick minors.
 
