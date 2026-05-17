@@ -24,7 +24,7 @@ export function render(f: Frame, state: AppState): void {
         : state.filter === Filter.Active 
             ? "Active" 
             : "Completed";
-    lines.push(`[Filter: ${filterLabel}]`);
+    lines.push("[Filter: " + filterLabel + "]");
     lines.push("");
     
     // Task list
@@ -39,24 +39,22 @@ export function render(f: Frame, state: AppState): void {
             const prefix = (getOriginalIndex(state, i, filtered) === state.selected) 
                 ? "> " 
                 : "  ";
-            lines.push(`${prefix}${marker} ${task.title}`);
+            lines.push(prefix + marker + " " + task.title);
         }
     }
     
     lines.push("");
     lines.push("────────────────────────────────────────");
-    lines.push(`  Tasks: ${state.tasks.length} total`);
+    lines.push("  Tasks: " + state.tasks.length + " total");
     lines.push("");
     lines.push("  j/k: Navigate  x: Toggle  a: Add");
     lines.push("  d: Delete     f: Filter  q: Quit");
     
-    // Render using Ratatui
+    // Render using Ratatui widgets via JSX
     const content = lines.join("\n");
-    let para = Paragraph::new(content);
-    let block = Block::default()
-        .title(" TODOX ")
-        .borders(Borders::ALL);
-    f.render_widget(para.block(block), f.size());
+    const para = <Paragraph text={content} />;
+    const block = <Block title="TODOX" borders={Borders.ALL} />;
+    f.render_widget(para.withBlock(block), f.size());
 }
 
 /// Get original index in full task list from filtered index.
