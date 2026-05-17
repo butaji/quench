@@ -52,7 +52,9 @@ impl SubsetValidator {
         self.check_type_restrictions(line, line_num)?;
         self.check_keyword_restrictions(line, line_num)?;
         self.check_operators(line, line_num)?;
-        self.check_statements(line, line_num)
+        self.check_statements(line, line_num)?;
+        self.check_runtime_inspection(line, line_num)?;
+        self.check_dynamic_access(line, line_num)
     }
 
     /// Check if line is a comment.
@@ -85,6 +87,9 @@ impl SubsetValidator {
         if line.starts_with("var ") {
             self.push_error("no-var", "Use 'const' or 'let' instead of 'var'.", line_num);
         }
+        if line.contains(" delete ") || line.starts_with("delete ") {
+            self.push_error("no-delete", "delete is forbidden. Use ownership and explicit drops.", line_num);
+        }
         Ok(())
     }
 
@@ -92,6 +97,23 @@ impl SubsetValidator {
     fn check_operators(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
         if Self::has_loose_equality(line) {
             self.push_error("no-loose-equality", "Use strict equality (=== or !==).", line_num);
+        }
+        self.check_implicit_coercion(line, line_num)
+    }
+
+    /// Check for implicit coercion patterns like `if ("")` or `if (0)`.
+    fn check_implicit_coercion(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        // Check for falsy value in condition without comparison
+        // e.g., `if (str)` or `if (num)` where str/num are direct identifiers
+        if line.starts_with("if (") {
+            let condition = Self::extract_condition(line, "if");
+            if Self::is_falsy_pattern(&condition) {
+                self.push_error(
+                    "no-implicit-coercion",
+                    "Implicit boolean coercion forbidden. Use explicit comparison (e.g., s.is_empty())",
+                    line_num,
+                );
+            }
         }
         Ok(())
     }
@@ -107,7 +129,115 @@ impl SubsetValidator {
         if line.starts_with("with ") {
             self.push_error("no-with", "with statement is forbidden.", line_num);
         }
+        if line.contains("for (") && line.contains(" in ") {
+            self.push_error("no-for-in", "for...in is forbidden. Use for...of with Object.keys() or Map.", line_num);
+        }
+        if line.contains(" arguments") || line.contains("(arguments") {
+            self.push_error("no-arguments", "Use rest parameters (...args) instead of 'arguments'.", line_num);
+        }
         Ok(())
+    }
+
+    /// Check for runtime type inspection.
+    fn check_runtime_inspection(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        if line.contains("typeof ") {
+            self.push_error("no-typeof", "typeof is forbidden. Runtime type inspection is not allowed.", line_num);
+        }
+        if line.contains(" instanceof ") {
+            self.push_error("no-instanceof", "instanceof is forbidden. Use explicit type checking.", line_num);
+        }
+        Ok(())
+    }
+
+    /// Check for dynamic property access.
+    fn check_dynamic_access(&mut self, line: &str, line_num: u32) -> Result<(), ValidationError> {
+        // Match obj[key] pattern where key is not a number literal
+        if Self::has_dynamic_bracket_access(line) {
+            self.push_error(
+                "no-dynamic-access",
+                "Dynamic property access (obj[key]) is forbidden. Use Map<K,V> for dynamic keys.",
+                line_num,
+            );
+        }
+        Ok(())
+    }
+
+    /// Extract condition from statement.
+    fn extract_condition(line: &str, keyword: &str) -> String {
+        if let Some(start) = line.find(&format!("{keyword} (")) {
+            let after = &line[start + keyword.len() + 2..];
+            let mut depth = 0;
+            let mut end = 0;
+            for (i, c) in after.chars().enumerate() {
+                match c {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        if depth == 0 {
+                            end = i;
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            return after[..end].trim().to_string();
+        }
+        String::new()
+    }
+
+    /// Check if condition is a falsy pattern (bare identifier or literal).
+    fn is_falsy_pattern(condition: &str) -> bool {
+        let trimmed = condition.trim();
+        // Empty string literal
+        if trimmed == "''" || trimmed == "\"\"" || trimmed == "`" {
+            return true;
+        }
+        // Numeric literal
+        if trimmed.parse::<f64>().is_ok() {
+            return true;
+        }
+        // Boolean literal
+        if trimmed == "true" || trimmed == "false" {
+            return true;
+        }
+        // Direct identifier (would be falsy check without comparison)
+        // This is conservative - allow identifiers that are clearly booleans
+        if trimmed == "null" || trimmed == "undefined" {
+            return true;
+        }
+        false
+    }
+
+    /// Check for dynamic bracket access patterns.
+    fn has_dynamic_bracket_access(line: &str) -> bool {
+        let bytes = line.as_bytes();
+        for i in 0..bytes.len().saturating_sub(4) {
+            // Look for [...]
+            if bytes[i] == b'[' {
+                // Find matching ]
+                let mut depth = 0;
+                let mut j = i;
+                for c in &bytes[i..] {
+                    match c {
+                        b'[' | b'(' | b'{' => depth += 1,
+                        b']' | b')' | b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    if depth == 0 {
+                        break;
+                    }
+                    j += 1;
+                }
+                // Check if content is not a simple number (allowed for arrays)
+                let inner = &line[i + 1..i + j.min(bytes.len())];
+                if !inner.is_empty() && inner.trim().parse::<f64>().is_err() {
+                    // This is likely a dynamic key access
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check for loose equality operators (== and !=).

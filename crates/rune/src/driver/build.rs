@@ -203,6 +203,8 @@ impl BuildDriver {
     }
 
     fn build_crate(&self, release: bool) -> Result<()> {
+        use crate::reload::ErrorTranslator;
+
         let manifest = self.cache.generated_cargo_toml();
         let mut cmd = ProcCommand::new("cargo");
         cmd.arg("build");
@@ -222,7 +224,22 @@ impl BuildDriver {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::RuneError::Cargo(stderr.to_string()));
+            let translator = ErrorTranslator::new();
+            let translated_errors = translator.translate_all(&stderr);
+
+            // Print translated errors
+            for err in &translated_errors {
+                eprintln!("{}", err);
+            }
+
+            // If no translated errors, print original
+            if translated_errors.is_empty() {
+                return Err(crate::RuneError::Cargo(stderr.to_string()));
+            }
+
+            return Err(crate::RuneError::Cargo(
+                "Compilation failed. See errors above.".to_string(),
+            ));
         }
         Ok(())
     }

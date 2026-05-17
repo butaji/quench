@@ -74,3 +74,91 @@ fn test_subset_validator_comments_ignored() {
     let result = validator.validate(&file);
     assert!(result.is_ok());
 }
+
+// Additional tests for new validation features
+
+#[test]
+fn test_subset_validator_delete() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("delete obj.key;");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_for_in() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("for (const key in obj) {}");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_typeof() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("const t = typeof x;");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_instanceof() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("if (x instanceof String) {}");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_arguments() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("console.log(arguments);");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_implicit_coercion() {
+    let mut validator = SubsetValidator::new();
+    // Bare identifier is not flagged (could be boolean variable)
+    let file = create_test_file("if (isActive) {}");
+    let result = validator.validate(&file);
+    assert!(result.is_ok());
+    
+    // Null/undefined in condition is flagged
+    let file = create_test_file("if (null) {}");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_implicit_coercion_empty_string() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("if ('') {}");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_implicit_coercion_numeric() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("if (0) {}");
+    let result = validator.validate(&file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_subset_validator_valid_explicit_check() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("if (str !== '') {}");
+    let result = validator.validate(&file);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_subset_validator_valid_map_access() {
+    let mut validator = SubsetValidator::new();
+    let file = create_test_file("const val = map.get(key);");
+    let result = validator.validate(&file);
+    assert!(result.is_ok());
+}

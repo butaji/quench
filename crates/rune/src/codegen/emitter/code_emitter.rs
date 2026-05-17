@@ -6,6 +6,15 @@ use super::types::{EnumDefinition, RustType, StructFields};
 use crate::codegen::emitter::utils::{to_pascal_case, to_snake_case};
 use swc_ecma_ast::Stmt;
 
+/// A warning generated during code emission.
+#[derive(Debug, Clone)]
+pub struct EmitterWarning {
+    /// Warning code identifier
+    pub code: &'static str,
+    /// Warning message
+    pub message: String,
+}
+
 /// Emits Rust code for types and functions.
 pub struct CodeEmitter {
     /// Output buffer
@@ -16,6 +25,8 @@ pub struct CodeEmitter {
     expected_return: Option<String>,
     /// Struct name prefix for the current object literal context
     object_struct_name: Option<String>,
+    /// Warnings collected during emission
+    warnings: Vec<EmitterWarning>,
 }
 
 impl CodeEmitter {
@@ -51,7 +62,28 @@ impl CodeEmitter {
             indent: 0,
             expected_return: None,
             object_struct_name: None,
+            warnings: Vec::new(),
         }
+    }
+
+    /// Emit a warning.
+    pub fn emit_warning(&mut self, code: &'static str, message: &str) {
+        self.warnings.push(EmitterWarning {
+            code,
+            message: message.to_string(),
+        });
+    }
+
+    /// Get all warnings.
+    #[must_use]
+    pub fn warnings(&self) -> &[EmitterWarning] {
+        &self.warnings
+    }
+
+    /// Take all warnings.
+    #[must_use]
+    pub fn take_warnings(&mut self) -> Vec<EmitterWarning> {
+        std::mem::take(&mut self.warnings)
     }
 
     /// Emit a struct definition.
