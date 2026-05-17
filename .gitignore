@@ -1,6 +1,6 @@
 target/
 .rune-cache/
-/.ralph
+.ralph/
 
 # macOS
 .DS_Store
@@ -19,4 +19,3 @@ target/
 # Rune cache
 target/rune-cache/
 target/hot/
-.ralph/RALPH.md
