@@ -65,7 +65,7 @@
         .runie-text {
             font-family: 'Inter', sans-serif;
             font-weight: 700;
-            font-size: 2.5rem;
+            font-size: 5rem;
             color: #3C3C3C;
             letter-spacing: -0.02em;
             line-height: 1;
@@ -74,7 +74,7 @@
         .runie-dot {
             font-family: 'Inter', sans-serif;
             font-weight: 700;
-            font-size: 2.5rem;
+            font-size: 5rem;
             color: #EF5102;
             letter-spacing: -0.02em;
             line-height: 1;
@@ -120,9 +120,32 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            justify-content: flex-end;
+            justify-content: center;
             align-items: center;
-            padding: 1.75rem 2rem;
+            padding: 2rem;
+        }
+
+        .vertical-text {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 1.5rem;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            line-height: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .ts-line {
+            color: #1C1C1E;
+        }
+
+        .rust-line {
+            color: #1C1C1E;
         }
 
         .metric-number {
@@ -215,6 +238,39 @@
             max-width: 260px;
         }
 
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: #1C1C1E;
+            background: #E8E8E8;
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
+            margin-top: 1.25rem;
+            line-height: 1.6;
+        }
+
+        .code-block .keyword {
+            color: #EF5102;
+            font-weight: 700;
+        }
+
+        .code-block .type {
+            color: #1C1C1E;
+            font-weight: 700;
+        }
+
+        .code-block .fn {
+            color: #3C3C3C;
+        }
+
+        .code-block .string {
+            color: #6B7280;
+        }
+
+        .code-block .num {
+            color: #6B7280;
+        }
+
         @media (max-width: 560px) {
             .card {
                 transform: scale(0.7);
@@ -251,33 +307,81 @@
                 <div class="orange-panel">
                     <div class="stripes"></div>
                     <div class="metric-area">
-                        <div class="metric-number">100</div>
-                        <div class="percent-circle">
-                            <span class="percent-text">%</span>
+                        <div class="vertical-text">
+                            <span class="ts-line">TYPESCRIPT & TSX</span>
+                            <span class="rust-line">RUST PERFORMANCE</span>
                         </div>
                     </div>
                 </div>
                 <div class="content-panel">
                     <div class="nav-row">
-                        <span class="nav-arrow">←</span>
+                        <span class="nav-arrow" id="prev-arrow">←</span>
                         <span class="nav-label">
-                            <span>framework: </span>
-                            <span>Ratatui</span>
+                            <span id="framework-label">framework: </span>
+                            <span id="framework-name">Ratatui</span>
                         </span>
-                        <span class="nav-arrow">→</span>
+                        <span class="nav-arrow" id="next-arrow">→</span>
                     </div>
-                    <div>
-                        <h2 class="heading">
-                            Code
-                            <br />
-                            Example
-                        </h2>
-                        <p class="description">Here some code</p>
-                    </div>
+                    <div class="code-block" id="code-example"></div>
                 </div>
             </div>
         </div>
     </div>
+
+    <script>
+        const examples = [
+            {
+                framework: 'Ratatui',
+                label: 'framework: ',
+                code: '<span class="keyword">const</span> terminal = <span class="type">Terminal</span>.<span class="fn">new</span>(<span class="type">Backend</span>.<span class="fn">new</span>());<br><span class="keyword">while</span> (app.running) {<br>  terminal.<span class="fn">draw</span>((frame) => {<br>    frame.<span class="fn">render</span>(view, frame.<span class="fn">area</span>());<br>  });<br>}'
+            },
+            {
+                framework: 'Axum',
+                label: 'framework: ',
+                code: '<span class="keyword">return</span> <span class="type">Router</span>.<span class="fn">new</span>()<br>  .<span class="fn">route</span>(<span class="string">"/tasks"</span>, { <span class="fn">get</span>: list })<br>  .<span class="fn">layer</span>(TraceLayer.<span class="fn">new</span>());'
+            },
+            {
+                framework: 'Dioxus',
+                label: 'framework: ',
+                code: '<span class="keyword">const</span> tasks = <span class="fn">useSignal</span>&lt;<span class="type">Task</span>[]&gt;([]);<br><span class="keyword">const</span> filter = <span class="fn">useSignal</span>(<span class="string">"all"</span>);<br><br><span class="keyword">const</span> filtered = <span class="fn">useMemo</span>(() => {<br>  <span class="keyword">return</span> tasks().<span class="fn">filter</span>((t) => !t.done);<br>});'
+            },
+            {
+                framework: 'SQLx',
+                label: 'framework: ',
+                code: '<span class="keyword">const</span> rows = <span class="keyword">await</span> <span class="fn">queryAs</span>&lt;<span class="type">Task</span>&gt;(pool, <span class="string">"SELECT * FROM tasks"</span>);'
+            },
+            {
+                framework: 'Bevy',
+                label: 'framework: ',
+                code: '<span class="keyword">const</span> state: <span class="type">GameState</span> = { score: <span class="num">0</span>, paused: <span class="keyword">false</span> };<br>app.<span class="fn">addPlugins</span>(DefaultPlugins)<br>  .<span class="fn">insertResource</span>(state)<br>  .<span class="fn">addSystem</span>(update);'
+            },
+            {
+                framework: 'Candle',
+                label: 'framework: ',
+                code: '<span class="keyword">const</span> logits = <span class="fn">forward</span>(model, tokens);<br><span class="keyword">const</span> next = logits.<span class="fn">argmax</span>(<span class="num">1</span>);<br><span class="keyword">if</span> (next === eos) <span class="keyword">break</span>;'
+            }
+        ];
+
+        let currentIndex = 0;
+
+        function updateExample() {
+            const example = examples[currentIndex];
+            document.getElementById('framework-name').textContent = example.framework;
+            document.getElementById('code-example').innerHTML = example.code;
+        }
+
+        document.getElementById('prev-arrow').addEventListener('click', () => {
+            currentIndex = (currentIndex - 1 + examples.length) % examples.length;
+            updateExample();
+        });
+
+        document.getElementById('next-arrow').addEventListener('click', () => {
+            currentIndex = (currentIndex + 1) % examples.length;
+            updateExample();
+        });
+
+        updateExample();
+    </script>
 
 </body>
 
