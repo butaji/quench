@@ -104,65 +104,39 @@ impl ErrorTranslator {
     }
 
     /// Parse location info from rustc error output.
-    /// Handles multi-line rustc output where --> can be on next line.
     fn parse_rustc_location(&self, rust_error: &str) -> Option<ParsedLocation> {
-        // Handle multi-line format:
-        // error[E0382]: borrow of moved value: `x`
-        //   --> src/main.rs:10:5
-        //    |
-        // 10 | let x = s;
-        //    |         ^ value moved here
+        self.try_parse_multiline_format(rust_error)
+            .or_else(|| self.try_parse_single_line_format(rust_error))
+    }
 
-        // First, look for --> pattern which indicates the location
-        if let Some(idx) = rust_error.find("-->") {
-            let before_arrow = rust_error[..idx].trim();
-            let after_arrow = rust_error[idx + 3..].trim();
+    fn try_parse_multiline_format(&self, rust_error: &str) -> Option<ParsedLocation> {
+        let idx = rust_error.find("-->")?;
+        let before_arrow = rust_error[..idx].trim();
+        let after_arrow = rust_error[idx + 3..].trim();
 
-            // Extract message from before arrow
-            let message = before_arrow
-                .lines()
-                .last()
-                .unwrap_or(before_arrow)
-                .to_string();
+        let message = before_arrow.lines().last().unwrap_or(before_arrow).to_string();
+        self.parse_location_parts(after_arrow, message)
+    }
 
-            // Parse location after arrow (format: filename:line:col)
-            let loc_parts: Vec<&str> = after_arrow.split(':').collect();
-            if loc_parts.len() >= 3 {
-                let file = loc_parts[0].trim().to_string();
-                let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
-                let column: u32 = loc_parts[2].trim().parse().unwrap_or(0);
-
-                return Some(ParsedLocation {
-                    file,
-                    line,
-                    column,
-                    message,
-                });
-            }
-        }
-
-        // Fallback: try to parse as single-line format
+    fn try_parse_single_line_format(&self, rust_error: &str) -> Option<ParsedLocation> {
         let parts: Vec<&str> = rust_error.split("--> ").collect();
         if parts.len() < 2 {
             return None;
         }
-
         let location = parts[1].trim();
         let message = parts[0].trim().to_string();
+        self.parse_location_parts(location, message)
+    }
 
+    fn parse_location_parts(&self, location: &str, message: String) -> Option<ParsedLocation> {
         let loc_parts: Vec<&str> = location.split(':').collect();
         if loc_parts.len() < 3 {
             return None;
         }
-
-        let file = loc_parts[0].trim().to_string();
-        let line: u32 = loc_parts[1].trim().parse().unwrap_or(1);
-        let column: u32 = loc_parts[2].trim().parse().unwrap_or(0);
-
         Some(ParsedLocation {
-            file,
-            line,
-            column,
+            file: loc_parts[0].trim().to_string(),
+            line: loc_parts[1].trim().parse().unwrap_or(1),
+            column: loc_parts[2].trim().parse().unwrap_or(0),
             message,
         })
     }
@@ -264,6 +238,149 @@ mod tests {
         let error = "error[E0382]: borrow of moved value: `x` --> src/main.rs:10:5";
         let result = translator.translate(error);
 
+        assert_eq!(result.line, 10);
+    }
+
+    #[test]
+    fn test_parse_multiline_format() {
+        let translator = ErrorTranslator::new();
+        let input = "error[E0382]: borrow of moved value: `s`\n  --> src/main.r.ts:15:10";
+        let result = translator.parse_rustc_location(input);
+
+        assert!(result.is_some());
+        let loc = result.unwrap();
+        assert_eq!(loc.file, "src/main.r.ts");
+        assert_eq!(loc.line, 15);
+        assert_eq!(loc.column, 10);
+        assert!(loc.message.contains("borrow of moved value"));
+    }
+
+    #[test]
+    fn test_parse_single_line_format() {
+        let translator = ErrorTranslator::new();
+        let input = "error[E0505]: cannot move out --> lib.rs:42:8";
+        let result = translator.parse_rustc_location(input);
+
+        assert!(result.is_some());
+        let loc = result.unwrap();
+        assert_eq!(loc.file, "lib.rs");
+        assert_eq!(loc.line, 42);
+        assert_eq!(loc.column, 8);
+    }
+
+    #[test]
+    fn test_parse_location_with_complex_path() {
+        let translator = ErrorTranslator::new();
+        let input = "error[E0601]: --> crates/app/src/main.r.ts:5:3";
+        let result = translator.parse_rustc_location(input);
+
+        assert!(result.is_some());
+        let loc = result.unwrap();
+        assert_eq!(loc.file, "crates/app/src/main.r.ts");
+        assert_eq!(loc.line, 5);
+    }
+
+    #[test]
+    fn test_parse_invalid_format_returns_none() {
+        let translator = ErrorTranslator::new();
+        let input = "some random text without arrow";
+        let result = translator.parse_rustc_location(input);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_translate_move_error() {
+        let translator = ErrorTranslator::new();
+        let error = "error[E0382]: cannot move out --> file.rs:1:1";
+        let result = translator.translate(error);
+
+        assert!(result.message.contains("Move error"));
+        assert!(result.message.contains(".clone()"));
+    }
+
+    #[test]
+    fn test_translate_borrow_error() {
+        let translator = ErrorTranslator::new();
+        let error = "error[E0382]: borrow of moved value --> file.rs:1:1";
+        let result = translator.translate(error);
+
+        assert!(result.message.contains("Borrow error"));
+    }
+
+    #[test]
+    fn test_translate_trait_error() {
+        let translator = ErrorTranslator::new();
+        let error = "error[E0277]: Foo does not implement Bar --> file.rs:1:1";
+        let result = translator.translate(error);
+
+        assert!(result.message.contains("Type error"));
+    }
+
+    #[test]
+    fn test_translate_type_mismatch() {
+        let translator = ErrorTranslator::new();
+        let error = "error[E0308]: expected i32 found String --> file.rs:1:1";
+        let result = translator.translate(error);
+
+        assert!(result.message.contains("Type mismatch"));
+        assert!(result.message.contains("i32"));
+        assert!(result.message.contains("String"));
+    }
+
+    #[test]
+    fn test_translate_integer_division_warning() {
+        let translator = ErrorTranslator::new();
+        let error = "warning: integer division --> file.rs:1:1";
+        let result = translator.translate(error);
+
+        assert!(result.message.contains("Integer division"));
+        assert!(result.message.contains("i32"));
+    }
+
+    #[test]
+    fn test_translate_all_filters_errors_and_warnings() {
+        let translator = ErrorTranslator::new();
+        let output = "error[E0001]: first error\nnote: some note\nwarning[E0002]: some warning\ninfo: some info";
+        let results = translator.translate_all(output);
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].message.contains("first error"));
+        assert!(results[1].message.contains("some warning"));
+    }
+
+    #[test]
+    fn test_source_mapping() {
+        let mut translator = ErrorTranslator::new();
+        translator.register_mapping(
+            Path::new("target/generated/main.rs"),
+            Path::new("src/main.r.ts"),
+        );
+
+        let error = "error[E0001]: test --> target/generated/main.rs:10:5";
+        let result = translator.translate(error);
+
+        assert_eq!(result.file, "src/main.r.ts");
+    }
+
+    #[test]
+    fn test_line_mapping() {
+        let mut translator = ErrorTranslator::new();
+        translator.register_line_map("test.rs", vec![1, 5, 10, 15, 20]);
+
+        let error = "error[E0001]: test --> test.rs:3:1";
+        let result = translator.translate(error);
+
+        assert_eq!(result.line, 10);
+    }
+
+    #[test]
+    fn test_unknown_file_when_no_mapping() {
+        let translator = ErrorTranslator::new();
+        let error = "error[E0001]: test --> unknown.rs:10:5";
+        let result = translator.translate(error);
+
+        assert_eq!(result.file, "unknown.rs");
         assert_eq!(result.line, 10);
     }
 }
