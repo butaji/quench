@@ -312,6 +312,7 @@ impl TypeCollector {
         String::from("()")
     }
 
+    #[allow(dead_code)]
     fn extract_result_error_type(&mut self, union: &swc_ecma_ast::TsUnionType) -> String {
         for ts_type in &union.types {
             if self.is_error_variant(ts_type) {

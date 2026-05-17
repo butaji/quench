@@ -26,9 +26,9 @@ pub fn emit_switch_case(emitter: &mut CodeEmitter, case: &SwitchCase) {
     if let Some(test) = &case.test {
         emit_case_pattern_for_test(emitter, test);
     } else {
-        emitter.push_str("_ ");
+        emitter.push_str("_");
     }
-    emitter.push_str("=> {\n");
+    emitter.push_str(" {\n");
 
     emitter.inc_indent();
     for stmt in &case.cons {
@@ -49,7 +49,13 @@ fn emit_case_pattern_for_test(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Ex
             emit_tagged_variant_pattern(emitter, member);
         }
         swc_ecma_ast::Expr::Ident(ident) => {
-            emitter.push_str(&to_rust_name(ident.sym.as_ref()));
+            // For enum types, preserve PascalCase; for values, convert to snake_case
+            let name = ident.sym.as_ref();
+            if is_enum_type(name) {
+                emitter.push_str(name);
+            } else {
+                emitter.push_str(&to_rust_name(name));
+            }
         }
         swc_ecma_ast::Expr::Lit(lit) => {
             if let swc_ecma_ast::Lit::Str(s) = lit {
@@ -60,6 +66,7 @@ fn emit_case_pattern_for_test(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Ex
         }
         _ => emit_expr(emitter, test),
     }
+    emitter.push_str(" => ");
 }
 
 /// Emit a tagged variant pattern from member access.

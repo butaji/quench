@@ -27,7 +27,7 @@ pub fn emit_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         Expr::JSXElement(_) | Expr::JSXFragment(_) => emit_jsx_placeholder(emitter),
         Expr::Await(await_expr) => emit_await_expr(emitter, await_expr),
         Expr::Yield(_) => emitter.push_str("()"),
-        Expr::Update(_) => emitter.push_str("()"),
+        Expr::Update(update_expr) => emit_update_expr(emitter, update_expr),
         Expr::Assign(_) => emit_assign_expr(emitter, expr),
         Expr::Seq(_) => emitter.push_str("()"),
         _ => emitter.push_str("()"),
@@ -299,6 +299,16 @@ fn emit_assign_expr(emitter: &mut CodeEmitter, expr: &Expr) {
         emit_expr(emitter, &assign.right);
     } else {
         emitter.push_str("()");
+    }
+}
+
+/// Emit an update expression (i++, i--, ++i, --i).
+fn emit_update_expr(emitter: &mut CodeEmitter, update: &swc_ecma_ast::UpdateExpr) {
+    // For Rust, convert i++ to i += 1
+    emit_expr(emitter, &update.arg);
+    match update.op {
+        swc_ecma_ast::UpdateOp::PlusPlus => emitter.push_str(" += 1"),
+        swc_ecma_ast::UpdateOp::MinusMinus => emitter.push_str(" -= 1"),
     }
 }
 

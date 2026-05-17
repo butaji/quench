@@ -78,19 +78,30 @@ impl AstWalker {
     }
 
     fn emit_imports(&mut self) {
+        let protocol_types = ["Task", "AppState", "Filter"];
         for (path, names) in &self.imports {
             let clean_path = path.trim_matches('"');
             if clean_path.starts_with("native:") {
                 continue;
             }
-            let protocol_types = ["Task", "AppState", "Filter"];
-            if names.iter().all(|n| protocol_types.contains(&n.as_str())) {
+
+            // Filter out types that are in protocol (already imported via protocol)
+            let filtered_names: Vec<&String> = names
+                .iter()
+                .filter(|n| !protocol_types.contains(&n.as_str()))
+                .collect();
+
+            if filtered_names.is_empty() {
                 continue;
             }
 
             let rust_path = self.convert_import_path(clean_path);
-            let names_str = names.join(", ");
-            self.emitter.push_line(&format!("use {}::{{{}}};", rust_path, names_str));
+            let names_str = filtered_names
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.emitter.push_line(&format!("use {rust_path}::{{{names_str}}};"));
         }
     }
 
@@ -98,7 +109,15 @@ impl AstWalker {
         if path.starts_with("./") {
             let path = path.trim_start_matches("./");
             let path = path.replace(".r.ts", "").replace(".r.tsx", "");
-            let parts: Vec<&str> = path.split('/').collect();
+            let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+            let rust_parts: Vec<String> = parts.iter().map(|p| to_snake_case(p)).collect();
+            return format!("crate::generated::{}", rust_parts.join("::"));
+        }
+        // Handle ../ paths (relative to current directory)
+        if path.starts_with("../") {
+            let path = path.trim_start_matches("../");
+            let path = path.replace(".r.ts", "").replace(".r.tsx", "");
+            let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
             let rust_parts: Vec<String> = parts.iter().map(|p| to_snake_case(p)).collect();
             return format!("crate::generated::{}", rust_parts.join("::"));
         }
