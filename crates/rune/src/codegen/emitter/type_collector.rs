@@ -116,6 +116,16 @@ impl TypeCollector {
             return;
         }
 
+        // Check for Result pattern first (more specific than tagged union)
+        if let TsType::TsUnionOrIntersectionType(
+            swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u),
+        ) = type_ann {
+            if self.is_result_pattern(u) {
+                self.collect_result_type(name, u);
+                return;
+            }
+        }
+
         if let TsType::TsUnionOrIntersectionType(
             swc_ecma_ast::TsUnionOrIntersectionType::TsUnionType(u),
         ) = type_ann {
@@ -201,6 +211,149 @@ impl TypeCollector {
         }
     }
 
+    /// Check if this is a Result pattern: {ok: true, value: T} | {ok: false, error: E}
+    fn is_result_pattern(&self, union: &swc_ecma_ast::TsUnionType) -> bool {
+        if union.types.len() != 2 {
+            return false;
+        }
+
+        let ok_variant = union.types.iter().find(|t| self.is_ok_variant(t));
+        let err_variant = union.types.iter().find(|t| self.is_error_variant(t));
+
+        ok_variant.is_some() && err_variant.is_some()
+    }
+
+    fn is_ok_variant(&self, ts_type: &TsType) -> bool {
+        let TsType::TsTypeLit(lit) = ts_type else { return false };
+        let mut has_ok_true = false;
+        let mut has_value = false;
+
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                if let Some(type_ann) = &prop.type_ann {
+                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        ident.sym.as_ref()
+                    } else {
+                        continue;
+                    };
+
+                    if field_name == "ok" && self.is_true_literal(&type_ann.type_ann) {
+                        has_ok_true = true;
+                    }
+                    if field_name == "value" {
+                        has_value = true;
+                    }
+                }
+            }
+        }
+
+        has_ok_true && has_value
+    }
+
+    fn is_error_variant(&self, ts_type: &TsType) -> bool {
+        let TsType::TsTypeLit(lit) = ts_type else { return false };
+        let mut has_ok_false = false;
+        let mut has_error = false;
+
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                if let Some(type_ann) = &prop.type_ann {
+                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                        ident.sym.as_ref()
+                    } else {
+                        continue;
+                    };
+
+                    if field_name == "ok" && self.is_false_literal(&type_ann.type_ann) {
+                        has_ok_false = true;
+                    }
+                    if field_name == "error" {
+                        has_error = true;
+                    }
+                }
+            }
+        }
+
+        has_ok_false && has_error
+    }
+
+    fn is_true_literal(&self, ty: &TsType) -> bool {
+        if let TsType::TsLitType(lit) = ty {
+            return matches!(lit.lit, swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: true, .. }));
+        }
+        false
+    }
+
+    fn is_false_literal(&self, ty: &TsType) -> bool {
+        if let TsType::TsLitType(lit) = ty {
+            return matches!(lit.lit, swc_ecma_ast::TsLit::Bool(swc_ecma_ast::Bool { value: false, .. }));
+        }
+        false
+    }
+
+    /// Collect a Result type and register it for emission
+    fn collect_result_type(&mut self, name: &str, union: &swc_ecma_ast::TsUnionType) {
+        // Extract value type from the ok variant
+        let value_type = self.extract_result_value_type(union);
+
+        // Store the Result type info for later use during type resolution
+        // We use the resolver to handle this
+        self.resolver.register_result_type(name, value_type);
+    }
+
+    fn extract_result_value_type(&mut self, union: &swc_ecma_ast::TsUnionType) -> String {
+        for ts_type in &union.types {
+            if self.is_ok_variant(ts_type) {
+                if let TsType::TsTypeLit(lit) = ts_type.as_ref() {
+                    return self.extract_field_type(lit, "value");
+                }
+            }
+        }
+        String::from("()")
+    }
+
+    fn extract_result_error_type(&mut self, union: &swc_ecma_ast::TsUnionType) -> String {
+        for ts_type in &union.types {
+            if self.is_error_variant(ts_type) {
+                if let TsType::TsTypeLit(lit) = ts_type.as_ref() {
+                    return self.extract_field_type(lit, "error");
+                }
+            }
+        }
+        String::from("String")
+    }
+
+    fn extract_field_type(&mut self, lit: &swc_ecma_ast::TsTypeLit, field_name: &str) -> String {
+        for member in &lit.members {
+            if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
+                let name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
+                    ident.sym.as_ref()
+                } else {
+                    continue;
+                };
+
+                if name == field_name {
+                    if let Some(type_ann) = &prop.type_ann {
+                        return self.resolver.resolve(&type_ann.type_ann).to_string();
+                    }
+                }
+            }
+        }
+        String::from("()")
+    }
+
+    fn is_string_type(&self, ty: &TsType) -> bool {
+        // Check for string keyword (string)
+        if let TsType::TsKeywordType(k) = ty {
+            return k.kind == swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword;
+        }
+        // Check for string literal type ("Move")
+        if let TsType::TsLitType(lit) = ty {
+            return matches!(lit.lit, swc_ecma_ast::TsLit::Str(_));
+        }
+        false
+    }
+
     fn is_tagged_variant(&self, ts_type: &TsType) -> bool {
         let TsType::TsTypeLit(lit) = ts_type else { return false };
         lit.members.iter().any(|m| self.has_string_tag(m))
@@ -209,15 +362,7 @@ impl TypeCollector {
     fn has_string_tag(&self, member: &swc_ecma_ast::TsTypeElement) -> bool {
         let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member else { return false };
         let Some(type_ann) = &prop.type_ann else { return false };
-        self.is_string_keyword(&type_ann.type_ann)
-    }
-
-    fn is_string_keyword(&self, ty: &TsType) -> bool {
-        if let TsType::TsKeywordType(k) = ty {
-            k.kind == swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword
-        } else {
-            false
-        }
+        self.is_string_type(&type_ann.type_ann)
     }
 
     pub(super) fn collect_tagged_union(&mut self, name: &str, types: &[Box<TsType>]) {
@@ -252,18 +397,32 @@ impl TypeCollector {
         if tag.is_empty() { None } else { Some((tag, fields)) }
     }
 
-    fn extract_property(&mut self, prop: &swc_ecma_ast::TsPropertySignature, enum_name: &str, tag_buffer: &mut String) -> Option<(String, RustType)> {
+    fn extract_property(&mut self, prop: &swc_ecma_ast::TsPropertySignature, _enum_name: &str, tag_buffer: &mut String) -> Option<(String, RustType)> {
         let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() else { return None };
         let field_name = ident.sym.to_string();
         let type_ann = prop.type_ann.as_ref()?;
         let ty = self.resolver.resolve(&type_ann.type_ann);
 
-        if field_name == "tag" && self.is_string_keyword(&type_ann.type_ann) {
-            *tag_buffer = format!("{}{}", enum_name.chars().next()?.to_uppercase(), &enum_name[1..]);
+        if field_name == "tag" && self.is_string_type(&type_ann.type_ann) {
+            // Extract the actual tag value from string literal
+            let tag_value = self.extract_string_value(&type_ann.type_ann);
+            *tag_buffer = tag_value;
             None
         } else {
             Some((field_name, ty))
         }
+    }
+
+    fn extract_string_value(&self, ty: &TsType) -> String {
+        if let TsType::TsLitType(lit) = ty {
+            if let swc_ecma_ast::TsLit::Str(s) = &lit.lit {
+                // Extract string value and strip surrounding quotes if present
+                let raw = format!("{:?}", s.value);
+                return raw.trim_matches('"').to_string();
+            }
+        }
+        // Fallback for string keyword - use enum name
+        String::new()
     }
 
     #[must_use]

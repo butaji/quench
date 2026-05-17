@@ -9,6 +9,7 @@ use super::RustType;
 pub struct TypeResolver {
     anonymous_struct_counter: usize,
     pending_anonymous_structs: Vec<(String, StructFields)>,
+    result_types: std::collections::HashMap<String, String>,
 }
 
 impl TypeResolver {
@@ -17,7 +18,13 @@ impl TypeResolver {
         Self {
             anonymous_struct_counter: 0,
             pending_anonymous_structs: Vec::new(),
+            result_types: std::collections::HashMap::new(),
         }
+    }
+
+    /// Register a Result type with its value type
+    pub fn register_result_type(&mut self, name: &str, value_type: String) {
+        self.result_types.insert(name.to_string(), value_type);
     }
 
     #[allow(clippy::too_many_lines)]
@@ -96,12 +103,29 @@ impl TypeResolver {
     }
 
     fn resolve_simple_type(&self, name: &str) -> RustType {
+        // Check if this is a registered Result type
+        if let Some(value_type) = self.result_types.get(name).cloned() {
+            return RustType::Result(Box::new(self.resolve_type_string(&value_type)));
+        }
+
         match name {
             "Widget" | "Task" | "Filter" => RustType::Custom(name.to_string()),
             "AppState" => RustType::MutBorrow(Box::new(RustType::Custom(name.to_string()))),
             "Result" => RustType::Result(Box::new(RustType::Unknown)),
             "Option" => RustType::Option(Box::new(RustType::Unknown)),
             _ => RustType::Custom(name.to_string()),
+        }
+    }
+
+    /// Resolve a type from a string representation
+    fn resolve_type_string(&self, type_str: &str) -> RustType {
+        match type_str {
+            "f64" | "F64" => RustType::F64,
+            "i32" | "I32" => RustType::I32,
+            "bool" | "Bool" => RustType::Bool,
+            "String" => RustType::String,
+            "()" => RustType::Unit,
+            _ => RustType::Custom(type_str.to_string()),
         }
     }
 
