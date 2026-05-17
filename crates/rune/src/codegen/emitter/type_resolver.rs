@@ -32,12 +32,8 @@ impl TypeResolver {
                 RustType::Vec(Box::new(self.resolve(&arr.elem_type)))
             }
             swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.resolve_type_ref(type_ref),
-            swc_ecma_ast::TsType::TsUnionOrIntersectionType(union) => {
-                self.resolve_union(union)
-            }
-            swc_ecma_ast::TsType::TsParenthesizedType(paren) => {
-                self.resolve(&paren.type_ann)
-            }
+            swc_ecma_ast::TsType::TsUnionOrIntersectionType(union) => self.resolve_union(union),
+            swc_ecma_ast::TsType::TsParenthesizedType(paren) => self.resolve(&paren.type_ann),
             swc_ecma_ast::TsType::TsTupleType(_) => RustType::Unknown,
             swc_ecma_ast::TsType::TsTypeLit(lit) => self.resolve_type_literal(lit),
             _ => RustType::Unknown,
@@ -133,8 +129,9 @@ impl TypeResolver {
             }
         });
 
-        non_null
-            .map_or(RustType::Unknown, |t| RustType::Option(Box::new(self.resolve(t))))
+        non_null.map_or(RustType::Unknown, |t| {
+            RustType::Option(Box::new(self.resolve(t)))
+        })
     }
 
     /// Resolve a type literal (anonymous struct).

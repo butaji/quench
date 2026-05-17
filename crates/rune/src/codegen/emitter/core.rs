@@ -2,11 +2,12 @@
 //!
 //! Main RustEmitter implementation.
 
-use std::collections::HashSet;
-use crate::{parser::SourceFile, analyzer::AnalysisResult};
-use crate::codegen::{GeneratedModule, CodegenOptions};
 use super::ast_walker::AstWalker;
+use super::utils::escape_keyword;
+use crate::codegen::{CodegenOptions, GeneratedModule};
 use crate::parser::swc_parser::SwcAst;
+use crate::{analyzer::AnalysisResult, parser::SourceFile};
+use std::collections::HashSet;
 
 /// Options for code emission.
 #[derive(Debug, Clone, Default)]
@@ -15,26 +16,56 @@ pub struct EmitOptions {
     pub source_map: bool,
     /// Pretty print output
     pub pretty: bool,
+    /// Custom imports to add to generated code
+    pub custom_imports: Vec<String>,
+}
+
+impl EmitOptions {
+    /// Create new options with defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a custom import.
+    #[must_use]
+    pub fn with_import(mut self, import: impl Into<String>) -> Self {
+        self.custom_imports.push(import.into());
+        self
+    }
+
+    /// Add protocol import.
+    #[must_use]
+    pub fn with_protocol_import(mut self) -> Self {
+        self.custom_imports
+            .push("use crate::protocol::{{AppState, Task, Filter}};".into());
+        self
+    }
 }
 
 /// Emits Rust code from TypeScript source.
 pub struct RustEmitter {
     /// Analysis results
-    pub analysis: AnalysisResult,
+    #[allow(dead_code)]
+    analysis: AnalysisResult,
     /// Imports needed by this module (path → names)
-    pub imports: Vec<(String, Vec<String>)>,
+    imports: Vec<(String, Vec<String>)>,
     /// Output buffer
     output: String,
     /// Current indentation level
     indent: usize,
     /// Generation options
+    #[allow(dead_code)]
     options: CodegenOptions,
     /// Source line mappings for error translation
     source_line_map: Vec<(u32, u32)>,
+    /// Emit options for customization
+    emit_options: EmitOptions,
 }
 
 impl RustEmitter {
     /// Create a new emitter.
+    #[allow(clippy::unused_self)]
     pub fn new(_source: &SourceFile, analysis: &AnalysisResult) -> Self {
         Self {
             analysis: analysis.clone(),
@@ -43,7 +74,15 @@ impl RustEmitter {
             indent: 0,
             options: CodegenOptions::default(),
             source_line_map: Vec::new(),
+            emit_options: EmitOptions::new(),
         }
+    }
+
+    /// Set emit options.
+    #[must_use]
+    pub fn with_options(mut self, options: EmitOptions) -> Self {
+        self.emit_options = options;
+        self
     }
 
     /// Emit the complete module using AST walking.
@@ -55,7 +94,7 @@ impl RustEmitter {
             .unwrap_or("module")
             .to_string();
 
-        let module_name = AstWalker::escape_keyword(&file_stem);
+        let module_name = escape_keyword(&file_stem);
         let source_text = source.source.clone();
 
         // Parse with SWC to get AST
@@ -70,7 +109,7 @@ impl RustEmitter {
         let mut walker = AstWalker::new();
         walker.walk_module(&ast.module);
 
-        // Get native imports from walker (must do before consuming walker)
+        // Get native imports from walker
         let native_imports = { walker.native_imports().clone() };
 
         // Write header with imports
@@ -110,6 +149,7 @@ impl RustEmitter {
     }
 
     /// Get source line mappings.
+    #[must_use]
     pub fn source_line_map(&self) -> &[(u32, u32)] {
         &self.source_line_map
     }
@@ -119,19 +159,24 @@ impl RustEmitter {
         self.push_line(&format!("// Module: {module_name}"));
         self.push_line("");
 
-        // Protocol imports - always needed for AppState, Task, Filter types
-        self.push_line("use protocol::{AppState, Task, Filter};");
-        self.push_line("");
-
-        // Native module import - for hand-written Rust functions
-        self.push_line("use crate::native;");
-
-        // Emit native imports (specific modules)
-        for module in native_imports {
-            self.push_line(&format!("use crate::native::{module};"));
+        // Add custom imports (framework-specific imports come from config)
+        let custom_imports = self.emit_options.custom_imports.clone();
+        for import in custom_imports {
+            self.push_line(&import);
         }
 
-        self.push_line("");
+        if !self.emit_options.custom_imports.is_empty() {
+            self.push_line("");
+        }
+
+        // Native module import for hand-written Rust functions
+        if !native_imports.is_empty() {
+            self.push_line("use crate::native;");
+            for module in native_imports {
+                self.push_line(&format!("use crate::native::{module};"));
+            }
+            self.push_line("");
+        }
     }
 
     /// Push a line to output.

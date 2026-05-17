@@ -1,14 +1,15 @@
 //! # Build Driver
 //!
-//! Main compilation orchestration.
+//! Main compilation orchestration with clean separation of concerns.
 
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 use std::time::Duration;
-use crate::{Result, parser, analyzer, codegen};
-use super::config::RuneConfig;
+
 use super::cache::CacheManager;
+use super::config::RuneConfig;
 use crate::reload::{DylibWatcher, HostSignaler};
+use crate::{analyzer, codegen, parser, Result};
 
 /// Build mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -69,7 +70,7 @@ impl BuildOptions {
 /// Main build driver.
 pub struct BuildDriver {
     /// Build options
-    pub(crate) options: BuildOptions,
+    pub options: BuildOptions,
     /// Rune configuration
     pub(crate) config: RuneConfig,
     /// Cache manager
@@ -81,7 +82,11 @@ impl BuildDriver {
     pub fn new(options: BuildOptions) -> Result<Self> {
         let config = load_config(&options)?;
         let cache = CacheManager::new(&options.workspace)?;
-        Ok(Self { options, config, cache })
+        Ok(Self {
+            options,
+            config,
+            cache,
+        })
     }
 
     /// Run in development mode with hot reload.
@@ -122,7 +127,10 @@ impl BuildDriver {
 
     /// Transpile a single file to stdout.
     pub fn transpile(&mut self) -> Result<()> {
-        let file = self.options.transpile_file.as_ref()
+        let file = self
+            .options
+            .transpile_file
+            .as_ref()
             .ok_or_else(|| crate::RuneError::Codegen("No file specified".into()))?;
 
         let source = parser::parse_file(file)?;
@@ -164,7 +172,9 @@ impl BuildDriver {
     }
 
     fn find_sources(&self) -> Result<Vec<PathBuf>> {
-        let src_dir = self.options.workspace
+        let src_dir = self
+            .options
+            .workspace
             .join("crates")
             .join(&self.config.build.target_crate)
             .join("src");
@@ -172,7 +182,10 @@ impl BuildDriver {
     }
 
     fn parse_sources(sources: &[PathBuf]) -> Result<Vec<parser::SourceFile>> {
-        sources.iter().map(|s| parser::parse_file(s.as_path())).collect()
+        sources
+            .iter()
+            .map(|s| parser::parse_file(s.as_path()))
+            .collect()
     }
 
     fn analyze_sources(sources: &[parser::SourceFile]) -> Result<Vec<analyzer::AnalysisResult>> {
@@ -184,7 +197,8 @@ impl BuildDriver {
         sources: &[parser::SourceFile],
         analyses: &[analyzer::AnalysisResult],
     ) -> Result<Vec<codegen::GeneratedModule>> {
-        sources.iter()
+        sources
+            .iter()
             .zip(analyses.iter())
             .map(|(s, a)| codegen::generate(s, a))
             .collect()
@@ -204,7 +218,8 @@ impl BuildDriver {
             cmd.stderr(std::process::Stdio::piped());
         }
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .map_err(|e| crate::RuneError::Cargo(e.to_string()))?;
 
         if !output.status.success() {
@@ -225,7 +240,9 @@ impl BuildDriver {
 
         let target_crate = &self.config.build.target_crate;
         let artifact_name = format!("lib{target_crate}.so");
-        let artifact = self.options.workspace
+        let artifact = self
+            .options
+            .workspace
             .join("target")
             .join(profile)
             .join(&artifact_name);
@@ -238,7 +255,9 @@ impl BuildDriver {
 }
 
 fn load_config(options: &BuildOptions) -> Result<RuneConfig> {
-    let config_path = options.config.clone()
+    let config_path = options
+        .config
+        .clone()
         .or_else(|| Some(options.workspace.join("rune.toml")));
 
     if let Some(ref path) = config_path {
@@ -262,8 +281,8 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
     let hot_dir = driver.options.workspace.join("target/hot");
     std::fs::create_dir_all(&hot_dir)?;
 
-    let signaler = HostSignaler::new(&hot_dir)
-        .map_err(|e| crate::RuneError::Reload(e.to_string()))?;
+    let signaler =
+        HostSignaler::new(&hot_dir).map_err(|e| crate::RuneError::Reload(e.to_string()))?;
 
     let debounce = driver.config.dev.debounce;
     let watcher = DylibWatcher::new(&src_dir, debounce)
@@ -276,7 +295,9 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
 
     loop {
         match watcher.wait_for_event(Duration::from_millis(500)) {
-            Some(crate::reload::ReloadEvent::FilesChanged(_)) => handle_file_change(driver, &signaler),
+            Some(crate::reload::ReloadEvent::FilesChanged(_)) => {
+                handle_file_change(driver, &signaler);
+            }
             Some(crate::reload::ReloadEvent::ProtocolChanged) => {
                 eprintln!("Protocol changed, full restart required.");
                 let _ = signaler.mark_restart_needed();
@@ -296,7 +317,9 @@ fn run_watch_loop(driver: &mut BuildDriver) -> Result<()> {
 }
 
 fn find_src_dir(driver: &BuildDriver) -> PathBuf {
-    driver.options.workspace
+    driver
+        .options
+        .workspace
         .join("crates")
         .join(&driver.config.build.target_crate)
         .join("src")
@@ -319,11 +342,8 @@ fn handle_file_change(driver: &mut BuildDriver, signaler: &HostSignaler) {
     }
 }
 
-fn copy_artifact_to_hot_dir(
-    hot_dir: &Path,
-    artifact: &PathBuf,
-    target_crate: &str,
-) -> Result<()> {
+/// Copy artifact to hot dir with atomic symlink update.
+fn copy_artifact_to_hot_dir(hot_dir: &Path, artifact: &PathBuf, target_crate: &str) -> Result<()> {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -332,19 +352,60 @@ fn copy_artifact_to_hot_dir(
     let safe_name = target_crate.replace('-', "_");
     let hot_name = format!("{safe_name}_{timestamp}.so");
     let hot_path = hot_dir.join(&hot_name);
+
+    // Copy artifact first
     std::fs::copy(artifact, &hot_path)?;
 
+    // Atomic symlink update: create new symlink at temp location, then rename
     let current = hot_dir.join(".current");
-    if current.exists() {
-        std::fs::remove_file(&current)?;
-    }
+    let tmp_link = hot_dir.join(".current.tmp");
 
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&hot_path, &current)?;
+    {
+        std::os::unix::fs::symlink(&hot_path, &tmp_link)?;
+        std::fs::rename(&tmp_link, &current)?;
+    }
 
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(&hot_path, &current)?;
+    {
+        std::os::windows::fs::symlink_file(&hot_path, &tmp_link)?;
+        std::fs::rename(&tmp_link, &current)?;
+    }
+
+    // Clean up old artifacts (keep last 5)
+    cleanup_old_artifacts(hot_dir, &safe_name, 5)?;
 
     println!("Hot reload ready: {hot_name}");
+    Ok(())
+}
+
+/// Clean up old dylib artifacts.
+fn cleanup_old_artifacts(hot_dir: &Path, prefix: &str, keep: usize) -> Result<()> {
+    let mut artifacts: Vec<_> = std::fs::read_dir(hot_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            name_str.starts_with(prefix) && name_str.ends_with(".so")
+        })
+        .collect();
+
+    if artifacts.len() <= keep {
+        return Ok(());
+    }
+
+    artifacts.sort_by_key(|e| {
+        e.path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.split('_').next_back()?.parse::<u64>().ok())
+    });
+
+    // Keep only the last `keep` artifacts
+    let to_remove = artifacts.len() - keep;
+    for artifact in artifacts.into_iter().take(to_remove) {
+        let _ = std::fs::remove_file(artifact.path());
+    }
+
     Ok(())
 }

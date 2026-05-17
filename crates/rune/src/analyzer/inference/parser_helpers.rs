@@ -2,16 +2,22 @@
 //!
 //! Helper functions for parsing TypeScript type annotations.
 
-use crate::analyzer::{TypeInfo, FunctionInfo, StructInfo, EnumInfo};
+use crate::analyzer::{EnumInfo, FunctionInfo, StructInfo, TypeInfo};
 
 /// Parse a function declaration from a line.
 pub fn parse_function(line: &str) -> Option<FunctionInfo> {
-    let pattern = if line.starts_with("export") { "export function " } else { "function " };
+    let pattern = if line.starts_with("export") {
+        "export function "
+    } else {
+        "function "
+    };
     let rest = line.strip_prefix(pattern)?;
     let rest = rest.strip_prefix("async ").unwrap_or(rest);
     let rest = rest.strip_prefix("pub ").unwrap_or(rest);
 
-    let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+    let name_end = rest
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(rest.len());
     let name = rest[..name_end].to_string();
     let rest = &rest[name_end..];
 
@@ -28,6 +34,7 @@ pub fn parse_function(line: &str) -> Option<FunctionInfo> {
     })
 }
 
+#[allow(clippy::unnecessary_box_returns)]
 fn extract_return_type(rest: &str) -> Box<TypeInfo> {
     if let Some(ret) = rest.strip_prefix("): ") {
         return parse_type(ret.trim_end_matches(';'));
@@ -95,11 +102,15 @@ fn param_to_tuple(param: &str, idx: usize) -> (String, TypeInfo) {
 }
 
 /// Parse a type string.
+#[allow(clippy::unnecessary_box_returns)]
 pub fn parse_type(type_str: &str) -> Box<TypeInfo> {
-    let s = type_str.trim().trim_end_matches(|c: char| c == ';' || c == ',' || c == ')' || c == '>');
+    let s = type_str
+        .trim()
+        .trim_end_matches(|c: char| c == ';' || c == ',' || c == ')' || c == '>');
     parse_type_inner(s)
 }
 
+#[allow(clippy::unnecessary_box_returns)]
 fn parse_type_inner(s: &str) -> Box<TypeInfo> {
     if let Some(info) = parse_primitive_type(s) {
         return info;
@@ -125,7 +136,7 @@ fn parse_type_inner(s: &str) -> Box<TypeInfo> {
     if let Some(info) = parse_object_type(s) {
         return info;
     }
-    parse_type_name(s)
+    Box::new(parse_type_name(s))
 }
 
 fn parse_primitive_type(s: &str) -> Option<Box<TypeInfo>> {
@@ -139,21 +150,26 @@ fn parse_primitive_type(s: &str) -> Option<Box<TypeInfo>> {
 }
 
 fn parse_string_literal(s: &str) -> Option<Box<TypeInfo>> {
-    let is_quoted = (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''));
+    let is_quoted =
+        (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\''));
     if is_quoted {
-        Some(Box::new(TypeInfo::StringLiteral(s[1..s.len() - 1].to_string())))
+        Some(Box::new(TypeInfo::StringLiteral(
+            s[1..s.len() - 1].to_string(),
+        )))
     } else {
         None
     }
 }
 
 fn parse_integer_literal(s: &str) -> Option<Box<TypeInfo>> {
-    s.parse::<i64>().ok().map(|n| Box::new(TypeInfo::Integer(n)))
+    s.parse::<i64>()
+        .ok()
+        .map(|n| Box::new(TypeInfo::Integer(n)))
 }
 
 fn parse_array_type(s: &str) -> Option<Box<TypeInfo>> {
-    s.strip_suffix("[]").map(|inner| Box::new(TypeInfo::Array(parse_type(inner))))
+    s.strip_suffix("[]")
+        .map(|inner| Box::new(TypeInfo::Array(parse_type(inner))))
 }
 
 fn parse_option_type(s: &str) -> Option<Box<TypeInfo>> {
@@ -180,7 +196,10 @@ fn parse_generic_type(s: &str) -> Option<Box<TypeInfo>> {
     } else {
         generic
     };
-    Some(Box::new(TypeInfo::Generic(format!("{}<{}>", name, generic_part))))
+    Some(Box::new(TypeInfo::Generic(format!(
+        "{}<{}>",
+        name, generic_part
+    ))))
 }
 
 fn parse_object_type(s: &str) -> Option<Box<TypeInfo>> {
@@ -194,11 +213,11 @@ fn parse_object_type(s: &str) -> Option<Box<TypeInfo>> {
     })))
 }
 
-fn parse_type_name(s: &str) -> Box<TypeInfo> {
-    Box::new(TypeInfo::Struct(StructInfo {
+fn parse_type_name(s: &str) -> TypeInfo {
+    TypeInfo::Struct(StructInfo {
         name: s.to_string(),
         fields: Vec::new(),
-    }))
+    })
 }
 
 /// Parse object type fields from a type string.
@@ -215,7 +234,10 @@ fn parse_object_type_fields(type_str: &str) -> Vec<(String, TypeInfo)> {
 
 /// Extract content between outer braces.
 fn extract_brace_content(type_str: &str) -> &str {
-    type_str.trim_start_matches('{').trim_end_matches('}').trim()
+    type_str
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim()
 }
 
 /// Split field strings by comma/semicolon at depth 0.
@@ -348,9 +370,7 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
     for line in source.lines() {
         let line = line.trim();
 
-        if line.starts_with("export type ")
-            && (line.contains("= {") || line.contains(" ={"))
-        {
+        if line.starts_with("export type ") && (line.contains("= {") || line.contains(" ={")) {
             in_interface = true;
             let name_part = line.strip_prefix("export type ").unwrap();
             let name_end = name_part
@@ -365,10 +385,8 @@ pub fn parse_interfaces(source: &str, types: &mut crate::analyzer::TypeMap) {
         }
 
         if in_interface {
-            brace_depth = (brace_depth as i32
-                + line.matches('{').count() as i32
-                - line.matches('}').count() as i32)
-                as usize;
+            brace_depth = (brace_depth as i32 + line.matches('{').count() as i32
+                - line.matches('}').count() as i32) as usize;
 
             if brace_depth == 0 {
                 finalize_interface(types, &current_name, &fields);
@@ -396,7 +414,11 @@ fn extract_fields_from_line(line: &str, fields: &mut Vec<(String, TypeInfo)>) {
     }
 }
 
-fn finalize_interface(types: &mut crate::analyzer::TypeMap, name: &str, fields: &[(String, TypeInfo)]) {
+fn finalize_interface(
+    types: &mut crate::analyzer::TypeMap,
+    name: &str,
+    fields: &[(String, TypeInfo)],
+) {
     types.insert(
         name.to_string(),
         TypeInfo::Struct(StructInfo {

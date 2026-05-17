@@ -3,19 +3,19 @@
 //! Validates the zero-overhead TypeScript subset and performs
 //! ownership inference.
 
-mod ownership;
 mod context;
 mod inference;
+mod ownership;
 pub mod validator;
 
-pub use ownership::{OwnershipAnalyzer, BorrowMode};
 pub use context::AnalysisContext;
 pub use inference::TypeInferrer;
+pub use ownership::{BorrowMode, OwnershipAnalyzer};
 pub use validator::SubsetValidator;
 
-use std::collections::HashMap;
 use crate::parser::SourceFile;
-use crate::codegen::emitter::utils::{to_snake_case, to_pascal_case};
+use crate::utils::{to_pascal_case, to_snake_case};
+use std::collections::HashMap;
 
 /// Full analysis result for a source file.
 #[derive(Debug, Clone, Default)]
@@ -141,9 +141,7 @@ impl StructInfo {
         let fields = self
             .fields
             .iter()
-            .map(|(name, ty)| {
-                format!("    pub {}: {},", to_snake_case(name), ty.to_rust_type())
-            })
+            .map(|(name, ty)| format!("    pub {}: {},", to_snake_case(name), ty.to_rust_type()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -176,16 +174,10 @@ impl EnumInfo {
                     let fields = v
                         .fields
                         .iter()
-                        .map(|(n, t)| {
-                            format!("{}: {}", to_snake_case(n), t.to_rust_type())
-                        })
+                        .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_type()))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!(
-                        "    {} {{ {} }},",
-                        to_pascal_case(&v.tag),
-                        fields
-                    )
+                    format!("    {} {{ {} }},", to_pascal_case(&v.tag), fields)
                 }
             })
             .collect::<Vec<_>>()
@@ -304,11 +296,7 @@ pub fn analyze(source: &SourceFile) -> crate::Result<AnalysisResult> {
 
     // Validate the subset
     if let Err(e) = validator.validate(source) {
-        ctx.add_warning(
-            format!("{}:{}", e.line, e.column),
-            e.message,
-            e.code,
-        );
+        ctx.add_warning(format!("{}:{}", e.line, e.column), e.message, e.code);
     }
 
     // Infer types from source

@@ -1,10 +1,10 @@
 //! # Statement Emitter
 //! Emits Rust statements from TypeScript AST.
 
-use super::{CodeEmitter, emit_expr};
 use super::switch_match::emit_switch;
 use super::variables::emit_var_decl;
-use swc_ecma_ast::{Stmt, Decl};
+use super::{emit_expr, CodeEmitter};
+use swc_ecma_ast::{Decl, Stmt};
 
 /// Emit a function body statement.
 pub fn emit_body_stmt(emitter: &mut CodeEmitter, stmt: &Stmt) {

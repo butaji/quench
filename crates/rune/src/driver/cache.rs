@@ -1,16 +1,17 @@
 //! # Cache Manager
 //!
-//! Manages the generated code cache in .rune-cache/ (outside workspace).
+//! Manages the generated code cache in target/rune-cache/ (outside workspace).
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Cache manager for generated code.
 #[derive(Debug)]
 pub struct CacheManager {
     /// Root cache directory
     root: PathBuf,
-    /// Original workspace path (for relative paths)
+    /// Original workspace path
     workspace: PathBuf,
 }
 
@@ -20,7 +21,6 @@ impl CacheManager {
     /// # Errors
     /// Returns an error if the cache directory cannot be created.
     pub fn new(workspace: &Path) -> std::io::Result<Self> {
-        // Use target/rune-cache/ as specified in the architecture
         let root = workspace.join("target/rune-cache");
         fs::create_dir_all(&root)?;
         Ok(Self {
@@ -28,13 +28,13 @@ impl CacheManager {
             workspace: workspace.to_path_buf(),
         })
     }
-    
+
     /// Get the workspace path.
     #[must_use]
     pub fn workspace(&self) -> &Path {
         &self.workspace
     }
-    
+
     /// Get the cache root path.
     #[must_use]
     pub fn root(&self) -> &Path {
@@ -59,21 +59,25 @@ impl CacheManager {
         self.root.join("Cargo.toml")
     }
 
-    /// Check if a source file needs regeneration.
-    #[must_use]
-    pub fn needs_regeneration(&self, source: &Path) -> bool {
-        let source_mtime = fs::metadata(source)
-            .and_then(|m| m.modified())
-            .ok();
+    /// Get modification time of a file, if it exists.
+    fn mtime(path: &Path) -> Option<SystemTime> {
+        fs::metadata(path).and_then(|m| m.modified()).ok()
+    }
 
-        let cache_mtime = fs::metadata(self.generated_cargo_toml())
-            .and_then(|m| m.modified())
-            .ok();
+    /// Check if ANY source file is newer than the cache.
+    /// Scans ALL source files, not just one.
+    pub fn needs_regeneration(&self, sources: &[PathBuf]) -> bool {
+        let cache_mtime = Self::mtime(&self.generated_cargo_toml());
 
-        match (source_mtime, cache_mtime) {
-            (Some(st), Some(ct)) => st > ct,
-            _ => true,
-        }
+        // If no cache exists, need regeneration
+        let Some(cache_modified) = cache_mtime else {
+            return true;
+        };
+
+        // Check all sources against cache time
+        sources.iter().any(|source_path| {
+            Self::mtime(source_path).is_some_and(|source_modified| source_modified > cache_modified)
+        })
     }
 
     /// Clean the cache.
@@ -91,7 +95,6 @@ impl CacheManager {
     /// Get the hot reload directory.
     #[must_use]
     pub fn hot_dir(&self) -> PathBuf {
-        // target/rune-cache -> target/hot
         self.root
             .parent()
             .map_or_else(|| PathBuf::from("target/hot"), |p| p.join("hot"))

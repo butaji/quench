@@ -2,11 +2,11 @@
 //!
 //! Parses TypeScript using SWC into an AST representation.
 
-use swc_common::{sync::Lrc, SourceMap, FileName, errors::Handler};
-use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
-use swc_ecma_ast::{Module, ModuleItem};
-use std::io::sink;
 use std::fmt;
+use std::io::sink;
+use swc_common::{errors::Handler, sync::Lrc, FileName, SourceMap};
+use swc_ecma_ast::{Module, ModuleItem};
+use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
 
 /// Result type for SWC parsing.
 pub type SwcResult<T> = Result<T, SwcError>;
@@ -15,7 +15,11 @@ pub type SwcResult<T> = Result<T, SwcError>;
 #[derive(Debug, Clone)]
 pub enum SwcError {
     /// Parse error with location
-    Parse { message: String, line: u32, col: u32 },
+    Parse {
+        message: String,
+        line: u32,
+        col: u32,
+    },
     /// IO error
     Io(String),
     /// Unknown error
@@ -56,10 +60,7 @@ impl SwcAst {
             source.to_string(),
         );
 
-        let handler = Handler::with_emitter_writer(
-            Box::new(sink()),
-            Some(cm.clone()),
-        );
+        let handler = Handler::with_emitter_writer(Box::new(sink()), Some(cm.clone()));
 
         let mut lexer = Parser::new(
             Syntax::Typescript(TsSyntax {
@@ -70,17 +71,15 @@ impl SwcAst {
             None,
         );
 
-        let module = lexer
-            .parse_module()
-            .map_err(|e| {
-                let msg = format!("Parse error: {:?}", e);
-                e.into_diagnostic(&handler).emit();
-                SwcError::Parse {
-                    message: msg,
-                    line: 0,
-                    col: 0,
-                }
-            })?;
+        let module = lexer.parse_module().map_err(|e| {
+            let msg = format!("Parse error: {:?}", e);
+            e.into_diagnostic(&handler).emit();
+            SwcError::Parse {
+                message: msg,
+                line: 0,
+                col: 0,
+            }
+        })?;
 
         Ok(Self {
             module,
@@ -98,10 +97,7 @@ impl SwcAst {
             source.to_string(),
         );
 
-        let handler = Handler::with_emitter_writer(
-            Box::new(sink()),
-            Some(cm.clone()),
-        );
+        let handler = Handler::with_emitter_writer(Box::new(sink()), Some(cm.clone()));
 
         let mut lexer = Parser::new(
             Syntax::Typescript(TsSyntax {
@@ -112,17 +108,15 @@ impl SwcAst {
             None,
         );
 
-        let module = lexer
-            .parse_module()
-            .map_err(|e| {
-                let msg = format!("Parse error: {:?}", e);
-                e.into_diagnostic(&handler).emit();
-                SwcError::Parse {
-                    message: msg,
-                    line: 0,
-                    col: 0,
-                }
-            })?;
+        let module = lexer.parse_module().map_err(|e| {
+            let msg = format!("Parse error: {:?}", e);
+            e.into_diagnostic(&handler).emit();
+            SwcError::Parse {
+                message: msg,
+                line: 0,
+                col: 0,
+            }
+        })?;
 
         Ok(Self {
             module,

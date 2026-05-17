@@ -57,11 +57,7 @@ fn emit_date_now(emitter: &mut CodeEmitter) {
     );
 }
 
-fn emit_json_method(
-    emitter: &mut CodeEmitter,
-    method: &str,
-    call_expr: &swc_ecma_ast::CallExpr,
-) {
+fn emit_json_method(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
     match method {
         "stringify" => emit_json_stringify(emitter, call_expr),
         "parse" => emit_json_parse(emitter, call_expr),
@@ -89,11 +85,7 @@ fn emit_json_parse(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr
     }
 }
 
-fn emit_math_call(
-    emitter: &mut CodeEmitter,
-    method: &str,
-    call_expr: &swc_ecma_ast::CallExpr,
-) {
+fn emit_math_call(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
     let fn_name = match method {
         "floor" | "ceil" | "round" | "abs" | "sqrt" | "max" | "min" | "random" => method,
         "pow" => "powf",
@@ -127,9 +119,21 @@ fn emit_method_or_generic_call(
 fn is_array_method(method: &str) -> bool {
     matches!(
         method,
-        "filter" | "map" | "reduce" | "forEach" | "some" | "every"
-            | "find" | "findIndex" | "concat" | "join" | "reverse"
-            | "sort" | "slice" | "splice" | "get"
+        "filter"
+            | "map"
+            | "reduce"
+            | "forEach"
+            | "some"
+            | "every"
+            | "find"
+            | "findIndex"
+            | "concat"
+            | "join"
+            | "reverse"
+            | "sort"
+            | "slice"
+            | "splice"
+            | "get"
     )
 }
 
@@ -177,7 +181,11 @@ fn emit_array_get(emitter: &mut CodeEmitter, call_expr: &swc_ecma_ast::CallExpr)
     emitter.push_str(")");
 }
 
-fn emit_array_iter_method(emitter: &mut CodeEmitter, method: &str, call_expr: &swc_ecma_ast::CallExpr) {
+fn emit_array_iter_method(
+    emitter: &mut CodeEmitter,
+    method: &str,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
     emitter.push_str(".iter().");
     let rust_method = match method {
         "forEach" => "for_each",
@@ -278,11 +286,7 @@ fn emit_direct_call(
     emitter.push_str(")");
 }
 
-fn emit_generic_call(
-    emitter: &mut CodeEmitter,
-    callee: &Expr,
-    call_expr: &swc_ecma_ast::CallExpr,
-) {
+fn emit_generic_call(emitter: &mut CodeEmitter, callee: &Expr, call_expr: &swc_ecma_ast::CallExpr) {
     emit_expr(emitter, callee);
     emitter.push_str("(");
     emit_call_args(emitter, call_expr);

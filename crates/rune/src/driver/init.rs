@@ -3,15 +3,15 @@
 //! Creates new Rune projects with proper structure.
 #![allow(clippy::literal_string_with_formatting_args)]
 
+use super::templates;
 use crate::Result;
-use super::{BuildDriver, templates};
 
 /// Replace a placeholder in template string.
 fn template_replace(template: &str, placeholder: &str, value: &str) -> String {
     template.replace(placeholder, value)
 }
 
-impl BuildDriver {
+impl super::BuildDriver {
     /// Initialize project structure.
     pub fn init_project_structure(&self) -> Result<()> {
         let project_name = &self.config.project.name;
@@ -67,7 +67,10 @@ impl BuildDriver {
 
     /// Initialize app crate.
     pub fn init_app(&self) -> Result<()> {
-        let app_dir = self.options.workspace.join("crates")
+        let app_dir = self
+            .options
+            .workspace
+            .join("crates")
             .join(&self.config.build.target_crate);
         let app_name = &self.config.build.target_crate;
 
@@ -81,7 +84,10 @@ impl BuildDriver {
         // Native module
         std::fs::create_dir_all(app_dir.join("src/native"))?;
         std::fs::write(app_dir.join("src/native/mod.rs"), templates::NATIVE_MOD)?;
-        std::fs::write(app_dir.join("src/native/fast_math.rs"), templates::FAST_MATH)?;
+        std::fs::write(
+            app_dir.join("src/native/fast_math.rs"),
+            templates::FAST_MATH,
+        )?;
 
         // Main Rune file
         std::fs::write(app_dir.join("src/main.r.ts"), templates::MAIN_RS)?;
@@ -92,7 +98,10 @@ impl BuildDriver {
         // Root view (TSX)
         std::fs::create_dir_all(app_dir.join("src/views"))?;
         std::fs::write(app_dir.join("src/views/root.r.tsx"), templates::ROOT_RSX)?;
-        std::fs::write(app_dir.join("src/views/task_list.r.tsx"), templates::TASK_LIST_RSX)?;
+        std::fs::write(
+            app_dir.join("src/views/task_list.r.tsx"),
+            templates::TASK_LIST_RSX,
+        )?;
 
         Ok(())
     }

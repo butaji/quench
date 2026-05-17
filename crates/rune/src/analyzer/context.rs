@@ -2,8 +2,8 @@
 //!
 //! Maintains state during analysis.
 
+use super::{AnalysisWarning, TypeInfo};
 use crate::parser::SourceFile;
-use super::{TypeInfo, AnalysisWarning};
 
 /// Context for type and ownership analysis.
 #[derive(Debug)]
@@ -36,7 +36,12 @@ impl AnalysisContext {
     /// Get the current source location as a string.
     #[must_use]
     pub fn current_location(&self) -> String {
-        format!("{}:{}:{}", self.source.path.display(), self.current_line, self.current_column)
+        format!(
+            "{}:{}:{}",
+            self.source.path.display(),
+            self.current_line,
+            self.current_column
+        )
     }
 
     /// Update current location from line and column.
@@ -134,13 +139,56 @@ impl AnalysisContext {
     fn is_keyword(s: &str) -> bool {
         matches!(
             s,
-            "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn"
-            | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl" | "in"
-            | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return"
-            | "self" | "Self" | "static" | "struct" | "super" | "trait" | "true" | "type"
-            | "unsafe" | "use" | "where" | "while" | "abstract" | "become" | "box" | "do"
-            | "final" | "macro" | "override" | "priv" | "try" | "typeof" | "unsized"
-            | "virtual" | "yield"
+            "as" | "async"
+                | "await"
+                | "break"
+                | "const"
+                | "continue"
+                | "crate"
+                | "dyn"
+                | "else"
+                | "enum"
+                | "extern"
+                | "false"
+                | "fn"
+                | "for"
+                | "if"
+                | "impl"
+                | "in"
+                | "let"
+                | "loop"
+                | "match"
+                | "mod"
+                | "move"
+                | "mut"
+                | "pub"
+                | "ref"
+                | "return"
+                | "self"
+                | "Self"
+                | "static"
+                | "struct"
+                | "super"
+                | "trait"
+                | "true"
+                | "type"
+                | "unsafe"
+                | "use"
+                | "where"
+                | "while"
+                | "abstract"
+                | "become"
+                | "box"
+                | "do"
+                | "final"
+                | "macro"
+                | "override"
+                | "priv"
+                | "try"
+                | "typeof"
+                | "unsized"
+                | "virtual"
+                | "yield"
         )
     }
 }

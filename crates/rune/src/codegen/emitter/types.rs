@@ -2,7 +2,7 @@
 //!
 //! Type information for code generation.
 
-use crate::codegen::emitter::utils::to_snake_case;
+use crate::utils::to_snake_case;
 use std::fmt;
 
 /// Type information for code generation.
@@ -43,9 +43,6 @@ impl fmt::Display for RustType {
     }
 }
 
-/// Raw field for deferred type resolution.
-pub type RawField = (String, swc_ecma_ast::TsType);
-
 /// Struct field info.
 pub type StructFields = Vec<(String, RustType)>;
 
@@ -64,14 +61,9 @@ pub struct EnumDefinition {
 }
 
 /// Check if a name looks like an enum type (PascalCase).
-/// These should be preserved as-is for enum variants.
 #[must_use]
 pub fn is_enum_type(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_uppercase() => chars.all(|c| c.is_alphanumeric()),
-        _ => false,
-    }
+    crate::utils::is_enum_type(name)
 }
 
 /// Convert a type/variant name to appropriate Rust form.

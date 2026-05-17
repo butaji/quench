@@ -54,9 +54,7 @@ fn infer_array_type(arr: &swc_ecma_ast::ArrayLit) -> String {
 
 fn infer_unary_type(unary_expr: &swc_ecma_ast::UnaryExpr) -> String {
     match unary_expr.op {
-        swc_ecma_ast::UnaryOp::Bang | swc_ecma_ast::UnaryOp::TypeOf => {
-            "bool".to_string()
-        }
+        swc_ecma_ast::UnaryOp::Bang | swc_ecma_ast::UnaryOp::TypeOf => "bool".to_string(),
         _ => infer_type(&unary_expr.arg),
     }
 }
@@ -79,9 +77,7 @@ fn infer_bin_type(bin_expr: &swc_ecma_ast::BinExpr) -> String {
     let left = infer_type(&bin_expr.left);
     let right = infer_type(&bin_expr.right);
 
-    if bin_expr.op == swc_ecma_ast::BinaryOp::Add
-        && (left == "String" || right == "String")
-    {
+    if bin_expr.op == swc_ecma_ast::BinaryOp::Add && (left == "String" || right == "String") {
         return "String".to_string();
     }
 
@@ -184,20 +180,12 @@ fn infer_method_call_type(
     match method {
         "filter" | "map" | "concat" | "slice" | "flat" | "flatMap" => obj_type,
         "find" | "findIndex" => unwrap_vec_element(&obj_type),
-        "some" | "every" | "includes" | "startsWith" | "endsWith" => {
-            "bool".to_string()
-        }
+        "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
         "push" => "usize".to_string(),
         "pop" | "shift" => "Option<()>".to_string(),
         "reduce" => infer_reduce_return_type(call_expr),
-        "trim"
-        | "toLowerCase"
-        | "toUpperCase"
-        | "trimStart"
-        | "trimEnd"
-        | "substring"
-        | "substr"
-        | "toString" => "String".to_string(),
+        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd" | "substring"
+        | "substr" | "toString" => "String".to_string(),
         "indexOf" | "lastIndexOf" => "Option<usize>".to_string(),
         "charAt" => "Option<char>".to_string(),
         "join" => "String".to_string(),
@@ -249,14 +237,8 @@ fn infer_property_type(obj_type: &str, prop_name: &str) -> String {
         "ok" => "bool".to_string(),
         "value" => "()".to_string(),
         "error" => "String".to_string(),
-        "trim"
-        | "toLowerCase"
-        | "toUpperCase"
-        | "trimStart"
-        | "trimEnd"
-        | "substring"
-        | "substr"
-        | "toString" => "String".to_string(),
+        "trim" | "toLowerCase" | "toUpperCase" | "trimStart" | "trimEnd" | "substring"
+        | "substr" | "toString" => "String".to_string(),
         "push" => "usize".to_string(),
         "pop" | "shift" => "Option<()>".to_string(),
         "filter" | "map" | "concat" | "slice" => obj_type.to_string(),

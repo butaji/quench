@@ -6,11 +6,9 @@ mod parser_helpers;
 mod primitives;
 mod ts_types;
 
-pub use parser_helpers::{
-    parse_function, parse_type_alias, parse_enum, parse_interfaces,
-};
+use crate::analyzer::{TypeInfo, TypeMap};
 use crate::parser::SourceFile;
-use crate::analyzer::{TypeMap, TypeInfo};
+pub use parser_helpers::{parse_enum, parse_function, parse_interfaces, parse_type_alias};
 
 /// Main type inference engine.
 #[derive(Debug)]

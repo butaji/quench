@@ -2,10 +2,13 @@
 //!
 //! Cargo subcommand entry point for `cargo rune`.
 
-#![cfg_attr(not(any(feature = "binary-rune", feature = "binary-cargo")), forbid(unsafe_code))]
+#![cfg_attr(
+    not(any(feature = "binary-rune", feature = "binary-cargo")),
+    forbid(unsafe_code)
+)]
 
-use std::path::PathBuf;
 use rune::driver::BuildOptions;
+use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use rune_cli::cli::{build_cli, run_command};

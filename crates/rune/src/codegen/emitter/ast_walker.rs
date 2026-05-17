@@ -2,17 +2,14 @@
 //!
 //! Walks SWC AST and emits Rust code.
 
-use super::{CodeEmitter, TypeResolver, RustType};
-use crate::codegen::emitter::utils::{to_snake_case, to_pascal_case};
-use swc_ecma_ast::{
-    Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem,
-    Stmt, TsType,
-};
-use std::collections::{HashMap, HashSet};
 use super::types::EnumDefinition;
-use crate::codegen::emitter::types::EnumVariant;
+use super::{CodeEmitter, RustType, TypeResolver};
+use crate::utils::{to_pascal_case, to_snake_case};
+use std::collections::{HashMap, HashSet};
+use swc_ecma_ast::{Decl, ExportDecl, FnDecl, Module, ModuleDecl, ModuleItem, Stmt, TsType};
 
 /// Raw field for deferred type resolution.
+#[allow(dead_code)]
 type RawField = (String, TsType);
 
 /// Information about a struct type.
@@ -22,6 +19,33 @@ struct StructInfo {
     rust_name: String,
     /// Fields with types
     fields: Vec<(String, RustType)>,
+}
+
+/// Tracks which types have been emitted to avoid duplicates.
+#[derive(Default)]
+struct EmissionTracker {
+    emitted_structs: HashSet<String>,
+    emitted_enums: HashSet<String>,
+}
+
+impl EmissionTracker {
+    fn mark_struct_emitted(&mut self, name: &str) {
+        self.emitted_structs.insert(name.to_string());
+    }
+
+    fn mark_enum_emitted(&mut self, name: &str) {
+        self.emitted_enums.insert(name.to_string());
+    }
+
+    #[must_use]
+    fn struct_emitted(&self, name: &str) -> bool {
+        self.emitted_structs.contains(name)
+    }
+
+    #[must_use]
+    fn enum_emitted(&self, name: &str) -> bool {
+        self.emitted_enums.contains(name)
+    }
 }
 
 /// Walks the AST and emits Rust code.
@@ -37,11 +61,14 @@ pub struct AstWalker {
     /// Type resolver
     resolver: TypeResolver,
     /// Module name (for imports)
+    #[allow(dead_code)]
     module_name: String,
     /// Known imports (path → names)
     imports: HashMap<String, Vec<String>>,
     /// Native imports (module names that use native: prefix)
     native_imports: HashSet<String>,
+    /// Tracks what's been emitted
+    emission_tracker: EmissionTracker,
 }
 
 impl AstWalker {
@@ -57,12 +84,12 @@ impl AstWalker {
             module_name: String::new(),
             imports: HashMap::new(),
             native_imports: HashSet::new(),
+            emission_tracker: EmissionTracker::default(),
         }
     }
 
     /// Walk a module and emit Rust code.
     pub fn walk_module(&mut self, module: &Module) {
-        // First pass: collect imports
         self.collect_imports(module);
 
         // Second pass: collect all type definitions and enums
@@ -81,13 +108,10 @@ impl AstWalker {
     fn collect_imports(&mut self, module: &Module) {
         for item in &module.body {
             if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
-                // import.src is a Box<Str> containing the module path (ESM import)
                 let path_str = format!("{:?}", import.src.value);
 
-                // Check for native: imports
                 let is_native = path_str.starts_with("\"native:");
                 if is_native {
-                    // Extract module name from "native:module" -> "module"
                     let module_name = path_str
                         .trim_start_matches("\"native:")
                         .trim_end_matches('"');
@@ -101,9 +125,7 @@ impl AstWalker {
                         swc_ecma_ast::ImportSpecifier::Named(named) => {
                             to_snake_case(named.local.as_ref())
                         }
-                        swc_ecma_ast::ImportSpecifier::Default(_) => {
-                            "default".to_string()
-                        }
+                        swc_ecma_ast::ImportSpecifier::Default(_) => "default".to_string(),
                         swc_ecma_ast::ImportSpecifier::Namespace(ns) => {
                             format!("*{}", to_snake_case(ns.local.as_ref()))
                         }
@@ -115,47 +137,47 @@ impl AstWalker {
     }
 
     fn emit_named_types(&mut self) {
-        // Collect type data to avoid borrow conflicts
-        let type_data: Vec<(String, Vec<RawField>)> = self
-            .type_fields
-            .iter()
-            .map(|(n, f)| (n.clone(), f.clone()))
-            .collect();
+        // Emit struct types - each struct only once
+        let struct_names: Vec<String> = self.structs.keys().cloned().collect();
+        for name in struct_names {
+            if self.emission_tracker.struct_emitted(&name) {
+                continue;
+            }
+            self.emission_tracker.mark_struct_emitted(&name);
 
-        for (name, raw_fields) in type_data {
-            let fields: Vec<(String, RustType)> = raw_fields
-                .iter()
-                .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
-                .collect();
-
-            // Store struct info for object literal context
-            let rust_name = to_pascal_case(&name);
-            self.structs.insert(name.clone(), StructInfo {
-                rust_name: rust_name.clone(),
-                fields: fields.clone(),
-            });
-
-            self.emitter.emit_struct(&rust_name, &fields);
+            if let Some(info) = self.structs.get(&name) {
+                self.emitter.emit_struct(&info.rust_name, &info.fields);
+            }
         }
 
-        // Emit enum types
-        let enum_data: Vec<EnumDefinition> = self.enums.values().cloned().collect();
-        for ed in enum_data {
-            self.emitter.emit_enum(&ed);
+        // Emit enum types - each enum only once
+        let enum_names: Vec<String> = self.enums.keys().cloned().collect();
+        for name in enum_names {
+            if self.emission_tracker.enum_emitted(&name) {
+                continue;
+            }
+            self.emission_tracker.mark_enum_emitted(&name);
+
+            if let Some(ed) = self.enums.get(&name) {
+                self.emitter.emit_enum(ed);
+            }
         }
     }
 
     fn emit_anonymous_structs(&mut self) {
         let anon_structs = self.resolver.take_pending_structs();
         for (name, fields) in anon_structs {
-            self.emitter.emit_struct(&name, &fields);
+            // Check if already emitted (in case of naming collision)
+            if !self.emission_tracker.struct_emitted(&name) {
+                self.emission_tracker.mark_struct_emitted(&name);
+                self.emitter.emit_struct(&name, &fields);
+            }
         }
     }
 
     #[allow(clippy::single_match)]
     fn collect_item(&mut self, item: &ModuleItem) {
         match item {
-            // Direct type declarations
             ModuleItem::Stmt(Stmt::Decl(Decl::TsInterface(d))) => {
                 self.collect_interface(d.id.sym.as_ref(), &d.body);
             }
@@ -168,7 +190,6 @@ impl AstWalker {
             ModuleItem::Stmt(Stmt::Decl(Decl::TsModule(d))) => {
                 self.collect_ts_module(d);
             }
-            // Exported type declarations
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
                 decl: Decl::TsInterface(d),
                 ..
@@ -187,13 +208,6 @@ impl AstWalker {
             })) => {
                 self.collect_type_alias(d.id.sym.as_ref(), &d.type_ann);
             }
-            // Handle named exports: export { Type }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
-                // Named exports don't contain type definitions themselves
-                // Type re-exports like: export { Task } from "./types"
-                // are handled by the import system
-                let _ = named;
-            }
             _ => {}
         }
     }
@@ -202,14 +216,12 @@ impl AstWalker {
         let mut fields: Vec<(String, TsType)> = Vec::new();
         for member in &body.body {
             if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
-                let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
-                    ident.sym.to_string()
-                } else if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) =
-                    prop.key.as_ref()
-                {
-                    format!("{:?}", s.value)
-                } else {
-                    "_unknown".to_string()
+                let field_name = match prop.key.as_ref() {
+                    swc_ecma_ast::Expr::Ident(ident) => ident.sym.to_string(),
+                    swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) => {
+                        format!("{:?}", s.value)
+                    }
+                    _ => "_unknown".to_string(),
                 };
 
                 if let Some(type_ann) = &prop.type_ann {
@@ -217,24 +229,35 @@ impl AstWalker {
                 }
             }
         }
-        self.type_fields.insert(name.to_string(), fields);
+
+        // Convert to RustType and store in structs map
+        let rust_name = to_pascal_case(name);
+        let resolved_fields: Vec<(String, RustType)> = fields
+            .iter()
+            .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
+            .collect();
+
+        self.structs.insert(
+            name.to_string(),
+            StructInfo {
+                rust_name,
+                fields: resolved_fields,
+            },
+        );
     }
 
     fn collect_enum(&mut self, name: &str, decl: &swc_ecma_ast::TsEnumDecl) {
-        let variants: Vec<EnumVariant> = decl
+        let variants: Vec<super::types::EnumVariant> = decl
             .members
             .iter()
             .map(|member| {
-                // Get the variant name from the enum member ID
                 let variant_name = match &member.id {
-                    swc_ecma_ast::TsEnumMemberId::Ident(ident) => {
-                        ident.sym.to_string()
-                    }
+                    swc_ecma_ast::TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
                     swc_ecma_ast::TsEnumMemberId::Str(s) => {
                         format!("{:?}", s.value)
                     }
                 };
-                EnumVariant {
+                super::types::EnumVariant {
                     name: variant_name,
                     fields: Vec::new(),
                 }
@@ -256,14 +279,9 @@ impl AstWalker {
             let mut fields: Vec<(String, TsType)> = Vec::new();
             for member in &lit.members {
                 if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
-                    let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
-                        ident.sym.to_string()
-                    } else if let swc_ecma_ast::Expr::Lit(swc_ecma_ast::Lit::Str(s)) =
-                        prop.key.as_ref()
-                    {
-                        format!("{:?}", s.value)
-                    } else {
-                        "_unknown".to_string()
+                    let field_name = match prop.key.as_ref() {
+                        swc_ecma_ast::Expr::Ident(ident) => ident.sym.to_string(),
+                        _ => continue,
                     };
 
                     if let Some(type_ann) = &prop.type_ann {
@@ -271,12 +289,14 @@ impl AstWalker {
                     }
                 }
             }
-            // Store as a struct type, not just a raw field
+
+            // Store in structs map with resolved types
             let rust_name = to_pascal_case(name);
             let resolved_fields: Vec<(String, RustType)> = fields
                 .iter()
                 .map(|(n, t)| (n.clone(), self.resolver.resolve(t)))
                 .collect();
+
             self.structs.insert(
                 name.to_string(),
                 StructInfo {
@@ -284,8 +304,6 @@ impl AstWalker {
                     fields: resolved_fields,
                 },
             );
-            // Also store in type_fields for backward compatibility
-            self.type_fields.insert(name.to_string(), fields);
             return;
         }
 
@@ -300,9 +318,11 @@ impl AstWalker {
             }
         }
 
-        // For other type aliases, just store the type reference
-        self.type_fields
-            .insert(name.to_string(), vec![("_type".to_string(), type_ann.clone())]);
+        // For other type aliases, store the type reference
+        self.type_fields.insert(
+            name.to_string(),
+            vec![("_type".to_string(), type_ann.clone())],
+        );
     }
 
     /// Check if a type is a tagged variant.
@@ -325,7 +345,7 @@ impl AstWalker {
 
     /// Collect a tagged union (enum).
     fn collect_tagged_union(&mut self, name: &str, types: &[Box<TsType>]) {
-        let mut variants: Vec<EnumVariant> = Vec::new();
+        let mut variants: Vec<super::types::EnumVariant> = Vec::new();
 
         for ts_type in types {
             if let TsType::TsTypeLit(lit) = ts_type.as_ref() {
@@ -334,19 +354,18 @@ impl AstWalker {
 
                 for member in &lit.members {
                     if let swc_ecma_ast::TsTypeElement::TsPropertySignature(prop) = member {
-                        let field_name = if let swc_ecma_ast::Expr::Ident(ident) = prop.key.as_ref() {
-                            ident.sym.to_string()
-                        } else {
-                            continue;
+                        let field_name = match prop.key.as_ref() {
+                            swc_ecma_ast::Expr::Ident(ident) => ident.sym.to_string(),
+                            _ => continue,
                         };
 
                         if let Some(type_ann) = &prop.type_ann {
                             let ty = self.resolver.resolve(&type_ann.type_ann);
                             if field_name == "tag" {
-                                // Extract the string literal value for the tag
                                 if let TsType::TsKeywordType(k) = type_ann.type_ann.as_ref() {
                                     if k.kind == swc_ecma_ast::TsKeywordTypeKind::TsStringKeyword {
-                                        tag = format!("{}{}",
+                                        tag = format!(
+                                            "{}{}",
                                             name.chars().next().unwrap().to_uppercase(),
                                             &name[1..]
                                         );
@@ -360,7 +379,7 @@ impl AstWalker {
                 }
 
                 if !tag.is_empty() {
-                    variants.push(EnumVariant { name: tag, fields });
+                    variants.push(super::types::EnumVariant { name: tag, fields });
                 }
             }
         }
@@ -377,8 +396,7 @@ impl AstWalker {
     }
 
     fn collect_ts_module(&mut self, decl: &swc_ecma_ast::TsModuleDecl) {
-        if let Some(swc_ecma_ast::TsNamespaceBody::TsModuleBlock(block)) = decl.body.as_ref()
-        {
+        if let Some(swc_ecma_ast::TsNamespaceBody::TsModuleBlock(block)) = decl.body.as_ref() {
             for item in &block.body {
                 self.collect_item(item);
             }
@@ -410,10 +428,9 @@ impl AstWalker {
             .iter()
             .filter_map(|p| {
                 if let swc_ecma_ast::Pat::Ident(ident) = &p.pat {
-                    let ty = ident
-                        .type_ann
-                        .as_ref()
-                        .map_or(RustType::Unknown, |ann| self.resolver.resolve(&ann.type_ann));
+                    let ty = ident.type_ann.as_ref().map_or(RustType::Unknown, |ann| {
+                        self.resolver.resolve(&ann.type_ann)
+                    });
                     Some((ident.id.sym.to_string(), ty))
                 } else {
                     None
@@ -429,41 +446,19 @@ impl AstWalker {
 
         let is_async = fn_decl.function.is_async;
 
-        // Get the function body
-        let body =
-            fn_decl
-                .function
-                .body
-                .as_ref()
-                .map(|block| Stmt::Block(block.clone()));
+        let body = fn_decl
+            .function
+            .body
+            .as_ref()
+            .map(|block| Stmt::Block(block.clone()));
 
-        // Set the expected return type for type inference
-        self.emitter.set_expected_return(Some(return_type.to_string()));
+        self.emitter
+            .set_expected_return(Some(return_type.to_string()));
 
-        self.emitter.emit_function_with_body(
-            &rust_name,
-            &params,
-            &return_type,
-            is_async,
-            body,
-        );
+        self.emitter
+            .emit_function_with_body(&rust_name, &params, &return_type, is_async, body);
 
         self.emitter.set_expected_return(None);
-    }
-
-    /// Escape a Rust keyword for use as an identifier.
-    #[must_use]
-    pub fn escape_keyword(name: &str) -> String {
-        match name {
-            "as" | "async" | "await" | "break" | "const" | "continue" | "crate" | "dyn"
-            | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if" | "impl"
-            | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub" | "ref"
-            | "return" | "self" | "Self" | "static" | "struct" | "super" | "trait" | "true"
-            | "type" | "unsafe" | "use" | "where" | "while" | "abstract" | "become"
-            | "box" | "do" | "final" | "macro" | "override" | "priv" | "try"
-            | "typeof" | "unsized" | "virtual" | "yield" => format!("r#{name}"),
-            _ => name.to_string(),
-        }
     }
 
     /// Get the generated output.

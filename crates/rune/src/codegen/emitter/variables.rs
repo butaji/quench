@@ -2,7 +2,7 @@
 //!
 //! Emits Rust variable declarations from TypeScript var/let/const.
 
-use super::{CodeEmitter, emit_expr, infer_type};
+use super::{emit_expr, infer_type, CodeEmitter};
 
 /// Emit a variable declaration.
 pub fn emit_var_decl(emitter: &mut CodeEmitter, decl: &swc_ecma_ast::Decl) {

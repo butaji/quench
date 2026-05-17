@@ -2,13 +2,12 @@
 //!
 //! Parses `*.r.ts` and `*.r.tsx` files using SWC.
 
-mod source_file;
 mod diagnostics;
+mod source_file;
 pub mod swc_parser;
 
-pub use source_file::{SourceFile, SourceKind};
 pub use diagnostics::ParseDiagnostics;
-pub use swc_parser::SwcAst;
+pub use source_file::{SourceFile, SourceKind};
 
 /// Check if a file path is a Rune source file (ending in .r.ts or .r.tsx).
 pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
@@ -41,7 +40,8 @@ pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
                 .and_then(std::ffi::OsStr::to_str)
                 .unwrap_or("unknown")
                 .to_string(),
-        ).into());
+        )
+        .into());
     };
 
     SourceFile::parse(path, kind).map_err(Into::into)

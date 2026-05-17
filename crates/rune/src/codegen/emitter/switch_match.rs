@@ -1,7 +1,8 @@
 //! # Switch Statement Emitter
 //! Emits Rust match expressions from TypeScript switch statements.
-use super::{CodeEmitter, emit_expr, to_rust_name, is_enum_type};
-use swc_ecma_ast::{SwitchCase, Stmt};
+use super::{emit_expr, CodeEmitter};
+use super::types::{is_enum_type, to_rust_name};
+use swc_ecma_ast::{Stmt, SwitchCase};
 
 /// Emit a switch statement as Rust match.
 pub fn emit_switch(emitter: &mut CodeEmitter, switch_stmt: &swc_ecma_ast::SwitchStmt) {
@@ -62,10 +63,7 @@ fn emit_case_pattern_for_test(emitter: &mut CodeEmitter, test: &swc_ecma_ast::Ex
 }
 
 /// Emit a tagged variant pattern from member access.
-fn emit_tagged_variant_pattern(
-    emitter: &mut CodeEmitter,
-    member: &swc_ecma_ast::MemberExpr,
-) {
+fn emit_tagged_variant_pattern(emitter: &mut CodeEmitter, member: &swc_ecma_ast::MemberExpr) {
     if let swc_ecma_ast::MemberProp::Ident(prop) = &member.prop {
         let prop_name = prop.sym.as_ref();
 

@@ -2,8 +2,8 @@
 //!
 //! Validates the zero-overhead TypeScript subset is being used.
 
-use crate::parser::SourceFile;
 use super::ValidationError;
+use crate::parser::SourceFile;
 
 /// Validator for the Rune TypeScript subset.
 #[derive(Debug)]
@@ -66,7 +66,8 @@ impl SubsetValidator {
         if line.contains(": unknown") {
             self.errors.push(ValidationError {
                 code: "no-unknown",
-                message: "Type 'unknown' requires dynamic dispatch. Use concrete types.".to_string(),
+                message: "Type 'unknown' requires dynamic dispatch. Use concrete types."
+                    .to_string(),
                 line: line_num,
                 column: 0,
             });
@@ -189,7 +190,7 @@ impl SubsetValidator {
             // Simple heuristic: if there's "[variable]" (non-numeric), it's likely dynamic access
             // Array access like arr[0] or arr[i] where i is used as index is fine
             // We check for patterns like: obj[variableName] where variableName is not a number
-            
+
             // Find bracket pairs and check if the content is a simple identifier (variable)
             let mut chars = line.chars().peekable();
             while let Some(c) = chars.next() {
@@ -198,22 +199,31 @@ impl SubsetValidator {
                     let mut content = String::new();
                     let mut depth = 1;
                     while let Some(&next) = chars.peek() {
-                        if next == '[' { depth += 1; }
-                        if next == ']' { 
-                            depth -= 1; 
-                            if depth == 0 { break; }
+                        if next == '[' {
+                            depth += 1;
+                        }
+                        if next == ']' {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
                         }
                         content.push(chars.next().unwrap());
                     }
                     chars.next(); // consume ]
-                    
+
                     // Check if this is array indexing (numeric or simple variable used as index)
                     let content_trimmed = content.trim();
-                    let is_numeric = content_trimmed.chars().all(|c| c.is_ascii_digit() || c == '.');
-                    let is_index_var = content_trimmed == "i" || content_trimmed == "j" || 
-                                       content_trimmed == "k" || content_trimmed == "idx" ||
-                                       content_trimmed == "index" || content_trimmed.starts_with("task.");
-                    
+                    let is_numeric = content_trimmed
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.');
+                    let is_index_var = content_trimmed == "i"
+                        || content_trimmed == "j"
+                        || content_trimmed == "k"
+                        || content_trimmed == "idx"
+                        || content_trimmed == "index"
+                        || content_trimmed.starts_with("task.");
+
                     // If it's not numeric and not a known index variable, it might be dynamic
                     // For now, only flag if it looks like a property access (before [ is a var name)
                     if !is_numeric && !is_index_var && content_trimmed.len() > 1 {

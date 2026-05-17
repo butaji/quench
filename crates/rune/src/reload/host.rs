@@ -2,8 +2,11 @@
 //!
 //! Signals the host process when a reload is needed.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::ReloadResult;
 
 /// Signals the host process about reload state.
 pub struct HostSignaler {
@@ -32,7 +35,6 @@ impl HostSignaler {
     ///
     /// # Errors
     /// Returns an error if signaling fails.
-    #[allow(clippy::unwrap_used)]
     pub fn signal(&self) -> ReloadResult<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -40,7 +42,39 @@ impl HostSignaler {
             .as_millis();
 
         let signal_file = self.hot_dir.join(format!("reload_{timestamp}.signal"));
-        std::fs::write(&signal_file, "")?;
+        fs::write(&signal_file, "")?;
+
+        // Clean up old signal files (keep only last 10)
+        self.cleanup_old_signals(10)?;
+
+        Ok(())
+    }
+
+    /// Clean up signal files older than the last N.
+    fn cleanup_old_signals(&self, keep_last: usize) -> ReloadResult<()> {
+        let mut signals: Vec<_> = fs::read_dir(&self.hot_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "signal"))
+            .collect();
+
+        if signals.len() <= keep_last {
+            return Ok(());
+        }
+
+        signals.sort_by_key(|e| {
+            e.path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_prefix("reload_"))
+                .and_then(|s| s.parse::<u64>().ok())
+        });
+
+        // Keep only the last `keep_last` signals
+        let to_remove = signals.len() - keep_last;
+        for signal in signals.into_iter().take(to_remove) {
+            let _ = fs::remove_file(signal.path());
+        }
+
         Ok(())
     }
 
@@ -49,11 +83,11 @@ impl HostSignaler {
     /// # Errors
     /// Returns an error if clearing fails.
     pub fn clear(&self) -> ReloadResult<()> {
-        for entry in std::fs::read_dir(&self.hot_dir)? {
+        for entry in fs::read_dir(&self.hot_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "signal") {
-                std::fs::remove_file(path)?;
+            if path.extension().is_some_and(|ext| ext == "signal") {
+                fs::remove_file(path)?;
             }
         }
         Ok(())
@@ -63,10 +97,11 @@ impl HostSignaler {
     ///
     /// # Errors
     /// Returns an error if reading fails.
+    #[allow(clippy::unwrap_used)]
     pub fn current_dylib(&self) -> ReloadResult<Option<PathBuf>> {
         let current_link = self.hot_dir.join(".current");
         if current_link.exists() {
-            Ok(Some(std::fs::read_link(current_link)?))
+            Ok(Some(fs::read_link(current_link)?))
         } else {
             Ok(None)
         }
@@ -85,7 +120,7 @@ impl HostSignaler {
     /// # Errors
     /// Returns an error if marking fails.
     pub fn mark_restart_needed(&self) -> ReloadResult<()> {
-        std::fs::write(&self.state_file, "")?;
+        fs::write(&self.state_file, "")?;
         Ok(())
     }
 
@@ -95,10 +130,8 @@ impl HostSignaler {
     /// Returns an error if clearing fails.
     pub fn clear_restart_needed(&self) -> ReloadResult<()> {
         if self.state_file.exists() {
-            std::fs::remove_file(&self.state_file)?;
+            fs::remove_file(&self.state_file)?;
         }
         Ok(())
     }
 }
-
-use super::ReloadResult;

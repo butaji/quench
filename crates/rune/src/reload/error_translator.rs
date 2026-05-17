@@ -115,10 +115,12 @@ impl ErrorTranslator {
         let msg = message.trim();
 
         if msg.contains("cannot move") {
-            return "Move error: value was already moved. Use .clone() to explicitly copy.".to_string();
+            return "Move error: value was already moved. Use .clone() to explicitly copy."
+                .to_string();
         }
         if msg.contains("borrow of moved value") {
-            return "Borrow error: value was moved. Consider using a reference or .clone().".to_string();
+            return "Borrow error: value was moved. Consider using a reference or .clone()."
+                .to_string();
         }
         if msg.contains("does not implement") {
             return format!("Type error: {}", msg.lines().next().unwrap_or(msg));

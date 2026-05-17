@@ -2,10 +2,10 @@
 //!
 //! Watches for file changes and triggers hot reload.
 
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::{ReloadError, ReloadResult};
 
@@ -23,12 +23,14 @@ pub enum ReloadEvent {
 /// Watches for file changes in Rune source files.
 pub struct DylibWatcher {
     /// Watcher for file system events
+    #[allow(dead_code)]
     watcher: RecommendedWatcher,
     /// Receiver for events
     receiver: Receiver<Result<Event, notify::Error>>,
     /// Directory being watched
     watched_dir: PathBuf,
     /// Debounce duration
+    #[allow(dead_code)]
     debounce: Duration,
 }
 

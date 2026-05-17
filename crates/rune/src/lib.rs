@@ -14,12 +14,9 @@
     non_ascii_idents,
     trivial_casts,
     trivial_numeric_casts,
-    unused_lifetimes,
+    unused_lifetimes
 )]
-// Note: unused_extern_crates and unused_qualifications are denied but serde/therror
-// derive macros emit allow() for these, so we use deny instead of forbid
 #![allow(
-    clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::missing_errors_doc,
     clippy::doc_markdown,
@@ -31,7 +28,6 @@
     clippy::match_same_arms,
     clippy::uninlined_format_args,
     clippy::unused_self,
-    clippy::self_only_used_in_recursion,
     clippy::redundant_closure,
     clippy::or_fun_call,
     clippy::derivable_impls,
@@ -42,27 +38,32 @@
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation,
     clippy::used_underscore_binding,
-    clippy::missing_const_for_fn,
-    dead_code,
-    clippy::unnecessary_box_returns,
     clippy::manual_pattern_char_comparison,
     clippy::cast_possible_wrap,
     clippy::manual_contains,
     clippy::redundant_closure_for_method_calls,
     clippy::useless_conversion,
     clippy::missing_panics_doc,
-    clippy::cognitive_complexity,
+    clippy::missing_const_for_fn,
     unused_extern_crates,
-    unused_qualifications,
+    unused_qualifications
 )]
 
+use thiserror::Error;
+
+// Public API - only expose what's needed
 pub mod analyzer;
 pub mod codegen;
 pub mod driver;
 pub mod parser;
 pub mod reload;
 
-use thiserror::Error;
+// Shared utilities
+pub mod utils;
+
+// Re-exports for convenience
+pub use crate::ParseError as ParseErrorType;
+pub use crate::RuneError as Error;
 
 /// Result type for Rune operations.
 pub type Result<T> = std::result::Result<T, RuneError>;
@@ -89,7 +90,7 @@ pub enum RuneError {
     Reload(String),
 }
 
-/// Parse errors.
+/// Parse errors with location information.
 #[derive(Error, Debug, Clone)]
 pub enum ParseError {
     #[error("Parse error: {0}")]
@@ -102,12 +103,24 @@ pub enum ParseError {
     InvalidExtension(String),
 }
 
-/// Location in source code.
-#[derive(Debug, Clone, Default)]
+/// Location in source code with line/column info.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceLocation {
     pub file: String,
     pub line: u32,
     pub column: u32,
+}
+
+impl SourceLocation {
+    /// Create a new location.
+    #[must_use]
+    pub fn new(file: impl Into<String>, line: u32, column: u32) -> Self {
+        Self {
+            file: file.into(),
+            line,
+            column,
+        }
+    }
 }
 
 impl std::fmt::Display for SourceLocation {

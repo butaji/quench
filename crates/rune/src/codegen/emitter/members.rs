@@ -2,9 +2,9 @@
 //!
 //! Emits Rust member expressions and object literals.
 
-use super::{CodeEmitter, emit_expr};
-use super::utils::{to_snake_case, escape_rust_keyword, infer_struct_from_object};
-use swc_ecma_ast::{Expr, ObjectLit, PropName, PropOrSpread, Prop, MemberProp};
+use super::utils::{escape_rust_keyword, infer_struct_from_object, to_snake_case};
+use super::{emit_expr, CodeEmitter};
+use swc_ecma_ast::{Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread};
 
 /// Emit a member expression.
 pub fn emit_member(emitter: &mut CodeEmitter, member_expr: &swc_ecma_ast::MemberExpr) {
@@ -112,9 +112,7 @@ fn infer_type_from_call(call_expr: &swc_ecma_ast::CallExpr) -> String {
                     infer_type_from_expr(&member.obj)
                 }
                 "find" | "findIndex" => "Option<()>".to_string(),
-                "some" | "every" | "includes" | "startsWith" | "endsWith" => {
-                    "bool".to_string()
-                }
+                "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
                 "push" => "usize".to_string(),
                 "pop" | "shift" => "Option<()>".to_string(),
                 "length" => "usize".to_string(),
@@ -222,11 +220,7 @@ fn emit_result_pattern_object(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     }
 }
 
-fn emit_anonymous_object(
-    emitter: &mut CodeEmitter,
-    obj: &ObjectLit,
-    spread: Option<&Expr>,
-) {
+fn emit_anonymous_object(emitter: &mut CodeEmitter, obj: &ObjectLit, spread: Option<&Expr>) {
     if spread.is_some() {
         emitter.push_str("{ /* struct update without type context */ }");
     } else {

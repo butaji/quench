@@ -2,7 +2,7 @@
 //!
 //! Infers Rust ownership patterns from TypeScript usage.
 
-use super::{TypeMap, OwnershipAnalysis, TypeInfo};
+use super::{OwnershipAnalysis, TypeInfo, TypeMap};
 
 /// Borrow mode for a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

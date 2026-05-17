@@ -3,9 +3,9 @@
 //! Shared CLI parsing and execution logic.
 
 use clap::{Parser, Subcommand, ValueHint};
-use std::path::PathBuf;
-use rune::driver::{BuildOptions, BuildMode, Command};
+use rune::driver::{BuildDriver, BuildMode, BuildOptions};
 use rune::Result;
+use std::path::PathBuf;
 
 /// Rune compiler driver.
 #[derive(Parser)]
@@ -67,38 +67,37 @@ pub fn build_cli(args: &[String]) -> Cli {
 }
 
 /// Run command based on CLI arguments.
-pub fn run_command(
-    command: &Commands,
-    options: &mut BuildOptions,
-) -> Result<()> {
+pub fn run_command(command: &Commands, options: &mut BuildOptions) -> Result<()> {
+    let mut driver = BuildDriver::new(options.clone())?;
+
     match command {
         Commands::Dev { path } => {
-            options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
-            options.mode = BuildMode::Dev;
-            rune::driver::run(Command::Dev, options.clone())
+            driver.options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
+            driver.options.mode = BuildMode::Dev;
+            driver.dev()
         }
         Commands::Build { path, release } => {
-            options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
-            options.mode = if *release {
+            driver.options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
+            driver.options.mode = if *release {
                 BuildMode::Release
             } else {
                 BuildMode::Dev
             };
-            rune::driver::run(Command::Build, options.clone())
+            driver.build()
         }
         Commands::Check { path } => {
-            options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
-            rune::driver::run(Command::Check, options.clone())
+            driver.options.workspace = path.clone().unwrap_or_else(|| PathBuf::from("."));
+            driver.check()
         }
         Commands::Transpile { file } => {
-            options.transpile_file = Some(file.clone());
-            rune::driver::run(Command::Transpile, options.clone())
+            driver.options.transpile_file = Some(file.clone());
+            driver.transpile()
         }
         Commands::Init { name } => {
-            if let Some(n) = name {
-                println!("Initializing project: {n}");
+            if let Some(_n) = name {
+                println!("Initializing project: {}", _n);
             }
-            rune::driver::run(Command::Init, options.clone())
+            driver.init()
         }
     }
 }
