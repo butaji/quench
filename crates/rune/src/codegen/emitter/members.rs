@@ -10,17 +10,10 @@ use swc_ecma_ast::{Expr, MemberProp, ObjectLit, Prop, PropName, PropOrSpread};
 pub fn emit_member(emitter: &mut CodeEmitter, member_expr: &swc_ecma_ast::MemberExpr) {
     let is_nested = matches!(&*member_expr.obj, Expr::Member(_));
     emit_expr(emitter, &member_expr.obj);
-
     match &member_expr.prop {
-        MemberProp::Ident(ident) => {
-            emit_property_access(emitter, ident.sym.as_ref(), is_nested);
-        }
-        MemberProp::PrivateName(_) => {
-            emitter.push_str(".prop");
-        }
-        MemberProp::Computed(comp) => {
-            emit_computed_property(emitter, &member_expr.obj, comp);
-        }
+        MemberProp::Ident(ident) => emit_property_access(emitter, ident.sym.as_ref(), is_nested),
+        MemberProp::PrivateName(_) => emitter.push_str(".prop"),
+        MemberProp::Computed(comp) => emit_computed_property(emitter, &member_expr.obj, comp),
     }
 }
 
@@ -66,11 +59,7 @@ fn emit_top_level_property(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 }
 
-fn emit_computed_property(
-    emitter: &mut CodeEmitter,
-    obj: &Expr,
-    comp: &swc_ecma_ast::ComputedPropName,
-) {
+fn emit_computed_property(emitter: &mut CodeEmitter, obj: &Expr, comp: &swc_ecma_ast::ComputedPropName) {
     let obj_type = infer_type_from_expr(obj);
     if obj_type.starts_with("Vec") {
         emitter.push_str("[");
@@ -85,16 +74,20 @@ fn emit_computed_property(
 
 fn infer_type_from_expr(expr: &Expr) -> String {
     match expr {
-        Expr::Lit(lit) => match lit {
-            swc_ecma_ast::Lit::Num(_) => "f64".to_string(),
-            swc_ecma_ast::Lit::Str(_) => "String".to_string(),
-            swc_ecma_ast::Lit::Bool(_) => "bool".to_string(),
-            _ => "()".to_string(),
-        },
+        Expr::Lit(lit) => infer_literal_type(lit),
         Expr::Array(_) => "Vec<()>".to_string(),
         Expr::Object(_) => "()".to_string(),
         Expr::Call(call_expr) => infer_type_from_call(call_expr),
         Expr::Member(member_expr) => infer_type_from_member(member_expr),
+        _ => "()".to_string(),
+    }
+}
+
+fn infer_literal_type(lit: &swc_ecma_ast::Lit) -> String {
+    match lit {
+        swc_ecma_ast::Lit::Num(_) => "f64".to_string(),
+        swc_ecma_ast::Lit::Str(_) => "String".to_string(),
+        swc_ecma_ast::Lit::Bool(_) => "bool".to_string(),
         _ => "()".to_string(),
     }
 }
@@ -105,38 +98,42 @@ fn infer_type_from_call(call_expr: &swc_ecma_ast::CallExpr) -> String {
     };
 
     if let Expr::Member(member) = &**callee {
-        if let MemberProp::Ident(prop) = &member.prop {
-            let method = prop.sym.as_ref();
-            match method {
-                "filter" | "map" | "concat" | "slice" | "flat" | "flatMap" => {
-                    infer_type_from_expr(&member.obj)
-                }
-                "find" | "findIndex" => "Option<()>".to_string(),
-                "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
-                "push" => "usize".to_string(),
-                "pop" | "shift" => "Option<()>".to_string(),
-                "length" => "usize".to_string(),
-                _ => "()".to_string(),
-            }
-        } else {
-            "()".to_string()
+        return infer_method_return_type(member);
+    }
+
+    "()".to_string()
+}
+
+fn infer_method_return_type(member: &swc_ecma_ast::MemberExpr) -> String {
+    let swc_ecma_ast::MemberProp::Ident(prop) = &member.prop else {
+        return "()".to_string();
+    };
+
+    let method = prop.sym.as_ref();
+    match method {
+        "filter" | "map" | "concat" | "slice" | "flat" | "flatMap" => {
+            infer_type_from_expr(&member.obj)
         }
-    } else {
-        "()".to_string()
+        "find" | "findIndex" => "Option<()>".to_string(),
+        "some" | "every" | "includes" | "startsWith" | "endsWith" => "bool".to_string(),
+        "push" => "usize".to_string(),
+        "pop" | "shift" => "Option<()>".to_string(),
+        "length" => "usize".to_string(),
+        _ => "()".to_string(),
     }
 }
 
 fn infer_type_from_member(member_expr: &swc_ecma_ast::MemberExpr) -> String {
-    if let MemberProp::Ident(prop) = &member_expr.prop {
-        match prop.sym.as_ref() {
-            "length" => "usize".to_string(),
-            "id" => "i32".to_string(),
-            "title" | "error" => "String".to_string(),
-            "done" | "ok" => "bool".to_string(),
-            _ => "()".to_string(),
-        }
-    } else {
-        "()".to_string()
+    let swc_ecma_ast::MemberProp::Ident(prop) = &member_expr.prop else {
+        return "()".to_string();
+    };
+
+    match prop.sym.as_ref() {
+        "length" => "usize".to_string(),
+        "id" => "i32".to_string(),
+        "title" | "error" => "String".to_string(),
+        "done" | "ok" => "bool".to_string(),
+        _ => "()".to_string(),
     }
 }
 
@@ -188,12 +185,7 @@ fn resolve_struct_name(emitter: &CodeEmitter, obj: &ObjectLit) -> StructNameKind
     StructNameKind::Anonymous
 }
 
-fn emit_struct_literal(
-    emitter: &mut CodeEmitter,
-    name: &str,
-    obj: &ObjectLit,
-    spread: Option<&Expr>,
-) {
+fn emit_struct_literal(emitter: &mut CodeEmitter, name: &str, obj: &ObjectLit, spread: Option<&Expr>) {
     emitter.push_str(name);
     emitter.push_str(" { ");
     emit_object_props(emitter, obj);
@@ -231,47 +223,33 @@ fn emit_anonymous_object(emitter: &mut CodeEmitter, obj: &ObjectLit, spread: Opt
 }
 
 fn is_result_pattern_object(obj: &ObjectLit) -> bool {
-    obj.props.iter().any(|p| {
-        if let PropOrSpread::Prop(prop) = p {
-            if let Prop::KeyValue(kv) = &**prop {
-                if let PropName::Ident(ident) = &kv.key {
-                    let name = ident.sym.as_ref();
-                    return name == "ok" || name == "value" || name == "error";
-                }
-            }
-        }
-        false
-    })
+    obj.props.iter().any(|p| is_result_key(p))
+}
+
+fn is_result_key(p: &PropOrSpread) -> bool {
+    let PropOrSpread::Prop(prop) = p else { return false };
+    let Prop::KeyValue(kv) = &**prop else { return false };
+    let PropName::Ident(ident) = &kv.key else { return false };
+    let name = ident.sym.as_ref();
+    name == "ok" || name == "value" || name == "error"
 }
 
 fn extract_result_value(obj: &ObjectLit) -> Option<&Expr> {
-    obj.props.iter().find_map(|p| {
-        if let PropOrSpread::Prop(prop) = p {
-            if let Prop::KeyValue(kv) = &**prop {
-                if let PropName::Ident(ident) = &kv.key {
-                    if ident.sym.as_ref() == "value" {
-                        return Some(&*kv.value);
-                    }
-                }
-            }
-        }
-        None
-    })
+    obj.props.iter().find_map(|p| extract_prop_value(p, "value"))
 }
 
 fn extract_result_error(obj: &ObjectLit) -> Option<&Expr> {
-    obj.props.iter().find_map(|p| {
-        if let PropOrSpread::Prop(prop) = p {
-            if let Prop::KeyValue(kv) = &**prop {
-                if let PropName::Ident(ident) = &kv.key {
-                    if ident.sym.as_ref() == "error" {
-                        return Some(&*kv.value);
-                    }
-                }
-            }
-        }
-        None
-    })
+    obj.props.iter().find_map(|p| extract_prop_value(p, "error"))
+}
+
+fn extract_prop_value<'a>(p: &'a PropOrSpread, field: &str) -> Option<&'a Expr> {
+    let PropOrSpread::Prop(prop) = p else { return None };
+    let Prop::KeyValue(kv) = &**prop else { return None };
+    let PropName::Ident(ident) = &kv.key else { return None };
+    if ident.sym.as_ref() == field {
+        return Some(&*kv.value);
+    }
+    None
 }
 
 fn find_spread_source(obj: &ObjectLit) -> Option<Box<Expr>> {
@@ -286,7 +264,6 @@ fn find_spread_source(obj: &ObjectLit) -> Option<Box<Expr>> {
 
 fn emit_object_props(emitter: &mut CodeEmitter, obj: &ObjectLit) {
     let mut first = true;
-
     for prop in &obj.props {
         if let PropOrSpread::Prop(prop) = prop {
             if !first {

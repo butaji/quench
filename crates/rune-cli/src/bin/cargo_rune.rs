@@ -14,7 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use rune_cli::cli::{build_cli, run_command};
 
 /// Main entry point for cargo-rune.
-fn main() -> rune::Result<()> {
+fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -31,14 +31,10 @@ fn main() -> rune::Result<()> {
     let cli = build_cli(&args);
     let mut options = create_options(&cli);
 
-    let result = run_command(&cli.command, &mut options);
-
-    if let Err(e) = result {
+    if let Err(e) = run_command(&cli.command, &mut options) {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
-
-    Ok(())
 }
 
 /// Create build options from CLI arguments.
