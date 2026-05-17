@@ -34,7 +34,7 @@ fn emit_property_access(emitter: &mut CodeEmitter, prop_name: &str, is_nested: b
 
 fn emit_nested_property(emitter: &mut CodeEmitter, prop_name: &str) {
     if prop_name == "length" {
-        emitter.push_str(".len() as f64");
+        emitter.push_str(".len()");
     } else {
         emitter.push_str(".");
         emitter.push_str(prop_name);
@@ -51,7 +51,7 @@ fn emit_top_level_property(emitter: &mut CodeEmitter, prop_name: &str) {
     }
 
     match prop_name {
-        "length" => emitter.push_str(".len() as f64"),
+        "length" => emitter.push_str(".len()"),
         "toString" | "valueOf" => {}
         "toLowerCase" => emitter.push_str(".to_lowercase()"),
         "toUpperCase" => emitter.push_str(".to_uppercase()"),
