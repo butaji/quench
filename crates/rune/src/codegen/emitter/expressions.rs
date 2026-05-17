@@ -50,7 +50,26 @@ fn emit_bin_expr(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {
         emit_string_concat(emitter, bin_expr);
         return;
     }
+
+    // Check for integer division warning
+    if bin_expr.op == swc_ecma_ast::BinaryOp::Div
+        && is_integer_type(&left_type)
+        && is_integer_type(&right_type)
+    {
+        emitter.emit_warning(
+            "integer-division",
+            "Integer division produces i32 result (5 / 2 == 2), not f64. \
+             Use 5.0 or explicit cast for float division.",
+        );
+    }
+
     emit_binary_op(emitter, bin_expr);
+}
+
+/// Check if a type string represents an integer.
+#[must_use]
+fn is_integer_type(ty: &str) -> bool {
+    matches!(ty, "i8" | "i16" | "i32" | "i64" | "isize" | "usize")
 }
 
 fn emit_string_concat(emitter: &mut CodeEmitter, bin_expr: &swc_ecma_ast::BinExpr) {

@@ -48,6 +48,15 @@ impl BorrowMode {
             BorrowMode::Unknown => "&",
         }
     }
+
+    /// Get the rust type annotation for this borrow mode.
+    #[must_use]
+    pub fn as_mut_prefix(&self) -> &'static str {
+        match self {
+            BorrowMode::Mut => "&mut ",
+            _ => "&",
+        }
+    }
 }
 
 /// Analyzes ownership and borrowing patterns.
@@ -59,6 +68,8 @@ pub struct OwnershipAnalyzer {
     mut_refs: Vec<String>,
     /// Shared references taken
     shared_refs: Vec<String>,
+    /// Functions that consume ownership
+    consuming_functions: Vec<String>,
 }
 
 impl OwnershipAnalyzer {
@@ -69,7 +80,18 @@ impl OwnershipAnalyzer {
             consumed: Vec::new(),
             mut_refs: Vec::new(),
             shared_refs: Vec::new(),
+            consuming_functions: Self::default_consuming_functions(),
         }
+    }
+
+    /// Default list of functions that consume ownership.
+    fn default_consuming_functions() -> Vec<String> {
+        vec![
+            "push".to_string(),
+            "pop".to_string(),
+            "splice".to_string(),
+            "consume".to_string(),
+        ]
     }
 
     /// Analyze types and produce ownership information.
@@ -86,11 +108,13 @@ impl OwnershipAnalyzer {
     }
 
     /// Infer borrow mode from type info.
-    fn infer_mode(&self, _name: &str, info: &TypeInfo) -> BorrowMode {
+    #[allow(unused_variables)]
+    fn infer_mode(&self, name: &str, info: &TypeInfo) -> BorrowMode {
         use TypeInfo::*;
         match info {
             Function(_) => BorrowMode::Owned,
-            String | StringLiteral(_) => BorrowMode::Shared,
+            String => BorrowMode::Shared,
+            StringLiteral(_) => BorrowMode::Shared,
             Array(_) => BorrowMode::Owned,
             Integer(_) | Float | Boolean => BorrowMode::Owned,
             Struct(_) | Enum(_) => BorrowMode::Owned,
@@ -98,6 +122,12 @@ impl OwnershipAnalyzer {
             Unknown => BorrowMode::Unknown,
             Generic(_) => BorrowMode::Owned,
         }
+    }
+
+    /// Check if a function is known to consume ownership.
+    #[must_use]
+    pub fn is_consuming_function(&self, name: &str) -> bool {
+        self.consuming_functions.iter().any(|f| f == name)
     }
 
     /// Record that a value was consumed (moved).
@@ -119,6 +149,25 @@ impl OwnershipAnalyzer {
     #[must_use]
     pub fn was_consumed(&self, name: &str) -> bool {
         self.consumed.contains(&name.to_string())
+    }
+
+    /// Add a custom consuming function.
+    pub fn add_consuming_function(&mut self, name: impl Into<String>) {
+        self.consuming_functions.push(name.into());
+    }
+
+    /// Generate warning for potential move after use.
+    #[must_use]
+    pub fn check_move_after_use(&self, var_name: &str) -> Option<String> {
+        if self.consumed.contains(&var_name.to_string()) {
+            Some(format!(
+                "Variable '{}' was moved and cannot be used after this point. \
+                 Consider using .clone() to explicitly copy.",
+                var_name
+            ))
+        } else {
+            None
+        }
     }
 }
 
