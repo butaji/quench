@@ -38,7 +38,7 @@ impl EmitOptions {
     #[must_use]
     pub fn with_protocol_import(mut self) -> Self {
         self.custom_imports
-            .push("use crate::protocol::{{AppState, Task, Filter}};".into());
+            .push("use protocol::{AppState, Filter, Task};".into());
         self
     }
 }
@@ -67,6 +67,8 @@ impl RustEmitter {
     /// Create a new emitter.
     #[allow(clippy::unused_self)]
     pub fn new(_source: &SourceFile, analysis: &AnalysisResult) -> Self {
+        // Add protocol imports by default so generated code can reference Task, Filter, AppState
+        let emit_options = EmitOptions::new().with_protocol_import();
         Self {
             analysis: analysis.clone(),
             imports: Vec::new(),
@@ -74,7 +76,7 @@ impl RustEmitter {
             indent: 0,
             options: CodegenOptions::default(),
             source_line_map: Vec::new(),
-            emit_options: EmitOptions::new(),
+            emit_options,
         }
     }
 
