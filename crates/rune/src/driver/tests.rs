@@ -11,22 +11,20 @@ mod driver_tests {
         let workspace = std::path::PathBuf::from("/test");
         let options = BuildOptions::new(workspace.clone());
         assert_eq!(workspace, options.workspace);
+        assert_eq!(BuildMode::Dev, options.mode);
+        assert!(!options.verbose);
     }
 
     #[test]
     fn test_build_options_dev() {
         let options = BuildOptions::new(std::path::PathBuf::from(".")).dev();
-        // Mode should be Dev (check via Debug output)
-        let debug = format!("{:?}", options.mode);
-        assert!(debug.contains("Dev") || debug.contains("Release"));
+        assert_eq!(BuildMode::Dev, options.mode);
     }
 
     #[test]
     fn test_build_options_release() {
         let options = BuildOptions::new(std::path::PathBuf::from(".")).release();
-        // Mode should be Release (check via Debug output)
-        let debug = format!("{:?}", options.mode);
-        assert!(debug.contains("Dev") || debug.contains("Release"));
+        assert_eq!(BuildMode::Release, options.mode);
     }
 
     #[test]
@@ -43,6 +41,38 @@ mod driver_tests {
         let mode = BuildMode::default();
         let debug = format!("{:?}", mode);
         assert!(debug.contains("Dev"));
+    }
+
+    #[test]
+    fn test_build_mode_debug() {
+        let mode = BuildMode::Dev;
+        let debug = format!("{:?}", mode);
+        assert!(debug.contains("Dev"));
+    }
+
+    #[test]
+    fn test_build_mode_release() {
+        let mode = BuildMode::Release;
+        let debug = format!("{:?}", mode);
+        assert!(debug.contains("Release"));
+    }
+
+    #[test]
+    fn test_build_options_with_config() {
+        let config_path = std::path::PathBuf::from("/path/to/rune.toml");
+        let options = BuildOptions {
+            mode: BuildMode::Release,
+            workspace: std::path::PathBuf::from("/workspace"),
+            target_crate: Some("myapp".to_string()),
+            config: Some(config_path.clone()),
+            transpile_file: None,
+            watch_transpile: false,
+            verbose: true,
+        };
+
+        assert_eq!(config_path, options.config.unwrap());
+        assert!(options.verbose);
+        assert_eq!(Some("myapp".to_string()), options.target_crate);
     }
 }
 

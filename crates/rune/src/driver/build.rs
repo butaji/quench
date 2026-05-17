@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 
 /// Build mode.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum BuildMode {
     /// Development with hot reload
     #[default]
@@ -237,8 +237,14 @@ impl BuildDriver {
     }
 
     fn build_crate(&self, release: bool) -> Result<()> {
-        use crate::reload::ErrorTranslator;
+        let output = self.run_cargo_build(release)?;
+        if !output.status.success() {
+            self.handle_build_failure(&output);
+        }
+        Ok(())
+    }
 
+    fn run_cargo_build(&self, release: bool) -> std::io::Result<std::process::Output> {
         let manifest = self.cache.generated_cargo_toml();
         let mut cmd = ProcCommand::new("cargo");
         cmd.arg("build");
@@ -246,36 +252,29 @@ impl BuildDriver {
             cmd.arg("--release");
         }
         cmd.arg("--manifest-path").arg(&manifest);
-
         if !self.options.verbose {
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
         }
+        cmd.output()
+    }
 
-        let output = cmd
-            .output()
-            .map_err(|e| crate::RuneError::Cargo(e.to_string()))?;
+    fn handle_build_failure(&self, output: &std::process::Output) {
+        use crate::reload::ErrorTranslator;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let translator = ErrorTranslator::new();
-            let translated_errors = translator.translate_all(&stderr);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let translator = ErrorTranslator::new();
+        let translated_errors = translator.translate_all(&stderr);
 
-            // Print translated errors
-            for err in &translated_errors {
-                eprintln!("{}", err);
-            }
-
-            // If no translated errors, print original
-            if translated_errors.is_empty() {
-                return Err(crate::RuneError::Cargo(stderr.to_string()));
-            }
-
-            return Err(crate::RuneError::Cargo(
-                "Compilation failed. See errors above.".to_string(),
-            ));
+        for err in &translated_errors {
+            eprintln!("{}", err);
         }
-        Ok(())
+
+        if translated_errors.is_empty() {
+            eprintln!("Compilation failed: {}", stderr);
+        } else {
+            eprintln!("Compilation failed. See errors above.");
+        }
     }
 
     fn setup_hot_reload(&self) -> Result<()> {
