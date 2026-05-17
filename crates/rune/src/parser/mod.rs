@@ -6,6 +6,8 @@ mod diagnostics;
 mod source_file;
 pub mod swc_parser;
 #[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
 mod tests;
 
 pub use diagnostics::ParseDiagnostics;
