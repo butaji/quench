@@ -43,9 +43,62 @@ impl AstWalker {
     pub fn walk_module(&mut self, module: &Module) {
         self.collect_imports(module);
         self.collect_types(module);
+        self.emit_imports();
         self.emit_named_types();
         self.emit_functions(module);
         self.emit_anonymous_structs();
+    }
+
+    /// Emit use statements for collected imports.
+    fn emit_imports(&mut self) {
+        // Protocol types (Task, AppState, Filter) are re-exported by mod.rs
+        // No need to import them here
+        
+        for (path, names) in &self.imports {
+            let clean_path = path.trim_matches('"');
+
+            // Skip native imports - they're handled separately
+            if clean_path.starts_with("native:") {
+                continue;
+            }
+
+            // Skip imports of protocol types (Task, AppState, Filter) - they're in scope via mod.rs
+            let protocol_types = ["Task", "AppState", "Filter"];
+            let is_protocol_import = names.iter().all(|n| protocol_types.contains(&n.as_str()));
+            if is_protocol_import {
+                continue;
+            }
+
+            // Convert relative path to Rust module path
+            let rust_path = self.convert_import_path(clean_path);
+            let names_str = names.join(", ");
+            self.emitter.push_line(&format!("use {}::{{{}}};", rust_path, names_str));
+        }
+
+        // Emit native imports
+        for module_name in &self.native_imports {
+            self.emitter.push_line("use crate::native;");
+            self.emitter.push_line(&format!("use crate::native::{};", module_name));
+        }
+
+        if !self.native_imports.is_empty() {
+            self.emitter.push_line("");
+        }
+    }
+
+    /// Convert TypeScript import path to Rust module path.
+    fn convert_import_path(&self, path: &str) -> String {
+        // Handle relative imports
+        if path.starts_with("./") {
+            let path = path.trim_start_matches("./");
+            let path = path.replace(".r.ts", "").replace(".r.tsx", "");
+            let parts: Vec<&str> = path.split('/').collect();
+            let rust_parts: Vec<String> = parts.iter().map(|p| to_snake_case(p)).collect();
+            return format!("crate::generated::{}", rust_parts.join("::"));
+        }
+
+        // Handle absolute imports (just use as-is for now)
+        path.to_string()
     }
 
     fn collect_imports(&mut self, module: &Module) {
@@ -59,7 +112,7 @@ impl AstWalker {
 
                 let names: Vec<String> = import.specifiers.iter()
                     .map(|spec| match spec {
-                        swc_ecma_ast::ImportSpecifier::Named(named) => to_snake_case(named.local.as_ref()),
+                        swc_ecma_ast::ImportSpecifier::Named(named) => named.local.as_ref().to_string(),
                         swc_ecma_ast::ImportSpecifier::Default(_) => "default".to_string(),
                         swc_ecma_ast::ImportSpecifier::Namespace(ns) => format!("*{}", to_snake_case(ns.local.as_ref())),
                     })

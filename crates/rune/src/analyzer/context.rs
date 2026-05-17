@@ -5,6 +5,17 @@
 use super::{AnalysisWarning, TypeInfo};
 use crate::parser::SourceFile;
 
+/// Rust keywords that need escaping.
+///
+/// This set is used to avoid conflicts when generating Rust code.
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+    "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+    "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
+    "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box", "do",
+    "final", "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield",
+];
+
 /// Context for type and ownership analysis.
 #[derive(Debug)]
 pub struct AnalysisContext {
@@ -137,58 +148,8 @@ impl AnalysisContext {
     /// Check if a string is a Rust keyword.
     #[must_use]
     fn is_keyword(s: &str) -> bool {
-        matches!(
-            s,
-            "as" | "async"
-                | "await"
-                | "break"
-                | "const"
-                | "continue"
-                | "crate"
-                | "dyn"
-                | "else"
-                | "enum"
-                | "extern"
-                | "false"
-                | "fn"
-                | "for"
-                | "if"
-                | "impl"
-                | "in"
-                | "let"
-                | "loop"
-                | "match"
-                | "mod"
-                | "move"
-                | "mut"
-                | "pub"
-                | "ref"
-                | "return"
-                | "self"
-                | "Self"
-                | "static"
-                | "struct"
-                | "super"
-                | "trait"
-                | "true"
-                | "type"
-                | "unsafe"
-                | "use"
-                | "where"
-                | "while"
-                | "abstract"
-                | "become"
-                | "box"
-                | "do"
-                | "final"
-                | "macro"
-                | "override"
-                | "priv"
-                | "try"
-                | "typeof"
-                | "unsized"
-                | "virtual"
-                | "yield"
-        )
+        // Using a lazy static would be ideal, but we keep it simple with a linear search
+        // for this small set of keywords (50 keywords, negligible performance impact)
+        RUST_KEYWORDS.contains(&s)
     }
 }

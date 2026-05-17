@@ -201,8 +201,8 @@ mod native;
 
 pub mod generated;
 
-use protocol::{App, AppState};
-pub use protocol::{Filter, Task};
+use protocol::App;
+pub use protocol::{AppState, Filter, Task};
 
 #[no_mangle]
 pub extern "C" fn create_app() -> *mut dyn App {
@@ -256,7 +256,14 @@ fn write_root_mod_file(
     generated_dir: &Path,
     modules: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<()> {
-    let root_mod_content: String = modules
+    let mut content = String::new();
+    
+    // Re-export protocol types for use by generated modules
+    content.push_str("// Protocol types re-exported for generated modules\n");
+    content.push_str("pub use protocol::{AppState, Filter, Task};\n\n");
+    
+    // Module declarations
+    let mod_decls: String = modules
         .get("")
         .cloned()
         .unwrap_or_default()
@@ -264,7 +271,9 @@ fn write_root_mod_file(
         .map(|m| format!("pub mod {};", m))
         .collect::<Vec<_>>()
         .join("\n");
-    atomic_write(&generated_dir.join("mod.rs"), &root_mod_content)?;
+    content.push_str(&mod_decls);
+    
+    atomic_write(&generated_dir.join("mod.rs"), &content)?;
     Ok(())
 }
 

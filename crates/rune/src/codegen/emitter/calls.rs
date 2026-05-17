@@ -53,7 +53,7 @@ fn emit_date_now(emitter: &mut CodeEmitter) {
         "std::time::SystemTime::now()\
         .duration_since(std::time::UNIX_EPOCH)\
         .unwrap()\
-        .as_millis() as i64",
+        .as_millis() as i32",
     );
 }
 
@@ -192,6 +192,13 @@ fn emit_array_iter_method(
         "findIndex" => "position",
         "some" => "any",
         "every" => "all",
+        "filter" => {
+            // filter needs .cloned().collect() to get owned values
+            emitter.push_str("filter(");
+            emit_call_args(emitter, call_expr);
+            emitter.push_str(").cloned().collect::<Vec<_>>()");
+            return;
+        }
         m => m,
     };
     emitter.push_str(rust_method);

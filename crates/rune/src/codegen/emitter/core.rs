@@ -87,52 +87,15 @@ impl RustEmitter {
 
     /// Emit the complete module using AST walking.
     pub fn emit(mut self, source: &SourceFile) -> crate::Result<GeneratedModule> {
-        let file_stem = source
-            .path
-            .file_stem()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("module")
-            .to_string();
+        let (file_stem, module_name) = self.extract_names(source);
+        let ast = self.parse_source(source, &file_stem)?;
+        let (native_imports, emitted_code) = self.walk_and_emit(&ast)?;
 
-        let module_name = escape_keyword(&file_stem);
-        let source_text = source.source.clone();
-
-        // Parse with SWC to get AST
-        let ast = if source.is_tsx() {
-            SwcAst::parse_tsx(&source_text, &file_stem)
-        } else {
-            SwcAst::parse_ts(&source_text, &file_stem)
-        }
-        .map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{e}"))))?;
-
-        // Walk the AST and emit Rust code
-        let mut walker = AstWalker::new();
-        walker.walk_module(&ast.module);
-
-        // Get native imports from walker
-        let native_imports = { walker.native_imports().clone() };
-
-        // Write header with imports
         self.write_header(&module_name, &native_imports);
-
-        self.output.push_str(&walker.into_output());
+        self.output.push_str(&emitted_code);
 
         let output = std::mem::take(&mut self.output);
-        let imports: Vec<_> = self
-            .imports
-            .into_iter()
-            .map(|(path, names)| crate::codegen::Import {
-                path,
-                names: names
-                    .into_iter()
-                    .map(|n| crate::codegen::ImportedName {
-                        original: n.clone(),
-                        rust_name: n,
-                    })
-                    .collect(),
-                is_native: false,
-            })
-            .collect();
+        let imports = self.convert_imports();
 
         Ok(GeneratedModule {
             name: file_stem,
@@ -141,6 +104,56 @@ impl RustEmitter {
             types: Vec::new(),
             functions: Vec::new(),
         })
+    }
+
+    /// Extract file stem and module name from source.
+    fn extract_names(&self, source: &SourceFile) -> (String, String) {
+        let file_stem = source
+            .path
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("module")
+            .to_string();
+        let module_name = escape_keyword(&file_stem);
+        (file_stem, module_name)
+    }
+
+    /// Parse source text to AST.
+    fn parse_source(&self, source: &SourceFile, file_stem: &str) -> crate::Result<SwcAst> {
+        let source_text = &source.source;
+        if source.is_tsx() {
+            SwcAst::parse_tsx(source_text, file_stem)
+        } else {
+            SwcAst::parse_ts(source_text, file_stem)
+        }
+        .map_err(|e| crate::RuneError::Parse(crate::ParseError::Parse(format!("{e}"))))
+    }
+
+    /// Walk AST and emit Rust code.
+    fn walk_and_emit(&self, ast: &SwcAst) -> crate::Result<(HashSet<String>, String)> {
+        let mut walker = AstWalker::new();
+        walker.walk_module(&ast.module);
+        let native_imports = walker.native_imports().clone();
+        let output = walker.into_output();
+        Ok((native_imports, output))
+    }
+
+    /// Convert internal import format to generated module imports.
+    fn convert_imports(&self) -> Vec<crate::codegen::Import> {
+        self.imports
+            .iter()
+            .map(|(path, names)| crate::codegen::Import {
+                path: path.clone(),
+                names: names
+                    .iter()
+                    .map(|n| crate::codegen::ImportedName {
+                        original: n.clone(),
+                        rust_name: n.clone(),
+                    })
+                    .collect(),
+                is_native: false,
+            })
+            .collect()
     }
 
     /// Register a source line mapping for error translation.

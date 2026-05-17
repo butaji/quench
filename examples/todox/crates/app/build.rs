@@ -53,6 +53,11 @@ fn main() {
         // Create mod.rs for the generated directory
         let mod_rs = gen_dest.join("mod.rs");
         let mut content = String::new();
+        
+        // Protocol types re-exported for generated modules
+        content.push_str("// Protocol types re-exported for generated modules\n");
+        content.push_str("pub use protocol::{AppState, Filter, Task};\n\n");
+        
         if let Ok(entries) = std::fs::read_dir(&gen_dest) {
             for entry in entries.flatten() {
                 let path = entry.path();
