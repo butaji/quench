@@ -10,9 +10,9 @@ import { State } from "./main.r.ts";
 /// Render the main application view.
 export function render(f: Frame, state: State): void {
     // Create a layout block
-    let block = Block::default()
+    let block = Block.default()
         .title("Ratatui Demo")
-        .borders(Borders::ALL);
+        .borders(Borders.ALL);
     
     // Create inner content
     let content = createContent(state);
@@ -23,17 +23,17 @@ export function render(f: Frame, state: State): void {
 }
 
 /// Create centered content area.
-function createContent(state: State) -> Paragraph {
+function createContent(state: State): Paragraph {
     let lines: string[] = [];
     
-    lines.push(format!("Counter: {}", state.counter));
+    lines.push("Counter: " + state.counter);
     lines.push("");
     lines.push("Items:");
     
     for (let i = 0; i < state.items.length; i++) {
         const marker = i === state.selectedIndex ? ">" : " ";
         const item = state.items[i];
-        lines.push(`${marker} ${item}`);
+        lines.push(marker + " " + item);
     }
     
     lines.push("");
@@ -41,20 +41,20 @@ function createContent(state: State) -> Paragraph {
     lines.push("j/k: Navigate  +/-: Counter");
     lines.push("n: New item   d: Delete");
     
-    return Paragraph::new(lines.join("\n"));
+    return Paragraph.new(lines.join("\n"));
 }
 
 /// Calculate a centered rectangle.
-function centeredRect(area: Rect, height: u16, width: u16) -> Rect {
+function centeredRect(area: Rect, height: number, width: number): Rect {
     let x = (area.width - width) / 2;
     let y = (area.height - height) / 2;
-    return Rect::new(x, y, width, height);
+    return Rect.new(x, y, width, height);
 }
 
 /// Format a number for display.
-function formatNum(n: number) -> string {
+function formatNum(n: number): string {
     if (n >= 0) {
-        return `+${n}`;
+        return "+" + n;
     }
-    return `${n}`;
+    return String(n);
 }
