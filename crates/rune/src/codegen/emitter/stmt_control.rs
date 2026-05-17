@@ -57,8 +57,8 @@ pub fn emit_if_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::IfStmt) {
         emit_simple_stmt(emitter, &stmt.cons);
     }
     emitter.dec_indent();
+    emitter.push_indent();
     if let Some(alt) = &stmt.alt {
-        emitter.push_indent();
         emitter.push_str("} else ");
         if let Stmt::If(else_if) = &**alt {
             emit_if_stmt(emitter, else_if);
@@ -72,7 +72,11 @@ pub fn emit_if_stmt(emitter: &mut CodeEmitter, stmt: &swc_ecma_ast::IfStmt) {
                 emit_simple_stmt(emitter, alt);
             }
             emitter.dec_indent();
+            emitter.push_indent();
+            emitter.push_str("}\n");
         }
+    } else {
+        emitter.push_str("}\n");
     }
 }
 

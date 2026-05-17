@@ -20,6 +20,8 @@ mod switch_match;
 #[cfg(test)]
 mod comprehensive_emitter_tests;
 #[cfg(test)]
+mod framework_example_tests;
+#[cfg(test)]
 mod tests;
 mod type_collector;
 mod type_resolver;
