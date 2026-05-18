@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/rune",
-    "crates/rune-cli",
+    "crates/runie",
+    "crates/runie-cli",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Rune Team"]
+authors = ["Runie Team"]
 license = "MIT"
 
 [workspace.dependencies]
