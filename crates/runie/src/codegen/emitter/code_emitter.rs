@@ -196,7 +196,16 @@ impl CodeEmitter {
         let async_prefix = if is_async { "async " } else { "" };
         let params_str: Vec<String> = params
             .iter()
-            .map(|(n, t)| format!("{}: {t}", to_snake_case(n)))
+            .map(|(n, t)| {
+                let name = to_snake_case(n);
+                // Convert Frame and Terminal to &mut Frame and &mut Terminal
+                let param_str = match t {
+                    RustType::Custom(s) if s.contains("Frame") => format!("{name}: &mut Frame"),
+                    RustType::Custom(s) if s.contains("Terminal") => format!("{name}: &mut Terminal"),
+                    _ => format!("{name}: {t}"),
+                };
+                param_str
+            })
             .collect();
         self.push_indent();
         self.push_str(&format!(

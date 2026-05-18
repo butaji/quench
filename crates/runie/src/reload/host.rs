@@ -144,6 +144,22 @@ impl HostSignaler {
         }
         Ok(())
     }
+
+    /// Check if a new reload signal exists (dylib was rebuilt) and clear it.
+    pub fn check_reload_signal(&self) -> bool {
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir(&self.hot_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().starts_with("reload_") {
+                    found = true;
+                    // Clear the signal file
+                    drop_signal_file(&entry);
+                }
+            }
+        }
+        found
+    }
 }
 
 /// Drop a single signal file.

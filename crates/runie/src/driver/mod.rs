@@ -3,7 +3,7 @@
 //! Main compilation orchestration.
 
 mod artifacts;
-mod build;
+pub mod build;
 mod cache;
 mod config;
 mod init;

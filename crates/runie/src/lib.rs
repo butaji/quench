@@ -129,6 +129,22 @@ impl std::fmt::Display for SourceLocation {
     }
 }
 
+/// Generate Rust code from *.r.ts* and *.r.tsx* files.
+/// 
+/// This should be called from build.rs to generate code at compile time.
+pub fn generate() {
+    use crate::driver::build::{BuildDriver, BuildOptions};
+    use std::process;
+    
+    let options = BuildOptions::new(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let mut build = BuildDriver::new(options).expect("Failed to create build context");
+    
+    if let Err(e) = build.build_once() {
+        eprintln!("Runie generation failed: {}", e);
+        process::exit(1);
+    }
+}
+
 /// Verify that a file or directory contains valid *.r.ts* files.
 ///
 /// Returns Ok(()) if all files are valid, Err with details otherwise.

@@ -160,12 +160,62 @@ fn emit_method_or_generic_call(
     };
 
     let method = prop.sym.as_ref();
+    
+    // Check if the object is a ratatui type alias (lowercase)
+    if let Expr::Ident(obj_ident) = &*member.obj {
+        let obj_name = obj_ident.sym.as_ref();
+        if let Some(type_name) = ratatui_type_alias(obj_name) {
+            emit_ratatui_builder(emitter, type_name, method, call_expr);
+            return;
+        }
+    }
+    
     if is_array_method(method) {
         emit_array_call(emitter, member, method, call_expr);
     } else if is_string_method(method) {
         emit_string_call(emitter, member, method, call_expr);
     } else {
         emit_generic_member_call(emitter, member, call_expr);
+    }
+}
+
+fn ratatui_type_alias(name: &str) -> Option<&'static str> {
+    match name {
+        "block" => Some("Block"),
+        "paragraph" => Some("Paragraph"),
+        "list" => Some("List"),
+        "gauge" => Some("Gauge"),
+        "layout" => Some("Layout"),
+        "constraint" => Some("Constraint"),
+        "border" => Some("Borders"),
+        _ => None,
+    }
+}
+
+fn emit_ratatui_builder(
+    emitter: &mut CodeEmitter,
+    type_name: &str,
+    method: &str,
+    call_expr: &swc_ecma_ast::CallExpr,
+) {
+    match method {
+        "new" => {
+            // block.new(args) -> Type::new(args)
+            emitter.push_str(type_name);
+            emitter.push_str("::new(");
+            emit_call_args(emitter, call_expr);
+            emitter.push_str(")");
+        }
+        _ => {
+            // block.title(...) -> Type::default().title(...)
+            emitter.push_str(type_name);
+            emitter.push_str("::default()");
+            emitter.push_str(".");
+            emitter.push_str(method);
+            emitter.push_str("(");
+            emit_call_args(emitter, call_expr);
+            emitter.push_str(")");
+        }
     }
 }
 

@@ -134,6 +134,7 @@ impl AstWalker {
     }
 
     fn convert_import_path(&self, path: &str) -> String {
+        // Handle relative paths
         if path.starts_with("./") {
             let path = path.trim_start_matches("./");
             let path = path.replace(".r.ts", "").replace(".r.tsx", "");
@@ -149,6 +150,14 @@ impl AstWalker {
             let rust_parts: Vec<String> = parts.iter().map(|p| to_snake_case(p)).collect();
             return format!("crate::generated::{}", rust_parts.join("::"));
         }
+        
+        // Handle paths with slashes like "ratatui/widgets" -> "ratatui::widgets"
+        if path.contains('/') {
+            let parts: Vec<&str> = path.split('/').collect();
+            let rust_parts: Vec<String> = parts.iter().map(|p| to_snake_case(p)).collect();
+            return rust_parts.join("::");
+        }
+        
         path.to_string()
     }
 

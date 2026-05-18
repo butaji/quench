@@ -97,10 +97,17 @@ impl DylibWatcher {
             .into_iter()
             .filter(|p| {
                 let p_str = p.to_string_lossy();
-                // Ignore generated files
-                if p_str.contains(".generated") {
+                // Ignore common build/cache directories
+                if p_str.contains("/target/") 
+                    || p_str.contains("/.generated/") 
+                    || p_str.contains("/generated/")
+                    || p_str.contains("/src/generated")
+                    || p_str.contains("/.git/")
+                    || p_str.contains("/node_modules/")
+                {
                     return false;
                 }
+                // Only watch Rune source files
                 p.extension()
                     .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
             })

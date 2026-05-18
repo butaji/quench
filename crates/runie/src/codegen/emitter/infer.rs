@@ -147,7 +147,18 @@ fn infer_call_type(call_expr: &swc_ecma_ast::CallExpr) -> String {
 
     match &**callee {
         Expr::Ident(ident) => infer_direct_call_type(ident.sym.as_ref()),
-        Expr::Member(member) => infer_method_call_type(member, call_expr),
+        Expr::Member(member) => {
+            let method = extract_method_name(&member.prop);
+            // Constructor call: block.new() -> Block
+            if method == "new" {
+                // Check if the object is an identifier (type alias)
+                if let Expr::Ident(type_ident) = member.obj.as_ref() {
+                    let type_name = type_ident.sym.as_ref();
+                    return infer_direct_call_type(type_name);
+                }
+            }
+            infer_method_call_type(member, call_expr)
+        }
         _ => "()".to_string(),
     }
 }
@@ -164,6 +175,14 @@ fn infer_direct_call_type(fn_name: &str) -> String {
         "isFinite" => "bool".to_string(),
         // Type-checking helpers
         "is_number" | "is_string" | "is_boolean" | "is_object" => "bool".to_string(),
+        // Ratatui widget types (lowercase alias)
+        "block" => "Block".to_string(),
+        "paragraph" => "Paragraph".to_string(),
+        "list" => "List".to_string(),
+        "gauge" => "Gauge".to_string(),
+        "layout" => "Layout".to_string(),
+        "constraint" => "Constraint".to_string(),
+        "border" => "Borders".to_string(),
         _ => UNKNOWN_TYPE.to_string(),
     }
 }
@@ -172,8 +191,19 @@ fn infer_method_call_type(
     member: &swc_ecma_ast::MemberExpr,
     call_expr: &swc_ecma_ast::CallExpr,
 ) -> String {
-    let obj_type = infer_type(&member.obj);
     let method = extract_method_name(&member.prop);
+    
+    // Constructor call: Block.new() -> Block
+    if method == "new" {
+        return infer_type(&member.obj);
+    }
+    
+    // Builder pattern: methods like .title() .borders() return the same type as the object
+    if is_builder_method(&method) {
+        return infer_type(&member.obj);
+    }
+    
+    let obj_type = infer_type(&member.obj);
     infer_array_or_string_method(&obj_type, method, call_expr)
 }
 
@@ -282,6 +312,11 @@ fn infer_member_type(member_expr: &swc_ecma_ast::MemberExpr) -> String {
         return UNKNOWN_TYPE.to_string();
     }
     
+    // Builder pattern: methods like .title() .borders() return the same type as the object
+    if is_builder_method(&prop_name) {
+        return obj_type;
+    }
+    
     // Handle slice/iter methods that return slice types
     if (prop_name == "as_slice" || prop_name == "iter") && obj_type.starts_with("Vec<") {
         let inner = &obj_type[4..obj_type.len() - 1];
@@ -289,6 +324,16 @@ fn infer_member_type(member_expr: &swc_ecma_ast::MemberExpr) -> String {
     }
     
     infer_property_type(&obj_type, prop_name)
+}
+
+fn is_builder_method(name: &str) -> bool {
+    matches!(name,
+        "new" | "title" | "borders" | "block" | "text" | "items"
+        | "percent" | "label" | "direction" | "constraints"
+        | "highlight_symbol" | "style" | "render_widget" | "size"
+        | "inner" | "outer" | "get" | "set" | "width" | "height"
+        | "x" | "y"
+    )
 }
 
 fn is_hashmap_type(ty: &str) -> bool {
