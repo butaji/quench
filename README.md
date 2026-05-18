@@ -1,10 +1,10 @@
-# Rune - TypeScript to Rust Compiler Driver
+# Runie - TypeScript to Rust Compiler Driver
 
 > A compiler driver that makes `*.r.ts` and `*.r.tsx` valid source files for Rust projects with zero runtime overhead.
 
 ## Overview
 
-Rune is a compiler driver that parses TypeScript-like syntax (`.r.ts` and `.r.tsx` files) using SWC, validates the zero-overhead subset, and transpiles to Rust source code. The generated Rust code compiles with `rustc` to produce native binaries with zero runtime overhead.
+Runie is a compiler driver that parses TypeScript-like syntax (`.r.ts` and `.r.tsx` files) using SWC, validates the zero-overhead subset, and transpiles to Rust source code. The generated Rust code compiles with `rustc` to produce native binaries with zero runtime overhead.
 
 ### Key Features
 
@@ -18,37 +18,37 @@ Rune is a compiler driver that parses TypeScript-like syntax (`.r.ts` and `.r.ts
 ## Installation
 
 ```bash
-cargo install --path crates/rune-cli --features binary-rune
+cargo install --path crates/runie-cli --features binary-runie
 ```
 
 Or build from source:
 
 ```bash
-cargo build --release -p rune-cli
+cargo build --release -p runie-cli
 ```
 
 ## CLI Commands
 
 ```bash
 # Development mode with hot reload
-cargo rune dev
+cargo runie dev
 
 # Release build (static binary)
-cargo rune build --release
+cargo runie build --release
 
 # Type check only
-cargo rune check
+cargo runie check
 
 # Transpile a file to stdout
-cargo rune transpile path/to/file.r.ts
+cargo runie transpile path/to/file.r.ts
 
 # Initialize a new project
-cargo rune init --name myproject
+cargo runie init --name myproject
 ```
 
 ## Type Mapping
 
-| Rune (TS) | Rust | Notes |
+| Runie (TS) | Rust | Notes |
 |---|---|---|
 | `number` | `f64` | Default |
 | `number` (literal) | `i32` | Integer literals |
@@ -58,7 +58,7 @@ cargo rune init --name myproject
 | `T \| null` | `Option<T>` | |
 | `{ok, value}` / `{ok, error}` | `Result<T, E>` | With `?` operator |
 
-## The Rune Subset
+## The Runie Subset
 
 ### Forbidden Features
 
@@ -103,7 +103,7 @@ function caller(): Result<number, string> {
 ```
 myproject/
 ├── Cargo.toml              # Workspace
-├── rune.toml               # Rune configuration
+├── Runie.toml               # Runie configuration
 │
 └── crates/
     ├── protocol/           # Shared state trait
@@ -125,8 +125,8 @@ myproject/
 
 ## Hot Reload Protocol
 
-1. `cargo rune dev` scans for `.r.ts` / `.r.tsx` files
-2. SWC parses → validates subset → generates Rust to `target/rune-cache/`
+1. `cargo runie dev` scans for `.r.ts` / `.r.tsx` files
+2. SWC parses → validates subset → generates Rust to `target/Runie-cache/`
 3. Compiles to cdylib in `target/debug/`
 4. Copies to `target/hot/libapp_<timestamp>.so`
 5. Updates `target/hot/.current` symlink atomically
@@ -135,7 +135,7 @@ myproject/
 
 ## Examples
 
-See `rune_framework_examples.md` for 12 framework-specific examples showing zero-overhead TS→Rust mappings:
+See `Runie_framework_examples.md` for 12 framework-specific examples showing zero-overhead TS→Rust mappings:
 
 | # | Framework | Pattern |
 |---|---|---|
@@ -158,9 +158,9 @@ Tests in `framework_example_tests.rs` verify each example parses and emits key p
 ## Architecture
 
 ```
-.r.ts / .r.tsx  ──►  SWC Parser  ──►  Rune Analyzer  ──►  Rust Codegen  ──►  rustc
+.r.ts / .r.tsx  ──►  SWC Parser  ──►  Runie Analyzer  ──►  Rust Codegen  ──►  rustc
      │                    │                │                    │
-     │                    │                │                    └── target/rune-cache/
+     │                    │                │                    └── target/Runie-cache/
      │                    │                └── borrow check, subset validation
      │                    └── produces TS AST
      └── you edit this
