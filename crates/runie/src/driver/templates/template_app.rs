@@ -2,99 +2,41 @@
 //!
 //! Templates for the app crate.
 
-/// App lib.rs template.
-pub const APP_LIB: &str = r#"//! # App Library
-//!
-//! Hot-reloadable application logic.
+/// lib.rs template for generated app.
+pub const APP_LIB: &str = r#"//! Generated app library
 
 mod native;
 
-use protocol::{App, AppState};
+pub mod generated;
 
-/// Create a new app instance.
+use serde::{Deserialize, Serialize};
+
+/// Application state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppState {
+    pub tasks: Vec<Task>,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: i32,
+    pub title: String,
+    pub done: bool,
+}
+
+/// Host signal handler.
 #[no_mangle]
-pub extern "C" fn create_app() -> *mut dyn App {
-    Box::into_raw(Box::new(AppImpl::default()))
-}
-
-#[derive(Default)]
-struct AppImpl;
-
-impl App for AppImpl {
-    fn update(&mut self, state: &mut AppState) {
-        let mut s = AppState::default();
-        std::mem::swap(state, &mut s);
-        generated::main::update(&mut s);
-        std::mem::swap(state, &mut s);
-    }
-
-    fn render(&self, f: &mut ratatui::Frame<'_>, state: &AppState) {
-        let _ = (f, state);
-    }
-
-    fn handle_key(&mut self, _key: crossterm::event::KeyEvent, _state: &mut AppState) {
-    }
+pub extern "C" fn update() {
+    generated::main::update();
 }
 "#;
 
-/// Main.r.ts template.
-pub const MAIN_RS: &str = r#"//! main.r.ts - Main entry point
+/// Native module template.
+pub const NATIVE_MOD: &str = r#"//! Native Rust helpers available to runie code.
 
-import { AppState, Task, Filter } from "./state.r.ts";
-
-/// Update application state.
-export function update(state: AppState): void {
-    if (state.selected >= state.tasks.length) {
-        state.selected = Math.max(0, state.tasks.length - 1);
-    }
-}
-
-/// Handle key events.
-export function handleKey(key: KeyEvent, state: AppState): void {
-    if (key === "j") {
-        state.selected = Math.min(state.selected + 1, state.tasks.length - 1);
-    } else if (key === "k") {
-        state.selected = Math.max(state.selected - 1, 0);
-    } else if (key === "x") {
-        const task = state.tasks[state.selected];
-        if (task) {
-            task.done = !task.done;
-        }
-    }
-}
-"#;
-
-/// State.r.ts template.
-pub const STATE_RS: &str = r#"//! state.r.ts - Application state types
-
-export type Task = {
-    id: number;
-    title: string;
-    done: boolean;
-};
-
-export enum Filter {
-    All = "all",
-    Active = "active",
-    Completed = "completed",
-}
-
-export type AppState = {
-    tasks: Task[];
-    selected: number;
-    filter: Filter;
-    shouldExit: boolean;
-};
-
-export function createTask(title: string): Task {
-    return {
-        id: Date.now(),
-        title,
-        done: false,
-    };
-}
-
-export function toggleTask(task: Task): Task {
-    return { ...task, done: !task.done };
+/// Fast math utilities.
+pub fn fast_add(a: i32, b: i32) -> i32 {
+    a + b
 }
 "#;

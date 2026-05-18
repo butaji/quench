@@ -51,12 +51,8 @@ impl BuildDriver {
 }
 
 fn find_src_dir(driver: &BuildDriver) -> PathBuf {
-    driver
-        .options
-        .workspace
-        .join("crates")
-        .join(&driver.config.build.target_crate)
-        .join("src")
+    // For simple workflow, just use src/ directory
+    driver.options.workspace.join("src")
 }
 
 fn create_signaler(hot_dir: &std::path::Path) -> Result<HostSignaler> {

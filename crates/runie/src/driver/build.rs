@@ -189,10 +189,7 @@ impl BuildDriver {
     /// Initialize a new project.
     pub fn init(&self) -> Result<()> {
         self.init_project_structure()?;
-        self.init_protocol()?;
-        self.init_host()?;
-        self.init_app()?;
-        println!("Initialized Rune project: {}", self.config.project.name);
+        println!("Initialized runie project");
         Ok(())
     }
 
@@ -207,22 +204,19 @@ impl BuildDriver {
         let analyses = Self::analyze_sources(&parsed)?;
         let generated = self.generate_code(&parsed, &analyses)?;
         self.write_generated(&generated)?;
-        self.build_crate(matches!(self.options.mode, BuildMode::Release))?;
-        self.setup_hot_reload()?;
+        // self.build_crate(matches!(self.options.mode, BuildMode::Release))?; // disabled for simple mode
+        // self.setup_hot_reload(); // disabled for simple mode
 
+        println!("Generated {} module(s) in src/generated/", generated.len());
         if self.options.verbose {
-            println!("Build complete.");
+            println!("Run 'cargo build' to compile your project");
         }
         Ok(())
     }
 
     fn find_sources(&self) -> Result<Vec<PathBuf>> {
-        let src_dir = self
-            .options
-            .workspace
-            .join("crates")
-            .join(&self.config.build.target_crate)
-            .join("src");
+        // Scan src/ directory for *.r.ts* files
+        let src_dir = self.options.workspace.join("src");
         parser::scan_directory(&src_dir)
     }
 

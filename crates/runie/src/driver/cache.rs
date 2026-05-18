@@ -41,10 +41,10 @@ impl CacheManager {
         &self.root
     }
 
-    /// Get the generated code directory.
+    /// Get the generated code directory (in src/generated/).
     #[must_use]
     pub fn generated_dir(&self) -> PathBuf {
-        self.root.join("src/generated")
+        self.workspace.join("src/generated")
     }
 
     /// Get the path for a generated module.
