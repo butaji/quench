@@ -9,7 +9,15 @@ use swc_ecma_ast::Lit;
 /// Emit a literal.
 pub fn emit_lit(emitter: &mut CodeEmitter, lit: &Lit) {
     match lit {
-        Lit::Str(s) => emitter.push_str(&format!("{:?}", s.value)),
+        Lit::Str(s) => {
+            let value = format!("{:?}", s.value);
+            // If expected return type is String, convert &str to String
+            if emitter.expected_return().is_some_and(|t| t.contains("String")) {
+                emitter.push_str(&format!("{}.to_string()", value));
+            } else {
+                emitter.push_str(&value);
+            }
+        }
         Lit::Num(n) => emit_number_literal(emitter, n),
         Lit::Bool(b) => emitter.push_str(if b.value { "true" } else { "false" }),
         Lit::Null(_) => emitter.push_str("None"),

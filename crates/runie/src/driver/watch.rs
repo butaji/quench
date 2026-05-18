@@ -6,12 +6,13 @@ use super::BuildDriver;
 use crate::reload::{DylibWatcher, HostSignaler};
 use crate::Result;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 impl BuildDriver {
-    /// Run the development watch loop.
+    /// Run the development watch loop with cargo run.
     pub fn watch(&mut self) -> Result<()> {
         let src_dir = find_src_dir(self);
         let hot_dir = self.options.workspace.join("target/hot");
@@ -32,26 +33,26 @@ impl BuildDriver {
             }
         }
 
-        print_watch_status(&src_dir, self.options.verbose);
+        // Initial build and run
+        rebuild_and_run(self);
+
+        print_watch_status(&src_dir);
 
         while running.load(Ordering::SeqCst) {
             let event = watcher.wait_for_event(Duration::from_millis(500));
             if let Some(reload_event) = event {
-                if !process_event(reload_event, self, &signaler) {
+                if !process_event(reload_event, self) {
                     break;
                 }
             }
         }
 
-        if self.options.verbose {
-            println!("\nDevelopment server stopped.");
-        }
+        println!("\nStopped.");
         Ok(())
     }
 }
 
 fn find_src_dir(driver: &BuildDriver) -> PathBuf {
-    // For simple workflow, just use src/ directory
     driver.options.workspace.join("src")
 }
 
@@ -63,26 +64,22 @@ fn create_watcher(src_dir: &Path, debounce: u64) -> Result<DylibWatcher> {
     DylibWatcher::new(src_dir, debounce).map_err(|e| crate::RunieError::Reload(e.to_string()))
 }
 
-fn print_watch_status(src_dir: &Path, verbose: bool) {
-    if verbose {
-        println!("Watching for changes in {}...", src_dir.display());
-        println!("Press Ctrl+C to stop.");
-    }
+fn print_watch_status(src_dir: &Path) {
+    println!("Watching {} for changes...", src_dir.display());
+    println!("Press Ctrl+C to stop.\n");
 }
 
 fn process_event(
     event: crate::reload::ReloadEvent,
     driver: &mut BuildDriver,
-    signaler: &HostSignaler,
 ) -> bool {
     match event {
         crate::reload::ReloadEvent::FilesChanged(_) => {
-            handle_file_change(driver, signaler);
+            rebuild_and_run(driver);
             true
         }
         crate::reload::ReloadEvent::ProtocolChanged => {
-            eprintln!("Protocol changed, full restart required.");
-            let _ = signaler.mark_restart_needed();
+            eprintln!("Protocol changed - restart required");
             false
         }
         crate::reload::ReloadEvent::Error(e) => {
@@ -92,19 +89,21 @@ fn process_event(
     }
 }
 
-fn handle_file_change(driver: &mut BuildDriver, signaler: &HostSignaler) {
-    if driver.options.verbose {
-        println!("File changed, rebuilding...");
+fn rebuild_and_run(driver: &mut BuildDriver) {
+    if let Err(e) = driver.build_once() {
+        eprintln!("Build failed: {}", e);
+        return;
     }
-    match driver.build_once() {
-        Ok(()) => {
-            if driver.options.verbose {
-                println!("Build successful, hot reload ready.");
-            }
-            let _ = signaler.signal();
-        }
-        Err(e) => {
-            eprintln!("Build failed: {}", e);
-        }
+
+    // Run cargo run
+    let status = Command::new("cargo")
+        .args(["run"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .and_then(|mut child| child.wait());
+
+    if let Err(e) = status {
+        eprintln!("Failed to run: {}", e);
     }
 }

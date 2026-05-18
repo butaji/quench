@@ -207,7 +207,8 @@ impl BuildDriver {
         // self.build_crate(matches!(self.options.mode, BuildMode::Release))?; // disabled for simple mode
         // self.setup_hot_reload(); // disabled for simple mode
 
-        println!("Generated {} module(s) in src/generated/", generated.len());
+        let gen_dir = self.cache.generated_dir().display().to_string();
+        println!("Generated {} module(s) in {}", generated.len(), gen_dir);
         if self.options.verbose {
             println!("Run 'cargo build' to compile your project");
         }
