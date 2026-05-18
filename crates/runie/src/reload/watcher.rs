@@ -96,6 +96,11 @@ impl DylibWatcher {
             .paths
             .into_iter()
             .filter(|p| {
+                let p_str = p.to_string_lossy();
+                // Ignore generated files
+                if p_str.contains(".generated") {
+                    return false;
+                }
                 p.extension()
                     .is_some_and(|e| e == "r.ts" || e == "r.tsx" || e == "rs")
             })
