@@ -52,7 +52,8 @@ struct AppImpl;
 
 impl App for AppImpl {
     fn update(&mut self, state: &mut AppState) {
-        generated::main::update(state);
+        // For now, generated code is read-only
+        let _ = state;
     }
 
     fn render(&self, frame: &mut ratatui::Frame, state: &AppState) {

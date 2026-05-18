@@ -1,43 +1,53 @@
 //! # Host Binary
 //!
-//! Thin host binary that loads the app dylib and drives I/O.
-//! The dylib mutates AppState. The host reads AppState and does I/O.
+//! Thin host binary that loads and manages the app dylib.
 
 use std::path::PathBuf;
-use libloading::{Library, Symbol};
-use protocol::AppState;
-use ratatui::{Terminal, backend::CrosstermBackend, widgets::{Block, Borders, List, ListItem, Paragraph, Clear}};
+use libloading::Library;
+use protocol::{App, AppState};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
-/// Dylib loader that manages library loading and symbol resolution.
-pub struct DylibLoader {
+/// Application loader that manages dylib loading.
+pub struct AppLoader {
+    /// Loaded library
     lib: Option<Library>,
-    update_fn: Option<unsafe extern "C" fn(*mut AppState)>,
+    /// App creator function
+    creator: Option<unsafe extern "C" fn() -> *mut dyn App>,
 }
 
-impl DylibLoader {
+impl AppLoader {
     /// Load a dylib from path.
-    ///
     /// # Safety
-    /// The path must point to a valid rune-generated dylib.
+    /// The path must point to a valid runie-generated dylib.
     #[allow(unsafe_code)]
     pub unsafe fn load(path: &PathBuf) -> Result<Self, libloading::Error> {
         let lib = Library::new(path)?;
-        let update: Symbol<unsafe extern "C" fn(*mut AppState)> = lib.get(b"update\0")?;
+        let creator: libloading::Symbol<
+            unsafe extern "C" fn() -> *mut dyn App
+        > = lib.get(b"create_app")?;
         Ok(Self {
             lib: Some(lib),
-            update_fn: Some(*update),
+            creator: Some(*creator),
         })
     }
 
-    /// Call the dylib's update function.
-    #[allow(unsafe_code)]
-    pub fn update(&self, state: &mut AppState) {
-        if let Some(f) = self.update_fn {
-            unsafe { f(state) };
+    /// Create a new app instance.
+    ///
+    /// # Panics
+    /// Panics if `create_app` returns a null pointer.
+    #[must_use]
+    pub fn create_app(&self) -> Box<dyn App> {
+        unsafe {
+            let creator = self.creator.expect("creator not set");
+            let ptr = creator();
+            if ptr.is_null() {
+                panic!("create_app() returned null pointer - dylib may be malformed");
+            }
+            Box::from_raw(ptr)
         }
     }
 
-    /// Check if the dylib is loaded.
+    /// Check if loader is valid.
     #[must_use]
     pub fn is_loaded(&self) -> bool {
         self.lib.is_some()
@@ -48,44 +58,28 @@ impl DylibLoader {
 pub fn run_host() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = setup_terminal()?;
     let mut state = AppState::default();
-    let mut loader: Option<DylibLoader> = None;
+    let mut app_loader: Option<AppLoader> = None;
+    let mut current_app: Option<Box<dyn App>> = None;
     let hot_dir = PathBuf::from("target/hot");
     let current_link = hot_dir.join(".current");
 
     loop {
         // Check for dylib reload
-        loader = check_and_reload(&current_link, loader);
+        let (new_loader, new_app) = check_and_reload(&current_link, app_loader.take(), current_app.take());
+        app_loader = new_loader;
+        current_app = new_app;
 
-        // Poll input and handle directly in host
-        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
-            if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
-                match key.code {
-                    crossterm::event::KeyCode::Char('q') => state.should_exit = true,
-                    crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
-                        state.selected = (state.selected + 1).min(state.tasks.len().saturating_sub(1));
-                    }
-                    crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up => {
-                        state.selected = state.selected.saturating_sub(1);
-                    }
-                    crossterm::event::KeyCode::Char('x') => {
-                        if let Some(task) = state.tasks.get_mut(state.selected) {
-                            task.done = !task.done;
-                        }
-                    }
-                    _ => {}
-                }
+        // Run one frame with current app
+        if let Some(ref mut app) = current_app {
+            run_app_frame(app, &mut state, &mut terminal);
+        }
+
+        // Handle input events
+        if let Some(should_exit) = handle_events(current_app.as_ref(), &mut state) {
+            if should_exit {
+                break;
             }
         }
-
-        // Run dylib update
-        if let Some(ref l) = loader {
-            l.update(&mut state);
-        }
-
-        // Render from state every frame
-        let _ = terminal.draw(|f| {
-            render_state(f, &state);
-        });
 
         if state.should_exit {
             break;
@@ -101,94 +95,66 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>, Box<d
     let mut stdout = std::io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
-    Ok(Terminal::new(backend)?)
+    Ok(Terminal::new(backend))
 }
 
 #[allow(unsafe_code)]
 fn check_and_reload(
     current_link: &PathBuf,
-    loader: Option<DylibLoader>,
-) -> Option<DylibLoader> {
+    app_loader: Option<AppLoader>,
+    _current_app: Option<Box<dyn App>>,
+) -> (Option<AppLoader>, Option<Box<dyn App>>) {
     if !current_link.exists() {
-        return loader;
+        return (app_loader, None);
     }
 
     if let Ok(target) = std::fs::read_link(current_link) {
-        let needs_reload = loader
+        let needs_reload = app_loader
             .as_ref()
             .and_then(|l| l.lib.as_ref())
             .map(|lib| lib.path() != Some(target.clone()))
             .unwrap_or(true);
 
         if needs_reload {
-            if let Ok(new_loader) = unsafe { DylibLoader::load(&target) } {
-                return Some(new_loader);
+            if let Ok(loader) = unsafe { AppLoader::load(&target) } {
+                let app = Some(loader.create_app());
+                return (Some(loader), app);
+            }
+        } else if let Some(loader) = &app_loader {
+            // Same dylib, reuse app instance
+            return (app_loader, Some(loader.create_app()));
+        }
+    }
+    (app_loader, None)
+}
+
+fn run_app_frame(
+    app: &mut dyn App,
+    state: &mut AppState,
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) {
+    app.update(state);
+    let _ = terminal.draw(|f| {
+        app.render(f, state);
+    });
+}
+
+fn handle_events(
+    app: Option<&dyn App>,
+    state: &mut AppState,
+) -> Option<bool> {
+    // Use non-blocking poll for hot reload compatibility
+    if crossterm::event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+        if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+            if key.code == crossterm::event::KeyCode::Char('q') {
+                return Some(true);
+            }
+            if let Some(app) = app {
+                app.handle_key(key, state);
             }
         }
     }
-
-    loader
-}
-
-fn convert_key_event(key: crossterm::event::KeyEvent) -> Option<KeyEvent> {
-    use crossterm::event::KeyCode;
-    match key.code {
-        KeyCode::Char(c) => Some(KeyEvent::Char(c)),
-        KeyCode::Up => Some(KeyEvent::Up),
-        KeyCode::Down => Some(KeyEvent::Down),
-        KeyCode::Left => Some(KeyEvent::Left),
-        KeyCode::Right => Some(KeyEvent::Right),
-        KeyCode::Enter => Some(KeyEvent::Enter),
-        KeyCode::Esc => Some(KeyEvent::Esc),
-        KeyCode::Backspace => Some(KeyEvent::Backspace),
-        KeyCode::Tab => Some(KeyEvent::Tab),
-        KeyCode::Delete => Some(KeyEvent::Delete),
-        KeyCode::Home => Some(KeyEvent::Home),
-        KeyCode::End => Some(KeyEvent::End),
-        KeyCode::PageUp => Some(KeyEvent::PageUp),
-        KeyCode::PageDown => Some(KeyEvent::PageDown),
-        _ => Some(KeyEvent::Other),
-    }
-}
-
-fn render_state(frame: &mut ratatui::Frame, state: &AppState) {
-    use ratatui::layout::Rect;
-    use ratatui::style::{Color, Style};
-    use ratatui::text::{Line, Span, Text};
-
-    let area = frame.size();
-
-    // Draw border block
-    let block = Block::default()
-        .title("Rune Todos")
-        .borders(Borders::ALL);
-    frame.render_widget(block, area);
-
-    // Build task list lines
-    let inner = Rect::new(area.x + 2, area.y + 1, area.width - 4, area.height - 2);
-    let mut lines: Vec<Line> = Vec::new();
-
-    for (i, task) in state.tasks.iter().enumerate() {
-        let marker = if task.done { "[x]" } else { "[ ]" };
-        let prefix = if i == state.selected { "> " } else { "  " };
-        let text = format!("{}{} {}", prefix, marker, task.title);
-        let style = if i == state.selected {
-            Style::default().bg(Color::Blue)
-        } else {
-            Style::default()
-        };
-        lines.push(Line::from(Span::styled(text, style)));
-    }
-
-    if state.tasks.is_empty() {
-        lines.push(Line::from("No tasks yet. Add some!"));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from("j/k: navigate | x: toggle | q: quit"));
-
-    let text_widget = ratatui::widgets::Paragraph::new(Text::from(lines));
-    frame.render_widget(text_widget, inner);
+    Some(false)
 }
 
 fn cleanup_terminal() {

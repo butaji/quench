@@ -133,7 +133,7 @@ mod error_tests {
     }
 
     #[test]
-    fn test_rune_error_analysis() {
+    fn test_runie_error_analysis() {
         let error = RunieError::Analysis {
             location: "main.r.ts:10".to_string(),
             message: "type mismatch".to_string(),
@@ -143,13 +143,13 @@ mod error_tests {
     }
 
     #[test]
-    fn test_rune_error_codegen() {
+    fn test_runie_error_codegen() {
         let error = RunieError::Codegen("test error".to_string());
         assert!(error.to_string().contains("test error"));
     }
 
     #[test]
-    fn test_rune_error_io() {
+    fn test_runie_error_io() {
         let error = RunieError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "file not found",
@@ -158,7 +158,7 @@ mod error_tests {
     }
 
     #[test]
-    fn test_rune_result_ok() {
+    fn test_runie_result_ok() {
         let result: crate::Result<i32> = Ok(42);
         assert!(result.is_ok());
         if let Ok(val) = result {
@@ -167,7 +167,7 @@ mod error_tests {
     }
 
     #[test]
-    fn test_rune_result_err() {
+    fn test_runie_result_err() {
         let result: crate::Result<i32> = Err(RunieError::Codegen("test".to_string()));
         assert!(result.is_err());
     }

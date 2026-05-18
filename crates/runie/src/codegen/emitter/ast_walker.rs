@@ -104,6 +104,17 @@ impl AstWalker {
         for (path, names) in &self.imports {
             let clean_path = path.trim_matches('"');
             if clean_path.starts_with("native:") {
+                // Handle native imports - map to crate::native::{items}
+                if names.is_empty() {
+                    continue;
+                }
+                let names_str = names
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.emitter
+                    .push_line(&format!("use crate::native::{{{names_str}}};"));
                 continue;
             }
 

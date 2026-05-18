@@ -299,15 +299,28 @@ impl BuildDriver {
         std::fs::create_dir_all(&hot_dir)?;
 
         let target_crate = &self.config.build.target_crate;
-        let artifact = self
-            .options
-            .workspace
-            .join("target")
-            .join(self.get_profile())
-            .join(format!("lib{target_crate}.so"));
+        // Build artifact can be in either:
+        // 1. target/runie-cache/target/{profile}/lib{target_crate}.dylib (when built via cache)
+        // 2. target/{profile}/lib{target_crate}.so (standard location)
+        let profile = self.get_profile();
+        let ext = std::env::consts::DLL_EXTENSION;
+        let prefix = if cfg!(windows) { "" } else { "lib" };
+        
+        let artifact_paths = vec![
+            self.cache.root().join("target").join(profile).join(format!("{prefix}{target_crate}.{ext}")),
+            self.options.workspace.join("target").join(profile).join(format!("{prefix}{target_crate}.{ext}")),
+        ];
 
-        if artifact.exists() {
-            artifacts::copy_artifact_to_hot_dir(&hot_dir, &artifact, target_crate)?;
+        for artifact in artifact_paths {
+            if artifact.exists() {
+                artifacts::copy_artifact_to_hot_dir(&hot_dir, &artifact, target_crate)?;
+                return Ok(());
+            }
+        }
+        
+        // Print warning if no artifact found
+        if self.options.verbose {
+            println!("Warning: No build artifact found for hot reload");
         }
         Ok(())
     }

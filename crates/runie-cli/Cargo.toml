@@ -7,12 +7,12 @@ license.workspace = true
 
 [[bin]]
 name = "runie"
-path = "src/bin/rune.rs"
+path = "src/bin/runie.rs"
 required-features = ["binary-runie"]
 
 [[bin]]
 name = "cargo-runie"
-path = "src/bin/cargo_rune.rs"
+path = "src/bin/cargo_runie.rs"
 required-features = ["binary-cargo"]
 
 [lib]

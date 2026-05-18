@@ -66,6 +66,13 @@ pub enum Commands {
         /// Project name
         name: Option<String>,
     },
+
+    /// Verify that files contain valid *.r.ts* syntax
+    Verify {
+        /// Path to file or directory to verify
+        #[arg(value_hint = ValueHint::AnyPath)]
+        path: PathBuf,
+    },
 }
 
 /// Build CLI from arguments.
@@ -105,9 +112,19 @@ pub fn run_command(command: &Commands, options: &mut BuildOptions) -> Result<()>
         }
         Commands::Init { name } => {
             if let Some(n) = name {
-                println!("Initializing project: {n}");
+                let path = PathBuf::from(&n);
+                if path.exists() {
+                    eprintln!("Error: Directory '{}' already exists", n);
+                    std::process::exit(1);
+                }
+                std::fs::create_dir_all(&path)?;
+                driver.options.workspace = path;
+                println!("Initializing project: {}", n);
             }
             driver.init()
+        }
+        Commands::Verify { path } => {
+            runie::verify(&path)
         }
     }
 }

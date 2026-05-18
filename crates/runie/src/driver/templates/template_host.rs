@@ -23,7 +23,7 @@ pub struct AppLoader {
 impl AppLoader {
     /// Load a dylib from path.
     /// # Safety
-    /// The path must point to a valid rune-generated dylib.
+    /// The path must point to a valid runie-generated dylib.
     #[allow(unsafe_code)]
     pub unsafe fn load(path: &PathBuf) -> Result<Self, libloading::Error> {
         let lib = Library::new(path)?;

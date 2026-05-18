@@ -33,12 +33,12 @@ impl super::BuildDriver {
         std::fs::write(self.options.workspace.join("Cargo.toml"), workspace_cargo)?;
 
         // Create runie.toml
-        let rune_config = template_replace(
+        let runie_config = template_replace(
             &template_replace(templates::RUNE_CONFIG, "{name}", project_name),
             "{target_crate}",
             target_crate,
         );
-        std::fs::write(self.options.workspace.join("runie.toml"), rune_config)?;
+        std::fs::write(self.options.workspace.join("runie.toml"), runie_config)?;
 
         Ok(())
     }

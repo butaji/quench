@@ -128,3 +128,106 @@ impl std::fmt::Display for SourceLocation {
         write!(f, "{}:{}:{}", self.file, self.line, self.column)
     }
 }
+
+/// Verify that a file or directory contains valid *.r.ts* files.
+///
+/// Returns Ok(()) if all files are valid, Err with details otherwise.
+pub fn verify(path: &std::path::Path) -> Result<()> {
+    let paths = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let mut sources = Vec::new();
+        scan_for_runie_files(path, &mut sources)?;
+        sources
+    } else {
+        return Err(RunieError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Path not found: {}", path.display()),
+        )));
+    };
+    
+    if paths.is_empty() {
+        println!("No *.r.ts* files found in {}", path.display());
+        return Ok(());
+    }
+    
+    println!("Verifying {} file(s)...\n", paths.len());
+    
+    let mut errors = Vec::new();
+    let mut valid_count = 0;
+    
+    for file_path in &paths {
+        print!("{}: ", file_path.display());
+        match verify_file(file_path) {
+            Ok(_) => {
+                println!("✓ valid");
+                valid_count += 1;
+            }
+            Err(e) => {
+                println!("✗ invalid: {}", e);
+                errors.push((file_path.clone(), e));
+            }
+        }
+    }
+    
+    println!("\n--- Summary ---");
+    println!("Valid: {}/{}", valid_count, paths.len());
+    
+    if !errors.is_empty() {
+        println!("\nErrors:");
+        for (path, err) in &errors {
+            println!("  {}: {}", path.display(), err);
+        }
+        return Err(RunieError::Parse(ParseError::Parse(
+            format!("{} file(s) failed verification", errors.len()),
+        )));
+    }
+    
+    Ok(())
+}
+
+/// Scan directory for *.r.ts* and *.r.tsx* files.
+fn scan_for_runie_files(dir: &std::path::Path, results: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    for entry in walkdir::WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".r.ts") || name.ends_with(".r.tsx") {
+                    results.push(path.to_path_buf());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Verify a single file.
+fn verify_file(path: &std::path::Path) -> std::result::Result<(), String> {
+    use crate::analyzer::analyze;
+    use crate::parser::{SourceFile, is_runie_file};
+    
+    // Determine file kind
+    let kind = if let Some((_, k)) = is_runie_file(path) {
+        k
+    } else {
+        return Err("Not a *.r.ts* file".to_string());
+    };
+    
+    // Parse the file
+    let source = SourceFile::parse(path, kind).map_err(|e| format!("{}", e))?;
+    
+    // Check for parse errors
+    if !source.valid {
+        let errs: Vec<String> = source.errors.iter().map(|e| format!("{}", e)).collect();
+        return Err(format!("parse errors: {}", errs.join(", ")));
+    }
+    
+    // Analyze for semantic errors
+    analyze(&source).map_err(|e| format!("analysis: {}", e))?;
+    
+    Ok(())
+}

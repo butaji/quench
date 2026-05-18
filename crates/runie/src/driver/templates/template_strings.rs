@@ -93,5 +93,5 @@ serde = {{ workspace = true }}
 serde_json = {{ workspace = true }}
 
 [build-dependencies]
-rune = {{ path = "../../.." }}
+runie = { path = "../.." }
 "#;

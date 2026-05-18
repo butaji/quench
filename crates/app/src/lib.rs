@@ -1,36 +1,30 @@
 //! # App Library
 //!
 //! Hot-reloadable application logic.
-//! Exports a single `update(state)` function that the host calls.
 
 mod native;
 
-use protocol::AppState;
+use protocol::{App, AppState};
 
-/// Global state pointer — set by `update` before calling generated code.
-///
-/// # Safety
-/// This is only accessed from the host's single thread during `update`.
-static mut STATE_PTR: *mut AppState = std::ptr::null_mut();
-
-/// Access the host-owned application state.
-///
-/// # Panics
-/// Panics if called outside of an `update` invocation.
-pub fn state() -> &'static mut AppState {
-    unsafe {
-        assert!(!STATE_PTR.is_null(), "state() called outside of update()");
-        &mut *STATE_PTR
-    }
+/// Create a new app instance.
+#[no_mangle]
+pub extern "C" fn create_app() -> *mut dyn App {
+    Box::into_raw(Box::new(AppImpl::default()))
 }
 
-/// The single export from the dylib.
-///
-/// # Safety
-/// `state_ptr` must point to a valid `AppState` allocated by the host.
-#[no_mangle]
-pub unsafe extern "C" fn update(state_ptr: *mut AppState) {
-    STATE_PTR = state_ptr;
-    generated::main::update();
-    STATE_PTR = std::ptr::null_mut();
+#[derive(Default)]
+struct AppImpl;
+
+impl App for AppImpl {
+    fn update(&mut self, state: &mut AppState) {
+        generated::main::update(state);
+    }
+
+    fn render(&self, f: &mut ratatui::Frame<'_>, state: &AppState) {
+        generated::main::render(f, state);
+    }
+
+    fn handle_key(&mut self, key: crossterm::event::KeyEvent, state: &mut AppState) {
+        generated::main::handle_key(key, state);
+    }
 }

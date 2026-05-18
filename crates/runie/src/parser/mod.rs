@@ -14,7 +14,7 @@ pub use diagnostics::ParseDiagnostics;
 pub use source_file::{parse_file_from_str, SourceFile, SourceKind};
 
 /// Check if a file path is a Rune source file (ending in .r.ts or .r.tsx).
-pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
+pub fn is_runie_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
     let file_name = path.file_name()?.to_str()?;
     if file_name.ends_with(".r.ts") {
         Some((true, SourceKind::TypeScript))
@@ -31,7 +31,7 @@ pub fn is_rune_file(path: &std::path::Path) -> Option<(bool, SourceKind)> {
 /// Returns an error if the file cannot be parsed.
 pub fn parse_file(path: &std::path::Path) -> crate::Result<SourceFile> {
     // Check if it's a Rune file (.r.ts or .r.tsx)
-    let Some((_, kind)) = is_rune_file(path) else {
+    let Some((_, kind)) = is_runie_file(path) else {
         return Err(crate::ParseError::InvalidExtension(
             path.extension()
                 .and_then(std::ffi::OsStr::to_str)
@@ -69,7 +69,7 @@ fn scan_directory_impl(
             continue;
         }
 
-        if is_rune_file(path).is_some() {
+        if is_runie_file(path).is_some() {
             sources.push(path.to_path_buf());
         }
     }

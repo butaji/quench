@@ -181,12 +181,14 @@ impl RustEmitter {
         }
     }
 
-    /// Write native module imports.
+    /// Write native module imports (for submodule imports like native:math).
     fn write_native_imports(&mut self, native_imports: &HashSet<String>) {
         if !native_imports.is_empty() {
-            self.push_line("use crate::native;");
+            // Only emit submodule imports - items from root native are handled in emit_imports
             for module in native_imports {
-                self.push_line(&format!("use crate::native::{module};"));
+                if module != "native" {
+                    self.push_line(&format!("use crate::native::{module};"));
+                }
             }
             self.push_line("");
         }

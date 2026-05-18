@@ -1,6 +1,6 @@
 //! # Framework Example Tests
 //!
-//! Tests that verify the 12 framework examples from rune_framework_examples.md
+//! Tests that verify the 12 framework examples from runie_framework_examples.md
 //! parse, analyze, and emit key patterns correctly.
 
 use crate::{analyzer, codegen, parser};

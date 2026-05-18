@@ -1,6 +1,6 @@
 //! # Cache Manager
 //!
-//! Manages the generated code cache in target/rune-cache/ (outside workspace).
+//! Manages the generated code cache in target/runie-cache/ (outside workspace).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ impl CacheManager {
     /// # Errors
     /// Returns an error if the cache directory cannot be created.
     pub fn new(workspace: &Path) -> std::io::Result<Self> {
-        let root = workspace.join("target/rune-cache");
+        let root = workspace.join("target/runie-cache");
         fs::create_dir_all(&root)?;
         Ok(Self {
             root,

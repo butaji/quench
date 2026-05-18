@@ -18,7 +18,7 @@ pub struct ProjectConfig {
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
-            name: "rune-project".to_string(),
+            name: "runie-project".to_string(),
             entry: None,
         }
     }

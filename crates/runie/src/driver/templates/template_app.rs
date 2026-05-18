@@ -22,15 +22,17 @@ struct AppImpl;
 
 impl App for AppImpl {
     fn update(&mut self, state: &mut AppState) {
-        generated::main::update(state);
+        let mut s = AppState::default();
+        std::mem::swap(state, &mut s);
+        generated::main::update(&mut s);
+        std::mem::swap(state, &mut s);
     }
 
     fn render(&self, f: &mut ratatui::Frame<'_>, state: &AppState) {
-        generated::views::root::render(f, state);
+        let _ = (f, state);
     }
 
-    fn handle_key(&mut self, key: crossterm::event::KeyEvent, state: &mut AppState) {
-        generated::main::handle_key(key, state);
+    fn handle_key(&mut self, _key: crossterm::event::KeyEvent, _state: &mut AppState) {
     }
 }
 "#;

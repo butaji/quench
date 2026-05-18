@@ -83,35 +83,35 @@ mod config_tests {
     use std::path::Path;
 
     #[test]
-    fn test_rune_config_default() {
+    fn test_runie_config_default() {
         let config = RuneConfig::default();
         // Just verify it constructs with some name
         assert!(!config.project.name.is_empty());
     }
 
     #[test]
-    fn test_rune_config_load_missing_file() {
+    fn test_runie_config_load_missing_file() {
         let config = RuneConfig::load(Path::new("/nonexistent/config.toml"));
         // Should fail because file doesn't exist
         assert!(config.is_err());
     }
 
     #[test]
-    fn test_rune_config_project_name() {
+    fn test_runie_config_project_name() {
         let mut config = RuneConfig::default();
         config.project.name = "myapp".to_string();
         assert_eq!("myapp", config.project.name);
     }
 
     #[test]
-    fn test_rune_config_target_crate() {
+    fn test_runie_config_target_crate() {
         let mut config = RuneConfig::default();
         config.build.target_crate = "frontend".to_string();
         assert_eq!("frontend", config.build.target_crate);
     }
 
     #[test]
-    fn test_rune_config_hot_reload_toggle() {
+    fn test_runie_config_hot_reload_toggle() {
         let mut config = RuneConfig::default();
         assert!(config.dev.hot_reload);
         config.dev.hot_reload = false;
@@ -119,14 +119,14 @@ mod config_tests {
     }
 
     #[test]
-    fn test_rune_config_debounce() {
+    fn test_runie_config_debounce() {
         let mut config = RuneConfig::default();
         config.dev.debounce = 250;
         assert_eq!(250, config.dev.debounce);
     }
 
     #[test]
-    fn test_rune_config_lto() {
+    fn test_runie_config_lto() {
         let mut config = RuneConfig::default();
         assert!(config.release.lto);
         config.release.lto = false;
@@ -153,7 +153,7 @@ mod cache_tests {
         let temp = TempDir::new().unwrap();
         let cache = CacheManager::new(temp.path()).unwrap();
         let generated = cache.generated_dir();
-        assert!(generated.to_string_lossy().contains("rune-cache"));
+        assert!(generated.to_string_lossy().contains("runie-cache"));
     }
 
     #[test]
