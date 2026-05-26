@@ -25,6 +25,9 @@
 | **Init Command** | ✅ Complete | `src/commands/init.rs` | Project scaffolding |
 | **Route Generation** | ✅ Complete | `src/transpile/routegen.rs` | File-based routing |
 | **Middleware Gen** | ✅ Complete | `src/transpile/middlewaregen.rs` | Middleware extraction |
+| **Middleware Runtime** | ✅ Complete | `src/runtime/middleware.rs` | Full pipeline execution |
+| **Parallel Transpilation** | ✅ Complete | `src/commands/parallel.rs` | rayon-based concurrent processing |
+| **Error Utilities** | ✅ Complete | `src/transpile/errors.rs` | Levenshtein, suggestions |
 | **CLI** | ✅ Complete | `src/cli.rs` | clap-based commands |
 | **Config** | ✅ Complete | `src/config.rs` | runts.config.json |
 | **Example Blog** | ✅ Complete | `examples/my-blog/` | Full example app |
@@ -33,15 +36,13 @@
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| **Middleware Runtime** | ⚠️ Basic | P1 | Pipeline exists, needs full dev-mode exec |
-| **Type Error Messages** | ⚠️ Basic | P2 | Needs "Did you mean..." suggestions |
-| **Parallel Transpile** | ❌ Missing | P2 | Should use rayon for faster builds |
 | **Source Maps** | ❌ Missing | P2 | Debugging support |
 | **IDE Integration** | ❌ Missing | P3 | LSP for .tsx files |
+| **Incremental Builds** | ❌ Missing | P2 | Cache file changes |
 
 ---
 
-## Required Implementation
+## Completed Features (v0.5.0)
 
 ### ✅ P0: Critical (MVP) — ALL COMPLETE
 
@@ -50,6 +51,8 @@ All MVP components are now implemented:
 1. **Client-Side JS Runtime** — Complete with signal system, hydration strategies (load, visible, idle, interaction)
 2. **HIR Interpreter** — Full route execution with `ctx.render()`, `Response` handling, middleware pipeline
 3. **Full Route Handler Execution** — Request/Response handling, context passing, error pages
+4. **Middleware Runtime** — Full pipeline execution with `ctx.next()`, `ctx.render()`, `Response` constructor
+5. **Parallel Transpilation** — rayon-based concurrent file processing
 
 ### P1: Important (Feature Complete)
 
@@ -64,51 +67,37 @@ All MVP components are now implemented:
 - `_404.tsx` and `_500.tsx` handling
 - Default error pages with styling
 - Error page registry in interpreter
+- Levenshtein distance suggestions for typos
 
-#### 3. Middleware Pipeline — ⚠️ PARTIAL
+#### 3. Middleware Pipeline — ✅ COMPLETE
 
 - Middleware extraction and code generation: ✅ Complete
-- Runtime execution in dev mode: ⚠️ Basic (needs full exec)
+- Runtime execution in dev mode: ✅ Complete
+- Pipeline supports `ctx.next()`, `ctx.render()`, `Response`
 
 ### P2: Polish
 
 | Feature | Priority | Status |
 |---------|----------|--------|
-| Better error messages | P1 | Basic, needs "Did you mean..." |
-| Parallel transpilation | P2 | Not started, use rayon |
-| Source maps | P2 | Not started |
-| IDE integration | P3 | Not started |
-
-### P2: Polish
-
-#### 7. Performance
-
-- Parallel transpilation (rayon)
-- Incremental builds
-- Binary size optimization
-- Startup time optimization
-
-#### 8. Developer Experience
-
-- Better error messages
-- Source maps
-- Watch mode improvements
-- Type checking integration
+| Better error messages | P1 | ✅ Complete (Levenshtein) |
+| Parallel transpilation | P1 | ✅ Complete (rayon) |
+| Source maps | P2 | ❌ Not started |
+| IDE integration | P3 | ❌ Not started |
 
 ---
 
 ## Technical Debt
 
-1. **Middleware runtime** - Needs full execution in dev mode
-2. **No parallel transpilation** - Single-threaded file processing
-3. **Limited error recovery** - Parser fails on first error
-4. **No incremental builds** - Full transpile on each build
+1. ✅ **Middleware runtime** - Fully implemented
+2. ✅ **Parallel transpilation** - Using rayon
+3. ⚠️ **Limited error recovery** - Parser fails on first error
+4. ❌ **No incremental builds** - Full transpile on each build
 
 ---
 
 ## Verification Plan
 
-### Unit Tests Needed (71 passing)
+### Unit Tests (80 passing)
 
 - [x] Parser: JSX parsing (all patterns)
 - [x] Parser: Type annotation parsing
@@ -122,14 +111,17 @@ All MVP components are now implemented:
 - [x] Runtime: Hooks behavior
 - [x] Runtime: Signal reactivity
 - [x] Runtime: Island hydration
+- [x] Middleware: Pipeline execution
+- [x] Parallel: Route pattern extraction
+- [x] Errors: Levenshtein distance
 
-### Integration Tests Needed
+### Integration Tests
 
 - [x] Full route: index.tsx → HTML
 - [x] Full route: [slug].tsx → params
 - [x] Full island: Counter → hydration
 - [x] Layout composition
-- [ ] Middleware chaining (runtime)
+- [x] Middleware chaining (runtime)
 - [x] Error pages (404, 500)
 - [x] Dev hot-reload
 
