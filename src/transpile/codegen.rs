@@ -70,19 +70,117 @@ impl CodeGenerator {
                 }
             }
             
-            if let ModuleItem::Export(Export::Default { expr }) = item {
-                if let Expr::Function { decl } = expr {
-                    // Default exports are components
-                    let fn_code = self.generate_function(decl, true)?;
-                    if !fn_code.trim().is_empty() {
-                        output.push_str(&fn_code);
-                        output.push_str("\n\n");
+            if let ModuleItem::Export(export) = item {
+                match export {
+                    Export::Default { expr } => {
+                        if let Expr::Function { decl } = expr {
+                            let fn_code = self.generate_function(decl, true)?;
+                            if !fn_code.trim().is_empty() {
+                                output.push_str(&fn_code);
+                                output.push_str("\n\n");
+                            }
+                        }
                     }
+                    Export::NamedWithValue { name, value } => {
+                        // Handle route handlers: export const handler = { GET: async (req, ctx) => { ... } }
+                        if name == "handler" {
+                            let handler_code = self.generate_route_handler(value)?;
+                            if !handler_code.trim().is_empty() {
+                                output.push_str(&handler_code);
+                                output.push_str("\n\n");
+                            }
+                        } else {
+                            // Other named exports with values
+                            let value_code = self.expr_to_rust(value);
+                            output.push_str(&format!("pub const {}: () = {};\n\n", name, value_code));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
         Ok(output)
+    }
+    
+    /// Generate Rust route handler from an object literal
+    fn generate_route_handler(&self, expr: &Expr) -> Result<String> {
+        // Handler should be an object: { GET, POST, etc. }
+        if let Expr::Object { props } = expr {
+            let mut output = String::new();
+            
+            for prop in props {
+                if let ObjectProp::Init { key, value } = prop {
+                    let method_name = match key {
+                        PropKey::Ident(s) => s.clone(),
+                        PropKey::String(s) => s.clone(),
+                        _ => continue,
+                    };
+                    
+                    // Generate handler function for this method
+                    let handler_fn = self.generate_handler_method(&method_name, value)?;
+                    output.push_str(&handler_fn);
+                    output.push_str("\n\n");
+                }
+            }
+            
+            Ok(output)
+        } else {
+            Ok(String::new())
+        }
+    }
+    
+    /// Generate a single handler method (GET, POST, etc.)
+    fn generate_handler_method(&self, method: &str, value: &Expr) -> Result<String> {
+        let method_lower = method.to_lowercase();
+        let handler_name = format!("handle_{}", method_lower);
+        
+        match value {
+            Expr::Arrow { params, body, is_async } => {
+                let async_prefix = if *is_async { "async " } else { "" };
+                let params_str = params.iter().map(|p| {
+                    let name = self.to_snake_case(&p.name);
+                    p.type_.as_ref()
+                        .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
+                        .unwrap_or_else(|| name)
+                }).collect::<Vec<_>>().join(", ");
+                
+                let body_str = match body.as_ref() {
+                    Stmt::Block(stmts) => {
+                        let mut lines = Vec::new();
+                        for stmt in stmts {
+                            let code = self.stmt_to_rust(stmt)?;
+                            if !code.trim().is_empty() {
+                                lines.push(code.trim().to_string());
+                            }
+                        }
+                        format!("{{ {} }}", lines.join("; "))
+                    }
+                    Stmt::Return { arg } => {
+                        if let Some(e) = arg {
+                            let expr_str = self.expr_to_rust(e);
+                            format!("{{ return {}; }}", expr_str)
+                        } else {
+                            "{}".to_string()
+                        }
+                    }
+                    _ => "{}".to_string(),
+                };
+                
+                Ok(format!(
+                    r#"pub {}fn {}(req: Request, ctx: HandlerContext) -> impl IntoResponse {{
+    {} // Handler body
+}}"#,
+                    async_prefix,
+                    handler_name,
+                    body_str
+                ))
+            }
+            _ => Ok(format!(
+                "pub fn {}() -> impl Fn(Request, HandlerContext) -> Response {{ |_, _| todo!() }}",
+                handler_name
+            )),
+        }
     }
 
     pub fn generate_type_decl(&self, decl: &TypeDecl) -> Result<String> {

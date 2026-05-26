@@ -54,6 +54,7 @@ pub enum ImportSpecifier {
 #[serde(tag = "type")]
 pub enum Export {
     Named { name: String },
+    NamedWithValue { name: String, value: Expr },
     Default { expr: Expr },
     ReExport { source: String, names: Vec<String> },
     All { source: String },

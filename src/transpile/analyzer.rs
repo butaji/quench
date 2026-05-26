@@ -333,6 +333,13 @@ impl Analyzer {
             Export::Default { expr } => {
                 self.analyze_expr(expr);
             }
+            Export::NamedWithValue { name, value } => {
+                // Check if this is a route handler
+                if name == "handler" {
+                    self.is_route = true;
+                }
+                self.analyze_expr(value);
+            }
             _ => {}
         }
     }

@@ -1,40 +1,6 @@
 //! Middleware chain generation
 //!
 //! Transforms Fresh-style `_middleware.ts` files into Axum middleware:
-//!
-//! ```typescript
-//! // routes/_middleware.ts
-//! import { FreshContext } from "$fresh/server.ts";
-//!
-//! export default async function handler(
-//!   req: Request,
-//!   ctx: FreshContext,
-//! ) {
-//!   // Add request ID
-//!   ctx.state.requestId = crypto.randomUUID();
-//!   
-//!   // Continue to handler
-//!   return await ctx.next();
-//! }
-//! ```
-//!
-//! Becomes:
-//!
-//! ```rust
-//! pub async fn middleware(
-//!     request: Request,
-//!     next: Next,
-//! ) -> Response {
-//!     let mut request = request;
-//!     
-//!     // Add request ID
-//!     let request_id = Uuid::new_v4().to_string();
-//!     request.extensions_mut().insert(RequestId(request_id));
-//!     
-//!     // Call next middleware/handler
-//!     next.run(request).await
-//! }
-//! ```
 
 use super::hir::*;
 use anyhow::{anyhow, Result};
@@ -67,7 +33,7 @@ pub fn extract_middleware(module: &Module) -> Vec<MiddlewareInfo> {
             ModuleItem::Export(export) => {
                 match export {
                     Export::Default { expr } => {
-                        if let Expr::Function { decl } = expr.as_ref() {
+                        if let Expr::Function { decl } = expr {
                             middlewares.push(MiddlewareInfo {
                                 path: None,
                                 params: decl.params.clone(),
@@ -79,9 +45,9 @@ pub fn extract_middleware(module: &Module) -> Vec<MiddlewareInfo> {
                             });
                         }
                     }
-                    Export::Named { name, expr } => {
+                    Export::NamedWithValue { name, value } => {
                         if name == "handler" || name.ends_with("Handler") {
-                            if let Expr::Function { decl } = expr.as_ref() {
+                            if let Expr::Function { decl } = value {
                                 middlewares.push(MiddlewareInfo {
                                     path: None,
                                     params: decl.params.clone(),
@@ -93,6 +59,9 @@ pub fn extract_middleware(module: &Module) -> Vec<MiddlewareInfo> {
                                 });
                             }
                         }
+                    }
+                    Export::Named { name, .. } => {
+                        let _ = name;
                     }
                     _ => {}
                 }
@@ -119,8 +88,6 @@ pub fn extract_middleware(module: &Module) -> Vec<MiddlewareInfo> {
 
 /// Generate Axum middleware from middleware info
 pub fn generate_middleware(middleware: &MiddlewareInfo, is_global: bool) -> Result<String> {
-    let async_prefix = if middleware.is_async { "async " } else { "" };
-    
     // Check for ctx.next() call to determine middleware type
     let calls_next = middleware.body.iter().any(|stmt| {
         contains_next_call(stmt)
@@ -136,8 +103,8 @@ pub fn generate_middleware(middleware: &MiddlewareInfo, is_global: bool) -> Resu
 fn contains_next_call(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Expr { expr } => contains_next_in_expr(expr),
-        Stmt::Block(stmts) => stmts.0.iter().any(contains_next_call),
-        Stmt::If { test, consequent, alternate } => {
+        Stmt::Block(stmts) => stmts.iter().any(contains_next_call),
+        Stmt::If { consequent, alternate, .. } => {
             contains_next_call(consequent) || 
             alternate.as_ref().map(|a| contains_next_call(a)).unwrap_or(false)
         }
@@ -174,19 +141,20 @@ fn contains_next_in_expr(expr: &Expr) -> bool {
     }
 }
 
-fn generate_middleware_fn(middleware: &MiddlewareInfo, is_global: bool) -> String {
+fn generate_middleware_fn(middleware: &MiddlewareInfo, is_global: bool) -> Result<String> {
     let fn_name = if is_global {
         "global_middleware"
     } else {
         "route_middleware"
     };
     
-    let async_prefix = if middleware.is_async { "async " } else { "async " }; // Middleware is always async
+    // Middleware is always async for Fresh compatibility
+    let async_prefix = "async ";
     
     // Extract state assignments from body
     let state_updates = extract_state_updates(&middleware.body);
     
-    format!(
+    Ok(format!(
         r#"pub {async_prefix}fn {fn_name}(
     request: Request,
     next: Next,
@@ -207,21 +175,17 @@ fn extract_next(middleware: Vec<axum::middleware::FromRequestLayer>) -> axum::mi
     }})
 }}"#,
         state_updates.join("\n    ")
-    )
+    ))
 }
 
-fn generate_handler_fn(middleware: &MiddlewareInfo) -> String {
-    let async_prefix = if middleware.is_async { "async " } else { "async " };
-    
-    format!(
-        r#"pub {async_prefix}fn middleware_handler(
+fn generate_handler_fn(middleware: &MiddlewareInfo) -> Result<String> {
+    Ok(r#"pub async fn middleware_handler(
     request: Request,
-) -> impl IntoResponse + Send + Sync {{
+) -> impl IntoResponse + Send + Sync {
     // Request handler
     // TODO: Implement handler logic
     todo!("Middleware handler")
-}}"#
-    )
+}"#.to_string())
 }
 
 fn extract_state_updates(stmts: &[Stmt]) -> Vec<String> {
@@ -229,13 +193,13 @@ fn extract_state_updates(stmts: &[Stmt]) -> Vec<String> {
     
     for stmt in stmts {
         if let Stmt::Expr { expr } = stmt {
-            if let Expr::Assign { left, right, .. } = expr.as_ref() {
+            if let Expr::Assign { left, right, .. } = expr {
                 if let Expr::Member { object, property, .. } = left.as_ref() {
                     if let Expr::Ident { name: obj_name } = object.as_ref() {
                         if obj_name == "ctx" || obj_name == "context" || obj_name == "state" {
                             if let Expr::Ident { name: prop_name } = property.as_ref() {
                                 updates.push(format!(
-                                    "    request.extensions_mut().insert({}::{}({:#?}));",
+                                    "    request.extensions_mut().insert({}({:#?}));",
                                     to_pascal_case(prop_name),
                                     extract_rust_value(right)
                                 ));
@@ -324,43 +288,14 @@ fn to_pascal_case(s: &str) -> String {
     result
 }
 
-/// Generate layout wrapper component
-pub fn generate_layout(child_name: &str, layout_name: &str) -> String {
-    format!(
-        r#"/// Layout wrapper for nested routes
-pub fn {}_layout(child: VNode) -> VNode {{
-    // Render the layout component wrapping the child
-    html! {{
-        <{}>
-            {{ child }}
-        </{}>
-    }}
-}}"#,
-        child_name,
-        to_snake_case(layout_name),
-        to_snake_case(layout_name)
-    )
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_lowercase());
-    }
-    result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Generate middleware from module
+pub fn generate_middleware_from_module(module: &Module) -> Result<String> {
+    let middlewares = extract_middleware(module);
     
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("request_id"), "RequestId");
-        assert_eq!(to_pascal_case("user_id"), "UserId");
-        assert_eq!(to_pascal_case("created_at"), "CreatedAt");
+    if middlewares.is_empty() {
+        return Ok(String::new());
     }
+    
+    let middleware = &middlewares[0];
+    generate_middleware(middleware, middleware.path.is_none())
 }

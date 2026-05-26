@@ -498,29 +498,38 @@ fn extract_http_methods(module: &Module) -> Vec<HttpMethod> {
     
     // Look for handler exports
     for item in &module.items {
-        if let crate::transpile::hir::ModuleItem::Export(
-            crate::transpile::hir::Export::Named { name }
-        ) = item {
-            let name_lower = name.to_lowercase();
-            if name_lower.contains("get") && !name_lower.contains("post") {
-                if !methods.contains(&HttpMethod::GET) {
-                    methods.push(HttpMethod::GET);
+        if let crate::transpile::hir::ModuleItem::Export(export) = item {
+            match export {
+                crate::transpile::hir::Export::NamedWithValue { name, .. } => {
+                    if name == "handler" {
+                        // Handler object with GET/POST/etc methods
+                        // For now, assume GET
+                    }
                 }
-            }
-            if name_lower.contains("post") {
-                if !methods.contains(&HttpMethod::POST) {
-                    methods.push(HttpMethod::POST);
+                crate::transpile::hir::Export::Named { name } => {
+                    let name_lower = name.to_lowercase();
+                    if name_lower.contains("get") && !name_lower.contains("post") {
+                        if !methods.contains(&HttpMethod::GET) {
+                            methods.push(HttpMethod::GET);
+                        }
+                    }
+                    if name_lower.contains("post") {
+                        if !methods.contains(&HttpMethod::POST) {
+                            methods.push(HttpMethod::POST);
+                        }
+                    }
+                    if name_lower.contains("put") {
+                        if !methods.contains(&HttpMethod::PUT) {
+                            methods.push(HttpMethod::PUT);
+                        }
+                    }
+                    if name_lower.contains("delete") {
+                        if !methods.contains(&HttpMethod::DELETE) {
+                            methods.push(HttpMethod::DELETE);
+                        }
+                    }
                 }
-            }
-            if name_lower.contains("put") {
-                if !methods.contains(&HttpMethod::PUT) {
-                    methods.push(HttpMethod::PUT);
-                }
-            }
-            if name_lower.contains("delete") {
-                if !methods.contains(&HttpMethod::DELETE) {
-                    methods.push(HttpMethod::DELETE);
-                }
+                _ => {}
             }
         }
     }

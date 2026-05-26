@@ -246,16 +246,26 @@ impl Parser {
             let name = self.parse_identifier()?;
             self.skip_ws_and_comments();
             
-            // Parse the initializer
-            if self.check('=') {
+            // Parse the initializer - capture full expression for route handlers
+            let value = if self.check('=') {
                 self.advance();
                 self.skip_ws_and_comments();
-                let _ = self.parse_expression()?;
-            }
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
             
             self.skip_ws_and_comments();
             if self.check(';') {
                 self.advance();
+            }
+            
+            // Return as Named export with value for handlers
+            if let Some(expr) = value {
+                return Ok(Some(Export::NamedWithValue { 
+                    name: name.clone(), 
+                    value: expr 
+                }));
             }
             
             return Ok(Some(Export::Named { name }));

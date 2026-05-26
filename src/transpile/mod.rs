@@ -5,6 +5,8 @@ pub mod analyzer;
 pub mod codegen;
 pub mod hir;
 pub mod jsx_transformer;
+pub mod routegen;
+pub mod middlewaregen;
 
 #[cfg(test)]
 mod tests;
@@ -13,6 +15,8 @@ pub use crate::config::Config;
 pub use parser::Parser;
 pub use analyzer::Analyzer;
 pub use codegen::CodeGenerator;
+pub use routegen::{RouteHandler, RouteInfo, RouteMethod, parse_route_path, generate_route_handlers, extract_handlers};
+pub use middlewaregen::{MiddlewareInfo, extract_middleware, generate_middleware};
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
