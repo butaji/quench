@@ -366,23 +366,25 @@ mod codegen_tests {
     fn test_logical_conversion() {
         let cg = create_codegen();
         
-        // Test && -> &&
+        // Test && -> conditional (for JSX rendering)
         let expr = Expr::Logical {
             op: LogicalOp::And,
             left: Box::new(Expr::Ident { name: "a".to_string() }),
             right: Box::new(Expr::Ident { name: "b".to_string() }),
         };
         let result = cg.expr_to_rust(&expr);
-        assert!(result.contains("(a && b)"));
+        // && is converted to if/else for JSX conditional rendering
+        assert!(result.contains("if a"));
+        assert!(result.contains("else"));
         
-        // Test || -> ||
+        // Test || -> unwrap_or (for nullish coalescing)
         let expr = Expr::Logical {
             op: LogicalOp::Or,
             left: Box::new(Expr::Ident { name: "a".to_string() }),
             right: Box::new(Expr::Ident { name: "b".to_string() }),
         };
         let result = cg.expr_to_rust(&expr);
-        assert!(result.contains("(a || b)"));
+        assert!(result.contains("unwrap_or"));
     }
     
     #[test]

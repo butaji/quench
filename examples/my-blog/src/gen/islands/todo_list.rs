@@ -12,16 +12,15 @@ pub struct TodoListProps {
     pub title: String,
 }
 
-pub fn todo_list(_destructure: todo_list_props) -> () {
-    let _destructured:  = use_state(vec![]);
-
-    let _destructured:  = use_state("");
-
+#[component]
+pub fn todo_list(_props: TodoListProps) -> VNode {
+    let { title: title} = _props;
+    let (todos, set_todos) = use_state(vec![]);
+    let (new_todo, set_new_todo) = use_state("");
     pub fn handle_add() -> () {
     if (!new_todo.trim()) { return; }
-    let todo: : todo = {id: , text: new_todo.trim(), completed: false};
-
-    set_todos(vec![...todos, todo]);
+    let todo: todo = {id: , text: new_todo.trim(), completed: false};
+    set_todos({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(todos.iter().cloned()); __arr.push(todo); __arr });
     set_new_todo("");
 }
 
@@ -34,16 +33,14 @@ pub fn todo_list(_destructure: todo_list_props) -> () {
 }
 
     pub fn handle_input_change(e: event) -> () {
-    let target:  = e.target;
-
+    let target = e.target;
     as;
     h_t_m_l_input_element;
     set_new_todo(target.value);
 }
 
-    let active_count:  = todos.filter(|| { (!t.completed) }).length;
-
-    return html!(<div class_name: "todo-list"><h3>title</h3> <div class_name: "todo-input-row"><input type: "text" value: new_todo on_input: handle_input_change placeholder: "What needs to be done?"/> <button on_click: handle_add>"Add"</button></div> <ul class_name: "todo-items">if (todos.length == 0) { html!(<li class_name: "empty">"No todos yet"</li>) } else { todos.map(|| { html!(<li key: todo.id class_name: {todo: todo, completed: completed, completed: ""}><input type: "checkbox" checked: todo.completed on_change: || { handle_toggle(todo.id) }/> <span>todo.text</span> <button on_click: || { handle_delete(todo.id) }>"Delete"</button></li>) }) }</ul> <p class_name: "count">active_count "items left"</p></div>);
+    let active_count = todos.filter(|| { (!t.completed) }).len();
+    return html!(<div class_name = "todo-list"><h3>{title}</h3> <div class_name = "todo-input-row"><input type = "text" value = {new_todo} on_input = {handle_input_change} placeholder = "What needs to be done?"/> <button on_click = {handle_add}>"Add"</button></div> <ul class_name = "todo-items">{if (todos.len() == 0) { html!(<li class_name = "empty">"No todos yet"</li>) } else { todos.map(|| { html!(<li key = {todo.id} class_name = {{todo: todo, completed: completed, completed: ""}}><input type = "checkbox" checked = {todo.completed} on_change = {|| { handle_toggle(todo.id) }}/> <span>{todo.text}</span> <button on_click = {|| { handle_delete(todo.id) }}>"Delete"</button></li>) }) }}</ul> <p class_name = "count">{active_count} "items left"</p></div>);
 }
 
 

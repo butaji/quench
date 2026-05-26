@@ -8,8 +8,10 @@ pub struct Post {
     pub date: String,
 }
 
-pub fn blog_post(_destructure: PageProps<post>) -> () {
-    return html!(<article class_name: "blog-post"><header><h1>data.title</h1> <p class_name: "meta">"By" data.author "on" data.date</p></header> <div class_name: "content">data.content</div> <footer><a href: "/blog">"Back to blog"</a></footer></article>);
+#[component]
+pub fn blog_post(_props: PageProps<post>) -> VNode {
+    let { params: params, data: data} = _props;
+    return html!(<article class_name = "blog-post"><header><h1>{data.title}</h1> <p class_name = "meta">"By" {data.author} "on" {data.date}</p></header> <div class_name = "content">{data.content}</div> <footer><a href = "/blog">"Back to blog"</a></footer></article>);
 }
 
 
