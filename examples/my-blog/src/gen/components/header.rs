@@ -6,11 +6,10 @@ pub struct HeaderProps {
     pub subtitle: String,
 }
 
-pub fn header(_props_0: header_props) -> () {
-    let let { title: title, subtitle: subtitle} = _props_0;
+pub fn header(_destructure: header_props) -> () {
     let year:  = 2026;
 
-    return html!(<header class_name: "site-header">html!(<div class_name: "header-content">html!(<div class_name: "logo">html!(<a href: "/">html!(<span class_name: "logo-icon">"runts"</span>)html!(<span class_name: "logo-text">title</span>)</a>)</div>)html!(<nav class_name: "main-nav">html!(<ul>html!(<li>html!(<a href: "/">"Home"</a>)</li>)html!(<li>html!(<a href: "/blog">"Blog"</a>)</li>)html!(<li>html!(<a href: "/about">"About"</a>)</li>)</ul>)</nav>)html!(<div class_name: "header-actions">html!(<span class_name: "subtitle">subtitle</span>)</div>)</div>)html!(<div class_name: "header-banner">html!(<span class_name: "runtime-badge">"Powered by runts and Rust"</span>)</div>)</header>);
+    return html!(<header class_name: "site-header"><div class_name: "header-content"><div class_name: "logo"><a href: "/"><span class_name: "logo-icon">"runts"</span> <span class_name: "logo-text">title</span></a></div> <nav class_name: "main-nav"><ul><li><a href: "/">"Home"</a></li> <li><a href: "/blog">"Blog"</a></li> <li><a href: "/about">"About"</a></li></ul></nav> <div class_name: "header-actions"><span class_name: "subtitle">subtitle</span></div></div> <div class_name: "header-banner"><span class_name: "runtime-badge">"Powered by runts and Rust"</span></div></header>);
 }
 
 

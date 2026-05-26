@@ -28,7 +28,7 @@ pub fn counter(_destructure: counter_props) -> () {
     set_count(new_history.(new_history.length - 1));
 } } };
 
-    return html!(<div class_name: "counter">html!(<h2>label</h2>)html!(<div class_name: "display">html!(<span class_name: "count">count</span>)((count != initial) && html!(<span class_name: "delta">"("if (count > initial) { "+" } else { "" }(count - initial)")"</span>))</div>)html!(<div class_name: "controls">html!(<button on_click: decrement>"-"</button>)html!(<button on_click: undo disabled: (history.length <= 1)>"Undo"</button>)html!(<button on_click: reset>"Reset"</button>)html!(<button on_click: increment>"+"</button>)</div>)html!(<div class_name: "info">html!(<p>"Step:"step"| Initial:"initial</p>)html!(<p>"History length:"history.length</p>)</div>)</div>);
+    return html!(<div class_name: "counter"><h2>label</h2> <div class_name: "display"><span class_name: "count">count</span> ((count != initial) && html!(<span class_name: "delta">"(" if (count > initial) { "+" } else { "" } (count - initial) ")"</span>))</div> <div class_name: "controls"><button on_click: decrement>"-"</button> <button on_click: undo disabled: (history.length <= 1)>"Undo"</button> <button on_click: reset>"Reset"</button> <button on_click: increment>"+"</button></div> <div class_name: "info"><p>"Step:" step "| Initial:" initial</p> <p>"History length:" history.length</p></div></div>);
 }
 
 
