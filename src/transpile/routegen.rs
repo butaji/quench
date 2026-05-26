@@ -97,9 +97,16 @@ pub fn parse_route_path(path: &str) -> RouteInfo {
     let mut url_path = String::new();
     
     for segment in path.split('/') {
-        if segment.starts_with('[') && segment.ends_with(']') {
+        // Strip file extension for the last segment
+        let clean_segment = if segment.ends_with(".tsx") || segment.ends_with(".ts") {
+            &segment[..segment.len() - 4]
+        } else {
+            segment
+        };
+        
+        if clean_segment.starts_with('[') && clean_segment.ends_with(']') {
             // Dynamic segment: [slug] -> :slug
-            let param_name = &segment[1..segment.len()-1];
+            let param_name = &clean_segment[1..clean_segment.len()-1];
             segments.push(param_name.to_string());
             
             // Check for catch-all: [...slug]
@@ -109,7 +116,7 @@ pub fn parse_route_path(path: &str) -> RouteInfo {
                 url_path.push_str(&format!("/:{}", param_name));
             }
         } else {
-            url_path.push_str(&format!("/{}", segment));
+            url_path.push_str(&format!("/{}", clean_segment));
         }
     }
     
@@ -176,7 +183,7 @@ pub async fn {}(req: Request, params: {}) -> Response {{
     Ok(output)
 }
 
-fn generate_params_struct(segments: &[String]) -> String {
+pub fn generate_params_struct(segments: &[String]) -> String {
     if segments.is_empty() {
         return "pub struct RouteParams;".to_string();
     }
@@ -241,24 +248,53 @@ pub fn extract_handlers(module: &Module) -> Vec<RouteHandler> {
     
     for item in &module.items {
         if let ModuleItem::Export(export) = item {
-            if let Export::Named { name, expr } = export {
-                if name == "handler" {
-                    if let Expr::Object { props } = expr.as_ref() {
-                        for prop in props {
-                            if let ObjectProp::Init { key: PropKey::Ident(method), value } = prop {
-                                if let Expr::Arrow { params, body, .. } = value.as_ref() {
-                                    if let Some(route_method) = RouteMethod::from_str(method) {
-                                        handlers.push(RouteHandler {
-                                            method: route_method,
-                                            params: params.clone(),
-                                            body: match body.as_ref() {
-                                                Stmt::Block(stmts) => stmts.0.clone(),
-                                                _ => vec![body.as_ref().clone()],
-                                            },
-                                            is_async: true, // TODO: detect from arrow
-                                        });
-                                    }
-                                }
+            // Try to find handler export
+            let handler_object = match export {
+                Export::NamedWithValue { name, value } if name == "handler" => {
+                    if let Expr::Object { props } = value {
+                        Some(props)
+                    } else {
+                        None
+                    }
+                }
+                Export::Named { name, .. } if name == "handler" => None,
+                Export::Default { expr } => {
+                    // Check if this is a handler export
+                    if let Expr::Object { props } = expr {
+                        // Check if it looks like a handler (has GET/POST/etc)
+                        if props.iter().any(|p| {
+                            if let ObjectProp::Init { key: PropKey::Ident(s), .. } = p {
+                                matches!(s.as_str(), "GET" | "POST" | "PUT" | "DELETE" | "PATCH")
+                            } else {
+                                false
+                            }
+                        }) {
+                            Some(props)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            
+            if let Some(props) = handler_object {
+                for prop in props {
+                    if let ObjectProp::Init { key: PropKey::Ident(method), value } = prop {
+                        if let Some(route_method) = RouteMethod::from_str(method) {
+                            if let Expr::Arrow { params, body, is_async } = value {
+                                let body_stmts = match body.as_ref() {
+                                    Stmt::Block(stmts) => stmts.clone(),
+                                    _ => vec![body.as_ref().clone()],
+                                };
+                                handlers.push(RouteHandler {
+                                    method: route_method,
+                                    params: params.clone(),
+                                    body: body_stmts,
+                                    is_async: *is_async,
+                                });
                             }
                         }
                     }

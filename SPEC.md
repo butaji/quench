@@ -1,4 +1,4 @@
-# runts - Specification v0.3.0
+# runts - Specification v0.4.0
 
 ## Executive Summary
 
@@ -69,7 +69,7 @@
 | Hook | Status | Notes |
 |------|--------|-------|
 | `useState` | ✅ | Full |
-| `useEffect` | ✅ | SSR-safe |
+| `useEffect` | ⚠️ | SSR-safe (client only) |
 | `useRef` | ✅ | Via Ref<T> |
 | `useMemo` | ✅ | Basic |
 | `useCallback` | ✅ | Function memo |
@@ -86,12 +86,12 @@
 |---------|--------|-------|
 | File-based routing | ✅ | `routes/**/*.tsx` |
 | Route patterns | ✅ | Static, param, catch-all |
-| Layouts | ✅ | `_layout.tsx` |
-| Middleware | ✅ | `_middleware.ts` |
-| Islands | ✅ | `islands/**/*.tsx` |
+| Layouts | ⚠️ | Partial - needs composition |
+| Middleware | ⚠️ | Partial - pipeline needs work |
+| Islands | ⚠️ | SSR placeholder - client needs work |
 | `PageProps` | ✅ | Typed route params |
-| `HandlerContext` | ✅ | Full context |
-| `Handler` export | ✅ | Route handlers |
+| `HandlerContext` | ⚠️ | Partial |
+| `Handler` export | ⚠️ | GET handler only |
 | `Default` export | ✅ | Page components |
 | `State` | ⚠️ | Partial |
 
@@ -283,9 +283,40 @@ runts-project/
 
 ---
 
-## Part IV: Development vs Production Modes
+## Part IV: Implementation Status (v0.4.0)
 
-### 4.1 Development Mode
+### 4.1 Completed Components
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| TS/TSX Parser | ✅ | Custom recursive descent |
+| HIR (High-Level IR) | ✅ | Complete IR with all node types |
+| Semantic Analyzer | ✅ | Detects islands, routes, hooks |
+| Rust Codegen | ✅ | Most patterns covered |
+| Hooks Runtime | ✅ | useState, useEffect, useRef, etc. |
+| Signals Runtime | ✅ | Signal, Computed, batch |
+| Islands Runtime | ✅ | IslandRenderer, Registry, Hydration |
+| Dev Server | ✅ | HIR interpreter with hot reload |
+| CLI | ✅ | init, dev, build, transpile, add |
+| Client Runtime | ✅ | JavaScript hydration framework |
+
+### 4.2 Incomplete Components
+
+| Component | Priority | Description |
+|-----------|----------|-------------|
+| Route Handlers | P0 | `export const handler = { GET, POST, ... }` |
+| Layout Composition | P0 | `_layout.tsx` rendering pipeline |
+| Middleware Pipeline | P0 | Connect to Axum tower |
+| Page Data | P0 | `ctx.render({ data })` in handlers |
+| Client Island JS | P1 | Generate minimal hydration bundles |
+| Error Pages | P1 | `_404.tsx`, `_500.tsx` |
+| State Sharing | P2 | `ctx.state` between middleware/handlers |
+
+---
+
+## Part V: Development vs Production Modes
+
+### 5.1 Development Mode
 
 **Start**: `runts dev`
 
@@ -308,7 +339,7 @@ Request → Route Match → Load HIR (cached) → Execute Handler
 - File change → Invalidate cache → Re-parse → Broadcast SSE → Browser refresh
 - **Target**: <100ms from file save to visible update
 
-### 4.2 Production Mode
+### 5.2 Production Mode
 
 **Build**: `runts build`
 
@@ -332,33 +363,21 @@ cargo build --release
 
 ---
 
-## Part V: Roadmap
+## Part VI: Roadmap
 
-### 5.1 Current Status (v0.3.0)
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| TS/TSX Parser | ✅ | Custom recursive descent |
-| HIR | ✅ | Complete IR |
-| Rust Codegen | ✅ | Most patterns |
-| Hooks | ✅ | useState, useEffect, etc. |
-| Signals | ✅ | Fine-grained reactivity |
-| Dev Server | ✅ | HIR interpreter |
-| Islands | ⚠️ | Partial - needs client JS |
-| Layouts | ⚠️ | Partial - needs composer |
-| Middleware | ⚠️ | Partial - needs pipeline |
-
-### 5.2 MVP Completion (v0.4.0)
+### 6.1 v0.4.0 - MVP Completion
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
-| Client Island JS | P0 | Generate minimal hydration bundles |
+| Route Handler Exports | P0 | `export const handler = { GET, POST }` |
 | Layout Composition | P0 | Proper `_layout.tsx` rendering |
-| Middleware Pipeline | P1 | Connect to Axum tower |
+| Middleware Pipeline | P0 | Connect to Axum tower middleware |
+| Page Data | P0 | Handler `ctx.render({ data })` |
+| Client Island JS | P1 | Generate minimal hydration bundles |
 | Error Pages | P1 | `_404.tsx`, `_500.tsx` |
 | State Sharing | P2 | `ctx.state` between middleware/handlers |
 
-### 5.3 v1.0 Roadmap
+### 6.2 v0.5.0 - Feature Complete
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
@@ -367,9 +386,18 @@ cargo build --release
 | Image Optimization | P3 | Built-in handling |
 | Edge Deployment | P3 | WASM target (optional) |
 
+### 6.3 v1.0 Roadmap
+
+| Feature | Priority | Description |
+|---------|----------|-------------|
+| Production HMR | P1 | Fine-grained module updates |
+| Edge Functions | P2 | Serverless deployment |
+| API Routes | P2 | Full REST API support |
+| Database Integration | P2 | Prisma/Drizzle ORM |
+
 ---
 
-## Part VI: Performance Targets
+## Part VII: Performance Targets
 
 | Metric | Target | Current |
 |--------|--------|---------|
@@ -394,7 +422,7 @@ cargo build --release
 
 ---
 
-## Part VII: Type Mappings
+## Part VIII: Type Mappings
 
 | TypeScript | Rust |
 |------------|------|
@@ -456,5 +484,131 @@ cargo build --release
 
 ---
 
-*Document Version: 0.3.0*  
+## Appendix C: Supported Hooks API
+
+### useState
+
+```typescript
+const [state, setState] = useState(initialValue);
+// or with function initializer
+const [state, setState] = useState(() => computeInitial());
+```
+
+### useEffect
+
+```typescript
+useEffect(() => {
+  // effect code
+  return () => {
+    // cleanup
+  };
+}, [dependencies]);
+```
+
+### useRef
+
+```typescript
+const ref = useRef<T>(initialValue);
+// Access via ref.current
+```
+
+### useMemo
+
+```typescript
+const value = useMemo(() => expensiveComputation(a, b), [a, b]);
+```
+
+### useCallback
+
+```typescript
+const handler = useCallback((event: Event) => {
+  doSomething(event);
+}, [dependencies]);
+```
+
+### useReducer
+
+```typescript
+const [state, dispatch] = useReducer((state, action) => {
+  switch (action.type) {
+    case 'increment': return { count: state.count + 1 };
+    default: return state;
+  }
+}, { count: 0 });
+```
+
+### useContext
+
+```typescript
+const value = useContext(MyContext);
+```
+
+---
+
+## Appendix D: Route File Conventions
+
+### Static Routes
+```
+routes/index.tsx         → /
+routes/about.tsx         → /about
+routes/blog/index.tsx    → /blog
+```
+
+### Dynamic Routes
+```
+routes/blog/[slug].tsx   → /blog/:slug
+routes/[year]/[month].tsx → /:year/:month
+```
+
+### Catch-all Routes
+```
+routes/[...path].tsx     → /*path
+routes/api/[...rest].tsx → /api/*rest
+```
+
+### Layouts
+```
+routes/_layout.tsx       → Wraps all routes
+routes/blog/_layout.tsx   → Wraps /blog/*
+```
+
+### Special Files
+```
+routes/_middleware.ts    → Global middleware
+routes/_app.tsx          → App wrapper
+routes/_404.tsx          → 404 page
+```
+
+---
+
+## Appendix E: Island Conventions
+
+```typescript
+// islands/Counter.tsx
+// Components in islands/ are automatically hydrated on the client
+
+import { useState } from "preact/hooks";
+
+interface Props {
+  initial?: number;
+  step?: number;
+}
+
+export default function Counter({ initial = 0, step = 1 }: Props) {
+  const [count, setCount] = useState(initial);
+  
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={() => setCount(c => c + step)}>+</button>
+    </div>
+  );
+}
+```
+
+Islands are rendered server-side for SSR and hydrated on the client for interactivity.
+
+---
+
+*Document Version: 0.4.0*  
 *Last Updated: 2026-05-26*

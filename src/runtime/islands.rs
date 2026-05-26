@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_instance_creation() {
-        let registry = IslandRegistry::new();
+        let mut registry = IslandRegistry::new();
         registry.register_default("Button");
 
         let instance = registry.create_instance(
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_manifest_generation() {
-        let registry = IslandRegistry::new();
+        let mut registry = IslandRegistry::new();
         registry.register_default("TodoList");
 
         registry.create_instance(

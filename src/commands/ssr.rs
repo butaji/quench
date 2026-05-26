@@ -169,12 +169,21 @@ impl SsrRenderer {
         // Check for handler export
         let mut has_handler = false;
         for item in &module.items {
-            if let crate::transpile::hir::ModuleItem::Export(
-                crate::transpile::hir::Export::Named { name }
-            ) = item {
-                if name == "handler" {
-                    has_handler = true;
-                    break;
+            if let crate::transpile::hir::ModuleItem::Export(export) = item {
+                match export {
+                    crate::transpile::hir::Export::NamedWithValue { name, .. } => {
+                        if name == "handler" {
+                            has_handler = true;
+                            break;
+                        }
+                    }
+                    crate::transpile::hir::Export::Named { name } => {
+                        if name == "handler" {
+                            has_handler = true;
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
