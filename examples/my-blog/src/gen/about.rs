@@ -16,7 +16,9 @@ pub struct PerformanceMetrics {
     pub memory_baseline: String,
 }
 
-pub fn handle_get() -> impl Fn(Request, HandlerContext) -> Response { |_, _| todo!() }
+pub async fn handle_get(_req: Request, _ctx: HandlerContext) -> impl IntoResponse {
+    { let data: AboutData = {title: "About runts", description: "runts is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries. Built with a focus on performance, developer experience, and framework compatibility.", tech_stack: vec!["Rust - Core runtime and transpiler", "TypeScript - User-facing API", "Preact - Component model and hooks", "Fresh - Islands architecture and routing", "Axum - HTTP server", "Tokio - Async runtime"], goals: vec!["Zero external JS runtime dependencies", "Full Fresh/Preact API compatibility", "Sub-100ms hot reload in development", "Sub-500KB binary size", "Production-ready performance"], performance: {binary_size: "<2MB", cold_start: "<10ms", memory_baseline: "<5MB RSS"}};; return new;; response(j_s_o_n.stringify(data), {headers: {content-_type: "application/json"}}); } // Handler body
+}
 
 
 
