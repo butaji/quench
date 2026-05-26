@@ -1,522 +1,545 @@
 /**
  * runts Client Runtime
  * 
- * This is the client-side runtime for hydrating islands.
- * It's a minimal Preact-compatible runtime for use in the browser.
- * 
- * In production, this would be bundled with each island (~12KB gzip).
+ * Provides client-side hydration and interactivity for islands.
+ * This is the minimal JavaScript needed for island hydration.
  */
 
-// ============================================================================
-// Signals - Fine-grained Reactivity
-// ============================================================================
+(function(global) {
+    'use strict';
 
-type Subscriber = () => void;
+    // ============================================================================
+    // Configuration
+    // ============================================================================
 
-interface SignalState<T> {
-  value: T;
-  subscribers: Set<Subscriber>;
-}
+    const CONFIG = {
+        // Hydration strategies
+        STRATEGY: {
+            EAGER: 'eager',
+            VISIBLE: 'visible',
+            IDLE: 'idle',
+            MANUAL: 'manual',
+            STATIC: 'static'
+        },
+        
+        // Debounce delay for visible observer (ms)
+        VISIBLE_DEBOUNCE: 100,
+        
+        // Max idle time before hydrating idle islands (ms)
+        IDLE_TIMEOUT: 5000
+    };
 
-let currentEffect: (() => void) | null = null;
-const effectCleanup = new Set<() => void>();
+    // ============================================================================
+    // Utility Functions
+    // ============================================================================
 
-export function signal<T>(initialValue: T): Signal<T> {
-  const state: SignalState<T> = {
-    value: initialValue,
-    subscribers: new Set(),
-  };
-
-  return {
-    get value(): T {
-      // Track subscription when accessed in effect
-      if (currentEffect) {
-        state.subscribers.add(currentEffect);
-        effectCleanup.add(() => state.subscribers.delete(currentEffect));
-      }
-      return state.value;
-    },
-    set value(newValue: T) {
-      if (!Object.is(state.value, newValue)) {
-        state.value = newValue;
-        // Notify all subscribers synchronously
-        state.subscribers.forEach(fn => fn());
-      }
-    },
-    peek: () => state.value,
-  };
-}
-
-export function computed<T>(fn: () => T): Signal<T> {
-  const sig = signal<T>(undefined as any);
-  let currentValue: T;
-  
-  effect(() => {
-    currentValue = fn();
-    sig.value = currentValue;
-  });
-  
-  return sig;
-}
-
-export function effect(fn: () => void | (() => void)): () => void {
-  const cleanupFns: (() => void)[] = [];
-  
-  const wrappedFn = () => {
-    currentEffect = wrappedFn;
-    effectCleanup.delete(wrappedFn);
-    const cleanup = fn();
-    if (typeof cleanup === 'function') {
-      cleanupFns.push(cleanup);
-    }
-  };
-  
-  wrappedFn();
-  
-  return () => {
-    effectCleanup.delete(wrappedFn);
-    cleanupFns.forEach(fn => fn());
-  };
-}
-
-export function batch(fn: () => void): void {
-  fn();
-}
-
-export function untrack<T>(fn: () => T): T {
-  const prev = currentEffect;
-  currentEffect = null;
-  try {
-    return fn();
-  } finally {
-    currentEffect = prev;
-  }
-}
-
-// Signal type for exports
-export interface Signal<T> {
-  value: T;
-  peek: () => T;
-}
-
-// ============================================================================
-// Hooks - Preact-compatible state management
-// ============================================================================
-
-type StateSetter<T> = (value: T | ((prev: T) => T)) => void;
-
-export function useState<T>(initialValue: T | (() => T)): [T, StateSetter<T>] {
-  const sig = typeof initialValue === 'function'
-    ? signal((initialValue as () => T)())
-    : signal(initialValue);
-  
-  const setValue: StateSetter<T> = (value) => {
-    if (typeof value === 'function') {
-      sig.value = (value as (prev: T) => T)(sig.peek());
-    } else {
-      sig.value = value;
-    }
-  };
-  
-  return [sig.value, setValue];
-}
-
-export function useRef<T>(initialValue: T): { current: T } {
-  return { current: initialValue };
-}
-
-export function useEffect(fn: () => void | (() => void), deps?: any[]): void {
-  if (typeof window === 'undefined') return; // SSR guard - effects don't run on server
-  
-  let cleanup: (() => void) | void;
-  let oldDeps: any[] | undefined;
-  
-  const effect = () => {
-    if (deps !== undefined && oldDeps !== undefined) {
-      // Check if deps changed using shallow equality
-      if (deps.length === oldDeps.length && deps.every((d, i) => Object.is(d, oldDeps[i]))) {
-        return;
-      }
-    }
-    
-    if (cleanup) {
-      (cleanup as () => void)();
-    }
-    
-    cleanup = fn();
-    oldDeps = deps ? [...deps] : undefined;
-  };
-  
-  // Schedule effect after paint (like React)
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(effect);
-  } else {
-    setTimeout(effect, 0);
-  }
-}
-
-export function useLayoutEffect(fn: () => void | (() => void), deps?: any[]): void {
-  if (typeof window === 'undefined') return; // SSR guard
-  
-  let cleanup: (() => void) | void;
-  let oldDeps: any[] | undefined;
-  
-  const effect = () => {
-    if (deps !== undefined && oldDeps !== undefined) {
-      if (deps.length === oldDeps.length && deps.every((d, i) => Object.is(d, oldDeps[i]))) {
-        return;
-      }
-    }
-    
-    if (cleanup) {
-      (cleanup as () => void)();
-    }
-    
-    cleanup = fn();
-    oldDeps = deps ? [...deps] : undefined;
-  };
-  
-  // Run synchronously before paint
-  requestAnimationFrame(effect);
-}
-
-export function useMemo<T>(fn: () => T, deps: any[]): T {
-  const [value, setValue] = useState<T>(() => fn());
-  
-  useEffect(() => {
-    setValue(() => fn());
-  }, deps);
-  
-  return value;
-}
-
-export function useCallback<T extends (...args: any[]) => any>(
-  fn: T,
-  deps: any[]
-): T {
-  return useMemo(() => fn, deps);
-}
-
-export function useReducer<S, A>(
-  reducer: (state: S, action: A) => S,
-  initialState: S
-): [S, (action: A) => void] {
-  const [state, setState] = useState<S>(initialState);
-  
-  const dispatch = (action: A) => {
-    setState(prev => reducer(prev, action));
-  };
-  
-  return [state, dispatch];
-}
-
-export function useContext<T>(context: Context<T>): T {
-  // In a full implementation, this would read from a context provider
-  // For now, return undefined (caller must handle)
-  return undefined as T;
-}
-
-export function createContext<T>(defaultValue: T): Context<T> {
-  return { 
-    id: Math.random().toString(36).slice(2),
-    defaultValue 
-  };
-}
-
-export interface Context<T> {
-  id: string;
-  defaultValue: T;
-}
-
-// ============================================================================
-// Island Hydration
-// ============================================================================
-
-export interface IslandInfo {
-  name: string;
-  id: string;
-  hash: string;
-  props: Record<string, any>;
-  element: HTMLElement;
-}
-
-export interface HydrationResult {
-  element: HTMLElement;
-  unmount: () => void;
-}
-
-// Global registry of hydrated islands
-const hydratedIslands = new Map<string, HydrationResult>();
-
-// Find all islands in the DOM
-export function findIslands(): IslandInfo[] {
-  const elements = document.querySelectorAll('[data-island]');
-  const islands: IslandInfo[] = [];
-  
-  for (const el of elements) {
-    const htmlEl = el as HTMLElement;
-    const name = htmlEl.getAttribute('data-island');
-    const id = htmlEl.getAttribute('data-id');
-    const hash = htmlEl.getAttribute('data-hash');
-    
-    if (name && id && hash) {
-      // Try to get props from the element or a script tag
-      let props: Record<string, any> = {};
-      
-      const propsAttr = htmlEl.getAttribute('data-props');
-      if (propsAttr) {
+    /**
+     * Safe JSON parse
+     */
+    function safeJsonParse(str) {
         try {
-          props = JSON.parse(propsAttr);
+            return JSON.parse(str);
         } catch (e) {
-          console.error(`[runts] Failed to parse props for island ${name}:`, e);
+            console.error('[runts] Failed to parse JSON:', e);
+            return null;
         }
-      }
-      
-      islands.push({ 
-        name, 
-        id, 
-        hash, 
-        props, 
-        element: htmlEl 
-      });
     }
-  }
-  
-  return islands;
-}
 
-// Create a hydration script for an island
-function createHydrationScript(info: IslandInfo): string {
-  return `
-    import { signal, computed, effect, useState, useEffect, useRef, useMemo, useCallback } from '/_runts/runtime.js';
-    
-    // Find the element
-    const el = document.querySelector('[data-id="${info.id}"]');
-    if (!el) {
-      console.error('[runts] Island element not found:', '${info.id}');
-      throw new Error('Island element not found');
+    /**
+     * Query selector with fallback
+     */
+    function querySelector(selector) {
+        return document.querySelector(selector);
     }
-    
-    // Props
-    const props = ${JSON.stringify(info.props)};
-    
-    // Placeholder content (from SSR)
-    const placeholder = el.innerHTML;
-    
-    // Island module (loaded dynamically)
-    const module = await import('/_runts/islands/${info.name}.js');
-    
-    // Create the island instance
-    const instance = new module.default({
-      props,
-      placeholder,
-      hydrate: true
-    });
-    
-    // Render to the element
-    instance.mount(el);
-    
-    // Return cleanup function
-    return () => instance.unmount();
-  `;
-}
 
-// Hydrate a single island
-export async function hydrateIsland(info: IslandInfo): Promise<HydrationResult> {
-  // Skip if already hydrated
-  if (hydratedIslands.has(info.id)) {
-    return hydratedIslands.get(info.id)!;
-  }
-  
-  console.log(`[runts] Hydrating island: ${info.name}`, info.props);
-  
-  try {
-    // Create and execute hydration script
-    const script = createHydrationScript(info);
-    
-    // Use a module script to run the hydration
-    const blob = new Blob([script], { type: 'module' });
-    const url = URL.createObjectURL(blob);
-    
-    const cleanup = await import(/* @vite-ignore */ url);
-    URL.revokeObjectURL(url);
-    
-    const result: HydrationResult = {
-      element: info.element,
-      unmount: typeof cleanup === 'function' ? cleanup : () => {}
-    };
-    
-    hydratedIslands.set(info.id, result);
-    
-    console.log(`[runts] Island hydrated: ${info.name}`);
-    return result;
-    
-  } catch (e) {
-    console.error(`[runts] Failed to hydrate island ${info.name}:`, e);
-    return {
-      element: info.element,
-      unmount: () => {}
-    };
-  }
-}
+    function querySelectorAll(selector) {
+        return Array.from(document.querySelectorAll(selector));
+    }
 
-// Hydrate all islands
-export async function hydrateAll(): Promise<HydrationResult[]> {
-  const islands = findIslands();
-  const results: HydrationResult[] = [];
-  
-  for (const info of islands) {
-    const result = await hydrateIsland(info);
-    results.push(result);
-  }
-  
-  console.log(`[runts] Hydrated ${results.length} islands`);
-  return results;
-}
+    // ============================================================================
+    // Island Registry
+    // ============================================================================
 
-// Lazy hydration with IntersectionObserver
-export function hydrateOnVisible(info: IslandInfo): void {
-  if (typeof IntersectionObserver === 'undefined') {
-    // Fallback: hydrate immediately
-    hydrateIsland(info);
-    return;
-  }
-  
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          observer.disconnect();
-          hydrateIsland(info);
+    /**
+     * Island registry for client-side components
+     */
+    const Islands = {
+        _components: {},
+        _instances: {},
+
+        /**
+         * Register an island component
+         */
+        register(name, component) {
+            this._components[name] = component;
+            console.debug(`[runts] Registered island: ${name}`);
+        },
+
+        /**
+         * Check if island is registered
+         */
+        has(name) {
+            return name in this._components;
+        },
+
+        /**
+         * Create island instance
+         */
+        create(name, props, element) {
+            if (!this.has(name)) {
+                console.warn(`[runts] Unknown island: ${name}`);
+                return null;
+            }
+
+            const Component = this._components[name];
+            const instance = new Component(props, element);
+            this._instances[name] = instance;
+            return instance;
+        },
+
+        /**
+         * Mount all pending islands
+         */
+        mountAll(manifest) {
+            if (!manifest || !manifest.islands) {
+                return;
+            }
+
+            for (const entry of manifest.islands) {
+                const element = querySelector(entry.selector);
+                if (!element) {
+                    console.warn(`[runts] Island element not found: ${entry.selector}`);
+                    continue;
+                }
+
+                const props = safeJsonParse(entry.props);
+                if (props === null) {
+                    console.warn(`[runts] Invalid props for island: ${entry.name}`);
+                    continue;
+                }
+
+                const instance = this.create(entry.name, props, element);
+                if (instance && entry.strategy !== CONFIG.STRATEGY.STATIC) {
+                    instance.mount();
+                }
+            }
         }
-      }
-    },
-    { rootMargin: '100px' }
-  );
-  
-  observer.observe(info.element);
-}
+    };
 
-// Hydration on interaction (click, focus, hover)
-export function hydrateOnInteraction(
-  info: IslandInfo,
-  events: string[] = ['click', 'focus', 'hover']
-): void {
-  let hydrated = false;
-  
-  const hydrate = () => {
-    if (!hydrated) {
-      hydrated = true;
-      for (const event of events) {
-        info.element.removeEventListener(event, hydrate);
-      }
-      hydrateIsland(info);
+    // ============================================================================
+    // Hydration Strategies
+    // ============================================================================
+
+    /**
+     * Hydration manager
+     */
+    const Hydrator = {
+        _observer: null,
+
+        /**
+         * Initialize hydration
+         */
+        init() {
+            this._setupVisibilityObserver();
+            this._hydrateEager();
+            this._scheduleIdle();
+        },
+
+        /**
+         * Setup IntersectionObserver for visible strategy
+         */
+        _setupVisibilityObserver() {
+            if (!('IntersectionObserver' in window)) {
+                // Fallback: hydrate everything visible
+                return;
+            }
+
+            this._observer = new IntersectionObserver(
+                (entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const island = entry.target.closest('[data-island]');
+                            if (island) {
+                                this._hydrateIsland(island);
+                                this._observer.unobserve(entry.target);
+                            }
+                        }
+                    });
+                },
+                {
+                    rootMargin: '100px',
+                    threshold: 0.1
+                }
+            );
+        },
+
+        /**
+         * Hydrate all eager islands immediately
+         */
+        _hydrateEager() {
+            const islands = querySelectorAll('[data-island]');
+            islands.forEach(island => {
+                const strategy = island.dataset.strategy;
+                if (strategy === CONFIG.STRATEGY.EAGER) {
+                    this._hydrateIsland(island);
+                }
+            });
+        },
+
+        /**
+         * Schedule idle hydration
+         */
+        _scheduleIdle() {
+            if (!('requestIdleCallback' in window)) {
+                // Fallback: use setTimeout
+                setTimeout(() => this._hydrateIdle(), CONFIG.IDLE_TIMEOUT);
+                return;
+            }
+
+            requestIdleCallback(() => this._hydrateIdle(), {
+                timeout: CONFIG.IDLE_TIMEOUT
+            });
+        },
+
+        /**
+         * Hydrate idle islands
+         */
+        _hydrateIdle() {
+            const islands = querySelectorAll('[data-island]');
+            islands.forEach(island => {
+                const strategy = island.dataset.strategy;
+                if (strategy === CONFIG.STRATEGY.IDLE) {
+                    this._hydrateIsland(island);
+                }
+            });
+        },
+
+        /**
+         * Hydrate visible islands when they enter viewport
+         */
+        hydrateVisible(island) {
+            if (this._observer) {
+                this._observer.observe(island);
+            } else {
+                // Fallback: hydrate immediately
+                this._hydrateIsland(island);
+            }
+        },
+
+        /**
+         * Hydrate a single island
+         */
+        _hydrateIsland(island) {
+            const name = island.dataset.island;
+            const propsJson = island.dataset.props;
+            
+            if (!Islands.has(name)) {
+                console.warn(`[runts] Island not registered: ${name}`);
+                return;
+            }
+
+            const props = safeJsonParse(propsJson);
+            const instance = Islands.create(name, props, island);
+            
+            if (instance) {
+                instance.mount();
+                island.classList.add('hydrated');
+                console.debug(`[runts] Hydrated island: ${name}`);
+            }
+        },
+
+        /**
+         * Manually hydrate an island (for manual strategy)
+         */
+        hydrate(name, selector) {
+            const element = querySelector(selector);
+            if (element) {
+                this._hydrateIsland(element);
+            }
+        }
+    };
+
+    // ============================================================================
+    // Island Base Class
+    // ============================================================================
+
+    /**
+     * Base class for island components
+     */
+    class Island {
+        constructor(props, element) {
+            this.props = props || {};
+            this.element = element;
+            this.contentElement = element.querySelector('[data-island-content]') || element;
+            this.hydrated = false;
+        }
+
+        mount() {
+            // Override in subclass
+            this.hydrated = true;
+        }
+
+        unmount() {
+            // Override in subclass
+            this.hydrated = false;
+        }
+
+        setProps(props) {
+            this.props = { ...this.props, ...props };
+            this.render();
+        }
     }
-  };
-  
-  for (const event of events) {
-    info.element.addEventListener(event, hydrate, { once: true, passive: true });
-  }
-}
 
-// ============================================================================
-// Page Data Hydration
-// ============================================================================
+    // ============================================================================
+    // Event Delegation
+    // ============================================================================
 
-export function getPageData<T>(): T | null {
-  const el = document.getElementById('__page_props');
-  if (!el) return null;
-  
-  try {
-    return JSON.parse(el.textContent || '{}');
-  } catch (e) {
-    console.error('[runts] Failed to parse page data:', e);
-    return null;
-  }
-}
+    /**
+     * Event delegation for island events
+     */
+    const Events = {
+        _handlers: new Map(),
+        _delegated: new Map(),
 
-// ============================================================================
-// Initialization & HMR
-// ============================================================================
+        /**
+         * Attach event handler to island
+         */
+        on(eventType, selector, handler) {
+            const key = `${eventType}:${selector}`;
+            
+            if (!this._delegated.has(key)) {
+                document.addEventListener(eventType, (e) => {
+                    const target = e.target.closest(selector);
+                    if (target) {
+                        const handlers = this._delegated.get(key);
+                        handlers.forEach(h => h.call(target, e));
+                    }
+                });
+                this._delegated.set(key, new Set());
+            }
+            
+            this._delegated.get(key).add(handler);
+        },
 
-// Auto-hydrate on DOMContentLoaded
-if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      hydrateAll();
-    });
-  } else {
-    // DOM already loaded, hydrate immediately
-    hydrateAll();
-  }
-}
+        /**
+         * Attach one-time event handler
+         */
+        once(eventType, selector, handler) {
+            const wrappedHandler = (e) => {
+                handler(e);
+                this.off(eventType, selector, wrappedHandler);
+            };
+            this.on(eventType, selector, wrappedHandler);
+        },
 
-// HMR client - listen for file changes
-if (typeof EventSource !== 'undefined') {
-  const source = new EventSource('/_runts/hmr');
-  
-  source.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      
-      switch (data.type) {
-        case 'reload':
-          console.log('[runts HMR] Full reload requested');
-          window.location.reload();
-          break;
-          
-        case 'change':
-          console.log('[runts HMR] File changed:', data.path);
-          // For now, do a full reload
-          // A smarter implementation would do hot-module replacement
-          window.location.reload();
-          break;
-          
-        case 'error':
-          console.error('[runts HMR] Error:', data.message);
-          break;
-          
-        default:
-          console.log('[runts HMR] Unknown event:', data);
-      }
-    } catch (e) {
-      console.error('[runts HMR] Failed to parse event:', e);
+        /**
+         * Remove event handler
+         */
+        off(eventType, selector, handler) {
+            const key = `${eventType}:${selector}`;
+            const handlers = this._delegated.get(key);
+            if (handlers) {
+                handlers.delete(handler);
+            }
+        }
+    };
+
+    // ============================================================================
+    // Signal Integration (for Preact Signals)
+    // ============================================================================
+
+    /**
+     * Preact-style signals for client
+     */
+    const Signals = {
+        _subscribers: new Map(),
+        _values: new Map(),
+
+        create(initialValue) {
+            const id = Math.random().toString(36).substr(2);
+            this._values.set(id, initialValue);
+            this._subscribers.set(id, new Set());
+            return {
+                id,
+                get value() {
+                    return Signals._values.get(id);
+                },
+                set value(newValue) {
+                    Signals._values.set(id, newValue);
+                    Signals._subscribers.get(id).forEach(fn => fn(newValue));
+                }
+            };
+        },
+
+        effect(fn, ids) {
+            ids.forEach(id => {
+                this._subscribers.get(id)?.add(fn);
+            });
+        }
+    };
+
+    // ============================================================================
+    // HMR (Hot Module Replacement)
+    // ============================================================================
+
+    const HMR = {
+        _connection: null,
+        _retryCount: 0,
+        _maxRetries: 5,
+
+        /**
+         * Connect to HMR server
+         */
+        connect() {
+            this._connection = new EventSource('/_runts/hmr');
+
+            this._connection.onopen = () => {
+                console.log('[runts HMR] Connected');
+                this._retryCount = 0;
+            };
+
+            this._connection.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    this._handleEvent(data);
+                } catch (e) {
+                    console.error('[runts HMR] Failed to parse event:', e);
+                }
+            };
+
+            this._connection.onerror = () => {
+                console.warn('[runts HMR] Connection lost, retrying...');
+                this._connection.close();
+                this._retryCount++;
+
+                if (this._retryCount < this._maxRetries) {
+                    setTimeout(() => this.connect(), 1000 * this._retryCount);
+                } else {
+                    console.error('[runts HMR] Max retries reached');
+                }
+            };
+        },
+
+        /**
+         * Handle HMR event
+         */
+        _handleEvent(data) {
+            switch (data.type) {
+                case 'change':
+                    this._handleChange(data);
+                    break;
+                case 'reload':
+                    window.location.reload();
+                    break;
+                case 'error':
+                    console.error('[runts HMR] Error:', data.message);
+                    this._showError(data.message);
+                    break;
+            }
+        },
+
+        /**
+         * Handle file change
+         */
+        _handleChange(data) {
+            console.log(`[runts HMR] File changed: ${data.path}`);
+            
+            // Dispatch custom event for app to handle
+            window.dispatchEvent(new CustomEvent('runts:reload', {
+                detail: { path: data.path }
+            }));
+
+            // Soft reload: re-fetch page data
+            if (data.path.includes('/routes/')) {
+                this._softReload();
+            }
+        },
+
+        /**
+         * Soft reload: fetch new page content
+         */
+        async _softReload() {
+            try {
+                const response = await fetch(window.location.pathname);
+                const html = await response.text();
+                
+                // Update island content
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                querySelectorAll('[data-island]').forEach(island => {
+                    const name = island.dataset.island;
+                    const newIsland = doc.querySelector(`[data-island="${name}"]`);
+                    if (newIsland) {
+                        const newContent = newIsland.innerHTML;
+                        island.innerHTML = newContent;
+                    }
+                });
+
+                console.log('[runts HMR] Soft reload complete');
+            } catch (e) {
+                console.error('[runts HMR] Soft reload failed:', e);
+                window.location.reload();
+            }
+        },
+
+        /**
+         * Show error in dev toolbar
+         */
+        _showError(message) {
+            const status = document.getElementById('__runts-status');
+            if (status) {
+                status.textContent = 'Error';
+                status.style.color = '#ff6b6b';
+                status.title = message;
+            }
+        }
+    };
+
+    // ============================================================================
+    // Initialize
+    // ============================================================================
+
+    /**
+     * Initialize the client runtime
+     */
+    function init() {
+        // Load island manifest
+        const manifestEl = document.getElementById('__island-manifest');
+        if (manifestEl) {
+            const manifest = safeJsonParse(manifestEl.textContent);
+            if (manifest) {
+                // Connect to HMR
+                HMR.connect();
+                
+                // Initialize hydration
+                Hydrator.init();
+                Islands.mountAll(manifest);
+            }
+        }
+
+        // Mark as ready
+        document.body.classList.add('runts-ready');
+        console.log('[runts] Client runtime initialized');
     }
-  };
-  
-  source.onerror = () => {
-    console.warn('[runts HMR] Connection lost, retrying...');
-    // EventSource will automatically reconnect
-  };
-}
 
-// Export everything for use in islands
-export default {
-  // Signals
-  signal,
-  computed,
-  effect,
-  batch,
-  untrack,
-  
-  // Hooks
-  useState,
-  useRef,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useCallback,
-  useReducer,
-  useContext,
-  createContext,
-  
-  // Islands
-  findIslands,
-  hydrateIsland,
-  hydrateAll,
-  hydrateOnVisible,
-  hydrateOnInteraction,
-  
-  // Utils
-  getPageData,
-};
+    // Export to global
+    global.runts = {
+        Islands,
+        Signals,
+        Events,
+        Hydrator,
+        HMR,
+        CONFIG,
+        Island,
+        init
+    };
+
+    // Auto-initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})(typeof window !== 'undefined' ? window : this);

@@ -1,215 +1,404 @@
-//! Server-side rendering and HTTP handling
+//! SSR Server utilities
 //!
-//! This module provides utilities for building Fresh-style web applications
-//! with Axum as the HTTP framework.
+//! Provides utilities for server-side rendering:
+//! - HTML rendering
+//! - Asset management
+//! - Caching utilities
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 
-/// Application state shared across handlers
-#[derive(Clone)]
-pub struct AppState {
-    /// User-defined state
-    pub user_state: Arc<HashMap<String, serde_json::Value>>,
-    /// Routes manifest
-    pub routes: Arc<Vec<RouteManifest>>,
-    /// Islands manifest
-    pub islands: Arc<Vec<IslandManifest>>,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            user_state: Arc::new(HashMap::new()),
-            routes: Arc::new(Vec::new()),
-            islands: Arc::new(Vec::new()),
-        }
-    }
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_user_state(mut self, state: HashMap<String, serde_json::Value>) -> Self {
-        self.user_state = Arc::new(state);
-        self
-    }
-
-    pub fn with_routes(mut self, routes: Vec<RouteManifest>) -> Self {
-        self.routes = Arc::new(routes);
-        self
-    }
-
-    pub fn with_islands(mut self, islands: Vec<IslandManifest>) -> Self {
-        self.islands = Arc::new(islands);
-        self
-    }
-}
-
-/// Route manifest entry
-#[derive(Clone, Debug)]
-pub struct RouteManifest {
-    /// URL pattern (e.g., "/blog/:slug")
-    pub pattern: String,
-    /// File path in the routes directory
-    pub file: String,
-}
-
-/// Island manifest entry
-#[derive(Clone, Debug)]
-pub struct IslandManifest {
-    /// Component name
-    pub name: String,
+/// Asset manifest entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetEntry {
     /// File path
     pub file: String,
-    /// Props type
-    pub props_type: Option<String>,
+    /// MIME type
+    pub mime: String,
+    /// Content hash for cache busting
+    pub hash: Option<String>,
+    /// Size in bytes
+    pub size: Option<usize>,
 }
 
-/// Response wrapper
-#[derive(Clone, Debug)]
-pub struct Response {
-    pub status: u16,
-    pub headers: HashMap<String, String>,
-    pub body: String,
+/// Asset manifest
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AssetManifest {
+    #[serde(rename = "entrypoints")]
+    pub entrypoints: HashMap<String, Vec<String>>,
+    
+    #[serde(rename = "routes")]
+    pub routes: HashMap<String, RouteAssets>,
 }
 
-impl Response {
-    pub fn new(html: impl Into<String>) -> Self {
-        Self {
-            status: 200,
-            headers: HashMap::new(),
-            body: html.into(),
-        }
-    }
-
-    pub fn with_status(mut self, status: u16) -> Self {
-        self.status = status;
-        self
-    }
-
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn html(body: impl Into<String>) -> Self {
-        Self::new(body).with_header("Content-Type", "text/html")
-    }
-
-    pub fn json<T: serde::Serialize>(body: &T) -> Result<Self, serde_json::Error> {
-        let json = serde_json::to_string(body)?;
-        Ok(Self::new(json).with_header("Content-Type", "application/json"))
-    }
-
-    pub fn not_found() -> Self {
-        Self::html(r#"<!DOCTYPE html>
-<html>
-<head><title>404</title></head>
-<body>
-    <h1>404 - Not Found</h1>
-    <a href="/">Home</a>
-</body>
-</html>"#)
-        .with_status(404)
-    }
+/// Assets for a specific route
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteAssets {
+    /// CSS files
+    pub css: Vec<String>,
+    /// JS files
+    pub js: Vec<String>,
 }
 
-/// Response builder
-pub struct ResponseBuilder {
-    status: u16,
-    headers: HashMap<String, String>,
+/// SSR Render options
+#[derive(Debug, Clone)]
+pub struct RenderOptions {
+    /// Whether to include dev toolbar
+    pub dev_mode: bool,
+    /// Base URL for assets
+    pub base_url: String,
+    /// Additional head elements
+    pub head: Vec<HeadElement>,
 }
 
-impl ResponseBuilder {
-    pub fn new() -> Self {
-        Self {
-            status: 200,
-            headers: HashMap::new(),
-        }
-    }
+/// Head element types
+#[derive(Debug, Clone)]
+pub enum HeadElement {
+    /// <title> element
+    Title(String),
+    /// <meta> element
+    Meta { name: String, content: String },
+    /// <link> element
+    Link { rel: String, href: String },
+    /// <script> element
+    Script { src: Option<String>, content: Option<String> },
+    /// <style> element
+    Style(String),
+    /// Raw HTML
+    Raw(String),
+}
 
-    pub fn status(mut self, status: u16) -> Self {
-        self.status = status;
-        self
-    }
-
-    pub fn header<K, V>(mut self, key: K, value: V) -> Self
-    where
-        K: Into<String>,
-        V: Into<String>,
-    {
-        self.headers.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn build(self, body: impl Into<String>) -> Response {
-        Response {
-            status: self.status,
-            headers: self.headers,
-            body: body.into(),
+impl HeadElement {
+    pub fn to_html(&self) -> String {
+        match self {
+            HeadElement::Title(title) => format!("<title>{}</title>", html_escape(title)),
+            HeadElement::Meta { name, content } => {
+                format!(r#"<meta name="{}" content="{}">"#, 
+                    html_escape(name), html_escape(content))
+            }
+            HeadElement::Link { rel, href } => {
+                format!(r#"<link rel="{}" href="{}">"#, 
+                    html_escape(rel), html_escape(href))
+            }
+            HeadElement::Script { src, content } => {
+                if let Some(src) = src {
+                    format!(r#"<script src="{}"></script>"#, html_escape(src))
+                } else if let Some(content) = content {
+                    format!("<script>{}</script>", content)
+                } else {
+                    String::new()
+                }
+            }
+            HeadElement::Style(css) => {
+                format!("<style>{}</style>", css)
+            }
+            HeadElement::Raw(html) => html.clone(),
         }
     }
 }
 
-impl Default for ResponseBuilder {
+impl Default for RenderOptions {
     fn default() -> Self {
-        Self::new()
+        Self {
+            dev_mode: false,
+            base_url: String::new(),
+            head: Vec::new(),
+        }
     }
 }
 
-// =============================================================================
-// Island Hydration
-// =============================================================================
-
-/// Island hydration script
-pub fn island_hydration_script(name: &str, props: &serde_json::Value, id: &str) -> String {
-    format!(
-        r#"<script type="application/x-runts-island" id="{}" data-component="{}">{}</script>"#,
-        id,
-        name,
-        serde_json::to_string(props).unwrap_or_default()
-    )
+/// HTML renderer for SSR
+pub struct HtmlRenderer {
+    options: RenderOptions,
 }
 
-/// Island container HTML
-pub fn island_container(name: &str, id: &str, props: &serde_json::Value, server_rendered: &str) -> String {
-    format!(
-        r#"<div data-island="{}" data-props="{}" data-url="/_islands/{}">{}</div>"#,
-        name,
-        serde_json::to_string(props).unwrap_or_default(),
-        name,
-        server_rendered
-    )
-}
+impl HtmlRenderer {
+    pub fn new(options: RenderOptions) -> Self {
+        Self { options }
+    }
 
-// =============================================================================
-// Page Rendering
-// =============================================================================
-
-/// Render full HTML page
-pub fn render_page(
-    title: &str,
-    content: super::vdom::VNode,
-    _app_wrapper: Option<super::vdom::VNode>,
-) -> String {
-    let page_html = content.to_html();
-
-    format!(
-        r#"<!DOCTYPE html>
+    /// Render a complete HTML document
+    pub fn render_document(&self, title: &str, body: &str, manifest: Option<&AssetManifest>) -> String {
+        let head_html = self.render_head(manifest);
+        
+        format!(
+            r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{}</title>
+    <title>{title}</title>
+    {head_html}
 </head>
 <body>
-    <div id="app">{}</div>
+{body}
 </body>
 </html>"#,
-        title,
-        page_html
+            title = html_escape(title),
+            head_html = head_html,
+            body = body
+        )
+    }
+
+    /// Render the <head> section
+    fn render_head(&self, manifest: Option<&AssetManifest>) -> String {
+        let mut parts = Vec::new();
+
+        // Add custom head elements
+        for element in &self.options.head {
+            parts.push(element.to_html());
+        }
+
+        // Add asset links
+        if let Some(manifest) = manifest {
+            for (name, files) in &manifest.entrypoints {
+                match name.as_str() {
+                    "main" => {
+                        for file in files {
+                            if file.ends_with(".css") {
+                                parts.push(format!(
+                                    r#"<link rel="stylesheet" href="{}{}">"#,
+                                    self.options.base_url,
+                                    file
+                                ));
+                            }
+                        }
+                        for file in files {
+                            if file.ends_with(".js") {
+                                parts.push(format!(
+                                    r#"<script type="module" src="{}{}"></script>"#,
+                                    self.options.base_url,
+                                    file
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Add favicon
+        parts.push(r#"<link rel="icon" href="/favicon.ico">"#.to_string());
+
+        // Add dev mode toolbar
+        if self.options.dev_mode {
+            parts.push(self.render_dev_toolbar());
+        }
+
+        parts.join("\n    ")
+    }
+
+    /// Render the dev mode toolbar
+    fn render_dev_toolbar(&self) -> String {
+        r#"<script>
+window.__RUNTS_DEV__ = true;
+</script>
+<div id="__runts-toolbar" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#fff;padding:8px 16px;font-family:monospace;font-size:12px;z-index:9999;display:flex;justify-content:space-between;">
+    <span>runts dev</span>
+    <span id="__runts-status">Ready</span>
+</div>"#.to_string()
+    }
+}
+
+/// Utility function for HTML escaping
+pub fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Utility function for HTML attribute escaping
+pub fn html_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Generate inline script for page data
+pub fn render_page_data_script(data: &serde_json::Value) -> String {
+    let json = serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        r#"<script id="__page-data" type="application/json">{}</script>"#,
+        html_escape(&json)
     )
+}
+
+/// Generate inline script for island manifest
+pub fn render_island_manifest_script(manifest: &crate::runtime::islands::IslandManifest) -> String {
+    let json = serde_json::to_string(manifest).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        r#"<script id="__island-manifest" type="application/json">{}</script>"#,
+        html_escape(&json)
+    )
+}
+
+/// Cache utilities
+pub mod cache {
+    use std::time::{Duration, Instant};
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
+    /// Simple in-memory cache
+    pub struct Cache<K, V> {
+        entries: RwLock<HashMap<K, CacheEntry<V>>>,
+        ttl: Duration,
+    }
+
+    struct CacheEntry<V> {
+        value: V,
+        expires: Instant,
+    }
+
+    impl<K, V> Cache<K, V>
+    where
+        K: std::hash::Hash + Eq + Clone,
+        V: Clone,
+    {
+        pub fn new(ttl: Duration) -> Self {
+            Self {
+                entries: RwLock::new(HashMap::new()),
+                ttl,
+            }
+        }
+
+        pub fn get(&self, key: &K) -> Option<V> {
+            let mut entries = self.entries.write().ok()?;
+            if let Some(entry) = entries.get_mut(key) {
+                if Instant::now() < entry.expires {
+                    return Some(entry.value.clone());
+                } else {
+                    entries.remove(key);
+                }
+            }
+            None
+        }
+
+        pub fn set(&self, key: K, value: V) {
+            let mut entries = match self.entries.write() {
+                Ok(e) => e,
+                Err(_) => return,
+            };
+            entries.insert(key, CacheEntry {
+                value,
+                expires: Instant::now() + self.ttl,
+            });
+        }
+
+        pub fn invalidate(&self, key: &K) {
+            if let Ok(mut entries) = self.entries.write() {
+                entries.remove(key);
+            }
+        }
+
+        pub fn clear(&self) {
+            if let Ok(mut entries) = self.entries.write() {
+                entries.clear();
+            }
+        }
+    }
+
+    /// Create a cache with common TTL values
+    pub fn short_lived() -> Duration {
+        Duration::from_secs(5)
+    }
+
+    pub fn medium_lived() -> Duration {
+        Duration::from_secs(60)
+    }
+
+    pub fn long_lived() -> Duration {
+        Duration::from_secs(3600)
+    }
+}
+
+/// Response caching utilities
+pub mod response_cache {
+    use http::{HeaderMap, HeaderName, HeaderValue};
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
+    static CACHE: RwLock<Option<HashMap<String, CachedResponse>>> = RwLock::new(None);
+
+    /// Cached HTTP response
+    #[derive(Clone)]
+    pub struct CachedResponse {
+        pub status: u16,
+        pub headers: HashMap<String, String>,
+        pub body: Vec<u8>,
+    }
+
+    /// Generate a cache key from request
+    pub fn cache_key(method: &str, path: &str, query: Option<&str>) -> String {
+        match query {
+            Some(q) => format!("{}:{}?{}", method, path, q),
+            None => format!("{}:{}", method, path),
+        }
+    }
+
+    /// Check if response should be cached
+    pub fn is_cacheable(status: u16, headers: &HeaderMap<HeaderValue>) -> bool {
+        // Only cache successful GET responses
+        if status != 200 {
+            return false;
+        }
+
+        // Don't cache if Cache-Control: no-store
+        if let Some(cc) = headers.get("Cache-Control") {
+            if let Ok(cc_str) = cc.to_str() {
+                if cc_str.contains("no-store") || cc_str.contains("no-cache") {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Add cache headers to response
+    pub fn add_cache_headers(headers: &mut HeaderMap<HeaderValue>, max_age_secs: u64) {
+        headers.insert(
+            HeaderName::from_static("cache-control"),
+            HeaderValue::try_from(format!("public, max-age={}", max_age_secs)).unwrap_or_else(|_| {
+                HeaderValue::from_static("public, max-age=3600")
+            }),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_html_escape() {
+        assert_eq!(html_escape("<script>"), "&lt;script&gt;");
+        assert_eq!(html_escape("Hello & World"), "Hello &amp; World");
+        assert_eq!(html_escape("\"quoted\""), "&quot;quoted&quot;");
+    }
+
+    #[test]
+    fn test_render_document() {
+        let renderer = HtmlRenderer::new(RenderOptions::default());
+        let html = renderer.render_document("Test", "<p>Hello</p>", None);
+        
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<title>Test</title>"));
+        assert!(html.contains("<p>Hello</p>"));
+    }
+
+    #[test]
+    fn test_cache_key() {
+        assert_eq!(
+            cache_key("GET", "/api/users", None),
+            "GET:/api/users"
+        );
+        assert_eq!(
+            cache_key("GET", "/api/users", Some("page=1")),
+            "GET:/api/users?page=1"
+        );
+    }
 }
