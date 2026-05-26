@@ -42,12 +42,49 @@ fn main() -> Result<()> {
             rt.block_on(commands::run_dev_server(&config, 8000))?;
         }
 
-        cli::Commands::Build { path } => {
+        cli::Commands::Build { path, release, no_compile } => {
             info!("Building for production...");
             let config = config::Config::load_from_path(&path)?;
             let rt = tokio::runtime::Runtime::new()?;
-            let result = rt.block_on(commands::run_build(&config, path))?;
-            info!("Build complete!");
+            
+            if no_compile {
+                // Just transpile
+                let result = rt.block_on(commands::run_build(&config, path))?;
+                info!("Transpilation complete!");
+                info!("  Generated {} files", result.generated_files.len());
+                info!("  Routes: {}", result.routes.len());
+                info!("  Islands: {}", result.islands.len());
+                info!("  Components: {}", result.components.len());
+                info!("Run `cargo build --release` to compile.");
+            } else {
+                let result = rt.block_on(commands::build::run_full_build(&config, path, release))?;
+                
+                info!("Build complete!");
+                if let Some(binary) = &result.binary_path {
+                    info!("  Binary: {:?}", binary);
+                }
+                if let Some(size) = result.binary_size {
+                    info!("  Size: {:.2} KB", size as f64 / 1024.0);
+                }
+            }
+        }
+
+        cli::Commands::Transpile { path, output } => {
+            // Just transpile without compiling
+            info!("Transpiling TypeScript to Rust...");
+            let config = config::Config::load_from_path(&path)?;
+            let rt = tokio::runtime::Runtime::new()?;
+            let result = rt.block_on(commands::run_build(&config, path.clone()))?;
+            
+            if let Some(out_dir) = &output {
+                for file in &result.generated_files {
+                    let target = out_dir.join(file.path.file_name().unwrap_or_default());
+                    std::fs::write(&target, &file.content)?;
+                    info!("  Wrote: {:?}", target);
+                }
+            }
+            
+            info!("Transpilation complete!");
             info!("  Generated {} files", result.generated_files.len());
             info!("  Routes: {}", result.routes.len());
             info!("  Islands: {}", result.islands.len());

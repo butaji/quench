@@ -4,11 +4,12 @@
 //! - Route table
 //! - Islands manifest
 //! - Rust source files
-//! - Final binary
+//! - Compiles to native binary (via cargo)
 
 use anyhow::{Result, Context};
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::process::Command;
 use walkdir::WalkDir;
 use regex::Regex;
 use tracing::{info, error};
@@ -773,4 +774,91 @@ fn to_snake_case(s: &str) -> String {
         result.push(c.to_ascii_lowercase());
     }
     result
+}
+
+// =============================================================================
+// Rust Compilation
+// =============================================================================
+
+/// Compile the generated Rust code using cargo
+pub fn compile_rust(project_root: &Path, release: bool) -> Result<()> {
+    info!("Compiling Rust code...");
+    
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(project_root);
+    
+    if release {
+        cmd.arg("build").arg("--release");
+    } else {
+        cmd.arg("build");
+    }
+    
+    info!("Running: {:?}", cmd);
+    
+    let output = cmd.output().context("Failed to execute cargo")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        
+        error!("Cargo build failed!");
+        if !stdout.is_empty() {
+            error!("stdout: {}", stdout);
+        }
+        if !stderr.is_empty() {
+            error!("stderr: {}", stderr);
+        }
+        
+        anyhow::bail!("cargo build failed with exit code: {:?}", output.status.code());
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() {
+        info!("Compilation output:\n{}", stdout);
+    }
+    
+    info!("Rust compilation complete!");
+    Ok(())
+}
+
+/// Build result with compilation info
+pub struct CompilationResult {
+    pub binary_path: Option<PathBuf>,
+    pub binary_size: Option<u64>,
+}
+
+/// Full build: transpile + compile
+pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Result<CompilationResult> {
+    // Phase 1: Transpile
+    let build_result = run_build(config, path.clone()).await?;
+    
+    // Phase 2: Compile Rust
+    let project_root = find_project_root(&path)?;
+    compile_rust(&project_root, release)?;
+    
+    // Phase 3: Find binary
+    let binary_path = if release {
+        project_root.join("target").join("release")
+    } else {
+        project_root.join("target").join("debug")
+    };
+    
+    // Find the binary (usually same name as project)
+    let app_name = project_root.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("app");
+    let binary = binary_path.join(if cfg!(windows) { format!("{}.exe", app_name) } else { app_name.to_string() });
+    
+    let binary_size = if binary.exists() {
+        let size = fs::metadata(&binary)?.len();
+        info!("Binary size: {:.2} KB", size as f64 / 1024.0);
+        Some(size)
+    } else {
+        None
+    };
+    
+    Ok(CompilationResult {
+        binary_path: if binary.exists() { Some(binary) } else { None },
+        binary_size,
+    })
 }
