@@ -1,43 +1,33 @@
-// routes/blog/_layout.tsx - Blog section layout
-import { PageProps } from "$fresh/server.ts";
+/**
+ * Blog Layout
+ * 
+ * Wraps all blog routes with consistent styling.
+ * The children prop contains the rendered child route.
+ */
 
-interface BlogLayoutProps {
+interface LayoutProps {
   children?: any;
 }
 
-/**
- * Blog layout - wraps all blog routes
- * Demonstrates:
- * - Layout nesting
- * - Shared UI
- * - Props from parent
- */
-export default function BlogLayout({ children }: BlogLayoutProps) {
+export default function BlogLayout({ children }: LayoutProps) {
   return (
     <div class="blog-layout">
-      <aside class="blog-sidebar">
-        <nav class="blog-nav">
-          <h3>Blog Navigation</h3>
-          <ul>
-            <li><a href="/blog">All Posts</a></li>
-            <li><a href="/blog?filter=recent">Recent</a></li>
-            <li><a href="/blog?filter=popular">Popular</a></li>
-          </ul>
-        </nav>
-        
-        <div class="blog-categories">
-          <h4>Categories</h4>
-          <ul>
-            <li><a href="/blog?category=tutorial">Tutorials</a></li>
-            <li><a href="/blog?category=news">News</a></li>
-            <li><a href="/blog?category=guide">Guides</a></li>
-          </ul>
-        </div>
-      </aside>
+      <div class="blog-header" style={{
+        padding: "1.5rem 0",
+        borderBottom: "2px solid #e0e0e0",
+        marginBottom: "2rem"
+      }}>
+        <h1 style={{ fontSize: "2rem", margin: 0 }}>
+          <a href="/blog" style={{ textDecoration: "none", color: "#1a1a2e" }}>
+            Blog
+          </a>
+        </h1>
+        <p style={{ color: "#666", margin: "0.5rem 0 0 0" }}>
+          Thoughts on Rust, web development, and building fast software
+        </p>
+      </div>
       
-      <main class="blog-content">
-        {children}
-      </main>
+      {children}
     </div>
   );
 }

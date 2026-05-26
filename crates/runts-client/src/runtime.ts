@@ -106,21 +106,17 @@
             }
 
             for (const entry of manifest.islands) {
-                const element = querySelector(entry.selector);
+                const element = querySelector(`[data-island="${entry.name}"][data-id="${entry.id}"]`);
                 if (!element) {
                     console.warn(`[runts] Island element not found: ${entry.selector}`);
                     continue;
                 }
 
-                const props = safeJsonParse(entry.props);
-                if (props === null) {
-                    console.warn(`[runts] Invalid props for island: ${entry.name}`);
-                    continue;
-                }
-
+                const props = entry.props || {};
                 const instance = this.create(entry.name, props, element);
                 if (instance && entry.strategy !== CONFIG.STRATEGY.STATIC) {
                     instance.mount();
+                    element.dataset.hydrated = 'true';
                 }
             }
         }
@@ -230,6 +226,10 @@
          * Hydrate a single island
          */
         _hydrateIsland(island) {
+            if (island.dataset.hydrated === 'true') {
+                return;
+            }
+
             const name = island.dataset.island;
             const propsJson = island.dataset.props;
             
@@ -238,12 +238,12 @@
                 return;
             }
 
-            const props = safeJsonParse(propsJson);
+            const props = safeJsonParse(propsJson) || {};
             const instance = Islands.create(name, props, island);
             
             if (instance) {
                 instance.mount();
-                island.classList.add('hydrated');
+                island.dataset.hydrated = 'true';
                 console.debug(`[runts] Hydrated island: ${name}`);
             }
         },
@@ -272,21 +272,79 @@
             this.element = element;
             this.contentElement = element.querySelector('[data-island-content]') || element;
             this.hydrated = false;
+            this._handlers = new Map();
         }
 
         mount() {
-            // Override in subclass
             this.hydrated = true;
+            this.attachEvents();
         }
 
         unmount() {
-            // Override in subclass
             this.hydrated = false;
+            this.detachEvents();
         }
 
         setProps(props) {
             this.props = { ...this.props, ...props };
             this.render();
+        }
+
+        render() {
+            // Override in subclass
+        }
+
+        attachEvents() {
+            // Override in subclass
+        }
+
+        detachEvents() {
+            // Remove all attached event listeners
+            for (const [key, handler] of this._handlers) {
+                const [event, selector] = key.split(':');
+                const el = selector ? this.element.querySelector(selector) : this.element;
+                if (el) {
+                    el.removeEventListener(event, handler);
+                }
+            }
+            this._handlers.clear();
+        }
+
+        /**
+         * Attach event handler with automatic cleanup
+         */
+        on(event, selector, handler) {
+            const key = `${event}:${selector || ''}`;
+            this._handlers.set(key, handler);
+            
+            const el = selector ? this.element.querySelector(selector) : this.element;
+            if (el) {
+                el.addEventListener(event, handler);
+            }
+        }
+
+        /**
+         * Attach one-time event handler
+         */
+        once(event, selector, handler) {
+            const wrappedHandler = (e) => {
+                handler(e);
+                this.off(event, selector, wrappedHandler);
+            };
+            this.on(event, selector, wrappedHandler);
+        }
+
+        /**
+         * Remove event handler
+         */
+        off(event, selector, handler) {
+            const key = `${event}:${selector || ''}`;
+            this._handlers.delete(key);
+            
+            const el = selector ? this.element.querySelector(selector) : this.element;
+            if (el) {
+                el.removeEventListener(event, handler);
+            }
         }
     }
 
@@ -345,7 +403,7 @@
     };
 
     // ============================================================================
-    // Signal Integration (for Preact Signals)
+    // Preact-Style Signals (Client-side)
     // ============================================================================
 
     /**
@@ -375,6 +433,10 @@
             ids.forEach(id => {
                 this._subscribers.get(id)?.add(fn);
             });
+        },
+
+        batch(fn) {
+            fn();
         }
     };
 
@@ -391,6 +453,10 @@
          * Connect to HMR server
          */
         connect() {
+            if (this._connection) {
+                this._connection.close();
+            }
+
             this._connection = new EventSource('/_runts/hmr');
 
             this._connection.onopen = () => {
@@ -452,6 +518,9 @@
             // Soft reload: re-fetch page data
             if (data.path.includes('/routes/')) {
                 this._softReload();
+            } else if (data.path.includes('/islands/')) {
+                // For islands, just reload the page to get fresh hydration
+                window.location.reload();
             }
         },
 
@@ -507,15 +576,25 @@
         // Load island manifest
         const manifestEl = document.getElementById('__island-manifest');
         if (manifestEl) {
-            const manifest = safeJsonParse(manifestEl.textContent);
-            if (manifest) {
-                // Connect to HMR
-                HMR.connect();
-                
-                // Initialize hydration
-                Hydrator.init();
-                Islands.mountAll(manifest);
+            try {
+                const manifest = JSON.parse(manifestEl.textContent);
+                if (manifest) {
+                    // Connect to HMR
+                    HMR.connect();
+                    
+                    // Initialize hydration
+                    Hydrator.init();
+                    Islands.mountAll(manifest);
+                }
+            } catch (e) {
+                console.error('[runts] Failed to parse island manifest:', e);
             }
+        }
+
+        // Also check window.__ISLAND_MANIFEST__
+        if (window.__ISLAND_MANIFEST__) {
+            Hydrator.init();
+            Islands.mountAll(window.__ISLAND_MANIFEST__);
         }
 
         // Mark as ready
@@ -534,6 +613,10 @@
         Island,
         init
     };
+
+    // Also expose common APIs at window level for convenience
+    global.__registerIsland__ = (name, Component) => Islands.register(name, Component);
+    global.__runts_islands__ = Islands._components;
 
     // Auto-initialize on DOM ready
     if (document.readyState === 'loading') {
