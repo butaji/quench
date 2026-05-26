@@ -12,7 +12,7 @@ runts-lib = { path = "../../crates/runts-lib" }
 # Web server
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compress"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-gzip"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

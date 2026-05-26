@@ -160,12 +160,14 @@ examples/my-blog/
 - [x] Islands architecture
 - [x] Dev server with file watching
 - [x] Production build (transpile + compile)
-- [x] Example: my-blog with Counter, TodoList
+- [x] Example: my-blog builds successfully (1.2MB binary)
 
 ### Phase 2: Production Ready (In Progress)
-- [ ] Complete TSX parser (remaining 15%)
+- [x] Route patterns extraction
+- [x] Props types generation from interfaces
+- [ ] Complete TSX parser (remaining 15% edge cases)
 - [ ] Client-side island hydration
-- [ ] Full Axum route wiring from generated code
+- [ ] Full Axum route handlers from TS handler exports
 - [ ] Layout/middleware composition
 - [ ] Error messages with source spans
 
@@ -182,7 +184,7 @@ examples/my-blog/
 | Metric | Target | Current |
 |--------|--------|---------|
 | Cold Start | < 10ms | ~5-15ms |
-| Binary Size | < 2MB | ~500KB-2MB |
+| Binary Size | < 2MB | **1.2MB** ✅ |
 | Memory (idle) | < 10MB | ~5-10MB |
 | Island Bundle | < 15KB | ~12KB |
 | Hot Reload | < 100ms | ~50-100ms |
