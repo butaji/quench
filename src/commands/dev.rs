@@ -532,9 +532,10 @@ fn extract_headers(headers: &http::HeaderMap) -> HashMap<String, String> {
 /// Handle SSR request
 async fn handle_ssr(
     State(state): State<AppState>,
-    Path(path): Path<String>,
+    path: Option<Path<String>>,
     headers: http::HeaderMap,
 ) -> impl IntoResponse {
+    let path = path.map(|p| p.0).unwrap_or_default();
     let path = if path.is_empty() { "/" } else { &path };
 
     // Build request info
@@ -577,9 +578,10 @@ async fn handle_ssr(
 /// Handle API routes
 async fn handle_api(
     State(state): State<AppState>,
-    Path(path): Path<String>,
+    path: Option<Path<String>>,
     headers: http::HeaderMap,
 ) -> Response {
+    let path = path.map(|p| p.0).unwrap_or_default();
     let api_path = format!("/api/{}", path);
 
     // Build request info

@@ -226,7 +226,12 @@ impl CodeGenerator {
                 };
                 match name.as_str() {
                     "PageProps" | "HandlerContext" | "Request" | "Response" => name.clone() + &args,
-                    _ => self.to_snake_case(name) + &args,
+                    "Record" => format!("std::collections::HashMap{}", args),
+                    "Promise" => format!("std::pin::Pin<Box<dyn std::future::Future<Output = {}> + Send>>", args.trim_start_matches('<').trim_end_matches('>')),
+                    "Array" => format!("Vec{}", args),
+                    "Map" => format!("std::collections::HashMap{}", args),
+                    "Set" => format!("std::collections::HashSet{}", args),
+                    _ => name.clone() + &args,
                 }
             }
             Type::Union { types } => {

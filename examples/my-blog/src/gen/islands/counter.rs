@@ -9,9 +9,11 @@ pub struct CounterProps {
 
 #[component]
 pub fn counter(_props: CounterProps) -> VNode {
-    let { initial: initial, step: step, label: label} = _props;
-    let (count, set_count) = use_state(initial);
-    let (history, set_history) = use_state(vec![initial]);
+    let initial = _props.initial;
+    let step = _props.step;
+    let label = _props.label;
+    let (count, set_count) = (use_state(initial)[0], use_state(initial)[1]);
+    let (history, set_history) = (use_state(vec![initial])[0], use_state(vec![initial])[1]);
     let increment = || { let new_value = (count + step); set_count(new_value); set_history(|| { { let mut __arr: Vec<_> = Vec::new(); __arr.extend(prev.iter().cloned()); __arr.push(new_value); __arr } }) };
     let decrement = || { let new_value = (count - step); set_count(new_value); set_history(|| { { let mut __arr: Vec<_> = Vec::new(); __arr.extend(prev.iter().cloned()); __arr.push(new_value); __arr } }) };
     let reset = || { set_count(initial); set_history(vec![initial]) };
@@ -21,7 +23,8 @@ pub fn counter(_props: CounterProps) -> VNode {
     set_history(new_history);
     set_count(new_history[(new_history.len() - 1)]);
 } } };
-    return html!(<div class_name = "counter"><h2>{label}</h2> <div class_name = "display"><span class_name = "count">{count}</span> {if (count != initial) { Some(html!(<span class_name = "delta">"(" {if (count > initial) { "+" } else { "" }} {(count - initial)} ")"</span>)) } else { None }}</div> <div class_name = "controls"><button on_click = {decrement}>"-"</button> <button on_click = {undo} disabled = {(history.len() <= 1)}>"Undo"</button> <button on_click = {reset}>"Reset"</button> <button on_click = {increment}>"+"</button></div> <div class_name = "info"><p>"Step:" {step} "| Initial:" {initial}</p> <p>"History length:" {history.len()}</p></div></div>);
+    let delta = (count - initial);
+    return html!(<div class_name = "counter-island" style = {{padding: "1.5rem", border: "2px solid #e0e0e0", border_radius: "12px", max_width: "400px", background: "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)"}}><h2 style = {{margin: "0 0 1rem 0", color: "#333", text_align: "center"}}>{label}</h2> <div style = {{display: "flex", flex_direction: "column", align_items: "center", gap: "1rem"}}><div class_name = "display" style = {{display: "flex", align_items: "center", gap: "0.5rem", font_size: "2.5rem", font_weight: "bold", color: "#1a1a2e"}}><span class_name = "count">{count}</span> {if (delta != 0) { Some(html!(<span style = {{font_size: "1rem", color: if (delta > 0) { "#4caf50" } else { "#f44336" }, font_weight: "normal"}}>"(" {if (delta > 0) { "+" } else { "" }} {delta} ")"</span>)) } else { None }}</div> <div style = {{display: "flex", gap: "0.5rem", flex_wrap: "wrap", justify_content: "center"}}><button on_click = {decrement} style = {{padding: "0.5rem 1.25rem", font_size: "1.25rem", font_weight: "bold", border: "none", border_radius: "8px", background: "#e74c3c", color: "white", cursor: "pointer", transition: "transform 0.1s, background 0.2s"}} on_mouse_over = {|e| { e.currentTarget.style.background = "#c0392b" }} on_mouse_out = {|e| { e.currentTarget.style.background = "#e74c3c" }}>"−"</button> <button on_click = {undo} disabled = {(history.len() <= 1)} style = {{padding: "0.5rem 1rem", font_size: "0.875rem", border: "none", border_radius: "8px", background: if (history.len() <= 1) { "#bdc3c7" } else { "#f39c12" }, color: "white", cursor: if (history.len() <= 1) { "not-allowed" } else { "pointer" }, transition: "background 0.2s", opacity: if (history.len() <= 1) { 0.5 } else { 1 }}}>"Undo"</button> <button on_click = {reset} disabled = {(count == initial)} style = {{padding: "0.5rem 1rem", font_size: "0.875rem", border: "none", border_radius: "8px", background: if (count == initial) { "#bdc3c7" } else { "#9b59b6" }, color: "white", cursor: if (count == initial) { "not-allowed" } else { "pointer" }, transition: "background 0.2s", opacity: if (count == initial) { 0.5 } else { 1 }}}>"Reset"</button> <button on_click = {increment} style = {{padding: "0.5rem 1.25rem", font_size: "1.25rem", font_weight: "bold", border: "none", border_radius: "8px", background: "#27ae60", color: "white", cursor: "pointer", transition: "transform 0.1s, background 0.2s"}} on_mouse_over = {|e| { e.currentTarget.style.background = "#1e8449" }} on_mouse_out = {|e| { e.currentTarget.style.background = "#27ae60" }}>"+"</button></div> <div style = {{margin_top: "0.5rem", font_size: "0.875rem", color: "#666", text_align: "center"}}><p style = {{margin: "0.25rem 0"}}>"Step:" {step} "| Initial:" {initial}</p> <p style = {{margin: "0.25rem 0"}}>"History:" {history.len()} "changes"</p></div></div></div>);
 }
 
 
