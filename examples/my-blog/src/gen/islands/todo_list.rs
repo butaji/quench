@@ -13,7 +13,7 @@ pub struct TodoListProps {
 }
 
 pub fn todo_list(_destructure: todo_list_props) -> () {
-    let _destructured:  = (use_state < (todo. > vec![]));
+    let _destructured:  = use_state(vec![]);
 
     let _destructured:  = use_state("");
 
