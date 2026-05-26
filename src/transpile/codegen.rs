@@ -755,26 +755,22 @@ impl CodeGenerator {
                 // Handle block body vs expression body
                 let body_code = match body.as_ref() {
                     Stmt::Block(stmts) => {
-                        // Handle multiple statements including variable declarations
+                        // Handle multiple statements - strip trailing semicolons before joining
                         let mut lines: Vec<String> = Vec::new();
                         for stmt in stmts {
                             let stmt_code = self.stmt_to_rust(stmt).unwrap_or_default();
                             if !stmt_code.trim().is_empty() {
-                                // Variable declarations need 'let' keyword
-                                if stmt_code.trim().starts_with("let ") || stmt_code.trim().starts_with("let mut") {
-                                    lines.push(stmt_code);
-                                } else {
-                                    let trimmed = stmt_code.trim_end_matches(';').to_string();
-                                    if !trimmed.is_empty() {
-                                        lines.push(trimmed);
-                                    }
+                                // Strip trailing semicolon and newline, then add it back properly
+                                let trimmed = stmt_code.trim().trim_end_matches(';').trim_end().to_string();
+                                if !trimmed.is_empty() {
+                                    lines.push(trimmed);
                                 }
                             }
                         }
                         if lines.is_empty() {
                             "{}".to_string()
                         } else {
-                            format!("{{ {} }}", lines.join("; ") + ";")
+                            format!("{{ {} }}", lines.join("; "))
                         }
                     }
                     Stmt::Return { arg } => {

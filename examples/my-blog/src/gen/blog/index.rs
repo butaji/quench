@@ -16,7 +16,7 @@ pub struct Post {
 #[component]
 pub fn blog_index(_props: PageProps<blogData>) -> VNode {
     let { data: data} = _props;
-    let post_items = data.posts.map(|| { return html!(<article key = {post.slug} class_name = "post-preview"><h2><a href = {/blog/{post.slug}}>{post.title}</a></h2> <p>{post.excerpt}</p></article>); });
+    let post_items = data.posts.map(|| { return html!(<article key = {post.slug} class_name = "post-preview"><h2><a href = {/blog/{post.slug}}>{post.title}</a></h2> <p>{post.excerpt}</p></article>) });
     return html!(<div class_name = "blog-page"><header class_name = "blog-header"><h1>"Blog"</h1> <p>"Total posts:" {data.totalCount}</p></header> <main class_name = "blog-list">{post_items}</main></div>);
 }
 
