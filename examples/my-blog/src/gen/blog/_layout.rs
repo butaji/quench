@@ -5,3 +5,8 @@ pub struct BlogLayoutProps {
     pub children: serde_json::Value,
 }
 
+pub fn blog_layout(_destructure: blog_layout_props) -> () {
+    return html!(<div class_name: "blog-layout">html!(<aside class_name: "blog-sidebar">html!(<nav class_name: "blog-nav">html!(<h3>"Blog Navigation"</h3>)html!(<ul>html!(<li>html!(<a href: "/blog">"All Posts"</a>)</li>)html!(<li>html!(<a href: "/blog?filter=recent">"Recent"</a>)</li>)html!(<li>html!(<a href: "/blog?filter=popular">"Popular"</a>)</li>)</ul>)</nav>)html!(<div class_name: "blog-categories">html!(<h4>"Categories"</h4>)html!(<ul>html!(<li>html!(<a href: "/blog?category=tutorial">"Tutorials"</a>)</li>)html!(<li>html!(<a href: "/blog?category=news">"News"</a>)</li>)html!(<li>html!(<a href: "/blog?category=guide">"Guides"</a>)</li>)</ul>)</div>)</aside>)html!(<main class_name: "blog-content">children</main>)</div>);
+}
+
+

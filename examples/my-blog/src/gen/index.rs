@@ -7,3 +7,8 @@ pub struct HomeData {
     pub version: String,
 }
 
+pub fn home(_destructure: PageProps<home_data>) -> () {
+    return html!(<div class_name: "home-page">html!(<header title: data.greeting/>)html!(<main class_name: "container">html!(<section class_name: "hero">html!(<h1>data.greeting</h1>)html!(<p class_name: "lead">data.description</p>)html!(<p class_name: "version">"Version:"data.version</p>)html!(<div class_name: "cta-buttons">html!(<a href: "/blog" class_name: "btn btn-primary">"Read the Blog"</a>)html!(<a href: "/about" class_name: "btn btn-secondary">"Learn More"</a>)</div>)</section>)html!(<section class_name: "demo">html!(<h2>"Interactive Demo"</h2>)html!(<p>"Try out the counter island below!"</p>)html!(<div class_name: "demo-item">html!(<h3>"Counter Island"</h3>)html!(<counter initial: 5 step: 1 label: "Try clicking me!"/>)</div>)</section>)</main>)html!(<footer class_name: "footer">html!(<p>"Built with runts and Rust"</p>)</footer>)</div>);
+}
+
+
