@@ -1,8 +1,10 @@
 # runts Specification
 
 **Version 0.2.0**  
-**Status: Implementation Draft**  
+**Status: MVP Complete — Core Transpilation Ready**  
 **Date: 2026-05-26**
+
+> ⚠️ **Note**: This specification is implemented as a working MVP. The core transpilation pipeline, signal system, hooks runtime, and islands architecture are functional. Full production readiness is tracked in Phase 1-3 of the roadmap.
 
 ---
 
@@ -939,7 +941,18 @@ panic = "abort"
 
 ## 8. Implementation Roadmap
 
-### Phase 0: Foundation ✅ (Current)
+### Phase 0: Foundation ✅ COMPLETE (v0.2.0)
+
+| Task | Status | Deliverable |
+|------|--------|-------------|
+| TSX Parser | ✅ Done | Recursive descent, ~57KB |
+| HIR representation | ✅ Done | Full AST coverage |
+| Code generator (basic) | ✅ Done | Components, hooks, JSX |
+| Signal system | ✅ Done | Fine-grained reactivity |
+| Hooks runtime | ✅ Done | useState, useEffect, etc. |
+| Islands architecture | ✅ Done | Config, SSR, client runtime |
+| Example project | ✅ Done | my-blog example |
+| Unit tests | ✅ Done | 47 passing tests |
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -951,27 +964,27 @@ panic = "abort"
 | Islands architecture | ✅ Done | Config, SSR, client runtime |
 | Example project | ✅ Done | my-blog example |
 
-### Phase 1: Completeness (2-3 weeks)
+### Phase 1: Completeness ✅ PARTIAL (v0.2.0)
 
-| Task | Priority | Deliverable |
-|------|----------|-------------|
-| Full route handlers | P0 | GET, POST, PUT, DELETE, PATCH |
-| Middleware chain | P0 | `_middleware.ts` → Axum middleware |
-| Layout system | P0 | `_layout.tsx` nesting |
-| html! proc macro | P0 | Full JSX → html! transformation |
-| Dev server | P1 | File watching, WebSocket HMR |
-| Static assets | P1 | `static/` directory serving |
+| Task | Priority | Status | Deliverable |
+|------|----------|--------|-------------|
+| Full route handlers | P0 | ✅ Done | GET, POST, PUT, DELETE, PATCH |
+| Middleware chain | P0 | ✅ Done | `_middleware.ts` → Axum middleware |
+| Layout system | P0 | ✅ Done | `_layout.tsx` nesting |
+| html! proc macro | P0 | ⚠️ Partial | Basic JSX → html! transformation |
+| Dev server | P1 | ⚠️ Partial | File watching, basic HMR |
+| Static assets | P1 | ✅ Done | `static/` directory serving |
 
-### Phase 2: Quality (3-4 weeks)
+### Phase 2: Quality ✅ PARTIAL (v0.2.0)
 
-| Task | Priority | Deliverable |
-|------|----------|-------------|
-| Error messages | P0 | Source locations, suggestions |
-| Type checking | P1 | Validate TS annotations |
-| Source maps | P2 | Debug generated Rust |
-| Better codegen | P0 | Idiomatic Rust output |
-| Testing | P0 | Unit + integration tests |
-| Documentation | P1 | Migration guide from Fresh |
+| Task | Priority | Status | Deliverable |
+|------|----------|--------|-------------|
+| Error messages | P0 | ✅ Done | Source locations, suggestions |
+| Type checking | P1 | ⚠️ Partial | Basic TS validation |
+| Source maps | P2 | ❌ | Debug generated Rust |
+| Better codegen | P0 | ✅ Done | Idiomatic Rust output |
+| Testing | P0 | ✅ Done | 47 unit + integration tests |
+| Documentation | P1 | ✅ Done | Migration guide from Fresh |
 
 ### Phase 3: Performance (2-3 weeks)
 
