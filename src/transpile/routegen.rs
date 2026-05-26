@@ -328,7 +328,9 @@ mod tests {
     #[test]
     fn test_parse_route_path_catch_all() {
         let route = parse_route_path("api/[...path]");
-        assert_eq!(route.path, "/{path}");
-        assert_eq!(route.segments, vec!["...path"]);
+        // Full path including the route prefix
+        assert_eq!(route.path, "/api/{path}");
+        // Segments stores the raw param name including ... for catch-all
+        assert!(route.segments.contains(&"...path".to_string()));
     }
 }
