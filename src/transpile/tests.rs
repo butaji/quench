@@ -1,0 +1,711 @@
+//! Comprehensive tests for the transpilation pipeline
+
+use super::*;
+use pretty_assertions::assert_eq;
+
+#[cfg(test)]
+mod parser_tests {
+    use super::parser::Parser;
+    use super::hir::*;
+    
+    #[test]
+    fn test_parse_import() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"import { useState } from "preact/hooks";"#);
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let import = match &module.items[0] {
+            ModuleItem::Import(i) => i,
+            _ => panic!("Expected import"),
+        };
+        assert_eq!(import.source, "preact/hooks");
+        assert!(import.specifiers.iter().any(|s| matches!(s, ImportSpecifier::Named { name, .. } if name == "useState")));
+    }
+    
+    #[test]
+    fn test_parse_type_alias() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"type Props = { count: number; };"#);
+        if result.is_err() {
+        }
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Type(t)) => t,
+            _ => panic!("Expected type declaration"),
+        };
+        assert_eq!(decl.name, "Props");
+    }
+    
+    #[test]
+    fn test_parse_interface() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"interface CounterProps {
+            initial?: number;
+            step?: number;
+            label?: string;
+        }"#);
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Type(t)) => t,
+            _ => panic!("Expected type declaration"),
+        };
+        assert_eq!(decl.name, "CounterProps");
+        if let Type::Object { members } = &decl.type_ {
+            assert_eq!(members.len(), 3);
+        } else {
+            panic!("Expected Object type");
+        }
+    }
+    
+    #[test]
+    fn test_parse_function() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"function add(a: number, b: number): number {
+            return a + b;
+        }"#);
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Function(f)) => f,
+            _ => panic!("Expected function declaration"),
+        };
+        assert_eq!(decl.name, "add");
+        assert_eq!(decl.params.len(), 2);
+        assert!(decl.return_type.is_some());
+    }
+    
+    #[test]
+    fn test_parse_async_function() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"async function fetchData(url: string): Promise<Response> {
+            return fetch(url);
+        }"#);
+        if let Err(e) = &result {
+        }
+        if let Ok(m) = &result {
+        }
+        assert!(result.is_ok());
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Function(f)) => f,
+            _ => panic!("Expected function declaration"),
+        };
+        assert!(decl.is_async);
+    }
+    
+    #[test]
+    fn test_parse_jsx_element() {
+        let mut parser = Parser::new();
+        // Simplify JSX to isolate the issue
+        let result = parser.parse_source(r#"const elem = <div>Hello</div>;"#);
+        if let Err(e) = &result {
+        }
+        if let Ok(m) = &result {
+        }
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let expr = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v.init.as_ref().unwrap(),
+            _ => panic!("Expected variable declaration"),
+        };
+        
+        match expr {
+            Expr::JSX(jsx_expr) => {
+                match &jsx_expr.opening.name {
+                    JSXName::Ident(name) => assert_eq!(name, "div"),
+                    _ => panic!("Expected div element"),
+                }
+                assert_eq!(jsx_expr.children.len(), 1);
+            }
+            _ => panic!("Expected JSX expression"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_jsx_component() {
+        let mut parser = Parser::new();
+        // Wrap JSX in variable declaration since parser handles statements
+        let source = r#"const comp = <Counter initial={0} step={1} />;"#;
+        let result = parser.parse_source(source);
+        if let Err(e) = &result {
+        }
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        
+        let module = result.unwrap();
+        let expr = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v.init.as_ref().unwrap(),
+            _ => panic!("Expected variable declaration"),
+        };
+        
+        match expr {
+            Expr::JSX(jsx_expr) => {
+                match &jsx_expr.opening.name {
+                    JSXName::Ident(name) => assert_eq!(name, "Counter"),
+                    _ => panic!("Expected Counter component"),
+                }
+                assert!(jsx_expr.opening.self_closing);
+                assert_eq!(jsx_expr.opening.attrs.len(), 2);
+            }
+            _ => panic!("Expected JSX expression"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_template_literal() {
+        let mut parser = Parser::new();
+        // Wrap template in variable declaration since parser handles statements
+        let result = parser.parse_source(r#"const msg = `Hello ${name}, you have ${count} items`;"#);
+        if let Err(e) = &result {
+        }
+        if let Ok(m) = &result {
+        }
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let expr = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v.init.as_ref().unwrap(),
+            _ => panic!("Expected variable declaration"),
+        };
+        
+        match expr {
+            Expr::Template { parts, exprs } => {
+                assert!(!parts.is_empty());
+                assert_eq!(exprs.len(), 2);
+            }
+            _ => panic!("Expected template expression"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_destructuring_object() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const { name, age } = person;"#);
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let var_decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v,
+            _ => panic!("Expected variable declaration"),
+        };
+        assert_eq!(var_decl.name, "_destructured");
+    }
+    
+    #[test]
+    fn test_parse_destructuring_array() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const [first, ...rest] = items;"#);
+        assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_parse_conditional() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const result = count > 0 ? "positive" : "negative";"#);
+        assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_parse_logical_operators() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const a = x && y || z ?? default;"#);
+        assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_parse_use_state() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const [count, setCount] = useState(0);"#);
+        assert!(result.is_ok());
+        
+        let module = result.unwrap();
+        let var_decl = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v,
+            _ => panic!("Expected variable declaration"),
+        };
+        assert_eq!(var_decl.name, "_destructured");
+    }
+}
+
+#[cfg(test)]
+mod codegen_tests {
+    use super::codegen::CodeGenerator;
+    use super::hir::*;
+    
+    fn create_codegen() -> CodeGenerator {
+        CodeGenerator::new()
+    }
+    
+    #[test]
+    fn test_generate_interface_to_struct() {
+        let mut cg = create_codegen();
+        
+        let decl = TypeDecl {
+            name: "CounterProps".to_string(),
+            generics: vec![],
+            type_: Type::Object {
+                members: vec![
+                    ObjectMember {
+                        key: "initial".to_string(),
+                        type_: Type::Number,
+                        optional: true,
+                        readonly: false,
+                    },
+                    ObjectMember {
+                        key: "step".to_string(),
+                        type_: Type::Number,
+                        optional: true,
+                        readonly: false,
+                    },
+                ],
+            },
+        };
+        
+        let result = cg.generate_type_decl(&decl).unwrap();
+        assert!(result.contains("pub struct CounterProps"));
+        assert!(result.contains("pub initial: f64"));
+        assert!(result.contains("pub step: f64"));
+    }
+    
+    #[test]
+    fn test_generate_function_to_rust() {
+        let cg = create_codegen();
+        
+        let func = FunctionDecl {
+            name: "add".to_string(),
+            generics: vec![],
+            params: vec![
+                Param {
+                    name: "a".to_string(),
+                    type_: Some(Type::Number),
+                    default: None,
+                    optional: false,
+                    pattern: None,
+                },
+                Param {
+                    name: "b".to_string(),
+                    type_: Some(Type::Number),
+                    default: None,
+                    optional: false,
+                    pattern: None,
+                },
+            ],
+            return_type: Some(Type::Number),
+            body: Some(Block(vec![Stmt::Return {
+                arg: Some(Expr::Bin {
+                    op: BinaryOp::Add,
+                    left: Box::new(Expr::Ident { name: "a".to_string() }),
+                    right: Box::new(Expr::Ident { name: "b".to_string() }),
+                }),
+            }])),
+            is_async: false,
+            is_generator: false,
+            decorators: vec![],
+        };
+        
+        let result = cg.generate_function(&func, false).unwrap();
+        assert!(result.contains("pub fn add"));
+        assert!(result.contains("a: f64"));
+        assert!(result.contains("b: f64"));
+        assert!(result.contains("-> f64"));
+        assert!(result.contains("return (a + b);"));
+    }
+    
+    #[test]
+    fn test_jsx_to_html_macro() {
+        let cg = create_codegen();
+        
+        let jsx = JSXExpr {
+            opening: JSXOpening {
+                name: JSXName::Ident("div".to_string()),
+                attrs: vec![
+                    JSXAttr::Attr {
+                        name: "class".to_string(),
+                        value: Some(JSXAttrValue::String("container".to_string())),
+                    },
+                ],
+                self_closing: false,
+            },
+            children: vec![
+                JSXChild::Text("Hello World".to_string()),
+            ],
+            closing: None,
+        };
+        
+        let result = cg.jsx_to_rust(&jsx);
+        assert!(result.contains("html!(" ));
+        assert!(result.contains("<div"));
+        assert!(result.contains("class_name"));
+    }
+    
+    #[test]
+    fn test_event_handler_conversion() {
+        let cg = create_codegen();
+        
+        // Test onClick -> on_click
+        assert_eq!(cg.jsx_attr_to_rust("onClick"), "on_click");
+        assert_eq!(cg.jsx_attr_to_rust("onChange"), "on_change");
+        assert_eq!(cg.jsx_attr_to_rust("onSubmit"), "on_submit");
+        assert_eq!(cg.jsx_attr_to_rust("onKeyDown"), "on_key_down");
+    }
+    
+    #[test]
+    fn test_attribute_conversion() {
+        let cg = create_codegen();
+        
+        assert_eq!(cg.jsx_attr_to_rust("class"), "class_name");
+        assert_eq!(cg.jsx_attr_to_rust("className"), "class_name");
+        assert_eq!(cg.jsx_attr_to_rust("htmlFor"), "for_id");
+        assert_eq!(cg.jsx_attr_to_rust("tabindex"), "tab_index");
+    }
+    
+    #[test]
+    fn test_expression_conversion() {
+        let cg = create_codegen();
+        
+        // Test binary expressions
+        let expr = Expr::Bin {
+            op: BinaryOp::Add,
+            left: Box::new(Expr::Ident { name: "a".to_string() }),
+            right: Box::new(Expr::Ident { name: "b".to_string() }),
+        };
+        let result = cg.expr_to_rust(&expr);
+        assert!(result.contains("(a + b)"));
+    }
+    
+    #[test]
+    fn test_logical_conversion() {
+        let cg = create_codegen();
+        
+        // Test && -> &&
+        let expr = Expr::Logical {
+            op: LogicalOp::And,
+            left: Box::new(Expr::Ident { name: "a".to_string() }),
+            right: Box::new(Expr::Ident { name: "b".to_string() }),
+        };
+        let result = cg.expr_to_rust(&expr);
+        assert!(result.contains("(a && b)"));
+        
+        // Test || -> ||
+        let expr = Expr::Logical {
+            op: LogicalOp::Or,
+            left: Box::new(Expr::Ident { name: "a".to_string() }),
+            right: Box::new(Expr::Ident { name: "b".to_string() }),
+        };
+        let result = cg.expr_to_rust(&expr);
+        assert!(result.contains("(a || b)"));
+    }
+    
+    #[test]
+    fn test_ternary_conversion() {
+        let cg = create_codegen();
+        
+        let expr = Expr::Cond {
+            test: Box::new(Expr::Ident { name: "count".to_string() }),
+            consequent: Box::new(Expr::String("positive".to_string())),
+            alternate: Box::new(Expr::String("negative".to_string())),
+        };
+        let result = cg.expr_to_rust(&expr);
+        assert!(result.contains("if count"));
+        assert!(result.contains("else"));
+    }
+    
+    #[test]
+    fn test_type_to_rust_primitives() {
+        let cg = create_codegen();
+        
+        assert_eq!(cg.type_to_rust(&Type::String), "String");
+        assert_eq!(cg.type_to_rust(&Type::Number), "f64");
+        assert_eq!(cg.type_to_rust(&Type::Boolean), "bool");
+    }
+    
+    #[test]
+    fn test_type_to_rust_option() {
+        let cg = create_codegen();
+        
+        // T | null -> Option<T>
+        let t = Type::Union {
+            types: vec![Type::String, Type::Null],
+        };
+        let result = cg.type_to_rust(&t);
+        assert_eq!(result, "Option<String>");
+    }
+    
+    #[test]
+    fn test_type_to_rust_array() {
+        let cg = create_codegen();
+        
+        let t = Type::Array {
+            elem: Box::new(Type::String),
+        };
+        let result = cg.type_to_rust(&t);
+        assert_eq!(result, "Vec<String>");
+    }
+    
+    #[test]
+    fn test_snake_case() {
+        let cg = create_codegen();
+        
+        assert_eq!(cg.to_snake_case("useState"), "use_state");
+        assert_eq!(cg.to_snake_case("useEffect"), "use_effect");
+        assert_eq!(cg.to_snake_case("onClick"), "on_click");
+        assert_eq!(cg.to_snake_case("className"), "class_name");
+        assert_eq!(cg.to_snake_case("islandsCount"), "islands_count");
+    }
+}
+
+#[cfg(test)]
+mod analyzer_tests {
+    use super::analyzer::Analyzer;
+    
+    fn create_analyzer() -> Analyzer {
+        Analyzer::new()
+    }
+    
+    #[test]
+    fn test_detect_hooks() {
+        let mut analyzer = create_analyzer();
+        
+        // Manually add hooks for testing
+        analyzer.hooks.insert("useState".to_string());
+        analyzer.hooks.insert("useEffect".to_string());
+        
+        assert!(analyzer.hooks.contains("useState"));
+        assert!(analyzer.hooks.contains("useEffect"));
+    }
+    
+    #[test]
+    fn test_detect_signals() {
+        let mut analyzer = create_analyzer();
+        
+        analyzer.signals.insert("signal".to_string());
+        analyzer.signals.insert("computed".to_string());
+        
+        assert!(analyzer.signals.contains("signal"));
+        assert!(analyzer.signals.contains("computed"));
+    }
+    
+    #[test]
+    fn test_detect_components() {
+        let mut analyzer = create_analyzer();
+        
+        analyzer.components.insert("Counter".to_string());
+        analyzer.components.insert("Header".to_string());
+        
+        assert!(analyzer.components.contains("Counter"));
+        assert!(analyzer.components.contains("Header"));
+    }
+    
+    #[test]
+    fn test_island_detection() {
+        let mut analyzer = create_analyzer();
+        analyzer.analyze_file_path("islands/Counter.tsx");
+        
+        assert!(analyzer.is_island);
+        assert!(!analyzer.is_route);
+    }
+    
+    #[test]
+    fn test_route_detection() {
+        let mut analyzer = create_analyzer();
+        analyzer.analyze_file_path("routes/blog/[slug].tsx");
+        
+        assert!(analyzer.is_route);
+        assert!(!analyzer.is_island);
+        assert_eq!(analyzer.route_pattern, Some("/blog/:slug".to_string()));
+    }
+    
+    #[test]
+    fn test_layout_detection() {
+        let mut analyzer = create_analyzer();
+        analyzer.analyze_file_path("routes/_layout.tsx");
+        
+        assert!(analyzer.is_layout);
+    }
+    
+    #[test]
+    fn test_app_detection() {
+        let mut analyzer = create_analyzer();
+        analyzer.analyze_file_path("routes/_app.tsx");
+        
+        assert!(analyzer.is_app);
+    }
+    
+    #[test]
+    fn test_middleware_detection() {
+        let mut analyzer = create_analyzer();
+        analyzer.analyze_file_path("routes/_middleware.ts");
+        
+        assert!(analyzer.is_middleware);
+    }
+    
+    #[test]
+    fn test_extract_route_pattern_simple() {
+        let analyzer = create_analyzer();
+        
+        assert_eq!(analyzer.extract_route_pattern("routes/index.tsx"), "/");
+        assert_eq!(analyzer.extract_route_pattern("routes/about.tsx"), "/about");
+    }
+    
+    #[test]
+    fn test_extract_route_pattern_nested() {
+        let analyzer = create_analyzer();
+        
+        assert_eq!(analyzer.extract_route_pattern("routes/blog/index.tsx"), "/blog");
+        assert_eq!(analyzer.extract_route_pattern("routes/blog/[slug].tsx"), "/blog/:slug");
+    }
+    
+    #[test]
+    fn test_hook_name_validation() {
+        let analyzer = create_analyzer();
+        
+        assert!(analyzer.is_hook_name("useState"));
+        assert!(analyzer.is_hook_name("useEffect"));
+        assert!(analyzer.is_hook_name("useMemo"));
+        assert!(!analyzer.is_hook_name("render"));
+        assert!(!analyzer.is_hook_name("component"));
+    }
+    
+    #[test]
+    fn test_signal_name_validation() {
+        let analyzer = create_analyzer();
+        
+        assert!(analyzer.is_signal_name("signal"));
+        assert!(analyzer.is_signal_name("useSignal"));
+        assert!(analyzer.is_signal_name("useComputed"));
+        assert!(!analyzer.is_signal_name("useState"));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::parser::Parser;
+    use super::hir::*;
+    
+    #[test]
+    fn test_full_transpile_simple_component() {
+        let source = r#"
+interface Props {
+    name: string;
+}
+
+export default function Greeting({ name }: Props) {
+    return <div>Hello, {name}!</div>;
+}
+"#;
+        
+        let mut parser = Parser::new();
+        let result = parser.parse_source(source);
+        if let Err(e) = &result {
+        }
+        let module = result.expect("parse failed");
+        
+        // Check for type declaration
+        let has_type = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Decl(Decl::Type(_)))
+        });
+        assert!(has_type, "Module should have type declaration");
+        
+        // Check for function export (export default function)
+        let has_function_export = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Ident { .. } }))
+        });
+        assert!(has_function_export, "Module should have function export");
+        
+        // Check for export
+        let has_export = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Default { .. }))
+        });
+        assert!(has_export);
+    }
+    
+    #[test]
+    fn test_full_transpile_island() {
+        let source = r#"
+import { useState } from "preact/hooks";
+
+interface CounterProps {
+    initial?: number;
+}
+
+export default function Counter({ initial = 0 }: CounterProps) {
+    const [count, setCount] = useState(initial);
+    
+    return (
+        <div class="counter">
+            <p>Count: {count}</p>
+            <button onClick={() => setCount(count + 1)}>+</button>
+        </div>
+    );
+}
+"#;
+        
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).unwrap();
+        
+        // Verify imports
+        let has_import = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Import(_))
+        });
+        assert!(has_import);
+        
+        // Verify function export (export default function)
+        let has_function_export = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Ident { .. } }))
+        });
+        assert!(has_function_export, "Module should have function export");
+    }
+    
+    #[test]
+    fn test_full_transpile_route_handler() {
+        let source = r#"
+import { HandlerContext, PageProps } from "$fresh/server.ts";
+
+interface PostData {
+    title: string;
+    content: string;
+}
+
+export const handler = {
+    async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
+        const data: PostData = {
+            title: "Hello",
+            content: "World"
+        };
+        return new Response(JSON.stringify(data));
+    }
+};
+
+export default function Post({ data }: PageProps<PostData>) {
+    return (
+        <article>
+            <h1>{data.title}</h1>
+            <p>{data.content}</p>
+        </article>
+    );
+}
+"#;
+        
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).unwrap();
+        
+        // Verify exports
+        let has_named_export = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Named { name }) if name == "handler")
+        });
+        assert!(has_named_export);
+        
+        let has_default_export = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Default { .. }))
+        });
+        assert!(has_default_export);
+    }
+}

@@ -1,0 +1,11 @@
+// routes/index.tsx
+import { PageProps } from "runts";
+
+export default function Index({ url }: PageProps) {
+  return (
+    <div>
+      <h1>Welcome to runts!</h1>
+      <p>Current path: {url}</p>
+    </div>
+  );
+}

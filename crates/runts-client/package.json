@@ -1,0 +1,23 @@
+{
+  "name": "@runts/runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/runtime.js",
+  "types": "dist/runtime.d.ts",
+  "exports": {
+    ".": "./dist/runtime.js",
+    "./islands": "./dist/islands.js"
+  },
+  "files": [
+    "dist/**/*",
+    "src/**/*"
+  ],
+  "scripts": {
+    "build": "esbuild src/runtime.ts --bundle --format=esm --outdir=dist --minify",
+    "dev": "esbuild src/runtime.ts --bundle --format=esm --outdir=dist --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}

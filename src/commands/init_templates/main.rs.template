@@ -1,0 +1,106 @@
+//! __NAME__ - Built with runts
+
+use axum::{
+    body::Body,
+    extract::Path,
+    response::Response,
+    routing::get,
+    Router,
+};
+use std::net::SocketAddr;
+use tracing_subscriber;
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter("info")
+        .init();
+
+    let app = Router::new()
+        .route("/", get(handler))
+        .route("/about", get(about_handler))
+        .route("/blog/:slug", get(blog_handler))
+        .fallback(not_found);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
+    info!("Server running at http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handler() -> Response<Body> {
+    let body = r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome to runts</title>
+</head>
+<body>
+    <h1>Welcome to runts!</h1>
+    <p>Your Fresh/Preact app is running natively in Rust.</p>
+    <a href="/about">About</a>
+</body>
+</html>"##;
+    Response::builder()
+        .header("Content-Type", "text/html")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn about_handler() -> Response<Body> {
+    let body = r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>About - runts</title>
+</head>
+<body>
+    <h1>About runts</h1>
+    <p>Fresh/Preact compiled to native Rust.</p>
+    <a href="/">Home</a>
+</body>
+</html>"##;
+    Response::builder()
+        .header("Content-Type", "text/html")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn blog_handler(Path(slug): Path<String>) -> Response<Body> {
+    let body = format!(r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Blog: {}</title>
+</head>
+<body>
+    <h1>Blog Post</h1>
+    <p>Slug: {}</p>
+    <a href="/">Home</a>
+</body>
+</html>"##, slug, slug);
+
+    Response::builder()
+        .header("Content-Type", "text/html")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn not_found() -> Response<Body> {
+    let body = r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>404 - Not Found</title>
+</head>
+<body>
+    <h1>404 - Not Found</h1>
+    <a href="/">Home</a>
+</body>
+</html>"##;
+    Response::builder()
+        .header("Content-Type", "text/html")
+        .body(Body::from(body))
+        .unwrap()
+}
