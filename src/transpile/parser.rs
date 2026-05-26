@@ -496,7 +496,7 @@ impl Parser {
         self.skip_ws_and_comments();
         
         // Check for destructuring patterns
-        let (name, _pattern) = if self.check('{') {
+        let (name, pattern) = if self.check('{') {
             // Object destructuring: const { a, b } = obj
             let pattern = self.parse_destructuring_pattern()?;
             (String::from("_destructured"), Some(pattern))
@@ -539,6 +539,7 @@ impl Parser {
             kind,
             type_,
             init,
+            pattern,
         }))
     }
 

@@ -248,9 +248,10 @@ impl CodeGenerator {
         if has_destructuring {
             for p in &f.params {
                 if let Some(ref pattern) = p.pattern {
-                    let destructured = self.pat_to_rust(pattern, &p.name);
-                    if !destructured.is_empty() {
-                        output.push_str(&format!("    let {};\n", destructured));
+                    if let Ok(destructured) = self.pat_to_rust(pattern, &p.name) {
+                        if !destructured.is_empty() {
+                            output.push_str(&format!("    let {};\n", destructured));
+                        }
                     }
                 }
             }
@@ -273,7 +274,7 @@ impl CodeGenerator {
     }
     
     /// Convert a destructuring pattern to Rust let bindings
-    fn pat_to_rust(&self, pat: &Pat, source_name: &str) -> String {
+    fn pat_to_rust(&self, pat: &Pat, source_name: &str) -> Result<String> {
         match pat {
             Pat::Object { props, .. } => {
                 let mut bindings = Vec::new();
@@ -292,43 +293,50 @@ impl CodeGenerator {
                     }
                 }
                 if bindings.is_empty() {
-                    String::new()
+                    Ok(String::new())
                 } else {
-                    format!("let {{ {}}} = {}", bindings.join(", "), source_name)
+                    Ok(format!("{{ {}}} = {}", bindings.join(", "), source_name))
                 }
             }
             Pat::Array { elems, rest } => {
+                // For tuple destructuring like [a, b] = tuple -> (a, b) in Rust
                 let mut bindings = Vec::new();
+                
                 for (i, elem) in elems.iter().enumerate() {
                     if let Some(Pat::Ident { name, .. }) = elem {
-                        bindings.push(format!("{}: {}[{}]", self.to_snake_case(name), source_name, i));
+                        bindings.push(self.to_snake_case(name));
                     } else {
-                        bindings.push(format!("_: {}[{}]", source_name, i));
+                        // For non-ident elements, use index access on source
+                        bindings.push(format!("{}[{}]", source_name, i));
                     }
                 }
+                
                 if let Some(rest) = rest {
                     if let Pat::Ident { name, .. } = rest.as_ref() {
-                        bindings.push(format!("{}: {}.split_at({})[1]", self.to_snake_case(name), source_name, elems.len()));
+                        bindings.push(format!("{}.into_iter().skip({}).collect::<Vec<_>>()", source_name, elems.len()));
                     }
                 }
+                
                 if bindings.is_empty() {
-                    String::new()
+                    Ok(String::new())
                 } else {
-                    format!("let [{}] = {};", bindings.join(", "), source_name)
+                    // Simple tuple destructuring: (a, b) = tuple
+                    Ok(format!("({}) = {}", bindings.join(", "), source_name))
                 }
             }
             Pat::Ident { name, .. } => {
-                format!("let {} = {};", self.to_snake_case(name), source_name)
+                Ok(format!("{} = {}", self.to_snake_case(name), source_name))
             }
-            _ => String::new(),
+            _ => Ok(String::new()),
         }
     }
 
     fn generate_variable(&self, var: &VariableDecl) -> Result<String> {
-        let name = self.to_snake_case(&var.name);
-        let type_suffix = var.type_.as_ref()
-            .map(|t| format!(": {}", self.type_to_rust(t)))
-            .unwrap_or_default();
+        let keyword = match var.kind {
+            VariableKind::Const => "let",
+            VariableKind::Let => "let mut",
+            VariableKind::Var => "let mut",
+        };
         
         let init = if let Some(expr) = &var.init {
             self.expr_to_rust(expr)
@@ -336,11 +344,16 @@ impl CodeGenerator {
             "()".to_string()
         };
         
-        let keyword = match var.kind {
-            VariableKind::Const => "let",
-            VariableKind::Let => "let mut",
-            VariableKind::Var => "let mut",
-        };
+        // Handle destructuring patterns (e.g., const [a, b] = useState())
+        if let Some(ref pattern) = var.pattern {
+            let pattern_code = self.pat_to_rust(pattern, &init)?;
+            return Ok(format!("{} {};\n", keyword, pattern_code));
+        }
+        
+        let name = self.to_snake_case(&var.name);
+        let type_suffix = var.type_.as_ref()
+            .map(|t| format!(": {}", self.type_to_rust(t)))
+            .unwrap_or_default();
         
         Ok(format!("{} {}: {} = {};\n", keyword, name, type_suffix, init))
     }
@@ -552,6 +565,7 @@ impl CodeGenerator {
             Expr::Member { object, property, computed, .. } => {
                 let obj_code = self.expr_to_rust(object);
                 let prop_code = if *computed {
+                    // Array/object index access: arr[0], obj[key]
                     self.expr_to_rust(property)
                 } else {
                     if let Expr::Ident { name } = property.as_ref() {
@@ -560,7 +574,11 @@ impl CodeGenerator {
                         self.expr_to_rust(property)
                     }
                 };
-                format!("{}.{}", obj_code, prop_code)
+                if *computed {
+                    format!("{}[{}]", obj_code, prop_code)
+                } else {
+                    format!("{}.{}", obj_code, prop_code)
+                }
             }
             Expr::Object { props } => {
                 let fields: Vec<String> = props.iter().map(|p| {
@@ -613,10 +631,55 @@ impl CodeGenerator {
                 format!("{{{}}}", fields.join(", "))
             }
             Expr::Array { elems } => {
-                let elems_code: Vec<String> = elems.iter().map(|e| {
-                    e.as_ref().map(|e| self.expr_to_rust(e)).unwrap_or_default()
-                }).collect();
-                format!("vec![{}]", elems_code.join(", "))
+                // Handle spread operator: [a, ...rest, b] -> vec![a].into_iter().chain(rest).chain(std::iter::once(b)).collect()
+                let mut has_spread = false;
+                let mut parts: Vec<String> = Vec::new();
+                let mut current_vec: Vec<String> = Vec::new();
+                
+                for elem in elems {
+                    match elem {
+                        Some(Expr::Spread { arg }) => {
+                            has_spread = true;
+                            // Flush any accumulated elements
+                            if !current_vec.is_empty() {
+                                parts.push(format!("vec![{}]", current_vec.join(", ")));
+                                current_vec.clear();
+                            }
+                            // Add spread as chain
+                            let spread_code = self.expr_to_rust(arg);
+                            parts.push(format!("{}.to_vec()", spread_code));
+                        }
+                        Some(e) => {
+                            if has_spread {
+                                // After spread, each element needs std::iter::once()
+                                parts.push(format!("std::iter::once({})", self.expr_to_rust(e)));
+                            } else {
+                                current_vec.push(self.expr_to_rust(e));
+                            }
+                        }
+                        None => {
+                            // Elision - skip
+                            if has_spread {
+                                // After spread, elision needs empty iterator
+                                parts.push("std::iter::empty()".to_string());
+                            }
+                        }
+                    }
+                }
+                
+                // Flush remaining elements
+                if !current_vec.is_empty() {
+                    parts.push(format!("vec![{}]", current_vec.join(", ")));
+                }
+                
+                if has_spread && !parts.is_empty() {
+                    // Chain all parts together
+                    format!("{{{}.into_iter().chain({}).collect::<Vec<_>>()}}", 
+                        parts[0], 
+                        parts[1..].join(".into_iter().chain("))
+                } else {
+                    format!("vec![{}]", current_vec.join(", "))
+                }
             }
             Expr::Arrow { params, body, .. } => {
                 let params_code: Vec<String> = params.iter().map(|p| {
@@ -629,14 +692,23 @@ impl CodeGenerator {
                 // Handle block body vs expression body
                 let body_code = match body.as_ref() {
                     Stmt::Block(stmts) => {
-                        let inner: Vec<String> = stmts.iter()
-                            .map(|s| self.stmt_to_rust(s).unwrap_or_default())
-                            .filter(|s| !s.trim().is_empty())
-                            .collect();
-                        if inner.is_empty() {
+                        // Handle multiple statements including variable declarations
+                        let mut lines: Vec<String> = Vec::new();
+                        for stmt in stmts {
+                            let stmt_code = self.stmt_to_rust(stmt).unwrap_or_default();
+                            if !stmt_code.trim().is_empty() {
+                                // Variable declarations need 'let' keyword
+                                if stmt_code.trim().starts_with("let ") || stmt_code.trim().starts_with("let mut") {
+                                    lines.push(stmt_code);
+                                } else {
+                                    lines.push(stmt_code.trim_end_matches(';').to_string());
+                                }
+                            }
+                        }
+                        if lines.is_empty() {
                             "{}".to_string()
                         } else {
-                            format!("{{ {} }}", inner.join("; "))
+                            format!("{{ {} }}", lines.join("; ") + ";")
                         }
                     }
                     Stmt::Return { arg } => {
@@ -646,7 +718,11 @@ impl CodeGenerator {
                             "{}".to_string()
                         }
                     }
-                    other => self.stmt_to_rust(other).unwrap_or_default(),
+                    Stmt::Expr { expr } => {
+                        // Single expression statement
+                        format!("{{ {} }}", self.expr_to_rust(expr))
+                    }
+                    other => self.stmt_to_rust(other).unwrap_or_else(|_: anyhow::Error| "{}".to_string()),
                 };
                 
                 format!("|{}| {}", params_code.join(", "), body_code)
