@@ -28,11 +28,30 @@ pub enum Commands {
         path: PathBuf,
     },
 
-    /// Build for production
+    /// Build for production (transpile + compile)
     Build {
         /// Project path
         #[arg(default_value = ".")]
         path: PathBuf,
+        
+        /// Build in release mode (default: true)
+        #[arg(short, long, default_value = "true")]
+        release: bool,
+        
+        /// Skip Rust compilation (transpile only)
+        #[arg(short, long, default_value = "false")]
+        no_compile: bool,
+    },
+    
+    /// Transpile TS/TSX to Rust without compiling
+    Transpile {
+        /// Project path
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        
+        /// Output directory for generated files
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Add a new component or route

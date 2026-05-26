@@ -6,45 +6,28 @@
   
   "server": {
     "host": "0.0.0.0",
-    "port": 8000,
-    "https": false
-  },
-  
-  "routes": {
-    "dir": "routes",
-    "layouts": true,
-    "middleware": true
+    "port": 8000
   },
   
   "islands": {
-    "dir": "islands",
-    "hydration": {
-      "default": "lazy",
-      "modes": ["eager", "lazy", "interaction", "visible"]
-    }
-  },
-  
-  "components": {
-    "dir": "components"
-  },
-  
-  "static": {
-    "dir": "static",
-    "prefix": "/static"
+    "hydration": "lazy",
+    "serializer": "json"
   },
   
   "build": {
-    "target": "x86_64-unknown-linux-gnu",
-    "release": {
+    "optimization": {
       "lto": true,
-      "optLevel": "z",
-      "codegenUnits": 1
+      "opt_level": "z"
     }
   },
   
   "dev": {
-    "hotReload": true,
-    "sourceMaps": true,
-    "watchDirs": ["routes", "islands", "components", "lib"]
+    "port": 8000,
+    "open": true,
+    "hmr": true
+  },
+  
+  "watch": {
+    "ignored": ["**/node_modules/**", "**/target/**", "**/.git/**"]
   }
 }
