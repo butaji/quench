@@ -1,20 +1,29 @@
-# runts Specification
+# runts Technical Specification
 
 **Status**: Active Development  
-**Version**: 0.1.0  
+**Version**: 0.2.0  
 **Target**: Fresh/Preact TSX → Native Rust Binary
 
 ---
 
 ## Executive Summary
 
-runts is a Fresh/Preact-to-Rust compiler providing framework compatibility using a minimal, precisely-defined subset of TypeScript + TSX.
+**runts** is a Fresh/Preact-to-Rust compiler providing framework-level compatibility using a minimal, precisely-defined subset of TypeScript + TSX.
 
-**Core Principles:**
+### Core Principles
 1. **Correctness first** — Fresh compatibility over performance
-2. **Minimal subset** — Ruthlessly exclude rarely-used TS features
-3. **Zero external runtimes** — Pure Rust execution
+2. **Minimal subset** — Ruthlessly exclude rarely-used TS features  
+3. **Zero external runtimes** — Pure Rust execution (no V8, Deno, or WASM JS)
 4. **Two modes** — Dev (interpreted, instant reload) / Prod (compiled, native binary)
+
+### Key Differentiators
+| Feature | runts | Deno Fresh | Next.js |
+|---------|-------|------------|---------|
+| Runtime | **None (native)** | Deno | Node.js |
+| Binary | **~500KB-2MB** | N/A | N/A |
+| Cold Start | **<10ms** | ~50ms | ~200ms |
+| Memory (idle) | **<5MB** | ~100MB | ~200MB |
+| Dev Hot Reload | **<100ms** | ~500ms | ~1s |
 
 ---
 
@@ -22,192 +31,261 @@ runts is a Fresh/Preact-to-Rust compiler providing framework compatibility using
 
 ### 1.1 Design Philosophy
 
-We target **95% coverage of real Fresh/Preact code** by supporting:
-- Common patterns exhaustively
-- Edge cases with clear fallbacks
+We target **95% coverage of real Fresh/Preact code** by:
+- Supporting common patterns exhaustively
+- Providing clear fallbacks for edge cases
 - Excluding features with simple workarounds
 
 **Exclusion criteria** (any of):
-1. Rarely used in Fresh apps (< 1% usage in real codebases)
+1. Rarely used in Fresh apps (< 1% usage)
 2. Semantically complex to transpile correctly
 3. Requires runtime support we won't implement
 4. Can be expressed simpler with supported features
 
-### 1.2 Supported Syntax
+### 1.2 Supported Syntax: Full Coverage
 
-#### ✅ **Full Support**
-
-```
-// --- Declarations ---
-const/let/var declarations
-function declarations (sync + async)
-arrow functions
-interface declarations (with generics, extends)
-type alias declarations (union, intersection, conditional)
-import / export (named, default, type-only)
-import "path" (side-effect only)
-
-// --- Expressions ---
-identifiers, literals (string, number, boolean, null)
-template literals (simple: `${expr}` only)
-array literals, object literals
-binary expressions (+, -, *, /, %, ==, !=, <, >, etc.)
-unary expressions (!, -, +)
-ternary (a ? b : c)
-logical (&&, ||, ??)
-spread (...obj, [...arr])
-destructuring ({ a, b } = obj)
-optional chaining (obj?.prop?.nested)
-await expressions
-new expressions (limited: `new Date()`, `new Map()`)
-
-// --- Statements ---
-if/else, while, for, for...of
-return, break, continue
-try/catch/finally
-switch (with string/number cases only)
-
-// --- Types ---
-string, number, boolean, null, undefined, void, never
-any, unknown
-Array<T>, ReadonlyArray<T>
-Record<K,V>, Map<K,V>, Set<T>
-Promise<T>
-Object types, function types
-union, intersection, type references
-generics with constraints
-```
-
-#### ⚠️ **Supported with Documented Differences**
-
-| Feature | Behavior | Migration |
-|---------|----------|----------|
-| `class` | Parse only, emit warning | Use function components + closures |
-| `enum` (non-const) | Emit warning | Use `as const` objects |
-| `namespace` | Parse only, emit warning | Use ES modules |
-| `declare` | Strip (no-op) | N/A |
-| `module` keyword | Strip (no-op) | Use ES module syntax |
-| JSDoc | Strip (no-op) | Use TypeScript types |
-| `bigint` literals | `i64` type, warn on overflow | Use `number` |
-| RegExp literals | Parse, warn unsupported | Use string methods |
-
-#### ❌ **Explicitly Excluded**
-
-```
-// Hard exclusions (parse error)
-with statement
-eval / Function constructor
-arguments object
-label statements
- debugger statement
-do-while loops
-non-const enums
-
-// Soft exclusions (warning + workaround)
-class declarations
-decorator syntax (@decorator)
-namespace modules
-module augmentation
-declare module
-```
-
-### 1.3 JSX/TSX Support
-
-#### ✅ **Full Support**
-
-```tsx
-// --- Elements ---
-<div>text</div>
-<div className="cls">content</div>
-<input type="text" value={x} onChange={h} />
-<CustomComponent prop={value} />
-<>
-  <div>A</div>
-  <div>B</div>
-</>
-
-// --- Expressions in JSX ---
-{condition && <Div />}
-{condition ? <A /> : <B />}
-{array.map(x => <Item key={x.id} {...x} />)}
-{"string literal"}
-{42}
-
-// --- Event Handlers ---
-<button onClick={handler}>Click</button>
-<input onInput={e => setValue(e.target.value)} />
-<div onMouseEnter={handleHover} />
-
-// --- Props & Children ---
-<Comp prop="value" />
-<Comp {...spread} />
-<Parent>
-  <Child />
-  {dynamic}
-</Parent>
-
-// --- Special Components ---
-<island.Counter />          // Explicit island
-```
-
-#### ⚠️ **Supported with Constraints**
-
-| Pattern | Constraint | Workaround |
-|---------|------------|------------|
-| Dynamic tag (`<{tag}>`) | Not supported | `if (tag === 'div')` branches |
-| Refs (`ref={r}`) | Not supported | `useRef()` + `querySelector` |
-| Portal | Not supported | Manual DOM positioning |
-| Context (`<Ctx.Provider>`) | Limited | Props drilling for MVP |
-| Suspense | Not supported | Full page loading state |
-| ErrorBoundary | Not supported | try/catch in handlers |
-
-### 1.4 Fresh-Specific Features
-
-#### ✅ **Full Support**
+#### Declarations ✅
 
 ```typescript
-// routes/blog/[slug].tsx
-import { PageProps } from "$fresh/server";
+// Variables
+const x = 5;
+let y: number = 10;
+let z = "hello";
+var legacy = true;  // Warn: prefer const/let
 
-export default function BlogPost({ params, data }: PageProps) {
-  return <h1>{data.title}</h1>;
-}
+// Functions
+function add(a: number, b: number): number { return a + b; }
+async function fetchData(url: string): Promise<Data> { ... }
+const multiply = (a: number, b: number) => a * b;
+const asyncHandler = async (req: Request) => { ... };
 
-export const handler = {
-  GET(req: Request, ctx: HandlerContext) {
-    return ctx.render({ title: "Hello" });
-  }
-};
+// Arrow function variations
+const fn1 = () => value;
+const fn2 = x => x * 2;
+const fn3 = (x: number, y: number): number => x + y;
+const fn4 = async () => await fetch();
 ```
 
-| Feature | Syntax | Notes |
-|---------|--------|-------|
-| Page props | `PageProps<T>`, `{ params, data }` | Type-safe params |
-| Route handlers | `export const handler = { GET, POST, ... }` | Full HTTP methods |
-| Middleware | `export default async function` | Per-route or global |
-| Islands | `islands/*.tsx` files | Auto-detected |
-| Layouts | `_layout.tsx` nesting | Hierarchical |
-| Static files | `/static/*` | Tower-http ServeDir |
+#### Interfaces & Types ✅
 
-#### ⚠️ **Supported with Differences**
+```typescript
+// Basic interface
+interface User { name: string; age: number; }
 
-| Fresh Feature | runts Behavior |
-|---------------|----------------|
-| `$fresh/` imports | Parsed, types stripped |
-| `_middleware.ts` | Same behavior |
-| `_app.tsx` | Wraps all routes |
-| `static/` | Same |
+// Generic interface
+interface Repo<T> { items: T[]; getById(id: string): T | null; }
 
-### 1.5 Preact Hooks
+// Interface extends
+interface Admin extends User { permissions: string[]; }
 
-#### ✅ **Full Support**
+// Type alias
+type Status = "pending" | "active" | "closed";
+type Callback = (error: Error | null, result?: Data) => void;
+type MapFn<T, U> = (item: T) => U;
+
+// Union & Intersection
+type StringOrNumber = string | number;
+type NamedEntity = { name: string } & { id: string };
+
+// Conditional types (simple)
+type NonNullable<T> = T extends null | undefined ? never : T;
+
+// Mapped types (simple)
+type Readonly<T> = { readonly [P in keyof T]: T[P] };
+```
+
+#### Imports & Exports ✅
+
+```typescript
+// Named imports
+import { useState, useEffect } from "preact/hooks";
+import { Signal } from "@preact/signals-core";
+
+// Default import
+import React from "preact";
+
+// Namespace import
+import * as hooks from "preact/hooks";
+
+// Type-only import (stripped)
+import type { UserData } from "./types";
+import { type UserData } from "./types";  // inline form
+
+// Re-export
+export { useState } from "preact/hooks";
+export type { User } from "./types";
+
+// Default export
+export default function MyComponent() { ... }
+
+// Named export
+export const constant = 42;
+export function helper() { ... }
+```
+
+#### Expressions ✅
+
+```typescript
+// Literals
+const str = "hello";
+const num = 42;
+const float = 3.14;
+const bool = true;
+const nil = null;
+const arr = [1, 2, 3];
+const obj = { key: "value" };
+
+// Template literals (simple)
+const greeting = `Hello, ${name}!`;
+const multiline = `line1
+line2
+${expr}`;
+
+// Binary operators
+const sum = a + b;
+const comp = x > 0 && y < 10;
+const nullish = value ?? defaultValue;
+
+// Ternary
+const result = condition ? trueVal : falseVal;
+
+// Logical short-circuit
+const safe = value && value.length;
+const fallback = input || defaultInput;
+
+// Spread
+const merged = { ...base, ...override };
+const concatenated = [...first, ...second];
+
+// Destructuring
+const { name, age } = user;
+const { data: payload } = response;
+const [first, ...rest] = items;
+
+// Optional chaining
+const len = str?.length;
+const userName = obj?.user?.name;
+const result = arr?.[0]?.value;
+
+// Await
+const data = await fetchSomething();
+const [a, b] = await Promise.all([fetchA(), fetchB()]);
+```
+
+#### Control Flow ✅
+
+```typescript
+// if/else
+if (x > 0) { positive(); } else { nonPositive(); }
+
+// while
+while (running) { process(); }
+
+// for
+for (let i = 0; i < n; i++) { sum += i; }
+
+// for...of
+for (const item of items) { process(item); }
+
+// switch (string/number only)
+switch (status) {
+  case "active": activate(); break;
+  case "pending": pending(); break;
+  default: unknown();
+}
+
+// try/catch/finally
+try { risky(); }
+catch (e) { handle(e); }
+finally { cleanup(); }
+
+// return/break/continue
+return result;
+break;
+continue;
+```
+
+### 1.3 Supported Syntax: JSX/TSX
+
+#### Elements ✅
 
 ```tsx
-import { useState, useEffect, useRef, useMemo, useCallback } from "preact/hooks";
+// HTML elements
+<div>content</div>
+<span className="highlight">text</span>
+<input type="text" value={val} onChange={handler} />
+<button onClick={handleClick}>Click me</button>
+
+// Self-closing
+<br />
+<hr />
+<img src="..." alt="..." />
+
+// Fragment
+<></>
+<Fragment>children</Fragment>
+
+// Components (PascalCase)
+<MyComponent />
+<Counter initial={0} />
+<BlogPost title="Hello" />
+```
+
+#### JSX Expressions ✅
+
+```tsx
+// Interpolation
+<div>{variable}</div>
+<p>Count: {count}</p>
+
+// Conditional rendering
+{show && <Banner />}
+{error ? <ErrorMsg /> : <SuccessMsg />}
+
+// List rendering
+{items.map(item => (
+  <li key={item.id}>{item.name}</li>
+))}
+
+// Spread attributes
+<Button {...buttonProps} />
+
+// Event handlers
+<button onClick={handleClick} />
+<input onInput={e => setValue(e.currentTarget.value)} />
+<div onMouseEnter={handleHover} />
+
+// Refs (via callback ref)
+<div ref={el => divRef = el} />
+```
+
+#### Special JSX Patterns ✅
+
+```tsx
+// Explicit island (Fresh-style)
+<island.Counter />
+
+// Dynamic children
+<Parent>
+  <Child1 />
+  {dynamicContent}
+  <Child2 />
+</Parent>
+
+// CSS modules pattern (treated as class)
+import styles from "./Button.module.css";
+<button className={styles.primary}>Click</button>
+```
+
+### 1.4 Supported Syntax: Preact Hooks ✅
+
+```tsx
+import { useState, useEffect, useRef, useMemo, useCallback, useReducer } from "preact/hooks";
 
 // useState
 const [count, setCount] = useState(0);
-setCount(count + 1);
+const [user, setUser] = useState<User | null>(null);
+setCount(prev => prev + 1);
 
 // useEffect
 useEffect(() => {
@@ -229,152 +307,527 @@ const sorted = useMemo(() =>
 const handler = useCallback((e: Event) => {
   doSomething(e.target.value);
 }, [dep]);
+
+// useReducer
+const [state, dispatch] = useReducer((s, a) => {
+  switch (a.type) {
+    case "inc": return s + 1;
+    case "dec": return s - 1;
+    default: return s;
+  }
+}, 0);
 ```
 
-| Hook | Signature | Notes |
-|------|-----------|-------|
-| `useState` | `(init: T \| () => T) -> [T, (T) => void]` | Cloneable types |
-| `useEffect` | `(fn: () => void \| cleanup, deps?)` | Cleanup supported |
-| `useRef` | `(init?: T) -> { current: T \| null }` | Mutable ref |
-| `useMemo` | `(fn: () => T, deps) -> T` | Dep tracking |
-| `useCallback` | `(fn: F, deps) -> F` | Function memo |
-| `useReducer` | `(reducer, init) -> [S, (A) => void]` | Complex state |
-
-#### ❌ **Not Supported**
-
-- `useContext` (props drilling MVP)
-- `useSyncExternalStore` (concurrency)
-- `useDeferredValue` (concurrency)
-- `useTransition` (concurrency)
-- `useLayoutEffect` (use `useEffect`)
-
-### 1.6 Preact Signals
-
-#### ✅ **Full Support**
+### 1.5 Supported Syntax: Preact Signals ✅
 
 ```tsx
-import { signal, computed, effect } from "@preact/signals/core";
+import { signal, computed, effect, batch } from "@preact/signals-core";
 
-// Create signal
+// Basic signal
 const count = signal(0);
-
-// Read value
-<div>{count.value}</div>
-
-// Write value
 count.value = 42;
 
 // Computed
 const doubled = computed(() => count.value * 2);
+const fullName = computed(() => `${user.value.first} ${user.value.last}`);
 
-// Effect
+// Effects
 effect(() => console.log("count:", count.value));
 
-// Batch
-import { batch } from "@preact/signals-core";
+// Batch updates
 batch(() => {
   count.value = 1;
   count.value = 2;
 });
 ```
 
+### 1.6 Supported Syntax: Fresh Framework ✅
+
+```tsx
+import { PageProps, HandlerContext } from "$fresh/server.ts";
+
+// Route handler
+export const handler = {
+  async GET(req: Request, ctx: HandlerContext) {
+    const data = await fetchData(ctx.params.id);
+    return ctx.render({ data });
+  }
+};
+
+// Page component
+export default function BlogPost({ params, data }: PageProps<BlogData>) {
+  return <h1>{data.title}</h1>;
+}
+
+// Middleware
+export default async function middleware(req: Request, ctx: FreshContext) {
+  ctx.state.user = await authenticate(req);
+  return ctx.next();
+}
+```
+
+### 1.7 Explicitly Excluded Syntax
+
+#### Hard Exclusions (Parse Error)
+
+| Pattern | Reason | Workaround |
+|---------|--------|------------|
+| `with` statement | Ambiguous scoping | Destructure object |
+| `eval()` | Security risk | N/A |
+| `new Function()` | Security risk | N/A |
+| `arguments` object | Not portable | Use rest params |
+| Labeled statements | Rarely needed | N/A |
+| `debugger` | Not portable | Remove entirely |
+| `do...while` | Complex control flow | Use `while` |
+| `yield` (generators) | Complex state | Use async/iterators |
+
+#### Soft Exclusions (Warning + No-op)
+
+| Pattern | Behavior | Workaround |
+|---------|----------|------------|
+| `class` declaration | Emit warning, skip | Function + closure |
+| Non-const `enum` | Emit warning, skip | `as const` object |
+| `namespace` module | Strip entirely | ES modules |
+| `declare` statement | Strip entirely | Types only |
+| `@decorator` | Emit warning, skip | Function wrapper |
+| JSDoc annotations | Strip entirely | TypeScript types |
+| `bigint` literals (large) | Emit warning | Use `number` |
+| RegExp literals | Emit warning | String methods |
+| `module` keyword | Strip entirely | ES module syntax |
+
+### 1.8 Type Mapping Reference
+
+| TypeScript | Rust | Notes |
+|------------|------|-------|
+| `string` | `String` | UTF-8 owned |
+| `number` | `f64` | IEEE 754 double |
+| `boolean` | `bool` | Native |
+| `null` | `Option<T>` | Via union types |
+| `undefined` | `()` | Unit type |
+| `any` | `serde_json::Value` | JSON value |
+| `unknown` | `serde_json::Value` | JSON value |
+| `never` | `!` | Never returns |
+| `Array<T>` | `Vec<T>` | Heap-allocated |
+| `T[]` | `Vec<T>` | Same |
+| `ReadonlyArray<T>` | `&[T]` | Borrowed slice |
+| `Record<K,V>` | `HashMap<K,V>` | Std collections |
+| `Map<K,V>` | `HashMap<K,V>` | Normalized |
+| `Set<T>` | `HashSet<T>` | Std collections |
+| `Promise<T>` | `tokio::task::JoinHandle<T>` | Async task |
+| `Date` | `chrono::DateTime<Utc>` | Chrono crate |
+| `function` | `Box<dyn Fn(...) -> ... + Send + Sync>` | Trait object |
+| `interface` | `struct` + Serde derives | Data class |
+
 ---
 
 ## Part 2: Architecture
 
-### 2.1 Transpilation Pipeline
+### 2.1 System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        TSX/TS Source                                 │
-└──────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  STAGE 1: PARSE                                                        │
-│  ───────────────────────────────────────────────────────────────────  │
-│  File → HIR (High-level IR)                                          │
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              runts                                       │
 │                                                                         │
-│  Location: src/transpile/parser.rs (~1700 lines)                     │
-│  Type: Hand-written recursive descent                                 │
-│  Output: Module with Declarations, Expressions, Types                 │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐           │
+│   │   Dev Mode   │     │  Build Mode  │     │   Runtime    │           │
+│   ├──────────────┤     ├──────────────┤     ├──────────────┤           │
+│   │ Zero-        │     │ Full         │     │ Islands      │           │
+│   │ compilation  │     │ compilation  │     │ SSR +        │           │
+│   │ Hot reload   │     │ Native bin   │     │ Hydration    │           │
+│   └──────────────┘     └──────────────┘     └──────────────┘           │
 │                                                                         │
-│  Key design decisions:                                                 │
-│  • Zero dependencies (no logos, no swc_core)                         │
-│  • 1-2 character lookahead for most decisions                         │
-│  • Error recovery: skip to next ';' or '}'                            │
-│  • JSX is first-class, not an expression                              │
-└──────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  STAGE 2: ANALYZE                                                      │
-│  ───────────────────────────────────────────────────────────────────  │
-│  HIR → Validated HIR + Diagnostics                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Transpilation Pipeline                            │
 │                                                                         │
-│  Location: src/transpile/analyzer.rs                                  │
-│  Tasks:                                                                 │
-│    • Type checking (structural, not sound)                             │
-│    • Island detection (islands/*.tsx)                                 │
-│    • Route extraction (routes/*.tsx patterns)                          │
-│    • Import resolution (type-only stripped)                           │
-│    • Hook call validation (rules of hooks)                            │
-│    • JSX element validation                                           │
+│   TSX Source                                                            │
+│       │                                                                │
+│       ▼                                                                │
+│   ┌─────────────────────────────────────────────────────────────┐       │
+│   │  STAGE 1: PARSE                                              │       │
+│   │  Hand-written recursive descent parser (~1700 lines)        │       │
+│   │  Zero dependencies                                           │       │
+│   │  Output: HIR (High-level IR)                                │       │
+│   └─────────────────────────────┬───────────────────────────────┘       │
+│                                 │                                        │
+│                                 ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────┐       │
+│   │  STAGE 2: ANALYZE                                           │       │
+│   │  Semantic analysis                                          │       │
+│   │  - Type checking (structural)                              │       │
+│   │  - Island detection (islands/*.tsx)                       │       │
+│   │  - Route extraction (routes/*.tsx patterns)                │       │
+│   │  - Hook validation                                          │       │
+│   │  Output: Validated HIR + Diagnostics                       │       │
+│   └─────────────────────────────┬───────────────────────────────┘       │
+│                                 │                                        │
+│                                 ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────┐       │
+│   │  STAGE 3: TRANSFORM                                          │       │
+│   │  JSX normalization                                          │       │
+│   │  - JSX → Rust html! macro                                   │       │
+│   │  - className → class_name                                   │       │
+│   │  - onClick → on_click                                       │       │
+│   │  - Signals → Signal<T> accessors                            │       │
+│   │  Output: Normalized HIR                                      │       │
+│   └─────────────────────────────┬───────────────────────────────┘       │
+│                                 │                                        │
+│                                 ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────┐       │
+│   │  STAGE 4: GENERATE                                           │       │
+│   │  Rust source code generation                                │       │
+│   │  - Components → #[component] fn                             │       │
+│   │  - Hooks → runtime::hook() calls                             │       │
+│   │  - Routes → Axum handlers                                   │       │
+│   │  Output: Rust source                                         │       │
+│   └─────────────────────────────┬───────────────────────────────┘       │
+│                                 │                                        │
+│                                 ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────┐       │
+│   │  STAGE 5: COMPILE (Production only)                          │       │
+│   │  cargo build --release                                       │       │
+│   │  LTO: fat, codegen-units: 1, opt-level: z                   │       │
+│   │  Output: Native binary                                       │       │
+│   └─────────────────────────────────────────────────────────────┘       │
 │                                                                         │
-│  Output: Vec<Diagnostic> (errors, warnings, hints)                    │
-└──────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  STAGE 3: TRANSFORM                                                    │
-│  ───────────────────────────────────────────────────────────────────  │
-│  Validated HIR → Transformed HIR                                        │
-│                                                                         │
-│  Location: src/transpile/jsx_transformer.rs                           │
-│  Transformations:                                                       │
-│    • JSX → html! macro invocations                                    │
-│    • className → class_name                                           │
-│    • onClick → on_click                                                │
-│    • PascalCase → snake_case                                          │
-│    • event handlers → closures                                        │
-│    • Signals → Signal<T> accessors                                    │
-│    • Hooks → runtime hook calls                                       │
-└──────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  STAGE 4: GENERATE                                                     │
-│  ───────────────────────────────────────────────────────────────────  │
-│  Transformed HIR → Rust Source                                         │
-│                                                                         │
-│  Location: src/transpile/codegen.rs                                    │
-│  Output: Formatted Rust source (via rustfmt)                          │
-│                                                                         │
-│  Type mapping:                                                          │
-│    string → String, number → f64, boolean → bool                     │
-│    Array<T> → Vec<T>, null/undefined → Option<T>                     │
-│    function → Box<dyn Fn(...) -> ... + Send + Sync>                   │
-│    interface → struct with serde derives                               │
-└──────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  STAGE 5: COMPILE                                                      │
-│  ───────────────────────────────────────────────────────────────────  │
-│  Rust Source → Native Binary                                           │
-│                                                                         │
-│  In production:                                                         │
-│    • Write to src-gen/ (generated code)                               │
-│    • cargo build --release                                            │
-│    • LTO + opt-level = "z" for minimal size                          │
-│                                                                         │
-│  In development: (skip this stage)                                     │
-│    • Execute from HIR directly                                        │
-│    • Route generation for SSR                                         │
-└──────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 JSX → Rust Transformation
+### 2.2 Component Model
+
+#### Server Components (Static)
+- Rendered once on server during SSR
+- Zero JavaScript shipped to client
+- Can use all hooks (but no browser APIs)
+
+#### Island Components (Interactive)
+- SSR rendered with placeholder
+- Hydrated on client with minimal JS (~12KB)
+- Support all hooks + browser APIs
+
+#### Hybrid Rendering
+```tsx
+// islands/Counter.tsx - ISLAND (interactive)
+export default function Counter() {
+  const [count, setCount] = useState(0);  // Client-side state
+  return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+}
+
+// components/Header.tsx - STATIC (no JS)
+export default function Header({ title }: { title: string }) {
+  return <header><h1>{title}</h1></header>;  // Pure HTML
+}
+```
+
+### 2.3 Runtime Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           Server Runtime                                 │
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    Virtual DOM Layer                            │   │
+│   │  VNode → HTML string (SSR)                                     │   │
+│   │  Fragment support                                               │   │
+│   │  Event handler serialization                                    │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                 │                                        │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    Hook System                                  │   │
+│   │  useState ────────► RwLock<Option<T>> + clone                  │   │
+│   │  useEffect ──────► Effect queue + cleanup                     │   │
+│   │  useRef ─────────► Arc<RwLock<Option<T>>>                     │   │
+│   │  useMemo ────────► HashMap cache                              │   │
+│   │  useCallback ────► Function memoization                       │   │
+│   │  useReducer ─────► State machine                              │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                 │                                        │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    Signal System                                 │   │
+│   │  Signal<T> ───────► Arc<RwLock<T>>                             │   │
+│   │  Computed<T> ─────► Lazy evaluation + caching                  │   │
+│   │  Effect ──────────► Dependency tracking                       │   │
+│   │  batch() ─────────► Transactional updates                     │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                 │                                        │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    Islands Registry                             │   │
+│   │  Server: Render placeholder + serialize props                  │   │
+│   │  Client: Hydrate from serialized state                        │   │
+│   │  Mode: eager | lazy | visible | interaction                   │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.4 HIR (High-Level IR)
+
+```rust
+// Simplified HIR structure
+pub enum ModuleItem {
+    Import(Import),      // import { x } from "module"
+    Export(Export),      // export { x } / export default
+    Decl(Decl),          // function, variable, type, class
+}
+
+pub enum Decl {
+    Function(FunctionDecl),
+    Variable(VariableDecl),
+    Type(TypeDecl),
+    Class(ClassDecl),
+}
+
+pub enum Expr {
+    // Literals
+    Null, Undefined,
+    Boolean(bool),
+    Number(f64),
+    String(String),
+    
+    // Structures
+    Array(Vec<Expr>),
+    Object(Vec<(String, Expr)>),
+    
+    // Control flow
+    Conditional { cond: Box<Expr>, then: Box<Expr>, else_: Box<Expr> },
+    
+    // Functions
+    Function(FunctionExpr),
+    ArrowFunction(ArrowFunctionExpr),
+    Call { func: Box<Expr>, args: Vec<Expr> },
+    Await(Box<Expr>),
+    
+    // JSX
+    JSXElement(JSXElement),
+    JSXFragment(Vec<Expr>),
+    
+    // References
+    Ident(String),
+    Member { obj: Box<Expr>, prop: String },
+    
+    // Reactivity
+    SignalAccess(String),  // count.value
+    SignalWrite { target: String, value: Box<Expr> },
+    
+    // Hooks
+    HookCall { name: String, args: Vec<Expr> },
+}
+
+pub enum JSXElement {
+    Component { name: String, props: Vec<(String, Expr)>, children: Vec<Expr> },
+    Intrinsic { tag: String, props: Vec<(String, Expr)>, children: Vec<Expr> },
+    Island { name: String, props: Vec<(String, Expr)>, children: Vec<Expr> },
+}
+```
+
+---
+
+## Part 3: Development Mode
+
+### 3.1 Zero-Compilation Architecture
+
+**Key insight**: Dev mode NEVER compiles Rust. Instead:
+1. Parse TSX to HIR (fast, ~5ms per file)
+2. Execute HIR directly with Rust runtime
+3. Client islands: pre-compiled TypeScript bundles (~12KB each)
+4. HMR: File watcher → SSE broadcast → Browser reload
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          runts dev                                       │
+│                                                                         │
+│   File System          In-Memory Cache         Rust Runtime             │
+│   ──────────          ──────────────         ────────────             │
+│                                                                         │
+│   routes/*.tsx   ───▶   ModuleCache    ───▶  SSR Handler               │
+│   islands/*.tsx  ───▶   (HIR + Errors) ───▶  Island Registry            │
+│   components/*   ───▶                   ───▶  Static Components        │
+│                                                                         │
+│   notify crate          Mutex<HashMap>       Rust-based                 │
+│   file watching          hot cache            SSR rendering            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 Dev Server Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/*` | GET | SSR HTML (from HIR) |
+| `/_runts/manifest.json` | GET | Island manifest |
+| `/_runts/islands/{name}.js` | GET | Pre-compiled island bundle |
+| `/_runts/hmr.js` | GET | HMR client script |
+| `/_runts/reload` | GET | SSE for live reload |
+| `/static/*` | GET | Static assets |
+
+### 3.3 Hot Reload Flow
+
+```
+1. User edits routes/index.tsx
+   │
+2. notify crate detects change (fsnotify)
+   │
+3. DevState::transpile() invalidates cache
+   │
+4. SSE broadcasts reload event to all clients
+   │
+5. Browser HMR script receives reload
+   │
+6. Browser fetches / (SSR renders from HIR)
+   │
+7. Full page update (no Rust compilation!)
+```
+
+**Constraint**: Rust code changes require `runts dev` restart.
+
+### 3.4 Performance Targets (Dev)
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| HMR latency | < 100ms | File change → page reload |
+| Parse time | < 5ms | Per file |
+| Full transpile | < 50ms | Per route |
+| Dev server start | < 200ms | `runts dev` |
+
+---
+
+## Part 4: Production Build
+
+### 4.1 Build Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           runts build                                    │
+│                                                                         │
+│   Phase 1: Discovery (parallel)                                         │
+│   ─────────────────────────────────────────────────────────────────    │
+│   routes/     → Route manifests (patterns, params, methods)            │
+│   islands/    → Island manifests (names, props, hydration mode)         │
+│   components/ → Static components (no client JS)                       │
+│   middleware/ → Middleware chain                                       │
+│                                                                         │
+│   Phase 2: Transpilation (parallel per file)                           │
+│   ─────────────────────────────────────────────────────────────────    │
+│   For each .tsx file:                                                   │
+│     1. Parse → HIR                                                     │
+│     2. Analyze → Validation                                            │
+│     3. Transform → JSX normalized                                      │
+│     4. Generate → Rust source                                          │
+│                                                                         │
+│   Phase 3: Code Generation                                              │
+│   ─────────────────────────────────────────────────────────────────    │
+│   routes.rs    → Axum router (all routes)                              │
+│   islands.rs   → Island registry + serialization                       │
+│   components.rs→ Static component registry                             │
+│   main.rs      → App entry point                                        │
+│                                                                         │
+│   Phase 4: Rust Compilation                                             │
+│   ─────────────────────────────────────────────────────────────────    │
+│   cargo build --release                                                │
+│   LTO: fat, codegen-units: 1, opt-level: z, strip                      │
+│   Output: dist/runts-app                                               │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 Output Structure
+
+```
+dist/
+├── my-app                 # Linux binary (statically linked musl)
+├── my-app.exe            # Windows binary
+├── islands/
+│   ├── Counter.a1b2.js   # Hashed island bundle (~12KB gzip)
+│   └── TodoList.c3d4.js
+├── static/
+│   ├── styles.css
+│   └── favicon.ico
+└── manifest.json          # Island registry
+```
+
+### 4.3 Performance Targets (Production)
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Hello World binary | < 1MB | `runts init hello` |
+| Typical App | 2-4MB | Blog + auth |
+| Full Fresh | 4-8MB | All features |
+| Cold start | < 10ms | Linux x86_64 |
+| Memory (idle) | < 5MB | Baseline |
+
+---
+
+## Part 5: Islands Architecture
+
+### 5.1 Island Detection
+
+| Directory | Type | Client JS |
+|-----------|------|-----------|
+| `islands/*.tsx` | Island | Yes (hydrated) |
+| `components/*.tsx` | Static | No (zero JS) |
+| `routes/*.tsx` | Route | Partial (islands inside) |
+
+### 5.2 Hydration Modes
+
+```tsx
+// Mode: eager (immediate hydration)
+// Use for: forms, critical UI
+<IslandWrapper mode="eager" />
+
+// Mode: lazy (IntersectionObserver + 100ms debounce)
+// Use for: below-the-fold content (DEFAULT)
+<IslandWrapper mode="lazy" />
+
+// Mode: visible (IntersectionObserver only)
+// Use for: images, videos
+<IslandWrapper mode="visible" />
+
+// Mode: interaction (click/focus/hover trigger)
+// Use for: modals, tooltips, dropdowns
+<IslandWrapper mode="interaction" />
+```
+
+### 5.3 SSR Output
+
+```html
+<!-- Server-rendered island (placeholder) -->
+<div 
+  data-island="Counter" 
+  data-id="island-abc123"
+  data-mode="lazy"
+  data-props='{"initial":0}'
+>
+  <!-- Server-rendered HTML -->
+  <button>0</button>
+</div>
+
+<!-- Client-side hydration (script) -->
+<script type="module">
+  import { hydrate } from '/_runts/islands/Counter.js';
+  hydrate('island-abc123', { initial: 0 });
+</script>
+```
+
+---
+
+## Part 6: JSX → Rust Transformation
+
+### 6.1 Element Transformations
+
+| JSX Pattern | Rust Pattern | Notes |
+|-------------|--------------|-------|
+| `<div>` | `<div>` | Lowercase preserved |
+| `<MyComponent>` | `my_component()` | PascalCase → snake_case |
+| `className` | `class_name` | Attr rename |
+| `onClick` | `on_click` | Handler rename |
+| `onInput` | `on_input` | Handler rename |
+| `{expr}` | `{ expr }` | Brace preservation |
+| `"text"` | `"text"` | String literal |
+| `<Child {...props} />` | `child(props)` | Spread expansion |
+| `<>...</>` | Fragment! { ... } | Fragment wrapper |
+
+### 6.2 Example Transformation
 
 **Input (TSX):**
 ```tsx
@@ -415,227 +868,9 @@ pub fn counter(initial: f64) -> VNode {
 }
 ```
 
-**Transformations Applied:**
-
-| JSX Pattern | Rust Pattern | Notes |
-|-------------|--------------|-------|
-| `<div>` | `<div>` | Lowercase preserved |
-| `className` | `class_name` | Attr rename |
-| `onClick` | `on_click` | Handler rename |
-| `PascalCase` | `snake_case` | Component name |
-| `{expr}` | `{ expr }` | Brace preservation |
-| `"text"` | `"text"` | String literal |
-| `onClick={fn}` | `on_click={ fn }` | Closure |
-| `onClick={e => fn(e)}` | `on_click={ move \|e\| fn(e) }` | Closure wrap |
-| `<Child {...props} />` | `child(props)` | Spread expansion |
-| `<>...</>` | Fragment! { ... } | Fragment wrapper |
-
-### 2.3 Islands Architecture
-
-#### 2.3.1 Detection
-
-```
-islands/*.tsx     → Island (ship client JS)
-components/*.tsx   → Static (zero client JS)
-routes/*.tsx      → Route + optional island
-```
-
-#### 2.3.2 SSR Output
-
-```html
-<!-- Server-rendered island -->
-<div 
-  data-island="Counter" 
-  data-id="island-abc123"
-  data-mode="lazy"
-  data-props='{"initial":0}'
->
-  <button>0</button>
-</div>
-
-<!-- Hydrated island -->
-<div 
-  data-island="Counter" 
-  data-id="island-abc123"
-  data-mode="lazy"
-  data-hydrated="true"
->
-  <button onclick="runts_hydrate('island-abc123', ...)">+</button>
-</div>
-```
-
-#### 2.3.3 Hydration Modes
-
-| Mode | Trigger | Use Case |
-|------|---------|----------|
-| `eager` | Immediately | Critical UI |
-| `visible` | IntersectionObserver | Below fold |
-| `lazy` | IntersectionObserver + 100ms | Default |
-| `interaction` | First click/focus | Buttons, forms |
-
 ---
 
-## Part 3: Development Mode
-
-### 3.1 Zero-Compilation Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      runts dev                                        │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   File System          In-Memory Cache        Runtime                  │
-│   ──────────          ──────────────        ───────                  │
-│                                                                       │
-│   routes/*.tsx   ───▶   ModuleCache    ───▶  SSR Handler             │
-│   islands/*.tsx  ───▶   (HIR + Errors) ───▶  Island Registry          │
-│   components/*  ───▶                    ───▶  Static Components      │
-│                                                                       │
-│   notify crate          Mutex<HashMap>       Rust-based               │
-│   file watching         hot cache            SSR rendering            │
-│                                                                       │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-**Key insight**: Dev mode NEVER compiles to binary. Instead:
-1. Parse TSX to HIR (fast, pure Rust)
-2. Execute HIR with Rust runtime (SSR, no JS)
-3. Client islands: pre-compiled TypeScript bundles (~12KB each)
-4. HMR: WebSocket/SSE triggers page reload, not recompile
-
-### 3.2 Dev Server Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/*` | GET | SSR HTML (from HIR) |
-| `/_runts/manifest.json` | GET | Island manifest |
-| `/_runts/islands/{name}.js` | GET | Pre-compiled island bundle |
-| `/_runts/hmr.js` | GET | HMR client script |
-| `/_runts/reload` | GET | SSE for live reload |
-| `/static/*` | GET | Static assets |
-
-### 3.3 Hot Reload Flow
-
-```
-1. User edits routes/index.tsx
-   │
-2. notify detects change
-   │
-3. DevState::transpile() invalidates cache
-   │
-4. SSE broadcasts reload event
-   │
-5. Browser receives reload
-   │
-6. Browser fetches / (SSR renders from HIR)
-   │
-7. Full page update (no compilation!)
-```
-
-**Constraint**: Rust code changes require `runts dev` restart.
-
----
-
-## Part 4: Production Build
-
-### 4.1 Build Pipeline
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                       runts build                                     │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   Phase 1: Discovery (parallel)                                       │
-│   ─────────────────────────────────────────────────────────────────   │
-│   routes/ → Route manifests                                          │
-│   islands/ → Island manifests                                        │
-│   components/ → Static components                                    │
-│                                                                       │
-│   Phase 2: Transpilation (parallel)                                   │
-│   ─────────────────────────────────────────────────────────────────   │
-│   For each .tsx file:                                                 │
-│     1. Parse → HIR                                                    │
-│     2. Analyze → Validation                                          │
-│     3. Transform → JSX normalized                                    │
-│     4. Generate → Rust source                                        │
-│                                                                       │
-│   Phase 3: Island Bundling                                            │
-│   ─────────────────────────────────────────────────────────────────   │
-│   1. Collect island manifests                                        │
-│   2. Bundle client runtime (~12KB)                                  │
-│   3. Output: dist/islands/*.js (hashed names)                        │
-│                                                                       │
-│   Phase 4: Rust Compilation                                          │
-│   ─────────────────────────────────────────────────────────────────   │
-│   1. Write generated Rust → src-gen/                                 │
-│   2. cargo build --release                                            │
-│   3. LTO: fat, codegen-units: 1                                     │
-│   4. strip + opt-level = "z"                                         │
-│   5. Output: dist/runts-app                                          │
-│                                                                       │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### 4.2 Output Structure
-
-```
-dist/
-├── my-app                 # Linux binary (statically linked)
-├── my-app.exe            # Windows binary
-├── islands/
-│   ├── Counter.a1b2.js   # Hashed island bundle
-│   └── TodoList.c3d4.js
-├── static/
-│   ├── styles.css
-│   └── favicon.ico
-└── manifest.json          # Island registry
-```
-
----
-
-## Part 5: Performance Targets
-
-### 5.1 Binary Size
-
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Hello World | < 1MB | `runts init hello` |
-| Typical App | 2-4MB | Blog + auth |
-| Full Fresh | 4-8MB | All features |
-| Stripped (debug) | -30% | `strip` binary |
-
-### 5.2 Runtime Performance
-
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Cold start | < 10ms | Linux x86_64 |
-| Request latency (p50) | < 1ms | Simple route |
-| Request latency (p99) | < 10ms | SSR with islands |
-| Memory (idle) | < 5MB | Baseline |
-| Memory (100 req/s) | < 20MB | Under load |
-| Island bundle | < 15KB | Gzipped |
-
-### 5.3 Development Experience
-
-| Metric | Target | Notes |
-|--------|--------|-------|
-| HMR latency | < 100ms | File change → page reload |
-| Parse time | < 5ms | Per file |
-| Full transpile | < 50ms | Per route |
-| Dev server start | < 200ms | `runts dev` |
-
-### 5.4 Trade-offs
-
-| Decision | Trade-off | Rationale |
-|----------|-----------|-----------|
-| Static linking | Larger binary | Zero runtime deps |
-| Custom parser | More code, full control | No swc_core bloat |
-| Dev mode: no Rust compile | Instant reload | Rust changes require restart anyway |
-| Signals over VDOM diff | Fine-grained reactivity | Preact Signals compatible |
-
----
-
-## Part 6: Roadmap
+## Part 7: Roadmap
 
 ### Phase 1: MVP ✅ (COMPLETED)
 
@@ -653,37 +888,56 @@ dist/
 
 **Coverage**: ~85% of real Fresh patterns
 
-### Phase 2: Production Ready (IN PROGRESS)
+### Phase 2: Production Ready (Q3 2025)
 
 **Required:**
 - [ ] Complete TSX parser (remaining 15% edge cases)
-- [ ] Type checking pass (soundness, not just structural)
+  - [ ] Class methods and constructor
+  - [ ] More complex conditional types
+  - [ ] Template literal types
+  - [ ] Template string expressions with types
+  - [ ] Satisfies operator
+- [ ] Full type checking pass (soundness, not just structural)
 - [ ] Error spans with source locations
 - [ ] Full route generation → Axum router wiring
-- [ ] Middleware support (`_middleware.ts`)
-- [ ] Layout nesting (`_layout.tsx`)
+  - [ ] All HTTP methods (GET, POST, PUT, DELETE, PATCH)
+  - [ ] Route parameters extraction
+  - [ ] Query string handling
+- [ ] Middleware support
+  - [ ] `_middleware.ts` global middleware
+  - [ ] Route-specific middleware
+- [ ] Layout nesting
+  - [ ] `_layout.tsx` hierarchical layouts
+  - [ ] `_app.tsx` global wrapper
 - [ ] Static file serving (`/static/*`)
-- [ ] Client-side island hydration (TypeScript runtime)
-- [ ] `_app.tsx` global wrapper
+- [ ] Client-side island hydration
+  - [ ] Pre-compiled TypeScript bundles
+  - [ ] Hydration from SSR state
+  - [ ] Event listener attachment
+- [ ] Streaming SSR (optional)
 
-**Target**: Q1 2025
-
-### Phase 3: Ecosystem (Q2-Q3 2025)
+### Phase 3: Ecosystem (Q4 2025)
 
 - [ ] `deno.json` / `fresh.config.ts` compatibility layer
 - [ ] Preact compat (`preact/compat` imports)
-- [ ] VSCode extension (syntax highlighting)
-- [ ] Common patterns: forms, data fetching, error boundaries
+- [ ] VSCode extension (syntax highlighting, diagnostics)
+- [ ] Common patterns library
+  - [ ] Form handling (`<Form>`, `useForm`)
+  - [ ] Data fetching (`useFetch`, `useQuery`)
+  - [ ] Error boundaries (`<ErrorBoundary>`)
 - [ ] Testing utilities
+  - [ ] Component testing
+  - [ ] Route testing
 - [ ] Documentation site
 
-### Phase 4: Optimization (Q4 2025+)
+### Phase 4: Optimization (Q1 2026+)
 
 - [ ] Benchmark suite (criterion)
 - [ ] Memory pooling (object arena)
 - [ ] Startup time < 5ms
+- [ ] Binary size < 500KB for hello world
 - [ ] WASM output (alternate target)
-- [ ] Edge runtime (Cloudflare, Vercel Edge)
+- [ ] Edge runtime (Cloudflare Workers, Vercel Edge)
 
 ---
 
@@ -703,7 +957,8 @@ runts/
 │   │       ├── hooks.rs         # useState, useEffect, etc.
 │   │       ├── signals.rs       # Signal, Computed, Effect
 │   │       ├── islands.rs       # Island registry
-│   │       └── html.rs          # html! macro
+│   │       ├── html.rs          # html! macro
+│   │       └── server.rs        # SSR rendering
 │   │
 │   └── runts-client/            # Client runtime (TypeScript)
 │       └── runtime.ts           # Island hydration
@@ -720,7 +975,7 @@ runts/
 │   │   ├── codegen.rs          # Rust codegen
 │   │   ├── jsx_transformer.rs # JSX normalization
 │   │   ├── routegen.rs         # Route handler generation
-│   │   └── middlewaregen.rs   # Middleware generation
+│   │   └── middlewaregen.rs    # Middleware generation
 │   │
 │   ├── runtime/
 │   │   ├── mod.rs
@@ -734,43 +989,51 @@ runts/
 │   └── commands/
 │       ├── dev.rs              # Dev server
 │       ├── build.rs           # Production build
-│       └── init.rs           # Project scaffolding
+│       ├── init.rs           # Project scaffolding
+│       └── add.rs            # Add component/island
 │
 ├── examples/
 │   └── my-blog/               # Example app
 │       ├── islands/
 │       ├── routes/
 │       ├── components/
-│       └── static/
+│       ├── lib/
+│       ├── static/
+│       ├── Cargo.toml
+│       └── runts.config.json
 │
 └── tests/
     ├── integration/
-    └── snapshots/
+    ├── snapshots/
+    └── fixtures/
 ```
 
 ---
 
-## Appendix B: Type Mapping Reference
+## Appendix B: Performance Comparison
 
-| TypeScript | Rust | Notes |
-|------------|------|-------|
-| `string` | `String` | UTF-8 owned |
-| `number` | `f64` | IEEE 754 double |
-| `boolean` | `bool` | Native |
-| `null` | `Option<T>` | Via union |
-| `undefined` | `()` | Unit type |
-| `any` | `serde_json::Value` | JSON |
-| `unknown` | `serde_json::Value` | JSON |
-| `never` | `!` | Never returns |
-| `Array<T>` | `Vec<T>` | Heap-allocated |
-| `T[]` | `Vec<T>` | Same |
-| `Record<K,V>` | `HashMap<K,V>` | Std |
-| `Map<K,V>` | `std::collections::HashMap<K,V>` | |
-| `Set<T>` | `std::collections::HashSet<T>` | |
-| `Promise<T>` | `tokio::task::JoinHandle<T>` | Async |
-| `Date` | `chrono::DateTime<Utc>` | Chrono |
-| `function` | `Box<dyn Fn(...) -> ... + Send + Sync>` | Trait |
-| `interface` | `struct` + Serde derives | |
+### Binary Size
+
+| App | runts | Deno Fresh | Next.js (Node) |
+|-----|-------|------------|----------------|
+| Hello World | **~500KB** | N/A | N/A |
+| Blog | **~2MB** | N/A | N/A |
+| E-commerce | **~4MB** | N/A | N/A |
+
+### Memory Usage
+
+| App | runts | Deno Fresh | Next.js |
+|-----|-------|------------|---------|
+| Idle | **<5MB** | ~100MB | ~200MB |
+| 100 req/s | **~20MB** | ~300MB | ~500MB |
+
+### Startup Time
+
+| Runtime | Cold Start |
+|---------|------------|
+| runts | **<10ms** |
+| Deno Fresh | ~50ms |
+| Next.js | ~200ms |
 
 ---
 
@@ -778,7 +1041,7 @@ runts/
 
 | Excluded | Reason | Workaround |
 |----------|--------|------------|
-| `with` | Ambiguous scoping, poor practice | Destructure |
+| `with` | Ambiguous scoping, poor practice | Destructure object |
 | `eval` | Security, impossible to compile | N/A |
 | `class` | Complex runtime semantics | Function + closure |
 | Decorators | Stage 2, complex inference | Function wrappers |
@@ -786,6 +1049,16 @@ runts/
 | `BigInt` (large) | Precision loss | Use `number` (f64) |
 | RegExp | Complex runtime | String methods |
 | Generators | Complex control flow | Iterators |
+| `do...while` | Complex control flow | Use `while` |
+
+---
+
+## Appendix D: Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.0.0 | 2025-05-26 | Complete rewrite with detailed spec |
+| 1.0.0 | 2025-05-25 | Initial implementation |
 
 ---
 
