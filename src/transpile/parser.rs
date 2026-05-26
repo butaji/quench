@@ -1493,24 +1493,34 @@ impl Parser {
 
                 // Check for method shorthand: foo() { } or foo(): T { }
                 if self.check('(') {
-                    // Skip the entire method: params, return type, and body
-                    self.skip_balanced('(', ')');
+                    self.advance(); // past '('
+                    let params = self.parse_params()?;
+                    self.expect(')')?;
                     self.skip_ws_and_comments();
-                    // Skip return type annotation if present
-                    if self.check(':') {
+                    let return_type = if self.check(':') {
                         self.advance();
                         self.skip_ws_and_comments();
-                        let _ = self.parse_type();
-                        self.skip_ws_and_comments();
-                    }
-                    // Actually parse the method body to handle statements with semicolons
-                    if self.check('{') {
-                        // Parse the body properly
-                        let _ = self.parse_block();
-                    }
-                    // Create placeholder for method
-                    let method_value = Expr::Ident { name: format!("method:{}", key) };
-                    props.push(ObjectProp::Init { key: PropKey::Ident(key.to_string()), value: method_value });
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
+                    self.skip_ws_and_comments();
+                    let body = if self.check('{') {
+                        Some(self.parse_block()?)
+                    } else {
+                        None
+                    };
+                    let decl = FunctionDecl {
+                        name: key.clone(),
+                        generics: vec![],
+                        params,
+                        return_type,
+                        body,
+                        is_async,
+                        is_generator: false,
+                        decorators: vec![],
+                    };
+                    props.push(ObjectProp::Method { key: PropKey::Ident(key), value: decl });
                 } else if self.check(':') {
                     // Regular property: key: value
                     self.advance();

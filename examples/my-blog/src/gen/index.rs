@@ -8,7 +8,9 @@ pub struct HomeData {
     pub features: Vec<String>,
 }
 
-pub fn handle_get() -> impl Fn(Request, HandlerContext) -> Response { |_, _| todo!() }
+pub async fn handle_get(_req: Request, _ctx: HandlerContext) -> impl IntoResponse {
+    { let data: HomeData = {greeting: "Welcome to runts!", description: "Build lightning-fast web apps with Fresh/Preact and native Rust. Zero external JS runtime, full Fresh compatibility.", version: "0.3.0", features: vec!["Instant hot reload in development", "Native binary compilation for production", "Full islands architecture", "Fine-grained reactivity with signals", "File-based routing like Next.js", "Middleware pipeline"]};; return new;; response(j_s_o_n.stringify(data), {headers: {content-_type: "application/json", x-_runtime: "Rust"}}); } // Handler body
+}
 
 
 

@@ -110,18 +110,30 @@ impl CodeGenerator {
             let mut output = String::new();
             
             for prop in props {
-                if let ObjectProp::Init { key, value } = prop {
-                    let method_name = match key {
-                        PropKey::Ident(s) => s.clone(),
-                        PropKey::String(s) => s.clone(),
-                        _ => continue,
-                    };
-                    
-                    // Generate handler function for this method
-                    let handler_fn = self.generate_handler_method(&method_name, value)?;
-                    output.push_str(&handler_fn);
-                    output.push_str("\n\n");
-                }
+                let (method_name, value) = match prop {
+                    ObjectProp::Init { key, value } => {
+                        let name = match key {
+                            PropKey::Ident(s) => s.clone(),
+                            PropKey::String(s) => s.clone(),
+                            _ => continue,
+                        };
+                        (name, value.clone())
+                    }
+                    ObjectProp::Method { key, value } => {
+                        let name = match key {
+                            PropKey::Ident(s) => s.clone(),
+                            PropKey::String(s) => s.clone(),
+                            _ => continue,
+                        };
+                        (name, Expr::Function { decl: value.clone() })
+                    }
+                    _ => continue,
+                };
+                
+                // Generate handler function for this method
+                let handler_fn = self.generate_handler_method(&method_name, &value)?;
+                output.push_str(&handler_fn);
+                output.push_str("\n\n");
             }
             
             Ok(output)
@@ -135,52 +147,65 @@ impl CodeGenerator {
         let method_lower = method.to_lowercase();
         let handler_name = format!("handle_{}", method_lower);
         
-        match value {
-            Expr::Arrow { params, body, is_async } => {
-                let async_prefix = if *is_async { "async " } else { "" };
-                let params_str = params.iter().map(|p| {
-                    let name = self.to_snake_case(&p.name);
-                    p.type_.as_ref()
-                        .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
-                        .unwrap_or_else(|| name)
-                }).collect::<Vec<_>>().join(", ");
-                
-                let body_str = match body.as_ref() {
-                    Stmt::Block(stmts) => {
-                        let mut lines = Vec::new();
-                        for stmt in stmts {
-                            let code = self.stmt_to_rust(stmt)?;
-                            if !code.trim().is_empty() {
-                                lines.push(code.trim().to_string());
-                            }
-                        }
-                        format!("{{ {} }}", lines.join("; "))
+        let (is_async, params, body) = match value {
+            Expr::Arrow { params, body, is_async } => (*is_async, params.clone(), body.clone()),
+            Expr::Function { decl } => {
+                let body_stmt = decl.body.as_ref()
+                    .map(|b| Stmt::Block(b.0.clone()))
+                    .unwrap_or(Stmt::Block(vec![]));
+                (decl.is_async, decl.params.clone(), Box::new(body_stmt))
+            }
+            _ => {
+                return Ok(format!(
+                    "pub fn {}() -> impl Fn(Request, HandlerContext) -> Response {{ |_, _| todo!() }}",
+                    handler_name
+                ));
+            }
+        };
+
+        let async_prefix = if is_async { "async " } else { "" };
+        let params_str = params.iter().map(|p| {
+            let name = self.to_snake_case(&p.name);
+            p.type_.as_ref()
+                .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
+                .unwrap_or_else(|| name)
+        }).collect::<Vec<_>>().join(", ");
+        
+        let body_str = match body.as_ref() {
+            Stmt::Block(stmts) => {
+                let mut lines = Vec::new();
+                for stmt in stmts {
+                    let code = self.stmt_to_rust(stmt)?;
+                    if !code.trim().is_empty() {
+                        lines.push(code.trim().to_string());
                     }
-                    Stmt::Return { arg } => {
-                        if let Some(e) = arg {
-                            let expr_str = self.expr_to_rust(e);
-                            format!("{{ return {}; }}", expr_str)
-                        } else {
-                            "{}".to_string()
-                        }
-                    }
-                    _ => "{}".to_string(),
-                };
-                
-                Ok(format!(
-                    r#"pub {}fn {}(req: Request, ctx: HandlerContext) -> impl IntoResponse {{
+                }
+                if lines.is_empty() {
+                    "{ todo!() }".to_string()
+                } else {
+                    format!("{{ {} }}", lines.join("; "))
+                }
+            }
+            Stmt::Return { arg } => {
+                if let Some(e) = arg {
+                    let expr_str = self.expr_to_rust(e);
+                    format!("{{ return {}; }}", expr_str)
+                } else {
+                    "{}".to_string()
+                }
+            }
+            _ => "{ todo!() }".to_string(),
+        };
+        
+        Ok(format!(
+            r#"pub {}fn {}({}) -> impl IntoResponse {{
     {} // Handler body
 }}"#,
-                    async_prefix,
-                    handler_name,
-                    body_str
-                ))
-            }
-            _ => Ok(format!(
-                "pub fn {}() -> impl Fn(Request, HandlerContext) -> Response {{ |_, _| todo!() }}",
-                handler_name
-            )),
-        }
+            async_prefix,
+            handler_name,
+            params_str,
+            body_str
+        ))
     }
 
     pub fn generate_type_decl(&self, decl: &TypeDecl) -> Result<String> {

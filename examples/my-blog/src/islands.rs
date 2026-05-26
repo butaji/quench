@@ -32,9 +32,12 @@ pub fn islands() -> Vec<Island> {
     ]
 }
 
+/// Re-export generated island components
+pub use crate::gen::islands::counter;
+pub use crate::gen::islands::counter_simple;
+pub use crate::gen::islands::todo_list;
+
 /// Island renderer
-pub async fn render_island(name: &str, props: serde_json::Value) -> String {
-    // Island rendering is handled by the SSR system
-    // This function would be called to render specific islands
-    format!("<div data-island=\"{}\">{{</div>", name)
+pub async fn render_island(name: &str, _props: serde_json::Value) -> String {
+    format!("<div data-island=\"{}\">\n</div>", name)
 }

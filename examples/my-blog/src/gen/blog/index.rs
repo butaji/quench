@@ -17,7 +17,9 @@ pub struct BlogData {
 let posts: Vec<Post> = vec![{slug: "introducing-runts", title: "Introducing runts: Fresh/Preact with Native Rust", excerpt: "Build lightning-fast web applications with Fresh's islands architecture, compiled to native Rust binaries. Zero external JS runtime, full framework compatibility.", date: "2026-05-26", reading_time: "5 min read"}, {slug: "islands-architecture", title: "Understanding the Islands Architecture", excerpt: "How selective hydration enables partial page interactivity while maintaining excellent performance. A deep dive into how runts handles client-server boundaries.", date: "2026-05-25", reading_time: "8 min read"}, {slug: "rust-frontend", title: "Rust in the Frontend: A New Paradigm", excerpt: "Exploring the benefits and challenges of compiling TypeScript to Rust. From TypeScript AST to native binary, understanding the runts transpilation pipeline.", date: "2026-05-24", reading_time: "12 min read"}, {slug: "fine-grained-reactivity", title: "Fine-Grained Reactivity in Pure Rust", excerpt: "Implementing Preact Signals and computed values in Rust for efficient reactive updates. How signals enable minimal re-renders and optimal performance.", date: "2026-05-23", reading_time: "10 min read"}];
 
 
-pub fn handle_get() -> impl Fn(Request, HandlerContext) -> Response { |_, _| todo!() }
+pub async fn handle_get(_req: Request, _ctx: HandlerContext) -> impl IntoResponse {
+    { let data: BlogData = posts;; return new;; response(j_s_o_n.stringify(data), {headers: {content-_type: "application/json"}}); } // Handler body
+}
 
 
 
