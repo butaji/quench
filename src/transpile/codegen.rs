@@ -206,14 +206,22 @@ impl CodeGenerator {
             output.push_str("#[component]\n");
         }
 
+        // Check if any params have destructuring patterns
+        let has_destructuring = f.params.iter().any(|p| p.pattern.is_some());
+        
         let params: Vec<String> = f.params.iter().map(|p| {
             let type_str = p.type_.as_ref()
                 .map(|t| self.type_to_rust(t))
                 .unwrap_or_else(|| "()".to_string());
             let param_name = self.to_snake_case(&p.name);
-            let default_suffix = p.default.as_ref()
-                .map(|d| format!(" = {}", self.expr_to_rust(d)))
-                .unwrap_or_default();
+            // Don't include default for destructured params - we'll handle defaults in destructuring
+            let default_suffix = if p.pattern.is_none() {
+                p.default.as_ref()
+                    .map(|d| format!(" = {}", self.expr_to_rust(d)))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             format!("{}: {}{}", param_name, type_str, default_suffix)
         }).collect();
 
@@ -235,6 +243,18 @@ impl CodeGenerator {
             "pub fn {}{}({}) -> {} {{\n",
             rust_name, generics_str, params.join(", "), return_type
         ));
+        
+        // Generate destructuring code at the start of the function body
+        if has_destructuring {
+            for p in &f.params {
+                if let Some(ref pattern) = p.pattern {
+                    let destructured = self.pat_to_rust(pattern, &p.name);
+                    if !destructured.is_empty() {
+                        output.push_str(&format!("    let {};\n", destructured));
+                    }
+                }
+            }
+        }
 
         if let Some(body) = &f.body {
             for stmt in &body.0 {
@@ -250,6 +270,58 @@ impl CodeGenerator {
         output.push_str("}\n");
 
         Ok(output)
+    }
+    
+    /// Convert a destructuring pattern to Rust let bindings
+    fn pat_to_rust(&self, pat: &Pat, source_name: &str) -> String {
+        match pat {
+            Pat::Object { props, .. } => {
+                let mut bindings = Vec::new();
+                for prop in props {
+                    match prop {
+                        ObjectPatProp::Init { key, value } => {
+                            if let Pat::Ident { name, .. } = value {
+                                bindings.push(format!("{}: {}", self.to_snake_case(name), self.to_snake_case(key)));
+                            }
+                        }
+                        ObjectPatProp::Rest { arg } => {
+                            if let Pat::Ident { name, .. } = arg.as_ref() {
+                                bindings.push(format!("..{}", self.to_snake_case(name)));
+                            }
+                        }
+                    }
+                }
+                if bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("let {{ {}}} = {}", bindings.join(", "), source_name)
+                }
+            }
+            Pat::Array { elems, rest } => {
+                let mut bindings = Vec::new();
+                for (i, elem) in elems.iter().enumerate() {
+                    if let Some(Pat::Ident { name, .. }) = elem {
+                        bindings.push(format!("{}: {}[{}]", self.to_snake_case(name), source_name, i));
+                    } else {
+                        bindings.push(format!("_: {}[{}]", source_name, i));
+                    }
+                }
+                if let Some(rest) = rest {
+                    if let Pat::Ident { name, .. } = rest.as_ref() {
+                        bindings.push(format!("{}: {}.split_at({})[1]", self.to_snake_case(name), source_name, elems.len()));
+                    }
+                }
+                if bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("let [{}] = {};", bindings.join(", "), source_name)
+                }
+            }
+            Pat::Ident { name, .. } => {
+                format!("let {} = {};", self.to_snake_case(name), source_name)
+            }
+            _ => String::new(),
+        }
     }
 
     fn generate_variable(&self, var: &VariableDecl) -> Result<String> {
