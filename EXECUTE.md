@@ -33,3 +33,5 @@ Deliver:
 
 Prioritize correctness and Fresh compatibility first, then performance. Be
 ruthless on keeping the TS subset minimal but sufficient.
+
+Git: task/scope=commit, no push.
