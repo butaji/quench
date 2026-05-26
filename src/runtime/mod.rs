@@ -13,6 +13,11 @@ pub mod vdom;
 pub mod islands;
 pub mod prelude;
 
+// Re-export for convenience
+pub use signals::{Signal, signal, Computed};
+pub use hooks::*;
+pub use islands::{IslandRegistry, IslandInstance, HydrationStrategy, IslandManifest};
+
 // HIR Interpreter for development mode
 pub mod interpreter;
 

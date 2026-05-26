@@ -497,7 +497,7 @@ impl Interpreter {
             "isFinite" => Ok(Value::Bool(args.first().map(|v| v.as_number()).unwrap_or(0.0).is_finite())),
             "encodeURIComponent" => Ok(Value::String(urlencoding::encode(&args.first().map(|v| v.to_string()).unwrap_or_default()).to_string())),
             "decodeURIComponent" => { let s = args.first().map(|v| v.to_string()).unwrap_or_default(); let decoded = urlencoding::decode(&s).map(|s| s.to_string()).unwrap_or_default(); Ok(Value::String(decoded)) }
-            _ => { if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) { Ok(Value::VNode(VNode::Component { name: name.clone(), props: args.first().cloned().unwrap_or(Value::Object(HashMap::new())) })) } else { Ok(Value::Undefined) } }
+            _ => { if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) { Ok(Value::VNode(Box::new(VNode::Component { name: name.clone(), props: args.first().cloned().unwrap_or(Value::Object(HashMap::new())) }))) } else { Ok(Value::Undefined) } }
         }
     }
 
@@ -513,7 +513,11 @@ impl Interpreter {
         for attr in &jsx.opening.attrs {
             match attr {
                 JSXAttr::Attr { name, value } => {
-                    let attr_value = value.as_ref().map(|v| match v { JSXAttrValue::String(s) => Value::String(s.clone()), JSXAttrValue::Expr(e) => self.evaluate_expr(e, ctx)? }).unwrap_or(Value::Bool(true));
+                    let attr_value = match value.as_ref() {
+                        Some(JSXAttrValue::String(s)) => Value::String(s.clone()),
+                        Some(JSXAttrValue::Expr(e)) => self.evaluate_expr(e, ctx)?,
+                        None => Value::Bool(true),
+                    };
                     attrs.insert(name.clone(), attr_value);
                 }
                 JSXAttr::Expr { name, expr } => { let value = self.evaluate_expr(expr, ctx)?; if let Some(n) = name { attrs.insert(n.clone(), value); } }
@@ -523,7 +527,7 @@ impl Interpreter {
             }
         }
 
-        let mut children = Vec::new();
+        let mut children: Vec<VNode> = Vec::new();
         for child in &jsx.children {
             match child {
                 JSXChild::Text(s) => children.push(VNode::Text(s.clone())),
@@ -531,23 +535,23 @@ impl Interpreter {
                     let value = self.evaluate_expr(e, ctx)?;
                     match value {
                         Value::String(s) => children.push(VNode::Text(s)),
-                        Value::Array(arr) => for v in arr { if let Value::VNode(vnode) = v { children.push(vnode); } else { children.push(VNode::Text(v.to_string())); } }
-                        Value::VNode(vnode) => children.push(vnode),
+                        Value::Array(arr) => for v in arr { if let Value::VNode(vnode) = v { children.push(*vnode); } else { children.push(VNode::Text(v.to_string())); } }
+                        Value::VNode(vnode) => children.push(*vnode),
                         Value::Undefined | Value::Null => {}
                         _ => children.push(VNode::Text(value.to_string())),
                     }
                 }
-                JSXChild::JSX(inner_jsx) => { if let Value::VNode(vnode) = self.evaluate_jsx(inner_jsx, ctx)? { children.push(vnode); } }
-                JSXChild::Fragment { children: frag_children } => for fc in frag_children { if let JSXChild::JSX(inner_jsx) = fc { if let Value::VNode(vnode) = self.evaluate_jsx(inner_jsx, ctx)? { children.push(vnode); } } }
-                JSXChild::Spread { expr } => { if let Value::Array(arr) = self.evaluate_expr(expr, ctx)? { for v in arr { if let Value::VNode(vnode) = v { children.push(vnode); } } } }
+                JSXChild::JSX(inner_jsx) => { if let Value::VNode(vnode) = self.evaluate_jsx(inner_jsx, ctx)? { children.push(*vnode); } }
+                JSXChild::Fragment { children: frag_children } => for fc in frag_children { if let JSXChild::JSX(inner_jsx) = fc { if let Value::VNode(vnode) = self.evaluate_jsx(inner_jsx, ctx)? { children.push(*vnode); } } }
+                JSXChild::Spread { expr } => { if let Value::Array(arr) = self.evaluate_expr(expr, ctx)? { for v in arr { if let Value::VNode(vnode) = v { children.push(*vnode); } } } }
             }
         }
 
         let is_component = tag.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
         if is_component {
-            Ok(Value::VNode(VNode::Component { name: tag, props: Value::Object(attrs) }))
+            Ok(Value::VNode(Box::new(VNode::Component { name: tag, props: Value::Object(attrs) })))
         } else {
-            Ok(Value::VNode(VNode::Element { tag, attrs, children, key: None }))
+            Ok(Value::VNode(Box::new(VNode::Element { tag, attrs, children, key: None })))
         }
     }
 
