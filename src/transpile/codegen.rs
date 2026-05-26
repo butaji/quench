@@ -8,9 +8,11 @@ use anyhow::{anyhow, Result};
 
 /// Code generator for producing Rust source from HIR
 pub struct CodeGenerator {
-    /// Generated imports to include
+    /// Generated imports to include (for future use)
+    #[allow(dead_code)]
     imports: Vec<String>,
-    /// Current indent level
+    /// Current indent level (for future pretty-printing)
+    #[allow(dead_code)]
     indent: usize,
 }
 

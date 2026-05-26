@@ -16,10 +16,13 @@ pub mod prelude;
 pub use vdom::VNode;
 
 /// Type alias for component props
+#[allow(dead_code)]
 pub type Props = std::collections::HashMap<String, serde_json::Value>;
 
 /// Type alias for component result
+#[allow(dead_code)]
 pub type ComponentResult = VNode;
 
 /// Type alias for event handler (using JsValue for cross-platform compatibility)
+#[allow(dead_code)]
 pub type EventHandler = Box<dyn Fn(vdom::JsValue) + Send + Sync>;

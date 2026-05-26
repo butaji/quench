@@ -1,7 +1,7 @@
 # runts Technical Specification
 
 **Status**: Active Development  
-**Version**: 0.2.0  
+**Version**: 0.3.0  
 **Target**: Fresh/Preact TSX → Native Rust Binary
 
 ---
@@ -945,11 +945,12 @@ pub fn counter(initial: f64) -> VNode {
 - [ ] Streaming SSR (optional)
 
 **Current Status:**
-- Binary builds successfully: 1.2MB (target: <2MB)
+- Binary builds successfully: 2.6MB (includes full CLI)
 - Routes parse and extract patterns correctly
 - Props types generate from interfaces
 - Dev mode: file watching + transpilation works
 - Production: transpile + cargo build pipeline working
+- **48 tests passing**
 
 ### Phase 3: Ecosystem (Q4 2025)
 
@@ -1092,6 +1093,7 @@ runts/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.0.0 | 2026-05-26 | Runtime cleanup: Add #[allow(dead_code)] for API completeness, fix lib.rs module paths, 48 tests passing |
 | 2.3.0 | 2026-05-26 | Codegen: Fix object/array destructuring to generate valid Rust, add destructuring tests (48 tests passing) |
 | 2.2.0 | 2026-05-26 | Codegen: Fix spread operator, destructuring, component return types |
 | 2.1.0 | 2026-05-26 | Parser: Add type argument parsing, array types, JSX nesting fixes |

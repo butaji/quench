@@ -192,6 +192,7 @@ impl AttrValue {
 }
 
 /// Trait for types that can be rendered
+#[allow(dead_code)]
 pub trait Render {
     /// Render to HTML string (for SSR)
     fn render_to_html(&self) -> String;
@@ -379,6 +380,7 @@ impl JsValue {
 }
 
 /// Placeholder for web_sys types in server context
+#[allow(dead_code)]
 pub mod web_sys {
     pub struct Event;
     pub struct MouseEvent;
