@@ -39,7 +39,7 @@ fn main() -> Result<()> {
             info!("Starting development server...");
             let config = config::Config::load_from_path(&path)?;
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(commands::start_dev_server(&config, path))?;
+            rt.block_on(commands::run_dev_server(&config, 8000))?;
         }
 
         cli::Commands::Build { path } => {

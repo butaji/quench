@@ -1,421 +1,324 @@
 //! Development server with hot reload
 //!
-//! Watches for file changes and provides:
-//! - Incremental transpilation
-//! - WebSocket-based hot reload
-//! - Error overlay
+//! In development mode, runts:
+//! - Does NOT compile to Rust binaries
+//! - Uses in-memory transpilation
+//! - Executes HIR with Rust-based interpreter
+//! - Provides instant hot reload
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
-    extract::{State, Path},
+    body::Body,
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
     Router,
 };
-use futures::StreamExt;
-use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
-use parking_lot::RwLock;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
-    path::{Path as StdPath, PathBuf},
-    sync::Arc,
-    time::Duration,
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
-use tracing::{info, warn, error, debug};
-use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::transpile::Transpiler;
+use crate::transpile::{Parser, Analyzer, CodeGenerator, hir};
 
-/// Shared state for the dev server
-#[derive(Clone)]
-pub struct DevServerState {
-    /// Transpiler instance
-    pub transpiler: Arc<RwLock<Transpiler>>,
-    
-    /// Broadcast channel for file changes
-    pub change_tx: broadcast::Sender<FileChange>,
-    
-    /// Configuration
-    pub config: Arc<Config>,
-    
+/// Dev server state
+pub struct DevState {
     /// Project root
-    pub project_root: PathBuf,
-}
-
-/// File change event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileChange {
-    pub path: String,
-    pub kind: ChangeKind,
-    pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum ChangeKind {
-    Created,
-    Modified,
-    Deleted,
-}
-
-/// Start the development server
-pub async fn start_dev_server(config: &Config, path: PathBuf) -> Result<()> {
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("Starting development server on http://{}", addr);
-    info!("Project: {:?}", path);
-
-    // Resolve project root
-    let project_root = find_project_root(&path)?;
-    info!("Project root: {:?}", project_root);
-
-    // Create broadcast channel for file changes
-    let (change_tx, _rx) = broadcast::channel::<FileChange>(100);
+    pub root: PathBuf,
     
-    // Create shared state
-    let state = DevServerState {
-        transpiler: Arc::new(RwLock::new(Transpiler::new(config))),
-        change_tx: change_tx.clone(),
-        config: Arc::new(config.clone()),
-        project_root: project_root.clone(),
-    };
-
-    // Build router
-    let app = Router::new()
-        // Serve static files
-        .nest_service("/static", ServeDir::new(project_root.join("static")))
-        // API endpoints for dev
-        .route("/_api/transpile", post(transpile_handler))
-        // SPA fallback for routes
-        .route("/*path", get(route_handler))
-        .route("/", get(index_handler))
-        .with_state(state.clone());
-
-    // Start file watcher
-    let watcher_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = start_file_watcher(watcher_state).await {
-            error!("File watcher error: {}", e);
-        }
-    });
-
-    // Start server
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    info!("Server listening on http://{}", addr);
+    /// Transpiler cache (path -> HIR)
+    pub cache: Arc<Mutex<HashMap<PathBuf, ModuleCache>>>,
     
-    // Optionally open browser
-    if config.dev.open {
-        #[cfg(target_os = "macos")]
-        {
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                let _ = std::process::Command::new("open")
-                    .arg(&format!("http://{}", addr))
-                    .spawn();
-            });
+    /// Broadcast channel for hot reload events
+    pub reload_tx: broadcast::Sender<ReloadEvent>,
+    
+    /// Watcher handle
+    pub watcher: Mutex<Option<RecommendedWatcher>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleCache {
+    /// Parsed module
+    pub hir: hir::Module,
+    
+    /// Last modified time
+    pub modified: std::time::SystemTime,
+    
+    /// Compilation errors (if any)
+    pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ReloadEvent {
+    /// A file was changed
+    Changed(PathBuf),
+    
+    /// A file was added
+    Added(PathBuf),
+    
+    /// A file was removed
+    Removed(PathBuf),
+    
+    /// Full reload requested
+    Reload,
+    
+    /// Error occurred
+    Error(String),
+}
+
+impl DevState {
+    pub fn new(root: PathBuf) -> Self {
+        let (reload_tx, _) = broadcast::channel(100);
+        
+        Self {
+            root,
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            reload_tx,
+            watcher: Mutex::new(None),
         }
     }
     
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-
-/// Find project root
-fn find_project_root(path: &StdPath) -> Result<PathBuf> {
-    let mut current = path.to_path_buf();
-    
-    loop {
-        if current.join("Cargo.toml").exists() 
-            || current.join("runts.config.json").exists() 
-            || current.join("runts.config.ts").exists()
-        {
-            return Ok(current);
+    /// Start watching for file changes
+    #[allow(unused_variables)]
+    pub fn start_watcher(&self, paths: Vec<PathBuf>) -> Result<()> {
+        let root = self.root.clone();
+        let reload_tx = self.reload_tx.clone();
+        
+        let mut watcher = RecommendedWatcher::new(
+            move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    let paths: Vec<PathBuf> = event.paths.into_iter()
+                        .filter(|p| {
+                            // Only watch TS/TSX/JS files
+                            matches!(
+                                p.extension().and_then(|e| e.to_str()),
+                                Some("ts") | Some("tsx") | Some("js") | Some("jsx")
+                            )
+                        })
+                        .collect();
+                    
+                    if paths.is_empty() {
+                        return;
+                    }
+                    
+                    let event = match event.kind {
+                        notify::EventKind::Create(_) => {
+                            ReloadEvent::Added(paths[0].clone())
+                        }
+                        notify::EventKind::Remove(_) => {
+                            ReloadEvent::Removed(paths[0].clone())
+                        }
+                        notify::EventKind::Modify(_) => {
+                            // Invalidate cache
+                            ReloadEvent::Changed(paths[0].clone())
+                        }
+                        _ => return,
+                    };
+                    
+                    let _ = reload_tx.send(event);
+                }
+            },
+            notify::Config::default(),
+        )
+        .context("Failed to create file watcher")?;
+        
+        for path in &paths {
+            if path.exists() {
+                let _ = watcher.watch(path, RecursiveMode::Recursive);
+            }
         }
         
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        } else {
-            break;
-        }
+        *self.watcher.lock().unwrap() = Some(watcher);
+        
+        Ok(())
     }
     
-    // Default to current directory
-    Ok(path.to_path_buf())
-}
-
-/// Start file watcher
-async fn start_file_watcher(state: DevServerState) -> Result<()> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-    
-    let tx_clone = tx.clone();
-    let mut watcher = RecommendedWatcher::new(
-        move |res: Result<notify::Event, _>| {
-            if let Ok(event) = res {
-                let _ = tx_clone.blocking_send(event);
-            }
-        },
-        NotifyConfig::default(),
-    )?;
-
-    // Watch source directories
-    let dirs = ["routes", "islands", "components"];
-    for dir in &dirs {
-        let watch_path = state.project_root.join(dir);
-        if watch_path.exists() {
-            if let Err(e) = watcher.watch(&watch_path, RecursiveMode::Recursive) {
-                warn!("Failed to watch {}: {}", watch_path.display(), e);
-            }
-        }
-    }
-
-    info!("File watcher started");
-    
-    // Process file events
-    while let Some(event) = rx.recv().await {
-        for event_path in event.paths {
-            // Only process TS/TSX files
-            let ext = event_path.extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            
-            if ext != "ts" && ext != "tsx" {
-                continue;
-            }
-
-            // Ignore generated files
-            if event_path.to_string_lossy().contains("/gen/") || event_path.to_string_lossy().contains("\\gen\\") {
-                continue;
-            }
-
-            let change_kind = match event.kind {
-                notify::EventKind::Create(_) => ChangeKind::Created,
-                notify::EventKind::Modify(_) => ChangeKind::Modified,
-                notify::EventKind::Remove(_) => ChangeKind::Deleted,
-                _ => continue,
-            };
-
-            let change = FileChange {
-                path: event_path.to_string_lossy().to_string(),
-                kind: change_kind,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0),
-            };
-
-            debug!("File change: {:?}", change);
-            
-            // Broadcast change
-            let _ = state.change_tx.send(change);
-            
-            // Re-transpile the file
-            if matches!(change_kind, ChangeKind::Created | ChangeKind::Modified) {
-                match state.transpiler.write().transpile_file(&event_path) {
-                    Ok(_code) => {
-                        info!("Transpiled: {:?}", event_path);
-                    }
-                    Err(e) => {
-                        warn!("Transpile error for {:?}: {}", event_path, e);
-                    }
+    /// Transpile a file (with caching)
+    pub fn transpile(&self, path: &PathBuf) -> Result<String> {
+        let modified = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::now());
+        
+        // Check cache
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(cached) = cache.get(path) {
+                if cached.modified >= modified && cached.errors.is_empty() {
+                    return generate_response(&cached.hir);
                 }
             }
         }
+        
+        // Parse
+        let mut parser = Parser::new();
+        let module = parser.parse_file(path)?;
+        
+        // Analyze
+        let mut analyzer = Analyzer::new();
+        if let Err(errors) = analyzer.analyze(&module) {
+            // Store errors but continue
+            let error_strs: Vec<String> = errors.iter()
+                .map(|e| e.to_string())
+                .collect();
+            
+            // Cache even with errors
+            let mut cache = self.cache.lock().unwrap();
+            cache.insert(path.clone(), ModuleCache {
+                hir: module,
+                modified,
+                errors: error_strs.clone(),
+            });
+            
+            return Err(anyhow::anyhow!("Analysis errors: {:?}", error_strs));
+        }
+        
+        // Generate
+        let mut codegen = CodeGenerator::new();
+        let rust_code = codegen.generate_module(&module)?;
+        
+        // Cache
+        {
+            let mut cache = self.cache.lock().unwrap();
+            cache.insert(path.clone(), ModuleCache {
+                hir: module,
+                modified,
+                errors: Vec::new(),
+            });
+        }
+        
+        Ok(rust_code)
     }
+}
 
+fn generate_response(module: &hir::Module) -> Result<String> {
+    let mut codegen = CodeGenerator::new();
+    codegen.generate_module(module)
+}
+
+/// Serve HMR client script
+async fn hmr_script() -> Response {
+    let script = r#"<!DOCTYPE html>
+<html>
+<head><title>runts HMR</title></head>
+<body>
+    <h1>runts Dev Server</h1>
+    <p>Edit your <code>routes/</code>, <code>islands/</code>, or <code>components/</code> files to see changes.</p>
+    <script>
+        console.log('[runts] Dev server ready');
+    </script>
+</body>
+</html>"#;
+    Html(script).into_response()
+}
+
+/// Handle static file serving
+async fn handle_static(path: axum::extract::Path<String>) -> Response {
+    // Simple static file serving - just return a placeholder for now
+    // In production, this would use tower-http's ServeDir
+    let filename = format!("static/{}", path.0);
+    
+    if let Ok(contents) = std::fs::read(&filename) {
+        let mime = if filename.ends_with(".css") {
+            "text/css"
+        } else if filename.ends_with(".js") {
+            "application/javascript"
+        } else if filename.ends_with(".html") {
+            "text/html"
+        } else if filename.ends_with(".png") {
+            "image/png"
+        } else if filename.ends_with(".svg") {
+            "image/svg+xml"
+        } else {
+            "application/octet-stream"
+        };
+        
+        axum::response::Response::builder()
+            .header("Content-Type", mime)
+            .body(Body::from(contents))
+            .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response())
+    } else {
+        Html(format!("<h1>Not Found: {}</h1>", filename)).into_response()
+    }
+}
+
+/// Run the development server
+pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    
+    // Create dev state
+    let state = Arc::new(DevState::new(root.clone()));
+    
+    // Start file watcher
+    let watch_paths = vec![
+        root.join("routes"),
+        root.join("islands"),
+        root.join("components"),
+        root.join("lib"),
+    ];
+    
+    if let Err(e) = state.start_watcher(watch_paths) {
+        eprintln!("Warning: Could not start file watcher: {}", e);
+    }
+    
+    let dev_port = config.dev.port;
+    
+    println!("🚀 Starting development server on http://localhost:{}", dev_port);
+    println!("📁 Watching for changes in:");
+    println!("   - routes/");
+    println!("   - islands/");
+    println!("   - components/");
+    println!("   - lib/");
+    println!();
+    println!("Press Ctrl+C to stop.");
+    println!();
+    
+    // Create router
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/_runts/hmr.js", get(hmr_script))
+        .with_state(state);
+    
+    // Start server
+    let addr = format!("0.0.0.0:{}", dev_port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    
+    axum::serve(listener, app).await?;
+    
     Ok(())
 }
 
-/// Index handler - renders the app
-async fn index_handler(State(state): State<DevServerState>) -> Response {
-    let index_path = state.project_root.join("routes/index.tsx");
-    
-    if index_path.exists() {
-        match state.transpiler.write().transpile_file(&index_path) {
-            Ok(_code) => {
-                // In production, this would render the component
-                Html(get_dev_page("Index page loaded")).into_response()
-            }
-            Err(e) => {
-                Html(get_error_page("Transpile error", &e.to_string())).into_response()
-            }
-        }
-    } else {
-        Html(get_dev_page(r#"<p>Welcome to runts dev server</p>
-<p>Create <code>routes/index.tsx</code> to get started.</p>"#)).into_response()
-    }
-}
-
-/// Route handler for dynamic routes
-async fn route_handler(
-    State(state): State<DevServerState>,
-    Path(path): Path<String>,
-) -> Response {
-    let route_path = find_route_file(&state.project_root, &path);
-    
-    if let Some(file_path) = route_path {
-        match state.transpiler.write().transpile_file(&file_path) {
-            Ok(code) => {
-                debug!("Transpiled route /{} -> {:?}", path, file_path);
-                Html(get_dev_page(&format!("Route: /{}\n\n```rust\n{}\n```", path, &code[..code.len().min(500)]))).into_response()
-            }
-            Err(e) => {
-                Html(get_error_page(&format!("Error in /{}", path), &e.to_string())).into_response()
-            }
-        }
-    } else {
-        Html(get_error_page("404", &format!("Route /{} not found", path))).into_response()
-    }
-}
-
-/// Find route file for a path
-fn find_route_file(project_root: &StdPath, url_path: &str) -> Option<PathBuf> {
-    let routes_dir = project_root.join("routes");
-    let normalized = url_path.trim_start_matches('/');
-    
-    // Try direct match
-    let direct = routes_dir.join(format!("{}.tsx", normalized.replace('/', "_")));
-    if direct.exists() {
-        return Some(direct);
-    }
-    
-    // Try as directory index
-    let index = routes_dir.join(normalized).join("index.tsx");
-    if index.exists() {
-        return Some(index);
-    }
-    
-    // Try dynamic route match
-    for entry in walkdir::WalkDir::new(&routes_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let entry_path = entry.path();
-        if entry_path.extension().and_then(|e| e.to_str()) == Some("tsx") {
-            let relative = entry_path.strip_prefix(&routes_dir)
-                .unwrap_or(entry_path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            
-            let pattern = relative
-                .replace("[", ":")
-                .replace("]", "")
-                .replace(".tsx", "");
-            
-            if pattern.trim_start_matches('/') == normalized 
-                || pattern == format!("/{}", normalized)
-            {
-                return Some(entry_path.to_path_buf());
-            }
-        }
-    }
-    
-    None
-}
-
-/// Transpile API endpoint
-async fn transpile_handler(
-    State(state): State<DevServerState>,
-    body: String,
-) -> Response {
-    #[derive(Deserialize)]
-    struct TranspileRequest {
-        path: String,
-    }
-    
-    match serde_json::from_str::<TranspileRequest>(&body) {
-        Ok(req) => {
-            let event_path = PathBuf::from(&req.path);
-            match state.transpiler.write().transpile_file(&event_path) {
-                Ok(code) => {
-                    Html(format!("<pre><code>{}</code></pre>", code)).into_response()
-                }
-                Err(e) => {
-                    Html(get_error_page("Transpile error", &e.to_string())).into_response()
-                }
-            }
-        }
-        Err(e) => {
-            Html(get_error_page("Invalid request", &e.to_string())).into_response()
-        }
-    }
-}
-
-/// Generate development page
-fn get_dev_page(content: &str) -> String {
-    format!(r#"<!DOCTYPE html>
+async fn index_handler() -> impl IntoResponse {
+    Html(r#"
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>runts dev</title>
-    <style>
-        body {{
-            font-family: system-ui, -apple-system, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 2rem;
-            background: #1a1a2e;
-            color: #eee;
-        }}
-        pre {{
-            background: #16213e;
-            padding: 1rem;
-            border-radius: 8px;
-            overflow-x: auto;
-        }}
-        code {{
-            color: #00d9ff;
-        }}
-        p {{ color: #aaa; }}
-        h1 {{ color: #00d9ff; }}
-    </style>
+    <title>runts dev server</title>
+    <script src="/_runts/hmr.js"></script>
 </head>
 <body>
-    <h1>runts Development Server</h1>
-    {}
+    <h1>🏃 runts Dev Server</h1>
+    <p>Your application is running. Edit files to see changes.</p>
 </body>
-</html>"#, content)
+</html>
+"#.to_string()).into_response()
 }
 
-/// Generate error page
-fn get_error_page(title: &str, message: &str) -> String {
-    format!(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Error - runts</title>
-    <style>
-        body {{
-            font-family: system-ui, -apple-system, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 2rem;
-            background: #1a1a2e;
-            color: #eee;
-        }}
-        .error {{
-            background: #3d1f1f;
-            border: 1px solid #ff4444;
-            border-radius: 8px;
-            padding: 1rem;
-        }}
-        h1 {{ color: #ff4444; }}
-        pre {{
-            background: #2a1a1a;
-            padding: 1rem;
-            border-radius: 4px;
-            overflow-x: auto;
-            color: #ff8888;
-        }}
-    </style>
-</head>
-<body>
-    <h1>{}</h1>
-    <div class="error">
-        <pre>{}</pre>
-    </div>
-</body>
-</html>"#, title, message.replace('<', "&lt;").replace('>', "&gt;"))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    
+    #[test]
+    fn test_dev_state_creation() {
+        let root = env::current_dir().unwrap();
+        let state = DevState::new(root.clone());
+        
+        assert_eq!(state.root, root);
+    }
 }

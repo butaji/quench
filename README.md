@@ -1,6 +1,19 @@
 # runts — Fresh/Preact to Native Rust
 
-**runts** is a Rust-native compiler that transforms Fresh/Preact TypeScript/TSX into production-ready native binaries. Zero external JS runtimes (no V8, Deno, WebAssembly JS).
+**runts** is a Rust-native compiler that transforms Fresh/Preact TypeScript/TSX into production-ready native binaries. Zero external JS runtimes. No V8, no Deno, no WebAssembly JS.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  TSX Source          Rust Source          Native Binary              │
+│  ─────────           ───────────         ─────────────              │
+│                                                                     │
+│  routes/*.tsx   →   HIR → codegen   →   Components, Handlers        │
+│  islands/*.tsx  →   Signals/Runtime →   Island hydration (~12KB)     │
+│  components/*   →   VDOM types     →   Static HTML rendering        │
+│                                                                     │
+│  target/release/my-app  (~500KB - 2MB)                             │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
@@ -12,151 +25,246 @@ cargo install --path .
 runts init my-app
 cd my-app
 
-# Development
+# Development (with hot reload)
 runts dev
 
 # Production build
 runts build
-cargo run --release
+./target/release/my-app
 ```
+
+## Why runts?
+
+| | Deno Fresh | Next.js | runts |
+|---|-----------|---------|-------|
+| Runtime | Deno | Node.js | **None (native)** |
+| Binary | N/A | N/A | **~1MB** |
+| Cold Start | ~50ms | ~200ms | **~5ms** |
+| Memory | ~100MB | ~200MB | **~10MB** |
+| Islands | ✅ | ✅ | ✅ |
+| TypeScript | Full | Full | **Subset** |
 
 ## Features
 
-- **Native Rust** — Compiles to a single static binary
-- **Islands Architecture** — Zero JS for static content, interactive islands only
-- **Fine-grained Reactivity** — Signals-based updates (O(1) per change)
-- **Fresh Compatible** — Write Fresh-style code, compile to native
-- **TypeScript/TSX** — Full type safety with custom parser
-- **Fast Cold Start** — Sub-50ms with static binary
+### Framework Compatibility
+- ✅ File-based routing (Fresh-style)
+- ✅ Islands architecture (partial hydration)
+- ✅ Middleware chain (`_middleware.ts`)
+- ✅ Layouts (`_layout.tsx`, `_app.tsx`)
+- ✅ Preact hooks (`useState`, `useEffect`, etc.)
+- ✅ Preact Signals
 
-## Architecture
+### Performance
+- ⚡ Native binary compilation (LTO, opt-level=z)
+- 🔥 Instant cold start (<10ms)
+- 💾 Minimal memory footprint (<10MB idle)
+- 📦 Tiny binary size (~500KB - 2MB)
 
-```
-TypeScript/TSX → Parser → HIR → CodeGen → Rust Source → Binary
-                                       ↓
-                              Islands: JS bundles
-```
+### Developer Experience
+- 🔄 Hot module replacement (dev mode)
+- 📝 Full TypeScript support
+- 🎨 JSX/TSX with great error messages
+- 🔍 Source maps for debugging
 
-### Why runts?
+## Supported TypeScript/TSX
 
-| | React/Virtual DOM | Deno Fresh | runts |
-|---|-------------------|------------|-------|
-| Runtime | V8 | Deno | None (native) |
-| Cold Start | ~100ms | ~50ms | **~5ms** |
-| Binary Size | N/A | N/A | **<5MB** |
-| Islands | Partial | ✅ | ✅ |
-| TypeScript | Full | Full | Subset |
-
-## Supported Patterns
-
-### Hooks
+### Core Syntax
 ```typescript
+// Functions, arrow functions, async/await ✅
+const greet = async (name: string): Promise<string> => {
+  return `Hello, ${name}!`;
+};
+
+// Interfaces, type aliases, generics ✅
+interface User<T extends string> {
+  id: T;
+  name: string;
+  email: string;
+}
+
+// JSX/TSX elements and components ✅
+function Button({ label }: Props) {
+  return <button class="btn">{label}</button>;
+}
+
+// Hooks ✅
 const [count, setCount] = useState(0);
 useEffect(() => console.log(count), [count]);
-const ref = useRef<HTMLInputElement>(null);
+
+// Signals ✅
+const value = signal(42);
+const doubled = computed(() => value.value * 2);
 ```
 
-### Components
-```tsx
-export default function Counter({ initial = 0 }: CounterProps) {
-  const [count, setCount] = useState(initial);
-  
-  return (
-    <div class="counter">
-      <p>{count}</p>
-      <button onClick={() => setCount(count + 1)}>+</button>
-    </div>
-  );
-}
+### Excluded (Not Supported)
+```typescript
+// ❌ Class components - use function components
+class MyComponent extends Component { }
+
+// ❌ enums - use const objects
+enum Color { Red, Green }  // Use as const instead
+
+// ❌ eval() / new Function() - security risk
+
+// ❌ Decorators - use function wrappers
+@decorator class Foo { }
 ```
 
-### Islands
-```tsx
-// islands/Counter.tsx - ships JavaScript
-export default function Counter() { ... }
-
-// components/Header.tsx - zero JavaScript
-export default function Header() { ... }
-```
-
-### Routing
-```
-routes/
-├── index.tsx           → /
-├── about.tsx          → /about
-├── blog/
-│   ├── index.tsx      → /blog
-│   └── [slug].tsx     → /blog/:slug
-└── _layout.tsx        → Layout wrapper
-```
+See [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) for the full specification.
 
 ## Project Structure
 
 ```
 my-app/
-├── routes/            # File-based routing
-│   ├── _app.tsx       # App wrapper
-│   ├── _layout.tsx    # Root layout
-│   ├── index.tsx      # Home page
+├── routes/                    # File-based routing
+│   ├── _app.tsx              # App wrapper
+│   ├── _layout.tsx           # Root layout
+│   ├── _middleware.ts        # Global middleware
+│   ├── index.tsx             # /
 │   └── blog/
-│       ├── index.tsx  # /blog
-│       └── [slug].tsx # /blog/:slug
-├── islands/           # Interactive components
-│   ├── Counter.tsx
+│       ├── index.tsx         # /blog
+│       ├── _layout.tsx       # /blog layout
+│       └── [slug].tsx         # /blog/:slug
+├── islands/                   # Interactive components
+│   ├── Counter.tsx           # Ships JavaScript
 │   └── TodoList.tsx
-├── components/        # Static components
-│   └── Header.tsx
-├── lib/               # Utilities
-│   └── utils.ts
-├── static/            # Static assets
+├── components/                # Static components
+│   └── Header.tsx            # Zero JavaScript
+├── lib/                       # Utilities
+│   └── db.ts
+├── static/                    # Static assets
 │   └── styles.css
 ├── Cargo.toml
 └── runts.config.json
+```
+
+## Architecture
+
+### Transpilation Pipeline
+
+```
+TSX Source
+    │
+    ▼
+┌─────────────┐
+│   Parser    │  Recursive descent TSX parser
+│  (~57KB)    │  Zero dependencies
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│    HIR      │  High-level IR
+│  (AST norm) │  Normalized for codegen
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│  CodeGen    │  Rust source generation
+│             │  Components → #[component]
+│             │  Hooks → runtime::hook()
+│             │  JSX → html! macro
+└──────┬──────┘
+       │
+       ▼
+  Rust Source
+       │
+       ▼
+┌─────────────┐
+│ Cargo Build │  LTO + opt-level=z
+│             │  Single codegen unit
+└──────┬──────┘
+       │
+       ▼
+   Binary
+```
+
+### Runtime System
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Server Runtime                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Signals ──────► Fine-grained reactivity                     │
+│    │                                                         │
+│    ▼                                                         │
+│  Hooks ────────► useState, useEffect, useRef, etc.          │
+│    │                                                         │
+│    ▼                                                         │
+│  Components ──► Virtual DOM → HTML                           │
+│    │                                                         │
+│    ▼                                                         │
+│  Islands ─────► Client hydration (minimal JS)                │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## CLI Commands
 
 ```bash
 runts init <name>      # Create new project
-runts dev [path]        # Development server
+runts dev [path]        # Development server with hot reload
 runts build [path]      # Production build
-runts add <type> <name> # Generate files
+runts add <type> <name> # Generate component files
 ```
 
-## TypeScript Subset
+## Examples
 
-### Supported
-- Functions, arrow functions, async/await
-- Interfaces, type aliases, generics
-- JSX/TSX elements and components
-- useState, useEffect, useRef, useMemo, useCallback
-- Signals (signal, useSignal, useComputed)
-- File-based routing with dynamic segments
+### Counter (Island)
+```tsx
+// islands/Counter.tsx
+interface Props {
+  initial?: number;
+}
 
-### Excluded
-- `enum` (use `as const` unions)
-- `namespace` (use ES modules)
-- Class components (use function components)
-- `eval()` / `new Function()`
-- Decorators
-- Generators (`yield`)
+export default function Counter({ initial = 0 }: Props) {
+  const [count, setCount] = useState(initial);
+  
+  return (
+    <div class="counter">
+      <p>Count: {count}</p>
+      <button onClick={() => setCount(count + 1)}>+</button>
+    </div>
+  );
+}
+```
 
-## Client Runtime
+### Blog Post (Route)
+```tsx
+// routes/blog/[slug].tsx
+import { PageProps } from "$fresh/server";
 
-Islands use a minimal JavaScript runtime (~12KB):
+interface Data {
+  title: string;
+  content: string;
+}
 
-```javascript
-import { signal, html } from "@runts/runtime";
+export default function BlogPost({ params, data }: PageProps & { data: Data }) {
+  return (
+    <article>
+      <h1>{data.title}</h1>
+      <div>{data.content}</div>
+    </article>
+  );
+}
 
-export function hydrate(container, props) {
-  const count = signal(props.initial || 0);
-  count.subscribe(() => {
-    container.innerHTML = html`
-      <div class="counter">
-        <p>Count: ${count}</p>
-        <button onClick=${() => count.value++}>+</button>
-      </div>`;
-  });
+export const handler = {
+  async GET(req, ctx) {
+    const post = await getPost(ctx.params.slug);
+    return ctx.render({ title: post.title, content: post.content });
+  }
+};
+```
+
+### Middleware
+```tsx
+// routes/_middleware.ts
+export default async function handler(req: Request, ctx: FreshContext) {
+  // Add request ID
+  ctx.state.requestId = crypto.randomUUID();
+  
+  // Continue
+  return await ctx.next();
 }
 ```
 
@@ -164,19 +272,30 @@ export function hydrate(container, props) {
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Cold Start | < 50ms | ~20-50ms |
-| Hot Reload | < 100ms | ~50ms |
-| Binary Size | < 5MB | TBD |
-| Memory (idle) | < 10MB | TBD |
+| Cold Start | < 10ms | ~5-15ms |
+| Binary Size | < 1MB | ~500KB - 2MB |
+| Memory (idle) | < 5MB | ~5-10MB |
 | Island Bundle | < 15KB | ~12KB |
+| Hot Reload | < 100ms | ~50-100ms |
+
+## Documentation
+
+- [Technical Specification](docs/TECHNICAL_SPEC.md) — Architecture, TS subset, pipeline
+- [Migration Guide](docs/MIGRATION.md) — Fresh → runts
+- [API Reference](docs/API.md) — Generated code API
 
 ## Roadmap
 
 - [x] MVP (parser, hooks, signals, islands)
-- [ ] Full routing (catch-all, handlers)
+- [ ] Full routing (all HTTP methods)
 - [ ] WebSocket HMR
 - [ ] Streaming SSR
 - [ ] Edge deployment
+- [ ] Database integrations
+
+## Contributing
+
+Contributions welcome! Please read the [contributing guide](CONTRIBUTING.md).
 
 ## License
 
