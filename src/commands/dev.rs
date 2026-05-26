@@ -26,7 +26,7 @@ use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 
 use crate::config::Config;
-use crate::runtime::interpreter::{Interpreter, RenderResult};
+use crate::runtime::interpreter::{Interpreter, RenderResult, RequestInfo};
 
 /// Application state shared across requests
 #[derive(Clone)]
@@ -408,7 +408,7 @@ impl AppState {
     }
 
     /// Execute a route and return the rendered HTML
-    pub fn execute_route(&self, path: &str, params: HashMap<String, String>) -> Result<RenderResult> {
+    pub fn execute_route(&self, path: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult> {
         let start = Instant::now();
 
         // Get route info
@@ -426,7 +426,7 @@ impl AppState {
         // Execute the route using interpreter
         let result = {
             let interpreter = self.interpreter.read();
-            interpreter.execute_route(path, "GET", all_params)
+            interpreter.execute_route(path, "GET", all_params, request)
                 .map_err(|e| anyhow::anyhow!("Handler error: {}", e))
         };
 
@@ -518,14 +518,33 @@ impl AppState {
     }
 }
 
+/// Extract request headers from headers map
+fn extract_headers(headers: &http::HeaderMap) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    for (name, value) in headers {
+        if let Ok(v) = value.to_str() {
+            result.insert(name.to_string(), v.to_string());
+        }
+    }
+    result
+}
+
 /// Handle SSR request
 async fn handle_ssr(
     State(state): State<AppState>,
     Path(path): Path<String>,
+    headers: http::HeaderMap,
 ) -> impl IntoResponse {
     let path = if path.is_empty() { "/" } else { &path };
 
-    match state.execute_route(path, HashMap::new()) {
+    // Build request info
+    let request = RequestInfo {
+        method: "GET".to_string(),
+        url: format!("http://localhost{}", path),
+        headers: extract_headers(&headers),
+    };
+
+    match state.execute_route(path, HashMap::new(), request) {
         Ok(result) => {
             let html = state.build_html(path, &result);
             Html(html).into_response()
@@ -559,8 +578,37 @@ async fn handle_ssr(
 async fn handle_api(
     State(state): State<AppState>,
     Path(path): Path<String>,
+    headers: http::HeaderMap,
 ) -> Response {
     let api_path = format!("/api/{}", path);
+
+    // Build request info
+    let request = RequestInfo {
+        method: "GET".to_string(),
+        url: format!("http://localhost{}", api_path),
+        headers: extract_headers(&headers),
+    };
+
+    // Try to execute as a route first
+    if let Ok(result) = state.execute_route(&api_path, HashMap::new(), request) {
+        // Return the rendered content as JSON
+        let response = serde_json::json!({
+            "path": api_path,
+            "html": result.html,
+            "data": result.page_data.to_json(),
+            "islands": result.islands.iter().map(|i| {
+                serde_json::json!({
+                    "name": i.name,
+                    "id": i.id
+                })
+            }).collect::<Vec<_>>()
+        });
+        
+        return Response::builder()
+            .header("Content-Type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response());
+    }
 
     // Simulate API response
     let response = serde_json::json!({

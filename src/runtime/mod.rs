@@ -22,6 +22,7 @@ pub use islands::{IslandRegistry, IslandInstance, HydrationStrategy, IslandManif
 pub mod interpreter;
 
 pub use vdom::VNode;
+pub use interpreter::{RequestInfo, RenderResult, RenderedIsland};
 
 /// Type alias for component props
 #[allow(dead_code)]

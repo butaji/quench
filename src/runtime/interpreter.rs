@@ -4,8 +4,10 @@
 //! This enables instant hot-reload in development mode.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
 
 use crate::transpile::hir::*;
@@ -33,80 +35,68 @@ pub struct Interpreter {
 struct ComponentDef {
     name: String,
     file_path: String,
+    params: Vec<Param>,
+    body: Vec<Stmt>,
 }
 
 /// Handler information
 #[derive(Clone)]
 struct HandlerInfo {
-    /// File path
     file_path: String,
-    /// Handler methods (GET, POST, etc.)
     methods: HashMap<String, HandlerMethod>,
-    /// Default export component name
     component_name: Option<String>,
+    props_type: Option<String>,
 }
 
 /// Single handler method
 #[derive(Clone)]
 struct HandlerMethod {
-    /// Function parameters
     params: Vec<Param>,
-    /// Function body
     body: Vec<Stmt>,
-    /// Is async
     is_async: bool,
 }
 
 /// Layout information
 #[derive(Clone)]
 struct LayoutInfo {
-    /// File path
     file_path: String,
-    /// Layout name (for matching)
     name: String,
-    /// Layout route pattern
     pattern: String,
+    params: Vec<Param>,
+    body: Vec<Stmt>,
 }
 
 /// Middleware information
 #[derive(Clone)]
 struct MiddlewareInfo {
-    /// File path
     file_path: String,
-    /// Function parameters
     params: Vec<Param>,
-    /// Function body
     body: Vec<Stmt>,
-    /// Is async
     is_async: bool,
-    /// Is global (routes/_middleware.ts)
     is_global: bool,
+    pattern: Option<String>,
 }
 
 /// Island information
 #[derive(Clone)]
 struct IslandInfo {
-    /// File path
     file_path: String,
-    /// Island name
     name: String,
-    /// Props type (interface name)
     props_type: Option<String>,
+    props_fields: Vec<ObjectMember>,
+    params: Vec<Param>,
+    body: Vec<Stmt>,
 }
 
 /// Evaluation context for a single render
 #[derive(Debug, Clone)]
 pub struct EvalContext {
-    /// Local variables
-    scope: HashMap<String, Value>,
-    /// Route parameters
-    params: HashMap<String, String>,
-    /// Current URL
-    url: String,
-    /// Rendered islands
-    rendered_islands: Vec<RenderedIsland>,
-    /// Middleware state
-    state: HashMap<String, Value>,
+    pub scope: HashMap<String, Value>,
+    pub params: HashMap<String, String>,
+    pub url: String,
+    pub rendered_islands: Vec<RenderedIsland>,
+    pub state: HashMap<String, Value>,
+    pub request: Option<RequestInfo>,
 }
 
 impl Default for EvalContext {
@@ -117,6 +107,7 @@ impl Default for EvalContext {
             url: String::new(),
             rendered_islands: Vec::new(),
             state: HashMap::new(),
+            request: None,
         }
     }
 }
@@ -128,10 +119,19 @@ pub struct RenderedIsland {
     pub props: HashMap<String, Value>,
     pub html: String,
     pub id: String,
+    pub props_json: String,
+}
+
+/// Request information
+#[derive(Debug, Clone)]
+pub struct RequestInfo {
+    pub method: String,
+    pub headers: HashMap<String, String>,
+    pub url: String,
 }
 
 /// Runtime values
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Undefined,
     Null,
@@ -141,6 +141,22 @@ pub enum Value {
     Array(Vec<Value>),
     Object(HashMap<String, Value>),
     Function(String),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Undefined, Value::Undefined) => true,
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Function(a), Value::Function(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Object(a), Value::Object(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -195,6 +211,25 @@ impl Value {
             _ => None,
         }
     }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Value::Undefined => serde_json::Value::Null,
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::json!(b),
+            Value::Number(n) => serde_json::json!(n),
+            Value::String(s) => serde_json::json!(s),
+            Value::Array(arr) => serde_json::json!(arr.iter().map(|v| v.to_json()).collect::<Vec<_>>()),
+            Value::Object(obj) => {
+                let mut map = serde_json::Map::new();
+                for (k, v) in obj {
+                    map.insert(k.clone(), v.to_json());
+                }
+                serde_json::Value::Object(map)
+            }
+            Value::Function(_) => serde_json::Value::Null,
+        }
+    }
 }
 
 /// Virtual node for rendering
@@ -202,9 +237,8 @@ impl Value {
 pub struct VNode {
     pub tag: String,
     pub attrs: HashMap<String, Value>,
-    pub children: Vec<VNode>,
+    pub children: Vec<String>,
     pub is_component: bool,
-    pub key: Option<String>,
 }
 
 impl VNode {
@@ -214,7 +248,6 @@ impl VNode {
             attrs: HashMap::new(),
             children: Vec::new(),
             is_component,
-            key: None,
         }
     }
 
@@ -225,6 +258,7 @@ impl VNode {
                 Value::Bool(true) => { html.push_str(&format!(" {}", key)); }
                 Value::String(s) if !s.is_empty() => { html.push_str(&format!(" {}=\"{}\"", key, html_escape_attr(s))); }
                 Value::Number(n) => { html.push_str(&format!(" {}=\"{}\"", key, n)); }
+                Value::Bool(false) => {} // Skip false booleans
                 _ => {}
             }
         }
@@ -235,7 +269,7 @@ impl VNode {
         } else {
             html.push('>');
             for child in &self.children { 
-                html.push_str(&child.to_html_string()); 
+                html.push_str(child); 
             }
             html.push_str(&format!("</{}>", self.tag));
         }
@@ -244,7 +278,6 @@ impl VNode {
 }
 
 fn generate_island_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos()).unwrap_or(0);
     format!("island-{:x}", nanos)
@@ -267,33 +300,26 @@ impl Interpreter {
         }
     }
 
-    /// Load a module from source code
     pub fn load_file(&mut self, path: &Path, source: &str) -> Result<(), String> {
         let path_str = path.to_string_lossy().to_string();
         let mut parser = crate::transpile::Parser::new();
         
         let module = parser.parse_source(source).map_err(|e| e.to_string())?;
-        
-        // Classify and register the module
         self.register_module(&path_str, module);
         
         Ok(())
     }
 
-    /// Register a parsed module based on its path
     fn register_module(&mut self, path: &str, module: Module) {
         let path_lower = path.to_lowercase();
         
-        // Determine module type by path
         let is_island = path_lower.contains("/islands/") || path_lower.contains("\\islands\\");
         let is_layout = path_lower.contains("_layout");
         let is_middleware = path_lower.contains("_middleware");
         let is_error_page = path_lower.contains("_404") || path_lower.contains("_500");
         
-        // Store module
         self.modules.write().insert(path.to_string(), module.clone());
         
-        // Register based on type
         if is_error_page {
             self.register_error_page(path, &module);
         } else if is_middleware {
@@ -306,39 +332,54 @@ impl Interpreter {
             self.register_route(path, &module);
         }
         
-        // Always register components
         self.register_components(path, &module);
     }
 
-    /// Register an island component
     fn register_island(&mut self, path: &str, module: &Module) {
         let name = extract_file_name(path, "islands/");
-        let island_info = IslandInfo {
-            file_path: path.to_string(),
-            name: name.clone(),
-            props_type: None,
-        };
+        let mut props_fields = Vec::new();
+        let mut props_type = None;
         
-        // Look for props interface
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Type(t)) = item {
-                if t.name.ends_with("Props") {
-                    let mut info = island_info.clone();
-                    info.props_type = Some(t.name.clone());
-                    self.islands.write().insert(name, info);
-                    return;
+                if t.name.ends_with("Props") || t.name.ends_with("Interface") {
+                    props_type = Some(t.name.clone());
+                    if let Type::Object { members } = &t.type_ {
+                        props_fields = members.clone();
+                    }
                 }
             }
         }
         
-        self.islands.write().insert(name, island_info);
+        for item in &module.items {
+            if let ModuleItem::Export(Export::Default { expr }) = item {
+                if let Expr::Function { decl } = expr {
+                    let island_info = IslandInfo {
+                        file_path: path.to_string(),
+                        name: name.clone(),
+                        props_type,
+                        props_fields,
+                        params: decl.params.clone(),
+                        body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                    };
+                    self.islands.write().insert(name.clone(), island_info);
+                    
+                    let comp_def = ComponentDef {
+                        name: name.clone(),
+                        file_path: path.to_string(),
+                        params: decl.params.clone(),
+                        body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                    };
+                    self.components.write().insert(name, comp_def);
+                    return;
+                }
+            }
+        }
     }
 
-    /// Register an error page
     fn register_error_page(&mut self, path: &str, module: &Module) {
         let code = if path.contains("_404") { 404 } else { 500 };
         
-        // Find the default export component
         for item in &module.items {
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
@@ -347,6 +388,7 @@ impl Interpreter {
                         file_path: path.to_string(),
                         methods: HashMap::new(),
                         component_name: Some(decl.name.clone()),
+                        props_type: None,
                     };
                     self.handlers.write().insert(route_key, handler_info);
                     self.error_pages.write().insert(code as u16, path.to_string());
@@ -356,28 +398,27 @@ impl Interpreter {
         }
     }
 
-    /// Register middleware
     fn register_middleware(&mut self, path: &str, module: &Module) {
         for item in &module.items {
-            // Check for default export function
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
                     let is_global = path.contains("routes/_middleware");
+                    let pattern = extract_layout_pattern(path);
                     let middleware = MiddlewareInfo {
                         file_path: path.to_string(),
                         params: decl.params.clone(),
                         body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
                         is_async: decl.is_async,
                         is_global,
+                        pattern,
                     };
                     self.middleware.write().push(middleware);
                     return;
                 }
             }
             
-            // Check for named handler export
             if let ModuleItem::Export(Export::NamedWithValue { name, value }) = item {
-                if name == "handler" || name.ends_with("Handler") {
+                if name == "handler" {
                     if let Expr::Function { decl } = value {
                         let is_global = path.contains("routes/_middleware");
                         let middleware = MiddlewareInfo {
@@ -386,6 +427,7 @@ impl Interpreter {
                             body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
                             is_async: decl.is_async,
                             is_global,
+                            pattern: None,
                         };
                         self.middleware.write().push(middleware);
                     }
@@ -394,12 +436,10 @@ impl Interpreter {
         }
     }
 
-    /// Register a layout
     fn register_layout(&mut self, path: &str, module: &Module) {
-        let pattern = path_to_layout_pattern(path);
-        let name = extract_file_name(path, "routes/");
+        let pattern = extract_layout_pattern(path).unwrap_or_else(|| "/".to_string());
+        let name = extract_file_name(path, "routes/").trim_end_matches("_layout").to_string();
         
-        // Find the default export function
         for item in &module.items {
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
@@ -407,6 +447,8 @@ impl Interpreter {
                         file_path: path.to_string(),
                         name: decl.name.clone(),
                         pattern: pattern.clone(),
+                        params: decl.params.clone(),
+                        body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
                     };
                     self.layouts.write().insert(pattern, layout_info);
                     return;
@@ -415,17 +457,26 @@ impl Interpreter {
         }
     }
 
-    /// Register a route with handlers
     fn register_route(&mut self, path: &str, module: &Module) {
         let route_key = path_to_route_key(path);
         let mut handler_info = HandlerInfo {
             file_path: path.to_string(),
             methods: HashMap::new(),
             component_name: None,
+            props_type: None,
         };
         
+        let mut props_type = None;
         for item in &module.items {
-            // Check for handler export (export const handler = { GET, POST, ... })
+            if let ModuleItem::Decl(Decl::Type(t)) = item {
+                if t.name.ends_with("Data") || t.name.ends_with("Props") {
+                    props_type = Some(t.name.clone());
+                }
+            }
+        }
+        handler_info.props_type = props_type;
+        
+        for item in &module.items {
             if let ModuleItem::Export(Export::NamedWithValue { name, value }) = item {
                 if name == "handler" {
                     if let Expr::Object { props } = value {
@@ -448,7 +499,6 @@ impl Interpreter {
                 }
             }
             
-            // Check for default export (page component)
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
                     handler_info.component_name = Some(decl.name.clone());
@@ -456,89 +506,81 @@ impl Interpreter {
             }
         }
         
-        if !handler_info.methods.is_empty() || handler_info.component_name.is_some() {
+        if handler_info.methods.is_empty() || handler_info.component_name.is_some() {
             self.handlers.write().insert(route_key, handler_info);
         }
     }
 
-    /// Register components from a module
     fn register_components(&mut self, path: &str, module: &Module) {
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Function(f)) = item {
-                // PascalCase function names are components
                 if f.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                    let comp_def = ComponentDef {
-                        name: f.name.clone(),
-                        file_path: path.to_string(),
-                    };
-                    self.components.write().insert(f.name.clone(), comp_def);
+                    if !self.components.read().contains_key(&f.name) {
+                        let comp_def = ComponentDef {
+                            name: f.name.clone(),
+                            file_path: path.to_string(),
+                            params: f.params.clone(),
+                            body: f.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                        };
+                        self.components.write().insert(f.name.clone(), comp_def);
+                    }
                 }
             }
         }
     }
     
-    /// Get layout chain for a route
     fn get_layout_chain(&self, route_path: &str) -> Vec<LayoutInfo> {
         let mut layouts = Vec::new();
         let layouts_guard = self.layouts.read();
         
-        // Find all matching layouts
-        let mut current_path = route_path;
-        while !current_path.is_empty() {
-            // Find layout for current path
-            for (pattern, layout) in layouts_guard.iter() {
-                if pattern_matches(pattern, current_path) {
+        let segments: Vec<&str> = route_path.split('/').filter(|s| !s.is_empty()).collect();
+        
+        for i in 0..=segments.len() {
+            let pattern = if i == 0 {
+                "/".to_string()
+            } else {
+                format!("/{}", segments[..i].join("/"))
+            };
+            
+            if let Some(layout) = layouts_guard.get(&pattern) {
+                if !layouts.iter().any(|l: &LayoutInfo| l.file_path == layout.file_path) {
                     layouts.push(layout.clone());
                 }
-            }
-            
-            // Move up one directory
-            if let Some(pos) = current_path.rfind('/') {
-                current_path = &current_path[..pos];
-                if current_path.is_empty() {
-                    break;
-                }
-            } else {
-                break;
             }
         }
         
         layouts
     }
     
-    /// Execute middleware chain
-    fn execute_middleware(&self, _request: &Request, _state: &mut MiddlewareState) -> Result<(), String> {
+    fn execute_middleware(&self, request: &RequestInfo, path: &str, state: &mut HashMap<String, Value>) -> Result<Option<String>, String> {
         let middleware_guard = self.middleware.read();
         
         for mw in middleware_guard.iter() {
             if mw.is_global {
-                // Execute global middleware
-                // For now, just simulate state updates
-                // In real implementation, we'd evaluate the middleware body
-                _state.set("middleware_executed", Value::Bool(true));
+                state.insert("_middleware_executed".to_string(), Value::Bool(true));
             }
         }
         
-        Ok(())
+        Ok(None)
     }
     
-    /// Execute a route handler and render the page
-    pub fn execute_route(&self, route_path: &str, method: &str, params: HashMap<String, String>) -> Result<RenderResult, String> {
+    pub fn execute_route(&self, route_path: &str, method: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult, String> {
         let route_key = route_path.to_string();
         
-        // Create middleware state
-        let mut middleware_state = MiddlewareState::new();
+        let mut middleware_state = HashMap::new();
         
-        // Execute middleware chain
-        let dummy_request = Request::new(route_path.to_string());
-        self.execute_middleware(&dummy_request, &mut middleware_state)?;
+        if let Some(response) = self.execute_middleware(&request, &route_key, &mut middleware_state)? {
+            return Ok(RenderResult {
+                html: response,
+                page_data: Value::Object(middleware_state),
+                islands: vec![],
+            });
+        }
         
-        // Get handler info
         let handler = self.handlers.read()
             .get(&route_key)
             .cloned()
             .ok_or_else(|| {
-                // Try to find 404 handler
                 if let Some(not_found) = self.error_pages.read().get(&404) {
                     format!("Route not found, would use 404 handler: {}", not_found)
                 } else {
@@ -546,79 +588,114 @@ impl Interpreter {
                 }
             })?;
         
-        // Create evaluation context
         let mut ctx = EvalContext {
             scope: HashMap::new(),
             params: params.clone(),
-            url: format!("http://localhost{}", route_path),
+            url: request.url.clone(),
             rendered_islands: Vec::new(),
-            state: middleware_state.data.clone(),
+            state: middleware_state.clone(),
+            request: Some(request.clone()),
         };
         
-        // Add route params to scope
         for (k, v) in &ctx.params {
             ctx.scope.insert(k.clone(), Value::String(v.clone()));
         }
         
-        // Check if we have a handler method for this HTTP method
-        let method_upper = method.to_uppercase();
-        if let Some(handler_method) = handler.methods.get(&method_upper) {
-            // Execute handler to get page data
-            // For now, we'll simulate handler execution
-            ctx.scope.insert("_handler_called".to_string(), Value::Bool(true));
+        for (k, v) in &middleware_state {
+            ctx.scope.insert(k.clone(), v.clone());
         }
         
-        // Render the page component
+        let method_upper = method.to_uppercase();
+        let mut page_data: Value = Value::Object(HashMap::new());
+        
+        if let Some(handler_method) = handler.methods.get(&method_upper) {
+            ctx.scope.insert("_handler_called".to_string(), Value::Bool(true));
+            
+            if let Some(data) = self.execute_handler_body(handler_method, &ctx) {
+                page_data = data;
+            }
+        }
+        
         let page_html = if let Some(component_name) = &handler.component_name {
-            self.render_component(component_name, &ctx, &handler.file_path)?
+            self.render_component(component_name, &ctx)?
         } else {
             String::new()
         };
         
-        // Apply layouts
         let layout_chain = self.get_layout_chain(&route_key);
         let full_html = self.apply_layouts(&page_html, &layout_chain, &ctx)?;
         
         Ok(RenderResult {
             html: full_html,
-            page_data: Value::Object(ctx.scope),
+            page_data,
             islands: ctx.rendered_islands,
         })
     }
     
-    /// Render a component by name
-    fn render_component(&self, name: &str, ctx: &EvalContext, _file_path: &str) -> Result<String, String> {
-        // Look up component definition
-        let comp = self.components.read().get(name).cloned();
-        
-        if let Some(comp_def) = comp {
-            // Get the module
-            let module = self.modules.read().get(&comp_def.file_path).cloned();
-            if let Some(module) = module {
-                // Find the component function
-                for item in &module.items {
-                    if let ModuleItem::Decl(Decl::Function(f)) = item {
-                        if &f.name == name {
-                            return self.render_function_component(f, ctx);
+    fn execute_handler_body(&self, handler: &HandlerMethod, ctx: &EvalContext) -> Option<Value> {
+        for stmt in &handler.body {
+            if let Stmt::Return { arg: Some(expr) } = stmt {
+                if let Expr::New { callee, args, .. } = expr {
+                    if let Expr::Ident { name } = callee.as_ref() {
+                        if name == "Response" && !args.is_empty() {
+                            if let Some(first_arg) = args.first() {
+                                return self.expr_to_value(first_arg, ctx).ok();
+                            }
+                        }
+                    }
+                }
+                
+                if let Expr::Call { callee, args, .. } = expr {
+                    if let Expr::Member { object, property, .. } = callee.as_ref() {
+                        if let Expr::Ident { name: obj_name } = object.as_ref() {
+                            if obj_name == "ctx" {
+                                if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                    if prop_name == "render" && !args.is_empty() {
+                                        return self.expr_to_value(&args[0], ctx).ok();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         
-        // Fallback: render a placeholder
+        None
+    }
+    
+    fn render_component(&self, name: &str, ctx: &EvalContext) -> Result<String, String> {
+        let comp = self.components.read().get(name).cloned();
+        
+        if let Some(comp_def) = comp {
+            let module = self.modules.read().get(&comp_def.file_path).cloned();
+            if let Some(module) = module {
+                for item in &module.items {
+                    if let ModuleItem::Decl(Decl::Function(f)) = item {
+                        if &f.name == name {
+                            return self.render_function_component(f, &comp_def, ctx);
+                        }
+                    }
+                    if let ModuleItem::Export(Export::Default { expr }) = item {
+                        if let Expr::Function { decl } = expr {
+                            if &decl.name == name {
+                                return self.render_function_component(decl, &comp_def, ctx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         Ok(format!("<div class=\"component-{}\">Component {}</div>", name.to_lowercase(), name))
     }
     
-    /// Render a function component
-    fn render_function_component(&self, f: &FunctionDecl, ctx: &EvalContext) -> Result<String, String> {
-        // Evaluate the function body to get JSX
+    fn render_function_component(&self, f: &FunctionDecl, comp_def: &ComponentDef, ctx: &EvalContext) -> Result<String, String> {
         let body = match &f.body {
             Some(b) => &b.0,
             None => return Ok(String::new()),
         };
         
-        // Find return statement with JSX
         for stmt in body {
             if let Stmt::Return { arg: Some(expr) } = stmt {
                 return self.evaluate_expr_to_html(expr, ctx);
@@ -628,23 +705,24 @@ impl Interpreter {
         Ok(String::new())
     }
     
-    /// Apply layout chain to content
     fn apply_layouts(&self, content: &str, layouts: &[LayoutInfo], ctx: &EvalContext) -> Result<String, String> {
         let mut result = content.to_string();
         
-        // Apply layouts in order (innermost to outermost)
         for layout in layouts.iter().rev() {
             let module = self.modules.read().get(&layout.file_path).cloned();
             if let Some(module) = module {
-                // Find the layout function
                 for item in &module.items {
                     if let ModuleItem::Decl(Decl::Function(f)) = item {
                         if &f.name == &layout.name {
-                            // Create a context with children
                             let mut layout_ctx = ctx.clone();
                             layout_ctx.scope.insert("children".to_string(), Value::String(result.clone()));
                             
-                            result = self.render_function_component(f, &layout_ctx)?;
+                            result = self.render_function_component(f, &ComponentDef {
+                                name: layout.name.clone(),
+                                file_path: layout.file_path.clone(),
+                                params: layout.params.clone(),
+                                body: layout.body.clone(),
+                            }, &layout_ctx)?;
                             break;
                         }
                     }
@@ -655,7 +733,6 @@ impl Interpreter {
         Ok(result)
     }
     
-    /// Evaluate an expression to HTML string
     fn evaluate_expr_to_html(&self, expr: &Expr, ctx: &EvalContext) -> Result<String, String> {
         match expr {
             Expr::JSX(jsx) => self.jsx_to_html(jsx, ctx),
@@ -674,7 +751,6 @@ impl Interpreter {
                 Ok(result)
             }
             Expr::Ident { name } => {
-                // Look up variable in context
                 if let Some(value) = ctx.scope.get(name) {
                     Ok(value.to_string())
                 } else {
@@ -698,26 +774,124 @@ impl Interpreter {
                 }
             }
             Expr::Call { callee, args, .. } => {
-                // Handle hook calls
                 if let Expr::Ident { name } = callee.as_ref() {
-                    let value = self.call_hook(name, args, ctx)?;
+                    let value = self.call_hook_or_function(name, args, ctx)?;
                     return Ok(value.to_string());
                 }
                 Ok(String::new())
             }
-            _ => Ok(String::new()),
+            Expr::Array { elems } => {
+                let mut html = String::new();
+                for elem in elems {
+                    if let Some(e) = elem {
+                        if let Expr::Spread { arg } = e {
+                            if let Value::Array(items) = self.expr_to_value(arg, ctx)? {
+                                for item in items {
+                                    html.push_str(&item.to_string());
+                                }
+                            }
+                        } else {
+                            html.push_str(&self.evaluate_expr_to_html(e, ctx)?);
+                        }
+                    }
+                }
+                Ok(html)
+            }
+            _ => {
+                if let Ok(value) = self.expr_to_value(expr, ctx) {
+                    Ok(value.to_string())
+                } else {
+                    Ok(String::new())
+                }
+            }
         }
     }
     
-    /// Call a hook and return appropriate value
-    fn call_hook(&self, name: &str, _args: &[Expr], _ctx: &EvalContext) -> Result<Value, String> {
+    fn call_hook_or_function(&self, name: &str, args: &[Expr], ctx: &EvalContext) -> Result<Value, String> {
         match name {
             "useState" => {
-                // Return a mock setState value
-                Ok(Value::Array(vec![Value::Number(0.0), Value::Function("setState".to_string())]))
+                let initial = args.first()
+                    .and_then(|a| self.expr_to_value(a, ctx).ok())
+                    .unwrap_or(Value::Number(0.0));
+                Ok(Value::Array(vec![initial, Value::Function("setState".to_string())]))
             }
-            "useEffect" => {
-                // Effects run on client side
+            "useEffect" => Ok(Value::Undefined),
+            "useRef" => Ok(Value::Object(HashMap::new())),
+            "useMemo" => {
+                let val = args.first()
+                    .and_then(|a| self.expr_to_value(a, ctx).ok())
+                    .unwrap_or(Value::Undefined);
+                Ok(val)
+            }
+            "useCallback" => {
+                let val = args.get(0)
+                    .and_then(|a| self.expr_to_value(a, ctx).ok())
+                    .unwrap_or(Value::Undefined);
+                Ok(val)
+            }
+            "useContext" => Ok(Value::Undefined),
+            "useId" => Ok(Value::String(format!("id-{}", rand_id()))),
+            "useSignal" => {
+                let initial = args.first()
+                    .and_then(|a| self.expr_to_value(a, ctx).ok())
+                    .unwrap_or(Value::Number(0.0));
+                let mut obj = HashMap::new();
+                obj.insert("value".to_string(), initial);
+                obj.insert("_type".to_string(), Value::String("signal".to_string()));
+                Ok(Value::Object(obj))
+            }
+            "useComputed" => {
+                let val = args.first()
+                    .and_then(|a| self.expr_to_value(a, ctx).ok())
+                    .unwrap_or(Value::Undefined);
+                Ok(val)
+            }
+            "useSignalEffect" => Ok(Value::Undefined),
+            "map" => {
+                let method_self = ctx.scope.get("_this").cloned().unwrap_or(Value::Undefined);
+                if let Value::Array(arr) = method_self {
+                    let callback = args.first();
+                    if let Some(Expr::Arrow { params, body, .. }) = callback {
+                        let mut results = Vec::new();
+                        for (i, item) in arr.iter().enumerate() {
+                            let mut item_ctx = ctx.clone();
+                            if let Some(param_name) = params.first().map(|p| p.name.clone()) {
+                                item_ctx.scope.insert(param_name, item.clone());
+                            }
+                            if params.len() > 1 {
+                                item_ctx.scope.insert("index".to_string(), Value::Number(i as f64));
+                            }
+                            if let Stmt::Block(stmts) = body.as_ref() {
+                                for stmt in stmts {
+                                    if let Stmt::Return { arg: Some(ret_expr) } = stmt {
+                                        let html = self.evaluate_expr_to_html(ret_expr, &mut item_ctx)?;
+                                        results.push(html);
+                                    }
+                                }
+                            } else if let Stmt::Return { arg: Some(ret_expr) } = body.as_ref() {
+                                let html = self.evaluate_expr_to_html(ret_expr, &mut item_ctx)?;
+                                results.push(html);
+                            } else if let Stmt::Expr { expr } = body.as_ref() {
+                                let html = self.evaluate_expr_to_html(expr, &mut item_ctx)?;
+                                if !html.is_empty() {
+                                    results.push(html);
+                                }
+                            }
+                        }
+                        return Ok(Value::String(results.join("")));
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            "join" => {
+                let method_self = ctx.scope.get("_this").cloned().unwrap_or(Value::Undefined);
+                if let Value::Array(arr) = method_self {
+                    let separator = args.first()
+                        .and_then(|a| self.expr_to_value(a, ctx).ok())
+                        .unwrap_or(Value::String(String::new()));
+                    let sep_str = if let Value::String(s) = separator { s } else { String::new() };
+                    return Ok(Value::String(arr.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&sep_str)));
+                }
                 Ok(Value::Undefined)
             }
             _ => Ok(Value::String(format!("[{}]", name))),
@@ -745,7 +919,6 @@ impl Interpreter {
                     vnode.attrs.insert(name.clone(), attr_value);
                 }
                 JSXAttr::Spread { expr } => {
-                    // Handle spread attributes
                     if let Value::Object(props) = self.expr_to_value(expr, ctx)? {
                         for (k, v) in props {
                             vnode.attrs.insert(k, v);
@@ -756,50 +929,111 @@ impl Interpreter {
             }
         }
 
+        if is_component {
+            let islands_guard = self.islands.read();
+            if let Some(_island) = islands_guard.get(&tag) {
+                drop(islands_guard);
+                return self.render_island(&tag, &vnode.attrs, &mut ctx.clone());
+            }
+        }
+
         for child in &jsx.children {
             match child {
                 JSXChild::Text(s) => {
                     if !s.trim().is_empty() {
-                        let mut text_vnode = VNode::new("", false);
-                        text_vnode.tag = s.clone();
-                        vnode.children.push(text_vnode);
+                        vnode.children.push(s.clone());
                     }
                 }
                 JSXChild::Expr(e) => {
-                    let val = self.evaluate_expr_to_html(e, ctx)?;
-                    if !val.is_empty() {
-                        let mut expr_vnode = VNode::new("", false);
-                        expr_vnode.tag = val;
-                        vnode.children.push(expr_vnode);
+                    if let Expr::Call { callee, .. } = e {
+                        if let Expr::Member { object, property, .. } = callee.as_ref() {
+                            let obj_val = self.expr_to_value(object, ctx)?;
+                            if let Expr::Ident { name: method_name } = property.as_ref().deref() {
+                                if let Some(method) = obj_val.get_member(method_name) {
+                                    let mut method_ctx = ctx.clone();
+                                    method_ctx.scope.insert("_this".to_string(), obj_val);
+                                    if let Value::String(result) = self.call_hook_or_function("map", &[], &method_ctx)? {
+                                        vnode.children.push(result);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let val = self.evaluate_expr_to_html(e, ctx)?;
+                        if !val.is_empty() {
+                            vnode.children.push(val);
+                        }
                     }
                 }
                 JSXChild::JSX(inner_jsx) => {
                     let child_html = self.jsx_to_html(inner_jsx, ctx)?;
-                    let mut child_vnode = VNode::new("", false);
-                    child_vnode.tag = child_html;
-                    vnode.children.push(child_vnode);
+                    if !child_html.is_empty() {
+                        vnode.children.push(child_html);
+                    }
                 }
                 JSXChild::Fragment { children } => {
                     for child in children {
                         if let JSXChild::Text(s) = child {
                             if !s.trim().is_empty() {
-                                let mut text_vnode = VNode::new("", false);
-                                text_vnode.tag = s.clone();
-                                vnode.children.push(text_vnode);
+                                vnode.children.push(s.clone());
                             }
                         } else if let JSXChild::JSX(inner_jsx) = child {
                             let child_html = self.jsx_to_html(inner_jsx, ctx)?;
-                            let mut child_vnode = VNode::new("", false);
-                            child_vnode.tag = child_html;
-                            vnode.children.push(child_vnode);
+                            if !child_html.is_empty() {
+                                vnode.children.push(child_html);
+                            }
+                        } else if let JSXChild::Expr(e) = child {
+                            let val = self.evaluate_expr_to_html(e, ctx)?;
+                            if !val.is_empty() {
+                                vnode.children.push(val);
+                            }
                         }
                     }
                 }
-                _ => {}
+                JSXChild::Spread { expr } => {
+                    if let Ok(Value::Array(items)) = self.expr_to_value(expr, ctx) {
+                        for item in items {
+                            vnode.children.push(item.to_string());
+                        }
+                    }
+                }
             }
         }
 
         Ok(vnode.to_html_string())
+    }
+    
+    fn render_island(&self, name: &str, attrs: &HashMap<String, Value>, ctx: &mut EvalContext) -> Result<String, String> {
+        let islands_guard = self.islands.read();
+        let island = islands_guard.get(name).cloned()
+            .ok_or_else(|| format!("Island not found: {}", name))?;
+        drop(islands_guard);
+        
+        let island_id = generate_island_id();
+        
+        let mut props_map = serde_json::Map::new();
+        for (k, v) in attrs {
+            props_map.insert(k.clone(), v.to_json());
+        }
+        let props_json = serde_json::to_string(&props_map).unwrap_or_default();
+        
+        let placeholder_html = format!(
+            r#"<div data-island="{}" data-id="{}" data-props='{}'><span class="island-loading">Loading {}...</span></div>"#,
+            name,
+            island_id,
+            props_json,
+            name
+        );
+        
+        ctx.rendered_islands.push(RenderedIsland {
+            name: name.to_string(),
+            props: attrs.clone(),
+            html: placeholder_html.clone(),
+            id: island_id,
+            props_json,
+        });
+        
+        Ok(placeholder_html)
     }
 
     fn expr_to_value(&self, expr: &Expr, ctx: &EvalContext) -> Result<Value, String> {
@@ -810,7 +1044,6 @@ impl Interpreter {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Ident { name } => {
-                // Look up in context
                 if let Some(value) = ctx.scope.get(name) {
                     Ok(value.clone())
                 } else {
@@ -856,9 +1089,10 @@ impl Interpreter {
                 
                 match op {
                     BinaryOp::Add => {
-                        // Check if both are strings for concatenation
                         match (&l, &r) {
                             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
+                            (Value::String(a), _) => Ok(Value::String(format!("{}{}", a, r.to_string()))),
+                            (_, Value::String(b)) => Ok(Value::String(format!("{}{}", l.to_string(), b))),
                             _ => Ok(Value::Number(l.as_number() + r.as_number())),
                         }
                     }
@@ -867,6 +1101,10 @@ impl Interpreter {
                     BinaryOp::Div => Ok(Value::Number(l.as_number() / r.as_number())),
                     BinaryOp::Eq | BinaryOp::EqStrict => Ok(Value::Bool(l == r)),
                     BinaryOp::Ne | BinaryOp::NeStrict => Ok(Value::Bool(l != r)),
+                    BinaryOp::Lt => Ok(Value::Bool(l.as_number() < r.as_number())),
+                    BinaryOp::Le => Ok(Value::Bool(l.as_number() <= r.as_number())),
+                    BinaryOp::Gt => Ok(Value::Bool(l.as_number() > r.as_number())),
+                    BinaryOp::Ge => Ok(Value::Bool(l.as_number() >= r.as_number())),
                     _ => Ok(Value::Undefined),
                 }
             }
@@ -906,52 +1144,77 @@ impl Interpreter {
             }
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident { name } = callee.as_ref() {
-                    return self.call_hook(name, args, ctx);
+                    return self.call_hook_or_function(name, args, ctx);
+                }
+                if let Expr::Member { object, property, .. } = callee.as_ref() {
+                    let obj_val = self.expr_to_value(object, ctx)?;
+                    let mut method_ctx = ctx.clone();
+                    method_ctx.scope.insert("_this".to_string(), obj_val);
+                    
+                    let method_name = if let Expr::Ident { name } = property.as_ref() {
+                        name.clone()
+                    } else {
+                        return Ok(Value::Undefined);
+                    };
+                    
+                    return self.call_hook_or_function(&method_name, args, &method_ctx);
                 }
                 Ok(Value::Undefined)
+            }
+            Expr::Unary { op, arg, .. } => {
+                let arg_val = self.expr_to_value(arg, ctx)?;
+                match op {
+                    UnaryOp::Minus => Ok(Value::Number(-arg_val.as_number())),
+                    UnaryOp::Plus => Ok(Value::Number(arg_val.as_number())),
+                    UnaryOp::Not => Ok(Value::Bool(!arg_val.as_bool())),
+                    _ => Ok(Value::Undefined),
+                }
+            }
+            Expr::Assign { op: _, left, right } => {
+                // Note: Assignment side effects are not stored for SSR
+                // This is a simplification - full JS semantics would require mutation tracking
+                self.expr_to_value(right, ctx)
+            }
+            Expr::Template { parts, exprs } => {
+                let mut result = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if let TemplatePart::String(s) = part {
+                        result.push_str(s);
+                    }
+                    if i < exprs.len() {
+                        let val = self.expr_to_value(&exprs[i], ctx)?;
+                        result.push_str(&val.to_string());
+                    }
+                }
+                Ok(Value::String(result))
+            }
+            Expr::Member { object, property, computed, .. } => {
+                let obj_val = self.expr_to_value(object, ctx)?;
+                let key = if let Expr::Ident { name } = property.as_ref() {
+                    name.clone()
+                } else {
+                    return Ok(Value::Undefined);
+                };
+                if *computed {
+                    Ok(obj_val.get_member(&key).unwrap_or(Value::Undefined))
+                } else {
+                    Ok(obj_val.get_member(&key).unwrap_or(Value::Undefined))
+                }
             }
             _ => Ok(Value::Undefined),
         }
     }
 
-    /// Render the default exported component
-    fn render_default_component(&self, route_key: &str, ctx: &EvalContext) -> Result<String, String> {
-        let module = self.modules.read()
-            .get(route_key)
-            .cloned()
-            .ok_or_else(|| format!("Module not found: {}", route_key))?;
-        
-        // Find default export
-        for item in &module.items {
-            if let ModuleItem::Export(Export::Default { expr }) = item {
-                if let Expr::Function { decl } = expr {
-                    // Evaluate the component to get JSX
-                    let result = self.evaluate_jsx_from_body(&decl.body, ctx)?;
-                    return Ok(result);
-                }
-            }
-        }
-        
-        Ok(String::new())
-    }
-    
-    /// Evaluate JSX from a function body
-    fn evaluate_jsx_from_body(&self, body: &Option<crate::transpile::hir::Block>, ctx: &EvalContext) -> Result<String, String> {
-        let body = match body {
-            Some(b) => b,
-            None => return Ok(String::new()),
-        };
-        
-        // Find return statement with JSX
-        for stmt in &body.0 {
-            if let Stmt::Return { arg } = stmt {
-                if let Some(expr) = arg {
-                    return self.evaluate_expr_to_html(expr, ctx);
-                }
-            }
-        }
-        
-        Ok(String::new())
+    pub fn get_island_manifest(&self) -> serde_json::Value {
+        let islands = self.islands.read();
+        serde_json::json!({
+            "islands": islands.values().map(|i| {
+                serde_json::json!({
+                    "name": i.name,
+                    "props": i.props_fields.iter().map(|m| m.key.clone()).collect::<Vec<_>>()
+                })
+            }).collect::<Vec<_>>()
+        })
     }
 }
 
@@ -959,51 +1222,12 @@ impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
-/// Middleware execution state
-#[derive(Clone, Debug)]
-struct MiddlewareState {
-    data: HashMap<String, Value>,
+fn rand_id() -> String {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos()).unwrap_or(0);
+    format!("{:x}", nanos)
 }
 
-impl MiddlewareState {
-    fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-        }
-    }
-    
-    fn set(&mut self, key: &str, value: Value) {
-        self.data.insert(key.to_string(), value);
-    }
-    
-    fn get(&self, key: &str) -> Option<&Value> {
-        self.data.get(key)
-    }
-}
-
-/// Mock request for middleware
-struct Request {
-    url: String,
-}
-
-impl Request {
-    fn new(url: String) -> Self {
-        Self { url }
-    }
-}
-
-/// Result of rendering a route
-#[derive(Debug)]
-pub struct RenderResult {
-    /// Rendered HTML
-    pub html: String,
-    /// Page data from handler
-    pub page_data: Value,
-    /// Rendered islands
-    pub islands: Vec<RenderedIsland>,
-}
-
-/// Convert file path to route key
 pub fn path_to_route_key(path: &str) -> String {
     let path = path.replace('\\', "/");
     
@@ -1029,8 +1253,7 @@ pub fn path_to_route_key(path: &str) -> String {
     }
 }
 
-/// Convert path to layout pattern
-fn path_to_layout_pattern(path: &str) -> String {
+fn extract_layout_pattern(path: &str) -> Option<String> {
     let path = path.replace('\\', "/");
     
     if let Some(routes_pos) = path.find("/routes/") {
@@ -1041,16 +1264,15 @@ fn path_to_layout_pattern(path: &str) -> String {
             .trim_end_matches("_layout.ts");
         
         if route.is_empty() {
-            "/".to_string()
+            Some("/".to_string())
         } else {
-            format!("/{}", route.trim_end_matches('/'))
+            Some(format!("/{}", route.trim_end_matches('/')))
         }
     } else {
-        "/".to_string()
+        None
     }
 }
 
-/// Extract file name from path after a prefix
 fn extract_file_name(path: &str, prefix: &str) -> String {
     if let Some(pos) = path.find(prefix) {
         let after_prefix = &path[pos + prefix.len()..];
@@ -1064,24 +1286,9 @@ fn extract_file_name(path: &str, prefix: &str) -> String {
     }
 }
 
-/// Check if a pattern matches a path
-fn pattern_matches(pattern: &str, path: &str) -> bool {
-    if pattern == "/" {
-        return path == "/" || path.is_empty();
-    }
-    
-    let pattern = pattern.trim_end_matches('/');
-    let path = path.trim_end_matches('/');
-    
-    // Direct match
-    if pattern == path {
-        return true;
-    }
-    
-    // Pattern is a prefix of path
-    if path.starts_with(pattern) {
-        return true;
-    }
-    
-    false
+#[derive(Debug)]
+pub struct RenderResult {
+    pub html: String,
+    pub page_data: Value,
+    pub islands: Vec<RenderedIsland>,
 }
