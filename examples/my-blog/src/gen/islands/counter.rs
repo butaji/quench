@@ -7,3 +7,28 @@ pub struct CounterProps {
     pub label: String,
 }
 
+pub fn counter(_destructure: counter_props) -> () {
+    let _destructured:  = use_state(initial);
+
+    let _destructured:  = (use_state < (number. > vec![initial]));
+
+    let increment:  = || { let new_value:  = (count + step);
+; set_count(new_value);; set_history(|| { vec![...prev, new_value] }); };
+
+    let decrement:  = || { let new_value:  = (count - step);
+; set_count(new_value);; set_history(|| { vec![...prev, new_value] }); };
+
+    let reset:  = || { set_count(initial);; set_history(vec![initial]); };
+
+    let undo:  = || { if (history.length > 1) { {
+    let new_history:  = vec![...history];
+
+    new_history.pop();
+    set_history(new_history);
+    set_count(new_history.(new_history.length - 1));
+} } };
+
+    return html!(<div class_name: "counter">html!(<h2>label</h2>)html!(<div class_name: "display">html!(<span class_name: "count">count</span>)((count != initial) && html!(<span class_name: "delta">"("if (count > initial) { "+" } else { "" }(count - initial)")"</span>))</div>)html!(<div class_name: "controls">html!(<button on_click: decrement>"-"</button>)html!(<button on_click: undo disabled: (history.length <= 1)>"Undo"</button>)html!(<button on_click: reset>"Reset"</button>)html!(<button on_click: increment>"+"</button>)</div>)html!(<div class_name: "info">html!(<p>"Step:"step"| Initial:"initial</p>)html!(<p>"History length:"history.length</p>)</div>)</div>);
+}
+
+

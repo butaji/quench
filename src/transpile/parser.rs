@@ -281,10 +281,10 @@ impl Parser {
         // Check if it's an export default function
         self.skip_ws_and_comments();
         if self.check_word("function") {
-            // Parse function declaration
+            // Parse function declaration and store the full function expression
             if let Some(func) = self.parse_function()? {
                 return Ok(Some(Export::Default { 
-                    expr: Expr::Ident { name: func.name } 
+                    expr: Expr::Function { decl: func }
                 }));
             }
         }

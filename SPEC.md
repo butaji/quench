@@ -707,20 +707,20 @@ pub enum JSXElement {
 │   components/ → Static components (no client JS)                       │
 │   middleware/ → Middleware chain                                       │
 │                                                                         │
-│   Phase 2: Transpilation (parallel per file)                           │
+│   Phase 2: Transpilation (parallel per file)                            │
 │   ─────────────────────────────────────────────────────────────────    │
 │   For each .tsx file:                                                   │
 │     1. Parse → HIR                                                     │
 │     2. Analyze → Validation                                            │
-│     3. Transform → JSX normalized                                      │
-│     4. Generate → Rust source                                          │
+│     3. Transform → JSX normalized                                       │
+│     4. Generate → Rust source                                           │
 │                                                                         │
 │   Phase 3: Code Generation                                              │
 │   ─────────────────────────────────────────────────────────────────    │
 │   routes.rs    → Axum router (all routes)                              │
-│   islands.rs   → Island registry + serialization                       │
+│   islands.rs   → Island registry + serialization                        │
 │   components.rs→ Static component registry                             │
-│   main.rs      → App entry point                                        │
+│   main.rs      → App entry point                                       │
 │                                                                         │
 │   Phase 4: Rust Compilation                                             │
 │   ─────────────────────────────────────────────────────────────────    │
@@ -888,6 +888,20 @@ pub fn counter(initial: f64) -> VNode {
 
 **Coverage**: ~85% of real Fresh patterns
 
+### Phase 1.5: Parser/Codegen Improvements (Current)
+
+**Known Parser Limitations:**
+- [ ] Destructuring in function parameters: `{ initial }` in props needs special handling
+- [ ] Generic type parameters: `<T>` in function calls confused with comparison operators
+- [ ] Arrow function params parsing: Empty params vector returned incorrectly
+- [ ] Array/object spread operator: `...` not fully implemented
+- [ ] JSX nested children: Generates nested html!() calls incorrectly
+
+**Known Codegen Issues:**
+- [ ] Arrow function body: Block vs expression body not distinguished
+- [ ] Hook call syntax: Generics in hook calls not generated correctly
+- [ ] Variable types: Empty type annotations generated for some variables
+
 ### Phase 2: Production Ready (Q3 2025)
 
 **Required:**
@@ -899,7 +913,7 @@ pub fn counter(initial: f64) -> VNode {
   - [ ] Remaining: class methods, complex conditional types, template literal types
 - [ ] Full type checking pass (soundness, not just structural)
 - [ ] Error spans with source locations
-- [ ] Full route generation → Axum router wiring
+- [x] Full route generation → Axum router wiring
   - [x] Route patterns extraction
   - [ ] All HTTP methods (GET, POST, PUT, DELETE, PATCH)
   - [ ] Route parameters extraction
@@ -1070,5 +1084,69 @@ runts/
 
 ---
 
+## Appendix E: Implementation Notes
+
+### E.1 Parser Architecture
+
+The hand-written recursive descent parser uses these key structures:
+
+```rust
+pub struct Parser {
+    source: String,
+    pos: usize,
+}
+
+impl Parser {
+    // Entry point
+    pub fn parse_module(&mut self) -> Result<Module>
+    
+    // Expression parsing (precedence climbing)
+    fn parse_expr(&mut self, precedence: u8) -> Result<Expr>
+    fn parse_primary(&mut self) -> Result<Expr>
+    fn parse_unary(&mut self) -> Result<Expr>
+    
+    // Statement parsing
+    fn parse_stmt(&mut self) -> Result<Stmt>
+    fn parse_block(&mut self) -> Result<Stmt>
+    
+    // Declaration parsing
+    fn parse_function(&mut self) -> Result<FunctionDecl>
+    fn parse_interface(&mut self) -> Result<InterfaceDecl>
+    
+    // JSX parsing
+    fn parse_jsx_element(&mut self) -> Result<JSXElement>
+    fn parse_jsx_opening(&mut self) -> Result<JSXOpening>
+    fn parse_jsx_attrs(&mut self) -> Result<Vec<JSXAttr>>
+    fn parse_jsx_children(&mut self) -> Result<Vec<JSXChild>>
+}
+```
+
+### E.2 Codegen Strategy
+
+Rust codegen follows these phases:
+
+1. **Type Generation**: Interfaces → Rust structs with Serde derives
+2. **Function Generation**: Components get `#[component]` attribute
+3. **JSX Transformation**: Elements → `html!()` macro calls
+4. **Event Handling**: `onClick` → `on_click` with closure conversion
+5. **Hook Calls**: Translated to runtime function calls
+
+### E.3 Islands Hydration Protocol
+
+```
+Server → Client:
+1. Render island with data-island attribute
+2. Serialize props to JSON
+3. Include hydration script
+
+Client:
+1. Parse data-island attributes
+2. Load island bundle
+3. Call hydrate(id, props)
+4. Attach event listeners
+```
+
+---
+
 *Document Version: 2.0.0*  
-*Last Updated: 2025-05-26*
+*Last Updated: 2026-05-26*

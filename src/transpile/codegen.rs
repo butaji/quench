@@ -10,6 +10,8 @@ use anyhow::{anyhow, Result};
 pub struct CodeGenerator {
     /// Generated imports to include
     imports: Vec<String>,
+    /// Current indent level
+    indent: usize,
 }
 
 impl Default for CodeGenerator {
@@ -25,7 +27,13 @@ impl CodeGenerator {
                 "use runts_lib::runtime::prelude::*;".to_string(),
                 "use serde::{Serialize, Deserialize};".to_string(),
             ],
+            indent: 0,
         }
+    }
+
+    /// Generate indented output
+    fn indent(&self) -> String {
+        "    ".repeat(self.indent)
     }
 
     /// Generate Rust code for a module
@@ -546,7 +554,29 @@ impl CodeGenerator {
                         .unwrap_or(name)
                 }).collect();
                 
-                let body_code = self.stmt_to_rust(body).unwrap_or_default();
+                // Handle block body vs expression body
+                let body_code = match body.as_ref() {
+                    Stmt::Block(stmts) => {
+                        let inner: Vec<String> = stmts.iter()
+                            .map(|s| self.stmt_to_rust(s).unwrap_or_default())
+                            .filter(|s| !s.trim().is_empty())
+                            .collect();
+                        if inner.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            format!("{{ {} }}", inner.join("; "))
+                        }
+                    }
+                    Stmt::Return { arg } => {
+                        if let Some(expr) = arg {
+                            format!("{{ {} }}", self.expr_to_rust(expr))
+                        } else {
+                            "{}".to_string()
+                        }
+                    }
+                    other => self.stmt_to_rust(other).unwrap_or_default(),
+                };
+                
                 format!("|{}| {}", params_code.join(", "), body_code)
             }
             Expr::Function { decl } => {
@@ -667,6 +697,11 @@ impl CodeGenerator {
             JSXChild::Fragment { children } => {
                 let inner: Vec<String> = children.iter().map(|c| self.jsx_child_to_rust(c)).collect();
                 format!("<>{}</>", inner.join(""))
+            }
+            JSXChild::Fragment { children } => {
+                // Fragment children are concatenated directly (JSX fragments don't need <> wrapper in Rust html!)
+                let inner: Vec<String> = children.iter().map(|c| self.jsx_child_to_rust(c)).collect();
+                inner.join(" ")
             }
             JSXChild::Spread { expr } => self.expr_to_rust(expr),
         }
