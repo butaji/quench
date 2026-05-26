@@ -141,6 +141,7 @@ impl DevState {
     }
     
     /// Transpile a file (with caching)
+    #[allow(dead_code)]
     pub fn transpile(&self, path: &PathBuf) -> Result<String> {
         let modified = std::fs::metadata(path)
             .and_then(|m| m.modified())
@@ -197,6 +198,7 @@ impl DevState {
     }
 }
 
+#[allow(dead_code)]
 fn generate_response(module: &hir::Module) -> Result<String> {
     let mut codegen = CodeGenerator::new();
     codegen.generate_module(module)
@@ -219,6 +221,7 @@ async fn hmr_script() -> Response {
 }
 
 /// Handle static file serving
+#[allow(dead_code)]
 async fn handle_static(path: axum::extract::Path<String>) -> Response {
     // Simple static file serving - just return a placeholder for now
     // In production, this would use tower-http's ServeDir

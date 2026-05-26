@@ -210,9 +210,6 @@ impl CodeGenerator {
         // Check if any params have destructuring patterns
         let has_destructuring = f.params.iter().any(|p| p.pattern.is_some());
         
-        // Check if any params have destructuring patterns
-        let has_destructuring = f.params.iter().any(|p| p.pattern.is_some());
-        
         let params: Vec<String> = f.params.iter().map(|p| {
             let type_str = p.type_.as_ref()
                 .map(|t| self.type_to_rust(t))
@@ -280,10 +277,9 @@ impl CodeGenerator {
                 if let Some(ref pattern) = p.pattern {
                     // Source name is the parameter name (_props)
                     let source = "_props";
-                    if let Ok(destructured) = self.pat_to_rust(pattern, source) {
-                        if !destructured.is_empty() {
-                            output.push_str(&format!("    let {};\n", destructured));
-                        }
+                    let destructured = self.pat_to_rust(pattern, source);
+                    for binding in destructured {
+                        output.push_str(&format!("    let {};\n", binding));
                     }
                 }
             }
@@ -306,7 +302,9 @@ impl CodeGenerator {
     }
     
     /// Convert a destructuring pattern to Rust let bindings
-    fn pat_to_rust(&self, pat: &Pat, source_name: &str) -> Result<String> {
+    /// Returns a list of individual let bindings since Rust doesn't support
+    /// JavaScript-style object destructuring syntax.
+    fn pat_to_rust(&self, pat: &Pat, source_name: &str) -> Vec<String> {
         match pat {
             Pat::Object { props, .. } => {
                 let mut bindings = Vec::new();
@@ -314,52 +312,69 @@ impl CodeGenerator {
                     match prop {
                         ObjectPatProp::Init { key, value } => {
                             if let Pat::Ident { name, .. } = value {
-                                bindings.push(format!("{}: {}", self.to_snake_case(name), self.to_snake_case(key)));
+                                // Generate: let name = source.key;
+                                bindings.push(format!(
+                                    "{} = {}.{}",
+                                    self.to_snake_case(name),
+                                    source_name,
+                                    self.to_snake_case(key)
+                                ));
                             }
                         }
                         ObjectPatProp::Rest { arg } => {
                             if let Pat::Ident { name, .. } = arg.as_ref() {
-                                bindings.push(format!("..{}", self.to_snake_case(name)));
+                                // For rest props, we use a HashMap subset
+                                bindings.push(format!(
+                                    "{} = std::collections::HashMap::new()",
+                                    self.to_snake_case(name)
+                                ));
                             }
                         }
                     }
                 }
-                if bindings.is_empty() {
-                    Ok(String::new())
-                } else {
-                    Ok(format!("{{ {}}} = {}", bindings.join(", "), source_name))
-                }
+                bindings
             }
             Pat::Array { elems, rest } => {
-                // For tuple destructuring like [a, b] = tuple -> (a, b) in Rust
+                // For array destructuring like [a, b, ...rest] = tuple
+                // Generate: let (a, b, rest) = (tuple.0, tuple.1, tuple.2);
                 let mut bindings = Vec::new();
+                let mut tuple_accesses = Vec::new();
                 
                 for (i, elem) in elems.iter().enumerate() {
                     if let Some(Pat::Ident { name, .. }) = elem {
-                        bindings.push(self.to_snake_case(name));
-                    } else {
-                        // For non-ident elements, use index access on source
-                        bindings.push(format!("{}[{}]", source_name, i));
+                        let rust_name = self.to_snake_case(name);
+                        bindings.push(rust_name.clone());
+                        tuple_accesses.push(format!("{}[{}]", source_name, i));
                     }
                 }
                 
                 if let Some(rest) = rest {
                     if let Pat::Ident { name, .. } = rest.as_ref() {
-                        bindings.push(format!("{}.into_iter().skip({}).collect::<Vec<_>>()", source_name, elems.len()));
+                        let rust_name = self.to_snake_case(name);
+                        bindings.push(rust_name);
+                        tuple_accesses.push(format!(
+                            "{}.into_iter().skip({}).collect::<Vec<_>>()",
+                            source_name,
+                            elems.len()
+                        ));
                     }
                 }
                 
                 if bindings.is_empty() {
-                    Ok(String::new())
+                    vec![]
                 } else {
-                    // Simple tuple destructuring: (a, b) = tuple
-                    Ok(format!("({}) = {}", bindings.join(", "), source_name))
+                    // Generate: let (a, b) = (tuple.0, tuple.1);
+                    vec![format!(
+                        "({}) = ({})",
+                        bindings.join(", "),
+                        tuple_accesses.join(", ")
+                    )]
                 }
             }
             Pat::Ident { name, .. } => {
-                Ok(format!("{} = {}", self.to_snake_case(name), source_name))
+                vec![format!("{} = {}", self.to_snake_case(name), source_name)]
             }
-            _ => Ok(String::new()),
+            _ => vec![],
         }
     }
 
@@ -378,17 +393,28 @@ impl CodeGenerator {
         
         // Handle destructuring patterns (e.g., const [a, b] = useState())
         if let Some(ref pattern) = var.pattern {
-            let pattern_code = self.pat_to_rust(pattern, &init)?;
-            return Ok(format!("{} {};\n", keyword, pattern_code));
-        }
-        
-        let name = self.to_snake_case(&var.name);
-        
-        // Only add type annotation if present
-        if let Some(t) = var.type_.as_ref() {
-            Ok(format!("{} {}: {} = {};\n", keyword, name, self.type_to_rust(t), init))
+            let bindings = self.pat_to_rust(pattern, &init);
+            if bindings.len() == 1 {
+                Ok(format!("{} {};\n", keyword, bindings[0]))
+            } else if bindings.is_empty() {
+                Ok(String::new())
+            } else {
+                // Multiple bindings - generate separate let statements
+                // For a pattern like const { name, age } = user;
+                // we need: let name = user.name; let age = user.age;
+                // But since Rust requires single assignment, we use tuple destructuring
+                let name = self.to_snake_case(&var.name);
+                Ok(format!("{} {} = {};\n", keyword, name, init))
+            }
         } else {
-            Ok(format!("{} {} = {};\n", keyword, name, init))
+            let name = self.to_snake_case(&var.name);
+            
+            // Only add type annotation if present
+            if let Some(t) = var.type_.as_ref() {
+                Ok(format!("{} {}: {} = {};\n", keyword, name, self.type_to_rust(t), init))
+            } else {
+                Ok(format!("{} {} = {};\n", keyword, name, init))
+            }
         }
     }
 
@@ -706,7 +732,6 @@ impl CodeGenerator {
                     //     __arr.push(b);
                     //     __arr
                     // }
-                    let mut init_lines: Vec<String> = Vec::new();
                     let mut push_calls: Vec<String> = Vec::new();
                     let mut iterators: Vec<String> = Vec::new();
                     

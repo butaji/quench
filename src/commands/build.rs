@@ -43,7 +43,9 @@ pub struct GeneratedFile {
 #[derive(Debug, Clone)]
 pub struct RouteEntry {
     pub pattern: String,
+    #[allow(dead_code)]
     pub path: PathBuf,
+    #[allow(dead_code)]
     pub file: String,
     pub params: Vec<String>,
     pub methods: Vec<HttpMethod>,
@@ -71,7 +73,9 @@ impl Default for HttpMethod {
 #[derive(Debug, Clone)]
 pub struct IslandEntry {
     pub name: String,
+    #[allow(dead_code)]
     pub path: PathBuf,
+    #[allow(dead_code)]
     pub file: String,
     pub props_type: Option<String>,
 }
@@ -829,8 +833,12 @@ pub struct CompilationResult {
 
 /// Full build: transpile + compile
 pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Result<CompilationResult> {
-    // Phase 1: Transpile
-    let build_result = run_build(config, path.clone()).await?;
+    // Phase 1: Transpile (returns manifest info we log for debugging)
+    let _build_result = run_build(config, path.clone()).await?;
+    info!("Generated {} routes, {} islands", 
+        _build_result.routes.len(),
+        _build_result.islands.len()
+    );
     
     // Phase 2: Compile Rust
     let project_root = find_project_root(&path)?;

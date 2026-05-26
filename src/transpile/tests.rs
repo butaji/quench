@@ -443,6 +443,85 @@ mod codegen_tests {
         assert_eq!(cg.to_snake_case("className"), "class_name");
         assert_eq!(cg.to_snake_case("islandsCount"), "islands_count");
     }
+    
+    #[test]
+    fn test_component_with_destructured_props() {
+        let cg = create_codegen();
+        
+        // Test component with destructured props (e.g., { initial, step } = props)
+        let func = FunctionDecl {
+            name: "Counter".to_string(),
+            generics: vec![],
+            params: vec![
+                Param {
+                    name: "_props".to_string(),
+                    type_: Some(Type::Object {
+                        members: vec![
+                            ObjectMember {
+                                key: "initial".to_string(),
+                                type_: Type::Number,
+                                optional: true,
+                                readonly: false,
+                            },
+                            ObjectMember {
+                                key: "step".to_string(),
+                                type_: Type::Number,
+                                optional: true,
+                                readonly: false,
+                            },
+                        ],
+                    }),
+                    default: None,
+                    optional: false,
+                    pattern: Some(Pat::Object {
+                        props: vec![
+                            ObjectPatProp::Init {
+                                key: "initial".to_string(),
+                                value: Pat::Ident {
+                                    name: "initial".to_string(),
+                                    type_: None,
+                                },
+                            },
+                            ObjectPatProp::Init {
+                                key: "step".to_string(),
+                                value: Pat::Ident {
+                                    name: "step".to_string(),
+                                    type_: None,
+                                },
+                            },
+                        ],
+                        rest: None,
+                    }),
+                },
+            ],
+            return_type: None,
+            body: Some(Block(vec![Stmt::Return {
+                arg: Some(Expr::JSX(JSXExpr {
+                    opening: JSXOpening {
+                        name: JSXName::Ident("div".to_string()),
+                        attrs: vec![],
+                        self_closing: false,
+                    },
+                    closing: Some(JSXClosing {
+                        name: JSXName::Ident("div".to_string()),
+                    }),
+                    children: vec![],
+                })),
+            }])),
+            is_async: false,
+            is_generator: false,
+            decorators: vec![],
+        };
+        
+        let result = cg.generate_function(&func, true).unwrap();
+        
+        // Verify the function is marked as a component
+        assert!(result.contains("#[component]"));
+        
+        // Verify destructuring generates proper let bindings
+        assert!(result.contains("let initial = _props.initial"));
+        assert!(result.contains("let step = _props.step"));
+    }
 }
 
 #[cfg(test)]
