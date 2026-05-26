@@ -729,15 +729,17 @@ export default function BlogPost({ data }: PageProps<Data>) {
 
 ## Appendix G: Test Coverage
 
-### Unit Tests (71 passing)
+### Unit Tests (80 passing)
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | Parser | 18 | JSX, types, imports, async |
 | Codegen | 12 | Type mappings, JSX transform |
-| Routegen | 7 | Route patterns, param extraction |
+| Routegen | 9 | Route patterns, param extraction |
 | Integration | 11 | Full pipelines, islands, routes |
-| Commands | 2 | Route table matching |
+| Parallel | 4 | Route pattern extraction, params |
+| Middleware | 2 | Pipeline execution, route matching |
+| Errors | 3 | Levenshtein, suggestions |
 
 ---
 
