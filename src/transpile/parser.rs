@@ -712,7 +712,17 @@ impl Parser {
                 };
                 Ok(Type::Ref { name, generics })
             }
-        }
+        }.map(|base_type| {
+            // Handle array type suffix: number[] -> Array<number>
+            self.skip_ws_and_comments();
+            let mut elem = base_type;
+            while self.check('[') {
+                self.advance();
+                self.expect(']').ok();
+                elem = Type::Array { elem: Box::new(elem) };
+            }
+            elem
+        })
     }
 
     fn parse_object_type_members(&mut self) -> Result<Vec<ObjectMember>> {
@@ -777,6 +787,80 @@ impl Parser {
             self.expect('>')?;
         }
         Ok(params)
+    }
+
+    /// Check if what follows < looks like type arguments.
+    /// This helps distinguish <T> (type args) from < x (comparison).
+    fn looks_like_type_arg(&self) -> bool {
+        let after_lt = &self.source[self.pos..].trim_start();
+        if after_lt.is_empty() {
+            return false;
+        }
+        
+        let first_char = after_lt.chars().next().unwrap();
+        
+        // Type keywords
+        let type_keywords = [
+            "number", "string", "boolean", "void", "null", "undefined", 
+            "any", "never", "unknown", "symbol", "bigint",
+            "interface", "type", "readonly", "keyof", "typeof",
+        ];
+        
+        // Uppercase means type name
+        if first_char.is_uppercase() {
+            return true;
+        }
+        
+        // Type keywords
+        for kw in type_keywords {
+            if after_lt.starts_with(kw) {
+                let after_kw = &after_lt[kw.len()..];
+                if after_kw.is_empty() || !after_kw.chars().next().unwrap().is_alphanumeric() {
+                    return true;
+                }
+            }
+        }
+        
+        // Structural starters
+        if first_char == '{' || first_char == '[' || first_char == '(' {
+            return true;
+        }
+        
+        // Lowercase identifier (generic param like <T>)
+        if first_char.is_lowercase() && first_char.is_alphabetic() {
+            return true;
+        }
+        
+        false
+    }
+
+    /// Parse type arguments for function calls (e.g., useState<T>)
+    fn parse_type_args(&mut self) -> Result<Vec<Type>> {
+        if !self.check('<') {
+            return Ok(Vec::new());
+        }
+        
+        let saved_pos = self.pos;
+        self.advance();
+        
+        if !self.looks_like_type_arg() {
+            self.pos = saved_pos;
+            return Ok(Vec::new());
+        }
+        
+        self.skip_ws_and_comments();
+        
+        let mut args = Vec::new();
+        while !self.check('>') {
+            if self.is_at_end() {
+                break;
+            }
+            args.push(self.parse_type()?);
+            self.skip_ws_and_comments();
+            if self.check(',') { self.advance(); self.skip_ws_and_comments(); }
+        }
+        self.expect('>')?;
+        Ok(args)
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {
@@ -1129,6 +1213,9 @@ impl Parser {
             // Optional chaining: ?.
             let is_optional = self.check_str("?.");
             
+            // Check for type arguments BEFORE arguments (e.g., useState<T>)
+            let type_args = self.parse_type_args()?;
+            
             if self.check('(') {
                 self.advance();
                 let mut args = Vec::new();
@@ -1140,7 +1227,13 @@ impl Parser {
                     if self.check(',') { self.advance(); }
                 }
                 self.expect(')')?;
-                expr = Expr::Call { callee: Box::new(expr), args, type_args: vec![] };
+                expr = Expr::Call { callee: Box::new(expr), args, type_args };
+            } else if !type_args.is_empty() {
+                // Type args without parens - wrap as type assertion
+                expr = Expr::TSAs { expr: Box::new(expr), type_: Type::Ref { 
+                    name: "Type".to_string(), 
+                    generics: type_args 
+                }};
             } else if self.check('.') || is_optional {
                 if is_optional {
                     self.advance_by(2); // Skip ?.

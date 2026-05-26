@@ -10,7 +10,7 @@ pub struct CounterProps {
 pub fn counter(_destructure: counter_props) -> () {
     let _destructured:  = use_state(initial);
 
-    let _destructured:  = (use_state < (number. > vec![initial]));
+    let _destructured:  = use_state(vec![initial]);
 
     let increment:  = || { let new_value:  = (count + step);
 ; set_count(new_value);; set_history(|| { vec![...prev, new_value] }); };
