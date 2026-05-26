@@ -695,7 +695,14 @@ impl CodeGenerator {
         }
     }
 
+    /// Generate JSX element as Rust code (for top-level use)
     pub fn jsx_to_rust(&self, x: &JSXExpr) -> String {
+        let inner = self.jsx_element_inner(x);
+        format!("html!({})", inner)
+    }
+    
+    /// Generate just the inner content of a JSX element (for use as children)
+    fn jsx_element_inner(&self, x: &JSXExpr) -> String {
         let tag_name = match &x.opening.name {
             JSXName::Ident(s) => s.clone(),
             JSXName::Member { object, property } => format!("{}_{}", object, property),
@@ -741,16 +748,13 @@ impl CodeGenerator {
             format!(" {}", attrs.join(" "))
         };
 
+        let children_str = children.join(" ");
+        let rust_tag = self.to_snake_case(&tag_name);
+        
         if x.opening.self_closing {
-            format!("html!(<{}{}/>)", self.to_snake_case(&tag_name), attrs_str)
+            format!("<{}{}/>", rust_tag, attrs_str)
         } else {
-            format!(
-                "html!(<{}{}>{}</{}>)",
-                self.to_snake_case(&tag_name),
-                attrs_str,
-                children.join(""),
-                self.to_snake_case(&tag_name)
-            )
+            format!("<{}{}>{}</{}>", rust_tag, attrs_str, children_str, rust_tag)
         }
     }
 
@@ -765,19 +769,19 @@ impl CodeGenerator {
         match child {
             JSXChild::Text(s) => format!("{:?}", s),
             JSXChild::Expr(e) => self.expr_to_rust(e),
-            JSXChild::JSX(x) => self.jsx_to_rust(x),
-            JSXChild::Fragment { children } => {
-                let inner: Vec<String> = children.iter().map(|c| self.jsx_child_to_rust(c)).collect();
-                format!("<>{}</>", inner.join(""))
+            JSXChild::JSX(x) => {
+                // Use inner content for children (no nested html!())
+                self.jsx_element_inner(x)
             }
             JSXChild::Fragment { children } => {
-                // Fragment children are concatenated directly (JSX fragments don't need <> wrapper in Rust html!)
+                // Fragment children are concatenated directly
                 let inner: Vec<String> = children.iter().map(|c| self.jsx_child_to_rust(c)).collect();
                 inner.join(" ")
             }
             JSXChild::Spread { expr } => self.expr_to_rust(expr),
         }
     }
+
 
     pub fn jsx_attr_to_rust(&self, name: &str) -> String {
         match name {

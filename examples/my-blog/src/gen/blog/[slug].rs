@@ -8,9 +8,8 @@ pub struct Post {
     pub date: String,
 }
 
-pub fn blog_post(_props_0: PageProps<post>) -> () {
-    let let { params: params, data: data} = _props_0;
-    return html!(<article class_name: "blog-post">html!(<header>html!(<h1>data.title</h1>)html!(<p class_name: "meta">"By"data.author"on"data.date</p>)</header>)html!(<div class_name: "content">data.content</div>)html!(<footer>html!(<a href: "/blog">"Back to blog"</a>)</footer>)</article>);
+pub fn blog_post(_destructure: PageProps<post>) -> () {
+    return html!(<article class_name: "blog-post"><header><h1>data.title</h1> <p class_name: "meta">"By" data.author "on" data.date</p></header> <div class_name: "content">data.content</div> <footer><a href: "/blog">"Back to blog"</a></footer></article>);
 }
 
 

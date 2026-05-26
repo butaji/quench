@@ -8,7 +8,7 @@ pub struct CounterProps {
 pub fn counter_simple(props: counter_props) -> () {
     let mut count:  = props.initial;
 
-    return html!(<div class_name: "counter">html!(<h2>"Simple Counter"</h2>)html!(<p>"Count:"count</p>)html!(<p>"Initial:"props.initial</p>)</div>);
+    return html!(<div class_name: "counter"><h2>"Simple Counter"</h2> <p>"Count:" count</p> <p>"Initial:" props.initial</p></div>);
 }
 
 

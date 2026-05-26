@@ -43,7 +43,7 @@ pub fn todo_list(_destructure: todo_list_props) -> () {
 
     let active_count:  = todos.filter(|| { (!t.completed) }).length;
 
-    return html!(<div class_name: "todo-list">html!(<h3>title</h3>)html!(<div class_name: "todo-input-row">html!(<input type: "text" value: new_todo on_input: handle_input_change placeholder: "What needs to be done?"/>)html!(<button on_click: handle_add>"Add"</button>)</div>)html!(<ul class_name: "todo-items">if (todos.length == 0) { html!(<li class_name: "empty">"No todos yet"</li>) } else { todos.map(|| { html!(<li key: todo.id class_name: {todo: todo, completed: completed, completed: ""}>html!(<input type: "checkbox" checked: todo.completed on_change: || { handle_toggle(todo.id) }/>)html!(<span>todo.text</span>)html!(<button on_click: || { handle_delete(todo.id) }>"Delete"</button>)</li>) }) }</ul>)html!(<p class_name: "count">active_count"items left"</p>)</div>);
+    return html!(<div class_name: "todo-list"><h3>title</h3> <div class_name: "todo-input-row"><input type: "text" value: new_todo on_input: handle_input_change placeholder: "What needs to be done?"/> <button on_click: handle_add>"Add"</button></div> <ul class_name: "todo-items">if (todos.length == 0) { html!(<li class_name: "empty">"No todos yet"</li>) } else { todos.map(|| { html!(<li key: todo.id class_name: {todo: todo, completed: completed, completed: ""}><input type: "checkbox" checked: todo.completed on_change: || { handle_toggle(todo.id) }/> <span>todo.text</span> <button on_click: || { handle_delete(todo.id) }>"Delete"</button></li>) }) }</ul> <p class_name: "count">active_count "items left"</p></div>);
 }
 
 

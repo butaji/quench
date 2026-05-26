@@ -15,8 +15,18 @@ pub struct Island {
 pub fn islands() -> Vec<Island> {
     vec![
         Island {
+            name: "Counter",
+            file: "Counter.tsx",
+            props_type: None,
+        },
+        Island {
             name: "CounterSimple",
             file: "CounterSimple.tsx",
+            props_type: None,
+        },
+        Island {
+            name: "TodoList",
+            file: "TodoList.tsx",
             props_type: None,
         },
     ]
