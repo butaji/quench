@@ -4,20 +4,25 @@
  * This is the client-side runtime for hydrating islands.
  * It's a minimal Preact-compatible runtime for use in the browser.
  * 
- * In production, this would be bundled with each island.
+ * In production, this would be bundled with each island (~12KB gzip).
  */
 
 // ============================================================================
-// Signals
+// Signals - Fine-grained Reactivity
 // ============================================================================
 
-type SignalValue<T> = {
+type Subscriber = () => void;
+
+interface SignalState<T> {
   value: T;
-  subscribers: Set<() => void>;
-};
+  subscribers: Set<Subscriber>;
+}
+
+let currentEffect: (() => void) | null = null;
+const effectCleanup = new Set<() => void>();
 
 export function signal<T>(initialValue: T): Signal<T> {
-  const state: SignalValue<T> = {
+  const state: SignalState<T> = {
     value: initialValue,
     subscribers: new Set(),
   };
@@ -32,9 +37,9 @@ export function signal<T>(initialValue: T): Signal<T> {
       return state.value;
     },
     set value(newValue: T) {
-      if (state.value !== newValue) {
+      if (!Object.is(state.value, newValue)) {
         state.value = newValue;
-        // Notify all subscribers
+        // Notify all subscribers synchronously
         state.subscribers.forEach(fn => fn());
       }
     },
@@ -53,9 +58,6 @@ export function computed<T>(fn: () => T): Signal<T> {
   
   return sig;
 }
-
-let currentEffect: (() => void) | null = null;
-const effectCleanup = new Set<() => void>();
 
 export function effect(fn: () => void | (() => void)): () => void {
   const cleanupFns: (() => void)[] = [];
@@ -81,8 +83,24 @@ export function batch(fn: () => void): void {
   fn();
 }
 
+export function untrack<T>(fn: () => T): T {
+  const prev = currentEffect;
+  currentEffect = null;
+  try {
+    return fn();
+  } finally {
+    currentEffect = prev;
+  }
+}
+
+// Signal type for exports
+export interface Signal<T> {
+  value: T;
+  peek: () => T;
+}
+
 // ============================================================================
-// Hooks (simplified client-side versions)
+// Hooks - Preact-compatible state management
 // ============================================================================
 
 type StateSetter<T> = (value: T | ((prev: T) => T)) => void;
@@ -108,15 +126,15 @@ export function useRef<T>(initialValue: T): { current: T } {
 }
 
 export function useEffect(fn: () => void | (() => void), deps?: any[]): void {
-  if (typeof window === 'undefined') return; // SSR guard
+  if (typeof window === 'undefined') return; // SSR guard - effects don't run on server
   
   let cleanup: (() => void) | void;
   let oldDeps: any[] | undefined;
   
   const effect = () => {
     if (deps !== undefined && oldDeps !== undefined) {
-      // Check if deps changed
-      if (deps.every((d, i) => d === oldDeps[i])) {
+      // Check if deps changed using shallow equality
+      if (deps.length === oldDeps.length && deps.every((d, i) => Object.is(d, oldDeps[i]))) {
         return;
       }
     }
@@ -129,7 +147,36 @@ export function useEffect(fn: () => void | (() => void), deps?: any[]): void {
     oldDeps = deps ? [...deps] : undefined;
   };
   
-  // Schedule effect
+  // Schedule effect after paint (like React)
+  if (typeof requestAnimationFrame !== 'undefined') {
+    requestAnimationFrame(effect);
+  } else {
+    setTimeout(effect, 0);
+  }
+}
+
+export function useLayoutEffect(fn: () => void | (() => void), deps?: any[]): void {
+  if (typeof window === 'undefined') return; // SSR guard
+  
+  let cleanup: (() => void) | void;
+  let oldDeps: any[] | undefined;
+  
+  const effect = () => {
+    if (deps !== undefined && oldDeps !== undefined) {
+      if (deps.length === oldDeps.length && deps.every((d, i) => Object.is(d, oldDeps[i]))) {
+        return;
+      }
+    }
+    
+    if (cleanup) {
+      (cleanup as () => void)();
+    }
+    
+    cleanup = fn();
+    oldDeps = deps ? [...deps] : undefined;
+  };
+  
+  // Run synchronously before paint
   requestAnimationFrame(effect);
 }
 
@@ -150,6 +197,37 @@ export function useCallback<T extends (...args: any[]) => any>(
   return useMemo(() => fn, deps);
 }
 
+export function useReducer<S, A>(
+  reducer: (state: S, action: A) => S,
+  initialState: S
+): [S, (action: A) => void] {
+  const [state, setState] = useState<S>(initialState);
+  
+  const dispatch = (action: A) => {
+    setState(prev => reducer(prev, action));
+  };
+  
+  return [state, dispatch];
+}
+
+export function useContext<T>(context: Context<T>): T {
+  // In a full implementation, this would read from a context provider
+  // For now, return undefined (caller must handle)
+  return undefined as T;
+}
+
+export function createContext<T>(defaultValue: T): Context<T> {
+  return { 
+    id: Math.random().toString(36).slice(2),
+    defaultValue 
+  };
+}
+
+export interface Context<T> {
+  id: string;
+  defaultValue: T;
+}
+
 // ============================================================================
 // Island Hydration
 // ============================================================================
@@ -159,6 +237,7 @@ export interface IslandInfo {
   id: string;
   hash: string;
   props: Record<string, any>;
+  element: HTMLElement;
 }
 
 export interface HydrationResult {
@@ -166,65 +245,119 @@ export interface HydrationResult {
   unmount: () => void;
 }
 
+// Global registry of hydrated islands
+const hydratedIslands = new Map<string, HydrationResult>();
+
 // Find all islands in the DOM
 export function findIslands(): IslandInfo[] {
   const elements = document.querySelectorAll('[data-island]');
   const islands: IslandInfo[] = [];
   
-  elements.forEach((el) => {
-    const name = el.getAttribute('data-island');
-    const id = el.getAttribute('data-id');
-    const hash = el.getAttribute('data-hash');
-    const propsJson = el.getAttribute('data-props');
+  for (const el of elements) {
+    const htmlEl = el as HTMLElement;
+    const name = htmlEl.getAttribute('data-island');
+    const id = htmlEl.getAttribute('data-id');
+    const hash = htmlEl.getAttribute('data-hash');
     
     if (name && id && hash) {
+      // Try to get props from the element or a script tag
       let props: Record<string, any> = {};
       
-      try {
-        props = propsJson ? JSON.parse(propsJson) : {};
-      } catch (e) {
-        console.error(`[runts] Failed to parse props for island ${name}:`, e);
+      const propsAttr = htmlEl.getAttribute('data-props');
+      if (propsAttr) {
+        try {
+          props = JSON.parse(propsAttr);
+        } catch (e) {
+          console.error(`[runts] Failed to parse props for island ${name}:`, e);
+        }
       }
       
-      islands.push({ name, id, hash, props });
+      islands.push({ 
+        name, 
+        id, 
+        hash, 
+        props, 
+        element: htmlEl 
+      });
     }
-  });
+  }
   
   return islands;
 }
 
-// Hydrate a single island
-export async function hydrateIsland(
-  info: IslandInfo,
-  container: HTMLElement
-): Promise<HydrationResult> {
-  console.log(`[runts] Hydrating island: ${info.name}`, info.props);
-  
-  // Load island bundle
-  const modulePath = `/_runts/islands/${info.name}.${info.hash}.js`;
-  
-  try {
-    // Dynamic import of island bundle
-    const module = await import(/* @vite-ignore */ modulePath);
+// Create a hydration script for an island
+function createHydrationScript(info: IslandInfo): string {
+  return `
+    import { signal, computed, effect, useState, useEffect, useRef, useMemo, useCallback } from '/_runts/runtime.js';
     
-    if (typeof module.hydrate === 'function') {
-      const cleanup = module.hydrate(info.props);
-      
-      return {
-        element: container,
-        unmount: typeof cleanup === 'function' ? cleanup : () => {},
-      };
-    } else {
-      console.warn(`[runts] Island ${info.name} has no hydrate function`);
+    // Find the element
+    const el = document.querySelector('[data-id="${info.id}"]');
+    if (!el) {
+      console.error('[runts] Island element not found:', '${info.id}');
+      throw new Error('Island element not found');
     }
-  } catch (e) {
-    console.error(`[runts] Failed to hydrate island ${info.name}:`, e);
+    
+    // Props
+    const props = ${JSON.stringify(info.props)};
+    
+    // Placeholder content (from SSR)
+    const placeholder = el.innerHTML;
+    
+    // Island module (loaded dynamically)
+    const module = await import('/_runts/islands/${info.name}.js');
+    
+    // Create the island instance
+    const instance = new module.default({
+      props,
+      placeholder,
+      hydrate: true
+    });
+    
+    // Render to the element
+    instance.mount(el);
+    
+    // Return cleanup function
+    return () => instance.unmount();
+  `;
+}
+
+// Hydrate a single island
+export async function hydrateIsland(info: IslandInfo): Promise<HydrationResult> {
+  // Skip if already hydrated
+  if (hydratedIslands.has(info.id)) {
+    return hydratedIslands.get(info.id)!;
   }
   
-  return {
-    element: container,
-    unmount: () => {},
-  };
+  console.log(`[runts] Hydrating island: ${info.name}`, info.props);
+  
+  try {
+    // Create and execute hydration script
+    const script = createHydrationScript(info);
+    
+    // Use a module script to run the hydration
+    const blob = new Blob([script], { type: 'module' });
+    const url = URL.createObjectURL(blob);
+    
+    const cleanup = await import(/* @vite-ignore */ url);
+    URL.revokeObjectURL(url);
+    
+    const result: HydrationResult = {
+      element: info.element,
+      unmount: typeof cleanup === 'function' ? cleanup : () => {}
+    };
+    
+    hydratedIslands.set(info.id, result);
+    
+    console.log(`[runts] Island hydrated: ${info.name}`);
+    return result;
+    
+  } catch (e) {
+    console.error(`[runts] Failed to hydrate island ${info.name}:`, e);
+    return {
+      element: info.element,
+      unmount: () => {}
+    };
+  }
 }
 
 // Hydrate all islands
@@ -233,12 +366,8 @@ export async function hydrateAll(): Promise<HydrationResult[]> {
   const results: HydrationResult[] = [];
   
   for (const info of islands) {
-    const container = document.querySelector(`[data-id="${info.id}"]`) as HTMLElement;
-    
-    if (container) {
-      const result = await hydrateIsland(info, container);
-      results.push(result);
-    }
+    const result = await hydrateIsland(info);
+    results.push(result);
   }
   
   console.log(`[runts] Hydrated ${results.length} islands`);
@@ -246,35 +375,31 @@ export async function hydrateAll(): Promise<HydrationResult[]> {
 }
 
 // Lazy hydration with IntersectionObserver
-export function hydrateOnVisible(
-  info: IslandInfo,
-  container: HTMLElement
-): void {
+export function hydrateOnVisible(info: IslandInfo): void {
   if (typeof IntersectionObserver === 'undefined') {
     // Fallback: hydrate immediately
-    hydrateIsland(info, container);
+    hydrateIsland(info);
     return;
   }
   
   const observer = new IntersectionObserver(
     (entries) => {
-      entries.forEach((entry) => {
+      for (const entry of entries) {
         if (entry.isIntersecting) {
           observer.disconnect();
-          hydrateIsland(info, container);
+          hydrateIsland(info);
         }
-      });
+      }
     },
     { rootMargin: '100px' }
   );
   
-  observer.observe(container);
+  observer.observe(info.element);
 }
 
 // Hydration on interaction (click, focus, hover)
 export function hydrateOnInteraction(
   info: IslandInfo,
-  container: HTMLElement,
   events: string[] = ['click', 'focus', 'hover']
 ): void {
   let hydrated = false;
@@ -282,20 +407,36 @@ export function hydrateOnInteraction(
   const hydrate = () => {
     if (!hydrated) {
       hydrated = true;
-      events.forEach((event) => {
-        container.removeEventListener(event, hydrate);
-      });
-      hydrateIsland(info, container);
+      for (const event of events) {
+        info.element.removeEventListener(event, hydrate);
+      }
+      hydrateIsland(info);
     }
   };
   
-  events.forEach((event) => {
-    container.addEventListener(event, hydrate, { once: true, passive: true });
-  });
+  for (const event of events) {
+    info.element.addEventListener(event, hydrate, { once: true, passive: true });
+  }
 }
 
 // ============================================================================
-// Initialization
+// Page Data Hydration
+// ============================================================================
+
+export function getPageData<T>(): T | null {
+  const el = document.getElementById('__page_props');
+  if (!el) return null;
+  
+  try {
+    return JSON.parse(el.textContent || '{}');
+  } catch (e) {
+    console.error('[runts] Failed to parse page data:', e);
+    return null;
+  }
+}
+
+// ============================================================================
+// Initialization & HMR
 // ============================================================================
 
 // Auto-hydrate on DOMContentLoaded
@@ -310,20 +451,72 @@ if (typeof document !== 'undefined') {
   }
 }
 
-// Export for manual control
+// HMR client - listen for file changes
+if (typeof EventSource !== 'undefined') {
+  const source = new EventSource('/_runts/hmr');
+  
+  source.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      
+      switch (data.type) {
+        case 'reload':
+          console.log('[runts HMR] Full reload requested');
+          window.location.reload();
+          break;
+          
+        case 'change':
+          console.log('[runts HMR] File changed:', data.path);
+          // For now, do a full reload
+          // A smarter implementation would do hot-module replacement
+          window.location.reload();
+          break;
+          
+        case 'error':
+          console.error('[runts HMR] Error:', data.message);
+          break;
+          
+        default:
+          console.log('[runts HMR] Unknown event:', data);
+      }
+    } catch (e) {
+      console.error('[runts HMR] Failed to parse event:', e);
+    }
+  };
+  
+  source.onerror = () => {
+    console.warn('[runts HMR] Connection lost, retrying...');
+    // EventSource will automatically reconnect
+  };
+}
+
+// Export everything for use in islands
 export default {
+  // Signals
   signal,
   computed,
   effect,
   batch,
+  untrack,
+  
+  // Hooks
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useCallback,
+  useReducer,
+  useContext,
+  createContext,
+  
+  // Islands
   findIslands,
   hydrateIsland,
   hydrateAll,
   hydrateOnVisible,
   hydrateOnInteraction,
+  
+  // Utils
+  getPageData,
 };

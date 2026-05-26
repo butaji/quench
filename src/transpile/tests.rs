@@ -651,6 +651,8 @@ mod analyzer_tests {
 mod integration_tests {
     use super::parser::Parser;
     use super::hir::*;
+    use super::codegen::CodeGenerator;
+    use super::analyzer::Analyzer;
     
     #[test]
     fn test_full_transpile_simple_component() {
@@ -751,5 +753,148 @@ export default function Post() {
             matches!(item, ModuleItem::Export(Export::Default { .. }))
         });
         assert!(has_default_export, "Should have default export");
+    }
+    
+    #[test]
+    fn test_full_pipeline_transpile_island_to_rust() {
+        let source = r#"
+interface Props {
+    initial?: number;
+}
+
+export default function Counter({ initial = 0 }: Props) {
+    const [count, setCount] = useState(initial);
+    return <div>Count: {count}</div>;
+}
+"#;
+        
+        // Parse
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).expect("parse failed");
+        
+        // Analyze
+        let mut analyzer = Analyzer::new();
+        let result = analyzer.analyze(&module);
+        assert!(result.is_ok(), "Analysis should succeed");
+        
+        // Generate
+        let mut codegen = CodeGenerator::new();
+        let rust_code = codegen.generate_module(&module).expect("codegen failed");
+        
+        // Verify Rust code structure
+        assert!(rust_code.contains("#[component]"), "Should have component attribute");
+        assert!(rust_code.contains("pub fn counter"), "Should have counter function");
+        assert!(rust_code.contains("use_state"), "Should use use_state hook");
+        assert!(rust_code.contains("html!"), "Should have html! macro");
+    }
+    
+    #[test]
+    fn test_full_pipeline_blog_route() {
+        let source = r#"
+import { PageProps } from "$fresh/server.ts";
+import Counter from "../islands/Counter.tsx";
+
+interface PostData {
+    title: string;
+    content: string;
+}
+
+export const handler = {
+    async GET(_req: Request, ctx: HandlerContext) {
+        return ctx.render({
+            title: "Hello World",
+            content: "Welcome to my blog"
+        });
+    }
+};
+
+export default function BlogPost({ data }: PageProps<PostData>) {
+    return (
+        <main>
+            <h1>{data.title}</h1>
+            <p>{data.content}</p>
+            <Counter initial={42} />
+        </main>
+    );
+}
+"#;
+        
+        // Parse
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).expect("parse failed");
+        
+        // Verify structure
+        let has_import = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Import(_))
+        });
+        assert!(has_import, "Should have imports");
+        
+        let has_handler = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Named { name }) if name == "handler")
+        });
+        assert!(has_handler, "Should have handler export");
+        
+        let has_default = module.items.iter().any(|item| {
+            matches!(item, ModuleItem::Export(Export::Default { .. }))
+        });
+        assert!(has_default, "Should have default export");
+    }
+    
+    #[test]
+    fn test_full_pipeline_todo_list() {
+        // Simplified version that parser can handle
+        let source = r#"
+import { useState } from "preact/hooks";
+
+interface Props {
+    items: number[];
+}
+
+export default function TodoList({ items }: Props) {
+    const [todos, setTodos] = useState(items);
+    return <div class="todo-list">Count: {todos.length}</div>;
+}
+"#;
+        
+        // Parse and generate
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).expect("parse failed");
+        
+        let mut analyzer = Analyzer::new();
+        let result = analyzer.analyze(&module);
+        assert!(result.is_ok(), "Analysis should succeed");
+        
+        let mut codegen = CodeGenerator::new();
+        let rust_code = codegen.generate_module(&module).expect("codegen failed");
+        
+        // Verify output
+        assert!(rust_code.contains("#[component]"), "Should have component attribute");
+        assert!(rust_code.contains("use_state"), "Should use hooks");
+    }
+    
+    #[test]
+    fn test_full_pipeline_signals_usage() {
+        // Use @preact/signals which is recognized by the analyzer
+        let source = r#"
+import { signal, computed } from "@preact/signals";
+
+const count = signal(0);
+const doubled = computed(() => count.value * 2);
+
+export default function Counter() {
+    return <div>Count: {count}</div>;
+}
+"#;
+        
+        let mut parser = Parser::new();
+        let module = parser.parse_source(source).expect("parse failed");
+        
+        let mut analyzer = Analyzer::new();
+        let result = analyzer.analyze(&module);
+        assert!(result.is_ok(), "Analysis should succeed");
+        
+        // Verify signal usage is detected
+        assert!(analyzer.signals.contains("signal"), "Should detect signal");
+        assert!(analyzer.signals.contains("computed"), "Should detect computed");
     }
 }
