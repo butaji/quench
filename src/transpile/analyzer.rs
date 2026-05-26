@@ -456,7 +456,7 @@ impl Analyzer {
             Expr::Template { parts, exprs } => {
                 for part in parts {
                     if let TemplatePart::Type(t) = part {
-                        drop(t); // Don't recurse into types
+                        let _ = t; // Don't recurse into types
                     }
                 }
                 for e in exprs {
