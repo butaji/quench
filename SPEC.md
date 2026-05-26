@@ -898,11 +898,17 @@ pub fn counter(initial: f64) -> VNode {
 - [x] Array type syntax: `number[]` now parsed correctly - handled as postfix array type
 - [x] Generic type arguments in hooks: `useState<number[]>(initial)` now parses correctly
 - [x] JSX nested children: Fixed nested html!() calls - now uses jsx_element_inner() for proper nesting
+- [x] Destructuring assignment: `const [a, b] = useState()` now generates correct Rust tuple destructuring
+- [x] Spread operator: `[...prev, newValue]` in arrays now generates proper Rust array building
+- [x] Arrow function body: Block statements properly handled with semicolon management
+- [x] Component return type: Default exports now correctly return `VNode` instead of `()`
+- [x] Property access: JavaScript `.length` correctly maps to Rust `.len()`
+- [x] Arrow function closures: Properly generate without empty type annotations
 
 **Known Codegen Issues (Remaining):**
-- [ ] Destructuring assignment: `const [a, b] = useState()` not generating correct Rust destructuring
-- [ ] Spread operator: `...prev` in arrays not generating correct Rust spread
-- [ ] Arrow function body: Block vs expression body not always distinguished correctly
+- [ ] Type name mapping: `Array<T>` generates `array<T>` instead of `Vec<T>`
+- [ ] Arrow function in array methods: `.map((x) => ...)` needs special handling
+- [ ] Object property access in JSX: `post.slug` as key attribute needs quoting
 
 ### Phase 2: Production Ready (Q3 2025)
 
@@ -1081,6 +1087,7 @@ runts/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.2.0 | 2026-05-26 | Codegen: Fix spread operator, destructuring, component return types |
 | 2.1.0 | 2026-05-26 | Parser: Add type argument parsing, array types, JSX nesting fixes |
 | 2.0.0 | 2025-05-26 | Complete rewrite with detailed spec |
 | 1.0.0 | 2025-05-25 | Initial implementation |
