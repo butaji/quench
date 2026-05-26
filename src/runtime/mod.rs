@@ -21,8 +21,12 @@ pub use islands::{IslandRegistry, IslandInstance, HydrationStrategy, IslandManif
 // HIR Interpreter for development mode
 pub mod interpreter;
 
+// Middleware runtime for development mode
+pub mod middleware;
+
 pub use vdom::VNode;
 pub use interpreter::{RequestInfo, RenderResult, RenderedIsland};
+pub use middleware::{MiddlewareExecutor, MiddlewareOutcome, MiddlewareDef};
 
 /// Type alias for component props
 #[allow(dead_code)]

@@ -1,308 +1,184 @@
-# runts Implementation Plan
-
-**Status**: Active Development  
-**Priority**: Fresh Compatibility First, Then Performance  
-**Goal**: 95% Fresh Pattern Coverage
-
----
+# Runts Implementation Plan - Final Phase
 
 ## Executive Summary
 
-This plan addresses the critical gaps in the runts implementation to achieve Full Fresh compatibility:
+**Goal**: Complete MVP and achieve full Fresh/Preact compatibility for production deployment.
 
-1. **Dev Server SSR** - Currently returns placeholder, needs actual component rendering
-2. **Island Hydration** - No client-side JS generation for interactive components
-3. **Route/Handler Wiring** - Handlers don't connect to page components
-4. **Layout System** - Layouts detected but not rendered
-5. **Middleware Pipeline** - Middleware not wired into Axum
-
----
-
-## Phase 1: Complete Dev Server SSR (Critical)
-
-### Problem
-The dev server currently returns a placeholder HTML page instead of actually rendering components.
-
-### Solution
-Create a proper SSR pipeline:
-1. Parse routes at startup
-2. Match incoming requests to routes
-3. Execute handler (if present) to get data
-4. Render component with data
-5. Wrap with layouts
-6. Inject island placeholders
-7. Return HTML
-
-### Implementation
-
-```
-src/
-├── dev/
-│   ├── mod.rs              # Dev module
-│   ├── ssr.rs              # SSR renderer
-│   ├── routes.rs           # Route matching
-│   ├── layouts.rs          # Layout composition
-│   └── islands.rs          # Island placeholder injection
-```
-
-### Files to Create/Modify
-
-1. **Create** `src/dev/mod.rs` - Dev SSR orchestrator
-2. **Create** `src/dev/ssr.rs` - Server-side rendering
-3. **Create** `src/dev/routes.rs` - Route matching and dispatch
-4. **Create** `src/dev/layouts.rs` - Layout composition
-5. **Modify** `src/commands/dev.rs` - Wire up SSR pipeline
-
-### Acceptance Criteria
-- [ ] `runts dev` renders actual route components
-- [ ] Route handlers execute and pass data to components
-- [ ] Layouts wrap page content correctly
-- [ ] Islands render as static HTML with placeholder attributes
-- [ ] HMR updates rendered output on file changes
+**Current Status**: ~90% complete. Core infrastructure is solid. Remaining work focuses on:
+1. Full middleware runtime execution
+2. Parallel transpilation
+3. Error handling polish
 
 ---
 
-## Phase 2: Island Hydration (Critical)
+## Phase 1: Middleware Runtime (P0 - Critical)
 
-### Problem
-Islands are rendered on server but never hydrated on client.
-
-### Solution
-Generate client-side TypeScript bundles for each island:
-1. Parse island TSX files
-2. Generate client-compatible TypeScript
-3. Include Preact runtime hooks (simplified)
-4. Ship bundled JS to client
-5. Browser hydrates islands from SSR placeholders
+### Current State
+- Middleware extraction: ✅ Complete
+- Code generation: ✅ Complete
+- **Dev mode execution**: ⚠️ Partial (basic body execution, missing full pipeline)
 
 ### Implementation
 
-```
-src/
-├── client/
-│   ├── runtime.ts          # Client-side runtime
-│   ├── hydrate.ts          # Island hydration
-│   ├── signals.ts          # Client-side signals
-│   └── hooks.ts            # Client-side hooks
-```
+```rust
+// src/runtime/middleware.rs - NEW FILE
+// Full middleware pipeline execution for dev mode
 
-### Island Manifest
-
-```json
-{
-  "islands": {
-    "Counter": {
-      "hash": "a1b2c3d4",
-      "props": ["initial", "step", "label"],
-      "module": "/_runts/islands/Counter.a1b2c3d4.js"
-    }
-  }
+pub fn execute_middleware_chain(
+    &self,
+    middleware: &[MiddlewareInfo],
+    request: &Request,
+    ctx: &mut EvalContext,
+) -> MiddlewareResult {
+    // 1. Collect matching middleware
+    // 2. Execute in order
+    // 3. Handle early returns
+    // 4. Pass state through chain
 }
 ```
 
-### Files to Create
-
-1. **Create** `crates/runts-client/src/runtime.ts` - Client runtime
-2. **Create** `crates/runts-client/src/hydrate.ts` - Island hydration
-3. **Create** `crates/runts-client/src/signals.ts` - Client signals
-4. **Create** `crates/runts-client/src/hooks.ts` - Client hooks
-5. **Create** `crates/runts-client/src/bundler.ts` - Island bundler
-6. **Modify** `src/dev/ssr.rs` - Inject hydration scripts
-
-### Acceptance Criteria
-- [ ] Islands hydrate correctly on client
-- [ ] Event handlers attach to DOM elements
-- [ ] State persists across hydration
-- [ ] Islands work in isolation
+### Tasks
+- [ ] Create `src/runtime/middleware.rs`
+- [ ] Implement `execute_middleware_chain()` with full pipeline
+- [ ] Handle `ctx.next()` correctly (calls next middleware)
+- [ ] Handle `return ctx.next()` in handlers
+- [ ] Pass `ctx.state` through middleware → handler → render
+- [ ] Unit tests for middleware chaining
 
 ---
 
-## Phase 3: Route/Handler Wiring (High Priority)
+## Phase 2: Parallel Transpilation (P1 - Performance)
 
-### Problem
-Route handlers generate skeleton code but don't actually execute.
+### Current State
+- Sequential file processing in `build.rs`
 
-### Solution
-Implement proper handler execution:
-1. Extract handler from route file
-2. Execute handler function (compiled to Rust)
-3. Pass response data to component render
-4. Handle errors gracefully
+### Implementation
 
-### Files to Modify
+```rust
+// Use rayon for parallel processing
+use rayon::prelude::*;
 
-1. **Modify** `src/transpile/routegen.rs` - Generate proper Axum handlers
-2. **Modify** `src/transpile/codegen.rs` - Generate component wrappers
-3. **Create** `src/runtime/handler.rs` - Handler execution runtime
-
-### Acceptance Criteria
-- [ ] GET handlers execute and return data
-- [ ] POST/PUT/DELETE handlers work
-- [ ] `ctx.params` contains route parameters
-- [ ] `ctx.render()` passes data to component
-- [ ] 404/500 errors handled correctly
-
----
-
-## Phase 4: Layout System (High Priority)
-
-### Problem
-`_layout.tsx` files are detected but not rendered.
-
-### Solution
-Implement layout composition:
-1. Detect layout hierarchy from file paths
-2. Render layouts from outermost to innermost
-3. Pass children to layout components
-4. Support `_app.tsx` as global wrapper
-
-### Files to Create/Modify
-
-1. **Create** `src/dev/layouts.rs` - Layout composition
-2. **Modify** `src/transpile/routegen.rs` - Generate layout wrappers
-
-### Acceptance Criteria
-- [ ] `/blog` uses `routes/blog/_layout.tsx`
-- [ ] `/blog/[slug]` uses both blog layout and root layout
-- [ ] Layouts receive `children` prop
-- [ ] `_app.tsx` wraps entire app
-
----
-
-## Phase 5: Middleware Pipeline (Medium Priority)
-
-### Problem
-Middleware files detected but not executed.
-
-### Solution
-Wire middleware into Axum:
-1. Collect middleware from `_middleware.ts` files
-2. Generate middleware chain
-3. Apply to Axum router
-4. Support `ctx.state` for data sharing
-
-### Files to Modify
-
-1. **Modify** `src/transpile/middlewaregen.rs` - Generate proper middleware
-2. **Modify** `src/commands/dev.rs` - Apply middleware to router
-
-### Acceptance Criteria
-- [ ] Global `_middleware.ts` runs on all requests
-- [ ] `ctx.state` shares data between middleware and handlers
-- [ ] Middleware can short-circuit requests
-- [ ] Response headers modified by middleware
-
----
-
-## Phase 6: Static Assets (Low Priority)
-
-### Problem
-Static files not properly served.
-
-### Solution
-Configure tower-http `ServeDir`:
-1. Mount `static/` directory
-2. Set proper cache headers
-3. Support SPA fallback for client-side routing
-
-### Files to Modify
-
-1. **Modify** `src/commands/dev.rs` - Add static file serving
-
-### Acceptance Criteria
-- [ ] `/static/*` serves files from `static/` directory
-- [ ] CSS, JS, images load correctly
-- [ ] Cache headers set appropriately
-
----
-
-## Implementation Order
-
+pub fn process_files_parallel(files: Vec<PathBuf>) -> Vec<GeneratedFile> {
+    files.par_iter()
+        .map(|path| transpile_file(path))
+        .collect()
+}
 ```
-Week 1: Phase 1 (Dev Server SSR) + Phase 3 (Route Wiring)
-Week 2: Phase 2 (Island Hydration)  
-Week 3: Phase 4 (Layouts) + Phase 5 (Middleware)
-Week 4: Phase 6 (Static) + Polish + Testing
+
+### Tasks
+- [ ] Add `rayon` dependency to Cargo.toml
+- [ ] Parallelize route transpilation
+- [ ] Parallelize island transpilation
+- [ ] Parallelize component transpilation
+- [ ] Benchmark before/after
+
+---
+
+## Phase 3: Error Handling Polish (P1 - DX)
+
+### Current State
+- Basic error messages with file/line info
+
+### Improvements
+
+```rust
+// Suggest "Did you mean..." for typos
+pub fn suggest_correction(word: &str, valid: &[&str]) -> Option<String> {
+    // Levenshtein distance
+    // Return closest match if distance <= 3
+}
+
+// Format error with source context
+pub fn format_error(e: &ParseError, source: &str) -> String {
+    // Show line with caret pointing to error
+    // Show relevant snippet
+}
+```
+
+### Tasks
+- [ ] Add Levenshtein distance utility
+- [ ] Implement "Did you mean..." suggestions
+- [ ] Add source context to errors
+- [ ] Highlight error location in source
+
+---
+
+## Phase 4: Production Build Optimization (P1 - Performance)
+
+### Tasks
+- [ ] Incremental builds (only changed files)
+- [ ] Binary size optimization (<2MB target)
+- [ ] Startup time optimization (<5ms target)
+
+---
+
+## Phase 5: Documentation (P1 - DX)
+
+### Tasks
+- [ ] API documentation for public types
+- [ ] Migration guide from Fresh
+- [ ] Example projects (blog, dashboard, e-commerce)
+- [ ] Performance benchmarking suite
+
+---
+
+## Implementation Timeline
+
+| Week | Focus | Deliverables |
+|------|-------|--------------|
+| 1 | Middleware Runtime | Full pipeline execution, tests |
+| 2 | Parallel Transpilation | rayon integration, benchmarks |
+| 3 | Error Polish | Better messages, source context |
+| 4 | Build Optimization | Incremental builds, size targets |
+| 5 | Documentation | API docs, migration guide |
+
+---
+
+## Technical Decisions
+
+### 1. Middleware State Type
+```typescript
+// Current: generic HashMap
+ctx.state: HashMap<String, Value>
+
+// Proposed: Typed state with inferred types
+interface State {
+    user?: User;
+    session?: Session;
+}
+```
+
+### 2. Hydration Strategy
+```typescript
+// Island hydration options
+type HydrationStrategy = 'load' | 'visible' | 'idle' | 'interaction';
+```
+
+### 3. Signal Granularity
+```rust
+// Current: Fine-grained with dependency tracking
+// Sufficient for 95% of use cases
 ```
 
 ---
 
-## Technical Details
+## Risk Mitigation
 
-### SSR Pipeline
-
-```
-Request → Middleware → Route Match → Handler Execute 
-    → Component Render → Layout Compose → Island Inject 
-    → HTML Response
-```
-
-### Island Placeholder Format
-
-```html
-<div 
-  data-island="Counter" 
-  data-id="island-abc123"
-  data-props='{"initial":0,"step":1}'
-  data-hash="a1b2c3d4"
->
-  <!-- Server-rendered HTML -->
-  <button class="counter-btn">0</button>
-</div>
-
-<script type="module">
-  import { hydrate } from '/_runts/islands/Counter.a1b2c3d4.js';
-  hydrate('island-abc123', { initial: 0, step: 1 });
-</script>
-```
-
-### Route Pattern Matching
-
-| File | Pattern | Method |
-|------|---------|--------|
-| `routes/index.tsx` | `/` | GET |
-| `routes/blog/[slug].tsx` | `/blog/:slug` | GET |
-| `routes/api/posts.ts` | `/api/posts` | GET, POST |
-| `routes/[...catchall].tsx` | `/*` | GET |
+| Risk | Mitigation |
+|------|------------|
+| Middleware complexity | Start simple, add features incrementally |
+| Parallel transpile race conditions | Use Arc<RwLock<>> for shared state |
+| Binary size bloat | Monitor with `cargo bloat`, strip aggressively |
 
 ---
 
-## Performance Targets
+## Success Criteria
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| HMR latency | < 100ms | N/A |
-| Dev cold start | < 200ms | ~500ms |
-| SSR time | < 5ms | N/A |
-| Binary size | < 2MB | 2.6MB |
-| Memory (idle) | < 5MB | N/A |
-
----
-
-## Testing Strategy
-
-1. **Unit Tests**: Parser, codegen, analyzer (existing)
-2. **Integration Tests**: Full route rendering
-3. **E2E Tests**: Browser automation with Playwright
-4. **Snapshot Tests**: HTML output comparison
-
----
-
-## Dependencies
-
-### Runtime Crates
-- `axum` - HTTP server
-- `tokio` - Async runtime
-- `notify` - File watching
-- `serde` - Serialization
-- `regex` - Route matching
-
-### Dev Crates
-- `swc_ecma_parser` - TypeScript parsing (optional, we use custom parser)
-
-### Build Crates
-- `cargo` - Rust compilation (external)
-- `tempfile` - Temporary files for code gen
+- [ ] `runts dev` serves routes with full middleware execution
+- [ ] `runts build` produces <2MB binary
+- [ ] Build time <5s for 100 files (parallel)
+- [ ] Error messages include suggestions
+- [ ] Full Fresh blog example runs without modifications
 
 ---
 
