@@ -26,6 +26,7 @@ use crate::config::Config;
 use crate::transpile::{Parser, Analyzer, CodeGenerator, hir};
 
 /// Dev server state
+#[allow(dead_code)]
 pub struct DevState {
     /// Project root
     pub root: PathBuf,
@@ -41,6 +42,7 @@ pub struct DevState {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ModuleCache {
     /// Parsed module
     pub hir: hir::Module,
@@ -53,6 +55,7 @@ pub struct ModuleCache {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum ReloadEvent {
     /// A file was changed
     Changed(PathBuf),

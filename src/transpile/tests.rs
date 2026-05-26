@@ -1,7 +1,6 @@
 //! Comprehensive tests for the transpilation pipeline
 
 use super::*;
-use pretty_assertions::assert_eq;
 
 #[cfg(test)]
 mod parser_tests {
@@ -86,12 +85,7 @@ mod parser_tests {
         let result = parser.parse_source(r#"async function fetchData(url: string): Promise<Response> {
             return fetch(url);
         }"#);
-        if let Err(e) = &result {
-        }
-        if let Ok(m) = &result {
-        }
-        assert!(result.is_ok());
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
         let module = result.unwrap();
         let decl = match &module.items[0] {
@@ -104,13 +98,8 @@ mod parser_tests {
     #[test]
     fn test_parse_jsx_element() {
         let mut parser = Parser::new();
-        // Simplify JSX to isolate the issue
         let result = parser.parse_source(r#"const elem = <div>Hello</div>;"#);
-        if let Err(e) = &result {
-        }
-        if let Ok(m) = &result {
-        }
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
         let module = result.unwrap();
         let expr = match &module.items[0] {
@@ -133,11 +122,8 @@ mod parser_tests {
     #[test]
     fn test_parse_jsx_component() {
         let mut parser = Parser::new();
-        // Wrap JSX in variable declaration since parser handles statements
         let source = r#"const comp = <Counter initial={0} step={1} />;"#;
         let result = parser.parse_source(source);
-        if let Err(e) = &result {
-        }
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
         let module = result.unwrap();
@@ -162,13 +148,8 @@ mod parser_tests {
     #[test]
     fn test_parse_template_literal() {
         let mut parser = Parser::new();
-        // Wrap template in variable declaration since parser handles statements
         let result = parser.parse_source(r#"const msg = `Hello ${name}, you have ${count} items`;"#);
-        if let Err(e) = &result {
-        }
-        if let Ok(m) = &result {
-        }
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
         let module = result.unwrap();
         let expr = match &module.items[0] {
@@ -246,7 +227,7 @@ mod codegen_tests {
     
     #[test]
     fn test_generate_interface_to_struct() {
-        let mut cg = create_codegen();
+        let cg = create_codegen();
         
         let decl = TypeDecl {
             name: "CounterProps".to_string(),
@@ -603,10 +584,7 @@ export default function Greeting({ name }: Props) {
 "#;
         
         let mut parser = Parser::new();
-        let result = parser.parse_source(source);
-        if let Err(e) = &result {
-        }
-        let module = result.expect("parse failed");
+        let module = parser.parse_source(source).expect("parse failed");
         
         // Check for type declaration
         let has_type = module.items.iter().any(|item| {

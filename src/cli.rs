@@ -63,6 +63,7 @@ pub enum ComponentType {
 }
 
 impl ComponentType {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             ComponentType::Island => "island",

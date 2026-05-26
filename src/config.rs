@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 /// Runts configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Config {
     /// Server configuration
     pub server: ServerConfig,
@@ -107,6 +108,7 @@ impl Default for Config {
 
 impl Config {
     /// Load configuration from a path (runts.config.ts or runts.config.json)
+    #[allow(dead_code)]
     pub fn load(path: &PathBuf) -> Result<Self> {
         let config_path = Self::find_config(path)?;
 

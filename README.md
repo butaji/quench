@@ -110,7 +110,7 @@ enum Color { Red, Green }  // Use as const instead
 @decorator class Foo { }
 ```
 
-See [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) for the full specification.
+See [SPEC.md](SPEC.md) for the full specification.
 
 ## Project Structure
 
@@ -280,9 +280,8 @@ export default async function handler(req: Request, ctx: FreshContext) {
 
 ## Documentation
 
-- [Technical Specification](docs/TECHNICAL_SPEC.md) — Architecture, TS subset, pipeline
-- [Migration Guide](docs/MIGRATION.md) — Fresh → runts
-- [API Reference](docs/API.md) — Generated code API
+- [SPEC.md](SPEC.md) — Full specification, architecture, TS subset, pipeline
+- [docs/](docs/) — Additional documentation
 
 ## Roadmap
 
