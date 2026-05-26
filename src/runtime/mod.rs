@@ -13,6 +13,9 @@ pub mod vdom;
 pub mod islands;
 pub mod prelude;
 
+// HIR Interpreter for development mode
+pub mod interpreter;
+
 pub use vdom::VNode;
 
 /// Type alias for component props
