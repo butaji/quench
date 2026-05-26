@@ -677,54 +677,62 @@ dist/
 
 ## Part 6: Roadmap
 
-### Phase 1: MVP (Current) ✅
+### Phase 1: MVP ✅ (Implemented)
 
-- [x] Custom TSX parser
-- [x] HIR representation
-- [x] Basic code generation
-- [x] Islands architecture
-- [x] Signal system
-- [x] Dev server with watching
-- [x] Axum integration
-- [ ] Example application
+**Completed Features:**
+- [x] Custom TSX parser (~1700 lines, handles most Fresh patterns)
+- [x] HIR representation (full AST with semantic info)
+- [x] Semantic analyzer (island detection, route extraction, hook validation)
+- [x] Rust code generation (jsx→html!, types→Rust types)
+- [x] Islands architecture (detection, SSR markers, props serialization)
+- [x] Signal system (Signal, Computed, Effect, fine-grained reactivity)
+- [x] Hooks: useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext
+- [x] VDOM (VNode, ElementBuilder, fragment support)
+- [x] Dev server with file watching (notify crate)
+- [x] Axum integration (routing, middleware layers)
+- [x] Production build command (generates Rust source)
+- [x] Example application (my-blog with Counter, TodoList, blog routes)
 
-**Status**: Functional but incomplete. Parser covers ~80% of Fresh syntax.
+**Status**: Core transpilation pipeline working. Parser covers ~85% of Fresh patterns.
+Tests: 47 passing.
 
-### Phase 2: Production Ready
+### Phase 2: Production Ready (In Progress)
 
-- [ ] Complete TSX parser (100% of Fresh patterns)
-- [ ] Type checking pass
-- [ ] Error messages with source locations
-- [ ] Full route generation
-- [ ] Middleware support
-- [ ] `_middleware.ts` support
-- [ ] `_app.tsx` support
-- [ ] Static file serving
-- [ ] Production build command
+**Required for production:**
+- [ ] Complete TSX parser (remaining 15% edge cases)
+- [ ] Type checking pass (structural validation)
+- [ ] Error messages with source locations (spans)
+- [ ] Full route generation → Axum router wiring
+- [ ] Middleware support (`_middleware.ts` pattern)
+- [ ] `_layout.tsx` nesting and composition
+- [ ] `_app.tsx` global layout wrapper
+- [ ] Static file serving (tower-http::ServeDir)
+- [ ] Rust compilation step in `runts build`
+- [ ] Client-side island hydration (TypeScript runtime)
 
-**Target**: Q2 2025
+**Target**: 2025
 
 ### Phase 3: Ecosystem
 
-- [ ] VSCode extension with TSX support
-- [ ] `deno.json` / `fresh.config.ts` compatibility
-- [ ] Preact compat layer (`preact/compat`)
-- [ ] Common patterns (forms, routing, data fetching)
-- [ ] Testing utilities
-- [ ] Documentation site
+- [ ] VSCode extension with TSX syntax highlighting
+- [ ] `deno.json` / `fresh.config.ts` compatibility layer
+- [ ] Preact compat layer (`preact/compat` imports)
+- [ ] Common patterns: forms, data fetching, error boundaries
+- [ ] Testing utilities (component testing)
+- [ ] Documentation site with examples
 
-**Target**: Q3 2025
+**Target**: 2025
 
 ### Phase 4: Optimization
 
-- [ ] Benchmark suite
-- [ ] Binary size optimization
-- [ ] Startup time optimization
-- [ ] Memory pool allocation
+- [ ] Benchmark suite (criterion)
+- [ ] Binary size optimization (LTO, stripping)
+- [ ] Startup time < 50ms target
+- [ ] Memory pool allocation (object pooling)
 - [ ] WASM output option (alternate target)
 - [ ] Edge runtime (Cloudflare Workers, Vercel Edge)
 
-**Target**: Q4 2025
+**Target**: 2025+
 
 ---
 
