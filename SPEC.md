@@ -1,6 +1,6 @@
-# runts v0.5.0 - Specification
+# runts v0.5.0 - Technical Specification
 
-## Executive Summary
+## Overview
 
 **runts** is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries with zero external JS runtime dependencies. It provides framework-level compatibility with Fresh's islands architecture while achieving native binary performance.
 
@@ -14,7 +14,6 @@
 | **Production** | Full static compilation, single binary |
 | **Binary Size Target** | <2MB (with full HTTP server, SSR, routing) |
 | **Cold Start** | <5ms (embedded HTTP server) |
-| **Memory Baseline** | <3MB RSS |
 
 ---
 
@@ -206,7 +205,7 @@ HIR Module
 │     - Island (islands/)                                          │
 │     - Layout (_layout.tsx)                                      │
 │     - Middleware (_middleware.ts)                               │
-│     - Component (components/)                                   │
+│     - Component (components/)                                     │
 │                                                                  │
 │  2. Extract symbols:                                            │
 │     - Named exports                                              │
@@ -218,7 +217,7 @@ HIR Module
 │  3. Validate:                                                    │
 │     - No class components                                        │
 │     - No dynamic imports                                        │
-│     - Supported patterns only                                   │
+│     - Supported patterns only                                    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
     │

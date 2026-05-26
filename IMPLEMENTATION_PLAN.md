@@ -288,4 +288,22 @@ Request → Middleware → Route Match → Handler Execute
 
 ---
 
+## Dependencies
+
+### Runtime Crates
+- `axum` - HTTP server
+- `tokio` - Async runtime
+- `notify` - File watching
+- `serde` - Serialization
+- `regex` - Route matching
+
+### Dev Crates
+- `swc_ecma_parser` - TypeScript parsing (optional, we use custom parser)
+
+### Build Crates
+- `cargo` - Rust compilation (external)
+- `tempfile` - Temporary files for code gen
+
+---
+
 *Last Updated: 2026-05-26*
