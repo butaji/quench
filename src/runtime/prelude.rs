@@ -12,10 +12,13 @@ pub use super::vdom::VNode;
 // The basic VNode construction is available via VNode::element() builder
 
 // Common type aliases
+#[allow(dead_code)]
 pub type Props = std::collections::HashMap<String, serde_json::Value>;
+#[allow(dead_code)]
 pub type Children = Vec<VNode>;
 
 /// Trait for types that can be used as children in components
+#[allow(dead_code)]
 pub trait IntoVNode {
     fn into_vnode(self) -> VNode;
 }

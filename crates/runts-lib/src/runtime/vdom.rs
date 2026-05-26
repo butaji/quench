@@ -20,7 +20,7 @@ pub enum AttrValue {
 
 /// Virtual Node - representation of a DOM element
 #[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum VNode {
     /// HTML/SVG element
@@ -51,6 +51,7 @@ pub enum VNode {
         children: Vec<VNode>,
     },
     /// Empty node (renders nothing)
+    #[default]
     Empty,
 }
 
@@ -111,12 +112,6 @@ impl VNode {
             *k = Some(key.into());
         }
         self
-    }
-}
-
-impl Default for VNode {
-    fn default() -> Self {
-        Self::Empty
     }
 }
 

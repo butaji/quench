@@ -9,12 +9,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Hydration mode for islands
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HydrationMode {
     /// Hydrate immediately on page load
     Eager,
     /// Hydrate when visible (intersection observer)
+    #[default]
     Lazy,
     /// Hydrate when interacted with (click, focus, etc.)
     Interaction,
@@ -22,14 +23,9 @@ pub enum HydrationMode {
     Visible,
 }
 
-impl Default for HydrationMode {
-    fn default() -> Self {
-        Self::Lazy
-    }
-}
-
 impl HydrationMode {
     /// Parse from string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "eager" => Self::Eager,
@@ -40,6 +36,7 @@ impl HydrationMode {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn to_attribute(&self) -> &'static str {
         match self {
             Self::Eager => "eager",
