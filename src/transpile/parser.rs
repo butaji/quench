@@ -1400,10 +1400,68 @@ impl Parser {
         if self.check_word("undefined") { return Ok(Expr::Undefined); }
 
         if c == '(' {
-            self.advance();
-            let expr = self.parse_expression()?;
-            self.expect(')')?;
-            return Ok(expr);
+            let start_pos = self.pos;
+            self.advance(); // past '('
+
+            // Try to detect arrow function: (params) => body
+            let mut is_arrow = false;
+            let mut params = Vec::new();
+
+            if self.check(')') {
+                // Empty params: () => ...
+                self.advance();
+                self.skip_ws_and_comments();
+                is_arrow = self.check_str("=>");
+            } else {
+                // Try to parse comma-separated identifiers as params
+                let mut param_parse_ok = true;
+                loop {
+                    self.skip_ws_and_comments();
+                    if self.check(')') { break; }
+
+                    if !self.is_ident_char(self.current()) && !self.current().is_alphabetic() {
+                        param_parse_ok = false;
+                        break;
+                    }
+                    let name = self.parse_identifier()?;
+                    params.push(Param { name, type_: None, default: None, optional: false, pattern: None });
+
+                    self.skip_ws_and_comments();
+                    if self.check(',') {
+                        self.advance();
+                    } else if self.check(')') {
+                        break;
+                    } else {
+                        param_parse_ok = false;
+                        break;
+                    }
+                }
+
+                if param_parse_ok && self.check(')') {
+                    self.advance();
+                    self.skip_ws_and_comments();
+                    is_arrow = self.check_str("=>");
+                }
+            }
+
+            if is_arrow {
+                self.advance_by(2); // past =>
+                self.skip_ws_and_comments();
+                let body = if self.check('{') {
+                    Stmt::Block(self.parse_block()?.0)
+                } else {
+                    let expr = self.parse_expression()?;
+                    Stmt::Return { arg: Some(expr) }
+                };
+                return Ok(Expr::Arrow { params, body: Box::new(body), is_async: false });
+            } else {
+                // Not an arrow function, reset and parse as parenthesized expression
+                self.pos = start_pos;
+                self.advance(); // past '('
+                let expr = self.parse_expression()?;
+                self.expect(')')?;
+                return Ok(expr);
+            }
         }
 
         Ok(Expr::Ident { name: String::new() })
@@ -1515,6 +1573,12 @@ impl Parser {
                     self.skip_ws_and_comments();
                     if self.current() == '"' || self.current() == '\'' {
                         JSXAttrValue::String(self.parse_string()?)
+                    } else if self.check('{') {
+                        // JSX expression wrapper: attr={expr}
+                        self.advance();
+                        let expr_val = self.parse_expression()?;
+                        self.expect('}')?;
+                        JSXAttrValue::Expr(expr_val)
                     } else {
                         // Use parse_primary to avoid parse_assignment's /> skipping
                         let expr_val = self.parse_primary();
@@ -1709,14 +1773,19 @@ impl Parser {
     }
 
     fn current(&self) -> char {
-        self.source.chars().nth(self.pos).unwrap_or('\0')
+        self.source[self.pos..].chars().next().unwrap_or('\0')
     }
 
     fn peek(&self) -> Option<char> {
-        self.source.chars().nth(self.pos + 1)
+        self.source[self.pos..].chars().nth(1)
     }
 
-    fn advance(&mut self) { self.pos += 1; }
+    fn advance(&mut self) {
+        let c = self.current();
+        if c != '\0' {
+            self.pos += c.len_utf8();
+        }
+    }
 
     fn advance_by(&mut self, n: usize) { self.pos += n; }
 
