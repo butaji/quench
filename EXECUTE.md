@@ -18,7 +18,7 @@ Requirements:
 2. Architecture: parser (TSX) → semantic analysis → Rust code generation that
    emulates Preact runtime (virtual DOM or fine-grained reactivity via Rust
    signals/leptos-style).
-3. Dev mode: extremely fast hot-reload with custom TS/TSX-subset runtime.
+3. Dev mode: extremely fast hot-reload with custom TS/TSX-subset runtime. No compilation in development mode. Only pur runtime execution with instant hot-reload on changes.
 4. Production: full static compilation to efficient native binary (use
    Axum/Tower for server).
 5. Full islands architecture and partial hydration implemented in Rust.
