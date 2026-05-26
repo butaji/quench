@@ -1218,9 +1218,7 @@ impl Interpreter {
     }
 }
 
-impl Default for Interpreter {
-    fn default() -> Self { Self::new() }
-}
+
 
 fn rand_id() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)

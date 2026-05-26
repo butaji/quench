@@ -1,236 +1,187 @@
-# runts — Fresh/Preact to Native Rust
+# runts — Fresh/Preact to Native Rust Compiler
 
-**runts** is a Rust-native compiler that transforms Fresh/Preact TypeScript/TSX into production-ready native binaries. Zero external JS runtimes. No V8, no Deno, no WebAssembly JS.
+> **Warning: This is a design document for a conceptual project. The implementation is partial/incomplete.**
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  TSX Source          Rust Source          Native Binary              │
-│  ─────────           ───────────         ─────────────              │
-│                                                                     │
-│  routes/*.tsx   →   HIR → codegen   →   Components, Handlers        │
-│  islands/*.tsx  →   Signals/Runtime →   Island hydration (~12KB)     │
-│  components/*   →   VDOM types     →   Static HTML rendering        │
-│                                                                     │
-│  target/release/my-app  (~500KB - 2MB)                             │
-└─────────────────────────────────────────────────────────────────────┘
-```
+A framework that compiles Fresh/Preact TypeScript/TSX to native Rust binaries with zero external JS runtime dependencies.
+
+## Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Parser | ✅ Complete | Recursive descent, zero deps |
+| HIR | ✅ Complete | Typed AST representation |
+| Type Analyzer | ✅ Complete | Type inference, island/route detection |
+| Code Generator | ✅ Complete | HIR → Rust source |
+| Signals | ✅ Complete | Fine-grained reactivity |
+| Hooks | ✅ Complete | useState, useEffect, useRef, useMemo |
+| Islands Architecture | ✅ Complete | Hydration modes, registry |
+| html! Macro | ✅ Complete | JSX → Rust transform |
+| Client JS Runtime | ⚠️ Partial | Structure exists, needs testing |
+| HIR Interpreter | ⚠️ Basic | Works for simple cases |
+| Dev Server | ✅ Complete | File watching, HIR caching |
+| Build Command | ✅ Complete | Transpile + cargo build |
 
 ## Quick Start
 
 ```bash
 # Install
-cargo install --path .
+cargo install runts
 
-# Create a new project
+# Create new project
 runts init my-app
 cd my-app
 
-# Development (with hot reload)
+# Development mode (instant hot-reload, no Rust recompilation)
 runts dev
 
 # Production build
 runts build
+
+# Run production binary
 ./target/release/my-app
 ```
-
-## Why runts?
-
-| | Deno Fresh | Next.js | runts |
-|---|-----------|---------|-------|
-| Runtime | Deno | Node.js | **None (native)** |
-| Binary | N/A | N/A | **~1MB** |
-| Cold Start | ~50ms | ~200ms | **~5ms** |
-| Memory | ~100MB | ~200MB | **~10MB** |
-| Islands | ✅ | ✅ | ✅ |
-| TypeScript | Full | Full | **Subset** |
-
-## Features
-
-### Framework Compatibility
-- ✅ File-based routing (Fresh-style)
-- ✅ Islands architecture (partial hydration)
-- ✅ Middleware chain (`_middleware.ts`)
-- ✅ Layouts (`_layout.tsx`, `_app.tsx`)
-- ✅ Preact hooks (`useState`, `useEffect`, etc.)
-- ✅ Preact Signals
-
-### Performance
-- ⚡ Native binary compilation (LTO, opt-level=z)
-- 🔥 Instant cold start (<10ms)
-- 💾 Minimal memory footprint (<10MB idle)
-- 📦 Tiny binary size (~500KB - 2MB)
-
-### Developer Experience
-- 🔄 Hot module replacement (dev mode)
-- 📝 Full TypeScript support
-- 🎨 JSX/TSX with great error messages
-- 🔍 Source maps for debugging
-
-## Supported TypeScript/TSX
-
-### Core Syntax
-```typescript
-// Functions, arrow functions, async/await ✅
-const greet = async (name: string): Promise<string> => {
-  return `Hello, ${name}!`;
-};
-
-// Interfaces, type aliases, generics ✅
-interface User<T extends string> {
-  id: T;
-  name: string;
-  email: string;
-}
-
-// JSX/TSX elements and components ✅
-function Button({ label }: Props) {
-  return <button class="btn">{label}</button>;
-}
-
-// Hooks ✅
-const [count, setCount] = useState(0);
-useEffect(() => console.log(count), [count]);
-
-// Signals ✅
-const value = signal(42);
-const doubled = computed(() => value.value * 2);
-```
-
-### Excluded (Not Supported)
-```typescript
-// ❌ Class components - use function components
-class MyComponent extends Component { }
-
-// ❌ enums - use const objects
-enum Color { Red, Green }  // Use as const instead
-
-// ❌ eval() / new Function() - security risk
-
-// ❌ Decorators - use function wrappers
-@decorator class Foo { }
-```
-
-See [SPEC.md](SPEC.md) for the full specification.
 
 ## Project Structure
 
 ```
 my-app/
 ├── routes/                    # File-based routing
-│   ├── _app.tsx              # App wrapper
-│   ├── _layout.tsx           # Root layout
-│   ├── _middleware.ts        # Global middleware
-│   ├── index.tsx             # /
+│   ├── _middleware.ts          # Global middleware
+│   ├── _layout.tsx            # Root layout
+│   ├── index.tsx              # GET /
 │   └── blog/
-│       ├── index.tsx         # /blog
-│       ├── _layout.tsx       # /blog layout
-│       └── [slug].tsx         # /blog/:slug
+│       └── [slug].tsx          # GET /blog/:slug
 ├── islands/                   # Interactive components
-│   ├── Counter.tsx           # Ships JavaScript
-│   └── TodoList.tsx
+│   └── Counter.tsx             # Hydrated on client
 ├── components/                # Static components
-│   └── Header.tsx            # Zero JavaScript
-├── lib/                       # Utilities
-│   └── db.ts
-├── static/                    # Static assets
-│   └── styles.css
-├── Cargo.toml
-└── runts.config.json
+│   └── Header.tsx
+└── runts.config.json          # Configuration
+```
+
+## Supported TypeScript/TSX Subset
+
+### Supported Features
+
+| Feature | Syntax | Status |
+|---------|--------|--------|
+| JSX/TSX | `<div>...</div>`, `<Component />` | ✅ Full |
+| Fragments | `<>...</>`, `<Fragment />` | ✅ Full |
+| Type annotations | `let x: number = 5` | ✅ Full |
+| Interfaces | `interface Foo { a: number }` | ✅ Full |
+| Type aliases | `type Foo = Bar \| null` | ✅ Full |
+| Arrow functions | `const f = () => {}` | ✅ Full |
+| Async/await | `async function foo() {}` | ✅ Full |
+| Template literals | `` `hello ${name}` `` | ✅ Full |
+| Destructuring | `const { a, b } = obj` | ✅ Full |
+| Spread operator | `...rest`, `{...props}` | ✅ Full |
+| Optional chaining | `obj?.prop?.nested` | ✅ Full |
+| Nullish coalescing | `a ?? b` | ✅ Full |
+
+### Preact Hooks
+
+| Hook | Status |
+|------|--------|
+| `useState` | ✅ |
+| `useEffect` | ✅ |
+| `useRef` | ✅ |
+| `useMemo` | ✅ |
+| `useCallback` | ✅ |
+| `useContext` | ✅ |
+| `useId` | ✅ |
+| `useSignal` | ✅ |
+| `useComputed` | ✅ |
+
+### Fresh-Specific
+
+| Feature | Status |
+|---------|--------|
+| File-based routing | ✅ |
+| Layouts | ✅ |
+| Middleware | ✅ |
+| Islands | ✅ |
+| `PageProps` | ✅ |
+| `HandlerContext` | ✅ |
+
+### Explicitly Excluded
+
+```typescript
+// ❌ Class components
+class MyComponent extends Component { }
+
+// ❌ Legacy React APIs
+React.memo(Component)
+React.forwardRef((props, ref) => ...)
+React.Suspense + lazy()
+
+// ❌ TypeScript features
+namespace MyNamespace { }
+declare module 'x' { }
+parameter decorators
+
+// ❌ Complex patterns
+eval(), new Function()
+Generator functions (yield)
 ```
 
 ## Architecture
 
-### Transpilation Pipeline
-
 ```
-TSX Source
-    │
-    ▼
-┌─────────────┐
-│   Parser    │  Recursive descent TSX parser
-│  (~57KB)    │  Zero dependencies
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│    HIR      │  High-level IR
-│  (AST norm) │  Normalized for codegen
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  CodeGen    │  Rust source generation
-│             │  Components → #[component]
-│             │  Hooks → runtime::hook()
-│             │  JSX → html! macro
-└──────┬──────┘
-       │
-       ▼
-  Rust Source
-       │
-       ▼
-┌─────────────┐
-│ Cargo Build │  LTO + opt-level=z
-│             │  Single codegen unit
-└──────┬──────┘
-       │
-       ▼
-   Binary
+┌─────────────────────────────────────────────────────────────────┐
+│                     runts Architecture                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  User Code (TS/TSX)                                              │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ routes/, islands/, components/, middleware/                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                  Transpiler Pipeline                       │  │
+│  │  ┌───────────┐  ┌────────────┐  ┌─────────────────────┐  │  │
+│  │  │  Parser   │─▶│  Analyzer  │─▶│   Code Generator   │  │  │
+│  │  │  (HIR)   │  │ (Semantic) │  │   (Rust source)    │  │  │
+│  │  └───────────┘  └────────────┘  └─────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│              ┌───────────────┴───────────────┐                   │
+│              ▼                               ▼                   │
+│  ┌─────────────────────┐         ┌─────────────────────┐      │
+│  │   Development Mode   │         │   Production Mode    │      │
+│  │                      │         │                      │      │
+│  │  HIR → Interpreter    │         │  Rust codegen →      │      │
+│  │  (direct execution)  │         │  cargo build         │      │
+│  │                      │         │  (static binary)    │      │
+│  │  File watcher        │         │                      │      │
+│  │  Instant HMR          │         │  Axum routes        │      │
+│  │  (<50ms)            │         │  Islands hydration   │      │
+│  └─────────────────────┘         └─────────────────────┘      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Runtime System
+## Development vs Production
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Server Runtime                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Signals ──────► Fine-grained reactivity                     │
-│    │                                                         │
-│    ▼                                                         │
-│  Hooks ────────► useState, useEffect, useRef, etc.          │
-│    │                                                         │
-│    ▼                                                         │
-│  Components ──► Virtual DOM → HTML                           │
-│    │                                                         │
-│    ▼                                                         │
-│  Islands ─────► Client hydration (minimal JS)                │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+### Development Mode
 
-## CLI Commands
+**Start**: `runts dev`
 
-```bash
-runts init <name>      # Create new project
-runts dev [path]        # Development server with hot reload
-runts build [path]      # Production build
-runts add <type> <name> # Generate component files
-```
+- Parse TS/TSX to HIR (in-memory)
+- Execute HIR directly with interpreter
+- File watcher for hot-reload
+- **Target**: <50ms from file save to visible update
 
-## Examples
+### Production Mode
 
-### Counter (Island)
-```tsx
-// islands/Counter.tsx
-interface Props {
-  initial?: number;
-}
+**Build**: `runts build`
 
-export default function Counter({ initial = 0 }: Props) {
-  const [count, setCount] = useState(initial);
-  
-  return (
-    <div class="counter">
-      <p>Count: {count}</p>
-      <button onClick={() => setCount(count + 1)}>+</button>
-    </div>
-  );
-}
-```
+1. Transpile all TS/TSX → Rust source
+2. `cargo build --release`
+3. Single static binary (<2MB)
 
-### Blog Post (Route)
-```tsx
+## Example: Route with Handler
+
+```typescript
 // routes/blog/[slug].tsx
 import { PageProps } from "$fresh/server";
 
@@ -239,63 +190,122 @@ interface Data {
   content: string;
 }
 
-export default function BlogPost({ params, data }: PageProps & { data: Data }) {
+export const handler = {
+  GET: async (req: Request, ctx: PageProps<{ slug: string }>) => {
+    const { slug } = ctx.params;
+    const post = await getPost(slug);
+    
+    if (!post) {
+      return new Response("Not Found", { status: 404 });
+    }
+    
+    return ctx.render({ post });
+  }
+};
+
+export default function BlogPost({ data }: PageProps<Data>) {
   return (
     <article>
-      <h1>{data.title}</h1>
-      <div>{data.content}</div>
+      <h1>{data.post.title}</h1>
+      <div>{data.post.content}</div>
     </article>
   );
 }
-
-export const handler = {
-  async GET(req, ctx) {
-    const post = await getPost(ctx.params.slug);
-    return ctx.render({ title: post.title, content: post.content });
-  }
-};
 ```
 
-### Middleware
-```tsx
-// routes/_middleware.ts
-export default async function handler(req: Request, ctx: FreshContext) {
-  // Add request ID
-  ctx.state.requestId = crypto.randomUUID();
+## Example: Island Component
+
+```typescript
+// islands/Counter.tsx
+import { useState } from "preact/hooks";
+
+interface Props {
+  initial?: number;
+  step?: number;
+}
+
+export default function Counter({ initial = 0, step = 1 }: Props) {
+  const [count, setCount] = useState(initial);
   
-  // Continue
-  return await ctx.next();
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={() => setCount(count + step)}>+</button>
+    </div>
+  );
 }
 ```
 
-## Performance
+## Example: Middleware
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Cold Start | < 10ms | ~5-15ms |
-| Binary Size | < 1MB | ~500KB - 2MB |
-| Memory (idle) | < 5MB | ~5-10MB |
-| Island Bundle | < 15KB | ~12KB |
-| Hot Reload | < 100ms | ~50-100ms |
+```typescript
+// routes/_middleware.ts
+import { FreshContext } from "$fresh/server";
 
-## Documentation
+interface State {
+  user?: { id: string; name: string };
+}
 
-- [SPEC.md](SPEC.md) — Full specification, architecture, TS subset, pipeline
-- [docs/](docs/) — Additional documentation
+export async function handler(
+  req: Request,
+  ctx: FreshContext<State>
+) {
+  const cookie = req.headers.get("cookie");
+  
+  if (cookie?.includes("session")) {
+    ctx.state.user = { id: "123", name: "Demo" };
+  }
+  
+  const resp = await ctx.next();
+  resp.headers.set("X-Custom", "runts");
+  
+  return resp;
+}
+```
+
+## Configuration
+
+```json
+{
+  "server": {
+    "port": 8000,
+    "host": "127.0.0.1"
+  },
+  "islands": {
+    "hydration": "visible"
+  },
+  "dev": {
+    "port": 8000,
+    "open": true,
+    "hmr": true
+  }
+}
+```
 
 ## Roadmap
 
-- [x] MVP (parser, hooks, signals, islands)
-- [ ] Full routing (all HTTP methods)
-- [ ] WebSocket HMR
-- [ ] Streaming SSR
+### v0.5.0 - MVP (Current)
+- [x] Route Handler Exports
+- [x] Layout Composition
+- [x] Middleware Pipeline
+- [x] Page Data
+- [x] Client Island JS
+- [x] Error Pages
+
+### v0.6.0 - Feature Complete
+- [ ] Dynamic JSX tags (`<{tagName} />`)
+- [ ] Forward refs
+- [ ] Enhanced hooks
+- [ ] Asset pipeline
+- [ ] Image optimization
+
+### v1.0.0 - Production Ready
+- [ ] Production HMR
 - [ ] Edge deployment
-- [ ] Database integrations
-
-## Contributing
-
-Contributions welcome! Please read the [contributing guide](CONTRIBUTING.md).
+- [ ] API Routes
+- [ ] Database integration
+- [ ] Testing utilities
 
 ## License
 
-MIT OR Apache-2.0
+MIT

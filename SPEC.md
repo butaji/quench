@@ -473,7 +473,7 @@ runts-project/
 
 ## Part VI: Performance Targets
 
-| Metric | Target | v0.4 Achieved | Notes |
+| Metric | Target | v0.5 Achieved | Notes |
 |--------|--------|---------------|-------|
 | **Binary size** | <2MB | ~2.6MB | LTO + strip helps |
 | **Memory (baseline)** | <3MB RSS | ~2.8MB | Runtime only |
@@ -724,6 +724,20 @@ export default function BlogPost({ data }: PageProps<Data>) {
   }
 }
 ```
+
+---
+
+## Appendix G: Test Coverage
+
+### Unit Tests (71 passing)
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| Parser | 18 | JSX, types, imports, async |
+| Codegen | 12 | Type mappings, JSX transform |
+| Routegen | 7 | Route patterns, param extraction |
+| Integration | 11 | Full pipelines, islands, routes |
+| Commands | 2 | Route table matching |
 
 ---
 
