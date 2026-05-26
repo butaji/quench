@@ -7,6 +7,7 @@ pub mod hir;
 pub mod jsx_transformer;
 pub mod routegen;
 pub mod middlewaregen;
+pub mod errors;
 
 #[cfg(test)]
 mod tests;

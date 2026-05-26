@@ -9,6 +9,9 @@ pub mod routes;
 pub mod layouts;
 pub mod ssr;
 
+// Parallel processing module
+pub mod parallel;
+
 pub use init::run_init;
 pub use dev::run_dev_server;
 pub use build::run_build;

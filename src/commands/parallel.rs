@@ -1,0 +1,520 @@
+//! Parallel file processing utilities
+//!
+//! Uses rayon for parallel transpilation of TS/TSX files.
+
+use anyhow::Result;
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use parking_lot::RwLock;
+use walkdir::WalkDir;
+use tracing::{info, error};
+
+use crate::transpile::{Transpiler, codegen::CodeGenerator, analyzer::Analyzer};
+
+use super::build::{GeneratedFile, RouteEntry, IslandEntry, ComponentEntry, HttpMethod};
+
+/// Parallel transpilation result
+pub struct ParallelBuildResult {
+    pub generated_files: Vec<GeneratedFile>,
+    pub routes: Vec<RouteEntry>,
+    pub islands: Vec<IslandEntry>,
+    pub components: Vec<ComponentEntry>,
+}
+
+/// Process all files in parallel
+pub fn process_all_files_parallel(
+    project_root: &PathBuf,
+    transpiler: Arc<Transpiler>,
+    code_gen: Arc<RwLock<CodeGenerator>>,
+) -> Result<ParallelBuildResult> {
+    let routes_dir = project_root.join("routes");
+    let islands_dir = project_root.join("islands");
+    let components_dir = project_root.join("components");
+
+    // Collect all files first
+    let route_files = collect_files(&routes_dir, &["tsx", "ts"]);
+    let island_files = collect_files(&islands_dir, &["tsx", "ts"]);
+    let component_files = collect_files(&components_dir, &["tsx", "ts"]);
+
+    info!("Found {} route files, {} island files, {} component files",
+          route_files.len(), island_files.len(), component_files.len());
+
+    // Process routes in parallel
+    let (route_results, routes) = process_routes_parallel(&route_files, &routes_dir, &transpiler, &code_gen);
+
+    // Process islands in parallel
+    let (island_results, islands) = process_islands_parallel(&island_files, &islands_dir, &transpiler, &code_gen);
+
+    // Process components in parallel
+    let (component_results, components) = process_components_parallel(&component_files, &transpiler, &code_gen);
+
+    // Combine all generated files
+    let mut generated_files = Vec::new();
+    generated_files.extend(route_results);
+    generated_files.extend(island_results);
+    generated_files.extend(component_results);
+
+    Ok(ParallelBuildResult {
+        generated_files,
+        routes,
+        islands,
+        components,
+    })
+}
+
+/// Collect all .ts/.tsx files from a directory
+fn collect_files(dir: &PathBuf, extensions: &[&str]) -> Vec<PathBuf> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+
+    WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            if e.path().is_dir() {
+                return false;
+            }
+            if let Some(ext) = e.path().extension().and_then(|e| e.to_str()) {
+                extensions.contains(&ext)
+            } else {
+                false
+            }
+        })
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
+/// Process routes in parallel
+fn process_routes_parallel(
+    files: &[PathBuf],
+    base: &PathBuf,
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> (Vec<GeneratedFile>, Vec<RouteEntry>) {
+    let base = base.clone();
+    
+    let results: Vec<(Result<(GeneratedFile, RouteEntry), TranspileError>, PathBuf)> = files
+        .par_iter()
+        .map(|path| {
+            let result = process_single_route(path, &base, transpiler, code_gen);
+            (result, path.clone())
+        })
+        .collect();
+
+    let mut generated_files = Vec::new();
+    let mut routes = Vec::new();
+
+    for (result, path) in results {
+        match result {
+            Ok((file, route)) => {
+                generated_files.push(file);
+                routes.push(route);
+            }
+            Err(e) => {
+                error!("Failed to process route {:?}: {}", path, e);
+            }
+        }
+    }
+
+    (generated_files, routes)
+}
+
+/// Process islands in parallel
+fn process_islands_parallel(
+    files: &[PathBuf],
+    base: &PathBuf,
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> (Vec<GeneratedFile>, Vec<IslandEntry>) {
+    let base = base.clone();
+    
+    let results: Vec<(Result<(GeneratedFile, IslandEntry), TranspileError>, PathBuf)> = files
+        .par_iter()
+        .map(|path| {
+            let result = process_single_island(path, &base, transpiler, code_gen);
+            (result, path.clone())
+        })
+        .collect();
+
+    let mut generated_files = Vec::new();
+    let mut islands = Vec::new();
+
+    for (result, path) in results {
+        match result {
+            Ok((file, island)) => {
+                generated_files.push(file);
+                islands.push(island);
+            }
+            Err(e) => {
+                error!("Failed to process island {:?}: {}", path, e);
+            }
+        }
+    }
+
+    (generated_files, islands)
+}
+
+/// Process components in parallel
+fn process_components_parallel(
+    files: &[PathBuf],
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> (Vec<GeneratedFile>, Vec<ComponentEntry>) {
+    let results: Vec<Result<(GeneratedFile, ComponentEntry), TranspileError>> = files
+        .par_iter()
+        .map(|path| process_single_component(path, transpiler, code_gen))
+        .collect();
+
+    let mut generated_files = Vec::new();
+    let mut components = Vec::new();
+
+    for result in results {
+        match result {
+            Ok((file, component)) => {
+                generated_files.push(file);
+                components.push(component);
+            }
+            Err(e) => {
+                error!("Failed to process component: {}", e);
+            }
+        }
+    }
+
+    (generated_files, components)
+}
+
+/// Transpile error with context
+#[derive(Debug)]
+pub struct TranspileError {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+impl std::fmt::Display for TranspileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.message)
+    }
+}
+
+impl std::error::Error for TranspileError {}
+
+/// Process a single route file
+fn process_single_route(
+    path: &PathBuf,
+    base: &PathBuf,
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> Result<(GeneratedFile, RouteEntry), TranspileError> {
+    // Skip special files (except _layout)
+    let filename = path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    if filename.starts_with('_') && !filename.contains("layout") {
+        return Err(TranspileError {
+            path: path.clone(),
+            message: "Skipping special file".to_string(),
+        });
+    }
+
+    // Read source
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Failed to read: {}", e),
+        })?;
+
+    // Parse
+    let module = transpiler.parse_source(&source)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Parse error: {}", e),
+        })?;
+
+    // Analyze
+    let mut analyzer = Analyzer::new();
+    if let Err(errors) = analyzer.analyze(&module) {
+        return Err(TranspileError {
+            path: path.clone(),
+            message: format!("Analysis errors: {:?}", errors),
+        });
+    }
+
+    // Generate
+    let rust_code = code_gen.write()
+        .generate_module(&module)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Code generation: {}", e),
+        })?;
+
+    // Extract route info
+    let relative = path.strip_prefix(base)
+        .unwrap_or(path.as_path());
+    let pattern = extract_route_pattern(relative);
+    let params = extract_params(&pattern);
+    let methods = extract_http_methods(&module);
+
+    let route = RouteEntry {
+        pattern: pattern.clone(),
+        path: path.clone(),
+        file: relative.to_string_lossy().to_string(),
+        params,
+        methods,
+    };
+
+    // Generate output path
+    let relative_without_ext = relative.with_extension("");
+    let output_path = base
+        .parent()
+        .unwrap_or(base)
+        .join("src")
+        .join("gen")
+        .join(relative_without_ext)
+        .with_extension("rs");
+
+    Ok((GeneratedFile {
+        path: output_path,
+        content: rust_code,
+    }, route))
+}
+
+/// Process a single island file
+fn process_single_island(
+    path: &PathBuf,
+    base: &PathBuf,
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> Result<(GeneratedFile, IslandEntry), TranspileError> {
+    // Read source
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Failed to read: {}", e),
+        })?;
+
+    // Parse
+    let module = transpiler.parse_source(&source)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Parse error: {}", e),
+        })?;
+
+    // Generate
+    let rust_code = code_gen.write()
+        .generate_module(&module)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Code generation: {}", e),
+        })?;
+
+    // Get island name
+    let name = path.file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+
+    let relative = path.strip_prefix(base)
+        .unwrap_or(path.as_path());
+
+    let island = IslandEntry {
+        name: name.clone(),
+        path: path.clone(),
+        file: relative.to_string_lossy().to_string(),
+        props_type: None,
+    };
+
+    // Generate output path
+    let output_path = base
+        .parent()
+        .unwrap_or(base)
+        .join("src")
+        .join("gen")
+        .join("islands")
+        .join(format!("{}.rs", to_snake_case(&name)));
+
+    Ok((GeneratedFile {
+        path: output_path,
+        content: rust_code,
+    }, island))
+}
+
+/// Process a single component file
+fn process_single_component(
+    path: &PathBuf,
+    transpiler: &Arc<Transpiler>,
+    code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> Result<(GeneratedFile, ComponentEntry), TranspileError> {
+    // Read source
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Failed to read: {}", e),
+        })?;
+
+    // Parse
+    let module = transpiler.parse_source(&source)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Parse error: {}", e),
+        })?;
+
+    // Generate
+    let rust_code = code_gen.write()
+        .generate_module(&module)
+        .map_err(|e| TranspileError {
+            path: path.clone(),
+            message: format!("Code generation: {}", e),
+        })?;
+
+    let name = path.file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+
+    // Get parent directory
+    let parent = path.parent().unwrap_or(path.as_path());
+    let output_path = parent
+        .join("src")
+        .join("gen")
+        .join("components")
+        .join(format!("{}.rs", to_snake_case(&name)));
+
+    let component = ComponentEntry {
+        name: name.clone(),
+        path: path.clone(),
+        file: path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string(),
+    };
+
+    Ok((GeneratedFile {
+        path: output_path,
+        content: rust_code,
+    }, component))
+}
+
+/// Extract route pattern from file path
+fn extract_route_pattern(relative: &Path) -> String {
+    let parts: Vec<String> = relative.iter()
+        .filter_map(|p| p.to_str())
+        .filter(|p| !["routes", "islands", "components"].contains(p))
+        .filter(|p| *p != "index" && *p != "index.tsx" && *p != "index.ts")
+        .map(|p| {
+            let p = p.trim_end_matches(".tsx").trim_end_matches(".ts");
+            if p.starts_with("[...") && p.ends_with(']') {
+                // Catch-all route: [...slug] -> :slug
+                format!(":{}", &p[4..p.len() - 1])
+            } else if p.starts_with('[') && p.ends_with(']') {
+                // Dynamic route: [slug] -> :slug
+                format!(":{}", &p[1..p.len() - 1])
+            } else {
+                p.to_string()
+            }
+        })
+        .collect();
+
+    if parts.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", parts.join("/"))
+    }
+}
+
+/// Extract parameter names from route pattern
+fn extract_params(pattern: &str) -> Vec<String> {
+    let re = regex::Regex::new(r":(\w+)").unwrap();
+    re.captures_iter(pattern)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+/// Extract HTTP methods from route handlers
+fn extract_http_methods(module: &crate::transpile::hir::Module) -> Vec<HttpMethod> {
+    let mut methods = vec![HttpMethod::GET];
+    
+    for item in &module.items {
+        if let crate::transpile::hir::ModuleItem::Export(export) = item {
+            match export {
+                crate::transpile::hir::Export::Named { name } => {
+                    let name_lower = name.to_lowercase();
+                    if name_lower.contains("get") && !name_lower.contains("post") {
+                        if !methods.contains(&HttpMethod::GET) {
+                            methods.push(HttpMethod::GET);
+                        }
+                    }
+                    if name_lower.contains("post") {
+                        if !methods.contains(&HttpMethod::POST) {
+                            methods.push(HttpMethod::POST);
+                        }
+                    }
+                    if name_lower.contains("put") {
+                        if !methods.contains(&HttpMethod::PUT) {
+                            methods.push(HttpMethod::PUT);
+                        }
+                    }
+                    if name_lower.contains("delete") {
+                        if !methods.contains(&HttpMethod::DELETE) {
+                            methods.push(HttpMethod::DELETE);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    methods
+}
+
+/// Convert to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            result.push('_');
+        }
+        result.push(c.to_lowercase().next().unwrap_or(c));
+    }
+    result
+}
+
+/// Extend Transpiler with parse_source method
+impl Transpiler {
+    /// Parse source string directly
+    pub fn parse_source(&self, source: &str) -> Result<crate::transpile::hir::Module, anyhow::Error> {
+        let mut parser = crate::transpile::Parser::new();
+        parser.parse_source(source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_route_pattern() {
+        assert_eq!(extract_route_pattern(Path::new("index.tsx")), "/");
+        assert_eq!(extract_route_pattern(Path::new("blog/index.tsx")), "/blog");
+        assert_eq!(extract_route_pattern(Path::new("blog/[slug].tsx")), "/blog/:slug");
+        assert_eq!(extract_route_pattern(Path::new("[...path].tsx")), "/:path");
+    }
+
+    #[test]
+    fn test_extract_params() {
+        assert_eq!(extract_params("/blog/:slug"), vec!["slug"]);
+        assert_eq!(extract_params("/:year/:month"), vec!["year", "month"]);
+        assert_eq!(extract_params("/"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("Counter"), "counter");
+        assert_eq!(to_snake_case("TodoList"), "todo_list");
+        assert_eq!(to_snake_case("myComponent"), "my_component");
+    }
+}
