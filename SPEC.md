@@ -890,14 +890,18 @@ pub fn counter(initial: f64) -> VNode {
 
 ### Phase 1.5: Parser/Codegen Improvements (Current)
 
-**Known Parser Limitations:**
-- [ ] Destructuring in function parameters: `{ initial }` in props needs special handling
-- [ ] Generic type parameters: `<T>` in function calls confused with comparison operators
-- [ ] Arrow function params parsing: Empty params vector returned incorrectly
-- [ ] Array/object spread operator: `...` not fully implemented
+**Fixed in this iteration:**
+- [x] `export default function` parsing: Now correctly generates `Expr::Function`
+- [x] Function parameters: Destructuring patterns stored in Param struct
+- [x] Generic params: Parser now checks if `<` is followed by valid identifier before consuming
+- [x] Method return types: Fixed skip_balanced to handle nested `<>` in generic types
+
+**Known Parser Limitations (Remaining):**
+- [ ] Array type syntax: `number[]` not parsed correctly - primitive types are matched by keyword before array handling
+- [ ] Generic type arguments in hooks: `useState<number[]>(initial)` - needs more work
 - [ ] JSX nested children: Generates nested html!() calls incorrectly
 
-**Known Codegen Issues:**
+**Known Codegen Issues (Remaining):**
 - [ ] Arrow function body: Block vs expression body not distinguished
 - [ ] Hook call syntax: Generics in hook calls not generated correctly
 - [ ] Variable types: Empty type annotations generated for some variables

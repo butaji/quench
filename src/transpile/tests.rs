@@ -594,7 +594,7 @@ export default function Greeting({ name }: Props) {
         
         // Check for function export (export default function)
         let has_function_export = module.items.iter().any(|item| {
-            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Ident { .. } }))
+            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Function { .. } }))
         });
         assert!(has_function_export, "Module should have function export");
         
@@ -637,7 +637,7 @@ export default function Counter({ initial = 0 }: CounterProps) {
         
         // Verify function export (export default function)
         let has_function_export = module.items.iter().any(|item| {
-            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Ident { .. } }))
+            matches!(item, ModuleItem::Export(Export::Default { expr: Expr::Function { .. } }))
         });
         assert!(has_function_export, "Module should have function export");
     }

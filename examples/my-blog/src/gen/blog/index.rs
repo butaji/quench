@@ -13,7 +13,8 @@ pub struct Post {
     pub excerpt: String,
 }
 
-pub fn blog_index(_destructure: PageProps<blog_data>) -> () {
+pub fn blog_index(_props_0: PageProps<blog_data>) -> () {
+    let let { data: data} = _props_0;
     let post_items:  = data.posts.map(|| { return html!(<article key: post.slug class_name: "post-preview">html!(<h2>html!(<a href: /blog/{post.slug}>post.title</a>)</h2>)html!(<p>post.excerpt</p>)</article>); });
 
     return html!(<div class_name: "blog-page">html!(<header class_name: "blog-header">html!(<h1>"Blog"</h1>)html!(<p>"Total posts:"data.totalCount</p>)</header>)html!(<main class_name: "blog-list">post_items</main>)</div>);
