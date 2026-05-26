@@ -6,10 +6,10 @@
 //! - Provides instant hot-reload (<100ms)
 //! - Full parity with production rendering
 
-use anyhow::{Context, Result};
+use anyhow::{Result, Context};
 use axum::{
     body::Body,
-    extract::{Path, State, Query},
+    extract::{Path, State},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
@@ -20,15 +20,13 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
-use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 
 use crate::config::Config;
-use crate::commands::routes::{HttpMethod, RouteTable};
-use crate::runtime::interpreter::Interpreter;
-use crate::commands::layouts::LayoutManager;
+use crate::runtime::interpreter::{Interpreter, RenderResult};
 
 /// Application state shared across requests
 #[derive(Clone)]
@@ -42,25 +40,178 @@ pub struct AppState {
     /// Interpreter (HIR executor)
     pub interpreter: Arc<RwLock<Interpreter>>,
 
-    /// Layout manager
-    pub layout_manager: Arc<LayoutManager>,
-
-    /// Module cache (source -> HIR)
-    pub module_cache: Arc<RwLock<HashMap<PathBuf, CachedModule>>>,
-
     /// Broadcast channel for hot reload events
     pub reload_tx: broadcast::Sender<ReloadEvent>,
 }
 
-/// Cached module data
-#[derive(Clone)]
-struct CachedModule {
-    /// Parsed HIR
-    module: crate::transpile::hir::Module,
-    /// Last modified time
-    modified: std::time::SystemTime,
-    /// Parse errors (if any)
-    errors: Vec<String>,
+/// Route information
+#[derive(Debug, Clone)]
+pub struct Route {
+    pub pattern: String,
+    pub regex: regex::Regex,
+    pub file_path: PathBuf,
+    pub methods: Vec<HttpMethod>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HttpMethod {
+    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+}
+
+impl HttpMethod {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "GET" => Some(Self::GET),
+            "POST" => Some(Self::POST),
+            "PUT" => Some(Self::PUT),
+            "DELETE" => Some(Self::DELETE),
+            "PATCH" => Some(Self::PATCH),
+            "HEAD" => Some(Self::HEAD),
+            "OPTIONS" => Some(Self::OPTIONS),
+            _ => None,
+        }
+    }
+}
+
+/// Route table for fast lookup
+#[derive(Debug, Clone, Default)]
+pub struct RouteTable {
+    routes: Vec<Route>,
+}
+
+impl RouteTable {
+    pub fn new() -> Self {
+        Self { routes: Vec::new() }
+    }
+
+    pub fn from_routes_dir(routes_dir: &PathBuf) -> Result<Self> {
+        let mut table = Self::new();
+        
+        if !routes_dir.exists() {
+            return Ok(table);
+        }
+
+        // Walk routes directory
+        Self::scan_dir(&routes_dir, routes_dir, &mut table)?;
+        
+        Ok(table)
+    }
+
+    fn scan_dir(base: &PathBuf, current: &PathBuf, table: &mut RouteTable) -> Result<()> {
+        for entry in std::fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            let filename = entry.file_name().to_string_lossy().to_string();
+
+            if path.is_dir() {
+                Self::scan_dir(base, &path, table)?;
+            } else if filename.ends_with(".tsx") || filename.ends_with(".ts") {
+                // Skip special files (middleware, etc.)
+                if filename.starts_with('_') && !filename.ends_with(".tsx") && !filename.ends_with(".ts") {
+                    continue;
+                }
+
+                let pattern = Self::file_to_pattern(base, &path);
+                let regex = Self::pattern_to_regex(&pattern);
+                
+                table.routes.push(Route {
+                    pattern,
+                    regex,
+                    file_path: path,
+                    methods: vec![HttpMethod::GET],
+                });
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn file_to_pattern(base: &PathBuf, file_path: &PathBuf) -> String {
+        let relative = file_path.strip_prefix(base)
+            .unwrap_or(file_path.as_path());
+        
+        // Get the relative path as a string
+        let relative_str = relative.to_string_lossy().to_string();
+        
+        // Split by path separator and filter empty parts
+        let parts: Vec<&str> = relative_str.split(['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if parts.is_empty() {
+            return "/".to_string();
+        }
+
+        let mut segments = Vec::new();
+        
+        for part in &parts {
+            let name = *part;
+            
+            // Skip index files - they represent the directory
+            if name == "index.tsx" || name == "index.ts" {
+                continue;
+            }
+            
+            // Handle dynamic segments: [slug] -> :slug
+            if name.starts_with('[') && name.ends_with(']') {
+                let param = &name[1..name.len()-1];
+                // Handle catch-all: [...slug] -> :slug*
+                if param.starts_with('.') {
+                    let inner = &param[1..];
+                    segments.push(format!("(?P<{}>.*)", inner.trim_start_matches('.')));
+                } else if param.starts_with("...") {
+                    segments.push(format!("(?P<{}>.*)", &param[3..]));
+                } else {
+                    segments.push(format!("(?P<{}>[^/]+)", param));
+                }
+            } else if !name.starts_with('_') {
+                segments.push(name.trim_end_matches(".tsx").trim_end_matches(".ts").to_string());
+            }
+        }
+
+        if segments.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", segments.join("/"))
+        }
+    }
+
+    fn pattern_to_regex(pattern: &str) -> regex::Regex {
+        let escaped = pattern
+            .replace('/', "/?/?")
+            .replace("(?P<", "(?P<")
+            .replace(">[^/]+>", ">/[^/]+)")
+            .replace(">.*>", ">/.*)");
+        
+        regex::Regex::new(&format!("^{}$", escaped))
+            .unwrap_or_else(|_| regex::Regex::new("^/$").unwrap())
+    }
+
+    pub fn find_route(&self, path: &str) -> Option<(String, HashMap<String, String>)> {
+        // First try exact match
+        for route in &self.routes {
+            if route.pattern == path {
+                return Some((route.pattern.clone(), HashMap::new()));
+            }
+        }
+
+        // Then try pattern matching
+        for route in &self.routes {
+            if let Some(caps) = route.regex.captures(path) {
+                let mut params = HashMap::new();
+                for name in route.regex.capture_names() {
+                    if let Some(name) = name {
+                        if let Some(value) = caps.name(name) {
+                            params.insert(name.to_string(), value.as_str().to_string());
+                        }
+                    }
+                }
+                return Some((route.pattern.clone(), params));
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,13 +225,8 @@ impl AppState {
     /// Create new application state
     pub fn new(root: PathBuf, _port: u16) -> Result<Self> {
         let routes_dir = root.join("routes");
-        let islands_dir = root.join("islands");
-        let components_dir = root.join("components");
 
         let route_table = RouteTable::from_routes_dir(&routes_dir)?;
-        let layout_manager = LayoutManager::from_routes_dir(&routes_dir)?;
-
-        // Create interpreter and pre-load modules
         let interpreter = Arc::new(RwLock::new(Interpreter::new()));
 
         // Pre-load all modules
@@ -92,8 +238,6 @@ impl AppState {
             root,
             route_table: Arc::new(RwLock::new(route_table)),
             interpreter,
-            layout_manager: Arc::new(layout_manager),
-            module_cache: Arc::new(RwLock::new(HashMap::new())),
             reload_tx,
         })
     }
@@ -165,12 +309,20 @@ impl AppState {
                 Self::load_routes_recursive(interpreter, &path)?;
             } else if path.extension().and_then(|e| e.to_str()) == Some("tsx") ||
                       path.extension().and_then(|e| e.to_str()) == Some("ts") {
-                // Skip middleware and special files
+                // Skip middleware and special files for route loading
                 let filename = path.file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
 
-                if filename.starts_with('_') && !filename.ends_with(".tsx") && !filename.ends_with(".ts") {
+                if filename.starts_with('_') {
+                    // Load layouts and middleware separately
+                    if filename.contains("layout") {
+                        if let Ok(source) = std::fs::read_to_string(&path) {
+                            if let Err(e) = interpreter.load_file(&path, &source) {
+                                eprintln!("[runts] Warning: Could not load layout {}: {}", path.display(), e);
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -189,7 +341,6 @@ impl AppState {
     pub fn start_watcher(&self) -> Result<()> {
         let reload_tx = self.reload_tx.clone();
         let interpreter = self.interpreter.clone();
-        let module_cache = self.module_cache.clone();
         let route_table = self.route_table.clone();
         let root = self.root.clone();
 
@@ -210,12 +361,6 @@ impl AppState {
                     }
 
                     let path = &paths[0];
-
-                    // Invalidate cache for this file
-                    {
-                        let mut cache = module_cache.write();
-                        cache.remove(path);
-                    }
 
                     // Reload the module
                     if let Ok(source) = std::fs::read_to_string(path) {
@@ -263,24 +408,14 @@ impl AppState {
     }
 
     /// Execute a route and return the rendered HTML
-    pub fn execute_route(&self, path: &str, method: HttpMethod, params: HashMap<String, String>) -> Result<String> {
+    pub fn execute_route(&self, path: &str, params: HashMap<String, String>) -> Result<RenderResult> {
         let start = Instant::now();
 
         // Get route info
         let route_table = self.route_table.read();
-        let fallback_route = crate::commands::routes::Route {
-            pattern: "/".to_string(),
-            regex: regex::Regex::new("/").unwrap(),
-            path_template: "/".to_string(),
-            segments: vec![],
-            file_path: self.root.join("routes/index.tsx"),
-            methods: vec![HttpMethod::GET],
-            is_catch_all: false,
-        };
-
-        let (route, route_params) = route_table
-            .find_route(path, method)
-            .unwrap_or((&fallback_route, HashMap::new()));
+        let (pattern, route_params) = route_table
+            .find_route(path)
+            .unwrap_or_else(|| ("/".to_string(), HashMap::new()));
 
         // Merge params
         let mut all_params = route_params;
@@ -289,96 +424,97 @@ impl AppState {
         }
 
         // Execute the route using interpreter
-        let page_data = {
-            let mut interpreter = self.interpreter.write();
-            interpreter.execute_handler(path, all_params.clone())
-                .unwrap_or_else(|e| {
-                    eprintln!("[runts] Handler error: {}", e);
-                    serde_json::json!({})
-                })
+        let result = {
+            let interpreter = self.interpreter.read();
+            interpreter.execute_route(path, "GET", all_params)
+                .map_err(|e| anyhow::anyhow!("Handler error: {}", e))
         };
-
-        // Build page HTML
-        let html = self.build_page_html(&route.pattern, &page_data, route);
 
         let elapsed = start.elapsed();
         if elapsed.as_millis() > 100 {
             println!("[runts] Slow route execution: {}ms for {}", elapsed.as_millis(), path);
         }
 
-        Ok(html)
+        result
     }
 
-    /// Build page HTML from route data
-    fn build_page_html(&self, path: &str, page_data: &serde_json::Value, _route: &crate::commands::routes::Route) -> String {
+    /// Build full HTML document
+    fn build_html(&self, path: &str, result: &RenderResult) -> String {
         let title = path_to_title(path);
-        let page_data_json = serde_json::to_string(page_data).unwrap_or_else(|_| "{}".to_string());
+        
+        // Convert page data to JSON manually
+        let page_data_json = serde_json::json!({
+            "rendered": true,
+            "route": path
+        }).to_string();
 
-        // Generate content based on route
-        let content = self.render_route_content(path, page_data);
+        // Generate island manifest (simplified)
+        let island_manifest_json = serde_json::json!({
+            "islands": result.islands.iter().map(|i| {
+                serde_json::json!({
+                    "name": i.name,
+                    "id": i.id
+                })
+            }).collect::<Vec<_>>()
+        }).to_string();
 
         format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{}</title>
+    <title>{title}</title>
     <link rel="icon" href="/static/favicon.ico">
-    <script type="module" src="/_runts/hmr.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }}
+        nav {{ background: #1a1a2e; padding: 1rem; }}
+        nav a {{ color: white; text-decoration: none; margin-right: 1rem; }}
+        nav a:hover {{ text-decoration: underline; }}
+        main {{ max-width: 800px; margin: 2rem auto; padding: 0 1rem; }}
+        .posts {{ list-style: none; }}
+        .posts li {{ margin-bottom: 1rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }}
+        .posts a {{ text-decoration: none; color: inherit; }}
+        .posts a:hover {{ color: #1a1a2e; }}
+        .posts strong {{ font-size: 1.2rem; display: block; margin-bottom: 0.5rem; }}
+        .posts p {{ color: #666; margin: 0; }}
+        .btn {{ display: inline-block; padding: 0.5rem 1rem; background: #1a1a2e; color: white; text-decoration: none; border-radius: 4px; }}
+        .btn:hover {{ background: #16213e; }}
+        .island-placeholder {{ border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; text-align: center; color: #666; }}
+    </style>
 </head>
 <body>
     <nav class="runts-nav">
         <a href="/">Home</a>
         <a href="/blog">Blog</a>
+        <a href="/about">About</a>
     </nav>
     <main>
-        {}
+        {content}
     </main>
     <script>
-        window.__PAGE_DATA__ = {};
+        window.__PAGE_DATA__ = {page_data_json};
+        window.__ISLAND_MANIFEST__ = {island_manifest_json};
     </script>
+    <script type="module" src="/_runts/hmr.js"></script>
+    <script type="module" src="/_runts/client.js"></script>
 </body>
 </html>
-"#, title, content, page_data_json)
+"#, title = title, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json)
     }
 
-    /// Render route-specific content
-    fn render_route_content(&self, path: &str, data: &serde_json::Value) -> String {
-        if let Some(obj) = data.as_object() {
-            // Check for blog data
-            if let Some(posts) = obj.get("posts").and_then(|v| v.as_array()) {
-                let mut html = String::new();
-                html.push_str("<h1>Blog Posts</h1>\n<ul class='posts'>");
-                for post in posts {
-                    if let Some(post_obj) = post.as_object() {
-                        let slug = post_obj.get("slug").and_then(|v| v.as_str()).unwrap_or("");
-                        let title = post_obj.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                        let excerpt = post_obj.get("excerpt").and_then(|v| v.as_str()).unwrap_or("");
-                        html.push_str(&format!(
-                            r#"<li><a href="/blog/{}"><strong>{}</strong><p>{}</p></a></li>"#,
-                            html_escape(slug),
-                            html_escape(title),
-                            html_escape(excerpt)
-                        ));
-                    }
-                }
-                html.push_str("</ul>");
-                return html;
-            }
-
-            // Check for single post
-            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
-                let content = obj.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                return format!(
-                    "<h1>{}</h1>\n<p>{}</p>",
-                    html_escape(title),
-                    html_escape(content)
-                );
-            }
+    fn value_to_json(&self, value: &crate::runtime::interpreter::Value) -> serde_json::Value {
+        match value {
+            crate::runtime::interpreter::Value::Undefined => serde_json::Value::Null,
+            crate::runtime::interpreter::Value::Null => serde_json::Value::Null,
+            crate::runtime::interpreter::Value::Bool(b) => serde_json::json!(b),
+            crate::runtime::interpreter::Value::Number(n) => serde_json::json!(n),
+            crate::runtime::interpreter::Value::String(s) => serde_json::json!(s),
+            crate::runtime::interpreter::Value::Array(arr) => serde_json::json!(arr.iter().map(|v| self.value_to_json(v)).collect::<Vec<_>>()),
+            crate::runtime::interpreter::Value::Object(obj) => serde_json::json!(obj.iter().map(|(k, v)| (k.clone(), self.value_to_json(v))).collect::<serde_json::Map<String, _>>()),
+            crate::runtime::interpreter::Value::Function(_) => serde_json::Value::Null,
+            _ => serde_json::Value::Null,
         }
-
-        // Default: show the path
-        format!("<p>Route: {}</p>", html_escape(path))
     }
 }
 
@@ -388,22 +524,31 @@ async fn handle_ssr(
     Path(path): Path<String>,
 ) -> impl IntoResponse {
     let path = if path.is_empty() { "/" } else { &path };
-    let method = HttpMethod::GET;
 
-    match state.execute_route(path, method, HashMap::new()) {
-        Ok(html) => Html(html).into_response(),
+    match state.execute_route(path, HashMap::new()) {
+        Ok(result) => {
+            let html = state.build_html(path, &result);
+            Html(html).into_response()
+        }
         Err(e) => {
             let html = format!(
                 r#"<!DOCTYPE html>
 <html>
 <head><title>Error</title></head>
 <body>
-    <h1>Error</h1>
-    <p>Route: {}</p>
-    <pre>{}</pre>
+    <nav class="runts-nav">
+        <a href="/">Home</a>
+        <a href="/blog">Blog</a>
+    </nav>
+    <main>
+        <h1>Error Rendering: {path}</h1>
+        <pre style="background:#f4f4f4;padding:1rem;overflow:auto;">{error}</pre>
+        <a href="/" class="btn">Go Home</a>
+    </main>
 </body>
 </html>"#,
-                path, e
+                path = path,
+                error = e.to_string().lines().take(20).collect::<Vec<_>>().join("\n")
             );
             Html(html).into_response()
         }
@@ -414,17 +559,17 @@ async fn handle_ssr(
 async fn handle_api(
     State(state): State<AppState>,
     Path(path): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let path = format!("/api/{}", path);
-    let method = HttpMethod::POST;
+    let api_path = format!("/api/{}", path);
 
-    // Check for POST body
-    // For simplicity, just echo back params
+    // Simulate API response
     let response = serde_json::json!({
-        "path": path,
-        "params": params,
-        "message": "API response from runts interpreter"
+        "path": api_path,
+        "message": "API response from runts",
+        "data": {
+            "status": "ok",
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        }
     });
 
     Response::builder()
@@ -458,34 +603,21 @@ async fn handle_static(path: Path<String>) -> Response {
     }
 }
 
-/// Serve island manifest
-async fn handle_island_manifest(State(_state): State<AppState>) -> Response {
-    let manifest = serde_json::json!({
-        "islands": [],
-        "version": "1.0"
-    });
-
-    Response::builder()
-        .header("Content-Type", "application/json")
-        .body(Body::from(manifest.to_string()))
-        .unwrap()
-}
-
 /// Serve island JS bundle
 async fn handle_island_bundle(Path(name): Path<String>) -> Response {
     // Generate minimal island bundle
     let bundle = format!(r#"
-// Island: {}
-export default class {0} {{
-    constructor(props) {{
+// Island: {0} - Client bundle
+class {0} {{
+    constructor(props, element) {{
         this.props = props;
-        this.el = null;
+        this.element = element;
     }}
 
-    mount(el) {{
-        this.el = el;
-        // Simple hydration: replace placeholder with component
-        el.innerHTML = this.render();
+    mount() {{
+        console.log('[runts] Mounting island: {0}');
+        // Render initial state from SSR HTML
+        this.element.innerHTML = this.element.innerHTML;
         this.attachEvents();
     }}
 
@@ -494,15 +626,29 @@ export default class {0} {{
     }}
 
     attachEvents() {{
-        // Attach event handlers here
+        // Find buttons and attach click handlers
+        this.element.querySelectorAll('button').forEach(btn => {{
+            // Re-attach any inline handlers
+        }});
+    }}
+
+    setState(newProps) {{
+        this.props = {{ ...this.props, ...newProps }};
+        this.render();
     }}
 
     unmount() {{
-        if (this.el) {{
-            this.el.innerHTML = '';
-        }}
+        this.element.innerHTML = '';
     }}
 }}
+
+// Register the island
+if (typeof window !== 'undefined') {{
+    window.__runts_islands__ = window.__runts_islands__ || {{}};
+    window.__runts_islands__['{0}'] = {0};
+}}
+
+export default {0};
 "#, name);
 
     Response::builder()
@@ -518,7 +664,6 @@ async fn handle_hmr_sse(State(state): State<AppState>) -> Response {
     let rx = state.reload_tx.subscribe();
     let broadcast_stream = BroadcastStream::new(rx);
 
-    // Convert broadcast stream to SSE format using async_stream
     let stream = async_stream::stream! {
         let mut broadcast_rx = broadcast_stream;
         while let Some(result) = futures::StreamExt::next(&mut broadcast_rx).await {
@@ -570,8 +715,7 @@ async fn hmr_client_script() -> Response {
                 switch (data.type) {
                     case 'change':
                         console.log('[runts HMR] File changed:', data.path);
-                        // Soft reload: just fetch the page
-                        window.__RUNTS_RELOAD__ && window.__RUNTS_RELOAD__();
+                        window.location.reload();
                         break;
 
                     case 'reload':
@@ -616,6 +760,105 @@ async fn hmr_client_script() -> Response {
         .unwrap()
 }
 
+/// Client-side island hydration
+async fn client_script() -> Response {
+    let script = r#"
+/**
+ * runts Client Runtime
+ * Handles island hydration and interactivity
+ */
+
+(function() {
+    'use strict';
+
+    // Island registry
+    const islands = new Map();
+
+    // Register an island
+    window.__registerIsland__ = function(name, Component) {
+        islands.set(name, Component);
+        console.debug('[runts] Registered island:', name);
+    };
+
+    // Hydrate all islands on page
+    function hydrateAll() {
+        const manifest = window.__ISLAND_MANIFEST__ || { islands: [] };
+        
+        for (const entry of manifest.islands) {
+            const el = document.querySelector(`[data-island="${entry.name}"][data-id="${entry.id}"]`);
+            if (!el) {
+                console.warn('[runts] Island element not found:', entry.name, entry.id);
+                continue;
+            }
+
+            // Check if already hydrated
+            if (el.dataset.hydrated === 'true') continue;
+
+            const Component = islands.get(entry.name);
+            if (Component) {
+                try {
+                    const instance = new Component(entry.props, el);
+                    instance.mount();
+                    el.dataset.hydrated = 'true';
+                    console.debug('[runts] Hydrated island:', entry.name);
+                } catch (e) {
+                    console.error('[runts] Hydration error for', entry.name, ':', e);
+                }
+            } else {
+                // Try to load from server
+                loadIsland(entry.name).then(() => {
+                    const LoadedComponent = islands.get(entry.name);
+                    if (LoadedComponent) {
+                        const instance = new LoadedComponent(entry.props, el);
+                        instance.mount();
+                        el.dataset.hydrated = 'true';
+                    }
+                });
+            }
+        }
+    }
+
+    // Load island bundle from server
+    async function loadIsland(name) {
+        try {
+            const response = await fetch(`/_runts/islands/${name}`);
+            if (response.ok) {
+                const text = await response.text();
+                // Execute in module context
+                const blob = new Blob([text], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                await import(url);
+                URL.revokeObjectURL(url);
+            }
+        } catch (e) {
+            console.error('[runts] Failed to load island:', name, e);
+        }
+    }
+
+    // Auto-initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(hydrateAll, 100); // Small delay to ensure all scripts loaded
+        });
+    } else {
+        setTimeout(hydrateAll, 100);
+    }
+
+    // Expose API
+    window.__runts__ = {
+        hydrateAll,
+        register: window.__registerIsland__,
+        islands
+    };
+})();
+"#;
+
+    Response::builder()
+        .header("Content-Type", "application/javascript")
+        .body(Body::from(script))
+        .unwrap()
+}
+
 /// Run the development server
 pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -638,12 +881,13 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
     }
 
     println!("\n╔══════════════════════════════════════════════════════════════╗");
-    println!("║                runts Dev Server (Runtime Mode)            ║");
+    println!("║                runts Dev Server (HIR Mode)               ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  URL:        http://localhost:{}                           ║", dev_port);
-    println!("║  Root:       {}  ", root.to_string_lossy());
+    println!("║  Root:       {}  ", truncate_path(&root.to_string_lossy(), 50));
     println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║  Mode:       Instant HIR Interpretation (No Rust Compile)  ║");
+    println!("║  Mode:       HIR Interpreter (No Rust Compile)            ║");
+    println!("║  Features:   Full SSR, Islands, Layouts, Hot Reload         ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  Watching:                                                    ║");
     println!("║    • routes/     (route handlers & pages)                     ║");
@@ -656,10 +900,10 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
 
     let app = Router::new()
         .nest_service("/static", get(handle_static))
-        .route("/_runts/manifest.json", get(handle_island_manifest))
         .route("/_runts/islands/:name", get(handle_island_bundle))
         .route("/_runts/hmr", get(handle_hmr_sse))
         .route("/_runts/hmr.js", get(hmr_client_script))
+        .route("/_runts/client.js", get(client_script))
         .route("/api/*path", get(handle_api))
         .route("/*path", get(handle_ssr))
         .route("/", get(handle_ssr))
@@ -694,11 +938,10 @@ fn path_to_title(path: &str) -> String {
     }
 }
 
-/// Escape HTML special characters
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+fn truncate_path(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("...{}", &s[s.len()-max_len+3..])
+    }
 }

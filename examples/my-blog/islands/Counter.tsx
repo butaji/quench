@@ -1,6 +1,14 @@
-// islands/Counter.tsx - Interactive counter component
+/**
+ * Counter Island
+ * 
+ * A fully interactive counter component that demonstrates:
+ * - useState hook
+ * - Event handlers
+ * - Conditional rendering
+ * - Proper island architecture
+ */
+
 import { useState } from "preact/hooks";
-import { signal } from "@preact/signals";
 
 interface CounterProps {
   initial?: number;
@@ -10,10 +18,10 @@ interface CounterProps {
 
 /**
  * Counter - An interactive island demonstrating:
- * - useState hook
- * - Event handlers
- * - Conditional rendering
- * - Props serialization
+ * - useState hook for local state
+ * - Event handlers for user interaction
+ * - Conditional rendering based on state
+ * - Props serialization for hydration
  */
 export default function Counter({ 
   initial = 0, 
@@ -49,27 +57,136 @@ export default function Counter({
     }
   };
 
+  const delta = count - initial;
+
   return (
-    <div class="counter">
-      <h2>{label}</h2>
+    <div class="counter-island" style={{
+      padding: "1.5rem",
+      border: "2px solid #e0e0e0",
+      borderRadius: "12px",
+      maxWidth: "400px",
+      background: "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)"
+    }}>
+      <h2 style={{ margin: "0 0 1rem 0", color: "#333", textAlign: "center" }}>
+        {label}
+      </h2>
       
-      <div class="display">
-        <span class="count">{count}</span>
-        {count !== initial && (
-          <span class="delta">({count > initial ? "+" : ""}{count - initial})</span>
-        )}
-      </div>
-      
-      <div class="controls">
-        <button onClick={decrement}>-</button>
-        <button onClick={undo} disabled={history.length <= 1}>Undo</button>
-        <button onClick={reset}>Reset</button>
-        <button onClick={increment}>+</button>
-      </div>
-      
-      <div class="info">
-        <p>Step: {step} | Initial: {initial}</p>
-        <p>History length: {history.length}</p>
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: "1rem"
+      }}>
+        <div class="display" style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.5rem",
+          fontSize: "2.5rem",
+          fontWeight: "bold",
+          color: "#1a1a2e"
+        }}>
+          <span class="count">{count}</span>
+          {delta !== 0 && (
+            <span style={{
+              fontSize: "1rem",
+              color: delta > 0 ? "#4caf50" : "#f44336",
+              fontWeight: "normal"
+            }}>
+              ({delta > 0 ? "+" : ""}{delta})
+            </span>
+          )}
+        </div>
+        
+        <div style={{
+          display: "flex",
+          gap: "0.5rem",
+          flexWrap: "wrap",
+          justifyContent: "center"
+        }}>
+          <button 
+            onClick={decrement}
+            style={{
+              padding: "0.5rem 1.25rem",
+              fontSize: "1.25rem",
+              fontWeight: "bold",
+              border: "none",
+              borderRadius: "8px",
+              background: "#e74c3c",
+              color: "white",
+              cursor: "pointer",
+              transition: "transform 0.1s, background 0.2s"
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = "#c0392b"}
+            onMouseOut={(e) => e.currentTarget.style.background = "#e74c3c"}
+          >
+            −
+          </button>
+          
+          <button 
+            onClick={undo}
+            disabled={history.length <= 1}
+            style={{
+              padding: "0.5rem 1rem",
+              fontSize: "0.875rem",
+              border: "none",
+              borderRadius: "8px",
+              background: history.length <= 1 ? "#bdc3c7" : "#f39c12",
+              color: "white",
+              cursor: history.length <= 1 ? "not-allowed" : "pointer",
+              transition: "background 0.2s",
+              opacity: history.length <= 1 ? 0.5 : 1
+            }}
+          >
+            Undo
+          </button>
+          
+          <button 
+            onClick={reset}
+            disabled={count === initial}
+            style={{
+              padding: "0.5rem 1rem",
+              fontSize: "0.875rem",
+              border: "none",
+              borderRadius: "8px",
+              background: count === initial ? "#bdc3c7" : "#9b59b6",
+              color: "white",
+              cursor: count === initial ? "not-allowed" : "pointer",
+              transition: "background 0.2s",
+              opacity: count === initial ? 0.5 : 1
+            }}
+          >
+            Reset
+          </button>
+          
+          <button 
+            onClick={increment}
+            style={{
+              padding: "0.5rem 1.25rem",
+              fontSize: "1.25rem",
+              fontWeight: "bold",
+              border: "none",
+              borderRadius: "8px",
+              background: "#27ae60",
+              color: "white",
+              cursor: "pointer",
+              transition: "transform 0.1s, background 0.2s"
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = "#1e8449"}
+            onMouseOut={(e) => e.currentTarget.style.background = "#27ae60"}
+          >
+            +
+          </button>
+        </div>
+        
+        <div style={{
+          marginTop: "0.5rem",
+          fontSize: "0.875rem",
+          color: "#666",
+          textAlign: "center"
+        }}>
+          <p style={{ margin: "0.25rem 0" }}>Step: {step} | Initial: {initial}</p>
+          <p style={{ margin: "0.25rem 0" }}>History: {history.length} changes</p>
+        </div>
       </div>
     </div>
   );
