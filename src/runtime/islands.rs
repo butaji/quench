@@ -158,7 +158,7 @@ pub struct IslandRegistry {
 }
 
 #[derive(Debug, Clone)]
-struct IslandEntry {
+pub(crate) struct IslandEntry {
     /// Component name
     name: String,
     
