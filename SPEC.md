@@ -928,15 +928,15 @@ pub fn counter(initial: f64) -> VNode {
 - [ ] Error spans with source locations
 - [x] Full route generation → Axum router wiring
   - [x] Route patterns extraction
+  - [x] Route parameters extraction (via RouteTable)
   - [ ] All HTTP methods (GET, POST, PUT, DELETE, PATCH)
-  - [ ] Route parameters extraction
   - [ ] Query string handling
 - [ ] Middleware support
   - [ ] `_middleware.ts` global middleware
   - [ ] Route-specific middleware
-- [ ] Layout nesting
-  - [ ] `_layout.tsx` hierarchical layouts
-  - [ ] `_app.tsx` global wrapper
+- [x] Layout nesting
+  - [x] `_layout.tsx` hierarchical layouts (detection + composition)
+  - [x] `_app.tsx` global wrapper (detection)
 - [x] Static file serving (`/static/*`) - via tower-http
 - [ ] Client-side island hydration
   - [ ] Pre-compiled TypeScript bundles
@@ -945,12 +945,12 @@ pub fn counter(initial: f64) -> VNode {
 - [ ] Streaming SSR (optional)
 
 **Current Status:**
-- Binary builds successfully: 2.6MB (includes full CLI)
-- Routes parse and extract patterns correctly
-- Props types generate from interfaces
-- Dev mode: file watching + transpilation works
-- Production: transpile + cargo build pipeline working
-- **48 tests passing**
+- Binary builds successfully: ~2.6MB (includes full CLI)
+- **57 tests passing**
+- Routes parse and extract patterns correctly (with regex-based matching)
+- SSR pipeline implemented (placeholder execution)
+- Layout detection and composition working
+- Dev server architecture complete
 
 ### Phase 3: Ecosystem (Q4 2025)
 
