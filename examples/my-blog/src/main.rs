@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use axum::Router;
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {

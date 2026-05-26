@@ -6,22 +6,15 @@ interface HeaderProps {
   subtitle?: string;
 }
 
-/**
- * Header - A static server component
- * 
- * This component renders on the server only.
- * No JavaScript is shipped for this component.
- */
 export default function Header({ title, subtitle }: HeaderProps) {
-  // Static rendering - no interactivity needed
-  const year = new Date().getFullYear();
+  const year = 2026;
   
   return (
     <header class="site-header">
       <div class="header-content">
         <div class="logo">
           <a href="/">
-            <span class="logo-icon">⚡</span>
+            <span class="logo-icon">runts</span>
             <span class="logo-text">{title}</span>
           </a>
         </div>
@@ -35,19 +28,14 @@ export default function Header({ title, subtitle }: HeaderProps) {
         </nav>
         
         <div class="header-actions">
-          {subtitle && <span class="subtitle">{subtitle}</span>}
+          <span class="subtitle">{subtitle}</span>
         </div>
       </div>
       
       <div class="header-banner">
         <span class="runtime-badge">
-          ⚡ Powered by runts &amp; Rust
+          Powered by runts and Rust
         </span>
-        {IS_BROWSER && (
-          <span class="browser-badge">
-            Client-side JavaScript active
-          </span>
-        )}
       </div>
     </header>
   );
