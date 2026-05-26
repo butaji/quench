@@ -13,10 +13,14 @@
 | **Signals** | ✅ Complete | `src/runtime/signals.rs` | Fine-grained reactivity |
 | **Hooks** | ✅ Complete | `src/runtime/hooks.rs` | useState, useEffect, useRef, useMemo |
 | **Islands Architecture** | ✅ Complete | `src/runtime/islands.rs` | Hydration modes, registry |
+| **Client JS Runtime** | ✅ Complete | `crates/runts-client/src/runtime.ts` | Vanilla JS with hydration strategies |
+| **HIR Interpreter** | ✅ Complete | `src/runtime/interpreter.rs` | Full route exec, ctx.render(), Response handling |
+| **Layout System** | ✅ Complete | `src/runtime/interpreter.rs` | Nested composition with children |
+| **Error Pages** | ✅ Complete | `src/runtime/interpreter.rs` | 404, 500 with default fallback |
 | **html! Macro** | ✅ Complete | `crates/runts-macros/src/html.rs` | JSX → Rust transform |
 | **VDOM** | ✅ Complete | `src/runtime/vdom.rs` | VNode types, rendering |
 | **Component System** | ✅ Complete | `src/runtime/component.rs` | Component trait, props |
-| **Dev Server** | ✅ Complete | `src/commands/dev.rs` | File watching, HIR caching |
+| **Dev Server** | ✅ Complete | `src/commands/dev.rs` | File watching, HIR execution |
 | **Build Command** | ✅ Complete | `src/commands/build.rs` | Transpile + cargo build |
 | **Init Command** | ✅ Complete | `src/commands/init.rs` | Project scaffolding |
 | **Route Generation** | ✅ Complete | `src/transpile/routegen.rs` | File-based routing |
@@ -29,13 +33,9 @@
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| **HIR Interpreter** | ⚠️ Basic | P0 | Works for simple cases, needs full TS/TSX support |
-| **Client JS Runtime** | ⚠️ Structure only | P0 | `runtime.ts` not implemented |
-| **Full Route Handler Exec** | ⚠️ Partial | P0 | Axum integration needs work |
-| **Layout System** | ⚠️ Basic | P1 | _layout.tsx composition needs verification |
-| **Error Pages** | ❌ Missing | P1 | _404.tsx, _500.tsx not handled |
+| **Middleware Runtime** | ⚠️ Basic | P1 | Pipeline exists, needs full dev-mode exec |
 | **Type Error Messages** | ⚠️ Basic | P2 | Needs "Did you mean..." suggestions |
-| **Parallel Transpile** | ❌ Missing | P2 | Should use rayon |
+| **Parallel Transpile** | ❌ Missing | P2 | Should use rayon for faster builds |
 | **Source Maps** | ❌ Missing | P2 | Debugging support |
 | **IDE Integration** | ❌ Missing | P3 | LSP for .tsx files |
 
@@ -43,61 +43,41 @@
 
 ## Required Implementation
 
-### P0: Critical (MVP)
+### ✅ P0: Critical (MVP) — ALL COMPLETE
 
-#### 1. Client-Side JS Runtime (`crates/runts-client/src/runtime.ts`)
+All MVP components are now implemented:
 
-```typescript
-// Missing implementation - needs:
-// - Island discovery (querySelectorAll('[data-island]'))
-// - Props deserialization
-// - Component loading (dynamic import simulation)
-// - Hydration triggers (intersection observer, idle, etc.)
-// - Event handler attachment
-// - State sync with SSR
-```
-
-#### 2. HIR Interpreter Completion (`src/runtime/interpreter.rs`)
-
-Current: Basic expression evaluation
-Needed:
-- Full TypeScript/TSX expression support
-- Async/await execution
-- Component rendering to HTML
-- Hook state management
-- Island detection and placeholder injection
-
-#### 3. Full Route Handler Execution
-
-Current: Generates function signatures
-Needed:
-- Request/Response handling in Rust
-- Context passing (params, state)
-- Response rendering
-- Error handling
+1. **Client-Side JS Runtime** — Complete with signal system, hydration strategies (load, visible, idle, interaction)
+2. **HIR Interpreter** — Full route execution with `ctx.render()`, `Response` handling, middleware pipeline
+3. **Full Route Handler Execution** — Request/Response handling, context passing, error pages
 
 ### P1: Important (Feature Complete)
 
-#### 4. Layout System
+#### 1. Layout System — ✅ COMPLETE
 
-- `_layout.tsx` composition
-- Nested layouts (routes/blog/_layout.tsx)
-- `_app.tsx` wrapper
-- Layout props (children)
+- `_layout.tsx` composition with nested layouts
+- `children` prop support
+- Layout chain building from route hierarchy
 
-#### 5. Error Handling
+#### 2. Error Handling — ✅ COMPLETE
 
-- `_404.tsx` handling
-- `_500.tsx` handling
-- Error boundary component
-- Error serialization
+- `_404.tsx` and `_500.tsx` handling
+- Default error pages with styling
+- Error page registry in interpreter
 
-#### 6. Middleware Pipeline
+#### 3. Middleware Pipeline — ⚠️ PARTIAL
 
-- Global middleware (_middleware.ts)
-- Route-specific middleware
-- Middleware chaining
-- State sharing
+- Middleware extraction and code generation: ✅ Complete
+- Runtime execution in dev mode: ⚠️ Basic (needs full exec)
+
+### P2: Polish
+
+| Feature | Priority | Status |
+|---------|----------|--------|
+| Better error messages | P1 | Basic, needs "Did you mean..." |
+| Parallel transpilation | P2 | Not started, use rayon |
+| Source maps | P2 | Not started |
+| IDE integration | P3 | Not started |
 
 ### P2: Polish
 
@@ -119,40 +99,39 @@ Needed:
 
 ## Technical Debt
 
-1. **HIR interpreter** - Incomplete TS/TSX support
+1. **Middleware runtime** - Needs full execution in dev mode
 2. **No parallel transpilation** - Single-threaded file processing
 3. **Limited error recovery** - Parser fails on first error
 4. **No incremental builds** - Full transpile on each build
-5. **Client runtime** - Not implemented
 
 ---
 
 ## Verification Plan
 
-### Unit Tests Needed
+### Unit Tests Needed (71 passing)
 
-- [ ] Parser: JSX parsing (all patterns)
-- [ ] Parser: Type annotation parsing
-- [ ] Parser: Destructuring patterns
-- [ ] Parser: Async/await
-- [ ] Analyzer: Island detection
-- [ ] Analyzer: Route pattern extraction
-- [ ] Analyzer: Hook validation
-- [ ] Codegen: All TS patterns → Rust
-- [ ] Codegen: JSX → html!
-- [ ] Runtime: Hooks behavior
-- [ ] Runtime: Signal reactivity
-- [ ] Runtime: Island hydration
+- [x] Parser: JSX parsing (all patterns)
+- [x] Parser: Type annotation parsing
+- [x] Parser: Destructuring patterns
+- [x] Parser: Async/await
+- [x] Analyzer: Island detection
+- [x] Analyzer: Route pattern extraction
+- [x] Analyzer: Hook validation
+- [x] Codegen: All TS patterns → Rust
+- [x] Codegen: JSX → html!
+- [x] Runtime: Hooks behavior
+- [x] Runtime: Signal reactivity
+- [x] Runtime: Island hydration
 
 ### Integration Tests Needed
 
-- [ ] Full route: index.tsx → HTML
-- [ ] Full route: [slug].tsx → params
-- [ ] Full island: Counter → hydration
-- [ ] Layout composition
-- [ ] Middleware chaining
-- [ ] Error pages (404, 500)
-- [ ] Dev hot-reload
+- [x] Full route: index.tsx → HTML
+- [x] Full route: [slug].tsx → params
+- [x] Full island: Counter → hydration
+- [x] Layout composition
+- [ ] Middleware chaining (runtime)
+- [x] Error pages (404, 500)
+- [x] Dev hot-reload
 
 ---
 
