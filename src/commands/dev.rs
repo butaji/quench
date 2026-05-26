@@ -9,94 +9,95 @@
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
+    extract::{Path, State},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::sync::broadcast;
-
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 
 use crate::config::Config;
-use crate::transpile::{Parser, Analyzer, CodeGenerator, hir};
+use crate::commands::routes::{HttpMethod, RouteTable};
+use crate::commands::ssr::{IslandManifest, SsrRenderer};
+use crate::commands::layouts::LayoutManager;
+use crate::transpile::{Parser, Analyzer, CodeGenerator};
 
-/// Dev server state
-#[allow(dead_code)]
-pub struct DevState {
+/// Application state shared across requests
+#[derive(Clone)]
+pub struct AppState {
     /// Project root
     pub root: PathBuf,
     
-    /// Transpiler cache (path -> HIR)
-    pub cache: Arc<Mutex<HashMap<PathBuf, ModuleCache>>>,
+    /// Route table
+    pub route_table: Arc<RwLock<RouteTable>>,
+    
+    /// SSR renderer
+    pub ssr: Arc<SsrRenderer>,
+    
+    /// Layout manager
+    pub layout_manager: Arc<LayoutManager>,
+    
+    /// Module cache
+    pub module_cache: Arc<RwLock<HashMap<PathBuf, ModuleCacheEntry>>>,
     
     /// Broadcast channel for hot reload events
     pub reload_tx: broadcast::Sender<ReloadEvent>,
-    
-    /// Watcher handle
-    pub watcher: Mutex<Option<RecommendedWatcher>>,
+}
+
+struct ModuleCacheEntry {
+    code: String,
+    modified: std::time::SystemTime,
+    errors: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct ModuleCache {
-    /// Parsed module
-    pub hir: hir::Module,
-    
-    /// Last modified time
-    pub modified: std::time::SystemTime,
-    
-    /// Compilation errors (if any)
-    pub errors: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub enum ReloadEvent {
-    /// A file was changed
     Changed(PathBuf),
-    
-    /// A file was added
-    Added(PathBuf),
-    
-    /// A file was removed
-    Removed(PathBuf),
-    
-    /// Full reload requested
     Reload,
-    
-    /// Error occurred
     Error(String),
 }
 
-impl DevState {
-    pub fn new(root: PathBuf) -> Self {
+impl AppState {
+    /// Create new application state
+    pub fn new(root: PathBuf, port: u16) -> Result<Self> {
+        let routes_dir = root.join("routes");
+        let islands_dir = root.join("islands");
+        
+        let route_table = RouteTable::from_routes_dir(&routes_dir)?;
+        let ssr = SsrRenderer::new(routes_dir, islands_dir)?;
+        let layout_manager = LayoutManager::from_routes_dir(&root.join("routes"))?;
+        
         let (reload_tx, _) = broadcast::channel(100);
         
-        Self {
+        Ok(Self {
             root,
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            route_table: Arc::new(RwLock::new(route_table)),
+            ssr: Arc::new(ssr),
+            layout_manager: Arc::new(layout_manager),
+            module_cache: Arc::new(RwLock::new(HashMap::new())),
             reload_tx,
-            watcher: Mutex::new(None),
-        }
+        })
     }
     
-    /// Start watching for file changes
-    #[allow(unused_variables)]
+    /// Start file watcher
     pub fn start_watcher(&self, paths: Vec<PathBuf>) -> Result<()> {
-        let root = self.root.clone();
         let reload_tx = self.reload_tx.clone();
+        let route_table = self.route_table.clone();
         
         let mut watcher = RecommendedWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
                     let paths: Vec<PathBuf> = event.paths.into_iter()
                         .filter(|p| {
-                            // Only watch TS/TSX/JS files
                             matches!(
                                 p.extension().and_then(|e| e.to_str()),
                                 Some("ts") | Some("tsx") | Some("js") | Some("jsx")
@@ -108,21 +109,28 @@ impl DevState {
                         return;
                     }
                     
+                    // Reload route table if routes changed
+                    if paths.iter().any(|p| {
+                        p.to_string_lossy().contains("/routes/")
+                    }) {
+                        if let Ok(new_table) = RouteTable::from_routes_dir(
+                            &std::env::current_dir().unwrap_or_default().join("routes")
+                        ) {
+                            *route_table.write() = new_table;
+                        }
+                    }
+                    
                     let event = match event.kind {
-                        notify::EventKind::Create(_) => {
-                            ReloadEvent::Added(paths[0].clone())
-                        }
-                        notify::EventKind::Remove(_) => {
-                            ReloadEvent::Removed(paths[0].clone())
-                        }
+                        notify::EventKind::Create(_) |
                         notify::EventKind::Modify(_) => {
-                            // Invalidate cache
                             ReloadEvent::Changed(paths[0].clone())
                         }
+                        notify::EventKind::Remove(_) => ReloadEvent::Reload,
                         _ => return,
                     };
                     
                     let _ = reload_tx.send(event);
+                    println!("[runts] File changed: {:?}", paths[0]);
                 }
             },
             notify::Config::default(),
@@ -135,44 +143,36 @@ impl DevState {
             }
         }
         
-        *self.watcher.lock().unwrap() = Some(watcher);
-        
         Ok(())
     }
     
-    /// Transpile a file (with caching)
-    #[allow(dead_code)]
+    /// Transpile a file
     pub fn transpile(&self, path: &PathBuf) -> Result<String> {
         let modified = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::now());
         
-        // Check cache
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.module_cache.read();
             if let Some(cached) = cache.get(path) {
                 if cached.modified >= modified && cached.errors.is_empty() {
-                    return generate_response(&cached.hir);
+                    return Ok(cached.code.clone());
                 }
             }
         }
         
-        // Parse
         let mut parser = Parser::new();
         let module = parser.parse_file(path)?;
         
-        // Analyze
         let mut analyzer = Analyzer::new();
         if let Err(errors) = analyzer.analyze(&module) {
-            // Store errors but continue
             let error_strs: Vec<String> = errors.iter()
                 .map(|e| e.to_string())
                 .collect();
             
-            // Cache even with errors
-            let mut cache = self.cache.lock().unwrap();
-            cache.insert(path.clone(), ModuleCache {
-                hir: module,
+            let mut cache = self.module_cache.write();
+            cache.insert(path.clone(), ModuleCacheEntry {
+                code: String::new(),
                 modified,
                 errors: error_strs.clone(),
             });
@@ -180,15 +180,13 @@ impl DevState {
             return Err(anyhow::anyhow!("Analysis errors: {:?}", error_strs));
         }
         
-        // Generate
         let mut codegen = CodeGenerator::new();
         let rust_code = codegen.generate_module(&module)?;
         
-        // Cache
         {
-            let mut cache = self.cache.lock().unwrap();
-            cache.insert(path.clone(), ModuleCache {
-                hir: module,
+            let mut cache = self.module_cache.write();
+            cache.insert(path.clone(), ModuleCacheEntry {
+                code: rust_code.clone(),
                 modified,
                 errors: Vec::new(),
             });
@@ -198,67 +196,154 @@ impl DevState {
     }
 }
 
-#[allow(dead_code)]
-fn generate_response(module: &hir::Module) -> Result<String> {
-    let mut codegen = CodeGenerator::new();
-    codegen.generate_module(module)
-}
-
-/// Serve HMR client script
-async fn hmr_script() -> Response {
-    let script = r#"<!DOCTYPE html>
-<html>
-<head><title>runts HMR</title></head>
-<body>
-    <h1>runts Dev Server</h1>
-    <p>Edit your <code>routes/</code>, <code>islands/</code>, or <code>components/</code> files to see changes.</p>
-    <script>
-        console.log('[runts] Dev server ready');
-    </script>
-</body>
-</html>"#;
-    Html(script).into_response()
-}
-
-/// Handle static file serving
-#[allow(dead_code)]
-async fn handle_static(path: axum::extract::Path<String>) -> Response {
-    // Simple static file serving - just return a placeholder for now
-    // In production, this would use tower-http's ServeDir
-    let filename = format!("static/{}", path.0);
+/// Handle SSR request
+async fn handle_ssr(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    let path = if path.is_empty() { "/" } else { &path };
+    let method = HttpMethod::GET;
     
-    if let Ok(contents) = std::fs::read(&filename) {
-        let mime = if filename.ends_with(".css") {
-            "text/css"
-        } else if filename.ends_with(".js") {
-            "application/javascript"
-        } else if filename.ends_with(".html") {
-            "text/html"
-        } else if filename.ends_with(".png") {
-            "image/png"
-        } else if filename.ends_with(".svg") {
-            "image/svg+xml"
-        } else {
-            "application/octet-stream"
-        };
-        
-        axum::response::Response::builder()
-            .header("Content-Type", mime)
-            .body(Body::from(contents))
-            .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response())
-    } else {
-        Html(format!("<h1>Not Found: {}</h1>", filename)).into_response()
+    match state.ssr.render(path, method).await {
+        Ok(result) => {
+            let html = inject_island_manifest(result.html, &result.island_manifest);
+            Html(html).into_response()
+        }
+        Err(e) => {
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head><title>404 - Not Found</title></head>
+<body>
+    <h1>404 Not Found</h1>
+    <p>Route: {}</p>
+    <pre>Error: {}</pre>
+</body>
+</html>"#,
+                path, e
+            );
+            Html(html).into_response()
+        }
     }
+}
+
+/// Handle static files
+async fn handle_static(path: Path<String>) -> Response {
+    let root = std::env::current_dir().unwrap_or_default();
+    let static_dir = root.join("static");
+    let file_path = static_dir.join(&*path);
+    
+    if !file_path.exists() {
+        return Html("<h1>404 - File not found</h1>").into_response();
+    }
+    
+    match tokio::fs::read(&file_path).await {
+        Ok(contents) => {
+            let mime = mime_guess::from_path(&file_path)
+                .first_or_octet_stream()
+                .to_string();
+            
+            Response::builder()
+                .header("Content-Type", mime)
+                .body(Body::from(contents))
+                .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response())
+        }
+        Err(_) => Html("<h1>Error reading file</h1>").into_response(),
+    }
+}
+
+/// Serve island manifest
+async fn handle_island_manifest(State(_state): State<AppState>) -> Response {
+    let manifest = IslandManifest::new();
+    let json = serde_json::to_string(&manifest).unwrap_or_default();
+    
+    Response::builder()
+        .header("Content-Type", "application/json")
+        .body(Body::from(json))
+        .unwrap()
+}
+
+/// Serve island JS bundle
+async fn handle_island_bundle(Path(name): Path<String>) -> Response {
+    let bundle = format!(
+        r#"// Island: {}
+export const hydrate = (id, props) => {{
+    console.log('[runts] Hydrating island:', id, props);
+}};
+"#,
+        name
+    );
+    
+    Response::builder()
+        .header("Content-Type", "application/javascript")
+        .body(Body::from(bundle))
+        .unwrap()
+}
+
+/// SSE endpoint for HMR
+async fn handle_hmr_sse(State(_state): State<AppState>) -> Response {
+    // For now, return a simple response indicating HMR is ready
+    // Full SSE implementation would require a different approach with tokio::sync::broadcast
+    let body = "data: {\"type\": \"connected\"}\n\n";
+    
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// HMR client script
+async fn hmr_client_script() -> Response {
+    let script = r#"
+(function() {
+    const source = new EventSource('/_runts/hmr');
+    
+    source.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'reload') {
+            console.log('[runts HMR] Full reload requested');
+            window.location.reload();
+        } else if (data.type === 'change') {
+            console.log('[runts HMR] File changed:', data.path);
+            window.location.reload();
+        } else if (data.type === 'error') {
+            console.error('[runts HMR] Error:', data.message);
+        }
+    };
+    
+    source.onerror = () => {
+        console.error('[runts HMR] Connection lost, retrying...');
+    };
+    
+    console.log('[runts HMR] Connected');
+})();
+"#;
+    
+    Response::builder()
+        .header("Content-Type", "application/javascript")
+        .body(Body::from(script))
+        .unwrap()
+}
+
+fn inject_island_manifest(html: String, manifest: &IslandManifest) -> String {
+    let manifest_json = serde_json::to_string(manifest).unwrap_or_default();
+    
+    format!(
+        r#"{}<script id="__runts_manifest" type="application/json">{}</script>"#,
+        html, manifest_json
+    )
 }
 
 /// Run the development server
 pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let dev_port = config.dev.port;
     
-    // Create dev state
-    let state = Arc::new(DevState::new(root.clone()));
+    let state = AppState::new(root.clone(), dev_port)?;
     
-    // Start file watcher
     let watch_paths = vec![
         root.join("routes"),
         root.join("islands"),
@@ -270,49 +355,40 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
         eprintln!("Warning: Could not start file watcher: {}", e);
     }
     
-    let dev_port = config.dev.port;
-    
-    println!("🚀 Starting development server on http://localhost:{}", dev_port);
-    println!("📁 Watching for changes in:");
-    println!("   - routes/");
-    println!("   - islands/");
-    println!("   - components/");
-    println!("   - lib/");
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║                    runts Dev Server                         ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║  URL:        http://localhost:{}                           ║", dev_port);
+    println!("║  Root:       {}  ", root.to_string_lossy());
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║  Watching:                                                    ║");
+    println!("║    • routes/     (route handlers & pages)                     ║");
+    println!("║    • islands/   (interactive components)                     ║");
+    println!("║    • components/(static components)                         ║");
+    println!("║    • lib/       (shared code)                               ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
-    println!("Press Ctrl+C to stop.");
-    println!();
+    println!("  Press Ctrl+C to stop.\n");
     
-    // Create router
     let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/_runts/hmr.js", get(hmr_script))
+        .nest_service("/static", ServeDir::new(root.join("static")))
+        .route("/_runts/manifest.json", get(handle_island_manifest))
+        .route("/_runts/islands/:name", get(handle_island_bundle))
+        .route("/_runts/hmr", get(handle_hmr_sse))
+        .route("/_runts/hmr.js", get(hmr_client_script))
+        .route("/*path", get(handle_ssr))
+        .route("/", get(handle_ssr))
+        .layer(CorsLayer::permissive())
         .with_state(state);
     
-    // Start server
     let addr = format!("0.0.0.0:{}", dev_port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    
+    println!("[runts] Server listening on http://localhost:{}\n", dev_port);
     
     axum::serve(listener, app).await?;
     
     Ok(())
-}
-
-async fn index_handler() -> impl IntoResponse {
-    Html(r#"
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>runts dev server</title>
-    <script src="/_runts/hmr.js"></script>
-</head>
-<body>
-    <h1>🏃 runts Dev Server</h1>
-    <p>Your application is running. Edit files to see changes.</p>
-</body>
-</html>
-"#.to_string()).into_response()
 }
 
 #[cfg(test)]
@@ -321,10 +397,9 @@ mod tests {
     use std::env;
     
     #[test]
-    fn test_dev_state_creation() {
+    fn test_app_state_creation() {
         let root = env::current_dir().unwrap();
-        let state = DevState::new(root.clone());
-        
-        assert_eq!(state.root, root);
+        let state = AppState::new(root.clone(), 8080);
+        assert!(state.is_ok());
     }
 }

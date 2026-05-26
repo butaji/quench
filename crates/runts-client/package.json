@@ -1,23 +1,15 @@
 {
-  "name": "@runts/runtime",
+  "name": "@runts/client",
   "version": "0.1.0",
-  "type": "module",
+  "description": "Client-side runtime for runts islands",
   "main": "dist/runtime.js",
   "types": "dist/runtime.d.ts",
-  "exports": {
-    ".": "./dist/runtime.js",
-    "./islands": "./dist/islands.js"
-  },
+  "type": "module",
   "files": [
-    "dist/**/*",
-    "src/**/*"
+    "dist"
   ],
   "scripts": {
-    "build": "esbuild src/runtime.ts --bundle --format=esm --outdir=dist --minify",
-    "dev": "esbuild src/runtime.ts --bundle --format=esm --outdir=dist --watch"
-  },
-  "devDependencies": {
-    "esbuild": "^0.20.0",
-    "typescript": "^5.4.0"
+    "build": "tsc",
+    "build:watch": "tsc --watch"
   }
 }
