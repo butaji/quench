@@ -66,12 +66,21 @@ impl Parser {
                 }
                 'a' if self.check_word("async") => {
                     // Check if it's async function
-                    let ahead = self.source[self.pos + 5..].trim_start();
+                    self.advance_by(5);  // Skip "async"
+                    self.skip_ws_and_comments();
+                    let ahead = self.source[self.pos..].trim_start();
                     if ahead.starts_with("function") {
-                        if let Some(decl) = self.parse_function()? {
+                        // Skip "function" keyword before calling parse_function
+                        self.advance_by(8);
+                        self.skip_ws_and_comments();
+                        if let Some(decl) = self.parse_function_after_keyword()? {
+                            // Set is_async to true since we already consumed "async"
+                            let mut decl = decl;
+                            decl.is_async = true;
                             items.push(ModuleItem::Decl(Decl::Function(decl)));
                         }
                     } else {
+                        // Not async function, skip this statement
                         self.skip_statement();
                     }
                 }
@@ -96,6 +105,10 @@ impl Parser {
                     }
                 }
                 _ => {
+                    // Check if we're at a closing brace (end of block/statement)
+                    if self.current() == '}' {
+                        break;
+                    }
                     self.skip_statement();
                 }
             }
@@ -218,18 +231,33 @@ impl Parser {
             }));
         }
 
-        if self.check_word("const") {
-            self.advance_by(5);
+        if self.check_word("const") || self.check_word("let") || self.check_word("var") {
+            // Skip past the keyword
+            if self.check_word("const") {
+                self.advance_by(5);
+            } else if self.check_word("let") {
+                self.advance_by(3);
+            } else {
+                self.advance_by(3);
+            }
             self.skip_ws_and_comments();
+            
+            // Parse the rest: name = value
             let name = self.parse_identifier()?;
-            self.skip_to_semicolon();
-            return Ok(Some(Export::Named { name }));
-        }
-
-        if self.check_word("function") {
-            self.advance_by(8);
             self.skip_ws_and_comments();
-            let name = self.parse_identifier()?;
+            
+            // Parse the initializer
+            if self.check('=') {
+                self.advance();
+                self.skip_ws_and_comments();
+                let _ = self.parse_expression()?;
+            }
+            
+            self.skip_ws_and_comments();
+            if self.check(';') {
+                self.advance();
+            }
+            
             return Ok(Some(Export::Named { name }));
         }
 
@@ -237,6 +265,13 @@ impl Parser {
             self.advance_by(7);
             self.skip_ws_and_comments();
             return self.parse_default_export();
+        }
+
+        if self.check_word("function") {
+            self.advance_by(8);
+            self.skip_ws_and_comments();
+            let name = self.parse_identifier()?;
+            return Ok(Some(Export::Named { name }));
         }
 
         Ok(None)
@@ -380,6 +415,51 @@ impl Parser {
             self.advance_by(5);
             self.skip_ws_and_comments();
         }
+
+        let body = if self.check('{') {
+            Some(self.parse_block()?)
+        } else {
+            None
+        };
+
+        Ok(Some(FunctionDecl {
+            name,
+            generics,
+            params,
+            return_type,
+            body,
+            is_async,
+            is_generator: false,
+            decorators: vec![],
+        }))
+    }
+
+    /// Parse function after "function" keyword has been consumed
+    fn parse_function_after_keyword(&mut self) -> Result<Option<FunctionDecl>> {
+        // Position is already after "function" keyword
+        
+        let name = self.parse_identifier()?;
+        self.skip_ws_and_comments();
+
+        let generics = self.parse_generic_params()?;
+
+        self.expect('(')?;
+        let params = self.parse_params()?;
+        self.expect(')')?;
+        self.skip_ws_and_comments();
+
+        let return_type = if self.check(':') {
+            self.advance();
+            self.skip_ws_and_comments();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.skip_ws_and_comments();
+
+        // Don't check for async here - it's already been consumed by caller
+        let is_async = false;  // Will be set by caller
 
         let body = if self.check('{') {
             Some(self.parse_block()?)
@@ -1104,6 +1184,14 @@ impl Parser {
             return self.parse_template_literal();
         }
 
+        // Handle identifiers (including keywords used as identifiers)
+        if self.is_ident_char(c) || c.is_alphabetic() {
+            let name = self.parse_identifier()?;
+            // Check for optional chaining after identifier: identifier?.prop
+            let expr = Expr::Ident { name };
+            return Ok(expr);
+        }
+
         if c == '{' {
             // Check if this is an object literal by looking ahead for key: value patterns
             let inner_start = self.pos + 1;
@@ -1220,24 +1308,55 @@ impl Parser {
                 let value = Box::new(self.parse_expression()?);
                 props.push(ObjectProp::Spread { value: *value });
             } else {
+                // Check for async method shorthand: async foo() { }
+                let is_async = self.check_word("async");
+                if is_async {
+                    self.advance_by(5);
+                    self.skip_ws_and_comments();
+                }
+
                 let key = self.parse_prop_key()?;
                 self.skip_ws_and_comments();
 
-                let value = if self.check(':') {
+                // Check for method shorthand: foo() { } or foo(): T { }
+                if self.check('(') {
+                    // Skip the entire method: params, return type, and body
+                    self.skip_balanced('(', ')');
+                    self.skip_ws_and_comments();
+                    // Skip return type annotation if present
+                    if self.check(':') {
+                        self.advance();
+                        self.skip_ws_and_comments();
+                        let _ = self.parse_type();
+                        self.skip_ws_and_comments();
+                    }
+                    // Actually parse the method body to handle statements with semicolons
+                    if self.check('{') {
+                        // Parse the body properly
+                        let _ = self.parse_block();
+                    }
+                    // Create placeholder for method
+                    let method_value = Expr::Ident { name: format!("method:{}", key) };
+                    props.push(ObjectProp::Init { key: PropKey::Ident(key.to_string()), value: method_value });
+                } else if self.check(':') {
+                    // Regular property: key: value
                     self.advance();
                     self.skip_ws_and_comments();
-                    self.parse_expression()?
-                } else if self.check('(') {
-                    self.parse_expression()?
+                    let value = self.parse_expression()?;
+                    props.push(ObjectProp::Init { key: PropKey::Ident(key.to_string()), value });
                 } else {
-                    Expr::Ident { name: key.to_string() }
-                };
-
-                props.push(ObjectProp::Init { key: PropKey::Ident(key.to_string()), value });
+                    // Shorthand property: { foo } means { foo: foo }
+                    let value = Expr::Ident { name: key.to_string() };
+                    props.push(ObjectProp::Init { key: PropKey::Ident(key.to_string()), value });
+                }
             }
 
             self.skip_ws_and_comments();
-            if self.check(',') { self.advance(); } else if !self.check('}') { self.advance(); }
+            if self.check(',') { 
+                self.advance(); // consume comma
+            } else if !self.check('}') { 
+                self.advance(); // consume something else (shouldn't happen often)
+            }  // else: we're at '}', don't advance
         }
 
         self.expect('}')?;
