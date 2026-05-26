@@ -2,6 +2,13 @@
 //!
 //! Executes HIR directly without Rust code generation.
 //! This enables instant hot-reload in development mode.
+//!
+//! Features:
+//! - Full Fresh route handler execution
+//! - Islands architecture with partial hydration
+//! - Layout system with nested composition
+//! - Middleware pipeline
+//! - Error pages (404, 500)
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -9,6 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
+use serde_json::Value as JsonValue;
 
 use crate::transpile::hir::*;
 
@@ -112,6 +120,17 @@ impl Default for EvalContext {
     }
 }
 
+/// Result of middleware execution
+#[derive(Debug, Clone)]
+enum MiddlewareResult {
+    /// Continue to next middleware
+    Continue,
+    /// Skip to next middleware
+    Next,
+    /// Return this response immediately
+    Response(String),
+}
+
 /// Rendered island placeholder
 #[derive(Debug, Clone)]
 pub struct RenderedIsland {
@@ -120,6 +139,27 @@ pub struct RenderedIsland {
     pub html: String,
     pub id: String,
     pub props_json: String,
+    /// Hydration strategy
+    pub hydrate: HydrationStrategy,
+}
+
+/// Island hydration strategy
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HydrationStrategy {
+    /// Hydrate immediately on page load
+    Load,
+    /// Hydrate when visible in viewport
+    Visible,
+    /// Hydrate when user interacts
+    Interaction,
+    /// Hydrate when browser is idle
+    Idle,
+}
+
+impl Default for HydrationStrategy {
+    fn default() -> Self {
+        Self::Load
+    }
 }
 
 /// Request information
@@ -285,6 +325,23 @@ fn generate_island_id() -> String {
 
 fn html_escape_attr(s: &str) -> String {
     s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Execution mode for route handlers
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExecMode {
+    /// Execute full handler including ctx.render() (default)
+    Full,
+    /// Only execute handler, skip component rendering (for API routes)
+    HandlerOnly,
+    /// Only render component, skip handler (for page-specific data)
+    RenderOnly,
+}
+
+impl Default for ExecMode {
+    fn default() -> Self {
+        Self::Full
+    }
 }
 
 impl Interpreter {
@@ -552,41 +609,152 @@ impl Interpreter {
         layouts
     }
     
+    /// Execute middleware pipeline
+    /// 
+    /// Middleware can:
+    /// - Modify request state
+    /// - Return early with a response
+    /// - Pass control to next middleware
     fn execute_middleware(&self, request: &RequestInfo, path: &str, state: &mut HashMap<String, Value>) -> Result<Option<String>, String> {
         let middleware_guard = self.middleware.read();
         
-        for mw in middleware_guard.iter() {
-            if mw.is_global {
-                state.insert("_middleware_executed".to_string(), Value::Bool(true));
+        // Collect middleware that matches this path (clone to avoid borrow issues)
+        let applicable_middleware: Vec<MiddlewareInfo> = middleware_guard.iter()
+            .filter(|mw| mw.is_global || self.middleware_matches_path(mw, path))
+            .cloned()
+            .collect();
+        
+        drop(middleware_guard);
+        
+        // Execute middleware chain
+        for mw in &applicable_middleware {
+            let mut ctx = EvalContext::default();
+            ctx.url = request.url.clone();
+            ctx.request = Some(request.clone());
+            ctx.state = state.clone();
+            
+            // Execute middleware body
+            let result = self.execute_middleware_body(mw, &mut ctx);
+            
+            match result {
+                MiddlewareResult::Continue => {
+                    // Update state from middleware
+                    *state = ctx.state;
+                }
+                MiddlewareResult::Response(html) => {
+                    return Ok(Some(html));
+                }
+                MiddlewareResult::Next => {
+                    // Continue to next middleware
+                    *state = ctx.state;
+                }
             }
         }
         
         Ok(None)
     }
     
+    /// Check if middleware matches the given path
+    fn middleware_matches_path(&self, middleware: &MiddlewareInfo, path: &str) -> bool {
+        if let Some(pattern) = &middleware.pattern {
+            // Simple prefix matching
+            path.starts_with(pattern)
+        } else {
+            true
+        }
+    }
+    
+    /// Execute middleware body and return result
+    fn execute_middleware_body(&self, middleware: &MiddlewareInfo, ctx: &mut EvalContext) -> MiddlewareResult {
+        for stmt in &middleware.body {
+            match stmt {
+                Stmt::Return { arg: Some(expr) } => {
+                    // Check for return response
+                    if let Expr::New { callee, args, .. } = expr {
+                        if let Expr::Ident { name } = callee.as_ref() {
+                            if name == "Response" {
+                                if let Some(body) = args.first() {
+                                    if let Ok(val) = self.expr_to_value(body, ctx) {
+                                        return MiddlewareResult::Response(val.to_string());
+                                    }
+                                }
+                                return MiddlewareResult::Response(String::new());
+                            }
+                        }
+                    }
+                }
+                
+                Stmt::Variable { decl } => {
+                    if let Some(init) = &decl.init {
+                        // Check for ctx.state assignment
+                        if let Expr::Assign { left, right, .. } = init {
+                            if let Expr::Member { object, property, .. } = left.as_ref() {
+                                if let Expr::Ident { name: obj_name } = object.as_ref() {
+                                    if obj_name == "ctx" {
+                                        if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                            if prop_name == "state" {
+                                                if let Ok(val) = self.expr_to_value(right, ctx) {
+                                                    ctx.state.insert("middleware_state".to_string(), val);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Ok(val) = self.expr_to_value(init, ctx) {
+                            ctx.state.insert(decl.name.clone(), val);
+                        }
+                    }
+                }
+                
+                // Check for await next() pattern
+                Stmt::Expr { expr } => {
+                    if let Expr::Await { arg } = expr {
+                        if let Expr::Call { callee, .. } = arg.as_ref() {
+                            if let Expr::Ident { name } = callee.as_ref() {
+                                if name == "next" {
+                                    return MiddlewareResult::Next;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                _ => {}
+            }
+        }
+        
+        MiddlewareResult::Continue
+    }
+    
+    /// Execute a route with full handler and component rendering
     pub fn execute_route(&self, route_path: &str, method: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult, String> {
+        self.execute_route_with_mode(route_path, method, params, request, ExecMode::Full)
+    }
+    
+    /// Execute a route with configurable mode
+    pub fn execute_route_with_mode(&self, route_path: &str, method: &str, params: HashMap<String, String>, request: RequestInfo, mode: ExecMode) -> Result<RenderResult, String> {
         let route_key = route_path.to_string();
         
+        // Execute middleware pipeline
         let mut middleware_state = HashMap::new();
-        
         if let Some(response) = self.execute_middleware(&request, &route_key, &mut middleware_state)? {
             return Ok(RenderResult {
                 html: response,
                 page_data: Value::Object(middleware_state),
                 islands: vec![],
+                status: 200,
             });
         }
         
-        let handler = self.handlers.read()
-            .get(&route_key)
-            .cloned()
-            .ok_or_else(|| {
-                if let Some(not_found) = self.error_pages.read().get(&404) {
-                    format!("Route not found, would use 404 handler: {}", not_found)
-                } else {
-                    format!("No handler found for route: {}", route_path)
-                }
-            })?;
+        // Look up handler
+        let handler = match self.handlers.read().get(&route_key).cloned() {
+            Some(h) => h,
+            None => {
+                // Try error pages
+                return self.handle_error(404, route_path, request);
+            }
+        };
         
         let mut ctx = EvalContext {
             scope: HashMap::new(),
@@ -597,39 +765,300 @@ impl Interpreter {
             request: Some(request.clone()),
         };
         
+        // Populate scope with params and middleware state
         for (k, v) in &ctx.params {
             ctx.scope.insert(k.clone(), Value::String(v.clone()));
         }
-        
         for (k, v) in &middleware_state {
             ctx.scope.insert(k.clone(), v.clone());
         }
         
         let method_upper = method.to_uppercase();
         let mut page_data: Value = Value::Object(HashMap::new());
+        let mut render_result: Option<String> = None;
         
-        if let Some(handler_method) = handler.methods.get(&method_upper) {
-            ctx.scope.insert("_handler_called".to_string(), Value::Bool(true));
-            
-            if let Some(data) = self.execute_handler_body(handler_method, &ctx) {
-                page_data = data;
+        // Execute handler based on mode
+        if mode == ExecMode::Full || mode == ExecMode::HandlerOnly {
+            if let Some(handler_method) = handler.methods.get(&method_upper) {
+                ctx.scope.insert("_handler_called".to_string(), Value::Bool(true));
+                
+                // Execute handler and check for Response/ctx.render
+                let handler_result = self.execute_handler_full(handler_method, &handler, &mut ctx, route_path)?;
+                
+                if let Some(result) = handler_result {
+                    // Handler returned a Response or rendered content
+                    return Ok(result);
+                }
+                
+                // Get page data from handler execution
+                page_data = ctx.state.get("_page_data").cloned().unwrap_or(Value::Object(HashMap::new()));
             }
         }
         
-        let page_html = if let Some(component_name) = &handler.component_name {
-            self.render_component(component_name, &ctx)?
+        // Render component if needed
+        if mode == ExecMode::Full || mode == ExecMode::RenderOnly {
+            if let Some(component_name) = &handler.component_name {
+                // Add data to props
+                ctx.scope.insert("data".to_string(), page_data.clone());
+                
+                render_result = Some(self.render_component(component_name, &ctx)?);
+            } else {
+                render_result = Some(String::new());
+            }
+        }
+        
+        // Apply layouts
+        let full_html = if let Some(html) = render_result {
+            let layout_chain = self.get_layout_chain(&route_key);
+            self.apply_layouts(&html, &layout_chain, &ctx)?
         } else {
             String::new()
         };
-        
-        let layout_chain = self.get_layout_chain(&route_key);
-        let full_html = self.apply_layouts(&page_html, &layout_chain, &ctx)?;
         
         Ok(RenderResult {
             html: full_html,
             page_data,
             islands: ctx.rendered_islands,
+            status: 200,
         })
+    }
+    
+    /// Execute handler body and check for Response/ctx.render
+    fn execute_handler_full(&self, handler: &HandlerMethod, handler_info: &HandlerInfo, ctx: &mut EvalContext, route_path: &str) -> Result<Option<RenderResult>, String> {
+        for stmt in &handler.body {
+            match stmt {
+                Stmt::Return { arg: Some(expr) } => {
+                    // Check for new Response(...) 
+                    if let Expr::New { callee, args, .. } = expr {
+                        if let Expr::Ident { name } = callee.as_ref() {
+                            if name == "Response" {
+                                return self.handle_response(args, ctx);
+                            }
+                        }
+                    }
+                    
+                    // Check for ctx.render(...)
+                    if let Expr::Call { callee, args, .. } = expr {
+                        if let Expr::Member { object, property, .. } = callee.as_ref() {
+                            if let Expr::Ident { name: obj_name } = object.as_ref() {
+                                if obj_name == "ctx" {
+                                    if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                        if prop_name == "render" {
+                                            // ctx.render() - return None to continue with component rendering
+                                            if !args.is_empty() {
+                                                // If data passed, store it
+                                                if let Ok(data) = self.expr_to_value(&args[0], ctx) {
+                                                    ctx.state.insert("_page_data".to_string(), data);
+                                                }
+                                            }
+                                            return Ok(None);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Otherwise, check if it's an object with data that we should capture
+                    if let Expr::Object { props } = expr {
+                        for prop in props {
+                            if let ObjectProp::Init { key: PropKey::Ident(key), value } = prop {
+                                if key == "json" || key == "data" {
+                                    if let Ok(data) = self.expr_to_value(value, ctx) {
+                                        ctx.state.insert("_page_data".to_string(), data);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Handle variable declarations that might set state
+                Stmt::Variable { decl } => {
+                    if let Some(init) = &decl.init {
+                        if let Ok(val) = self.expr_to_value(init, ctx) {
+                            ctx.state.insert(decl.name.clone(), val);
+                        }
+                    }
+                }
+                
+                _ => {}
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// Handle Response constructor
+    fn handle_response(&self, args: &[Expr], ctx: &EvalContext) -> Result<Option<RenderResult>, String> {
+        if args.is_empty() {
+            return Ok(Some(RenderResult {
+                html: String::new(),
+                page_data: Value::Object(HashMap::new()),
+                islands: vec![],
+                status: 200,
+            }));
+        }
+        
+        // First arg could be body (string or object) or options
+        let first_arg = &args[0];
+        let status = 200;
+        let content_type = "text/html";
+        
+        let body = match first_arg {
+            Expr::String(s) => s.clone(),
+            Expr::Template { parts, exprs } => {
+                let mut result = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if let TemplatePart::String(s) = part {
+                        result.push_str(s);
+                    }
+                    if i < exprs.len() {
+                        if let Ok(val) = self.expr_to_value(&exprs[i], ctx) {
+                            result.push_str(&val.to_string());
+                        }
+                    }
+                }
+                result
+            }
+            Expr::Object { props } => {
+                // Could be options object
+                let mut body_str = String::new();
+                for prop in props {
+                    if let ObjectProp::Init { key: PropKey::Ident(key), value } = prop {
+                        if key == "body" {
+                            if let Ok(val) = self.expr_to_value(value, ctx) {
+                                body_str = val.to_string();
+                            }
+                        }
+                    }
+                }
+                body_str
+            }
+            _ => {
+                if let Ok(val) = self.expr_to_value(first_arg, ctx) {
+                    val.to_string()
+                } else {
+                    String::new()
+                }
+            }
+        };
+        
+        Ok(Some(RenderResult {
+            html: body,
+            page_data: Value::Object(HashMap::new()),
+            islands: vec![],
+            status,
+        }))
+    }
+    
+    /// Handle error pages
+    fn handle_error(&self, status: u16, route_path: &str, request: RequestInfo) -> Result<RenderResult, String> {
+        let error_pages = self.error_pages.read();
+        
+        if let Some(error_path) = error_pages.get(&status) {
+            drop(error_pages);
+            
+            // Execute the error handler
+            let mut ctx = EvalContext::default();
+            ctx.url = request.url.clone();
+            ctx.request = Some(request);
+            ctx.scope.insert("url".to_string(), Value::String(route_path.to_string()));
+            ctx.scope.insert("status".to_string(), Value::Number(status as f64));
+            
+            let html = if let Some(comp_def) = self.components.read().values().find(|c| c.file_path.contains(&format!("_{}", status))) {
+                self.render_function_component_by_path(&comp_def.file_path, &comp_def.name, &ctx)?
+            } else {
+                self.default_error_page(status, route_path)
+            };
+            
+            return Ok(RenderResult {
+                html,
+                page_data: Value::Object(HashMap::new()),
+                islands: vec![],
+                status,
+            });
+        }
+        
+        // No error page found, return default
+        Ok(RenderResult {
+            html: self.default_error_page(status, route_path),
+            page_data: Value::Object(HashMap::new()),
+            islands: vec![],
+            status,
+        })
+    }
+    
+    /// Generate default error page
+    fn default_error_page(&self, status: u16, path: &str) -> String {
+        let title = match status {
+            404 => "Page Not Found",
+            500 => "Internal Server Error",
+            _ => "Error",
+        };
+        let message = match status {
+            404 => format!("The page '{}' could not be found.", path),
+            500 => "An unexpected error occurred.".to_string(),
+            _ => format!("Error {} occurred.", status),
+        };
+        
+        format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{status} - {title}</title>
+    <style>
+        body {{ font-family: system-ui, sans-serif; text-align: center; padding: 4rem; background: #f5f5f5; }}
+        h1 {{ font-size: 6rem; color: #333; margin: 0; }}
+        h2 {{ font-size: 2rem; color: #666; margin: 1rem 0; }}
+        p {{ color: #888; }}
+        a {{ color: #1a1a2e; }}
+    </style>
+</head>
+<body>
+    <h1>{status}</h1>
+    <h2>{title}</h2>
+    <p>{message}</p>
+    <p><a href="/">← Go home</a></p>
+</body>
+</html>"#, status = status, title = title, message = message)
+    }
+    
+    /// Render a function component by its file path
+    fn render_function_component_by_path(&self, file_path: &str, name: &str, ctx: &EvalContext) -> Result<String, String> {
+        let module = self.modules.read().get(file_path).cloned();
+        
+        if let Some(module) = module {
+            for item in &module.items {
+                if let ModuleItem::Decl(Decl::Function(f)) = item {
+                    if &f.name == name {
+                        let comp_def = ComponentDef {
+                            name: name.to_string(),
+                            file_path: file_path.to_string(),
+                            params: f.params.clone(),
+                            body: f.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                        };
+                        return self.render_function_component(f, &comp_def, ctx);
+                    }
+                }
+                if let ModuleItem::Export(Export::Default { expr }) = item {
+                    if let Expr::Function { decl } = expr {
+                        if &decl.name == name {
+                            let comp_def = ComponentDef {
+                                name: name.to_string(),
+                                file_path: file_path.to_string(),
+                                params: decl.params.clone(),
+                                body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                            };
+                            return self.render_function_component(decl, &comp_def, ctx);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(String::new())
     }
     
     fn execute_handler_body(&self, handler: &HandlerMethod, ctx: &EvalContext) -> Option<Value> {
@@ -1011,18 +1440,46 @@ impl Interpreter {
         
         let island_id = generate_island_id();
         
+        // Extract props and determine hydration strategy
         let mut props_map = serde_json::Map::new();
+        let mut hydrate = HydrationStrategy::Load;
+        
         for (k, v) in attrs {
-            props_map.insert(k.clone(), v.to_json());
+            match k.as_str() {
+                "hydrate" | "hydration" => {
+                    if let Value::String(s) = v {
+                        hydrate = match s.to_lowercase().as_str() {
+                            "visible" => HydrationStrategy::Visible,
+                            "interaction" => HydrationStrategy::Interaction,
+                            "idle" => HydrationStrategy::Idle,
+                            _ => HydrationStrategy::Load,
+                        };
+                    }
+                }
+                _ => {
+                    props_map.insert(k.clone(), v.to_json());
+                }
+            }
         }
         let props_json = serde_json::to_string(&props_map).unwrap_or_default();
         
+        // Server-render the island first (for SSR)
+        let server_html = self.render_island_content(&island, attrs, ctx)?;
+        
+        let hydrate_attr = match hydrate {
+            HydrationStrategy::Load => "load",
+            HydrationStrategy::Visible => "visible",
+            HydrationStrategy::Interaction => "interaction",
+            HydrationStrategy::Idle => "idle",
+        };
+        
         let placeholder_html = format!(
-            r#"<div data-island="{}" data-id="{}" data-props='{}'><span class="island-loading">Loading {}...</span></div>"#,
-            name,
-            island_id,
-            props_json,
-            name
+            r#"<div data-island="{name}" data-id="{id}" data-props='{props}' data-hydrate="{hydrate}">{content}</div>"#,
+            name = name,
+            id = island_id,
+            props = props_json,
+            hydrate = hydrate_attr,
+            content = server_html
         );
         
         ctx.rendered_islands.push(RenderedIsland {
@@ -1031,9 +1488,28 @@ impl Interpreter {
             html: placeholder_html.clone(),
             id: island_id,
             props_json,
+            hydrate,
         });
         
         Ok(placeholder_html)
+    }
+    
+    /// Render island content on the server
+    fn render_island_content(&self, island: &IslandInfo, attrs: &HashMap<String, Value>, ctx: &EvalContext) -> Result<String, String> {
+        // Create props object from attributes
+        let mut props_ctx = ctx.clone();
+        for (k, v) in attrs {
+            props_ctx.scope.insert(k.clone(), v.clone());
+        }
+        
+        // Find and execute the island component
+        for item in &island.body {
+            if let Stmt::Return { arg: Some(expr) } = item {
+                return self.evaluate_expr_to_html(expr, &props_ctx);
+            }
+        }
+        
+        Ok(String::new())
     }
 
     fn expr_to_value(&self, expr: &Expr, ctx: &EvalContext) -> Result<Value, String> {
@@ -1284,9 +1760,26 @@ fn extract_file_name(path: &str, prefix: &str) -> String {
     }
 }
 
-#[derive(Debug)]
+/// Result of a route render
+#[derive(Clone)]
 pub struct RenderResult {
+    /// Rendered HTML
     pub html: String,
+    /// Page data from handler
     pub page_data: Value,
+    /// Rendered islands for client hydration
     pub islands: Vec<RenderedIsland>,
+    /// HTTP status code
+    pub status: u16,
+}
+
+impl std::fmt::Debug for RenderResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderResult")
+            .field("html", &self.html.chars().take(100).collect::<String>())
+            .field("page_data", &self.page_data)
+            .field("islands", &self.islands.iter().map(|i| &i.name).collect::<Vec<_>>())
+            .field("status", &self.status)
+            .finish()
+    }
 }
