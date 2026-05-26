@@ -888,23 +888,21 @@ pub fn counter(initial: f64) -> VNode {
 
 **Coverage**: ~85% of real Fresh patterns
 
-### Phase 1.5: Parser/Codegen Improvements (Current)
+### Phase 1.5: Parser/Codegen Improvements (Completed ✅)
 
 **Fixed in this iteration:**
 - [x] `export default function` parsing: Now correctly generates `Expr::Function`
 - [x] Function parameters: Destructuring patterns stored in Param struct
 - [x] Generic params: Parser now checks if `<` is followed by valid identifier before consuming
 - [x] Method return types: Fixed skip_balanced to handle nested `<>` in generic types
-
-**Known Parser Limitations (Remaining):**
-- [ ] Array type syntax: `number[]` not parsed correctly - primitive types are matched by keyword before array handling
-- [ ] Generic type arguments in hooks: `useState<number[]>(initial)` - needs more work
-- [ ] JSX nested children: Generates nested html!() calls incorrectly
+- [x] Array type syntax: `number[]` now parsed correctly - handled as postfix array type
+- [x] Generic type arguments in hooks: `useState<number[]>(initial)` now parses correctly
+- [x] JSX nested children: Fixed nested html!() calls - now uses jsx_element_inner() for proper nesting
 
 **Known Codegen Issues (Remaining):**
-- [ ] Arrow function body: Block vs expression body not distinguished
-- [ ] Hook call syntax: Generics in hook calls not generated correctly
-- [ ] Variable types: Empty type annotations generated for some variables
+- [ ] Destructuring assignment: `const [a, b] = useState()` not generating correct Rust destructuring
+- [ ] Spread operator: `...prev` in arrays not generating correct Rust spread
+- [ ] Arrow function body: Block vs expression body not always distinguished correctly
 
 ### Phase 2: Production Ready (Q3 2025)
 
@@ -1083,6 +1081,7 @@ runts/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1.0 | 2026-05-26 | Parser: Add type argument parsing, array types, JSX nesting fixes |
 | 2.0.0 | 2025-05-26 | Complete rewrite with detailed spec |
 | 1.0.0 | 2025-05-25 | Initial implementation |
 
