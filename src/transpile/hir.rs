@@ -130,6 +130,8 @@ pub struct VariableDecl {
     pub kind: VariableKind,
     pub type_: Option<Type>,
     pub init: Option<Expr>,
+    /// Destructuring pattern (for const [a, b] = ... or const { a, b } = ...)
+    pub pattern: Option<Pat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
