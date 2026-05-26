@@ -7,7 +7,7 @@
 /// # Example
 /// ```rust,ignore
 /// let node = html! {
-///     <div class="container">
+///     <div>
 ///         <h1>"Hello"</h1>
 ///         <p>{ message }</p>
 ///     </div>
@@ -15,8 +15,13 @@
 /// ```
 #[macro_export]
 macro_rules! html {
+    // Match: <tag>children</tag>
+    (< $tag:ident > $($inner:tt)* </ $closing:ident >) => {{
+        $crate::runtime::vdom::VNode::element(stringify!($tag))
+    }};
+    
     // Match: <tag />
     (< $tag:ident />) => {{
-        $crate::runtime::VNode::element(stringify!($tag))
+        $crate::runtime::vdom::VNode::element(stringify!($tag))
     }};
 }

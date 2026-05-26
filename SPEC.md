@@ -904,6 +904,11 @@ pub fn counter(initial: f64) -> VNode {
 - [x] Component return type: Default exports now correctly return `VNode` instead of `()`
 - [x] Property access: JavaScript `.length` correctly maps to Rust `.len()`
 - [x] Arrow function closures: Properly generate without empty type annotations
+- [x] **Object destructuring**: `const { name, age } = props` now generates `let name = props.name; let age = props.age;`
+- [x] **Component prop destructuring**: `{ initial, step } = _props` generates proper let bindings in component functions
+- [x] **Array destructuring**: `[first, second] = tuple` generates tuple pattern destructuring
+- [x] **Codegen cleanup**: Removed duplicate variables, fixed mut warnings, added #[allow(dead_code)] for planned APIs
+- [x] **Test coverage**: Added test for component destructured props, 48 total tests passing
 
 **Known Codegen Issues (Remaining):**
 - [ ] Type name mapping: `Array<T>` generates `array<T>` instead of `Vec<T>`
@@ -1087,6 +1092,7 @@ runts/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.3.0 | 2026-05-26 | Codegen: Fix object/array destructuring to generate valid Rust, add destructuring tests (48 tests passing) |
 | 2.2.0 | 2026-05-26 | Codegen: Fix spread operator, destructuring, component return types |
 | 2.1.0 | 2026-05-26 | Parser: Add type argument parsing, array types, JSX nesting fixes |
 | 2.0.0 | 2025-05-26 | Complete rewrite with detailed spec |
