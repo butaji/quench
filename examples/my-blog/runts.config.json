@@ -1,0 +1,50 @@
+{
+  "$schema": "https://runts.dev/schema.json",
+  "name": "my-blog",
+  "version": "0.1.0",
+  "description": "A Fresh/Preact blog built with runts",
+  
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "https": false
+  },
+  
+  "routes": {
+    "dir": "routes",
+    "layouts": true,
+    "middleware": true
+  },
+  
+  "islands": {
+    "dir": "islands",
+    "hydration": {
+      "default": "lazy",
+      "modes": ["eager", "lazy", "interaction", "visible"]
+    }
+  },
+  
+  "components": {
+    "dir": "components"
+  },
+  
+  "static": {
+    "dir": "static",
+    "prefix": "/static"
+  },
+  
+  "build": {
+    "target": "x86_64-unknown-linux-gnu",
+    "release": {
+      "lto": true,
+      "optLevel": "z",
+      "codegenUnits": 1
+    }
+  },
+  
+  "dev": {
+    "hotReload": true,
+    "sourceMaps": true,
+    "watchDirs": ["routes", "islands", "components", "lib"]
+  }
+}
