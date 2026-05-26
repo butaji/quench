@@ -7,9 +7,11 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 /// Read signal - immutable reference to a signal
+#[allow(dead_code)]
 pub type ReadSignal<T> = Signal<T>;
 
 /// Write signal - mutable reference to a signal
+#[allow(dead_code)]
 pub type WriteSignal<T> = Signal<T>;
 
 /// Signal type for reactive values

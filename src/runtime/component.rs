@@ -7,6 +7,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 /// Component metadata for registration
+#[allow(dead_code)]
 pub trait ComponentMeta: Send + Sync {
     /// Get component name
     fn name(&self) -> &'static str;
@@ -18,6 +19,7 @@ pub trait ComponentMeta: Send + Sync {
 }
 
 /// Global component registry
+#[allow(dead_code)]
 pub struct ComponentRegistry {
     components: RwLock<Vec<Arc<dyn ComponentMeta>>>,
 }
@@ -50,6 +52,7 @@ impl Default for ComponentRegistry {
 }
 
 /// Global component registry instance - lazily initialized
+#[allow(dead_code)]
 pub struct LazyRegistry {
     registry: RwLock<Option<ComponentRegistry>>,
 }
@@ -85,6 +88,7 @@ pub fn component_registry() -> Arc<ComponentRegistry> {
 
 /// Hook context for component rendering
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct HookContext {
     /// Current hook index
     hook_index: RwLock<usize>,

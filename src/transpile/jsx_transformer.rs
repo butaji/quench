@@ -6,6 +6,10 @@
 use super::hir::*;
 
 /// JSX transformer that converts JSX to html! macro calls
+/// 
+/// Note: This transformer provides an alternative approach to JSX transformation
+/// using the html! macro. The main codegen embeds JSX generation directly.
+#[allow(dead_code)]
 pub struct JsxTransformer;
 
 impl JsxTransformer {

@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 pub use super::signals::Signal;
 
 /// State hook result
+#[allow(dead_code)]
 pub type UseStateResult<T> = (T, Box<dyn Fn(T) + Send + Sync>);
 
 /// useState hook
@@ -100,6 +101,7 @@ pub fn use_ref_default<T: Clone + Default>() -> Ref<T> {
 }
 
 /// Memoized value
+#[allow(dead_code)]
 pub struct Memo<T> {
     value: Arc<RwLock<Option<T>>>,
     deps_hash: usize,
@@ -146,6 +148,7 @@ where
 }
 
 /// Callback memoization
+#[allow(dead_code)]
 pub struct Callback<F> {
     inner: Arc<F>,
     deps_hash: usize,
@@ -180,6 +183,7 @@ where
 }
 
 /// Reducer result
+#[allow(dead_code)]
 pub type ReducerResult<S, A> = (S, Box<dyn Fn(A) + Send + Sync>);
 
 /// useReducer hook
@@ -221,9 +225,11 @@ where
 }
 
 /// Effect cleanup function
+#[allow(dead_code)]
 pub type EffectCleanup = Box<dyn Fn() + Send + Sync>;
 
 /// Effect callback
+#[allow(dead_code)]
 pub type EffectCallback = Box<dyn FnOnce() -> Option<EffectCleanup> + Send + Sync + 'static>;
 
 /// useEffect hook
@@ -263,6 +269,7 @@ where
 }
 
 /// Context value wrapper
+#[allow(dead_code)]
 pub struct Context<T> {
     value: Arc<dyn std::any::Any + Send + Sync>,
     default_value: Arc<dyn std::any::Any + Send + Sync>,
@@ -339,6 +346,7 @@ where
 }
 
 /// State signal wrapper
+#[allow(dead_code)]
 pub struct StateSignal<T: Clone> {
     inner: Signal<T>,
 }

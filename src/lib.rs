@@ -18,13 +18,11 @@ pub mod commands;
 // Runtime is in src/runtime/ directory as a module
 pub mod runtime;
 
-// Route generation
-pub mod routegen;
-pub use routegen::{RouteHandler, RouteInfo, RouteMethod, parse_route_path, generate_route_handlers};
-
-// Middleware generation
-pub mod middlewaregen;
-pub use middlewaregen::{MiddlewareInfo, extract_middleware, generate_middleware};
+// Re-export transpile submodules
+pub use transpile::routegen;
+pub use transpile::middlewaregen;
+pub use transpile::routegen::{RouteHandler, RouteInfo, RouteMethod, parse_route_path, generate_route_handlers};
+pub use transpile::middlewaregen::{MiddlewareInfo, extract_middleware, generate_middleware};
 
 pub use config::Config;
 pub use transpile::{Transpiler, TranspileResult};

@@ -34,6 +34,7 @@ impl Default for IslandMode {
 
 /// Island configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct IslandConfig {
     /// Island name (component name)
     pub name: String,
@@ -103,6 +104,7 @@ fn generate_island_id() -> String {
 
 /// Island container HTML for SSR
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct IslandContainer {
     /// Configuration
     pub config: IslandConfig,
@@ -152,6 +154,7 @@ impl IslandContainer {
 
 /// Island registry for tracking all islands
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct IslandRegistry {
     /// All registered islands
     islands: HashMap<String, IslandEntry>,
@@ -212,11 +215,13 @@ pub mod ssr {
     use serde_json::Value;
     
     /// Render props as JSON for client hydration
+    #[allow(dead_code)]
     pub fn serialize_props(props: &Value) -> String {
         serde_json::to_string(props).unwrap_or_else(|_| "{}".to_string())
     }
     
     /// Check if a value can be serialized for island props
+    #[allow(dead_code)]
     pub fn is_serializable(value: &Value) -> bool {
         match value {
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
@@ -229,6 +234,7 @@ pub mod ssr {
     ///
     /// This is used when the island cannot be pre-rendered on the server.
     /// The placeholder shows a loading state that will be replaced by hydration.
+    #[allow(dead_code)]
     pub fn render_placeholder(name: &str) -> String {
         format!(
             r#"<div class="runts-island-placeholder" data-island="{}">
@@ -245,6 +251,7 @@ pub mod ssr {
 /// 
 /// These types are used in the client-side runtime (JavaScript)
 /// and are documented here for completeness.
+#[allow(dead_code)]
 pub mod client {
     /// Hydration options for an island
     #[derive(Debug, Clone)]
@@ -263,6 +270,7 @@ pub mod client {
     /// 
     /// This trait is implemented by JavaScript island bundles
     /// and documented here for type consistency.
+    #[allow(dead_code)]
     pub trait IslandInstance {
         /// Mount the island
         /// 
