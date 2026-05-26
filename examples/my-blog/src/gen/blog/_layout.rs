@@ -5,8 +5,10 @@ pub struct BlogLayoutProps {
     pub children: serde_json::Value,
 }
 
-pub fn blog_layout(_destructure: blog_layout_props) -> () {
-    return html!(<div class_name: "blog-layout"><aside class_name: "blog-sidebar"><nav class_name: "blog-nav"><h3>"Blog Navigation"</h3> <ul><li><a href: "/blog">"All Posts"</a></li> <li><a href: "/blog?filter=recent">"Recent"</a></li> <li><a href: "/blog?filter=popular">"Popular"</a></li></ul></nav> <div class_name: "blog-categories"><h4>"Categories"</h4> <ul><li><a href: "/blog?category=tutorial">"Tutorials"</a></li> <li><a href: "/blog?category=news">"News"</a></li> <li><a href: "/blog?category=guide">"Guides"</a></li></ul></div></aside> <main class_name: "blog-content">children</main></div>);
+#[component]
+pub fn blog_layout(_props: BlogLayoutProps) -> VNode {
+    let { children: children} = _props;
+    return html!(<div class_name = "blog-layout"><aside class_name = "blog-sidebar"><nav class_name = "blog-nav"><h3>"Blog Navigation"</h3> <ul><li><a href = "/blog">"All Posts"</a></li> <li><a href = "/blog?filter=recent">"Recent"</a></li> <li><a href = "/blog?filter=popular">"Popular"</a></li></ul></nav> <div class_name = "blog-categories"><h4>"Categories"</h4> <ul><li><a href = "/blog?category=tutorial">"Tutorials"</a></li> <li><a href = "/blog?category=news">"News"</a></li> <li><a href = "/blog?category=guide">"Guides"</a></li></ul></div></aside> <main class_name = "blog-content">{children}</main></div>);
 }
 
 

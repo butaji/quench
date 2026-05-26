@@ -70,7 +70,8 @@ impl CodeGenerator {
             
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
-                    let fn_code = self.generate_function(decl, false)?;
+                    // Default exports are components
+                    let fn_code = self.generate_function(decl, true)?;
                     if !fn_code.trim().is_empty() {
                         output.push_str(&fn_code);
                         output.push_str("\n\n");
@@ -209,11 +210,39 @@ impl CodeGenerator {
         // Check if any params have destructuring patterns
         let has_destructuring = f.params.iter().any(|p| p.pattern.is_some());
         
+        // Check if any params have destructuring patterns
+        let has_destructuring = f.params.iter().any(|p| p.pattern.is_some());
+        
         let params: Vec<String> = f.params.iter().map(|p| {
             let type_str = p.type_.as_ref()
                 .map(|t| self.type_to_rust(t))
                 .unwrap_or_else(|| "()".to_string());
-            let param_name = self.to_snake_case(&p.name);
+            // For destructured params, use a simple name (not the pattern name)
+            let param_name = if p.pattern.is_some() {
+                "_props".to_string()
+            } else {
+                self.to_snake_case(&p.name)
+            };
+            // For components, capitalize the type name
+            let type_str = if is_component && p.pattern.is_some() {
+                // Convert counter_props -> CounterProps
+                let capitalized: String = type_str.chars()
+                    .map(|c| if c == '_' { ' ' } else { c })
+                    .collect::<String>()
+                    .split_whitespace()
+                    .map(|word| {
+                        let mut chars = word.chars();
+                        match chars.next() {
+                            None => String::new(),
+                            Some(first) => first.to_uppercase().chain(chars).collect(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                capitalized
+            } else {
+                type_str
+            };
             // Don't include default for destructured params - we'll handle defaults in destructuring
             let default_suffix = if p.pattern.is_none() {
                 p.default.as_ref()
@@ -225,6 +254,7 @@ impl CodeGenerator {
             format!("{}: {}{}", param_name, type_str, default_suffix)
         }).collect();
 
+        // For components, always return VNode (even if body is empty)
         let return_type = if is_component {
             "VNode".to_string()
         } else {
@@ -248,7 +278,9 @@ impl CodeGenerator {
         if has_destructuring {
             for p in &f.params {
                 if let Some(ref pattern) = p.pattern {
-                    if let Ok(destructured) = self.pat_to_rust(pattern, &p.name) {
+                    // Source name is the parameter name (_props)
+                    let source = "_props";
+                    if let Ok(destructured) = self.pat_to_rust(pattern, source) {
                         if !destructured.is_empty() {
                             output.push_str(&format!("    let {};\n", destructured));
                         }
@@ -351,11 +383,13 @@ impl CodeGenerator {
         }
         
         let name = self.to_snake_case(&var.name);
-        let type_suffix = var.type_.as_ref()
-            .map(|t| format!(": {}", self.type_to_rust(t)))
-            .unwrap_or_default();
         
-        Ok(format!("{} {}: {} = {};\n", keyword, name, type_suffix, init))
+        // Only add type annotation if present
+        if let Some(t) = var.type_.as_ref() {
+            Ok(format!("{} {}: {} = {};\n", keyword, name, self.type_to_rust(t), init))
+        } else {
+            Ok(format!("{} {} = {};\n", keyword, name, init))
+        }
     }
 
     fn stmt_to_rust(&self, stmt: &Stmt) -> Result<String> {
@@ -444,7 +478,12 @@ impl CodeGenerator {
             Stmt::With { .. } => Err(anyhow!("with statement is not supported")),
             Stmt::Label { .. } => Err(anyhow!("labeled statement is not supported")),
             Stmt::DoWhile { .. } => Err(anyhow!("do-while statement is not supported")),
-            Stmt::Variable { decl } => self.generate_variable(decl),
+            Stmt::Variable { decl } => {
+                // For variable statements, remove the trailing newline
+                let mut code = self.generate_variable(decl)?;
+                code.pop(); // Remove trailing newline
+                Ok(code)
+            }
             Stmt::Function { decl } => self.generate_function(decl, false),
             Stmt::Class { decl } => Err(anyhow!("class {} is not supported", decl.name)),
         }
@@ -531,12 +570,20 @@ impl CodeGenerator {
             Expr::Logical { left, op, right } => {
                 let left_code = self.expr_to_rust(left);
                 let right_code = self.expr_to_rust(right);
-                let rust_op = match op {
-                    LogicalOp::And => "&&",
-                    LogicalOp::Or => "||",
-                    LogicalOp::NullishCoalesce => "unwrap_or",
-                };
-                format!("({} {} {})", left_code, rust_op, right_code)
+                match op {
+                    LogicalOp::And => {
+                        // For && with JSX in right side, we need conditional rendering
+                        // a && <jsx> becomes if a { Some(html!(...)) } else { None }
+                        format!("if {} {{ Some({}) }} else {{ None }}", left_code, right_code)
+                    }
+                    LogicalOp::Or => {
+                        // For ||, use unwrap_or for nullish coalescing pattern
+                        format!("({}.unwrap_or({}))", left_code, right_code)
+                    }
+                    LogicalOp::NullishCoalesce => {
+                        format!("({}.unwrap_or({}))", left_code, right_code)
+                    }
+                }
             }
             Expr::Cond { test, consequent, alternate } => {
                 let test_code = self.expr_to_rust(test);
@@ -569,7 +616,23 @@ impl CodeGenerator {
                     self.expr_to_rust(property)
                 } else {
                     if let Expr::Ident { name } = property.as_ref() {
-                        name.clone()
+                        // Transform JavaScript property names to Rust equivalents
+                        let rust_name = match name.as_str() {
+                            "length" => "len()".to_string(),
+                            "name" => "name".to_string(),
+                            "value" => "value".to_string(),
+                            "innerHTML" => "inner_html".to_string(),
+                            "className" => "class_name".to_string(),
+                            "nodeName" => "node_name".to_string(),
+                            "textContent" => "text_content".to_string(),
+                            "innerText" => "inner_text".to_string(),
+                            _ if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+                                // Method call like .push() -> .push()
+                                name.clone()
+                            }
+                            _ => name.clone(),
+                        };
+                        rust_name
                     } else {
                         self.expr_to_rust(property)
                     }
@@ -631,62 +694,62 @@ impl CodeGenerator {
                 format!("{{{}}}", fields.join(", "))
             }
             Expr::Array { elems } => {
-                // Handle spread operator: [a, ...rest, b] -> vec![a].into_iter().chain(rest).chain(std::iter::once(b)).collect()
-                let mut has_spread = false;
-                let mut parts: Vec<String> = Vec::new();
-                let mut current_vec: Vec<String> = Vec::new();
+                // Handle spread operator: [a, ...rest, b] 
+                // If spread is present, we need to build the array differently
+                let has_spread = elems.iter().any(|e| matches!(e, Some(Expr::Spread { .. })));
                 
-                for elem in elems {
-                    match elem {
-                        Some(Expr::Spread { arg }) => {
-                            has_spread = true;
-                            // Flush any accumulated elements
-                            if !current_vec.is_empty() {
-                                parts.push(format!("vec![{}]", current_vec.join(", ")));
-                                current_vec.clear();
+                if has_spread {
+                    // For spread, we need to build the array dynamically
+                    // [a, ...rest, b] -> {
+                    //     let mut __arr = vec![a];
+                    //     __arr.extend(rest.iter().cloned());
+                    //     __arr.push(b);
+                    //     __arr
+                    // }
+                    let mut init_lines: Vec<String> = Vec::new();
+                    let mut push_calls: Vec<String> = Vec::new();
+                    let mut iterators: Vec<String> = Vec::new();
+                    
+                    for elem in elems {
+                        match elem {
+                            Some(Expr::Spread { arg }) => {
+                                let spread_code = self.expr_to_rust(arg);
+                                iterators.push(format!("{}.iter().cloned()", spread_code));
                             }
-                            // Add spread as chain
-                            let spread_code = self.expr_to_rust(arg);
-                            parts.push(format!("{}.to_vec()", spread_code));
-                        }
-                        Some(e) => {
-                            if has_spread {
-                                // After spread, each element needs std::iter::once()
-                                parts.push(format!("std::iter::once({})", self.expr_to_rust(e)));
-                            } else {
-                                current_vec.push(self.expr_to_rust(e));
+                            Some(e) => {
+                                let elem_code = self.expr_to_rust(e);
+                                push_calls.push(format!("__arr.push({});", elem_code));
                             }
-                        }
-                        None => {
-                            // Elision - skip
-                            if has_spread {
-                                // After spread, elision needs empty iterator
-                                parts.push("std::iter::empty()".to_string());
+                            None => {
+                                // Elision - skip
                             }
                         }
                     }
-                }
-                
-                // Flush remaining elements
-                if !current_vec.is_empty() {
-                    parts.push(format!("vec![{}]", current_vec.join(", ")));
-                }
-                
-                if has_spread && !parts.is_empty() {
-                    // Chain all parts together
-                    format!("{{{}.into_iter().chain({}).collect::<Vec<_>>()}}", 
-                        parts[0], 
-                        parts[1..].join(".into_iter().chain("))
+                    
+                    // Build the result
+                    let mut result = String::from("{ let mut __arr: Vec<_> = Vec::new(); ");
+                    for iter in &iterators {
+                        result.push_str(&format!("__arr.extend({}); ", iter));
+                    }
+                    for push in &push_calls {
+                        result.push_str(push);
+                        result.push(' ');
+                    }
+                    result.push_str("__arr }");
+                    result
                 } else {
-                    format!("vec![{}]", current_vec.join(", "))
+                    // No spread - simple vec!
+                    let elems_code: Vec<String> = elems.iter().filter_map(|e| {
+                        e.as_ref().map(|e| self.expr_to_rust(e))
+                    }).collect();
+                    format!("vec![{}]", elems_code.join(", "))
                 }
             }
             Expr::Arrow { params, body, .. } => {
                 let params_code: Vec<String> = params.iter().map(|p| {
                     let name = self.to_snake_case(&p.name);
-                    p.type_.as_ref()
-                        .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
-                        .unwrap_or(name)
+                    // Skip type annotations for closures - Rust will infer types
+                    name
                 }).collect();
                 
                 // Handle block body vs expression body
@@ -701,7 +764,10 @@ impl CodeGenerator {
                                 if stmt_code.trim().starts_with("let ") || stmt_code.trim().starts_with("let mut") {
                                     lines.push(stmt_code);
                                 } else {
-                                    lines.push(stmt_code.trim_end_matches(';').to_string());
+                                    let trimmed = stmt_code.trim_end_matches(';').to_string();
+                                    if !trimmed.is_empty() {
+                                        lines.push(trimmed);
+                                    }
                                 }
                             }
                         }
@@ -793,24 +859,33 @@ impl CodeGenerator {
                     let value_code = value.as_ref()
                         .map(|v| self.jsx_attr_value_to_rust(v))
                         .unwrap_or_else(|| "true".to_string());
-                    Some(format!("{}: {}", rust_name, value_code))
+                    // Check if value_code is a simple literal or needs braces
+                    if value_code.starts_with('"') || value_code.starts_with("r#") {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else if value_code.parse::<f64>().is_ok() {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else if value_code == "true" || value_code == "false" {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else {
+                        Some(format!("{} = {{{}}}", rust_name, value_code))
+                    }
                 }
                 JSXAttr::Spread { expr } => {
                     Some(format!("..{{{}}}", self.expr_to_rust(expr)))
                 }
                 JSXAttr::Event { name, handler } => {
                     let rust_name = self.jsx_attr_to_rust(name);
-                    Some(format!("{}: {}", rust_name, self.expr_to_rust(handler)))
+                    Some(format!("{} = {{{}}}", rust_name, self.expr_to_rust(handler)))
                 }
                 JSXAttr::Bool { name } => {
-                    Some(format!("{}: {}", self.jsx_attr_to_rust(name), "true"))
+                    Some(format!("{} = true", self.jsx_attr_to_rust(name)))
                 }
                 JSXAttr::Expr { name, expr } => {
                     if let Some(n) = name {
                         let rust_name = self.jsx_attr_to_rust(n);
-                        Some(format!("{}: {}", rust_name, self.expr_to_rust(expr)))
+                        Some(format!("{} = {{{}}}", rust_name, self.expr_to_rust(expr)))
                     } else {
-                        Some(self.expr_to_rust(expr))
+                        Some(format!("{{{}}}", self.expr_to_rust(expr)))
                     }
                 }
             }
@@ -825,7 +900,15 @@ impl CodeGenerator {
         };
 
         let children_str = children.join(" ");
-        let rust_tag = self.to_snake_case(&tag_name);
+        
+        // PascalCase tags are components, not HTML elements
+        let rust_tag = if tag_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            // Component - use PascalCase
+            tag_name.clone()
+        } else {
+            // HTML element - lowercase
+            tag_name.to_lowercase()
+        };
         
         if x.opening.self_closing {
             format!("<{}{}/>", rust_tag, attrs_str)
@@ -843,8 +926,19 @@ impl CodeGenerator {
 
     fn jsx_child_to_rust(&self, child: &JSXChild) -> String {
         match child {
-            JSXChild::Text(s) => format!("{:?}", s),
-            JSXChild::Expr(e) => self.expr_to_rust(e),
+            JSXChild::Text(s) => {
+                // Text content should be quoted for html! macro
+                if s.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("{:?}", s)
+                }
+            }
+            JSXChild::Expr(e) => {
+                // Expressions need to be wrapped in {} for html!
+                let expr_str = self.expr_to_rust(e);
+                format!("{{{}}}", expr_str)
+            }
             JSXChild::JSX(x) => {
                 // Use inner content for children (no nested html!())
                 self.jsx_element_inner(x)
@@ -854,7 +948,10 @@ impl CodeGenerator {
                 let inner: Vec<String> = children.iter().map(|c| self.jsx_child_to_rust(c)).collect();
                 inner.join(" ")
             }
-            JSXChild::Spread { expr } => self.expr_to_rust(expr),
+            JSXChild::Spread { expr } => {
+                // Spread in children
+                format!("..{{{}}}", self.expr_to_rust(expr))
+            }
         }
     }
 

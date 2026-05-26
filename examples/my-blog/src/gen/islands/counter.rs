@@ -7,28 +7,21 @@ pub struct CounterProps {
     pub label: String,
 }
 
-pub fn counter(_destructure: counter_props) -> () {
-    let _destructured:  = use_state(initial);
-
-    let _destructured:  = use_state(vec![initial]);
-
-    let increment:  = || { let new_value:  = (count + step);
-; set_count(new_value);; set_history(|| { vec![...prev, new_value] }); };
-
-    let decrement:  = || { let new_value:  = (count - step);
-; set_count(new_value);; set_history(|| { vec![...prev, new_value] }); };
-
-    let reset:  = || { set_count(initial);; set_history(vec![initial]); };
-
-    let undo:  = || { if (history.length > 1) { {
-    let new_history:  = vec![...history];
-
+#[component]
+pub fn counter(_props: CounterProps) -> VNode {
+    let { initial: initial, step: step, label: label} = _props;
+    let (count, set_count) = use_state(initial);
+    let (history, set_history) = use_state(vec![initial]);
+    let increment = || { let new_value = (count + step);; set_count(new_value); set_history(|| { { let mut __arr: Vec<_> = Vec::new(); __arr.extend(prev.iter().cloned()); __arr.push(new_value); __arr } }); };
+    let decrement = || { let new_value = (count - step);; set_count(new_value); set_history(|| { { let mut __arr: Vec<_> = Vec::new(); __arr.extend(prev.iter().cloned()); __arr.push(new_value); __arr } }); };
+    let reset = || { set_count(initial); set_history(vec![initial]); };
+    let undo = || { if (history.len() > 1) { {
+    let new_history = { let mut __arr: Vec<_> = Vec::new(); __arr.extend(history.iter().cloned()); __arr };
     new_history.pop();
     set_history(new_history);
-    set_count(new_history.(new_history.length - 1));
-} } };
-
-    return html!(<div class_name: "counter"><h2>label</h2> <div class_name: "display"><span class_name: "count">count</span> ((count != initial) && html!(<span class_name: "delta">"(" if (count > initial) { "+" } else { "" } (count - initial) ")"</span>))</div> <div class_name: "controls"><button on_click: decrement>"-"</button> <button on_click: undo disabled: (history.length <= 1)>"Undo"</button> <button on_click: reset>"Reset"</button> <button on_click: increment>"+"</button></div> <div class_name: "info"><p>"Step:" step "| Initial:" initial</p> <p>"History length:" history.length</p></div></div>);
+    set_count(new_history[(new_history.len() - 1)]);
+} }; };
+    return html!(<div class_name = "counter"><h2>{label}</h2> <div class_name = "display"><span class_name = "count">{count}</span> {if (count != initial) { Some(html!(<span class_name = "delta">"(" {if (count > initial) { "+" } else { "" }} {(count - initial)} ")"</span>)) } else { None }}</div> <div class_name = "controls"><button on_click = {decrement}>"-"</button> <button on_click = {undo} disabled = {(history.len() <= 1)}>"Undo"</button> <button on_click = {reset}>"Reset"</button> <button on_click = {increment}>"+"</button></div> <div class_name = "info"><p>"Step:" {step} "| Initial:" {initial}</p> <p>"History length:" {history.len()}</p></div></div>);
 }
 
 

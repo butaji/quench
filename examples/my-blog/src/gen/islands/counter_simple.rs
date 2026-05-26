@@ -5,10 +5,10 @@ pub struct CounterProps {
     pub initial: f64,
 }
 
-pub fn counter_simple(props: counter_props) -> () {
-    let mut count:  = props.initial;
-
-    return html!(<div class_name: "counter"><h2>"Simple Counter"</h2> <p>"Count:" count</p> <p>"Initial:" props.initial</p></div>);
+#[component]
+pub fn counter_simple(props: counter_props) -> VNode {
+    let mut count = props.initial;
+    return html!(<div class_name = "counter"><h2>"Simple Counter"</h2> <p>"Count:" {count}</p> <p>"Initial:" {props.initial}</p></div>);
 }
 
 

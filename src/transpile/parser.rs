@@ -872,17 +872,18 @@ impl Parser {
             self.skip_ws_and_comments();
 
             // Handle destructuring patterns like { name } or [first, second]
-            let name = if self.check('{') {
-                // Object destructuring - use placeholder name for now
-                // In a full implementation, we'd parse the pattern properly
-                let _pattern = self.parse_destructuring_pattern()?;
-                "_destructure".to_string()
+            let (name, pattern) = if self.check('{') {
+                // Object destructuring: { a, b = default } -> pattern contains the destructuring
+                let pattern = self.parse_destructuring_pattern()?;
+                // Use a placeholder name that we'll use as the source variable
+                ("_props".to_string(), Some(pattern))
             } else if self.check('[') {
-                // Array destructuring - use placeholder name
-                let _pattern = self.parse_array_destructuring_pattern()?;
-                "_destructure".to_string()
+                // Array destructuring: [first, second]
+                let pattern = self.parse_array_destructuring_pattern()?;
+                ("_props".to_string(), Some(pattern))
             } else {
-                self.parse_identifier()?
+                let name = self.parse_identifier()?;
+                (name, None)
             };
             self.skip_ws_and_comments();
 
@@ -910,7 +911,7 @@ impl Parser {
                 type_,
                 default,
                 optional,
-                pattern: None,
+                pattern,
             });
 
             self.skip_ws_and_comments();
@@ -1356,7 +1357,17 @@ impl Parser {
             while !self.check(']') {
                 self.skip_ws_and_comments();
                 if self.check(']') { break; }
-                elems.push(Some(self.parse_expression()?));
+                
+                // Handle spread operator: ...expr
+                if self.check_str("...") {
+                    self.advance_by(3);
+                    self.skip_ws_and_comments();
+                    let arg = Box::new(self.parse_expression()?);
+                    elems.push(Some(Expr::Spread { arg }));
+                } else {
+                    elems.push(Some(self.parse_expression()?));
+                }
+                
                 self.skip_ws_and_comments();
                 if self.check(',') { self.advance(); }
             }
