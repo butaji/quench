@@ -1,11 +1,9 @@
-// Runts Client Runtime v0.1.0
-// Built from: runtime.ts
 /**
  * Runts Client-Side Runtime
- * 
+ *
  * Provides selective hydration for islands using Preact Signals.
  * Zero dependencies - vanilla JS implementation.
- * 
+ *
  * @version 1.0.0
  */
 
@@ -17,10 +15,10 @@
   // ============================================================
 
   const CONFIG = {
-    debug: window.__RUNTS_CONFIG__?.debug ?? false,
-    defaultMode: window.__RUNTS_CONFIG__?.defaultMode ?? 'visible',
-    bundlesPath: window.__RUNTS_CONFIG__?.bundlesPath ?? '/_runts/islands',
-    version: window.__RUNTS_CONFIG__?.version ?? '0.5.0',
+    debug: (global.__RUNTS_CONFIG__ && global.__RUNTS_CONFIG__.debug) || false,
+    defaultMode: (global.__RUNTS_CONFIG__ && global.__RUNTS_CONFIG__.defaultMode) || 'visible',
+    bundlesPath: (global.__RUNTS_CONFIG__ && global.__RUNTS_CONFIG__.bundlesPath) || '/_runts/islands',
+    version: (global.__RUNTS_CONFIG__ && global.__RUNTS_CONFIG__.version) || '0.5.0',
   };
 
   const log = (...args) => {
@@ -33,118 +31,110 @@
   // Signal System (Preact Signals Compatible)
   // ============================================================
 
-  class Signal {
-    #value;
-    #subscribers = new Set();
-    #effectCleanup = null;
+  let currentComputation = null;
 
+  class Signal {
     constructor(value) {
-      this.#value = value;
+      this._value = value;
+      this._subscribers = new Set();
     }
 
     get value() {
-      // Track dependency
-      if (Signal.currentComputation) {
-        this.#subscribers.add(Signal.currentComputation);
-        Signal.currentComputation.dependencies.add(this);
+      if (currentComputation) {
+        this._subscribers.add(currentComputation);
+        currentComputation._dependencies.add(this);
       }
-      return this.#value;
+      return this._value;
     }
 
     set value(newValue) {
-      this.#setValue(newValue);
+      this._setValue(newValue);
     }
 
-    #setValue(newValue, force = false) {
-      const oldValue = this.#value;
-      this.#value = newValue;
+    _setValue(newValue, force = false) {
+      const oldValue = this._value;
+      this._value = newValue;
 
       if (force || !Object.is(oldValue, newValue)) {
-        // Notify all subscribers
-        const toNotify = new Set(this.#subscribers);
+        const toNotify = new Set(this._subscribers);
         toNotify.forEach(effect => {
-          effect.invalidate();
+          effect._invalidate();
         });
       }
     }
 
     peek() {
-      return this.#value;
+      return this._value;
     }
 
     update(fn) {
-      this.#setValue(fn(this.#value));
+      this._setValue(fn(this._value));
     }
 
-    // For internal use
     _addSubscriber(computation) {
-      this.#subscribers.add(computation);
+      this._subscribers.add(computation);
     }
 
     _removeSubscriber(computation) {
-      this.#subscribers.delete(computation);
+      this._subscribers.delete(computation);
     }
   }
 
   class ComputedSignal extends Signal {
-    #computeFn;
-    #dependencies = new Set();
-    #dirty = true;
-    #cachedValue;
-    #computation;
-
     constructor(fn) {
       super(undefined);
-      this.#computeFn = fn;
-      this.#run();
+      this._computeFn = fn;
+      this._dependencies = new Set();
+      this._dirty = true;
+      this._cachedValue = undefined;
+      this._computation = null;
+      this._run();
     }
 
-    #run() {
-      const prev = Signal.currentComputation;
-      Signal.currentComputation = this.#conputation = {
-        fn: this.#computeFn,
-        dependencies: new Set(),
-        dirty: false,
-        invalidate: () => this.#invalidate(),
+    _run() {
+      const prev = currentComputation;
+      this._computation = {
+        fn: this._computeFn,
+        _dependencies: new Set(),
+        _dirty: false,
+        _invalidate: () => this._invalidate(),
       };
+      currentComputation = this._computation;
 
       try {
-        this.#cachedValue = this.#computeFn();
+        this._cachedValue = this._computeFn();
       } finally {
-        Signal.currentComputation = prev;
+        currentComputation = prev;
         // Clean up old dependencies
-        this.#dependencies.forEach(dep => {
-          dep._removeSubscriber(this.#computation);
+        this._dependencies.forEach(dep => {
+          dep._removeSubscriber(this._computation);
         });
         // Add new dependencies
-        this.#conputation.dependencies.forEach(dep => {
-          dep._addSubscriber(this.#computation);
-          this.#dependencies.add(dep);
+        this._computation._dependencies.forEach(dep => {
+          dep._addSubscriber(this._computation);
+          this._dependencies.add(dep);
         });
-        this.#dirty = false;
+        this._dirty = false;
       }
     }
 
-    #invalidate() {
-      if (!this.#dirty) {
-        this.#dirty = true;
-        // Propagate to subscribers
-        this.#subscribers.forEach(effect => effect.invalidate());
+    _invalidate() {
+      if (!this._dirty) {
+        this._dirty = true;
+        this._subscribers.forEach(effect => effect._invalidate());
       }
     }
 
     get value() {
-      if (this.#dirty) {
-        this.#run();
+      if (this._dirty) {
+        this._run();
       }
-      if (Signal.currentComputation) {
-        Signal.currentComputation.dependencies.add(this);
+      if (currentComputation) {
+        currentComputation._dependencies.add(this);
       }
-      return this.#cachedValue;
+      return this._cachedValue;
     }
   }
-
-  Signal.currentComputation = null;
 
   function signal(initialValue) {
     return new Signal(initialValue);
@@ -175,12 +165,12 @@
   }
 
   function untrack(fn) {
-    const prev = Signal.currentComputation;
-    Signal.currentComputation = null;
+    const prev = currentComputation;
+    currentComputation = null;
     try {
       return fn();
     } finally {
-      Signal.currentComputation = prev;
+      currentComputation = prev;
     }
   }
 
@@ -189,22 +179,22 @@
   // ============================================================
 
   function effect(fn) {
-    const effect_ = {
+    const effectObj = {
       fn,
-      dependencies: new Set(),
+      _dependencies: new Set(),
       cleanup: null,
-      dirty: true,
-      invalidate() {
-        if (!this.dirty) {
-          this.dirty = true;
+      _dirty: true,
+      _invalidate() {
+        if (!this._dirty) {
+          this._dirty = true;
           if (batchDepth > 0) {
-            batchedEffects.add(this.#run.bind(this));
+            batchedEffects.add(this._run.bind(this));
           } else {
-            queueMicrotask(this.#run.bind(this));
+            queueMicrotask(this._run.bind(this));
           }
         }
       },
-      #run() {
+      _run() {
         if (this.cleanup) {
           try {
             this.cleanup();
@@ -213,33 +203,33 @@
           }
         }
         // Clean up old dependencies
-        this.dependencies.forEach(dep => {
-          dep._removeSubscriber(effect_);
+        this._dependencies.forEach(dep => {
+          dep._removeSubscriber(effectObj);
         });
-        this.dependencies.clear();
+        this._dependencies.clear();
 
-        const prev = Signal.currentComputation;
-        Signal.currentComputation = this;
+        const prev = currentComputation;
+        currentComputation = this;
         try {
-          this.cleanup = this.fn() ?? null;
+          this.cleanup = this.fn() || null;
         } catch (e) {
           console.error('[runts] Effect error:', e);
         } finally {
-          Signal.currentComputation = prev;
-          this.dirty = false;
+          currentComputation = prev;
+          this._dirty = false;
         }
       }
     };
 
-    effect_#run();
+    effectObj._run();
     return () => {
-      if (effect_.cleanup) {
-        effect_.cleanup();
+      if (effectObj.cleanup) {
+        effectObj.cleanup();
       }
-      effect_.dependencies.forEach(dep => {
-        dep._removeSubscriber(effect_);
+      effectObj._dependencies.forEach(dep => {
+        dep._removeSubscriber(effectObj);
       });
-      effect_.dependencies.clear();
+      effectObj._dependencies.clear();
     };
   }
 
@@ -253,11 +243,12 @@
   /**
    * Register an island component
    */
-  function registerIsland(name, component, options = {}) {
+  function registerIsland(name, component, options) {
+    options = options || {};
     ISLANDS.set(name, {
       component,
       options: {
-        hydration: options.hydration ?? CONFIG.defaultMode,
+        hydration: options.hydration || CONFIG.defaultMode,
         ...options,
       },
     });
@@ -270,12 +261,12 @@
   function createIsland(element, name, props) {
     const islandDef = ISLANDS.get(name);
     if (!islandDef) {
-      console.error(`[runts] Unknown island: ${name}`);
+      console.error('[runts] Unknown island: ' + name);
       return null;
     }
 
-    const id = element.dataset.id ?? `island-${++islandIdCounter}`;
-    const hydration = element.dataset.hydration ?? islandDef.options.hydration;
+    const id = element.dataset.id || ('island-' + (++islandIdCounter));
+    const hydration = element.dataset.hydration || islandDef.options.hydration;
 
     return {
       id,
@@ -300,16 +291,12 @@
     log('Hydrating island:', island.id, island.name);
 
     try {
-      // Call the component with props
       const vnode = island.component(island.props);
-      
-      // Render to DOM
       renderVNode(vnode, island.element);
-      
       island.hydrated = true;
       log('Hydrated:', island.id);
     } catch (e) {
-      console.error(`[runts] Hydration error for ${island.name}:`, e);
+      console.error('[runts] Hydration error for ' + island.name + ':', e);
     }
   }
 
@@ -338,15 +325,13 @@
       return;
     }
 
-    // DOM element
-    const element = vnode.type.startsWith('$')
+    const element = vnode.type && vnode.type.startsWith('$')
       ? document.createElement(vnode.type.slice(1))
-      : document.createElement(vnode.type);
+      : document.createElement(vnode.type || 'div');
 
-    // Apply attributes
     for (const [key, value] of Object.entries(vnode.props || {})) {
       if (key === 'children') continue;
-      
+
       if (key.startsWith('on') && key.length > 2) {
         const eventName = key.slice(2).toLowerCase();
         element.addEventListener(eventName, value);
@@ -361,8 +346,7 @@
       }
     }
 
-    // Render children
-    const children = vnode.props?.children;
+    const children = vnode.props && vnode.props.children;
     if (children) {
       if (Array.isArray(children)) {
         children.forEach(child => renderVNode(child, element));
@@ -390,7 +374,7 @@
       return new Promise((resolve) => {
         const observer = new IntersectionObserver(
           async (entries) => {
-            if (entries[0].isIntersecting) {
+            if (entries[0] && entries[0].isIntersecting) {
               observer.disconnect();
               await hydrateIsland(island);
               resolve();
@@ -404,7 +388,7 @@
 
     idle: async (island) => {
       return new Promise((resolve) => {
-        if ('requestIdleCallback' in window) {
+        if (typeof requestIdleCallback !== 'undefined') {
           requestIdleCallback(async () => {
             await hydrateIsland(island);
             resolve();
@@ -419,7 +403,6 @@
     },
 
     manual: async (island) => {
-      // Don't auto-hydrate, wait for explicit trigger
       log('Manual hydration for:', island.id);
     },
   };
@@ -434,8 +417,13 @@
 
     elements.forEach(element => {
       const name = element.dataset.island;
-      const propsJson = element.dataset.props ?? '{}';
-      const props = JSON.parse(propsJson);
+      const propsJson = element.dataset.props || '{}';
+      let props = {};
+      try {
+        props = JSON.parse(propsJson);
+      } catch (e) {
+        console.error('[runts] Failed to parse props for island', name, e);
+      }
 
       const island = createIsland(element, name, props);
       if (island) {
@@ -449,8 +437,7 @@
 
   async function bootstrapIslands() {
     const islands = discoverIslands();
-    
-    // Group by hydration strategy
+
     const byStrategy = {
       eager: [],
       visible: [],
@@ -459,7 +446,12 @@
     };
 
     islands.forEach(island => {
-      byStrategy[island.hydration]?.push(island) ?? byStrategy.visible.push(island);
+      const strategy = byStrategy[island.hydration];
+      if (strategy) {
+        strategy.push(island);
+      } else {
+        byStrategy.visible.push(island);
+      }
     });
 
     // Eager islands first
@@ -470,7 +462,7 @@
       const visibleObserver = new IntersectionObserver(
         async (entries) => {
           for (const entry of entries) {
-            if (entry.isIntersecting) {
+            if (entry.isIntersecting && entry.target._runtsIsland) {
               const island = entry.target._runtsIsland;
               visibleObserver.unobserve(entry.target);
               await hydrationStrategies.visible(island);
@@ -491,7 +483,6 @@
       hydrationStrategies.idle(island);
     });
 
-    // Manual islands are set up but not hydrated
     log('Bootstrap complete');
   }
 
@@ -500,28 +491,17 @@
   // ============================================================
 
   const RuntsClient = {
-    // Version
     version: CONFIG.version,
-
-    // Core APIs
     signal,
     computed,
     effect,
     batch,
     untrack,
-
-    // Island APIs
     registerIsland,
     hydrateIsland,
-
-    // Internal APIs
     _discoverIslands: discoverIslands,
     _bootstrapIslands: bootstrapIslands,
-
-    // Config
     CONFIG,
-
-    // Debug
     ISLANDS,
   };
 
@@ -529,11 +509,12 @@
   global.Runts = RuntsClient;
 
   // Auto-bootstrap on DOMContentLoaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootstrapIslands);
-  } else {
-    bootstrapIslands();
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bootstrapIslands);
+    } else {
+      bootstrapIslands();
+    }
   }
 
-})(typeof window !== 'undefined' ? window : global);
-
+})(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this));

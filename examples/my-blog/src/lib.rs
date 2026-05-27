@@ -16,15 +16,15 @@ pub use runts_lib::runtime::prelude::*;
 /// Register all components for SSR rendering.
 /// Call this before starting the server.
 pub fn register_components() {
-    runts_lib::runtime::vdom::register_component("Counter", |props, _children| {
+    runts_lib::runtime::vdom::register_island("Counter", |props, _children| {
         let parsed = serde_json::from_value(serde_json::json!(props)).unwrap_or_default();
         Some(crate::gen::islands::counter::counter(parsed))
     });
-    runts_lib::runtime::vdom::register_component("CounterSimple", |props, _children| {
+    runts_lib::runtime::vdom::register_island("CounterSimple", |props, _children| {
         let parsed = serde_json::from_value(serde_json::json!(props)).unwrap_or_default();
         Some(crate::gen::islands::counter_simple::counter_simple(parsed))
     });
-    runts_lib::runtime::vdom::register_component("TodoList", |props, _children| {
+    runts_lib::runtime::vdom::register_island("TodoList", |props, _children| {
         let parsed = serde_json::from_value(serde_json::json!(props)).unwrap_or_default();
         Some(crate::gen::islands::todo_list::todo_list(parsed))
     });

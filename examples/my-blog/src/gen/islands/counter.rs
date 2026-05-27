@@ -17,12 +17,12 @@ pub fn counter(_props: CounterProps) -> VNode {
     let initial = _props.initial;
     let step = _props.step;
     let label = _props.label;
-    let __runts_tmp_0 = use_state(initial);
-let mut count = __runts_tmp_0.0;
-let mut set_count = __runts_tmp_0.1;
-    let __runts_tmp_1 = use_state(vec![initial]);
-let mut history = __runts_tmp_1.0;
-let mut set_history = __runts_tmp_1.1;
+    let __runts_tmp_2 = use_state(initial);
+let mut count = __runts_tmp_2.0;
+let mut set_count = __runts_tmp_2.1;
+    let __runts_tmp_3 = use_state(vec![initial]);
+let mut history = __runts_tmp_3.0;
+let mut set_history = __runts_tmp_3.1;
     let mut increment = || { let mut new_value = (count + step); set_count(new_value); set_history({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(history.iter().cloned()); __arr.push(new_value); __arr }) };
     let mut decrement = || { let mut new_value = (count - step); set_count(new_value); set_history({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(history.iter().cloned()); __arr.push(new_value); __arr }) };
     let mut reset = || { set_count(initial); set_history(vec![initial]) };

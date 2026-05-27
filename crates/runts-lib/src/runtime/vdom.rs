@@ -337,10 +337,23 @@ pub fn to_html(node: &VNode) -> String {
             // For SSR, try to render through component registry if available,
             // otherwise render children as fallback.
             let children_html: String = children.iter().map(to_html).collect();
-            if let Some(rendered) = try_render_component(name, props, children) {
+            let rendered = if let Some(rendered) = try_render_component(name, props, children) {
                 rendered
             } else {
                 format!("<!-- {} -->{}", escape_html(name), children_html)
+            };
+            // Wrap islands with hydration markers
+            if is_island(name) {
+                let props_json = serde_json::to_string(props).unwrap_or_default();
+                let props_escaped = props_json.replace('&', "&amp;").replace('"', "&quot;");
+                format!(
+                    r#"<div data-island="{}" data-props="{}">{}</div>"#,
+                    escape_html(name),
+                    props_escaped,
+                    rendered
+                )
+            } else {
+                rendered
             }
         }
         VNode::Element { tag, attrs, children, .. } => {
@@ -381,10 +394,14 @@ pub fn to_html(node: &VNode) -> String {
     }
 }
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+pub type ComponentRenderer = Arc<dyn Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync>;
 
 lazy_static::lazy_static! {
-    static ref COMPONENT_REGISTRY: Mutex<std::collections::HashMap<String, Box<dyn Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync>>> =
+    static ref COMPONENT_REGISTRY: Mutex<std::collections::HashMap<String, ComponentRenderer>> =
+        Mutex::new(std::collections::HashMap::new());
+    static ref ISLAND_REGISTRY: Mutex<std::collections::HashMap<String, ComponentRenderer>> =
         Mutex::new(std::collections::HashMap::new());
 }
 
@@ -395,7 +412,24 @@ where
     F: Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync + 'static,
 {
     let mut reg = COMPONENT_REGISTRY.lock().unwrap();
-    reg.insert(name.to_string(), Box::new(renderer));
+    reg.insert(name.to_string(), Arc::new(renderer));
+}
+
+/// Register an island for SSR rendering.
+/// Islands are wrapped with hydration markers during SSR.
+pub fn register_island<F>(name: &str, renderer: F)
+where
+    F: Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync + 'static,
+{
+    let arc_renderer: ComponentRenderer = Arc::new(renderer);
+    {
+        let mut comp_reg = COMPONENT_REGISTRY.lock().unwrap();
+        comp_reg.insert(name.to_string(), arc_renderer.clone());
+    }
+    {
+        let mut island_reg = ISLAND_REGISTRY.lock().unwrap();
+        island_reg.insert(name.to_string(), arc_renderer);
+    }
 }
 
 /// Try to render a registered component. Returns None if not registered.
@@ -404,6 +438,12 @@ fn try_render_component(name: &str, props: &std::collections::HashMap<String, se
     let renderer = reg.get(name)?;
     let vnode = renderer(props, children)?;
     Some(to_html(&vnode))
+}
+
+/// Check if a component name is a registered island.
+fn is_island(name: &str) -> bool {
+    let reg = ISLAND_REGISTRY.lock().unwrap();
+    reg.contains_key(name)
 }
 
 /// Escape HTML special characters

@@ -20,12 +20,12 @@ pub struct TodoListProps {
 #[component]
 pub fn todo_list(_props: TodoListProps) -> VNode {
     let title = _props.title;
-    let __runts_tmp_2 = use_state(vec![]);
-let mut todos = __runts_tmp_2.0;
-let mut set_todos = __runts_tmp_2.1;
-    let __runts_tmp_3 = use_state("");
-let mut new_todo = __runts_tmp_3.0;
-let mut set_new_todo = __runts_tmp_3.1;
+    let __runts_tmp_0 = use_state(vec![]);
+let mut todos = __runts_tmp_0.0;
+let mut set_todos = __runts_tmp_0.1;
+    let __runts_tmp_1 = use_state("");
+let mut new_todo = __runts_tmp_1.0;
+let mut set_new_todo = __runts_tmp_1.1;
     let handle_add = || { if (new_todo.trim().to_string().len() as f64) == 0.0 { return; }; let mut todo: Todo = Todo {id: "todo-1".to_string(), text: new_todo.to_string(), completed: false};; set_todos({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(todos.iter().cloned()); __arr.push(todo); __arr });; set_new_todo(""); };
     let handle_toggle = |id: String| { let mut updated: Vec<Todo> = todos.iter().cloned().map(|t| { let mut item: Todo = Todo {id: t.id.clone(), text: t.text.clone(), completed: t.completed.clone()}; if t.id == id { {
     item.completed = (!t.completed);

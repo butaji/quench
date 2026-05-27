@@ -837,7 +837,7 @@ fn generate_lib(_routes: &[RouteEntry], islands: &[IslandEntry], components: &[C
         let struct_name = pascal_case(&island.name);
         let fn_name = to_snake_case(&island.name);
         code.push_str(&format!(
-            "    runts_lib::runtime::vdom::register_component(\"{}\", |props, _children| {{\n",
+            "    runts_lib::runtime::vdom::register_island(\"{}\", |props, _children| {{\n",
             struct_name
         ));
         code.push_str(&format!(
