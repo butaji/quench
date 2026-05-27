@@ -1609,6 +1609,20 @@ impl Interpreter {
                 ctx.rendered_islands.borrow_mut().push(rendered);
                 return Ok(html);
             }
+            drop(islands_guard);
+
+            // Try regular component rendering (non-island)
+            let components = self.components.read();
+            if let Some(comp_def) = components.get(&tag).cloned() {
+                drop(components);
+                let mut comp_ctx = ctx.clone();
+                let props_val = Value::Object(vnode.attrs.clone());
+                let param_name = comp_def.params.first()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "props".to_string());
+                comp_ctx.scope.insert(param_name, props_val);
+                return self.render_component(&tag, &comp_ctx);
+            }
         }
 
         for child in &jsx.children {
