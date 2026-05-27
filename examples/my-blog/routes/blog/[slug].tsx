@@ -15,8 +15,8 @@ interface PostData {
 }
 
 export const handler = {
-  async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
-    const slug = _ctx.params.slug;
+  async GET(req: Request, ctx: HandlerContext): Promise<Response> {
+    const slug = ctx.params.slug;
 
     if (slug === "introducing-runts") {
       const data: PostData = {
@@ -30,9 +30,7 @@ export const handler = {
         },
         notFound: false
       };
-      return new Response(JSON.stringify(data), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return ctx.render(data);
     }
 
     if (slug === "islands-architecture") {
@@ -47,9 +45,7 @@ export const handler = {
         },
         notFound: false
       };
-      return new Response(JSON.stringify(data), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return ctx.render(data);
     }
 
     if (slug === "rust-frontend") {
@@ -64,9 +60,7 @@ export const handler = {
         },
         notFound: false
       };
-      return new Response(JSON.stringify(data), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return ctx.render(data);
     }
 
     if (slug === "fine-grained-reactivity") {
@@ -81,9 +75,7 @@ export const handler = {
         },
         notFound: false
       };
-      return new Response(JSON.stringify(data), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return ctx.render(data);
     }
 
     const data: PostData = {
@@ -97,10 +89,7 @@ export const handler = {
       },
       notFound: true
     };
-    return new Response(JSON.stringify(data), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return ctx.render(data);
   }
 };
 

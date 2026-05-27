@@ -515,7 +515,7 @@ impl AppState {
         for route in &rt.routes {
             // Skip dynamic routes, catch-all, and special files for the nav
             let pattern = &route.pattern;
-            if pattern.contains(':') || pattern.contains('*') || pattern == "/" {
+            if pattern.contains(':') || pattern.contains('*') || pattern.contains('(') || pattern.contains('?') || pattern == "/" {
                 continue;
             }
             // Clean up pattern for display

@@ -5,8 +5,9 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 use axum::{response::IntoResponse, body::Body};
+use std::collections::HashMap;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Post {
     pub slug: String,
     pub title: String,
@@ -16,52 +17,26 @@ pub struct Post {
     pub tags: Vec<String>,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PostData {
     pub post: Post,
     pub not_found: bool,
 }
 
-pub async fn handle_get(_ctx: HandlerContext, _req: Request) -> impl IntoResponse {
-    { let mut slug = _ctx.param("slug"); if slug == "introducing-runts" { {
+pub async fn handle_get(ctx: HandlerContext, req: Request) -> Response<Body> {
+    { let mut slug = ctx.param("slug"); if slug == "introducing-runts" { {
     let mut data: PostData = PostData {post: Post {slug: "introducing-runts".to_string(), title: "Introducing runts: Fresh/Preact with Native Rust".to_string(), date: "2026-05-26".to_string(), author: "runts Team".to_string(), tags: vec!["Rust".to_string(), "Fresh".to_string(), "Preact".to_string(), "Web".to_string()], content: "Today we are excited to announce runts, a new framework that brings Fresh islands architecture to native Rust compilation.".to_string()}, not_found: false};
-    return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-};
+    return ctx.render(data);
 } }; if slug == "islands-architecture" { {
     let mut data: PostData = PostData {post: Post {slug: "islands-architecture".to_string(), title: "Understanding the Islands Architecture".to_string(), date: "2026-05-25".to_string(), author: "runts Team".to_string(), tags: vec!["Architecture".to_string(), "Performance".to_string(), "Fresh".to_string()], content: "The islands architecture is a rendering pattern that enables selective hydration of interactive components while keeping the rest of the page static.".to_string()}, not_found: false};
-    return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-};
+    return ctx.render(data);
 } }; if slug == "rust-frontend" { {
     let mut data: PostData = PostData {post: Post {slug: "rust-frontend".to_string(), title: "Rust in the Frontend: A New Paradigm".to_string(), date: "2026-05-24".to_string(), author: "runts Team".to_string(), tags: vec!["Rust".to_string(), "Compilers".to_string(), "TypeScript".to_string()], content: "What if we could compile TypeScript directly to native code? runts explores this question by building a full Fresh/Preact framework on Rust.".to_string()}, not_found: false};
-    return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-};
+    return ctx.render(data);
 } }; if slug == "fine-grained-reactivity" { {
     let mut data: PostData = PostData {post: Post {slug: "fine-grained-reactivity".to_string(), title: "Fine-Grained Reactivity in Pure Rust".to_string(), date: "2026-05-23".to_string(), author: "runts Team".to_string(), tags: vec!["Signals".to_string(), "Reactivity".to_string(), "Preact".to_string()], content: "Signals provide a way to express reactive values that automatically track their dependencies and update only what needs to be updated.".to_string()}, not_found: false};
-    return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-};
-} }; let mut data: PostData = PostData {post: Post {slug: "".to_string(), title: "".to_string(), content: "".to_string(), date: "".to_string(), author: "".to_string(), tags: vec![]}, not_found: true}; return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.status(404.0 as u16);
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-}; } // Handler body
+    return ctx.render(data);
+} }; let mut data: PostData = PostData {post: Post {slug: "".to_string(), title: "".to_string(), content: "".to_string(), date: "".to_string(), author: "".to_string(), tags: vec![]}, not_found: true}; return ctx.render(data); } // Handler body
 }
 
 
@@ -77,3 +52,7 @@ pub fn blog_post(_props: PageProps<PostData>) -> VNode {
 }
 
 
+pub fn blog_post_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {
+    let props: PageProps<PostData> = PageProps { params, url, data: serde_json::from_value(data).unwrap_or_default() };
+    blog_post(props)
+}

@@ -5,8 +5,9 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 use axum::{response::IntoResponse, body::Body};
+use std::collections::HashMap;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AboutData {
     pub title: String,
     pub description: String,
@@ -15,20 +16,15 @@ pub struct AboutData {
     pub performance: PerformanceMetrics,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PerformanceMetrics {
     pub binary_size: String,
     pub cold_start: String,
     pub memory_baseline: String,
 }
 
-pub async fn handle_get(_ctx: HandlerContext, _req: Request) -> impl IntoResponse {
-    { let mut data: AboutData = AboutData {title: "About runts".to_string(), description: "runts is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries. Built with a focus on performance, developer experience, and framework compatibility.".to_string(), tech_stack: vec!["Rust - Core runtime and transpiler".to_string(), "TypeScript - User-facing API".to_string(), "Preact - Component model and hooks".to_string(), "Fresh - Islands architecture and routing".to_string(), "Axum - HTTP server".to_string(), "Tokio - Async runtime".to_string()], goals: vec!["Zero external JS runtime dependencies".to_string(), "Full Fresh/Preact API compatibility".to_string(), "Sub-100ms hot reload in development".to_string(), "Sub-500KB binary size".to_string(), "Production-ready performance".to_string()], performance: PerformanceMetrics {binary_size: "<2MB".to_string(), cold_start: "<10ms".to_string(), memory_baseline: "<5MB RSS".to_string()}}; return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-}; } // Handler body
+pub async fn handle_get(ctx: HandlerContext, req: Request) -> Response<Body> {
+    { let mut data: AboutData = AboutData {title: "About runts".to_string(), description: "runts is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries. Built with a focus on performance, developer experience, and framework compatibility.".to_string(), tech_stack: vec!["Rust - Core runtime and transpiler".to_string(), "TypeScript - User-facing API".to_string(), "Preact - Component model and hooks".to_string(), "Fresh - Islands architecture and routing".to_string(), "Axum - HTTP server".to_string(), "Tokio - Async runtime".to_string()], goals: vec!["Zero external JS runtime dependencies".to_string(), "Full Fresh/Preact API compatibility".to_string(), "Sub-100ms hot reload in development".to_string(), "Sub-500KB binary size".to_string(), "Production-ready performance".to_string()], performance: PerformanceMetrics {binary_size: "<2MB".to_string(), cold_start: "<10ms".to_string(), memory_baseline: "<5MB RSS".to_string()}}; return ctx.render(data); } // Handler body
 }
 
 
@@ -40,3 +36,7 @@ pub fn about(_props: PageProps<AboutData>) -> VNode {
 }
 
 
+pub fn about_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {
+    let props: PageProps<AboutData> = PageProps { params, url, data: serde_json::from_value(data).unwrap_or_default() };
+    about(props)
+}
