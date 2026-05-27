@@ -1136,7 +1136,7 @@ impl CodeGenerator {
                             }
                         }
                         // Hono-style context methods: c.json(), c.html(), c.text()
-                        if (obj_name == "c" || obj_name == "ctx") {
+                        if obj_name == "c" || obj_name == "ctx" {
                             if let Expr::Ident { name: prop_name } = property.as_ref() {
                                 match prop_name.as_str() {
                                     "json" if !args.is_empty() => {
