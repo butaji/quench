@@ -298,6 +298,8 @@ fn process_single_route(
     let output_path = base
         .parent()
         .unwrap_or(base)
+        .join(".runts")
+        .join("build")
         .join("src")
         .join("gen")
         .join(sanitized)
@@ -359,6 +361,8 @@ fn process_single_island(
     let output_path = base
         .parent()
         .unwrap_or(base)
+        .join(".runts")
+        .join("build")
         .join("src")
         .join("gen")
         .join("islands")
@@ -405,10 +409,12 @@ fn process_single_component(
         .unwrap_or("Unknown")
         .to_string();
 
-    // Components are in <project_root>/components/; generated code goes to <project_root>/src/gen/components/
+    // Components are in <project_root>/components/; generated code goes to <project_root>/.runts/build/src/gen/components/
     let output_path = components_dir
         .parent()
         .unwrap_or(components_dir)
+        .join(".runts")
+        .join("build")
         .join("src")
         .join("gen")
         .join("components")

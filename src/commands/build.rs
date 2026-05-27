@@ -20,6 +20,66 @@ use crate::transpile::{Transpiler, hir::Module, codegen::CodeGenerator, analyzer
 use crate::commands::parallel;
 use crate::commands::incremental::{BuildCache, CacheEntry, compute_file_hash, IncrementalStats};
 
+/// Hidden build directory where all Rust code is generated.
+fn build_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".runts").join("build")
+}
+
+/// Generate Cargo.toml into the hidden build directory.
+fn generate_build_cargo_toml(project_root: &Path, build_dir: &Path) -> Result<()> {
+    let canonical = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let app_name = canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("app")
+        .replace('-', "_");
+
+    // Resolve runts-lib path from the runts binary location
+    let runts_lib_path = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.to_path_buf())) // target/release or target/debug
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))     // target
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))     // project root
+        .map(|p| p.join("crates").join("runts-lib"))
+        .unwrap_or_else(|| PathBuf::from(".."));
+
+    let cargo = format!(r#"[package]
+name = "{app_name}"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "{app_name}"
+path = "src/main.rs"
+
+[dependencies]
+runts-lib = {{ path = "{}" }}
+serde = {{ version = "1.0", features = ["derive"] }}
+serde_json = "1.0"
+tokio = {{ version = "1.0", features = ["full"] }}
+axum = "0.7"
+tower = "0.4"
+tower-http = {{ version = "0.5", features = ["fs", "cors", "trace"] }}
+tracing = "0.1"
+tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
+
+[workspace]
+
+[profile.release]
+lto = true
+codegen-units = 1
+"#, runts_lib_path.display());
+
+    fs::create_dir_all(build_dir)?;
+    fs::write(build_dir.join("Cargo.toml"), cargo)?;
+    Ok(())
+}
+
 /// Build result
 pub struct BuildResult {
     /// Generated Rust source files
@@ -178,43 +238,45 @@ pub async fn run_build(config: &Config, path: PathBuf) -> Result<BuildResult> {
         }
     }
 
+    let bdir = build_dir(&project_root);
+
     // Generate route table
     let route_table = generate_route_table(&routes);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/routes.rs"),
+        path: bdir.join("src/routes.rs"),
         content: route_table,
     });
 
     // Generate islands manifest
     let islands_manifest = generate_islands_manifest(&islands);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/islands.rs"),
+        path: bdir.join("src/islands.rs"),
         content: islands_manifest,
     });
 
     // Generate components module
     let components_module = generate_components_module(&components);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/components.rs"),
+        path: bdir.join("src/components.rs"),
         content: components_module,
     });
 
     // Generate lib.rs
     let lib_content = generate_lib(&routes, &islands, &components);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/lib.rs"),
+        path: bdir.join("src/lib.rs"),
         content: lib_content,
     });
 
-    // Generate main.rs if it doesn't exist
-    let main_path = project_root.join("src/main.rs");
-    if !main_path.exists() {
-        let main_content = generate_main(&project_root);
-        generated_files.push(GeneratedFile {
-            path: main_path,
-            content: main_content,
-        });
-    }
+    // Generate main.rs (always, into hidden build dir)
+    let main_content = generate_main(&project_root);
+    generated_files.push(GeneratedFile {
+        path: bdir.join("src/main.rs"),
+        content: main_content,
+    });
+
+    // Generate Cargo.toml into hidden build dir
+    generate_build_cargo_toml(&project_root, &bdir)?;
 
     // Write generated files
     for file in &generated_files {
@@ -229,7 +291,7 @@ pub async fn run_build(config: &Config, path: PathBuf) -> Result<BuildResult> {
     let file_tuples: Vec<(PathBuf, String)> = generated_files.iter()
         .map(|f| (f.path.clone(), f.content.clone()))
         .collect();
-    generate_mod_files(&project_root, &file_tuples);
+    generate_mod_files(&bdir, &file_tuples);
 
     info!("Build complete! Generated {} files", generated_files.len());
     info!("  Routes: {}", routes.len());
@@ -477,6 +539,8 @@ async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<B
             let output_path = islands_dir
                 .parent()
                 .unwrap_or(&islands_dir)
+                .join(".runts")
+                .join("build")
                 .join("src")
                 .join("gen")
                 .join("islands")
@@ -589,6 +653,8 @@ async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<B
             let output_path = components_dir
                 .parent()
                 .unwrap_or(&components_dir)
+                .join(".runts")
+                .join("build")
                 .join("src")
                 .join("gen")
                 .join("components")
@@ -629,38 +695,40 @@ async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<B
     }
 
     // ── Aggregate files (always regenerated) ────────────────────────────────
+    let bdir = build_dir(&project_root);
+
     let route_table = generate_route_table(&routes);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/routes.rs"),
+        path: bdir.join("src/routes.rs"),
         content: route_table,
     });
 
     let islands_manifest = generate_islands_manifest(&islands);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/islands.rs"),
+        path: bdir.join("src/islands.rs"),
         content: islands_manifest,
     });
 
     let components_module = generate_components_module(&components);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/components.rs"),
+        path: bdir.join("src/components.rs"),
         content: components_module,
     });
 
     let lib_content = generate_lib(&routes, &islands, &components);
     generated_files.push(GeneratedFile {
-        path: project_root.join("src/lib.rs"),
+        path: bdir.join("src/lib.rs"),
         content: lib_content,
     });
 
-    let main_path = project_root.join("src/main.rs");
-    if !main_path.exists() {
-        let main_content = generate_main(project_root);
-        generated_files.push(GeneratedFile {
-            path: main_path,
-            content: main_content,
-        });
-    }
+    let main_content = generate_main(&project_root);
+    generated_files.push(GeneratedFile {
+        path: bdir.join("src/main.rs"),
+        content: main_content,
+    });
+
+    // Generate Cargo.toml into hidden build dir
+    generate_build_cargo_toml(&project_root, &bdir)?;
 
     // Write generated files
     for file in &generated_files {
@@ -673,7 +741,7 @@ async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<B
     let file_tuples: Vec<(PathBuf, String)> = generated_files.iter()
         .map(|f| (f.path.clone(), f.content.clone()))
         .collect();
-    generate_mod_files(project_root, &file_tuples);
+    generate_mod_files(&bdir, &file_tuples);
 
     info!("{}", stats.summary());
     info!("Build complete! Generated {} files", generated_files.len());
@@ -707,6 +775,8 @@ fn compute_output_path(
     base_dir
         .parent()
         .unwrap_or(base_dir)
+        .join(".runts")
+        .join("build")
         .join("src")
         .join("gen")
         .join(sanitized)
@@ -830,6 +900,8 @@ fn process_routes_dir(
         let output_path = base
             .parent()
             .unwrap_or(base)
+            .join(".runts")
+            .join("build")
             .join("src")
             .join("gen")
             .join(sanitized)
@@ -902,6 +974,8 @@ fn process_islands_dir(
         let output_path = base
             .parent()
             .unwrap_or(base)
+            .join(".runts")
+            .join("build")
             .join("src")
             .join("gen")
             .join("islands")
@@ -962,6 +1036,8 @@ fn process_components_dir(
         let output_path = dir
             .parent()
             .unwrap_or(dir)
+            .join(".runts")
+            .join("build")
             .join("src")
             .join("gen")
             .join("components")
@@ -1519,8 +1595,9 @@ fn generate_mod_files(project_root: &Path, generated: &[(PathBuf, String)]) {
 pub fn compile_rust(project_root: &Path, release: bool) -> Result<()> {
     info!("Compiling Rust code...");
     
+    let bdir = build_dir(project_root);
     let mut cmd = Command::new("cargo");
-    cmd.current_dir(project_root);
+    cmd.current_dir(&bdir);
     
     if release {
         cmd.arg("build").arg("--release");
@@ -1575,10 +1652,12 @@ pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Re
     let project_root = find_project_root(&path)?;
     compile_rust(&project_root, release)?;
     
-    // Phase 3: Find binary
-    // For workspace members, cargo places binaries in the workspace root target.
-    // Check both project-local target and workspace root target.
-    let app_name = project_root.file_name()
+    // Phase 3: Find binary in hidden build dir
+    let canonical = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let app_name = canonical
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("app");
     
@@ -1586,17 +1665,10 @@ pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Re
     
     let target_subdir = if release { "release" } else { "debug" };
     
-    let local_target = project_root.join("target").join(target_subdir).join(&binary_name);
-    let workspace_target = project_root
-        .parent()
-        .map(|p| p.join("target").join(target_subdir).join(&binary_name))
-        .unwrap_or_else(|| local_target.clone());
-    
-    let binary = if local_target.exists() {
-        local_target
-    } else {
-        workspace_target
-    };
+    let binary = build_dir(&project_root)
+        .join("target")
+        .join(target_subdir)
+        .join(&binary_name);
     
     let binary_size = if binary.exists() {
         let size = fs::metadata(&binary)?.len();
