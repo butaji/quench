@@ -1311,6 +1311,18 @@ impl Interpreter {
                 ctx.scope.insert(name.clone(), source.clone());
                 Ok(())
             }
+            Pat::Default { arg, default } => {
+                // If source is undefined/null, use the default value
+                if matches!(source, Value::Undefined | Value::Null) {
+                    let default_val = self.expr_to_value(default, ctx)?;
+                    self.unpack_pattern(arg, &default_val, ctx)
+                } else {
+                    self.unpack_pattern(arg, source, ctx)
+                }
+            }
+            Pat::Rest { arg } => {
+                self.unpack_pattern(arg, source, ctx)
+            }
             _ => Ok(()),
         }
     }
@@ -1780,15 +1792,27 @@ impl Interpreter {
     
     /// Render island content on the server
     fn render_island_content(&self, island: &IslandInfo, attrs: &HashMap<String, Value>, ctx: &EvalContext) -> Result<String, String> {
-        // Create props object from attributes
         let mut props_ctx = ctx.clone();
-        for (k, v) in attrs {
-            props_ctx.scope.insert(k.clone(), v.clone());
+
+        // Build a synthetic props object from the JSX attributes
+        let props_obj = Value::Object(
+            attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        );
+
+        // Unpack destructured parameters exactly like render_function_component does
+        for param in &island.params {
+            if let Some(ref pattern) = param.pattern {
+                // For destructured params, the synthetic props object is the source
+                self.unpack_pattern(pattern, &props_obj, &mut props_ctx)?;
+            } else {
+                // Simple param — bind the whole props object under the param name
+                props_ctx.scope.insert(param.name.clone(), props_obj.clone());
+            }
         }
-        
+
         // Execute all body statements, returning on the first Return
-        for item in &island.body {
-            match item {
+        for stmt in &island.body {
+            match stmt {
                 Stmt::Return { arg: Some(expr) } => {
                     return self.evaluate_expr_to_html(expr, &props_ctx);
                 }
@@ -1812,7 +1836,7 @@ impl Interpreter {
                 _ => {}
             }
         }
-        
+
         Ok(String::new())
     }
 
