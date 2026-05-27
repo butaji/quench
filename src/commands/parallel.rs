@@ -47,7 +47,7 @@ pub fn process_all_files_parallel(
     let (island_results, islands) = process_islands_parallel(&island_files, &islands_dir, &transpiler, &code_gen);
 
     // Process components in parallel
-    let (component_results, components) = process_components_parallel(&component_files, &transpiler, &code_gen);
+    let (component_results, components) = process_components_parallel(&component_files, &components_dir, &transpiler, &code_gen);
 
     // Combine all generated files
     let mut generated_files = Vec::new();
@@ -161,12 +161,13 @@ fn process_islands_parallel(
 /// Process components in parallel
 fn process_components_parallel(
     files: &[PathBuf],
+    components_dir: &PathBuf,
     transpiler: &Arc<Transpiler>,
     code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> (Vec<GeneratedFile>, Vec<ComponentEntry>) {
     let results: Vec<Result<(GeneratedFile, ComponentEntry), TranspileError>> = files
         .par_iter()
-        .map(|path| process_single_component(path, transpiler, code_gen))
+        .map(|path| process_single_component(path, components_dir, transpiler, code_gen))
         .collect();
 
     let mut generated_files = Vec::new();
@@ -274,14 +275,21 @@ fn process_single_route(
         })
     };
 
-    // Generate output path
+    // Generate output path (sanitize module names like build.rs does)
     let relative_without_ext = relative.with_extension("");
+    let sanitized: PathBuf = relative_without_ext
+        .components()
+        .map(|c| {
+            let s = c.as_os_str().to_string_lossy().to_string();
+            sanitize_module_name(&s)
+        })
+        .collect();
     let output_path = base
         .parent()
         .unwrap_or(base)
         .join("src")
         .join("gen")
-        .join(relative_without_ext)
+        .join(sanitized)
         .with_extension("rs");
 
     Ok((GeneratedFile {
@@ -354,6 +362,7 @@ fn process_single_island(
 /// Process a single component file
 fn process_single_component(
     path: &PathBuf,
+    components_dir: &PathBuf,
     transpiler: &Arc<Transpiler>,
     _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, ComponentEntry), TranspileError> {
@@ -385,9 +394,10 @@ fn process_single_component(
         .unwrap_or("Unknown")
         .to_string();
 
-    // Get parent directory
-    let parent = path.parent().unwrap_or(path.as_path());
-    let output_path = parent
+    // Components are in <project_root>/components/; generated code goes to <project_root>/src/gen/components/
+    let output_path = components_dir
+        .parent()
+        .unwrap_or(components_dir)
         .join("src")
         .join("gen")
         .join("components")
@@ -479,6 +489,21 @@ fn extract_http_methods(module: &crate::transpile::hir::Module) -> Vec<HttpMetho
     }
     
     methods
+}
+
+/// Sanitize a file stem into a valid Rust module name.
+fn sanitize_module_name(stem: &str) -> String {
+    let mut s = stem
+        .replace('[', "")
+        .replace(']', "")
+        .replace('-', "_")
+        .replace('.', "_");
+    if let Some(first) = s.chars().next() {
+        if first.is_ascii_digit() {
+            s = format!("_{}", s);
+        }
+    }
+    to_snake_case(&s)
 }
 
 /// Convert to snake_case
