@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 /// Attribute value
 #[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AttrValue {
     /// String value
     String(String),
@@ -20,7 +20,7 @@ pub enum AttrValue {
 
 /// Virtual Node - representation of a DOM element
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum VNode {
     /// HTML/SVG element

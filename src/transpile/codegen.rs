@@ -343,7 +343,12 @@ impl CodeGenerator {
             out.push_str("#[derive(Clone, PartialEq, Serialize, Deserialize)]\n");
             out.push_str(&format!("pub struct {}{} {{\n", name, generics_str));
             for member in members {
-                let field_type = self.type_to_rust(&member.type_);
+                let mut field_type = self.type_to_rust(&member.type_);
+                // In Fresh, `children` is always a VNode (or ComponentChildren).
+                // If the TS source typed it as `any`, emit `VNode` instead of serde_json::Value.
+                if member.key == "children" && matches!(member.type_, Type::Any | Type::Unknown) {
+                    field_type = "VNode".to_string();
+                }
                 out.push_str(&format!("    pub {}: {},\n", self.to_snake_case(&member.key), field_type));
             }
             out.push_str("}\n");
@@ -618,8 +623,11 @@ impl CodeGenerator {
     }
 
     fn generate_variable(&self, var: &VariableDecl) -> Result<String> {
+        // TS `const` means the binding can't be reassigned, but the object can
+        // still be mutated (e.g. `const x = {}; x.a = 1`). We always emit
+        // `let mut` so generated Rust compiles without complex mutability inference.
         let keyword = match var.kind {
-            VariableKind::Const => "let",
+            VariableKind::Const => "let mut",
             VariableKind::Let => "let mut",
             VariableKind::Var => "let mut",
         };
@@ -1056,27 +1064,27 @@ impl CodeGenerator {
                                         let stmt_str = self.stmt_to_rust(body).unwrap_or_default();
                                         let inner = stmt_str.trim().trim_start_matches('{').trim_end_matches('}').trim();
                                         let new_closure = format!("|({}, {})| {{ let {} = {} as f64; {} }}", idx_name, item_name, idx_name, idx_name, inner);
-                                        return format!("{}.iter().enumerate().map({}).collect::<Vec<_>>()", obj_code, new_closure);
+                                        return format!("{}.iter().cloned().enumerate().map({}).collect::<Vec<_>>()", obj_code, new_closure);
                                     }
                                 }
                                 let closure = self.expr_to_rust(&args[0]);
-                                return format!("{}.iter().map({}).collect::<Vec<_>>()", obj_code, closure);
+                                return format!("{}.iter().cloned().map({}).collect::<Vec<_>>()", obj_code, closure);
                             }
                             "filter" if !args.is_empty() => {
                                 let closure = self.expr_to_rust(&args[0]);
-                                return format!("{}.iter().filter({}).cloned().collect::<Vec<_>>()", obj_code, closure);
+                                return format!("{}.iter().cloned().filter({}).collect::<Vec<_>>()", obj_code, closure);
                             }
                             "find" if !args.is_empty() => {
                                 let closure = self.expr_to_rust(&args[0]);
-                                return format!("{}.iter().find({}).cloned()", obj_code, closure);
+                                return format!("{}.iter().cloned().find({})", obj_code, closure);
                             }
                             "reduce" if !args.is_empty() => {
                                 let init = self.expr_to_rust(&args[0]);
                                 if args.len() > 1 {
                                     let closure = self.expr_to_rust(&args[1]);
-                                    return format!("{}.iter().fold({}, {})", obj_code, init, closure);
+                                    return format!("{}.iter().cloned().fold({}, {})", obj_code, init, closure);
                                 } else {
-                                    return format!("{}.iter().fold(None, |acc, x| acc.or(Some(x.clone()))).unwrap_or_default()", obj_code);
+                                    return format!("{}.iter().cloned().fold(None, |acc, x| acc.or(Some(x.clone()))).unwrap_or_default()", obj_code);
                                 }
                             }
                             "includes" if !args.is_empty() => {
@@ -1257,7 +1265,13 @@ impl CodeGenerator {
                                 };
                                 format!("{:?}.to_string()", s)
                             } else {
-                                self.expr_to_rust_with_hint(value, field_type.as_ref())
+                                let base = self.expr_to_rust_with_hint(value, field_type.as_ref());
+                                // Clone member accesses in struct literals to avoid partial moves
+                                if matches!(value, Expr::Member { .. }) {
+                                    format!("{}.clone()", base)
+                                } else {
+                                    base
+                                }
                             };
                             format!("{}: {}", snake_key, v)
                         }
