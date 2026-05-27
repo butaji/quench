@@ -96,7 +96,7 @@ impl MiddlewareExecutor {
             scope: HashMap::new(),
             params,
             url: request.url.clone(),
-            rendered_islands: Vec::new(),
+            rendered_islands: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             state: self.load_state_from_request(request),
             request: Some(request.clone()),
         };
