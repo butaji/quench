@@ -494,11 +494,12 @@ impl AppState {
         {content}
     </main>
     <script>
+        window.__RUNTS_CONFIG__ = {{ debug: true, defaultMode: 'visible', bundlesPath: '/_runts/islands', version: '0.5.0' }};
         window.__PAGE_DATA__ = {page_data_json};
         window.__ISLAND_MANIFEST__ = {island_manifest_json};
     </script>
     <script type="module" src="/_runts/hmr.js"></script>
-    <script type="module" src="/_runts/client.js"></script>
+    <script src="/_runts/client.js"></script>
 </body>
 </html>
 "#, title = title, nav_links = nav_links, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json)
@@ -556,6 +557,52 @@ impl AppState {
             crate::runtime::interpreter::Value::Object(obj) => serde_json::json!(obj.iter().map(|(k, v)| (k.clone(), self.value_to_json(v))).collect::<serde_json::Map<String, _>>()),
             crate::runtime::interpreter::Value::Function(_) => serde_json::Value::Null,
         }
+    }
+
+    /// Generate island JS bundle from HIR for client hydration
+    pub fn generate_island_js(&self, name: &str) -> String {
+        let interpreter = self.interpreter.read();
+        let _manifest = interpreter.get_island_manifest();
+        drop(interpreter);
+
+        // Start with the runtime
+        let mut js = CLIENT_RUNTIME_JS.to_string();
+        js.push('\n');
+
+        // Find island source and generate component function from HIR
+        let islands_dir = self.root.join("islands");
+        let island_path = islands_dir.join(format!("{}.tsx", name));
+        let alt_path = islands_dir.join(format!("{}/index.tsx", name));
+
+        let source_file = if island_path.exists() {
+            Some(island_path)
+        } else if alt_path.exists() {
+            Some(alt_path)
+        } else {
+            None
+        };
+
+        if let Some(path) = source_file {
+            if let Ok(source) = std::fs::read_to_string(&path) {
+                let mut parser = crate::transpile::Parser::new();
+                if let Ok(module) = parser.parse_source(&source) {
+                    let island_js = crate::transpile::js_codegen::generate_island_js(name, &module);
+                    js.push_str(&island_js);
+                } else {
+                    js.push_str(&format!("// Parse error for island: {}\n", name));
+                }
+            }
+        }
+
+        // Append hydration bootstrap
+        js.push_str(r#"
+// Auto-bootstrap if not already done
+if (typeof document !== 'undefined' && document.readyState !== 'loading') {
+  Runts._bootstrapIslands();
+}
+"#);
+
+        js
     }
 }
 
@@ -695,53 +742,12 @@ async fn handle_static(path: Path<String>) -> Response {
     }
 }
 
-/// Serve island JS bundle
-async fn handle_island_bundle(Path(name): Path<String>) -> Response {
-    // Generate minimal island bundle
-    let bundle = format!(r#"
-// Island: {0} - Client bundle
-class {0} {{
-    constructor(props, element) {{
-        this.props = props;
-        this.element = element;
-    }}
+/// Client runtime JS (embedded from runts-client/src/runtime.ts)
+const CLIENT_RUNTIME_JS: &str = include_str!("../../crates/runts-client/src/runtime.ts");
 
-    mount() {{
-        console.log('[runts] Mounting island: {0}');
-        // Render initial state from SSR HTML
-        this.element.innerHTML = this.element.innerHTML;
-        this.attachEvents();
-    }}
-
-    render() {{
-        return `<div class="island-{0}">Island {0} hydrated</div>`;
-    }}
-
-    attachEvents() {{
-        // Find buttons and attach click handlers
-        this.element.querySelectorAll('button').forEach(btn => {{
-            // Re-attach any inline handlers
-        }});
-    }}
-
-    setState(newProps) {{
-        this.props = {{ ...this.props, ...newProps }};
-        this.render();
-    }}
-
-    unmount() {{
-        this.element.innerHTML = '';
-    }}
-}}
-
-// Register the island
-if (typeof window !== 'undefined') {{
-    window.__runts_islands__ = window.__runts_islands__ || {{}};
-    window.__runts_islands__['{0}'] = {0};
-}}
-
-export default {0};
-"#, name);
+/// Serve island JS bundle — generated from HIR
+async fn handle_island_bundle(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    let bundle = state.generate_island_js(&name);
 
     Response::builder()
         .header("Content-Type", "application/javascript")
@@ -854,100 +860,9 @@ async fn hmr_client_script() -> Response {
 
 /// Client-side island hydration
 async fn client_script() -> Response {
-    let script = r#"
-/**
- * runts Client Runtime
- * Handles island hydration and interactivity
- */
-
-(function() {
-    'use strict';
-
-    // Island registry
-    const islands = new Map();
-
-    // Register an island
-    window.__registerIsland__ = function(name, Component) {
-        islands.set(name, Component);
-        console.debug('[runts] Registered island:', name);
-    };
-
-    // Hydrate all islands on page
-    function hydrateAll() {
-        const manifest = window.__ISLAND_MANIFEST__ || { islands: [] };
-        
-        for (const entry of manifest.islands) {
-            const el = document.querySelector(`[data-island="${entry.name}"][data-id="${entry.id}"]`);
-            if (!el) {
-                console.warn('[runts] Island element not found:', entry.name, entry.id);
-                continue;
-            }
-
-            // Check if already hydrated
-            if (el.dataset.hydrated === 'true') continue;
-
-            const Component = islands.get(entry.name);
-            if (Component) {
-                try {
-                    const instance = new Component(entry.props, el);
-                    instance.mount();
-                    el.dataset.hydrated = 'true';
-                    console.debug('[runts] Hydrated island:', entry.name);
-                } catch (e) {
-                    console.error('[runts] Hydration error for', entry.name, ':', e);
-                }
-            } else {
-                // Try to load from server
-                loadIsland(entry.name).then(() => {
-                    const LoadedComponent = islands.get(entry.name);
-                    if (LoadedComponent) {
-                        const instance = new LoadedComponent(entry.props, el);
-                        instance.mount();
-                        el.dataset.hydrated = 'true';
-                    }
-                });
-            }
-        }
-    }
-
-    // Load island bundle from server
-    async function loadIsland(name) {
-        try {
-            const response = await fetch(`/_runts/islands/${name}`);
-            if (response.ok) {
-                const text = await response.text();
-                // Execute in module context
-                const blob = new Blob([text], { type: 'application/javascript' });
-                const url = URL.createObjectURL(blob);
-                await import(url);
-                URL.revokeObjectURL(url);
-            }
-        } catch (e) {
-            console.error('[runts] Failed to load island:', name, e);
-        }
-    }
-
-    // Auto-initialize on DOM ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(hydrateAll, 100); // Small delay to ensure all scripts loaded
-        });
-    } else {
-        setTimeout(hydrateAll, 100);
-    }
-
-    // Expose API
-    window.__runts__ = {
-        hydrateAll,
-        register: window.__registerIsland__,
-        islands
-    };
-})();
-"#;
-
     Response::builder()
         .header("Content-Type", "application/javascript")
-        .body(Body::from(script))
+        .body(Body::from(CLIENT_RUNTIME_JS))
         .unwrap()
 }
 
