@@ -5,8 +5,9 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 use axum::{response::IntoResponse, body::Body};
+use std::collections::HashMap;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct HomeData {
     pub greeting: String,
     pub description: String,
@@ -14,14 +15,8 @@ pub struct HomeData {
     pub features: Vec<String>,
 }
 
-pub async fn handle_get(_ctx: HandlerContext, _req: Request) -> impl IntoResponse {
-    { let mut data: HomeData = HomeData {greeting: "Welcome to runts!".to_string(), description: "Build lightning-fast web apps with Fresh/Preact and native Rust. Zero external JS runtime, full Fresh compatibility.".to_string(), version: "0.3.0".to_string(), features: vec!["Instant hot reload in development".to_string(), "Native binary compilation for production".to_string(), "Full islands architecture".to_string(), "Fine-grained reactivity with signals".to_string(), "File-based routing like Next.js".to_string(), "Middleware pipeline".to_string()]}; return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp = __resp.header("X-Runtime", "Rust");
-    __resp.body(Body::from(__body)).unwrap()
-}; } // Handler body
+pub async fn handle_get(ctx: HandlerContext, req: Request) -> Response<Body> {
+    { let mut data: HomeData = HomeData {greeting: "Welcome to runts!".to_string(), description: "Build lightning-fast web apps with Fresh/Preact and native Rust. Zero external JS runtime, full Fresh compatibility.".to_string(), version: "0.3.0".to_string(), features: vec!["Instant hot reload in development".to_string(), "Native binary compilation for production".to_string(), "Full islands architecture".to_string(), "Fine-grained reactivity with signals".to_string(), "File-based routing like Next.js".to_string(), "Middleware pipeline".to_string()]}; return ctx.render(data); } // Handler body
 }
 
 
@@ -33,3 +28,7 @@ pub fn home(_props: PageProps<HomeData>) -> VNode {
 }
 
 
+pub fn home_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {
+    let props: PageProps<HomeData> = PageProps { params, url, data: serde_json::from_value(data).unwrap_or_default() };
+    home(props)
+}

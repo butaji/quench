@@ -5,14 +5,14 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Todo {
     pub id: String,
     pub text: String,
     pub completed: bool,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TodoListProps {
     pub title: String,
 }

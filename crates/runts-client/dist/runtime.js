@@ -1,558 +1,539 @@
 // Runts Client Runtime v0.1.0
 // Built from: runtime.ts
 /**
- * runts Client Runtime
+ * Runts Client-Side Runtime
  * 
- * Minimal JavaScript runtime for island hydration and signal synchronization.
- * Target: ~5KB gzipped for full functionality.
+ * Provides selective hydration for islands using Preact Signals.
+ * Zero dependencies - vanilla JS implementation.
  * 
- * @module runts
+ * @version 1.0.0
  */
 
-// ============================================================================
-// Signal System
-// ============================================================================
+(function(global) {
+  'use strict';
 
-export interface SignalOptions<T> {
-  equals?: (a: T, b: T) => boolean;
-}
+  // ============================================================
+  // Configuration
+  // ============================================================
 
-export class Signal<T> {
-  #value: T;
-  #subscribers: Set<(value: T) => void> = new Set();
-  #equals: (a: T, b: T) => boolean;
-  
-  constructor(value: T, options?: SignalOptions<T>) {
-    this.#value = value;
-    this.#equals = options?.equals ?? ((a, b) => a === b);
-  }
-  
-  get value(): T {
-    return this.#value;
-  }
-  
-  set value(newValue: T) {
-    if (!this.#equals(this.#value, newValue)) {
-      this.#value = newValue;
-      this.#notify();
-    }
-  }
-  
-  peek(): T {
-    return this.#value;
-  }
-  
-  set(newValue: T): void {
-    this.value = newValue;
-  }
-  
-  update(fn: (value: T) => T): void {
-    this.value = fn(this.#value);
-  }
-  
-  subscribe(fn: (value: T) => void): () => void {
-    this.#subscribers.add(fn);
-    return () => this.#subscribers.delete(fn);
-  }
-  
-  #notify(): void {
-    for (const fn of this.#subscribers) {
-      fn(this.#value);
-    }
-  }
-}
-
-export function signal<T>(initial: T, options?: SignalOptions<T>): Signal<T> {
-  return new Signal(initial, options);
-}
-
-export function computed<T>(fn: () => T): Signal<T> {
-  const sig = new Signal<T>(undefined as any);
-  let dirty = true;
-  let current: T;
-  
-  const recompute = () => {
-    if (dirty) {
-      current = fn();
-      dirty = false;
-    }
-    return current;
+  const CONFIG = {
+    debug: window.__RUNTS_CONFIG__?.debug ?? false,
+    defaultMode: window.__RUNTS_CONFIG__?.defaultMode ?? 'visible',
+    bundlesPath: window.__RUNTS_CONFIG__?.bundlesPath ?? '/_runts/islands',
+    version: window.__RUNTS_CONFIG__?.version ?? '0.5.0',
   };
-  
-  // Create a reactive signal that auto-computes
-  const computedSig = new Signal<T>(undefined as any, {
-    equals: () => {
-      const newVal = fn();
-      if (newVal !== current) {
-        current = newVal;
-        return true;
+
+  const log = (...args) => {
+    if (CONFIG.debug) {
+      console.log('[runts]', ...args);
+    }
+  };
+
+  // ============================================================
+  // Signal System (Preact Signals Compatible)
+  // ============================================================
+
+  class Signal {
+    #value;
+    #subscribers = new Set();
+    #effectCleanup = null;
+
+    constructor(value) {
+      this.#value = value;
+    }
+
+    get value() {
+      // Track dependency
+      if (Signal.currentComputation) {
+        this.#subscribers.add(Signal.currentComputation);
+        Signal.currentComputation.dependencies.add(this);
       }
-      return false;
+      return this.#value;
     }
-  });
-  
-  // Subscribe to dependencies
-  effect(() => {
-    current = fn();
-    computedSig.value = current;
-  });
-  
-  return computedSig;
-}
 
-export function effect(fn: () => void | (() => void)): () => void {
-  const cleanup = fn();
-  return () => {
-    if (typeof cleanup === 'function') {
-      cleanup();
+    set value(newValue) {
+      this.#setValue(newValue);
     }
-  };
-}
 
-// ============================================================================
-// Batch Updates
-// ============================================================================
+    #setValue(newValue, force = false) {
+      const oldValue = this.#value;
+      this.#value = newValue;
 
-let batchDepth = 0;
-let batchedEffects: (() => void)[] = [];
+      if (force || !Object.is(oldValue, newValue)) {
+        // Notify all subscribers
+        const toNotify = new Set(this.#subscribers);
+        toNotify.forEach(effect => {
+          effect.invalidate();
+        });
+      }
+    }
 
-export function batch(fn: () => void): void {
-  batchDepth++;
-  try {
-    fn();
-    flush();
-  } finally {
-    batchDepth--;
-  }
-}
+    peek() {
+      return this.#value;
+    }
 
-function flush(): void {
-  if (batchDepth > 0) return;
-  const effects = batchedEffects.splice(0);
-  for (const effect of effects) {
-    effect();
-  }
-}
+    update(fn) {
+      this.#setValue(fn(this.#value));
+    }
 
-// ============================================================================
-// Island Hydration
-// ============================================================================
+    // For internal use
+    _addSubscriber(computation) {
+      this.#subscribers.add(computation);
+    }
 
-export enum IslandMode {
-  Eager = 'eager',
-  Lazy = 'lazy',
-  Interaction = 'interaction',
-  Visible = 'visible'
-}
-
-interface IslandInstance {
-  id: string;
-  name: string;
-  props: any;
-  mode: IslandMode;
-  state: 'pending' | 'hydrating' | 'hydrated' | 'error';
-  element: HTMLElement | null;
-  cleanup?: () => void;
-}
-
-const islands: Map<string, IslandInstance> = new Map();
-const islandHandlers: Map<string, (props: any) => void> = new Map();
-
-// Initialize on DOM ready
-if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-}
-
-function init(): void {
-  discoverIslands();
-  setupIntersectionObserver();
-  setupInteractionObserver();
-}
-
-function discoverIslands(): void {
-  const elements = document.querySelectorAll('[data-island]');
-  
-  for (const el of elements) {
-    if (!(el instanceof HTMLElement)) continue;
-    
-    const name = el.dataset.island!;
-    const id = el.dataset.id!;
-    const mode = (el.dataset.hydration as IslandMode) ?? IslandMode.Lazy;
-    
-    // Parse props from script tag
-    const scriptId = `island-data-${id}`;
-    const script = document.getElementById(scriptId);
-    const props = script ? JSON.parse(script.textContent || '{}') : {};
-    
-    const instance: IslandInstance = {
-      id,
-      name,
-      props,
-      mode,
-      state: 'pending',
-      element: el
-    };
-    
-    islands.set(id, instance);
-    
-    // Hydrate based on mode
-    switch (mode) {
-      case IslandMode.Eager:
-        hydrateIsland(id);
-        break;
-      case IslandMode.Lazy:
-      case IslandMode.Visible:
-        // Will be hydrated by intersection observer
-        break;
-      case IslandMode.Interaction:
-        // Will be hydrated on first interaction
-        break;
+    _removeSubscriber(computation) {
+      this.#subscribers.delete(computation);
     }
   }
-}
 
-let intersectionObserver: IntersectionObserver | null = null;
-let interactionHandler: ((e: Event) => void) | null = null;
+  class ComputedSignal extends Signal {
+    #computeFn;
+    #dependencies = new Set();
+    #dirty = true;
+    #cachedValue;
+    #computation;
 
-function setupIntersectionObserver(): void {
-  intersectionObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          const el = entry.target as HTMLElement;
-          const id = el.dataset.id;
-          if (id) {
-            const island = islands.get(id);
-            if (island?.mode === IslandMode.Lazy || island?.mode === IslandMode.Visible) {
-              hydrateIsland(id);
-            }
+    constructor(fn) {
+      super(undefined);
+      this.#computeFn = fn;
+      this.#run();
+    }
+
+    #run() {
+      const prev = Signal.currentComputation;
+      Signal.currentComputation = this.#conputation = {
+        fn: this.#computeFn,
+        dependencies: new Set(),
+        dirty: false,
+        invalidate: () => this.#invalidate(),
+      };
+
+      try {
+        this.#cachedValue = this.#computeFn();
+      } finally {
+        Signal.currentComputation = prev;
+        // Clean up old dependencies
+        this.#dependencies.forEach(dep => {
+          dep._removeSubscriber(this.#computation);
+        });
+        // Add new dependencies
+        this.#conputation.dependencies.forEach(dep => {
+          dep._addSubscriber(this.#computation);
+          this.#dependencies.add(dep);
+        });
+        this.#dirty = false;
+      }
+    }
+
+    #invalidate() {
+      if (!this.#dirty) {
+        this.#dirty = true;
+        // Propagate to subscribers
+        this.#subscribers.forEach(effect => effect.invalidate());
+      }
+    }
+
+    get value() {
+      if (this.#dirty) {
+        this.#run();
+      }
+      if (Signal.currentComputation) {
+        Signal.currentComputation.dependencies.add(this);
+      }
+      return this.#cachedValue;
+    }
+  }
+
+  Signal.currentComputation = null;
+
+  function signal(initialValue) {
+    return new Signal(initialValue);
+  }
+
+  function computed(fn) {
+    return new ComputedSignal(fn);
+  }
+
+  // ============================================================
+  // Batch Updates
+  // ============================================================
+
+  let batchDepth = 0;
+  const batchedEffects = new Set();
+
+  function batch(fn) {
+    batchDepth++;
+    try {
+      return fn();
+    } finally {
+      batchDepth--;
+      if (batchDepth === 0) {
+        batchedEffects.forEach(effect => effect());
+        batchedEffects.clear();
+      }
+    }
+  }
+
+  function untrack(fn) {
+    const prev = Signal.currentComputation;
+    Signal.currentComputation = null;
+    try {
+      return fn();
+    } finally {
+      Signal.currentComputation = prev;
+    }
+  }
+
+  // ============================================================
+  // Effects
+  // ============================================================
+
+  function effect(fn) {
+    const effect_ = {
+      fn,
+      dependencies: new Set(),
+      cleanup: null,
+      dirty: true,
+      invalidate() {
+        if (!this.dirty) {
+          this.dirty = true;
+          if (batchDepth > 0) {
+            batchedEffects.add(this.#run.bind(this));
+          } else {
+            queueMicrotask(this.#run.bind(this));
           }
         }
-      }
-    },
-    { rootMargin: '100px' }
-  );
-  
-  // Observe all lazy/visible islands
-  for (const island of islands.values()) {
-    if (island.element && (island.mode === IslandMode.Lazy || island.mode === IslandMode.Visible)) {
-      intersectionObserver?.observe(island.element);
-    }
-  }
-}
+      },
+      #run() {
+        if (this.cleanup) {
+          try {
+            this.cleanup();
+          } catch (e) {
+            console.error('[runts] Effect cleanup error:', e);
+          }
+        }
+        // Clean up old dependencies
+        this.dependencies.forEach(dep => {
+          dep._removeSubscriber(effect_);
+        });
+        this.dependencies.clear();
 
-function setupInteractionObserver(): void {
-  interactionHandler = (e: Event) => {
-    const target = e.target as HTMLElement;
-    const islandEl = target.closest('[data-island]');
-    
-    if (islandEl instanceof HTMLElement) {
-      const id = islandEl.dataset.id;
-      if (id) {
-        const island = islands.get(id);
-        if (island?.mode === IslandMode.Interaction && island.state === 'pending') {
-          // Remove this listener after first interaction
-          document.removeEventListener('click', interactionHandler!, true);
-          document.removeEventListener('focus', interactionHandler!, true);
-          hydrateIsland(id);
+        const prev = Signal.currentComputation;
+        Signal.currentComputation = this;
+        try {
+          this.cleanup = this.fn() ?? null;
+        } catch (e) {
+          console.error('[runts] Effect error:', e);
+        } finally {
+          Signal.currentComputation = prev;
+          this.dirty = false;
         }
       }
+    };
+
+    effect_#run();
+    return () => {
+      if (effect_.cleanup) {
+        effect_.cleanup();
+      }
+      effect_.dependencies.forEach(dep => {
+        dep._removeSubscriber(effect_);
+      });
+      effect_.dependencies.clear();
+    };
+  }
+
+  // ============================================================
+  // Island Hydration
+  // ============================================================
+
+  const ISLANDS = new Map();
+  let islandIdCounter = 0;
+
+  /**
+   * Register an island component
+   */
+  function registerIsland(name, component, options = {}) {
+    ISLANDS.set(name, {
+      component,
+      options: {
+        hydration: options.hydration ?? CONFIG.defaultMode,
+        ...options,
+      },
+    });
+    log('Registered island:', name);
+  }
+
+  /**
+   * Create an island instance
+   */
+  function createIsland(element, name, props) {
+    const islandDef = ISLANDS.get(name);
+    if (!islandDef) {
+      console.error(`[runts] Unknown island: ${name}`);
+      return null;
     }
-  };
-  
-  document.addEventListener('click', interactionHandler, true);
-  document.addEventListener('focus', interactionHandler, true);
-}
 
-export async function hydrateIsland(id: string): Promise<void> {
-  const island = islands.get(id);
-  if (!island || island.state !== 'pending') return;
-  
-  island.state = 'hydrating';
-  island.element?.setAttribute('data-hydrating', 'true');
-  
-  try {
-    const handler = islandHandlers.get(island.name);
-    if (handler) {
-      handler(island.props);
-      island.state = 'hydrated';
-      island.element?.removeAttribute('data-hydrating');
-      island.element?.setAttribute('data-hydrated', 'true');
-    } else {
-      throw new Error(`No handler registered for island: ${island.name}`);
+    const id = element.dataset.id ?? `island-${++islandIdCounter}`;
+    const hydration = element.dataset.hydration ?? islandDef.options.hydration;
+
+    return {
+      id,
+      name,
+      element,
+      props,
+      hydration,
+      hydrated: false,
+      component: islandDef.component,
+    };
+  }
+
+  /**
+   * Hydrate an island
+   */
+  async function hydrateIsland(island) {
+    if (island.hydrated) {
+      log('Already hydrated:', island.id);
+      return;
     }
-  } catch (err) {
-    island.state = 'error';
-    island.element?.setAttribute('data-error', String(err));
-    console.error(`[runts] Failed to hydrate island ${id}:`, err);
-  }
-}
 
-export function registerIsland(name: string, handler: (props: any) => void): void {
-  islandHandlers.set(name, handler);
-}
+    log('Hydrating island:', island.id, island.name);
 
-export function getIsland(id: string): IslandInstance | undefined {
-  return islands.get(id);
-}
-
-// ============================================================================
-// Event Delegation
-// ============================================================================
-
-export function setupEventDelegation(): void {
-  document.addEventListener('click', handleClick, true);
-  document.addEventListener('input', handleInput, true);
-  document.addEventListener('change', handleChange, true);
-  document.addEventListener('submit', handleSubmit, true);
-  document.addEventListener('focus', handleFocus, true);
-  document.addEventListener('blur', handleBlur, true);
-  document.addEventListener('keydown', handleKeyDown, true);
-  document.addEventListener('keyup', handleKeyUp, true);
-}
-
-function handleClick(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-click]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-click');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleInput(e: Event): void {
-  const target = e.target as HTMLInputElement;
-  const delegated = target.closest('[data-on-input]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-input');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleChange(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-change]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-change');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleSubmit(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-submit]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-submit');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleFocus(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-focus]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-focus');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleBlur(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-blur]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-blur');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleKeyDown(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-key-down]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-key-down');
-    invokeHandler(fnName, e);
-  }
-}
-
-function handleKeyUp(e: Event): void {
-  const target = e.target as HTMLElement;
-  const delegated = target.closest('[data-on-key-up]');
-  if (delegated) {
-    const fnName = delegated.getAttribute('data-on-key-up');
-    invokeHandler(fnName, e);
-  }
-}
-
-function invokeHandler(fnName: string | null, e: Event): void {
-  if (!fnName) return;
-  
-  // Look up handler in global scope
-  const handler = (window as any)[fnName];
-  if (typeof handler === 'function') {
     try {
-      handler(e);
-    } catch (err) {
-      console.error(`[runts] Error in handler ${fnName}:`, err);
+      // Call the component with props
+      const vnode = island.component(island.props);
+      
+      // Render to DOM
+      renderVNode(vnode, island.element);
+      
+      island.hydrated = true;
+      log('Hydrated:', island.id);
+    } catch (e) {
+      console.error(`[runts] Hydration error for ${island.name}:`, e);
     }
   }
-}
 
-// ============================================================================
-// HTML Utilities
-// ============================================================================
+  /**
+   * Simple VNode renderer
+   */
+  function renderVNode(vnode, container) {
+    if (typeof vnode === 'string' || typeof vnode === 'number') {
+      container.textContent = String(vnode);
+      return;
+    }
 
-export function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+    if (vnode === null || vnode === undefined) {
+      container.innerHTML = '';
+      return;
+    }
 
-export function html(strings: TemplateStringsArray, ...values: any[]): string {
-  let result = '';
-  for (let i = 0; i < strings.length; i++) {
-    result += strings[i];
-    if (i < values.length) {
-      const value = values[i];
-      if (value == null) {
-        result += '';
-      } else if (typeof value === 'string') {
-        result += escapeHtml(value);
-      } else if (typeof value === 'number' || typeof value === 'boolean') {
-        result += String(value);
-      } else if (Array.isArray(value)) {
-        result += value.map(v => 
-          typeof v === 'string' ? escapeHtml(v) : String(v)
-        ).join('');
+    if (Array.isArray(vnode)) {
+      container.innerHTML = '';
+      vnode.forEach(child => renderVNode(child, container));
+      return;
+    }
+
+    if (vnode.type === 'TEXT') {
+      container.textContent = vnode.props.nodeValue;
+      return;
+    }
+
+    // DOM element
+    const element = vnode.type.startsWith('$')
+      ? document.createElement(vnode.type.slice(1))
+      : document.createElement(vnode.type);
+
+    // Apply attributes
+    for (const [key, value] of Object.entries(vnode.props || {})) {
+      if (key === 'children') continue;
+      
+      if (key.startsWith('on') && key.length > 2) {
+        const eventName = key.slice(2).toLowerCase();
+        element.addEventListener(eventName, value);
+      } else if (key === 'className') {
+        element.className = value;
+      } else if (key === 'style' && typeof value === 'object') {
+        Object.assign(element.style, value);
+      } else if (key.startsWith('data-')) {
+        element.dataset[key.slice(5)] = value;
       } else {
-        result += String(value);
+        element.setAttribute(key, value);
       }
     }
-  }
-  return result;
-}
 
-// ============================================================================
-// State Management
-// ============================================================================
-
-interface StoreState {
-  [key: string]: any;
-}
-
-const stores: Map<string, StoreState> = new Map();
-
-export function createStore<T extends StoreState>(initial: T): T {
-  const store = reactive(initial);
-  stores.set('default', store);
-  return store as T;
-}
-
-export function getStore<T extends StoreState>(name = 'default'): T | undefined {
-  return stores.get(name) as T | undefined;
-}
-
-export function reactive<T extends object>(obj: T): T {
-  return new Proxy(obj, {
-    get(target, key, receiver) {
-      const value = Reflect.get(target, key, receiver);
-      if (typeof value === 'object' && value !== null) {
-        return reactive(value);
+    // Render children
+    const children = vnode.props?.children;
+    if (children) {
+      if (Array.isArray(children)) {
+        children.forEach(child => renderVNode(child, element));
+      } else if (typeof children === 'object') {
+        renderVNode(children, element);
+      } else {
+        element.textContent = String(children);
       }
-      return value;
+    }
+
+    container.innerHTML = '';
+    container.appendChild(element);
+  }
+
+  // ============================================================
+  // Hydration Strategies
+  // ============================================================
+
+  const hydrationStrategies = {
+    eager: async (island) => {
+      await hydrateIsland(island);
     },
-    set(target, key, value, receiver) {
-      const result = Reflect.set(target, key, value, receiver);
-      if (result) {
-        // Trigger updates
-        notifyChange(String(key));
+
+    visible: async (island) => {
+      return new Promise((resolve) => {
+        const observer = new IntersectionObserver(
+          async (entries) => {
+            if (entries[0].isIntersecting) {
+              observer.disconnect();
+              await hydrateIsland(island);
+              resolve();
+            }
+          },
+          { threshold: 0.1 }
+        );
+        observer.observe(island.element);
+      });
+    },
+
+    idle: async (island) => {
+      return new Promise((resolve) => {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(async () => {
+            await hydrateIsland(island);
+            resolve();
+          });
+        } else {
+          setTimeout(async () => {
+            await hydrateIsland(island);
+            resolve();
+          }, 1);
+        }
+      });
+    },
+
+    manual: async (island) => {
+      // Don't auto-hydrate, wait for explicit trigger
+      log('Manual hydration for:', island.id);
+    },
+  };
+
+  // ============================================================
+  // Island Discovery & Bootstrapping
+  // ============================================================
+
+  function discoverIslands() {
+    const elements = document.querySelectorAll('[data-island]');
+    const islands = [];
+
+    elements.forEach(element => {
+      const name = element.dataset.island;
+      const propsJson = element.dataset.props ?? '{}';
+      const props = JSON.parse(propsJson);
+
+      const island = createIsland(element, name, props);
+      if (island) {
+        islands.push(island);
       }
-      return result;
+    });
+
+    log('Discovered islands:', islands.length);
+    return islands;
+  }
+
+  async function bootstrapIslands() {
+    const islands = discoverIslands();
+    
+    // Group by hydration strategy
+    const byStrategy = {
+      eager: [],
+      visible: [],
+      idle: [],
+      manual: [],
+    };
+
+    islands.forEach(island => {
+      byStrategy[island.hydration]?.push(island) ?? byStrategy.visible.push(island);
+    });
+
+    // Eager islands first
+    await Promise.all(byStrategy.eager.map(hydrationStrategies.eager));
+
+    // Visible islands with shared observer
+    if (byStrategy.visible.length > 0) {
+      const visibleObserver = new IntersectionObserver(
+        async (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const island = entry.target._runtsIsland;
+              visibleObserver.unobserve(entry.target);
+              await hydrationStrategies.visible(island);
+            }
+          }
+        },
+        { threshold: 0.1 }
+      );
+
+      byStrategy.visible.forEach(island => {
+        island.element._runtsIsland = island;
+        visibleObserver.observe(island.element);
+      });
     }
-  });
-}
 
-function notifyChange(key: string): void {
-  // Dispatch custom event for debugging/inspection
-  if (typeof document !== 'undefined') {
-    document.dispatchEvent(new CustomEvent('store-change', { 
-      detail: { key } 
-    }));
+    // Idle islands
+    byStrategy.idle.forEach(island => {
+      hydrationStrategies.idle(island);
+    });
+
+    // Manual islands are set up but not hydrated
+    log('Bootstrap complete');
   }
-}
 
-// ============================================================================
-// Routing (Client-side)
-// ============================================================================
+  // ============================================================
+  // Global API
+  // ============================================================
 
-export function navigate(url: string, options?: { replace?: boolean }): void {
-  if (typeof history !== 'undefined') {
-    if (options?.replace) {
-      history.replaceState(null, '', url);
-    } else {
-      history.pushState(null, '', url);
-    }
-    // Dispatch popstate to trigger route handlers
-    window.dispatchEvent(new PopStateEvent('popstate'));
+  const RuntsClient = {
+    // Version
+    version: CONFIG.version,
+
+    // Core APIs
+    signal,
+    computed,
+    effect,
+    batch,
+    untrack,
+
+    // Island APIs
+    registerIsland,
+    hydrateIsland,
+
+    // Internal APIs
+    _discoverIslands: discoverIslands,
+    _bootstrapIslands: bootstrapIslands,
+
+    // Config
+    CONFIG,
+
+    // Debug
+    ISLANDS,
+  };
+
+  // Expose globally
+  global.Runts = RuntsClient;
+
+  // Auto-bootstrap on DOMContentLoaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrapIslands);
+  } else {
+    bootstrapIslands();
   }
-}
 
-export function onMount(fn: () => void): void {
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', fn);
-    } else {
-      fn();
-    }
-  }
-}
-
-// ============================================================================
-// Initialization
-// ============================================================================
-
-export function initRuntime(): void {
-  setupEventDelegation();
-  discoverIslands();
-  
-  // Signal that runtime is ready
-  if (typeof window !== 'undefined') {
-    (window as any).__RUNTS_READY__ = true;
-    window.dispatchEvent(new Event('runts-ready'));
-  }
-}
-
-// Auto-initialize
-if (typeof document !== 'undefined') {
-  initRuntime();
-}
-
-// ============================================================================
-// Exports
-// ============================================================================
-
-export default {
-  Signal,
-  signal,
-  computed,
-  effect,
-  batch,
-  html,
-  escapeHtml,
-  registerIsland,
-  hydrateIsland,
-  getIsland,
-  IslandMode,
-  createStore,
-  getStore,
-  reactive,
-  navigate,
-  onMount
-};
+})(typeof window !== 'undefined' ? window : global);
 

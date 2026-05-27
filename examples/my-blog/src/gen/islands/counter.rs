@@ -5,7 +5,7 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CounterProps {
     pub initial: f64,
     pub step: f64,

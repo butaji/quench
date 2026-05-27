@@ -106,6 +106,7 @@ impl CodeGenerator {
         }
         if needs_axum {
             output.push_str("use axum::{response::IntoResponse, body::Body};\n");
+            output.push_str("use std::collections::HashMap;\n");
         }
         output.push('\n');
 
@@ -128,6 +129,7 @@ impl CodeGenerator {
         }
 
         let mut default_component_name: Option<String> = None;
+        let mut default_component_data_type: Option<String> = None;
         let mut has_handler_export = false;
 
         for item in &module.items {
@@ -147,6 +149,14 @@ impl CodeGenerator {
                     Export::Default { expr } => {
                         if let Expr::Function { decl } = expr {
                             default_component_name = Some(decl.name.clone());
+                            // Extract data type from PageProps<T> first param
+                            if let Some(param) = decl.params.first() {
+                                if let Some(Type::Ref { name, generics }) = &param.type_ {
+                                    if name == "PageProps" && generics.len() == 1 {
+                                        default_component_data_type = Some(self.type_to_rust(&generics[0]));
+                                    }
+                                }
+                            }
                             let fn_code = self.generate_function(decl, true)?;
                             if !fn_code.trim().is_empty() {
                                 output.push_str(&fn_code);
@@ -177,15 +187,24 @@ impl CodeGenerator {
         // If there's a default export component but no explicit handler,
         // generate a default GET handler that renders the component.
         if self.generate_handlers {
-            if let Some(component_name) = default_component_name {
+            if let Some(component_name) = default_component_name.clone() {
                 if !has_handler_export {
                     let fn_name = self.to_snake_case(&component_name);
                     output.push_str(&format!(
-                        "pub async fn handle_get() -> impl IntoResponse {{\n    {}()\n}}\n",
+                        "pub async fn handle_get() -> Response<Body> {{\n    {}()\n}}\n",
                         fn_name
                     ));
                 }
             }
+        }
+
+        // Generate render_with_data helper for SSR wrapper
+        if let (Some(comp_name), Some(data_type)) = (&default_component_name, &default_component_data_type) {
+            let fn_name = self.to_snake_case(comp_name);
+            output.push_str(&format!(
+                "pub fn {}_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {{\n    let props: PageProps<{}> = PageProps {{ params, url, data: serde_json::from_value(data).unwrap_or_default() }};\n    {}(props)\n}}\n",
+                fn_name, data_type, fn_name
+            ));
         }
 
         Ok(output)
@@ -268,7 +287,10 @@ impl CodeGenerator {
             }
         });
         let params_str = ordered_params.iter().map(|p| {
-            let name = self.to_snake_case(&p.name);
+            // Strip leading underscore from handler params so that `_ctx` becomes `ctx`.
+            // Fresh handlers often name params `_ctx` / `_req` but the body uses `ctx`.
+            let raw = p.name.trim_start_matches('_');
+            let name = self.to_snake_case(raw);
             p.type_.as_ref()
                 .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
                 .unwrap_or_else(|| name)
@@ -305,7 +327,7 @@ impl CodeGenerator {
         };
         
         Ok(format!(
-            r#"pub {}fn {}({}) -> impl IntoResponse {{
+            r#"pub {}fn {}({}) -> Response<Body> {{
     {} // Handler body
 }}"#,
             async_prefix,
@@ -386,7 +408,7 @@ impl CodeGenerator {
         
         if let Type::Object { members } = &decl.type_ {
             let mut out = String::new();
-            out.push_str("#[derive(Clone, PartialEq, Serialize, Deserialize)]\n");
+            out.push_str("#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]\n");
             out.push_str(&format!("pub struct {}{} {{\n", name, generics_str));
             for member in members {
                 let mut field_type = self.type_to_rust(&member.type_);

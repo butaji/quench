@@ -19,7 +19,7 @@ interface BlogData {
 }
 
 export const handler = {
-  async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
+  async GET(req: Request, ctx: HandlerContext): Promise<Response> {
     const posts: Post[] = [
       {
         slug: "introducing-runts",
@@ -53,11 +53,7 @@ export const handler = {
 
     const data: BlogData = { posts: posts };
 
-    return new Response(JSON.stringify(data), {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    return ctx.render(data);
   }
 };
 

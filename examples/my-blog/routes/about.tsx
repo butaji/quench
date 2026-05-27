@@ -21,7 +21,7 @@ interface PerformanceMetrics {
 }
 
 export const handler = {
-  async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
+  async GET(req: Request, ctx: HandlerContext): Promise<Response> {
     const data: AboutData = {
       title: "About runts",
       description: "runts is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries. Built with a focus on performance, developer experience, and framework compatibility.",
@@ -47,9 +47,7 @@ export const handler = {
       }
     };
 
-    return new Response(JSON.stringify(data), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return ctx.render(data);
   }
 };
 

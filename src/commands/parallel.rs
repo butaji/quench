@@ -263,6 +263,16 @@ fn process_single_route(
     let params = extract_params(&pattern);
     let methods = extract_http_methods(&module);
 
+    // Extract default-export component name (if any)
+    let component_name = module.items.iter().find_map(|item| {
+        if let crate::transpile::hir::ModuleItem::Export(crate::transpile::hir::Export::Default { expr }) = item {
+            if let crate::transpile::hir::Expr::Function { decl } = expr {
+                return Some(decl.name.clone());
+            }
+        }
+        None
+    });
+
     let route = if is_layout {
         None
     } else {
@@ -272,6 +282,7 @@ fn process_single_route(
             file: relative.to_string_lossy().to_string(),
             params,
             methods,
+            component_name,
         })
     };
 

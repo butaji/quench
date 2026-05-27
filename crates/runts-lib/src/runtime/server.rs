@@ -12,6 +12,8 @@ use http::{StatusCode, header};
 pub use axum::extract::Request;
 /// Re-export the generic http Response type for use in handler code generation
 pub use http::Response;
+/// Re-export Axum Body type for handlers
+pub use axum::body::Body;
 
 /// Page props - passed to page components
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,12 +89,15 @@ impl HandlerContext {
             .unwrap()
     }
     
-    /// Render with data
-    pub fn render<T: Serialize>(&self, data: T) -> Response<String> {
+    /// Render with data — returns a marker response that the route wrapper
+    /// detects to trigger component rendering.
+    pub fn render<T: Serialize>(&self, data: T) -> Response<Body> {
+        let body = serde_json::to_string(&data).unwrap_or_default();
         Response::builder()
             .status(200)
+            .header("X-Runts-Render", "true")
             .header(header::CONTENT_TYPE, "application/json")
-            .body(serde_json::to_string(&data).unwrap_or_default())
+            .body(Body::from(body))
             .unwrap()
     }
 }

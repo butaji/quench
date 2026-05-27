@@ -5,7 +5,7 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct HeaderProps {
     pub title: String,
     pub subtitle: String,

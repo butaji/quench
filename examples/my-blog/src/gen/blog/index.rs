@@ -5,8 +5,9 @@
 use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 use axum::{response::IntoResponse, body::Body};
+use std::collections::HashMap;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Post {
     pub slug: String,
     pub title: String,
@@ -15,18 +16,13 @@ pub struct Post {
     pub reading_time: String,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct BlogData {
     pub posts: Vec<Post>,
 }
 
-pub async fn handle_get(_ctx: HandlerContext, _req: Request) -> impl IntoResponse {
-    { let mut posts: Vec<Post> = vec![Post {slug: "introducing-runts".to_string(), title: "Introducing runts: Fresh/Preact with Native Rust".to_string(), excerpt: "Build lightning-fast web applications with Fresh's islands architecture, compiled to native Rust binaries.".to_string(), date: "2026-05-26".to_string(), reading_time: "5 min read".to_string()}, Post {slug: "islands-architecture".to_string(), title: "Understanding the Islands Architecture".to_string(), excerpt: "How selective hydration enables partial page interactivity while maintaining excellent performance.".to_string(), date: "2026-05-25".to_string(), reading_time: "8 min read".to_string()}, Post {slug: "rust-frontend".to_string(), title: "Rust in the Frontend: A New Paradigm".to_string(), excerpt: "Exploring the benefits and challenges of compiling TypeScript to Rust.".to_string(), date: "2026-05-24".to_string(), reading_time: "12 min read".to_string()}, Post {slug: "fine-grained-reactivity".to_string(), title: "Fine-Grained Reactivity in Pure Rust".to_string(), excerpt: "Implementing Preact Signals and computed values in Rust for efficient reactive updates.".to_string(), date: "2026-05-23".to_string(), reading_time: "10 min read".to_string()}]; let mut data: BlogData = BlogData {posts: posts}; return {
-    let __body = serde_json::to_string(&data).unwrap();
-    let mut __resp = Response::builder();
-    __resp = __resp.header("Content-Type", "application/json");
-    __resp.body(Body::from(__body)).unwrap()
-}; } // Handler body
+pub async fn handle_get(ctx: HandlerContext, req: Request) -> Response<Body> {
+    { let mut posts: Vec<Post> = vec![Post {slug: "introducing-runts".to_string(), title: "Introducing runts: Fresh/Preact with Native Rust".to_string(), excerpt: "Build lightning-fast web applications with Fresh's islands architecture, compiled to native Rust binaries.".to_string(), date: "2026-05-26".to_string(), reading_time: "5 min read".to_string()}, Post {slug: "islands-architecture".to_string(), title: "Understanding the Islands Architecture".to_string(), excerpt: "How selective hydration enables partial page interactivity while maintaining excellent performance.".to_string(), date: "2026-05-25".to_string(), reading_time: "8 min read".to_string()}, Post {slug: "rust-frontend".to_string(), title: "Rust in the Frontend: A New Paradigm".to_string(), excerpt: "Exploring the benefits and challenges of compiling TypeScript to Rust.".to_string(), date: "2026-05-24".to_string(), reading_time: "12 min read".to_string()}, Post {slug: "fine-grained-reactivity".to_string(), title: "Fine-Grained Reactivity in Pure Rust".to_string(), excerpt: "Implementing Preact Signals and computed values in Rust for efficient reactive updates.".to_string(), date: "2026-05-23".to_string(), reading_time: "10 min read".to_string()}]; let mut data: BlogData = BlogData {posts: posts}; return ctx.render(data); } // Handler body
 }
 
 
@@ -38,3 +34,7 @@ pub fn blog_index(_props: PageProps<BlogData>) -> VNode {
 }
 
 
+pub fn blog_index_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {
+    let props: PageProps<BlogData> = PageProps { params, url, data: serde_json::from_value(data).unwrap_or_default() };
+    blog_index(props)
+}

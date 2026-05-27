@@ -18,7 +18,7 @@ interface HomeData {
 }
 
 export const handler = {
-  async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
+  async GET(req: Request, ctx: HandlerContext): Promise<Response> {
     const data: HomeData = {
       greeting: "Welcome to runts!",
       description: "Build lightning-fast web apps with Fresh/Preact and native Rust. Zero external JS runtime, full Fresh compatibility.",
@@ -33,12 +33,7 @@ export const handler = {
       ]
     };
 
-    return new Response(JSON.stringify(data), {
-      headers: {
-        "Content-Type": "application/json",
-        "X-Runtime": "Rust",
-      },
-    });
+    return ctx.render(data);
   }
 };
 
