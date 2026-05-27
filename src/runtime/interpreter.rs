@@ -694,6 +694,11 @@ impl Interpreter {
         Ok(None)
     }
     
+    /// Check if a variable name is a context object (Fresh `ctx` or Hono `c`).
+    fn is_context_var(name: &str) -> bool {
+        name == "ctx" || name == "c"
+    }
+
     /// Check if middleware matches the given path
     fn middleware_matches_path(&self, middleware: &MiddlewareInfo, path: &str) -> bool {
         if let Some(pattern) = &middleware.pattern {
@@ -1178,7 +1183,7 @@ impl Interpreter {
                 if let Expr::Call { callee, args, .. } = expr {
                     if let Expr::Member { object, property, .. } = callee.as_ref() {
                         if let Expr::Ident { name: obj_name } = object.as_ref() {
-                            if obj_name == "ctx" {
+                            if Self::is_context_var(obj_name) {
                                 if let Expr::Ident { name: prop_name } = property.as_ref() {
                                     if prop_name == "render" && !args.is_empty() {
                                         return self.expr_to_value(&args[0], ctx).ok();

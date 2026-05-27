@@ -444,6 +444,7 @@ impl CodeGenerator {
                 };
                 match name.as_str() {
                     "PageProps" | "HandlerContext" | "Request" | "Response" => name.clone() + &args,
+                    "Context" => "HandlerContext".to_string() + &args,
                     "Record" => format!("std::collections::HashMap{}", args),
                     "Promise" => format!("std::pin::Pin<Box<dyn std::future::Future<Output = {}> + Send>>", args.trim_start_matches('<').trim_end_matches('>')),
                     "Array" => format!("Vec{}", args),
@@ -1131,6 +1132,26 @@ impl CodeGenerator {
                                     return format!(
                                         "std::time::Instant::now().elapsed().as_secs_f64() * 1000.0"
                                     );
+                                }
+                            }
+                        }
+                        // Hono-style context methods: c.json(), c.html(), c.text()
+                        if (obj_name == "c" || obj_name == "ctx") {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                match prop_name.as_str() {
+                                    "json" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("Response::builder().header(\"Content-Type\", \"application/json\").body(Body::from(serde_json::to_string(&{}).unwrap())).unwrap()", arg);
+                                    }
+                                    "html" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("Response::builder().header(\"Content-Type\", \"text/html\").body(Body::from({})).unwrap()", arg);
+                                    }
+                                    "text" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("Response::builder().header(\"Content-Type\", \"text/plain\").body(Body::from({})).unwrap()", arg);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
