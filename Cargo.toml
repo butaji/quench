@@ -79,7 +79,6 @@ members = [
     "crates/runts-macros",
     "crates/runts-lib",
     "crates/runts-client",
-    "examples/my-blog",
 ]
 
 [profile.release]

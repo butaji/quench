@@ -1,7 +1,3 @@
-# Generated Rust source — runts build creates these from TS/TSX
-src/
-Cargo.lock
-
-# Build cache
+# runts build artifacts (generated Rust + cargo cache)
 .runts/
 target/
