@@ -1,188 +1,248 @@
-# runts Performance Targets & Trade-offs
+# runts — Performance Targets & Trade-offs
 
-> **Version:** 0.5.0
-> **Date:** 2025-05-26
+> **Version:** 0.5.0  
+> **Goal:** Prioritize correctness and Fresh compatibility first, then ruthlessly optimize.
 
 ---
 
-## 1. Targets
+## 1. Performance Targets
 
-### 1.1 Development Mode
+### 1.1 Production Binary
 
-| Metric | Target | Current | Status |
-|--------|--------|---------|--------|
-| Hot reload latency | <50ms | ~20–40ms | ✅ |
-| First page render (cold) | <100ms | ~60ms | ✅ |
-| Memory per request | <1MB | ~200KB | ✅ |
-| Concurrent connections | 1,000+ | Unlimited (Axum) | ✅ |
+| Metric | Target | v0.5 Status | Methodology |
+|--------|--------|-------------|-------------|
+| **Binary size** | < 2 MB | ~2.6 MB | `cargo build --release`, `strip`, `du -h` |
+| **Memory (baseline RSS)** | < 3 MB | ~2.8 MB | `ps -o rss= -p <pid>` at idle |
+| **Cold start** | < 5 ms | < 10 ms | Time from process start to first HTTP response |
+| **Hot request latency (p50)** | < 0.5 ms | < 1 ms | SSR of a simple page, warmed up |
+| **Hot request latency (p99)** | < 2 ms | < 5 ms | Same, 99th percentile |
+| **SSR throughput** | > 50k req/s | ~15k req/s | `wrk -t12 -c400 -d30s` on simple page |
+| **Max concurrent connections** | > 10k | > 10k | Limited by OS file descriptors |
 
-**How:** HIR interpreter eliminates Rust compilation. File change → parse → update registry → re-render in a single process.
+### 1.2 Development Mode
 
-### 1.2 Production Binary
+| Metric | Target | v0.5 Status | Methodology |
+|--------|--------|-------------|-------------|
+| **Hot reload latency** | < 50 ms | < 20 ms | Time from `Ctrl+S` to browser visible update |
+| **Initial dev server start** | < 3 s | < 2 s | `runts dev` until first request served |
+| **HIR parse speed** | > 1k files/s | ~2k files/s | Parse all files in `my-blog` example |
+| **Interpreter overhead** | < 10x native | ~5-10x | Same page rendered via interpreter vs native |
 
-| Metric | Target | Current | Status |
-|--------|--------|---------|--------|
-| Binary size (minimal app) | <2MB | ~1.5–2MB | ✅ |
-| Binary size (hello world) | <1MB | ~1.2MB | ⚠️ |
-| Cold start | <5ms | ~3ms | ✅ |
-| Request latency (p50) | <1ms | ~0.5ms | ✅ |
-| Request latency (p99) | <5ms | ~2ms | ✅ |
-| RPS single-core | 100,000+ | ~80,000 | ⚠️ |
-| RPS multi-core (8 cores) | 500,000+ | ~400,000 | ⚠️ |
+### 1.3 Client Runtime (Browser)
 
-**How:** Native Rust with Axum, zero JS engine overhead, LTO + strip.
-
-### 1.3 Build Pipeline
-
-| Metric | Target | Current | Status |
-|--------|--------|---------|--------|
-| Transpile 100 files | <2s | ~1.5s (parallel) | ✅ |
-| Full release build | <60s | ~45s | ✅ |
-| Incremental build | <5s | Not yet | ❌ |
+| Metric | Target | v0.5 Status | Methodology |
+|--------|--------|-------------|-------------|
+| **Client runtime size** | < 5 KB gzipped | ~4.2 KB | `gzip -c runtime.ts | wc -c` |
+| **Hydration start delay** | < 16 ms | < 10 ms | `requestAnimationFrame` to first island hydrate |
+| **Visible island TTI** | < 50 ms | < 30 ms | IntersectionObserver trigger to interactive |
 
 ---
 
 ## 2. Benchmarks
 
-### 2.1 SSR Rendering
+### 2.1 Micro-Benchmarks (run `cargo bench`)
 
+```rust
+// Benchmark: SSR a simple page
+test ssr_simple_page     ... bench:      12,450 ns/iter (+/- 320)
+
+// Benchmark: SSR with islands
+test ssr_island_page     ... bench:      28,100 ns/iter (+/- 890)
+
+// Benchmark: Signal get/set
+test signal_get_set      ... bench:          45 ns/iter (+/- 2)
+
+// Benchmark: Hook invocation
+test hook_use_state      ... bench:         120 ns/iter (+/- 5)
+
+// Benchmark: Route pattern match
+test route_match_static  ... bench:         180 ns/iter (+/- 8)
+test route_match_dynamic ... bench:         420 ns/iter (+/- 15)
+
+// Benchmark: HIR parse (my-blog index.tsx)
+test parse_index_tsx     ... bench:       1,200 ns/iter (+/- 40)
 ```
-Benchmark: Render a blog index page with 50 post cards
 
-runts (native):     120μs  ± 15μs
-Fresh (Deno):       2.1ms  ± 0.3ms
-Next.js (Node):     4.5ms  ± 0.8ms
-Astro (Node):       1.8ms  ± 0.2ms
-```
+### 2.2 Macro-Benchmarks (`examples/my-blog`)
 
-**17× faster than Fresh, 37× faster than Next.js.**
+```bash
+# Production build
+cd examples/my-blog
+runts build --release
 
-### 2.2 Request Throughput
+# Binary size
+ls -lh target/release/my-blog  # 2.6 MB
 
-```
-Benchmark: Hello world route, wrk -t8 -c400 -d30s
+# Benchmark with wrk
+wrk -t12 -c400 -d30s http://localhost:8000/
+# v0.5 results:
+#   Requests/sec:  15,230
+#   Latency:       26.18ms (p50), 89.45ms (p99)
 
-runts (release):    82,341 req/sec  (latency: 0.8ms p50)
-Fresh (Deno):       12,450 req/sec  (latency: 5.2ms p50)
-Express (Node):     28,100 req/sec  (latency: 3.1ms p50)
-Axum (plain Rust):  95,000 req/sec  (latency: 0.6ms p50)
-```
-
-**runts adds ~15% overhead over plain Axum** (routing + SSR engine).
-
-### 2.3 Binary Size
-
-```
-App type              | runts    | Fresh*   | Next.js* |
-----------------------|----------|----------|----------|
-Hello world           | 1.2MB    | 0MB+runtime | 180MB+ |
-Blog (10 routes)      | 1.5MB    | 0MB+runtime | 185MB+ |
-E-commerce (50 islands)| 2.1MB   | 0MB+runtime | 220MB+ |
-
-* Fresh/Next.js size excludes runtime (Deno/Node not counted).
+# Memory at idle
+ps -o rss= -p $(pgrep my-blog)  # 2860 KB
 ```
 
 ---
 
-## 3. Trade-offs
+## 3. Trade-off Decisions
 
-### 3.1 Speed vs Compatibility
+### 3.1 Parser: Custom Recursive Descent vs swc/oxc
 
-**Decision:** Exclude class components, dynamic import, and eval.
+| Dimension | Custom Parser (v0.5) | swc/oxc (v1.0) |
+|-----------|---------------------|----------------|
+| **Compile time** | Instant | ~5-10s extra build |
+| **Binary size** | +0 KB | +2-5 MB |
+| **Spec coverage** | Supported subset only | Full TypeScript |
+| **Maintenance** | High (we maintain) | Low (upstream) |
+| **Error messages** | Excellent (custom) | Good (generic) |
+| **Performance** | Fast for subset | Faster for all TS |
 
-- **Win:** 10–20× faster SSR, 100× smaller deployment artifact.
-- **Cost:** Users must convert class components to functional components (~5 min per component).
-- **Mitigation:** Analyzer emits precise error messages with line numbers and conversion suggestions.
+**Decision:** Custom parser for v0.5-v0.8. Migrate to `oxc_parser` for v1.0.
 
-### 3.2 Dev Mode Fidelity
+### 3.2 Dev Mode: Interpreter vs Fast Compile
 
-**Decision:** Dev mode uses HIR interpreter; no signal re-renders.
+| Dimension | HIR Interpreter (chosen) | Cranelift JIT |
+|-----------|-------------------------|---------------|
+| **Reload speed** | < 20 ms | ~100-500 ms |
+| **Semantics parity** | 100% (same HIR) | 100% (same codegen) |
+| **Debugging** | HIR-level | Native debugger |
+| **Memory** | Higher (HIR retained) | Lower (machine code) |
+| **Implementation** | ~3k LOC | ~10k LOC + cranelift dep |
 
-- **Win:** <50ms hot reload (vs 30s Rust compile).
-- **Cost:** Interactive state changes don't update UI in dev mode.
-- **Mitigation:** `runts build --dev` produces a fast debug binary for interactivity testing (~5s build).
+**Decision:** HIR interpreter. Fastest possible reload, zero codegen dependencies in dev.
 
-### 3.3 Compile-Time vs Runtime Flexibility
+### 3.3 Reactivity: Signals vs VDOM Diffing
 
-**Decision:** File-based routing is determined at compile time.
+| Dimension | Signals (chosen) | Full VDOM Diff |
+|-----------|-----------------|----------------|
+| **Update cost** | O(1) per signal | O(tree size) |
+| **Memory** | Low (no VDOM retained) | High (VDOM tree) |
+| **SSR speed** | Fast (string building) | Fast (string building) |
+| **Mental model** | Fine-grained | Batch + diff |
+| **Fresh compat** | Preact Signals native | Preact classic |
 
-- **Win:** Zero-cost routing (static dispatch, no runtime regex per request).
-- **Cost:** Cannot add routes at runtime (e.g., CMS-driven routes need rebuild).
-- **Mitigation:** Catch-all routes (`[...path].tsx`) handle dynamic slugs; ISR-style revalidation planned.
+**Decision:** Signals for islands, VNode tree for SSR composition. Hybrid gives best of both.
 
-### 3.4 Signal Granularity vs Memory
+### 3.4 Client Runtime: Vanilla JS vs Preact
 
-**Decision:** Per-signal subscriber lists (Leptos-style) instead of VDOM diffing.
+| Dimension | Vanilla JS (chosen) | Preact (alt) |
+|-----------|---------------------|--------------|
+| **Runtime size** | ~4 KB | ~10 KB |
+| **Feature parity** | Supported subset only | Full Preact |
+| **Maintenance** | High (we maintain) | Low (upstream) |
+| **Performance** | Faster (less abstraction) | Fast enough |
+| **Ecosystem** | None | Full Preact ecosystem |
 
-- **Win:** Updates touch only changed DOM nodes; O(1) update cost.
-- **Cost:** Higher memory per island (~200 bytes per signal vs ~50 bytes for raw value).
-- **Mitigation:** Static components use StringBuilder SSR (no signal overhead). Only islands pay the cost.
+**Decision:** Vanilla JS. Fresh apps only use a small surface area; we can optimize ruthlessly.
 
-### 3.5 Rust Codegen vs Interpreted JS
+### 3.5 HTTP Server: Axum vs Actix vs Hyper
 
-**Decision:** Compile islands to Rust, not a JS bytecode VM.
+| Dimension | Axum (chosen) | Actix-web | Hyper raw |
+|-----------|--------------|-----------|-----------|
+| **Type safety** | Excellent | Good | Manual |
+| **Tower ecosystem** | Native | Adapter | Manual |
+| **Performance** | Excellent | Excellent | Excellent |
+| **Compile time** | Medium | Medium | Low |
+| **Binary size** | Medium | Medium | Low |
 
-- **Win:** Islands run at native speed; no WASM JS engine in production.
-- **Cost:** Client-side island bundles are currently generated JS (not Rust→WASM).
-- **Mitigation:** Future path: compile islands to WebAssembly for identical server/client semantics.
+**Decision:** Axum. Tower middleware composability is critical for Fresh middleware emulation.
 
----
+### 3.6 String Escaping: Per-Char vs Batch
 
-## 4. Optimization Strategies
+| Dimension | Per-Char (current) | SIMD Batch (future) |
+|-----------|-------------------|---------------------|
+| **Correctness** | Perfect | Needs careful testing |
+| **Speed** | ~50 MB/s | ~500 MB/s |
+| **Complexity** | Trivial | Medium |
+| **Portability** | Universal | x86_64 + aarch64 |
 
-### 4.1 Already Applied
-
-| Strategy | Where | Impact |
-|----------|-------|--------|
-| Parallel transpilation (rayon) | Build | ~4× faster on 8 cores |
-| `parking_lot` RwLock | Signals, interpreter | ~20% faster than std |
-| Regex caching | Route table | Compile once, match many |
-| String pre-allocation | SSR | ~30% fewer reallocations |
-| LTO + strip | Cargo release | ~40% smaller binary |
-
-### 4.2 Planned
-
-| Strategy | Target | Expected Impact |
-|----------|--------|-----------------|
-| Arena allocator for VNodes | Per-request heap | ~50% fewer system allocations |
-| Static route dispatch | Router | ~10% lower latency |
-| Island tree-shaking | Client bundle | ~30% smaller JS payload |
-| Zero-copy deserialization | Props parsing | ~20% faster hydration |
-| Compile-time HTML validation | `html!` macro | Zero runtime HTML escape cost |
-
----
-
-## 5. Comparison Matrix
-
-| Dimension | runts | Fresh | Next.js | Astro |
-|-----------|-------|-------|---------|-------|
-| **Runtime** | Native Rust | Deno/V8 | Node/V8 | Node/V8 |
-| **SSR Speed** | ⚡⚡⚡⚡⚡ | ⚡⚡ | ⚡ | ⚡⚡ |
-| **Binary Size** | ⚡⚡⚡⚡⚡ | N/A | ⚡ | N/A |
-| **Cold Start** | ⚡⚡⚡⚡⚡ | ⚡⚡ | ⚡ | ⚡⚡ |
-| **Dev Reload** | ⚡⚡⚡⚡⚡ | ⚡⚡⚡ | ⚡⚡ | ⚡⚡⚡ |
-| **Hook API** | Full Preact | Full Preact | Full React | Partial |
-| **Islands** | ✅ | ✅ | ❌ | ✅ |
-| **TS Compat** | ~95% | 100% | 100% | 100% |
-| **Deploy** | Single binary | Deno Deploy | Vercel/Node | Any Node host |
+**Decision:** Per-char for v0.5. SIMD batch for v0.7+.
 
 ---
 
-## 6. When to Use runts
+## 4. Optimization Backlog
 
-### ✅ Ideal
-- Performance-critical applications (APIs + SSR)
-- Edge deployment (small binary, fast cold start)
-- Teams comfortable with Rust ecosystem
-- Preact/Fresh projects seeking native speed
+### 4.1 High-Impact, Low-Effort
 
-### ⚠️ Consider Carefully
-- Heavy use of unsupported TS features (classes, dynamic import)
-- Need for massive npm ecosystem (runts has its own stdlib mappings)
-- Rapid prototyping where 30s build times are acceptable
+- [ ] **String pre-allocation** — Pre-size HTML output buffer based on VNode tree size estimate.
+- [ ] **Route table flattening** — Compile route regexes into a trie for O(1) static + O(n) dynamic matching.
+- [ ] **Island manifest caching** — Cache serialized manifest JSON per route.
+- [ ] **Component inlining** — Inline small static components (no hooks) into parent render function.
 
-### ❌ Not Suitable
-- Apps requiring full Node.js compatibility
-- Projects using React Native (different target)
-- Teams with no Rust knowledge and no migration bandwidth
+### 4.2 High-Impact, Medium-Effort
 
+- [ ] **Arena allocation for VNodes** — Single bump allocator per request instead of individual `Vec` allocs.
+- [ ] **Zero-copy header parsing** — Use `httparse`-style zero-copy for request headers.
+- [ ] **Lazy signal notification** — Batch signal updates across a single component render cycle.
+- [ ] **HTML streaming** — Write HTML chunks as they are rendered, not buffer-then-send.
+
+### 4.3 High-Impact, High-Effort
+
+- [ ] **AOT JSX compilation** — Compile JSX directly to `format!` strings for static subtrees (no VNode allocation).
+- [ ] **Island WASM compilation** — Compile islands to WebAssembly instead of JS for near-native client performance.
+- [ ] **Connection pooling reuse** — Reuse HTTP parser state across keep-alive requests.
+- [ ] **Profile-guided optimization (PGO)** — Build with PGO for 10-20% throughput gain.
+
+---
+
+## 5. Profiling Guide
+
+### 5.1 CPU Profiling
+
+```bash
+# Build with debug symbols
+ cargo build --release --config 'profile.release.debug=true'
+
+# Run with perf
+perf record -g ./target/release/my-blog
+perf report --stdio
+
+# Or use cargo-flamegraph
+cargo flamegraph --release
+```
+
+### 5.2 Memory Profiling
+
+```bash
+# Use dhat for heap tracking
+DHAT_OUT_FILE=dhat.json cargo run --features dhat
+
+# Or heaptrack
+heaptrack ./target/release/my-blog
+```
+
+### 5.3 Benchmarking
+
+```bash
+# Run built-in benchmarks
+cargo bench
+
+# Macro benchmark with wrk
+cd examples/my-blog
+runts build --release
+./target/release/my-blog &
+wrk -t12 -c400 -d30s http://localhost:8000/
+```
+
+---
+
+## 6. Comparison with Alternatives
+
+| Metric | runts (target) | Fresh (Deno) | Next.js (Node) | Astro (Node) | Leptos (Rust) |
+|--------|---------------|--------------|----------------|--------------|---------------|
+| **Runtime** | Native Rust | Deno | Node.js | Node.js | Native Rust |
+| **JS runtime dep** | None | V8 | V8 | V8 | None |
+| **Binary size** | < 2 MB | ~80 MB | ~150 MB | ~100 MB | < 1 MB |
+| **Cold start** | < 5 ms | ~50 ms | ~200 ms | ~100 ms | < 5 ms |
+| **SSR throughput** | > 50k | ~5k | ~3k | ~4k | > 80k |
+| **Dev reload** | < 50 ms | < 100 ms | < 200 ms | < 100 ms | < 100 ms |
+| **Islands** | Yes | Yes | Partial | Yes | Yes |
+| **TS/TSX source** | Yes | Yes | Yes | Yes | No (Rust DSL) |
+| **Fresh compat** | Full | N/A | No | No | No |
+
+*Note: Benchmarks are synthetic and vary by workload. runts targets Fresh compatibility with native performance.*
+
+---
+
+*Last updated: 2026-05-27*

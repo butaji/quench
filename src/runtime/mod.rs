@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod component;
 pub mod vdom;
 pub mod islands;
+pub mod server;
 pub mod prelude;
 
 // Re-export for convenience
@@ -24,6 +25,7 @@ pub mod interpreter;
 pub mod middleware;
 
 pub use vdom::VNode;
+pub use server::{PageResult, SsrEngine};
 #[allow(unused_imports)]
 pub use middleware::{MiddlewareExecutor, MiddlewareOutcome, MiddlewareDef};
 
