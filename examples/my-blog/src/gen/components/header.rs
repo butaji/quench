@@ -14,7 +14,7 @@ pub struct HeaderProps {
 pub fn header(_props: HeaderProps) -> VNode {
     let title = _props.title;
     let subtitle = _props.subtitle;
-    let year = 2026;
+    let year = 2026.0;
     return html!(<header class_name = "site-header"><div class_name = "header-content"><div class_name = "logo"><a href = "/"><span class_name = "logo-icon">"runts"</span> <span class_name = "logo-text">{title}</span></a></div> <nav class_name = "main-nav"><ul><li><a href = "/">"Home"</a></li> <li><a href = "/blog">"Blog"</a></li> <li><a href = "/about">"About"</a></li></ul></nav> <div class_name = "header-actions"><span class_name = "subtitle">{subtitle}</span></div></div> <div class_name = "header-banner"><span class_name = "runtime-badge">"Powered by runts and Rust"</span></div></header>);
 }
 

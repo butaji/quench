@@ -12,7 +12,10 @@ pub struct LayoutProps {
 #[component]
 pub fn blog_layout(_props: LayoutProps) -> VNode {
     let children = _props.children;
-    return html!(<div class_name = "blog-layout"><div class_name = "blog-header" style = {{padding: "1.5rem 0", border_bottom: "2px solid #e0e0e0", margin_bottom: "2rem"}}><h1 style = {{font_size: "2rem", margin: 0}}><a href = "/blog" style = {{text_decoration: "none", color: "#1a1a2e"}}>"Blog"</a></h1> <p style = {{color: "#666", margin: "0.5rem 0 0 0"}}>"Thoughts on Rust, web development, and building fast software"</p></div> {children}</div>);
+    return html!(<div class_name = "blog-layout"><div class_name = "blog-header" style = {{padding: "1.5rem 0", border_bottom: "2px solid #e0e0e0", margin_bottom: "2rem"}}><h1 style = {{font_size: "2rem", margin: 0.0}}><a href = "/blog" style = {{text_decoration: "none", color: "#1a1a2e"}}>"Blog"</a></h1> <p style = {{color: "#666", margin: "0.5rem 0 0 0"}}>"Thoughts on Rust, web development, and building fast software"</p></div> {children}</div>);
 }
 
 
+pub async fn handle_get() -> impl IntoResponse {
+    blog_layout()
+}

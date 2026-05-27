@@ -673,17 +673,17 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type> {
         self.skip_ws_and_comments();
 
-        match self.current() {
-            's' if self.check_word("string") => { self.advance_by(6); Ok(Type::String) }
-            'n' if self.check_word("number") => { self.advance_by(6); Ok(Type::Number) }
-            'b' if self.check_word("boolean") => { self.advance_by(7); Ok(Type::Boolean) }
-            'v' if self.check_word("void") => { self.advance_by(4); Ok(Type::Void) }
-            'n' if self.check_word("null") => { self.advance_by(4); Ok(Type::Null) }
-            'u' if self.check_word("undefined") => { self.advance_by(9); Ok(Type::Undefined) }
-            'n' if self.check_word("never") => { self.advance_by(5); Ok(Type::Never) }
-            'u' if self.check_word("unknown") => { self.advance_by(7); Ok(Type::Unknown) }
-            'a' if self.check_word("any") => { self.advance_by(3); Ok(Type::Any) }
-            '{' => { let members = self.parse_object_type_members()?; Ok(Type::Object { members }) }
+        let base: Type = match self.current() {
+            's' if self.check_word("string") => { self.advance_by(6); Type::String }
+            'n' if self.check_word("number") => { self.advance_by(6); Type::Number }
+            'b' if self.check_word("boolean") => { self.advance_by(7); Type::Boolean }
+            'v' if self.check_word("void") => { self.advance_by(4); Type::Void }
+            'n' if self.check_word("null") => { self.advance_by(4); Type::Null }
+            'u' if self.check_word("undefined") => { self.advance_by(9); Type::Undefined }
+            'n' if self.check_word("never") => { self.advance_by(5); Type::Never }
+            'u' if self.check_word("unknown") => { self.advance_by(7); Type::Unknown }
+            'a' if self.check_word("any") => { self.advance_by(3); Type::Any }
+            '{' => { let members = self.parse_object_type_members()?; Type::Object { members } }
             '(' => {
                 self.advance();
                 let mut types = Vec::new();
@@ -693,7 +693,7 @@ impl Parser {
                     if self.check(',') { self.advance(); }
                 }
                 self.expect(')')?;
-                Ok(Type::Tuple { types })
+                Type::Tuple { types }
             }
             '<' => {
                 self.advance();
@@ -704,7 +704,7 @@ impl Parser {
                     if self.check(',') { self.advance(); }
                 }
                 self.expect('>')?;
-                Ok(Type::Ref { name: "T".to_string(), generics })
+                Type::Ref { name: "T".to_string(), generics }
             }
             _ => {
                 let name = self.parse_identifier()?;
@@ -721,19 +721,47 @@ impl Parser {
                 } else {
                     vec![]
                 };
-                Ok(Type::Ref { name, generics })
+                Type::Ref { name, generics }
             }
-        }.map(|base_type| {
-            // Handle array type suffix: number[] -> Array<number>
-            self.skip_ws_and_comments();
-            let mut elem = base_type;
-            while self.check('[') {
+        };
+
+        // Handle array type suffix: number[] -> Array<number>
+        self.skip_ws_and_comments();
+        let mut elem = base;
+        while self.check('[') {
+            self.advance();
+            self.expect(']').ok();
+            elem = Type::Array { elem: Box::new(elem) };
+        }
+
+        // Handle union and intersection types
+        self.skip_ws_and_comments();
+        let mut types = vec![elem];
+        let mut is_union = false;
+        let mut is_intersection = false;
+        loop {
+            if self.check('|') && self.peek() != Some('|') {
                 self.advance();
-                self.expect(']').ok();
-                elem = Type::Array { elem: Box::new(elem) };
+                self.skip_ws_and_comments();
+                types.push(self.parse_type()?);
+                is_union = true;
+            } else if self.check('&') && self.peek() != Some('&') {
+                self.advance();
+                self.skip_ws_and_comments();
+                types.push(self.parse_type()?);
+                is_intersection = true;
+            } else {
+                break;
             }
-            elem
-        })
+        }
+
+        if types.len() == 1 {
+            Ok(types.into_iter().next().unwrap())
+        } else if is_union {
+            Ok(Type::Union { types })
+        } else {
+            Ok(Type::Intersection { types })
+        }
     }
 
     fn parse_object_type_members(&mut self) -> Result<Vec<ObjectMember>> {
