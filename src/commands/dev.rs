@@ -732,6 +732,19 @@ async fn handle_static(path: Path<String>) -> Response {
     let static_dir = root.join("static");
     let file_path = static_dir.join(&*path);
 
+    // Prevent directory traversal attacks
+    let canonical = match file_path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Html("<h1>404 - File not found</h1>").into_response(),
+    };
+    let canonical_static = match static_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Html("<h1>404 - File not found</h1>").into_response(),
+    };
+    if !canonical.starts_with(&canonical_static) {
+        return Html("<h1>403 - Forbidden</h1>").into_response();
+    }
+
     if !file_path.exists() {
         return Html("<h1>404 - File not found</h1>").into_response();
     }

@@ -233,20 +233,16 @@ impl Render for VNode {
                 format!("{}</{}>", opening + &children_html, tag)
             }
             
-            VNode::Component { name, props, children, key: _ } => {
-                // Components are rendered server-side by their props
-                // The actual component renders its children
+            VNode::Component { name: _, props: _, children, key: _ } => {
+                // Components are rendered server-side by their children.
+                // The actual component function is invoked at build time
+                // to produce the VNode tree; this runtime path only
+                // renders the already-resolved children.
                 let children_html: String = children
                     .iter()
                     .map(|c| c.render_to_html())
                     .collect();
-                
-                format!(
-                    "<!-- {} component: {:?} -->{}",
-                    name, 
-                    props.keys().collect::<Vec<_>>(),
-                    children_html
-                )
+                children_html
             }
             
             VNode::Text { value } => {
