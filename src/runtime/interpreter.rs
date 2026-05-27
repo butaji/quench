@@ -892,12 +892,15 @@ impl Interpreter {
         }
         
         // Apply layouts
-        let full_html = if let Some(html) = render_result {
+        let with_layouts = if let Some(html) = render_result {
             let layout_chain = self.get_layout_chain(&route_key);
             self.apply_layouts(&html, &layout_chain, &ctx)?
         } else {
             String::new()
         };
+
+        // Apply _app.tsx wrapper
+        let full_html = self.apply_app_wrapper(&with_layouts, &ctx)?;
         
         let rendered_islands = ctx.rendered_islands.borrow().clone();
         Ok(RenderResult {
@@ -1338,6 +1341,43 @@ impl Interpreter {
         }
         
         Ok(result)
+    }
+
+    /// Apply _app.tsx wrapper if one exists
+    fn apply_app_wrapper(&self, content: &str, ctx: &EvalContext) -> Result<String, String> {
+        // Find _app component by looking for a component whose file path contains "_app"
+        let app_component = {
+            let components = self.components.read();
+            components.values()
+                .find(|c| c.file_path.contains("_app"))
+                .cloned()
+        };
+
+        if let Some(comp_def) = app_component {
+            let module = self.modules.read().get(&comp_def.file_path).cloned();
+            if let Some(module) = module {
+                for item in &module.items {
+                    if let ModuleItem::Decl(Decl::Function(f)) = item {
+                        if f.name == comp_def.name {
+                            let mut app_ctx = ctx.clone();
+                            app_ctx.scope.insert("children".to_string(), Value::String(content.to_string()));
+                            return self.render_function_component(f, &comp_def, &app_ctx);
+                        }
+                    }
+                    if let ModuleItem::Export(Export::Default { expr }) = item {
+                        if let Expr::Function { decl } = expr {
+                            if decl.name == comp_def.name {
+                                let mut app_ctx = ctx.clone();
+                                app_ctx.scope.insert("children".to_string(), Value::String(content.to_string()));
+                                return self.render_function_component(decl, &comp_def, &app_ctx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(content.to_string())
     }
     
     fn evaluate_expr_to_html(&self, expr: &Expr, ctx: &EvalContext) -> Result<String, String> {
