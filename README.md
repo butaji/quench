@@ -2,7 +2,7 @@
 
 > **runts** compiles Fresh/Preact TypeScript/TSX to native Rust binaries with **zero external JS runtime dependencies**.
 
-[![Tests](https://img.shields.io/badge/tests-91%2F91%20passing-success)](SPEC.md)
+[![Tests](https://img.shields.io/badge/tests-99%2F99%20passing-success)](SPEC.md)
 [![Rust](https://img.shields.io/badge/rust-1.81%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 
@@ -13,6 +13,7 @@ runts is a framework and compiler that lets you write **pure Fresh-style Preact 
 - **No V8.** No Deno. No Node.js. No WebAssembly JS engine.
 - **Dev mode:** Instant hot-reload via HIR interpreter (< 50ms).
 - **Production:** Single static binary via `cargo build --release` (< 2MB).
+- **Incremental builds:** SHA-256 content-hash cache skips unchanged files on rebuild.
 - **Full islands architecture** with selective client-side hydration.
 - **Fine-grained signals** (Leptos-style) for reactive state.
 
@@ -172,10 +173,11 @@ See [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) for the complete specif
 
 ### Production (`runts build --release`)
 
-1. Transpiles all TS/TSX → Rust source (`src/gen/`)
-2. Generates route table, island manifest, and entry points
-3. `cargo build --release` → single static binary
-4. Axum server with native SSR throughput
+1. **Incremental transpilation** — SHA-256 content-hash cache skips unchanged files
+2. Transpiles changed TS/TSX → Rust source (`src/gen/`)
+3. Generates route table, island manifest, and entry points
+4. `cargo build --release` → single static binary
+5. Axum server with native SSR throughput
 
 ## Performance
 
@@ -199,7 +201,7 @@ cargo test
 RUST_LOG=debug cargo test
 ```
 
-91 tests passing covering parser, codegen, routing, middleware, signals, hooks, and integration.
+99 tests passing covering parser, codegen, routing, middleware, signals, hooks, incremental cache, and integration.
 
 ## Roadmap
 

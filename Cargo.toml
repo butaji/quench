@@ -53,6 +53,7 @@ mime = "0.3"
 mime_guess = "2.0"
 http = "1.0"
 urlencoding = "2.1"
+pathdiff = "0.2"
 
 # Parallel processing
 rayon = "1.10"
@@ -65,6 +66,9 @@ runts-macros = { path = "crates/runts-macros" }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+
+# Cryptographic hashing (incremental build cache)
+sha2 = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

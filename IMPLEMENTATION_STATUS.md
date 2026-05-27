@@ -38,7 +38,7 @@
 |-----------|--------|----------|-------|
 | **Source Maps** | ❌ Missing | P2 | Debugging support |
 | **IDE Integration** | ❌ Missing | P3 | LSP for .tsx files |
-| **Incremental Builds** | ❌ Missing | P2 | Cache file changes |
+| **Incremental Builds** | ✅ Complete | P2 | SHA-256 cache in `.runts/cache/build_cache.json` |
 
 ---
 
@@ -91,13 +91,13 @@ All MVP components are now implemented:
 1. ✅ **Middleware runtime** - Fully implemented
 2. ✅ **Parallel transpilation** - Using rayon
 3. ⚠️ **Limited error recovery** - Parser fails on first error
-4. ❌ **No incremental builds** - Full transpile on each build
+4. ✅ **Incremental builds** - SHA-256 content hash cache, environment key invalidation, stale entry pruning
 
 ---
 
 ## Verification Plan
 
-### Unit Tests (91 passing)
+### Unit Tests (99 passing)
 
 - [x] Parser: JSX parsing (all patterns)
 - [x] Parser: Type annotation parsing
@@ -114,6 +114,9 @@ All MVP components are now implemented:
 - [x] Middleware: Pipeline execution
 - [x] Parallel: Route pattern extraction
 - [x] Errors: Levenshtein distance
+- [x] Incremental: Cache save/load
+- [x] Incremental: Hash computation
+- [x] Incremental: Cache pruning & env mismatch
 
 ### Integration Tests
 
@@ -154,4 +157,4 @@ All MVP components are now implemented:
 
 ---
 
-*Last Updated: 2026-05-27*
+*Last Updated: 2026-05-27 (incremental builds implemented)*

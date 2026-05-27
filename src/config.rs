@@ -48,6 +48,8 @@ pub struct BuildConfig {
     pub optimization: OptimizationConfig,
     #[serde(default = "default_true")]
     pub parallel: bool,
+    #[serde(default = "default_true")]
+    pub incremental: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +89,7 @@ impl Default for Config {
                     opt_level: "z".to_string(),
                 },
                 parallel: true,
+                incremental: true,
             },
             islands: IslandsConfig {
                 hydration: "eager".to_string(),
