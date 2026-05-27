@@ -18,6 +18,7 @@
 | Layout system | ✅ | Nested `_layout.tsx` composition |
 | Middleware pipeline | ✅ | `ctx.next()`, `ctx.render()`, `ctx.state` |
 | Islands architecture | ✅ | SSR + hydration manifest |
+| Client JS codegen | ✅ | HIR → vanilla JS for islands |
 | HIR interpreter | ✅ | Dev mode direct execution |
 | Dev server (Axum) | ✅ | Hot reload <50ms |
 | Production build | ✅ | Transpile + cargo build |

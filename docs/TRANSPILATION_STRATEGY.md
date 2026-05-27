@@ -322,7 +322,45 @@ Production runtime components:
 
 ---
 
-## 6. Fine-Grained Reactivity (Signals)
+## 6. Client-Side Island Code Generation
+
+Islands require client-side JavaScript for interactivity. runts generates vanilla JS from the same HIR used for Rust codegen:
+
+```
+Island TSX ──▶ Parser ──▶ HIR ──▶ JS Code Generator ──▶ Vanilla JS Bundle
+                                      │
+                                      ▼
+                              ┌───────────────────┐
+                              │  useState → Signal│
+                              │  JSX → VNode obj  │
+                              │  Events → handlers│
+                              └───────────────────┘
+```
+
+### 6.1 JS Generator Design
+
+- **No external JS bundler**: HIR is transformed directly to vanilla JS using string codegen
+- **Zero dependencies**: Generated bundles include only the island logic + a minimal signal runtime
+- **Automatic hook shimming**: `useState` → `Runts.signal()`, `useEffect` → `Runts.effect()`
+- **JSX → VNode objects**: `{ type: 'div', props: { children: 'hello' } }`
+
+### 6.2 Bundle Structure
+
+```javascript
+// 1. Embedded Runts client runtime (signals, hydration, VNode renderer)
+// 2. Hook shims (useState, useRef, useMemo, etc.)
+// 3. Generated component function from HIR
+function CounterComponent(props) {
+  const { initial, step, label } = props || {};
+  const [count, setCount] = useState(initial);
+  const increment = () => { setCount(count.value + step); };
+  return { type: 'div', props: { children: [...] } };
+}
+// 4. Registration
+Runts.registerIsland('Counter', CounterComponent);
+```
+
+## 7. Fine-Grained Reactivity (Signals)
 
 Instead of VDOM diffing, islands use a Leptos-inspired signal system:
 

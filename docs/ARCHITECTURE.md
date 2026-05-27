@@ -17,10 +17,16 @@
 │                         runts Compiler Pipeline                              │
 │                                                                              │
 │  ┌─────────┐    ┌──────────┐    ┌─────────┐    ┌──────────┐    ┌─────────┐ │
-│  │  Parse  │───▶│   HIR    │───▶│ Analyze │───▶│ Transform│───▶│ Codegen │ │
-│  │(TS/TSX) │    │(Typed IR)│    │(Seman-  │    │ (Lower)  │    │(Rust src)│ │
+│  │  Parse  │───▶│   HIR    │───▶│ Analyze │───▶│ Transform│───▶│ Rust    │ │
+│  │(TS/TSX) │    │(Typed IR)│    │(Seman-  │    │ (Lower)  │    │ Codegen │ │
 │  └─────────┘    └──────────┘    │ tic)    │    └──────────┘    └─────────┘ │
-│                                 └─────────┘                                  │
+│                                 └─────────┘         │                        │
+│                                                     ▼                        │
+│                                               ┌──────────┐                   │
+│                                               │  JS      │                   │
+│                                               │ Codegen  │                   │
+│                                               │(Islands) │                   │
+│                                               └──────────┘                   │
 │                                                                              │
 │  Development:         HIR ──▶ Interpreter ──▶ Axum Server (zero compile)    │
 │  Production:          Rust ──▶ rustc/cargo ──▶ Native Binary                │
@@ -47,7 +53,8 @@
 1. **Dual-mode execution**: Same TS/TSX source runs in development (HIR interpreter) and production (native binary) with identical semantics.
 2. **Fine-grained reactivity**: Preact signals mapped to Leptos-style Rust signals for zero VDOM overhead in reactive paths.
 3. **Islands as compile-time boundaries**: Islands are analyzed at parse time; non-island code is fully server-rendered with zero client JS.
-4. **No JS runtime**: Parser, analyzer, and runtime are pure Rust. Client JS is generated as static bundles.
+4. **Dual backend compilation**: HIR → Rust for server/native, HIR → JavaScript for client island bundles.
+5. **No external JS runtime**: Parser, analyzer, and runtime are pure Rust. Client JS is generated directly from HIR without SWC/Babel.
 
 ---
 
@@ -642,6 +649,7 @@ runts/
 │   │   ├── hir.rs                # HIR definitions
 │   │   ├── analyzer.rs           # Semantic analysis
 │   │   ├── codegen.rs            # Rust code generation
+│   │   ├── js_codegen.rs         # HIR → JS (island bundles)
 │   │   ├── jsx_transformer.rs    # JSX → html! macro
 │   │   ├── routegen.rs           # Route table generation
 │   │   ├── middlewaregen.rs      # Middleware pipeline gen

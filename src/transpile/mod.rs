@@ -8,9 +8,13 @@ pub mod jsx_transformer;
 pub mod routegen;
 pub mod middlewaregen;
 pub mod errors;
+pub mod js_codegen;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod js_codegen_tests;
 
 pub use crate::config::Config;
 pub use parser::Parser;
