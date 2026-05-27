@@ -25,30 +25,13 @@ let set_todos = __runts_tmp_2.1;
     let __runts_tmp_3 = use_state("");
 let new_todo = __runts_tmp_3.0;
 let set_new_todo = __runts_tmp_3.1;
-    pub fn handle_add() -> () {
-    if (!new_todo.trim()) { return; }
-    let todo: Todo = Todo {id: , text: new_todo.trim(), completed: false};
-    set_todos({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(todos.iter().cloned()); __arr.push(todo); __arr });
-    set_new_todo("");
-}
-
-    pub fn handle_toggle(id: String) -> () {
-    set_todos(todos.map(|| { if (t.id == id) { {..{t}, completed: (!t.completed)} } else { t } }));
-}
-
-    pub fn handle_delete(id: String) -> () {
-    set_todos(todos.filter(|| { (t.id != id) }));
-}
-
-    pub fn handle_input_change(e: Event) -> () {
-    let target = e.target;
-    as;
-    h_t_m_l_input_element;
-    set_new_todo(target.value);
-}
-
-    let active_count = todos.filter(|| { (!t.completed) }).len();
-    return html!(<div class_name = "todo-list"><h3>{title}</h3> <div class_name = "todo-input-row"><input type = "text" value = {new_todo} on_input = {handle_input_change} placeholder = "What needs to be done?"/> <button on_click = {handle_add}>"Add"</button></div> <ul class_name = "todo-items">{if (todos.len() == 0.0) { html!(<li class_name = "empty">"No todos yet"</li>) } else { todos.map(|| { html!(<li key = {todo.id} class_name = {if todo.completed { "completed" } else { "" }}><input type = "checkbox" checked = {todo.completed} on_change = {|| { handle_toggle(todo.id) }}/> <span>{todo.text}</span> <button on_click = {|| { handle_delete(todo.id) }}>"Delete"</button></li>) }) }}</ul> <p class_name = "count">{active_count} "items left"</p></div>);
+    let handle_add = || { if ((new_todo.trim().to_string().len() as f64) == 0.0) { return; }; let todo: Todo = Todo {id: "todo-1".to_string(), text: new_todo.to_string(), completed: false};; set_todos({ let mut __arr: Vec<_> = Vec::new(); __arr.extend(todos.iter().cloned()); __arr.push(todo); __arr });; set_new_todo(""); };
+    let handle_toggle = |id: String| { let updated: Vec<Todo> = todos.iter().map(|t| { let item: Todo = Todo {id: t.id, text: t.text, completed: t.completed}; if (t.id == id) { {
+    item.completed = (!t.completed);
+} }; return item }).collect::<Vec<_>>();; set_todos(updated); };
+    let handle_delete = |id: String| { set_todos(todos.iter().filter(|t| { (t.id != id) }).cloned().collect::<Vec<_>>()); };
+    let active_count = todos.iter().filter(|t| { (!t.completed) }).cloned().collect::<Vec<_>>().len();
+    return html!(<div class_name = "todo-list"><h3>{title.clone()}</h3> <div class_name = "todo-input-row"><input type = "text" value = {new_todo.clone()} on_input = {|e| { set_new_todo(e.current_target.value) }.clone()} placeholder = "What needs to be done?"/> <button on_click = {handle_add.clone()}>"Add"</button></div> <ul class_name = "todo-items">{if ((todos.len() as f64) == 0.0) { Some(html!(<li class_name = "empty">"No todos yet"</li>)) } else { None }.clone()} {todos.iter().enumerate().map(|(i, todo)| { let i = i as f64; return html!(<li key = {i.clone()} class_name = {if todo.completed { "completed" } else { "" }.clone()}><input type = "checkbox" checked = {todo.completed.clone()} on_change = {|| { handle_toggle(todo.id) }.clone()}/> <span>{todo.text.clone()}</span> <button on_click = {|| { handle_delete(todo.id) }.clone()}>"Delete"</button></li>); }).collect::<Vec<_>>().clone()}</ul> <p class_name = "count">{active_count.clone()} "items left"</p></div>);
 }
 
 

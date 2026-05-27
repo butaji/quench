@@ -259,9 +259,9 @@ fn process_routes_dir(
             continue;
         }
 
-        // Skip _app.tsx, _layout.tsx, _middleware.ts
+        // Skip special files: _app.tsx, _layout.tsx, _middleware.ts, _404.tsx, _500.tsx
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if filename.starts_with('_') && filename != "_layout.tsx" && filename != "_layout.ts" {
+        if filename.starts_with('_') {
             continue;
         }
 
@@ -282,8 +282,9 @@ fn process_routes_dir(
             continue;
         }
 
-        // Generate Rust code (routes need handlers)
-        code_gen.set_generate_handlers(true);
+        // Generate Rust code (routes need handlers, layouts don't)
+        let is_layout = filename == "_layout.tsx" || filename == "_layout.ts";
+        code_gen.set_generate_handlers(!is_layout);
         let rust_code = match code_gen.generate_module(&module) {
             Ok(code) => code,
             Err(e) => {

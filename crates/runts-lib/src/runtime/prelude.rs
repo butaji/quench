@@ -10,7 +10,7 @@ pub use super::hooks::{
     use_reducer, use_context, create_context, use_id,
     Signal, Computed, Ref,
 };
-pub use super::server::{PageProps, HandlerContext, Handler};
+pub use super::server::{PageProps, HandlerContext, Handler, Request, Response};
 
 // Macros re-exported from runts-macros
 pub use crate::macros::{html, component};

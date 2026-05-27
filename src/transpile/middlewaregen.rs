@@ -3,7 +3,7 @@
 //! Transforms Fresh-style `_middleware.ts` files into Axum middleware:
 
 use super::hir::*;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 /// Middleware information
 #[derive(Debug, Clone)]
@@ -178,7 +178,7 @@ fn extract_next(middleware: Vec<axum::middleware::FromRequestLayer>) -> axum::mi
     ))
 }
 
-fn generate_handler_fn(middleware: &MiddlewareInfo) -> Result<String> {
+fn generate_handler_fn(_middleware: &MiddlewareInfo) -> Result<String> {
     Ok(r#"pub async fn middleware_handler(
     request: Request,
 ) -> impl IntoResponse + Send + Sync {

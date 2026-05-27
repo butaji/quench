@@ -23,7 +23,6 @@ use std::{
     time::Instant,
 };
 use tokio::sync::broadcast;
-use tokio_stream::StreamExt;
 
 use crate::config::Config;
 use crate::runtime::interpreter::{Interpreter, RenderResult, RequestInfo};
@@ -514,7 +513,6 @@ impl AppState {
             crate::runtime::interpreter::Value::Array(arr) => serde_json::json!(arr.iter().map(|v| self.value_to_json(v)).collect::<Vec<_>>()),
             crate::runtime::interpreter::Value::Object(obj) => serde_json::json!(obj.iter().map(|(k, v)| (k.clone(), self.value_to_json(v))).collect::<serde_json::Map<String, _>>()),
             crate::runtime::interpreter::Value::Function(_) => serde_json::Value::Null,
-            _ => serde_json::Value::Null,
         }
     }
 }
@@ -930,7 +928,7 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
     // Debug: print routes
     {
         let rt = state.route_table.read();
-        for route in &rt.routes {
+        for _route in &rt.routes {
         }
     }
 

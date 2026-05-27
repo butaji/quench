@@ -28,7 +28,7 @@
 //! ```
 
 use super::hir::*;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 /// Route method
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +144,7 @@ pub fn generate_route_handlers(route: &RouteInfo) -> Result<String> {
         );
         
         // Generate params struct
-        let params_struct = generate_params_struct(&route.segments);
+        let _params_struct = generate_params_struct(&route.segments);
         
         // Generate function
         let fn_sig = generate_handler_fn(handler, &route.segments);
@@ -212,7 +212,7 @@ fn generate_handler_fn(handler: &RouteHandler, _segments: &[String]) -> String {
 
 fn generate_component_wrapper(component_name: &str, segments: &[String]) -> String {
     let props_type = format!("{}Props", component_name);
-    let params_type = if segments.is_empty() {
+    let _params_type = if segments.is_empty() {
         "()".to_string()
     } else {
         format!("RouteParams")

@@ -224,7 +224,7 @@ impl SsrRenderer {
     
     /// Render the page component to HTML
     async fn render_page_component(&self, route: &Route, ctx: &SsrContext) -> Result<String> {
-        let component_name = path_to_component_name(&route.pattern);
+        let _component_name = path_to_component_name(&route.pattern);
         let page_data = ctx.page_data.as_ref();
         
         let mut html = String::new();

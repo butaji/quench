@@ -1,7 +1,7 @@
 //! html! procedural macro - JSX-like syntax for VNodes (syn 2.0 compatible)
 
-use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, TokenStream, TokenTree};
-use quote::{quote, ToTokens};
+use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
+use quote::quote;
 
 /// Entry point for the `html!` macro
 pub fn html_macro(input: TokenStream) -> TokenStream {

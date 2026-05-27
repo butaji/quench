@@ -14,9 +14,8 @@ pub mod islands;
 pub mod prelude;
 
 // Re-export for convenience
-pub use signals::{Signal, signal, Computed};
+#[allow(unused_imports)]
 pub use hooks::*;
-pub use islands::{IslandRegistry, IslandInstance, HydrationStrategy, IslandManifest};
 
 // HIR Interpreter for development mode
 pub mod interpreter;
@@ -25,7 +24,7 @@ pub mod interpreter;
 pub mod middleware;
 
 pub use vdom::VNode;
-pub use interpreter::{RequestInfo, RenderResult, RenderedIsland};
+#[allow(unused_imports)]
 pub use middleware::{MiddlewareExecutor, MiddlewareOutcome, MiddlewareDef};
 
 /// Type alias for component props

@@ -738,7 +738,7 @@ impl Parser {
         self.skip_ws_and_comments();
         let mut types = vec![elem];
         let mut is_union = false;
-        let mut is_intersection = false;
+        let mut _is_intersection = false;
         loop {
             if self.check('|') && self.peek() != Some('|') {
                 self.advance();
@@ -749,7 +749,7 @@ impl Parser {
                 self.advance();
                 self.skip_ws_and_comments();
                 types.push(self.parse_type()?);
-                is_intersection = true;
+                _is_intersection = true;
             } else {
                 break;
             }

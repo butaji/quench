@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! runts — Fresh/Preact to Native Rust Compiler
 //!
 //! A CLI tool that compiles Fresh/Preact TypeScript/TSX to native Rust binaries.

@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 
 use crate::transpile::hir::{
     Expr, Stmt, BinaryOp, UnaryOp, LogicalOp, TemplatePart, 
-    ObjectProp, PropKey, FunctionDecl, Module
+    ObjectProp, PropKey
 };
 
 use super::interpreter::{EvalContext, RequestInfo, Value};
@@ -426,7 +426,7 @@ impl MiddlewareExecutor {
                     self.expr_to_value(alternate, ctx)
                 }
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call { callee, args: _, .. } => {
                 // Handle specific calls like ctx.render(), ctx.next()
                 if let Expr::Member { object, property, .. } = &**callee {
                     if let Expr::Ident { name: obj_name } = &**object {
@@ -441,7 +441,7 @@ impl MiddlewareExecutor {
                 }
                 Ok(Value::Null)
             }
-            Expr::New { callee, args, .. } => {
+            Expr::New { callee, args: _, .. } => {
                 if let Expr::Ident { name } = &**callee {
                     if name == "Response" {
                         // Return a special marker for Response constructor
