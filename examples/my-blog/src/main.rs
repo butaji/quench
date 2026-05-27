@@ -15,6 +15,9 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Register components for SSR
+    my_blog::register_components();
+
     // Build router
     let app = my_blog::build_router()
         .layer(TraceLayer::new_for_http());

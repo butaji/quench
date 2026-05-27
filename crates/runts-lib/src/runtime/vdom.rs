@@ -301,6 +301,32 @@ impl axum::response::IntoResponse for VNode {
     }
 }
 
+/// Map React-style attribute names to HTML attribute names
+fn map_attr_name(name: &str) -> &str {
+    match name {
+        "class_name" => "class",
+        "for_id" => "for",
+        "html_for" => "for",
+        "tab_index" => "tabindex",
+        "read_only" => "readonly",
+        "max_length" => "maxlength",
+        "auto_focus" => "autofocus",
+        "auto_complete" => "autocomplete",
+        "content_editable" => "contenteditable",
+        "cross_origin" => "crossorigin",
+        "http_equiv" => "http-equiv",
+        "no_validate" => "novalidate",
+        "form_action" => "formaction",
+        "form_enc_type" => "formenctype",
+        "form_method" => "formmethod",
+        "form_no_validate" => "formnovalidate",
+        "form_target" => "formtarget",
+        "use_map" => "usemap",
+        "date_time" => "datetime",
+        _ => name,
+    }
+}
+
 /// Convert a VNode to HTML string
 pub fn to_html(node: &VNode) -> String {
     match node {
@@ -308,26 +334,33 @@ pub fn to_html(node: &VNode) -> String {
         VNode::Text { value } => escape_html(value),
         VNode::Fragment { children } => children.iter().map(to_html).collect(),
         VNode::Component { name, children, .. } => {
+            // For SSR, try to render through component registry if available,
+            // otherwise render children as fallback.
             let children_html: String = children.iter().map(to_html).collect();
-            format!("<!-- {} -->{}", escape_html(name), children_html)
+            if let Some(rendered) = try_render_component(name, children) {
+                rendered
+            } else {
+                format!("<!-- {} -->{}", escape_html(name), children_html)
+            }
         }
         VNode::Element { tag, attrs, children, .. } => {
             let mut html = format!("<{}", tag);
             
             // Add attributes
             for (name, value) in attrs {
+                let html_name = map_attr_name(name);
                 match value {
                     AttrValue::String(s) => {
-                        html.push_str(&format!(" {}=\"{}\"", name, escape_attr(s)));
+                        html.push_str(&format!(" {}=\"{}\"", html_name, escape_attr(s)));
                     }
                     AttrValue::Bool(true) => {
-                        html.push_str(&format!(" {}=\"{}\"", name, name));
+                        html.push_str(&format!(" {}=\"{}\"", html_name, html_name));
                     }
                     AttrValue::Bool(false) => {
                         // Skip false booleans
                     }
                     AttrValue::Number(n) => {
-                        html.push_str(&format!(" {}=\"{}\"", name, n));
+                        html.push_str(&format!(" {}=\"{}\"", html_name, n));
                     }
                 }
             }
@@ -346,6 +379,34 @@ pub fn to_html(node: &VNode) -> String {
             html
         }
     }
+}
+
+use std::sync::Mutex;
+
+lazy_static::lazy_static! {
+    static ref COMPONENT_REGISTRY: Mutex<std::collections::HashMap<String, Box<dyn Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync>>> =
+        Mutex::new(std::collections::HashMap::new());
+}
+
+/// Register a component for SSR rendering.
+/// The callback receives props and children, and should return a VNode.
+pub fn register_component<F>(name: &str, renderer: F)
+where
+    F: Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync + 'static,
+{
+    let mut reg = COMPONENT_REGISTRY.lock().unwrap();
+    reg.insert(name.to_string(), Box::new(renderer));
+}
+
+/// Try to render a registered component. Returns None if not registered.
+fn try_render_component(name: &str, children: &[VNode]) -> Option<String> {
+    let reg = COMPONENT_REGISTRY.lock().unwrap();
+    let renderer = reg.get(name)?;
+    // For SSR without actual props lookup, we pass empty props.
+    // In practice, components that need SSR should be inlined by codegen
+    // or the registry should be populated at startup with prop-aware closures.
+    let vnode = renderer(&std::collections::HashMap::new(), children)?;
+    Some(to_html(&vnode))
 }
 
 /// Escape HTML special characters
