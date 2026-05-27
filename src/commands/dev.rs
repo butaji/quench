@@ -41,6 +41,10 @@ pub struct AppState {
 
     /// Broadcast channel for hot reload events
     pub reload_tx: broadcast::Sender<ReloadEvent>,
+
+    /// File watcher (kept alive to prevent drop)
+    #[allow(dead_code)]
+    pub watcher: Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
 }
 
 /// Route information
@@ -230,12 +234,28 @@ impl AppState {
 
         let (reload_tx, _) = broadcast::channel(100);
 
-        Ok(Self {
-            root,
+        let mut state = Self {
+            root: root.clone(),
             route_table: Arc::new(RwLock::new(route_table)),
-            interpreter,
-            reload_tx,
-        })
+            interpreter: interpreter.clone(),
+            reload_tx: reload_tx.clone(),
+            watcher: Arc::new(std::sync::Mutex::new(
+                RecommendedWatcher::new(|_| {}, notify::Config::default())
+                    .context("Failed to create placeholder watcher")?
+            )),
+        };
+
+        // Start file watcher and keep it alive in AppState
+        match state.start_watcher() {
+            Ok(watcher) => {
+                state.watcher = Arc::new(std::sync::Mutex::new(watcher));
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not start file watcher: {}", e);
+            }
+        }
+
+        Ok(state)
     }
 
     /// Pre-load all TS/TSX modules into interpreter
@@ -338,7 +358,7 @@ impl AppState {
     }
 
     /// Start file watcher for hot reload
-    pub fn start_watcher(&self) -> Result<()> {
+    pub fn start_watcher(&self) -> Result<RecommendedWatcher> {
         let reload_tx = self.reload_tx.clone();
         let interpreter = self.interpreter.clone();
         let route_table = self.route_table.clone();
@@ -404,7 +424,7 @@ impl AppState {
             }
         }
 
-        Ok(())
+        Ok(watcher)
     }
 
     /// Execute a route and return the rendered HTML
@@ -458,6 +478,14 @@ impl AppState {
             }).collect::<Vec<_>>()
         }).to_string();
 
+        // Generate island bundle scripts (deduplicated)
+        let mut island_names = std::collections::HashSet::new();
+        let island_scripts = result.islands.iter()
+            .filter(|i| island_names.insert(i.name.clone()))
+            .map(|i| format!(r#"<script src="/_runts/islands/{}"></script>"#, i.name))
+            .collect::<Vec<_>>()
+            .join("\n    ");
+
         // Generate nav links from actual routes
         let nav_links = self.build_nav_links();
 
@@ -500,9 +528,10 @@ impl AppState {
     </script>
     <script type="module" src="/_runts/hmr.js"></script>
     <script src="/_runts/client.js"></script>
+    {island_scripts}
 </body>
 </html>
-"#, title = title, nav_links = nav_links, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json)
+"#, title = title, nav_links = nav_links, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json, island_scripts = island_scripts)
     }
 
     /// Generate nav links from the current route table
@@ -887,11 +916,6 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
         let rt = state.route_table.read();
         for _route in &rt.routes {
         }
-    }
-
-    // Start file watcher
-    if let Err(e) = state.start_watcher() {
-        eprintln!("Warning: Could not start file watcher: {}", e);
     }
 
     println!("\n╔══════════════════════════════════════════════════════════════╗");
