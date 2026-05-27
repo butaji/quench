@@ -1576,17 +1576,27 @@ pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Re
     compile_rust(&project_root, release)?;
     
     // Phase 3: Find binary
-    let binary_path = if release {
-        project_root.join("target").join("release")
-    } else {
-        project_root.join("target").join("debug")
-    };
-    
-    // Find the binary (usually same name as project)
+    // For workspace members, cargo places binaries in the workspace root target.
+    // Check both project-local target and workspace root target.
     let app_name = project_root.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("app");
-    let binary = binary_path.join(if cfg!(windows) { format!("{}.exe", app_name) } else { app_name.to_string() });
+    
+    let binary_name = if cfg!(windows) { format!("{}.exe", app_name) } else { app_name.to_string() };
+    
+    let target_subdir = if release { "release" } else { "debug" };
+    
+    let local_target = project_root.join("target").join(target_subdir).join(&binary_name);
+    let workspace_target = project_root
+        .parent()
+        .map(|p| p.join("target").join(target_subdir).join(&binary_name))
+        .unwrap_or_else(|| local_target.clone());
+    
+    let binary = if local_target.exists() {
+        local_target
+    } else {
+        workspace_target
+    };
     
     let binary_size = if binary.exists() {
         let size = fs::metadata(&binary)?.len();
