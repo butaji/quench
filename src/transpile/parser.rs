@@ -1066,7 +1066,20 @@ impl Parser {
         self.skip_ws_and_comments();
 
         if self.check_str("=>") {
-            return self.parse_arrow_function();
+            // Extract params from left side: ident or sequence expr
+            let params = match left {
+                Expr::Ident { ref name } => {
+                    vec![Param { name: name.clone(), type_: None, default: None, optional: false, pattern: None }]
+                }
+                Expr::Seq { ref exprs } => {
+                    exprs.iter().filter_map(|e| match e {
+                        Expr::Ident { name } => Some(Param { name: name.clone(), type_: None, default: None, optional: false, pattern: None }),
+                        _ => None,
+                    }).collect()
+                }
+                _ => vec![],
+            };
+            return self.parse_arrow_function_with_params(params);
         }
 
         let op = if self.check('=') && !self.check_str("==") && !self.check_str("===") {
@@ -1090,6 +1103,10 @@ impl Parser {
     }
 
     fn parse_arrow_function(&mut self) -> Result<Expr> {
+        self.parse_arrow_function_with_params(vec![])
+    }
+
+    fn parse_arrow_function_with_params(&mut self, params: Vec<Param>) -> Result<Expr> {
         // We're at '=>', consume it
         self.expect_str("=>")?;
         self.skip_ws_and_comments();
@@ -1105,7 +1122,7 @@ impl Parser {
         };
         
         Ok(Expr::Arrow {
-            params: vec![],
+            params,
             body: Box::new(body),
             is_async: false,
         })
