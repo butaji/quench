@@ -20,17 +20,14 @@ pub type UseStateResult<T> = (T, Box<dyn Fn(T) + Send + Sync>);
 ///
 /// # Example
 /// ```ignore
-/// let (count, setCount) = use_state(|| 0);
-/// setCount(count + 1);
+/// let (count, set_count) = use_state(0);
+/// set_count(count + 1);
 /// ```
-pub fn use_state<T, F>(initial: F) -> UseStateResult<T>
+pub fn use_state<T>(initial: T) -> UseStateResult<T>
 where
     T: Clone + Send + Sync + 'static,
-    F: FnOnce() -> T + Clone + Send + Sync + 'static,
 {
-    let initial_value = initial();
-    
-    let state = Arc::new(RwLock::new(initial_value));
+    let state = Arc::new(RwLock::new(initial));
     let state_clone = state.clone();
     
     let getter: T = state.read().clone();
@@ -38,6 +35,29 @@ where
     let setter: Box<dyn Fn(T) + Send + Sync> = Box::new(move |new_value: T| {
         *state_clone.write() = new_value;
         // In a full implementation, this would trigger a re-render
+    });
+    
+    (getter, setter)
+}
+
+/// useState hook with lazy initialization
+///
+/// # Example
+/// ```ignore
+/// let (count, set_count) = use_state_with(|| expensive_computation());
+/// ```
+pub fn use_state_with<T, F>(initial: F) -> UseStateResult<T>
+where
+    T: Clone + Send + Sync + 'static,
+    F: FnOnce() -> T + Send + Sync + 'static,
+{
+    let state = Arc::new(RwLock::new(initial()));
+    let state_clone = state.clone();
+    
+    let getter: T = state.read().clone();
+    
+    let setter: Box<dyn Fn(T) + Send + Sync> = Box::new(move |new_value: T| {
+        *state_clone.write() = new_value;
     });
     
     (getter, setter)

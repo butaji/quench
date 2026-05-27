@@ -27,14 +27,28 @@ pub type UseStateResult<T> = (T, Arc<dyn Fn(T) + Send + Sync>);
 /// useState hook
 ///
 /// Creates a reactive state value that persists across renders.
-pub fn use_state<T, F>(initial: F) -> UseStateResult<T>
+pub fn use_state<T>(initial: T) -> UseStateResult<T>
 where
     T: Clone + Send + Sync + 'static,
-    F: FnOnce() -> T + Clone + Send + Sync + 'static,
 {
-    let initial_value = initial();
+    let state = Arc::new(RwLock::new(initial));
+    let state_clone = state.clone();
     
-    let state = Arc::new(RwLock::new(initial_value));
+    let setter: Arc<dyn Fn(T) + Send + Sync> = Arc::new(move |new_value: T| {
+        *state_clone.write() = new_value;
+    });
+    
+    let getter: T = state.read().clone();
+    (getter, setter)
+}
+
+/// useState hook with lazy initialization
+pub fn use_state_with<T, F>(initial: F) -> UseStateResult<T>
+where
+    T: Clone + Send + Sync + 'static,
+    F: FnOnce() -> T + Send + Sync + 'static,
+{
+    let state = Arc::new(RwLock::new(initial()));
     let state_clone = state.clone();
     
     let setter: Arc<dyn Fn(T) + Send + Sync> = Arc::new(move |new_value: T| {

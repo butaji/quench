@@ -101,6 +101,11 @@ pub enum VNode {
 
 /// Create a VNode from an element
 impl VNode {
+    /// Create a text VNode
+    pub fn text(value: impl Into<String>) -> Self {
+        VNode::Text { value: value.into() }
+    }
+
     /// Create an element VNode
     pub fn element(tag: impl Into<String>) -> ElementBuilder {
         ElementBuilder {
@@ -292,6 +297,61 @@ impl Render for Fragment {
             .iter()
             .map(|c| c.render_to_html())
             .collect()
+    }
+}
+
+/// Trait for types that can be used as children in components
+#[allow(dead_code)]
+pub trait IntoVNode {
+    fn into_vnode(self) -> VNode;
+}
+
+impl IntoVNode for VNode {
+    fn into_vnode(self) -> VNode {
+        self
+    }
+}
+
+impl IntoVNode for String {
+    fn into_vnode(self) -> VNode {
+        VNode::Text { value: self }
+    }
+}
+
+impl IntoVNode for &str {
+    fn into_vnode(self) -> VNode {
+        VNode::Text { value: self.to_string() }
+    }
+}
+
+impl IntoVNode for () {
+    fn into_vnode(self) -> VNode {
+        VNode::Empty
+    }
+}
+
+impl<T: IntoVNode> IntoVNode for Option<T> {
+    fn into_vnode(self) -> VNode {
+        match self {
+            Some(v) => v.into_vnode(),
+            None => VNode::Empty,
+        }
+    }
+}
+
+/// Convert a value into a VNode
+pub fn into_vnode<T: IntoVNode>(value: T) -> VNode {
+    value.into_vnode()
+}
+
+/// Axum response support for VNode
+impl axum::response::IntoResponse for VNode {
+    fn into_response(self) -> axum::response::Response {
+        let html = self.render_to_html();
+        axum::response::Response::builder()
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(axum::body::Body::from(html))
+            .unwrap()
     }
 }
 

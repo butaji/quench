@@ -12,5 +12,5 @@ pub use super::hooks::{
 };
 pub use super::server::{PageProps, HandlerContext, Handler};
 
-// HTML macro - exported from crate root
-pub use crate::html;
+// Macros re-exported from runts-macros
+pub use crate::macros::{html, component};

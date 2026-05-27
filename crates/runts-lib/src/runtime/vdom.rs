@@ -115,6 +115,133 @@ impl VNode {
     }
 }
 
+/// Trait for types that can be converted into VNodes for the html! macro
+pub trait IntoVNode {
+    fn into_vnode(self) -> VNode;
+}
+
+impl IntoVNode for VNode {
+    fn into_vnode(self) -> VNode { self }
+}
+
+impl IntoVNode for Option<VNode> {
+    fn into_vnode(self) -> VNode {
+        self.unwrap_or_else(VNode::empty)
+    }
+}
+
+impl IntoVNode for String {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self)
+    }
+}
+
+impl IntoVNode for &str {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for Vec<VNode> {
+    fn into_vnode(self) -> VNode {
+        VNode::fragment(self)
+    }
+}
+
+impl IntoVNode for f64 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for f32 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for i64 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for i32 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for i16 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for i8 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for u64 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for u32 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for u16 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for u8 {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for usize {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for isize {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+impl IntoVNode for bool {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.to_string())
+    }
+}
+
+/// Helper to convert a value into a VNode
+pub fn into_vnode<T: IntoVNode>(value: T) -> VNode {
+    value.into_vnode()
+}
+
+/// Axum response support for VNode
+impl axum::response::IntoResponse for VNode {
+    fn into_response(self) -> axum::response::Response {
+        let html = to_html(&self);
+        axum::response::Response::builder()
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(axum::body::Body::from(html))
+            .unwrap()
+    }
+}
+
 /// Convert a VNode to HTML string
 pub fn to_html(node: &VNode) -> String {
     match node {

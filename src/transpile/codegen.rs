@@ -14,6 +14,8 @@ pub struct CodeGenerator {
     /// Current indent level (for future pretty-printing)
     #[allow(dead_code)]
     indent: usize,
+    /// Whether to generate route handlers for default-export components
+    generate_handlers: bool,
 }
 
 impl Default for CodeGenerator {
@@ -30,7 +32,13 @@ impl CodeGenerator {
                 "use serde::{Serialize, Deserialize};".to_string(),
             ],
             indent: 0,
+            generate_handlers: true,
         }
+    }
+
+    /// Set whether to generate route handlers for default-export components.
+    pub fn set_generate_handlers(&mut self, value: bool) {
+        self.generate_handlers = value;
     }
 
     /// Generate indented output
@@ -47,6 +55,10 @@ impl CodeGenerator {
             output.push_str(&format!("//! Source: {}\n", module.source));
         }
         output.push('\n');
+        output.push_str("use runts_lib::runtime::prelude::*;\n");
+        output.push_str("use serde::{Serialize, Deserialize};\n");
+        output.push_str("use axum::{response::IntoResponse, body::Body};\n");
+        output.push('\n');
 
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Type(t)) = item {
@@ -57,6 +69,9 @@ impl CodeGenerator {
                 }
             }
         }
+
+        let mut default_component_name: Option<String> = None;
+        let mut has_handler_export = false;
 
         for item in &module.items {
             if let ModuleItem::Decl(decl) = item {
@@ -74,6 +89,7 @@ impl CodeGenerator {
                 match export {
                     Export::Default { expr } => {
                         if let Expr::Function { decl } = expr {
+                            default_component_name = Some(decl.name.clone());
                             let fn_code = self.generate_function(decl, true)?;
                             if !fn_code.trim().is_empty() {
                                 output.push_str(&fn_code);
@@ -84,6 +100,7 @@ impl CodeGenerator {
                     Export::NamedWithValue { name, value } => {
                         // Handle route handlers: export const handler = { GET: async (req, ctx) => { ... } }
                         if name == "handler" {
+                            has_handler_export = true;
                             let handler_code = self.generate_route_handler(value)?;
                             if !handler_code.trim().is_empty() {
                                 output.push_str(&handler_code);
@@ -96,6 +113,20 @@ impl CodeGenerator {
                         }
                     }
                     _ => {}
+                }
+            }
+        }
+
+        // If there's a default export component but no explicit handler,
+        // generate a default GET handler that renders the component.
+        if self.generate_handlers {
+            if let Some(component_name) = default_component_name {
+                if !has_handler_export {
+                    let fn_name = self.to_snake_case(&component_name);
+                    output.push_str(&format!(
+                        "pub async fn handle_get() -> impl IntoResponse {{\n    {}()\n}}\n",
+                        fn_name
+                    ));
                 }
             }
         }
@@ -206,6 +237,64 @@ impl CodeGenerator {
             params_str,
             body_str
         ))
+    }
+
+    /// Generate Response::builder() code from new Response(body, init) args
+    fn generate_new_response(&self, args: &[Expr]) -> String {
+        let body = args.first().map(|a| self.expr_to_rust(a)).unwrap_or_default();
+        let mut lines = vec![
+            "{".to_string(),
+            format!("    let __body = {};", body),
+            "    let mut __resp = Response::builder();".to_string(),
+        ];
+
+        // Parse init options object if present
+        if let Some(init_expr) = args.get(1) {
+            if let Expr::Object { props } = init_expr {
+                for prop in props {
+                    match prop {
+                        ObjectProp::Init { key, value } => {
+                            let k = match key {
+                                PropKey::Ident(s) | PropKey::String(s) => s.as_str(),
+                                _ => continue,
+                            };
+                            match k {
+                                "status" | "statusCode" => {
+                                    let v = self.expr_to_rust(value);
+                                    lines.push(format!("    __resp = __resp.status({});", v));
+                                }
+                                "headers" => {
+                                    if let Expr::Object { props: header_props } = value {
+                                        for hp in header_props {
+                                            match hp {
+                                                ObjectProp::Init { key: hk, value: hv } => {
+                                                    let header_name = match hk {
+                                                        PropKey::Ident(s) | PropKey::String(s) => s.clone(),
+                                                        _ => continue,
+                                                    };
+                                                    let header_val = self.expr_to_rust(hv);
+                                                    lines.push(format!(
+                                                        "    __resp = __resp.header(\"{}\", {});",
+                                                        header_name, header_val
+                                                    ));
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        lines.push("    __resp.body(Body::from(__body)).unwrap()".to_string());
+        lines.push("}".to_string());
+        lines.join("\n")
     }
 
     pub fn generate_type_decl(&self, decl: &TypeDecl) -> Result<String> {
@@ -466,40 +555,29 @@ impl CodeGenerator {
             }
             Pat::Array { elems, rest } => {
                 // For array destructuring like [a, b, ...rest] = tuple
-                // Generate: let (a, b, rest) = (tuple.0, tuple.1, tuple.2);
+                // Generate individual let bindings for each element
                 let mut bindings = Vec::new();
-                let mut tuple_accesses = Vec::new();
                 
                 for (i, elem) in elems.iter().enumerate() {
                     if let Some(Pat::Ident { name, .. }) = elem {
                         let rust_name = self.to_snake_case(name);
-                        bindings.push(rust_name.clone());
-                        tuple_accesses.push(format!("{}[{}]", source_name, i));
+                        bindings.push(format!("{} = {}.{}", rust_name, source_name, i));
                     }
                 }
                 
                 if let Some(rest) = rest {
                     if let Pat::Ident { name, .. } = rest.as_ref() {
                         let rust_name = self.to_snake_case(name);
-                        bindings.push(rust_name);
-                        tuple_accesses.push(format!(
-                            "{}.into_iter().skip({}).collect::<Vec<_>>()",
+                        bindings.push(format!(
+                            "{} = {}.into_iter().skip({}).collect::<Vec<_>>()",
+                            rust_name,
                             source_name,
                             elems.len()
                         ));
                     }
                 }
                 
-                if bindings.is_empty() {
-                    vec![]
-                } else {
-                    // Generate: let (a, b) = (tuple.0, tuple.1);
-                    vec![format!(
-                        "({}) = ({})",
-                        bindings.join(", "),
-                        tuple_accesses.join(", ")
-                    )]
-                }
+                bindings
             }
             Pat::Ident { name, .. } => {
                 vec![format!("{} = {}", self.to_snake_case(name), source_name)]
@@ -514,33 +592,47 @@ impl CodeGenerator {
             VariableKind::Let => "let mut",
             VariableKind::Var => "let mut",
         };
-        
+
+        let type_hint = var.type_.as_ref();
+
         let init = if let Some(expr) = &var.init {
-            self.expr_to_rust(expr)
+            // If the init is an object literal and we have a struct type hint,
+            // prefix the object literal with the struct name.
+            if let (Expr::Object { .. }, Some(Type::Ref { name, .. })) = (expr, type_hint) {
+                let obj_code = self.expr_to_rust(expr);
+                // obj_code is like "{ a: 1, b: 2 }" — prefix with struct name
+                format!("{} {}", name, obj_code)
+            } else {
+                self.expr_to_rust(expr)
+            }
         } else {
             "()".to_string()
         };
-        
+
         // Handle destructuring patterns (e.g., const [a, b] = useState())
         if let Some(ref pattern) = var.pattern {
             let bindings = self.pat_to_rust(pattern, &init);
-            if bindings.len() == 1 {
-                Ok(format!("{} {};\n", keyword, bindings[0]))
-            } else if bindings.is_empty() {
+            if bindings.is_empty() {
                 Ok(String::new())
+            } else if bindings.len() == 1 {
+                Ok(format!("{} {};\n", keyword, bindings[0]))
             } else {
-                // Multiple bindings - generate separate let statements
-                // For a pattern like const { name, age } = user;
-                // we need: let name = user.name; let age = user.age;
-                // But since Rust requires single assignment, we use tuple destructuring
-                let name = self.to_snake_case(&var.name);
-                Ok(format!("{} {} = {};\n", keyword, name, init))
+                // Multiple bindings: evaluate init once into a temp, then destructure
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                static COUNTER: AtomicUsize = AtomicUsize::new(0);
+                let tmp = format!("__runts_tmp_{}", COUNTER.fetch_add(1, Ordering::Relaxed));
+                let mut stmts = vec![format!("let {} = {};\n", tmp, init)];
+                let rebound = self.pat_to_rust(pattern, &tmp);
+                for b in rebound {
+                    stmts.push(format!("{} {};\n", keyword, b));
+                }
+                Ok(stmts.join(""))
             }
         } else {
             let name = self.to_snake_case(&var.name);
-            
+
             // Only add type annotation if present
-            if let Some(t) = var.type_.as_ref() {
+            if let Some(t) = type_hint {
                 Ok(format!("{} {}: {} = {};\n", keyword, name, self.type_to_rust(t), init))
             } else {
                 Ok(format!("{} {} = {};\n", keyword, name, init))
@@ -656,7 +748,14 @@ impl CodeGenerator {
         match expr {
             Expr::Ident { name } => self.to_snake_case(name),
             Expr::String(s) => format!("{:?}", s),
-            Expr::Number(n) => n.to_string(),
+            Expr::Number(n) => {
+                let s = n.to_string();
+                if s.contains('.') || s.contains('e') || s == "inf" || s == "nan" {
+                    s
+                } else {
+                    format!("{}.0", s)
+                }
+            }
             Expr::BigInt(n) => n.to_string(),
             Expr::Boolean(b) => b.to_string(),
             Expr::Null => "None".to_string(),
@@ -748,11 +847,30 @@ impl CodeGenerator {
                 format!("if {} {{ {} }} else {{ {} }}", test_code, cons_code, alt_code)
             }
             Expr::Call { callee, args, .. } => {
+                // Special-case: JSON.stringify(arg) → serde_json::to_string(&arg).unwrap()
+                if let Expr::Member { object, property, .. } = callee.as_ref() {
+                    if let Expr::Ident { name: obj_name } = object.as_ref() {
+                        if obj_name == "JSON" {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                if prop_name == "stringify" && !args.is_empty() {
+                                    let arg = self.expr_to_rust(&args[0]);
+                                    return format!("serde_json::to_string(&{}).unwrap()", arg);
+                                }
+                            }
+                        }
+                    }
+                }
                 let callee_code = self.expr_to_rust(callee);
                 let args_code: Vec<String> = args.iter().map(|a| self.expr_to_rust(a)).collect();
                 format!("{}({})", callee_code, args_code.join(", "))
             }
             Expr::New { callee, args, .. } => {
+                // Special-case: new Response(body, init) → Response::builder()...
+                if let Expr::Ident { name } = callee.as_ref() {
+                    if name == "Response" {
+                        return self.generate_new_response(args);
+                    }
+                }
                 let callee_code = self.expr_to_rust(callee);
                 let args_code: Vec<String> = args.iter().map(|a| self.expr_to_rust(a)).collect();
                 format!("{}::new({})", callee_code, args_code.join(", "))

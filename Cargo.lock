@@ -1552,6 +1552,7 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "regex 1.12.3",
+ "runts-macros",
  "serde",
  "serde_json",
  "tempfile",
@@ -1578,11 +1579,13 @@ name = "runts-lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "futures",
  "http 1.4.1",
  "indexmap",
  "parking_lot",
+ "runts-macros",
  "serde",
  "serde_json",
  "thiserror",

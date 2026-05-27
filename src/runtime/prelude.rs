@@ -4,7 +4,7 @@
 //! Import with `use runts_lib::runtime::prelude::*;`
 
 // Re-export commonly used types
-pub use super::vdom::VNode;
+pub use super::vdom::{VNode, IntoVNode, into_vnode};
 
 // Re-export for component macro
 
@@ -16,45 +16,6 @@ pub use super::vdom::VNode;
 pub type Props = std::collections::HashMap<String, serde_json::Value>;
 #[allow(dead_code)]
 pub type Children = Vec<VNode>;
-
-/// Trait for types that can be used as children in components
-#[allow(dead_code)]
-pub trait IntoVNode {
-    fn into_vnode(self) -> VNode;
-}
-
-impl IntoVNode for VNode {
-    fn into_vnode(self) -> VNode {
-        self
-    }
-}
-
-impl IntoVNode for String {
-    fn into_vnode(self) -> VNode {
-        VNode::Text { value: self }
-    }
-}
-
-impl IntoVNode for &str {
-    fn into_vnode(self) -> VNode {
-        VNode::Text { value: self.to_string() }
-    }
-}
-
-impl IntoVNode for () {
-    fn into_vnode(self) -> VNode {
-        VNode::Empty
-    }
-}
-
-impl<T: IntoVNode> IntoVNode for Option<T> {
-    fn into_vnode(self) -> VNode {
-        match self {
-            Some(v) => v.into_vnode(),
-            None => VNode::Empty,
-        }
-    }
-}
 
 /// Helper for rendering multiple children
 #[macro_export]
