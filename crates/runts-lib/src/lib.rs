@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! runts-lib - Shared runtime library for runts
 //!
 //! This crate provides the runtime support for runts applications,

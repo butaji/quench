@@ -44,6 +44,17 @@ pub enum VNode {
         /// Text content
         value: String,
     },
+    /// Component placeholder (rendered by the component function)
+    Component {
+        /// Component name
+        name: String,
+        /// Props
+        #[serde(default)]
+        props: std::collections::HashMap<String, serde_json::Value>,
+        /// Children
+        #[serde(default)]
+        children: Vec<VNode>,
+    },
     /// Fragment (multiple children without a wrapper)
     Fragment {
         /// Child nodes
@@ -83,9 +94,9 @@ impl VNode {
     }
 
     /// Add an attribute
-    pub fn attr<S: Into<String>>(mut self, name: S, value: AttrValue) -> Self {
+    pub fn attr<S: Into<String>, V: Into<AttrValue>>(mut self, name: S, value: V) -> Self {
         if let Self::Element { attrs, .. } = &mut self {
-            attrs.insert(name.into(), value);
+            attrs.insert(name.into(), value.into());
         }
         self
     }
@@ -115,6 +126,48 @@ impl VNode {
     }
 }
 
+impl From<String> for AttrValue {
+    fn from(s: String) -> Self {
+        AttrValue::String(s)
+    }
+}
+
+impl From<&str> for AttrValue {
+    fn from(s: &str) -> Self {
+        AttrValue::String(s.to_string())
+    }
+}
+
+impl From<bool> for AttrValue {
+    fn from(b: bool) -> Self {
+        AttrValue::Bool(b)
+    }
+}
+
+impl From<f64> for AttrValue {
+    fn from(n: f64) -> Self {
+        AttrValue::Number(n)
+    }
+}
+
+impl From<usize> for AttrValue {
+    fn from(n: usize) -> Self {
+        AttrValue::Number(n as f64)
+    }
+}
+
+impl From<u32> for AttrValue {
+    fn from(n: u32) -> Self {
+        AttrValue::Number(n as f64)
+    }
+}
+
+impl From<i32> for AttrValue {
+    fn from(n: i32) -> Self {
+        AttrValue::Number(n as f64)
+    }
+}
+
 /// Trait for types that can be converted into VNodes for the html! macro
 pub trait IntoVNode {
     fn into_vnode(self) -> VNode;
@@ -133,6 +186,12 @@ impl IntoVNode for Option<VNode> {
 impl IntoVNode for String {
     fn into_vnode(self) -> VNode {
         VNode::text(self)
+    }
+}
+
+impl IntoVNode for &String {
+    fn into_vnode(self) -> VNode {
+        VNode::text(self.clone())
     }
 }
 
@@ -248,6 +307,10 @@ pub fn to_html(node: &VNode) -> String {
         VNode::Empty => String::new(),
         VNode::Text { value } => escape_html(value),
         VNode::Fragment { children } => children.iter().map(to_html).collect(),
+        VNode::Component { name, children, .. } => {
+            let children_html: String = children.iter().map(to_html).collect();
+            format!("<!-- {} -->{}", escape_html(name), children_html)
+        }
         VNode::Element { tag, attrs, children, .. } => {
             let mut html = format!("<{}", tag);
             

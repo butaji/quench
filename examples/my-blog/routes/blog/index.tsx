@@ -1,6 +1,6 @@
 /**
  * Blog Index Page
- * 
+ *
  * Lists all blog posts with pre-rendered content.
  */
 
@@ -18,43 +18,40 @@ interface BlogData {
   posts: Post[];
 }
 
-// Static post data (in a real app, this would come from a database)
-const posts: Post[] = [
-  {
-    slug: "introducing-runts",
-    title: "Introducing runts: Fresh/Preact with Native Rust",
-    excerpt: "Build lightning-fast web applications with Fresh's islands architecture, compiled to native Rust binaries. Zero external JS runtime, full framework compatibility.",
-    date: "2026-05-26",
-    readingTime: "5 min read"
-  },
-  {
-    slug: "islands-architecture",
-    title: "Understanding the Islands Architecture",
-    excerpt: "How selective hydration enables partial page interactivity while maintaining excellent performance. A deep dive into how runts handles client-server boundaries.",
-    date: "2026-05-25",
-    readingTime: "8 min read"
-  },
-  {
-    slug: "rust-frontend",
-    title: "Rust in the Frontend: A New Paradigm",
-    excerpt: "Exploring the benefits and challenges of compiling TypeScript to Rust. From TypeScript AST to native binary, understanding the runts transpilation pipeline.",
-    date: "2026-05-24",
-    readingTime: "12 min read"
-  },
-  {
-    slug: "fine-grained-reactivity",
-    title: "Fine-Grained Reactivity in Pure Rust",
-    excerpt: "Implementing Preact Signals and computed values in Rust for efficient reactive updates. How signals enable minimal re-renders and optimal performance.",
-    date: "2026-05-23",
-    readingTime: "10 min read"
-  }
-];
-
 export const handler = {
   async GET(_req: Request, _ctx: HandlerContext): Promise<Response> {
-    const data: BlogData = {
-      posts
-    };
+    const posts: Post[] = [
+      {
+        slug: "introducing-runts",
+        title: "Introducing runts: Fresh/Preact with Native Rust",
+        excerpt: "Build lightning-fast web applications with Fresh's islands architecture, compiled to native Rust binaries.",
+        date: "2026-05-26",
+        readingTime: "5 min read"
+      },
+      {
+        slug: "islands-architecture",
+        title: "Understanding the Islands Architecture",
+        excerpt: "How selective hydration enables partial page interactivity while maintaining excellent performance.",
+        date: "2026-05-25",
+        readingTime: "8 min read"
+      },
+      {
+        slug: "rust-frontend",
+        title: "Rust in the Frontend: A New Paradigm",
+        excerpt: "Exploring the benefits and challenges of compiling TypeScript to Rust.",
+        date: "2026-05-24",
+        readingTime: "12 min read"
+      },
+      {
+        slug: "fine-grained-reactivity",
+        title: "Fine-Grained Reactivity in Pure Rust",
+        excerpt: "Implementing Preact Signals and computed values in Rust for efficient reactive updates.",
+        date: "2026-05-23",
+        readingTime: "10 min read"
+      }
+    ];
+
+    const data: BlogData = { posts: posts };
 
     return new Response(JSON.stringify(data), {
       headers: {
@@ -77,9 +74,9 @@ export default function BlogIndex({ data }: PageProps<BlogData>) {
             transition: "box-shadow 0.2s",
           }}>
             <header style={{ marginBottom: "1rem" }}>
-              <div style={{ 
-                display: "flex", 
-                alignItems: "center", 
+              <div style={{
+                display: "flex",
+                alignItems: "center",
                 gap: "1rem",
                 marginBottom: "0.5rem",
                 fontSize: "0.875rem",
@@ -90,10 +87,10 @@ export default function BlogIndex({ data }: PageProps<BlogData>) {
                 <span>{post.readingTime}</span>
               </div>
               <h2 style={{ margin: 0 }}>
-                <a 
-                  href={`/blog/${post.slug}`} 
-                  style={{ 
-                    textDecoration: "none", 
+                <a
+                  href="/blog"
+                  style={{
+                    textDecoration: "none",
                     color: "#1a1a2e",
                     fontSize: "1.5rem"
                   }}
@@ -102,16 +99,16 @@ export default function BlogIndex({ data }: PageProps<BlogData>) {
                 </a>
               </h2>
             </header>
-            <p style={{ 
-              color: "#555", 
+            <p style={{
+              color: "#555",
               lineHeight: 1.7,
               margin: 0
             }}>
               {post.excerpt}
             </p>
             <footer style={{ marginTop: "1rem" }}>
-              <a 
-                href={`/blog/${post.slug}`}
+              <a
+                href="/blog"
                 style={{
                   color: "#3498db",
                   textDecoration: "none",

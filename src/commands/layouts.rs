@@ -6,7 +6,7 @@
 //! - _app.tsx global wrapper
 //! - Layout context passing
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

@@ -135,7 +135,7 @@ pub struct VariableDecl {
     pub pattern: Option<Pat>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum VariableKind {
     Const,
     Let,

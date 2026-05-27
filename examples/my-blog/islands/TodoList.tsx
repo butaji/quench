@@ -16,31 +16,31 @@ export default function TodoList({ title = "My Todos" }: TodoListProps) {
   const [newTodo, setNewTodo] = useState("");
 
   function handleAdd() {
-    if (!newTodo.trim()) return;
-    
+    if (newTodo.trim().length === 0) return;
+
     const todo: Todo = {
-      id: `${Date.now()}`,
-      text: newTodo.trim(),
+      id: "todo-1",
+      text: newTodo.toString(),
       completed: false,
     };
-    
+
     setTodos([...todos, todo]);
     setNewTodo("");
   }
 
   function handleToggle(id: string) {
-    setTodos(todos.map(t => 
-      t.id === id ? { ...t, completed: !t.completed } : t
-    ));
+    const updated: Todo[] = todos.map(t => {
+      const item: Todo = { id: t.id, text: t.text, completed: t.completed };
+      if (t.id === id) {
+        item.completed = !t.completed;
+      }
+      return item;
+    });
+    setTodos(updated);
   }
 
   function handleDelete(id: string) {
     setTodos(todos.filter(t => t.id !== id));
-  }
-
-  function handleInputChange(e: Event) {
-    const target = e.target as HTMLInputElement;
-    setNewTodo(target.value);
   }
 
   const activeCount = todos.filter(t => !t.completed).length;
@@ -48,35 +48,34 @@ export default function TodoList({ title = "My Todos" }: TodoListProps) {
   return (
     <div class="todo-list">
       <h3>{title}</h3>
-      
+
       <div class="todo-input-row">
         <input
           type="text"
           value={newTodo}
-          onInput={handleInputChange}
+          onInput={(e) => setNewTodo(e.currentTarget.value)}
           placeholder="What needs to be done?"
         />
         <button onClick={handleAdd}>Add</button>
       </div>
-      
+
       <ul class="todo-items">
-        {todos.length === 0 ? (
+        {todos.length === 0 && (
           <li class="empty">No todos yet</li>
-        ) : (
-          todos.map(todo => (
-            <li key={todo.id} class={todo.completed ? "completed" : ""}>
-              <input
-                type="checkbox"
-                checked={todo.completed}
-                onChange={() => handleToggle(todo.id)}
-              />
-              <span>{todo.text}</span>
-              <button onClick={() => handleDelete(todo.id)}>Delete</button>
-            </li>
-          ))
         )}
+        {todos.map((todo, i) => (
+          <li key={i} class={todo.completed ? "completed" : ""}>
+            <input
+              type="checkbox"
+              checked={todo.completed}
+              onChange={() => handleToggle(todo.id)}
+            />
+            <span>{todo.text}</span>
+            <button onClick={() => handleDelete(todo.id)}>Delete</button>
+          </li>
+        ))}
       </ul>
-      
+
       <p class="count">{activeCount} items left</p>
     </div>
   );

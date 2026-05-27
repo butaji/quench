@@ -4,7 +4,7 @@
 //! Import with `use runts_lib::runtime::prelude::*;`
 
 // Re-export commonly used types
-pub use super::vdom::{VNode, IntoVNode, into_vnode};
+pub use super::vdom::VNode;
 
 // Re-export for component macro
 

@@ -11,12 +11,10 @@
 //! - Error pages (404, 500)
 
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
-use serde_json::Value as JsonValue;
 
 use crate::transpile::hir::*;
 
@@ -506,7 +504,7 @@ impl Interpreter {
 
     fn register_layout(&mut self, path: &str, module: &Module) {
         let pattern = extract_layout_pattern(path).unwrap_or_else(|| "/".to_string());
-        let name = extract_file_name(path, "routes/").trim_end_matches("_layout").to_string();
+        let _name = extract_file_name(path, "routes/").trim_end_matches("_layout").to_string();
         
         for item in &module.items {
             if let ModuleItem::Export(Export::Default { expr }) = item {
@@ -1002,7 +1000,7 @@ impl Interpreter {
         // First arg could be body (string or object) or options
         let first_arg = &args[0];
         let status = 200;
-        let content_type = "text/html";
+        let _content_type = "text/html";
         
         let body = match first_arg {
             Expr::String(s) => s.clone(),
@@ -1055,7 +1053,7 @@ impl Interpreter {
     fn handle_error(&self, status: u16, route_path: &str, request: RequestInfo) -> Result<RenderResult, String> {
         let error_pages = self.error_pages.read();
         
-        if let Some(error_path) = error_pages.get(&status) {
+        if let Some(_error_path) = error_pages.get(&status) {
             drop(error_pages);
             
             // Execute the error handler
@@ -1859,7 +1857,7 @@ impl Interpreter {
                     _ => Ok(Value::Undefined),
                 }
             }
-            Expr::Assign { op: _, left, right } => {
+            Expr::Assign { op: _, left: _, right } => {
                 // Note: Assignment side effects are not stored for SSR
                 // This is a simplification - full JS semantics would require mutation tracking
                 self.expr_to_value(right, ctx)

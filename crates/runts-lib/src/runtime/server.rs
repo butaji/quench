@@ -6,7 +6,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
-use http::{Response, StatusCode, header};
+use http::{StatusCode, header};
+
+/// Re-export Axum request type for handlers
+pub use axum::extract::Request;
+/// Re-export the generic http Response type for use in handler code generation
+pub use http::Response;
 
 /// Page props - passed to page components
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,8 +55,13 @@ impl HandlerContext {
         }
     }
     
-    /// Get a route param
-    pub fn param(&self, name: &str) -> Option<&str> {
+    /// Get a route param (convenience method for codegen)
+    pub fn param(&self, name: &str) -> &str {
+        self.params.get(name).map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// Get a route param as Option
+    pub fn param_opt(&self, name: &str) -> Option<&str> {
         self.params.get(name).map(|s| s.as_str())
     }
     
@@ -125,8 +135,22 @@ pub type Handler = Box<dyn Fn(http::Request<()>, HandlerContext) -> HandlerOutpu
 /// Handler output future type
 pub type HandlerOutput = Box<dyn Future<Output = Response<String>> + Send>;
 
-/// Request type alias
-pub type Request = http::Request<()>;
+// Implement Axum extractor for HandlerContext so it can be used as a handler parameter
+#[axum::async_trait]
+impl axum::extract::FromRequestParts<()> for HandlerContext {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &(),
+    ) -> Result<Self, Self::Rejection> {
+        let ctx = HandlerContext::new(
+            parts.uri.to_string(),
+            parts.method.to_string(),
+        );
+        Ok(ctx)
+    }
+}
 
 // =============================================================================
 // Response builder functions

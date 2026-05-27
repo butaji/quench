@@ -4,7 +4,6 @@
 use axum::{Router, routing::{get, post, put, delete}};
 
 use crate::gen::about as about;
-use crate::gen::blog::_layout as blog__layout;
 use crate::gen::blog::index as blog_index;
 use crate::gen::blog::slug as blog_slug;
 use crate::gen::index as index;
@@ -18,9 +17,6 @@ pub fn build_router() -> Router {
 
     // /blog (blog/index.tsx)
     router = router.route("/blog", get(blog_index::handle_get));
-
-    // /blog/_layout (blog/_layout.tsx)
-    router = router.route("/blog/_layout", get(blog__layout::handle_get));
 
     // /blog/:slug (blog/[slug].tsx)
     router = router.route("/blog/:slug", get(blog_slug::handle_get));

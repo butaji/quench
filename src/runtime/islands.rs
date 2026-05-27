@@ -329,9 +329,9 @@ fn html_escape(s: &str) -> String {
 }
 
 /// Preact signal integration for islands
-#[cfg(feature = "signals")]
+#[allow(dead_code)]
 pub mod signal_integration {
-    use super::*;
+    
     use crate::runtime::signals::Signal;
 
     /// Signal-based island state

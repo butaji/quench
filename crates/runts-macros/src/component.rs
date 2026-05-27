@@ -27,14 +27,14 @@ use quote::quote;
 pub fn component_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn: syn::ItemFn = syn::parse_macro_input!(item as syn::ItemFn);
     let name = &item_fn.sig.ident;
-    let vis = &item_fn.vis;
+    let _vis = &item_fn.vis;
     
     // Extract the function signature
     let sig = &item_fn.sig;
-    let inputs = &sig.inputs;
-    let output = &sig.output;
-    let generics = &sig.generics;
-    let where_clause = &sig.generics.where_clause;
+    let _inputs = &sig.inputs;
+    let _output = &sig.output;
+    let _generics = &sig.generics;
+    let _where_clause = &sig.generics.where_clause;
     
     // Get the component name
     let component_name = name.to_string();

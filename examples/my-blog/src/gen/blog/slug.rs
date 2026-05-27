@@ -4,101 +4,74 @@ use runts_lib::runtime::prelude::*;
 use serde::{Serialize, Deserialize};
 use axum::{response::IntoResponse, body::Body};
 
-let posts: std::collections::HashMap<String, {pub title: String, pub content: String, pub date: String, pub author: String, pub tags: Vec<String>}> = Record {introducing-runts: {title: "Introducing runts: Fresh/Preact with Native Rust", date: "2026-05-26", author: "runts Team", tags: vec!["Rust", "Fresh", "Preact", "Web"], content: 
-      <p>Today we're excited to announce <strong>runts</strong>, a new framework that brings Fresh's islands architecture to native Rust compilation.</p>
-      
-      <h2>What is runts?</h2>
-      <p>runts is a Fresh/Preact-compatible TypeScript framework that compiles to native Rust binaries. It provides zero external JS runtime (no V8, Deno, or WebAssembly JS) while maintaining full Fresh/Preact API compatibility.</p>
-      
-      <h2>Key Features</h2>
-      <ul>
-        <li><strong>Native Binary Output</strong> - Compile to efficient Rust binaries</li>
-        <li><strong>Zero External Runtime</strong> - No V8, Deno, or Wasm JS engines</li>
-        <li><strong>Full Fresh Compatibility</strong> - Islands, layouts, middleware, routes</li>
-        <li><strong>Instant Hot Reload</strong> - HIR interpretation in development</li>
-        <li><strong>Fine-Grained Reactivity</strong> - Preact Signals compatible</li>
-      </ul>
-      
-      <h2>How It Works</h2>
-      <p>In development mode, runts parses TypeScript/TSX to a High-Level IR (HIR) and interprets it directly. This enables instant hot reload without any Rust recompilation.</p>
-      
-      <p>In production, runts transpiles TypeScript to Rust source code via in-memory code generation, then compiles with cargo for maximum performance.</p>
-      
-      <h2>Getting Started</h2>
-      <p>Check out the examples in the repository to see runts in action. The my-blog example demonstrates routing, islands, layouts, and full SSR.</p>
-    }, islands-architecture: {title: "Understanding the Islands Architecture", date: "2026-05-25", author: "runts Team", tags: vec!["Architecture", "Performance", "Fresh"], content: 
-      <p>The islands architecture is a rendering pattern that enables selective hydration of interactive components while keeping the rest of the page static.</p>
-      
-      <h2>The Problem with Traditional SSR</h2>
-      <p>Server-side rendering improves initial page load and SEO, but traditional SSR often ships all JavaScript to the client, even for static content. This leads to large JavaScript bundles and slow Time-to-Interactive.</p>
-      
-      <h2>The Islands Solution</h2>
-      <p>Islands architecture solves this by marking only interactive components for client hydration. The rest of the page remains as static HTML, rendered once on the server.</p>
-      
-      <pre><code>// Static HTML (no hydration)
-<div>Just static content</div>
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Post {
+    pub slug: String,
+    pub title: String,
+    pub content: String,
+    pub date: String,
+    pub author: String,
+    pub tags: Vec<String>,
+}
 
-// Island (will hydrate on client)
-<div data-island="Counter" data-id="abc123">
-  <button>0</button>
-</div></code></pre>
-      
-      <h2>Hydration Strategies</h2>
-      <p>runts supports multiple hydration strategies:</p>
-      <ul>
-        <li><strong>Eager</strong> - Hydrate immediately on page load</li>
-        <li><strong>Visible</strong> - Hydrate when the island enters the viewport</li>
-        <li><strong>Idle</strong> - Hydrate during browser idle time</li>
-        <li><strong>Manual</strong> - Hydrate on explicit trigger</li>
-      </ul>
-    }, rust-frontend: {title: "Rust in the Frontend: A New Paradigm", date: "2026-05-24", author: "runts Team", tags: vec!["Rust", "Compilers", "TypeScript"], content: 
-      <p>What if we could compile TypeScript directly to native code? runts explores this question by building a full Fresh/Preact framework on Rust.</p>
-      
-      <h2>The Transpilation Pipeline</h2>
-      <p>runts implements a multi-stage transpilation pipeline:</p>
-      
-      <ol>
-        <li><strong>Parse</strong> - TSX → AST using custom recursive descent parser</li>
-        <li><strong>Analyze</strong> - Semantic analysis, type checking, hook detection</li>
-        <li><strong>Transform</strong> - Convert to High-Level IR (HIR)</li>
-        <li><strong>Generate</strong> - HIR → Rust source code</li>
-        <li><strong>Compile</strong> - cargo build for native binary</li>
-      </ol>
-      
-      <h2>Why Rust?</h2>
-      <p>Rust offers several advantages for frontend tooling:</p>
-      <ul>
-        <li><strong>Performance</strong> - Native code without garbage collection pauses</li>
-        <li><strong>Memory Safety</strong> - No buffer overflows, use-after-free, etc.</li>
-        <li><strong>Binary Distribution</strong> - Single executable, no runtime dependencies</li>
-        <li><strong>Tooling</strong> - Excellent compiler, rustfmt, clippy</li>
-      </ul>
-    }, fine-grained-reactivity: {title: "Fine-Grained Reactivity in Pure Rust", date: "2026-05-23", author: "runts Team", tags: vec!["Signals", "Reactivity", "Preact"], content: 
-      <p>Signals provide a way to express reactive values that automatically track their dependencies and update only what needs to be updated.</p>
-      
-      <h2>How Signals Work</h2>
-      <p>A signal is a container for a reactive value. When you read a signal's value, you implicitly subscribe to updates. When you write to a signal, all subscribers are notified.</p>
-      
-      <pre><code>// Create a signal
-let count = signal(0);
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct PostData {
+    pub post: Post,
+    pub not_found: bool,
+}
 
-// Read the value
-let n = count.value; // 0
+pub async fn handle_get(_ctx: HandlerContext, _req: Request) -> impl IntoResponse {
+    { let slug = _ctx.param("slug"); if (slug == "introducing-runts") { {
+    let data: PostData = PostData {post: Post {slug: "introducing-runts".to_string(), title: "Introducing runts: Fresh/Preact with Native Rust".to_string(), date: "2026-05-26".to_string(), author: "runts Team".to_string(), tags: vec!["Rust".to_string(), "Fresh".to_string(), "Preact".to_string(), "Web".to_string()], content: "Today we are excited to announce runts, a new framework that brings Fresh islands architecture to native Rust compilation.".to_string()}, not_found: false};
+    return {
+    let __body = serde_json::to_string(&data).unwrap();
+    let mut __resp = Response::builder();
+    __resp = __resp.header("Content-Type", "application/json");
+    __resp.body(Body::from(__body)).unwrap()
+};
+} }; if (slug == "islands-architecture") { {
+    let data: PostData = PostData {post: Post {slug: "islands-architecture".to_string(), title: "Understanding the Islands Architecture".to_string(), date: "2026-05-25".to_string(), author: "runts Team".to_string(), tags: vec!["Architecture".to_string(), "Performance".to_string(), "Fresh".to_string()], content: "The islands architecture is a rendering pattern that enables selective hydration of interactive components while keeping the rest of the page static.".to_string()}, not_found: false};
+    return {
+    let __body = serde_json::to_string(&data).unwrap();
+    let mut __resp = Response::builder();
+    __resp = __resp.header("Content-Type", "application/json");
+    __resp.body(Body::from(__body)).unwrap()
+};
+} }; if (slug == "rust-frontend") { {
+    let data: PostData = PostData {post: Post {slug: "rust-frontend".to_string(), title: "Rust in the Frontend: A New Paradigm".to_string(), date: "2026-05-24".to_string(), author: "runts Team".to_string(), tags: vec!["Rust".to_string(), "Compilers".to_string(), "TypeScript".to_string()], content: "What if we could compile TypeScript directly to native code? runts explores this question by building a full Fresh/Preact framework on Rust.".to_string()}, not_found: false};
+    return {
+    let __body = serde_json::to_string(&data).unwrap();
+    let mut __resp = Response::builder();
+    __resp = __resp.header("Content-Type", "application/json");
+    __resp.body(Body::from(__body)).unwrap()
+};
+} }; if (slug == "fine-grained-reactivity") { {
+    let data: PostData = PostData {post: Post {slug: "fine-grained-reactivity".to_string(), title: "Fine-Grained Reactivity in Pure Rust".to_string(), date: "2026-05-23".to_string(), author: "runts Team".to_string(), tags: vec!["Signals".to_string(), "Reactivity".to_string(), "Preact".to_string()], content: "Signals provide a way to express reactive values that automatically track their dependencies and update only what needs to be updated.".to_string()}, not_found: false};
+    return {
+    let __body = serde_json::to_string(&data).unwrap();
+    let mut __resp = Response::builder();
+    __resp = __resp.header("Content-Type", "application/json");
+    __resp.body(Body::from(__body)).unwrap()
+};
+} }; let data: PostData = PostData {post: Post {slug: "".to_string(), title: "".to_string(), content: "".to_string(), date: "".to_string(), author: "".to_string(), tags: vec![]}, not_found: true}; return {
+    let __body = serde_json::to_string(&data).unwrap();
+    let mut __resp = Response::builder();
+    __resp = __resp.status(404.0 as u16);
+    __resp = __resp.header("Content-Type", "application/json");
+    __resp.body(Body::from(__body)).unwrap()
+}; } // Handler body
+}
 
-// Update triggers all subscribers
-count.value = 5;</code></pre>
-      
-      <h2>Computed Values</h2>
-      <p>Computed values derive from other signals and automatically update when their dependencies change:</p>
-      
-      <pre><code>let doubled = computed(|| count.value * 2);</code></pre>
-      
-      <h2>Effects</h2>
-      <p>Effects run side effects when their signal dependencies change:</p>
-      
-      <pre><code>effect(|| {
-  console.log("Count changed:", count.value);
-});</code></pre>
-    }};
+
+
+#[component]
+pub fn blog_post(_props: PageProps<PostData>) -> VNode {
+    let data = _props.data;
+    if data.not_found { {
+    return html!(<div class_name = "not-found"><h1>"Post Not Found"</h1> <p>"The requested blog post could not be found."</p> <a href = "/blog">"Back to Blog"</a></div>);
+} }
+    let post = data.post;
+    return html!(<article class_name = "blog-post"><header style = "margin-bottom: 2rem;"><div style = "display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; font-size: 0.875rem; color: #666;"><time>{post.date.clone()}</time> <span>"•"</span> <span>"By" {post.author.clone()}</span></div> <h1 style = {format!("font-size: 2.5rem; margin: {}; line-height: {};", 0.0, 1.2)}>{post.title.clone()}</h1> <div style = "display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;">{post.tags.iter().enumerate().map(|(i, tag)| { let i = i as f64; return html!(<span key = {i.clone()} style = "padding: 0.25rem 0.75rem; background: #e8f4f8; color: #2980b9; border-radius: 20px; font-size: 0.875rem;">{tag.clone()}</span>); }).collect::<Vec<_>>().clone()}</div></header> <div class_name = "post-content" style = {format!("line-height: {};", 1.8)}>{post.content.clone()}</div> <footer style = "margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #e0e0e0;"><a href = "/blog" style = "color: #3498db; text-decoration: none; font-weight: 500;">"Back to Blog"</a></footer></article>);
+}
 
 

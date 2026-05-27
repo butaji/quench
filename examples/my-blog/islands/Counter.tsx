@@ -1,6 +1,6 @@
 /**
  * Counter Island
- * 
+ *
  * A fully interactive counter component that demonstrates:
  * - useState hook
  * - Event handlers
@@ -16,33 +16,26 @@ interface CounterProps {
   label?: string;
 }
 
-/**
- * Counter - An interactive island demonstrating:
- * - useState hook for local state
- * - Event handlers for user interaction
- * - Conditional rendering based on state
- * - Props serialization for hydration
- */
-export default function Counter({ 
-  initial = 0, 
+export default function Counter({
+  initial = 0,
   step = 1,
   label = "Counter"
 }: CounterProps) {
   const [count, setCount] = useState(initial);
   const [history, setHistory] = useState<number[]>([initial]);
-  
+
   const increment = () => {
     const newValue = count + step;
     setCount(newValue);
-    setHistory(prev => [...prev, newValue]);
+    setHistory([...history, newValue]);
   };
-  
+
   const decrement = () => {
     const newValue = count - step;
     setCount(newValue);
-    setHistory(prev => [...prev, newValue]);
+    setHistory([...history, newValue]);
   };
-  
+
   const reset = () => {
     setCount(initial);
     setHistory([initial]);
@@ -50,14 +43,15 @@ export default function Counter({
 
   const undo = () => {
     if (history.length > 1) {
-      const newHistory = [...history];
-      newHistory.pop();
-      setHistory(newHistory);
+      const newHistory = history.slice(0, history.length - 1);
       setCount(newHistory[newHistory.length - 1]);
+      setHistory(newHistory);
     }
   };
 
   const delta = count - initial;
+  const canUndo = history.length > 1;
+  const canReset = count !== initial;
 
   return (
     <div class="counter-island" style={{
@@ -70,7 +64,7 @@ export default function Counter({
       <h2 style={{ margin: "0 0 1rem 0", color: "#333", textAlign: "center" }}>
         {label}
       </h2>
-      
+
       <div style={{
         display: "flex",
         flexDirection: "column",
@@ -92,18 +86,18 @@ export default function Counter({
               color: delta > 0 ? "#4caf50" : "#f44336",
               fontWeight: "normal"
             }}>
-              ({delta > 0 ? "+" : ""}{delta})
+              ({delta})
             </span>
           )}
         </div>
-        
+
         <div style={{
           display: "flex",
           gap: "0.5rem",
           flexWrap: "wrap",
           justifyContent: "center"
         }}>
-          <button 
+          <button
             onClick={decrement}
             style={{
               padding: "0.5rem 1.25rem",
@@ -113,52 +107,47 @@ export default function Counter({
               borderRadius: "8px",
               background: "#e74c3c",
               color: "white",
-              cursor: "pointer",
-              transition: "transform 0.1s, background 0.2s"
+              cursor: "pointer"
             }}
-            onMouseOver={(e) => e.currentTarget.style.background = "#c0392b"}
-            onMouseOut={(e) => e.currentTarget.style.background = "#e74c3c"}
           >
             −
           </button>
-          
-          <button 
+
+          <button
             onClick={undo}
-            disabled={history.length <= 1}
+            disabled={!canUndo}
             style={{
               padding: "0.5rem 1rem",
               fontSize: "0.875rem",
               border: "none",
               borderRadius: "8px",
-              background: history.length <= 1 ? "#bdc3c7" : "#f39c12",
+              background: canUndo ? "#f39c12" : "#bdc3c7",
               color: "white",
-              cursor: history.length <= 1 ? "not-allowed" : "pointer",
-              transition: "background 0.2s",
-              opacity: history.length <= 1 ? 0.5 : 1
+              cursor: canUndo ? "pointer" : "not-allowed",
+              opacity: canUndo ? 1 : 0.5
             }}
           >
             Undo
           </button>
-          
-          <button 
+
+          <button
             onClick={reset}
-            disabled={count === initial}
+            disabled={!canReset}
             style={{
               padding: "0.5rem 1rem",
               fontSize: "0.875rem",
               border: "none",
               borderRadius: "8px",
-              background: count === initial ? "#bdc3c7" : "#9b59b6",
+              background: canReset ? "#9b59b6" : "#bdc3c7",
               color: "white",
-              cursor: count === initial ? "not-allowed" : "pointer",
-              transition: "background 0.2s",
-              opacity: count === initial ? 0.5 : 1
+              cursor: canReset ? "pointer" : "not-allowed",
+              opacity: canReset ? 1 : 0.5
             }}
           >
             Reset
           </button>
-          
-          <button 
+
+          <button
             onClick={increment}
             style={{
               padding: "0.5rem 1.25rem",
@@ -168,16 +157,13 @@ export default function Counter({
               borderRadius: "8px",
               background: "#27ae60",
               color: "white",
-              cursor: "pointer",
-              transition: "transform 0.1s, background 0.2s"
+              cursor: "pointer"
             }}
-            onMouseOver={(e) => e.currentTarget.style.background = "#1e8449"}
-            onMouseOut={(e) => e.currentTarget.style.background = "#27ae60"}
           >
             +
           </button>
         </div>
-        
+
         <div style={{
           marginTop: "0.5rem",
           fontSize: "0.875rem",

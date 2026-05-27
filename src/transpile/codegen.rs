@@ -16,6 +16,8 @@ pub struct CodeGenerator {
     indent: usize,
     /// Whether to generate route handlers for default-export components
     generate_handlers: bool,
+    /// Type definitions from the module (for nested struct literal generation)
+    type_defs: std::collections::HashMap<String, TypeDecl>,
 }
 
 impl Default for CodeGenerator {
@@ -33,6 +35,7 @@ impl CodeGenerator {
             ],
             indent: 0,
             generate_handlers: true,
+            type_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -59,6 +62,14 @@ impl CodeGenerator {
         output.push_str("use serde::{Serialize, Deserialize};\n");
         output.push_str("use axum::{response::IntoResponse, body::Body};\n");
         output.push('\n');
+
+        // Collect type definitions for nested struct literal lookup
+        self.type_defs.clear();
+        for item in &module.items {
+            if let ModuleItem::Decl(Decl::Type(t)) = item {
+                self.type_defs.insert(t.name.clone(), t.clone());
+            }
+        }
 
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Type(t)) = item {
@@ -199,7 +210,18 @@ impl CodeGenerator {
         };
 
         let async_prefix = if is_async { "async " } else { "" };
-        let params_str = params.iter().map(|p| {
+        // Reorder params so body-consuming extractors (Request) come last
+        let mut ordered_params: Vec<_> = params.iter().collect();
+        ordered_params.sort_by(|a, b| {
+            let a_is_request = a.type_.as_ref().map(|t| matches!(t, Type::Ref { name, .. } if name == "Request")).unwrap_or(false);
+            let b_is_request = b.type_.as_ref().map(|t| matches!(t, Type::Ref { name, .. } if name == "Request")).unwrap_or(false);
+            match (a_is_request, b_is_request) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+        let params_str = ordered_params.iter().map(|p| {
             let name = self.to_snake_case(&p.name);
             p.type_.as_ref()
                 .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
@@ -212,13 +234,17 @@ impl CodeGenerator {
                 for stmt in stmts {
                     let code = self.stmt_to_rust(stmt)?;
                     if !code.trim().is_empty() {
-                        lines.push(code.trim().to_string());
+                        // Strip trailing semicolons to avoid double ;; when joining
+                        let trimmed = code.trim().trim_end_matches(';').trim_end().to_string();
+                        if !trimmed.is_empty() {
+                            lines.push(trimmed);
+                        }
                     }
                 }
                 if lines.is_empty() {
                     "{ Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap() }".to_string()
                 } else {
-                    format!("{{ {} }}", lines.join("; "))
+                    format!("{{ {}; }}", lines.join("; "))
                 }
             }
             Stmt::Return { arg } => {
@@ -265,7 +291,8 @@ impl CodeGenerator {
                             match k {
                                 "status" | "statusCode" => {
                                     let v = self.expr_to_rust(value);
-                                    lines.push(format!("    __resp = __resp.status({});", v));
+                                    // Status code needs u16, not f64
+                                    lines.push(format!("    __resp = __resp.status({} as u16);", v));
                                 }
                                 "headers" => {
                                     if let Expr::Object { props: header_props } = value {
@@ -600,15 +627,8 @@ impl CodeGenerator {
         let type_hint = var.type_.as_ref();
 
         let init = if let Some(expr) = &var.init {
-            // If the init is an object literal and we have a struct type hint,
-            // prefix the object literal with the struct name.
-            if let (Expr::Object { .. }, Some(Type::Ref { name, .. })) = (expr, type_hint) {
-                let obj_code = self.expr_to_rust(expr);
-                // obj_code is like "{ a: 1, b: 2 }" — prefix with struct name
-                format!("{} {}", name, obj_code)
-            } else {
-                self.expr_to_rust(expr)
-            }
+            // Use type-aware expression generation for nested struct literals
+            self.expr_to_rust_with_hint(expr, type_hint)
         } else {
             "()".to_string()
         };
@@ -736,7 +756,25 @@ impl CodeGenerator {
                 code.pop(); // Remove trailing newline
                 Ok(code)
             }
-            Stmt::Function { decl } => self.generate_function(decl, false),
+            Stmt::Function { decl } => {
+                // Nested functions should be closures to capture environment
+                let name = self.to_snake_case(&decl.name);
+                let params: Vec<String> = decl.params.iter().map(|p| {
+                    let name = self.to_snake_case(&p.name);
+                    p.type_.as_ref()
+                        .map(|t| format!("{}: {}", name, self.type_to_rust(t)))
+                        .unwrap_or(name)
+                }).collect();
+                let body_code = if let Some(body) = &decl.body {
+                    let stmts = body.0.iter()
+                        .map(|s| self.stmt_to_rust(s).unwrap_or_default())
+                        .collect::<Vec<_>>().join("; ");
+                    format!("{{ {} }}", stmts)
+                } else {
+                    "{}".to_string()
+                };
+                Ok(format!("let {} = |{}| {};", name, params.join(", "), body_code))
+            }
             Stmt::Class { decl } => Err(anyhow!("class {} is not supported", decl.name)),
         }
     }
@@ -748,7 +786,69 @@ impl CodeGenerator {
         }
     }
 
+    /// Look up a type definition by name
+    fn lookup_type_def(&self, name: &str) -> Option<&TypeDecl> {
+        self.type_defs.get(name)
+    }
+
+    /// Get the type of a field from an object type definition
+    fn get_field_type(&self, type_: &Type, field_name: &str) -> Option<Type> {
+        match type_ {
+            Type::Ref { name, .. } => {
+                let decl = self.lookup_type_def(name)?;
+                self.get_field_type(&decl.type_, field_name)
+            }
+            Type::Object { members } => {
+                let snake_field = self.to_snake_case(field_name);
+                members.iter().find(|m| self.to_snake_case(&m.key) == snake_field).map(|m| m.type_.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Infer the type of an expression for better property access and struct literal codegen
+    fn infer_expr_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::Ident { name } => {
+                // Common type hints for known identifiers
+                if name == "data" || name == "props" || name == "_props" {
+                    // We can't know the exact type without scope analysis, but we can
+                    // hint that it's a reference type for field lookups
+                    None
+                } else {
+                    None
+                }
+            }
+            Expr::Member { object, property, computed: false, .. } => {
+                let obj_type = self.infer_expr_type(object)?;
+                if let Expr::Ident { name } = property.as_ref() {
+                    self.get_field_type(&obj_type, name)
+                } else {
+                    None
+                }
+            }
+            Expr::Call { callee, .. } => {
+                if let Expr::Ident { name } = callee.as_ref() {
+                    match name.as_str() {
+                        "useState" => Some(Type::Ref { name: "UseState".to_string(), generics: vec![] }),
+                        "useRef" => Some(Type::Ref { name: "UseRef".to_string(), generics: vec![] }),
+                        "useMemo" => Some(Type::Ref { name: "UseMemo".to_string(), generics: vec![] }),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Generate expression with an optional type hint for better codegen
     pub fn expr_to_rust(&self, expr: &Expr) -> String {
+        self.expr_to_rust_with_hint(expr, None)
+    }
+
+    pub fn expr_to_rust_with_hint(&self, expr: &Expr, type_hint: Option<&Type>) -> String {
         match expr {
             Expr::Ident { name } => self.to_snake_case(name),
             Expr::String(s) => format!("{:?}", s),
@@ -778,8 +878,21 @@ impl CodeGenerator {
                 result
             }
             Expr::Bin { left, op, right } => {
-                let left_code = self.expr_to_rust(left);
-                let right_code = self.expr_to_rust(right);
+                let is_len = |e: &Expr| matches!(e, Expr::Member { property, .. } if matches!(property.as_ref(), Expr::Ident { name } if name == "length"));
+                let left_is_len = is_len(left);
+                let right_is_len = is_len(right);
+                let is_comparison = matches!(op, BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Eq | BinaryOp::EqStrict | BinaryOp::Ne | BinaryOp::NeStrict);
+                let is_arithmetic = matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod);
+                let left_code = if left_is_len && (is_comparison || is_arithmetic) {
+                    format!("({} as f64)", self.expr_to_rust(left))
+                } else {
+                    self.expr_to_rust(left)
+                };
+                let right_code = if right_is_len && (is_comparison || is_arithmetic) {
+                    format!("({} as f64)", self.expr_to_rust(right))
+                } else {
+                    self.expr_to_rust(right)
+                };
                 let rust_op = match op {
                     BinaryOp::Eq | BinaryOp::EqStrict => "==",
                     BinaryOp::Ne | BinaryOp::NeStrict => "!=",
@@ -934,6 +1047,18 @@ impl CodeGenerator {
                         match method_name.as_str() {
                             // Array methods
                             "map" if !args.is_empty() => {
+                                // Detect 2-param closures like .map((item, index) => ...)
+                                // and convert to .iter().enumerate().map(|(index, item)| ...)
+                                if let Expr::Arrow { params, body, .. } = &args[0] {
+                                    if params.len() == 2 {
+                                        let item_name = self.to_snake_case(&params[0].name);
+                                        let idx_name = self.to_snake_case(&params[1].name);
+                                        let stmt_str = self.stmt_to_rust(body).unwrap_or_default();
+                                        let inner = stmt_str.trim().trim_start_matches('{').trim_end_matches('}').trim();
+                                        let new_closure = format!("|({}, {})| {{ let {} = {} as f64; {} }}", idx_name, item_name, idx_name, idx_name, inner);
+                                        return format!("{}.iter().enumerate().map({}).collect::<Vec<_>>()", obj_code, new_closure);
+                                    }
+                                }
                                 let closure = self.expr_to_rust(&args[0]);
                                 return format!("{}.iter().map({}).collect::<Vec<_>>()", obj_code, closure);
                             }
@@ -983,7 +1108,7 @@ impl CodeGenerator {
                                 let sep = self.expr_to_rust(&args[0]);
                                 return format!("{}.split(&{}).collect::<Vec<_>>()", obj_code, sep);
                             }
-                            "trim" => return format!("{}.trim()", obj_code),
+                            "trim" => return format!("{}.trim().to_string()", obj_code),
                             "startsWith" if !args.is_empty() => {
                                 let prefix = self.expr_to_rust(&args[0]);
                                 return format!("{}.starts_with(&{})", obj_code, prefix);
@@ -1003,9 +1128,9 @@ impl CodeGenerator {
                                 let start = self.expr_to_rust(&args[0]);
                                 if args.len() > 1 {
                                     let end = self.expr_to_rust(&args[1]);
-                                    return format!("{}[{}..{}]", obj_code, start, end);
+                                    return format!("{}[({} as usize)..({} as usize)].to_vec()", obj_code, start, end);
                                 } else {
-                                    return format!("{}[{}..]", obj_code, start);
+                                    return format!("{}[({} as usize)..].to_vec()", obj_code, start);
                                 }
                             }
                             "substring" if !args.is_empty() => {
@@ -1049,35 +1174,64 @@ impl CodeGenerator {
                 }
             }
             Expr::Member { object, property, computed, .. } => {
-                let obj_code = self.expr_to_rust(object);
+                let obj_type = self.infer_expr_type(object);
+                let obj_code = self.expr_to_rust_with_hint(object, obj_type.as_ref());
+                // Special case: ctx.params.field -> ctx.params.get("field")
+                // But NOT for HashMap method calls like params.get("key")
+                let is_params_access = if let Expr::Member { object: _inner, property: inner_prop, computed: false, .. } = object.as_ref() {
+                    if let Expr::Ident { name: inner_name } = inner_prop.as_ref() {
+                        inner_name == "params"
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
                 let prop_code = if *computed {
                     // Array/object index access: arr[0], obj[key]
-                    self.expr_to_rust(property)
+                    // Cast to usize for array indexing
+                    format!("({} as usize)", self.expr_to_rust(property))
                 } else {
                     if let Expr::Ident { name } = property.as_ref() {
-                        // Transform JavaScript property names to Rust equivalents
-                        let rust_name = match name.as_str() {
-                            "length" => "len()".to_string(),
-                            "name" => "name".to_string(),
-                            "value" => "value".to_string(),
-                            "innerHTML" => "inner_html".to_string(),
-                            "className" => "class_name".to_string(),
-                            "nodeName" => "node_name".to_string(),
-                            "textContent" => "text_content".to_string(),
-                            "innerText" => "inner_text".to_string(),
-                            _ if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
-                                // Method call like .push() -> .push()
-                                name.clone()
-                            }
-                            _ => name.clone(),
-                        };
-                        rust_name
+                        // Don't transform known HashMap methods
+                        let hashmap_methods = ["get", "insert", "remove", "contains_key", "entry", "len", "is_empty", "keys", "values", "iter"];
+                        if is_params_access && !hashmap_methods.contains(&name.as_str()) {
+                            format!("param(\"{}\")", name)
+                        } else {
+                            // Transform JavaScript property names to Rust equivalents
+                            // Convert ALL camelCase to snake_case for field access
+                            let rust_name = match name.as_str() {
+                                "length" => "len()".to_string(),
+                                "name" => "name".to_string(),
+                                "value" => "value".to_string(),
+                                "innerHTML" => "inner_html".to_string(),
+                                "className" => "class_name".to_string(),
+                                "nodeName" => "node_name".to_string(),
+                                "textContent" => "text_content".to_string(),
+                                "innerText" => "inner_text".to_string(),
+                                _ if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+                                    // Method call like .push() -> .push()
+                                    // Still convert camelCase methods to snake_case
+                                    self.to_snake_case(name)
+                                }
+                                _ => self.to_snake_case(name),
+                            };
+                            rust_name
+                        }
                     } else {
                         self.expr_to_rust(property)
                     }
                 };
                 if *computed {
                     format!("{}[{}]", obj_code, prop_code)
+                } else if is_params_access {
+                    // obj_code is `_ctx.params`, we want `_ctx.param("field")`
+                    let base = if let Expr::Member { object: base_obj, .. } = object.as_ref() {
+                        self.expr_to_rust(base_obj)
+                    } else {
+                        obj_code.clone()
+                    };
+                    format!("{}.{}", base, prop_code)
                 } else {
                     format!("{}.{}", obj_code, prop_code)
                 }
@@ -1092,8 +1246,20 @@ impl CodeGenerator {
                                 PropKey::Number(n) => n.to_string(),
                                 PropKey::Computed(e) => self.expr_to_rust(e),
                             };
-                            let v = self.expr_to_rust(value);
-                            format!("{}: {}", self.to_snake_case(&k), v)
+                            let snake_key = self.to_snake_case(&k);
+                            // Look up field type from type hint to pass down for nested struct literals
+                            let field_type = type_hint.and_then(|t| self.get_field_type(t, &snake_key));
+                            let v = if matches!(value, Expr::String(_)) && matches!(field_type, Some(Type::String)) {
+                                // In struct literal context, string fields need .to_string()
+                                let s = match value {
+                                    Expr::String(s) => s.clone(),
+                                    _ => unreachable!()
+                                };
+                                format!("{:?}.to_string()", s)
+                            } else {
+                                self.expr_to_rust_with_hint(value, field_type.as_ref())
+                            };
+                            format!("{}: {}", snake_key, v)
                         }
                         ObjectProp::Method { key, value: _ } => {
                             let k = match key {
@@ -1130,7 +1296,13 @@ impl CodeGenerator {
                         }
                     }
                 }).collect();
-                format!("{{{}}}", fields.join(", "))
+                let body = format!("{{{}}}", fields.join(", "));
+                // If we have a type hint that is a struct reference, prefix with the struct name
+                if let Some(Type::Ref { name, .. }) = type_hint {
+                    format!("{} {}", name, body)
+                } else {
+                    body
+                }
             }
             Expr::Array { elems } => {
                 // Handle spread operator: [a, ...rest, b] 
@@ -1177,8 +1349,25 @@ impl CodeGenerator {
                     result
                 } else {
                     // No spread - simple vec!
+                    let elem_type_hint = type_hint.and_then(|t| {
+                        if let Type::Array { elem } = t {
+                            Some(elem.as_ref())
+                        } else {
+                            None
+                        }
+                    });
                     let elems_code: Vec<String> = elems.iter().filter_map(|e| {
-                        e.as_ref().map(|e| self.expr_to_rust(e))
+                        e.as_ref().map(|e| {
+                            if matches!(e, Expr::String(_)) && matches!(elem_type_hint, Some(Type::String)) {
+                                let s = match e {
+                                    Expr::String(s) => s.clone(),
+                                    _ => unreachable!()
+                                };
+                                format!("{:?}.to_string()", s)
+                            } else {
+                                self.expr_to_rust_with_hint(e, elem_type_hint)
+                            }
+                        })
                     }).collect();
                     format!("vec![{}]", elems_code.join(", "))
                 }
@@ -1290,9 +1479,15 @@ impl CodeGenerator {
             match a {
                 JSXAttr::Attr { name, value } => {
                     let rust_name = self.jsx_attr_to_rust(name);
-                    let value_code = value.as_ref()
-                        .map(|v| self.jsx_attr_value_to_rust(v))
-                        .unwrap_or_else(|| "true".to_string());
+                    let value_code = if rust_name == "style" {
+                        value.as_ref()
+                            .map(|v| self.jsx_style_value_to_rust(v))
+                            .unwrap_or_else(|| "\"\"".to_string())
+                    } else {
+                        value.as_ref()
+                            .map(|v| self.jsx_attr_value_to_rust(v))
+                            .unwrap_or_else(|| "true".to_string())
+                    };
                     // Check if value_code is a simple literal or needs braces
                     if value_code.starts_with('"') || value_code.starts_with("r#") {
                         Some(format!("{} = {}", rust_name, value_code))
@@ -1354,8 +1549,65 @@ impl CodeGenerator {
     fn jsx_attr_value_to_rust(&self, v: &JSXAttrValue) -> String {
         match v {
             JSXAttrValue::String(s) => format!("{:?}", s),
+            JSXAttrValue::Expr(e) => format!("{}.clone()", self.expr_to_rust(e)),
+        }
+    }
+
+    /// Convert CSS-in-JS object literal to inline CSS string expression
+    fn jsx_style_value_to_rust(&self, v: &JSXAttrValue) -> String {
+        match v {
+            JSXAttrValue::String(s) => format!("{:?}", s),
+            JSXAttrValue::Expr(Expr::Object { props }) => {
+                let mut static_parts: Vec<String> = Vec::new();
+                let mut dynamic_args: Vec<String> = Vec::new();
+                
+                for prop in props {
+                    if let ObjectProp::Init { key, value } = prop {
+                        let k = match key {
+                            PropKey::Ident(s) | PropKey::String(s) => s.clone(),
+                            PropKey::Number(n) => n.to_string(),
+                            PropKey::Computed(e) => self.expr_to_rust(e),
+                        };
+                        // Convert camelCase to kebab-case for CSS property names
+                        let css_prop = self.to_kebab_case(&k);
+                        match value {
+                            Expr::String(s) => {
+                                static_parts.push(format!("{}: {};", css_prop, s));
+                            }
+                            _ => {
+                                static_parts.push(format!("{}: {{}};", css_prop));
+                                dynamic_args.push(self.expr_to_rust(value));
+                            }
+                        }
+                    }
+                }
+                
+                let css_template = static_parts.join(" ");
+                if dynamic_args.is_empty() {
+                    format!("\"{}\"", css_template)
+                } else {
+                    format!("format!(\"{}\"{})", css_template, dynamic_args.iter().map(|a| format!(", {}", a)).collect::<String>())
+                }
+            }
             JSXAttrValue::Expr(e) => self.expr_to_rust(e),
         }
+    }
+
+    fn to_kebab_case(&self, s: &str) -> String {
+        let mut result = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if c.is_uppercase() {
+                if i > 0 {
+                    result.push('-');
+                }
+                result.push(c.to_ascii_lowercase());
+            } else if c == '_' {
+                result.push('-');
+            } else {
+                result.push(c);
+            }
+        }
+        result
     }
 
     fn jsx_child_to_rust(&self, child: &JSXChild) -> String {
@@ -1370,8 +1622,9 @@ impl CodeGenerator {
             }
             JSXChild::Expr(e) => {
                 // Expressions need to be wrapped in {} for html!
+                // Clone to handle reference fields in .iter().map() closures
                 let expr_str = self.expr_to_rust(e);
-                format!("{{{}}}", expr_str)
+                format!("{{{}.clone()}}", expr_str)
             }
             JSXChild::JSX(x) => {
                 // Use inner content for children (no nested html!())
