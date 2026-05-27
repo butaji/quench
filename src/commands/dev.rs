@@ -461,28 +461,12 @@ impl AppState {
     /// Build full HTML document
     fn build_html(&self, path: &str, result: &RenderResult) -> String {
         let title = path_to_title(path);
-        
-        // Convert page data to JSON manually
-        let page_data_json = serde_json::json!({
-            "rendered": true,
-            "route": path
-        }).to_string();
-
-        // Generate island manifest (simplified)
-        let island_manifest_json = serde_json::json!({
-            "islands": result.islands.iter().map(|i| {
-                serde_json::json!({
-                    "name": i.name,
-                    "id": i.id
-                })
-            }).collect::<Vec<_>>()
-        }).to_string();
 
         // Generate island bundle scripts (deduplicated)
         let mut island_names = std::collections::HashSet::new();
         let island_scripts = result.islands.iter()
             .filter(|i| island_names.insert(i.name.clone()))
-            .map(|i| format!(r#"<script src="/_runts/islands/{}"></script>"#, i.name))
+            .map(|i| format!(r#"<script type="module" src="/_runts/islands/{}"></script>"#, i.name))
             .collect::<Vec<_>>()
             .join("\n    ");
 
@@ -521,17 +505,24 @@ impl AppState {
     <main>
         {content}
     </main>
-    <script>
-        window.__RUNTS_CONFIG__ = {{ debug: true, defaultMode: 'visible', bundlesPath: '/_runts/islands', version: '0.5.0' }};
-        window.__PAGE_DATA__ = {page_data_json};
-        window.__ISLAND_MANIFEST__ = {island_manifest_json};
+    <script type="importmap">
+    {{
+      "imports": {{
+        "preact": "https://esm.sh/preact@10.19.3",
+        "preact/hooks": "https://esm.sh/preact@10.19.3/hooks"
+      }}
+    }}
     </script>
-    <script type="module" src="/_runts/hmr.js"></script>
-    <script src="/_runts/client.js"></script>
+    <script type="module">
+        import * as preact from 'preact';
+        window.preact = preact;
+    </script>
+    <script type="module" src="/_runts/client.js"></script>
     {island_scripts}
+    <script type="module" src="/_runts/hmr.js"></script>
 </body>
 </html>
-"#, title = title, nav_links = nav_links, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json, island_scripts = island_scripts)
+"#, title = title, nav_links = nav_links, content = result.html, island_scripts = island_scripts)
     }
 
     /// Generate nav links from the current route table

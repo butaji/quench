@@ -1,17 +1,14 @@
 //! JavaScript code generator for island client bundles
 //!
-//! Generates vanilla JS from HIR that runs in the browser using
-//! the global Runts client runtime (signals, effects, hydration).
+//! Generates standard Preact ES modules from HIR.
+//! Each island bundle:
+//!   1. Imports preact + hooks
+//!   2. Defines the component as a Preact function component
+//!   3. Auto-hydrates its data-island container
 
 use super::hir::*;
 
-/// Generate a self-contained island JS bundle from HIR.
-///
-/// The output is vanilla JS that:
-/// 1. Defines the component function
-/// 2. Uses Runts.signal() for useState/useSignal
-/// 3. Returns a VNode tree compatible with Runts.renderVNode()
-/// 4. Registers itself via Runts.registerIsland()
+/// Generate a Preact island JS bundle from HIR.
 pub fn generate_island_js(name: &str, module: &Module) -> String {
     let mut js = String::new();
 
@@ -32,81 +29,43 @@ pub fn generate_island_js(name: &str, module: &Module) -> String {
         );
     };
 
-    js.push_str(&format!("// Island: {}\n", name));
-    js.push_str("(function() {\n");
-    js.push_str("'use strict';\n\n");
+    // ── Imports ────────────────────────────────────────────────
+    js.push_str("import { h, render } from 'preact';\n");
 
-    // Generate hook helpers
-    js.push_str(
-        r#"
-// Helper: create signal-backed state (useState shim)
-function useState(initial) {
-  const sig = Runts.signal(initial);
-  const set = function(v) { sig.value = v; };
-  return [sig, set];
-}
-
-// Helper: create ref
-function useRef(initial) {
-  return { current: initial };
-}
-
-// Helper: create memo
-function useMemo(fn, deps) {
-  return Runts.computed(fn);
-}
-
-// Helper: create callback
-function useCallback(fn, deps) {
-  return fn;
-}
-
-// Helper: run effect
-function useEffect(fn, deps) {
-  Runts.effect(fn);
-}
-"#,
-    );
-
-    // Generate the component function
-    js.push_str(&format!("function {}Component(props) {{\n", name));
-
-    // Destructure props with defaults
-    if let Some(first_param) = component.params.first() {
-        if let Some(Pat::Object { props: pat_props, .. }) = &first_param.pattern {
-            let destructured: Vec<String> = pat_props
-                .iter()
-                .map(|prop| match prop {
-                    ObjectPatProp::Init { key, value } => {
-                        match value {
-                            Pat::Default { arg: _, default } => {
-                                format!("{} = {}", key, expr_to_js(default))
-                            }
-                            Pat::Ident { name: pat_name, .. } => {
-                                if key == pat_name {
-                                    key.clone()
-                                } else {
-                                    format!("{}: {}", key, pat_name)
-                                }
-                            }
-                            _ => {
-                                format!("{}: {}", key, pat_to_js(value))
-                            }
-                        }
-                    }
-                    ObjectPatProp::Rest { .. } => "...rest".to_string(),
-                })
-                .collect();
-            js.push_str(&format!("  const {{{}}} = props || {{}};\n", destructured.join(", ")));
-        } else {
-            js.push_str(&format!(
-                "  const _props = props || {{}};\n  const {} = _props;\n",
-                first_param.name
-            ));
-        }
+    // Check which hooks are used and import only those
+    let body_stmts = component.body.as_ref().map(|b| b.0.as_slice()).unwrap_or(&[]);
+    let mut hooks = Vec::new();
+    if stmts_have_call(body_stmts, "useState") { hooks.push("useState"); }
+    if stmts_have_call(body_stmts, "useEffect") { hooks.push("useEffect"); }
+    if stmts_have_call(body_stmts, "useRef") { hooks.push("useRef"); }
+    if stmts_have_call(body_stmts, "useMemo") { hooks.push("useMemo"); }
+    if stmts_have_call(body_stmts, "useCallback") { hooks.push("useCallback"); }
+    if stmts_have_call(body_stmts, "useReducer") { hooks.push("useReducer"); }
+    if stmts_have_call(body_stmts, "useContext") { hooks.push("useContext"); }
+    if stmts_have_call(body_stmts, "useId") { hooks.push("useId"); }
+    if stmts_have_call(body_stmts, "useSignal") { hooks.push("useSignal"); }
+    if stmts_have_call(body_stmts, "useComputed") { hooks.push("useComputed"); }
+    if stmts_have_call(body_stmts, "useSignalEffect") { hooks.push("useSignalEffect"); }
+    if !hooks.is_empty() {
+        js.push_str(&format!(
+            "import {{ {} }} from 'preact/hooks';\n",
+            hooks.join(", ")
+        ));
     }
 
-    // Generate body statements
+    // ── Component ──────────────────────────────────────────────
+    js.push('\n');
+    js.push_str(&format!("// Island: {}\n", name));
+    js.push_str("export default function ");
+    js.push_str(name);
+    js.push_str("Component(");
+
+    // Params
+    let params_js = params_to_js(&component.params);
+    js.push_str(&params_js);
+    js.push_str(") {\n");
+
+    // Body
     if let Some(body) = &component.body {
         for stmt in &body.0 {
             let stmt_js = stmt_to_js(stmt);
@@ -122,16 +81,116 @@ function useEffect(fn, deps) {
 
     js.push_str("}\n\n");
 
-    // Register with Runts
-    js.push_str(&format!(
-        "Runts.registerIsland('{}', {}Component);\n",
-        name, name
-    ));
-
-    js.push_str("})();\n");
+    // ── Auto-hydrate ───────────────────────────────────────────
+    js.push_str("// Auto-hydrate on client\n");
+    js.push_str("const el = document.querySelector('[data-island=\"");
+    js.push_str(name);
+    js.push_str("\"]');\n");
+    js.push_str("if (el && typeof Runts !== 'undefined') {\n");
+    js.push_str("  Runts.registerIsland('");
+    js.push_str(name);
+    js.push_str("', ");
+    js.push_str(name);
+    js.push_str("Component);\n");
+    js.push_str("}\n");
 
     js
 }
+
+// ── Detect hook usage ──────────────────────────────────────────
+
+fn has_hook_calls(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| stmt_has_call(s, "useState")
+        || stmt_has_call(s, "useEffect")
+        || stmt_has_call(s, "useRef")
+        || stmt_has_call(s, "useMemo")
+        || stmt_has_call(s, "useCallback")
+        || stmt_has_call(s, "useReducer")
+        || stmt_has_call(s, "useContext")
+        || stmt_has_call(s, "useId")
+        || stmt_has_call(s, "useSignal")
+        || stmt_has_call(s, "useComputed")
+        || stmt_has_call(s, "useSignalEffect"))
+}
+
+/// Check if any statement in the slice contains a call to `name`.
+fn stmts_have_call(stmts: &[Stmt], name: &str) -> bool {
+    stmts.iter().any(|s| stmt_has_call(s, name))
+}
+
+fn stmt_has_call(stmt: &Stmt, name: &str) -> bool {
+    match stmt {
+        Stmt::Variable { decl } => {
+            decl.init.as_ref().map_or(false, |e| expr_has_call(e, name))
+        }
+        Stmt::Expr { expr } => expr_has_call(expr, name),
+        Stmt::Return { arg: Some(expr) } => expr_has_call(expr, name),
+        Stmt::If { test, consequent, alternate } => {
+            expr_has_call(test, name)
+                || stmt_has_call(consequent, name)
+                || alternate.as_ref().map_or(false, |s| stmt_has_call(s, name))
+        }
+        Stmt::Block(stmts) => has_hook_calls(stmts),
+        _ => false,
+    }
+}
+
+fn expr_has_call(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Call { callee, .. } => {
+            if let Expr::Ident { name: n } = callee.as_ref() {
+                if n == name { return true; }
+            }
+            false
+        }
+        Expr::Member { object, .. } => expr_has_call(object, name),
+        Expr::Bin { left, right, .. } => expr_has_call(left, name) || expr_has_call(right, name),
+        Expr::Unary { arg, .. } => expr_has_call(arg, name),
+        Expr::Logical { left, right, .. } => expr_has_call(left, name) || expr_has_call(right, name),
+        Expr::Cond { test, consequent, alternate } => {
+            expr_has_call(test, name)
+                || expr_has_call(consequent, name)
+                || expr_has_call(alternate, name)
+        }
+        Expr::Assign { right, .. } => expr_has_call(right, name),
+        Expr::Array { elems } => elems.iter().any(|e| e.as_ref().map_or(false, |e| expr_has_call(e, name))),
+        Expr::Object { props } => props.iter().any(|p| match p {
+            ObjectProp::Init { value, .. } => expr_has_call(value, name),
+            ObjectProp::Method { value, .. } => {
+                value.body.as_ref().map_or(false, |b| has_hook_calls(&b.0))
+            }
+            ObjectProp::Spread { value } => expr_has_call(value, name),
+            _ => false,
+        }),
+        Expr::Arrow { body, .. } => {
+            match body.as_ref() {
+                Stmt::Block(stmts) => has_hook_calls(stmts),
+                stmt => stmt_has_call(stmt, name),
+            }
+        }
+        Expr::Function { decl } => {
+            decl.body.as_ref().map_or(false, |b| has_hook_calls(&b.0))
+        }
+        Expr::JSX(jsx) => jsx_has_call(jsx, name),
+        Expr::Template { exprs, .. } => exprs.iter().any(|e| expr_has_call(e, name)),
+        _ => false,
+    }
+}
+
+fn jsx_has_call(jsx: &JSXExpr, name: &str) -> bool {
+    jsx.children.iter().any(|child| match child {
+        JSXChild::Expr(e) => expr_has_call(e, name),
+        JSXChild::JSX(inner) => jsx_has_call(inner, name),
+        JSXChild::Fragment { children } => children.iter().any(|c| match c {
+            JSXChild::Expr(e) => expr_has_call(e, name),
+            JSXChild::JSX(inner) => jsx_has_call(inner, name),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+// ── JS codegen helpers ─────────────────────────────────────────
 
 fn stmt_to_js(stmt: &Stmt) -> String {
     match stmt {
@@ -154,11 +213,7 @@ fn stmt_to_js(stmt: &Stmt) -> String {
         }
         Stmt::Expr { expr } => {
             let e = expr_to_js(expr);
-            if e.is_empty() {
-                String::new()
-            } else {
-                format!("{};", e)
-            }
+            if e.is_empty() { String::new() } else { format!("{};", e) }
         }
         Stmt::Return { arg: Some(expr) } => {
             format!("return {};", expr_to_js(expr))
@@ -474,6 +529,8 @@ fn expr_to_js(expr: &Expr) -> String {
     }
 }
 
+// ── JSX → Preact h() calls ─────────────────────────────────────
+
 fn jsx_to_js(jsx: &JSXExpr) -> String {
     let tag = match &jsx.opening.name {
         JSXName::Ident(s) => s.clone(),
@@ -481,15 +538,13 @@ fn jsx_to_js(jsx: &JSXExpr) -> String {
         _ => "div".to_string(),
     };
 
-    // Check if component (PascalCase)
     let is_component = tag.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
 
     if is_component {
-        // For components in islands, we inline or call the component
         let props = jsx_attrs_to_js(&jsx.opening.attrs);
         let children = jsx_children_to_js(&jsx.children);
-        let all_props = if children.is_empty() {
-            props
+        let all_props = if children.is_empty() || children == "null" {
+            if props.is_empty() { "null".to_string() } else { format!("{{ {} }}", props) }
         } else {
             if props.is_empty() {
                 format!("{{ children: {} }}", children)
@@ -497,10 +552,10 @@ fn jsx_to_js(jsx: &JSXExpr) -> String {
                 format!("{{ {}, children: {} }}", props, children)
             }
         };
-        return format!("{}({})", tag, all_props);
+        return format!("h({}, {})", tag, all_props);
     }
 
-    // HTML element → VNode object
+    // HTML element → h('tag', props, children)
     let mut props = Vec::new();
     for attr in &jsx.opening.attrs {
         match attr {
@@ -510,8 +565,8 @@ fn jsx_to_js(jsx: &JSXExpr) -> String {
                     Some(JSXAttrValue::Expr(e)) => expr_to_js(e),
                     None => "true".to_string(),
                 };
-                let key = if name == "className" { "className" } else { name };
-                props.push(format!("{}: {}", key, v));
+                let key = if name == "className" { "class" } else { name };
+                props.push(format!("'{}': {}", key, v));
             }
             JSXAttr::Spread { expr } => {
                 props.push(format!("...{}", expr_to_js(expr)));
@@ -521,15 +576,18 @@ fn jsx_to_js(jsx: &JSXExpr) -> String {
     }
 
     let children = jsx_children_to_js(&jsx.children);
-    if !children.is_empty() && children != "null" {
-        props.push(format!("children: {}", children));
-    }
 
-    format!(
-        "{{ type: '{}', props: {{{}}} }}",
-        tag,
-        props.join(", ")
-    )
+    let props_str = if props.is_empty() {
+        "null".to_string()
+    } else {
+        format!("{{ {} }}", props.join(", "))
+    };
+
+    if children.is_empty() || children == "null" {
+        format!("h('{}', {})", tag, props_str)
+    } else {
+        format!("h('{}', {}, {})", tag, props_str, children)
+    }
 }
 
 fn jsx_attrs_to_js(attrs: &[JSXAttr]) -> String {
