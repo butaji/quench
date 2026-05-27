@@ -120,6 +120,50 @@ mod parser_tests {
     }
     
     #[test]
+    fn test_parse_jsx_fragment() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const elem = <>Hello <span>world</span></>;"#);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        
+        let module = result.unwrap();
+        let expr = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v.init.as_ref().unwrap(),
+            _ => panic!("Expected variable declaration"),
+        };
+        
+        match expr {
+            Expr::JSX(jsx_expr) => {
+                assert!(matches!(jsx_expr.opening.name, JSXName::Fragment), "Expected fragment name");
+                assert_eq!(jsx_expr.children.len(), 2);
+                assert!(matches!(&jsx_expr.children[0], JSXChild::Text(t) if t == "Hello"
+                ));
+            }
+            _ => panic!("Expected JSX expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_jsx_fragment_empty() {
+        let mut parser = Parser::new();
+        let result = parser.parse_source(r#"const elem = <></>;"#);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        
+        let module = result.unwrap();
+        let expr = match &module.items[0] {
+            ModuleItem::Decl(Decl::Variable(v)) => v.init.as_ref().unwrap(),
+            _ => panic!("Expected variable declaration"),
+        };
+        
+        match expr {
+            Expr::JSX(jsx_expr) => {
+                assert!(matches!(jsx_expr.opening.name, JSXName::Fragment));
+                assert!(jsx_expr.children.is_empty());
+            }
+            _ => panic!("Expected JSX expression"),
+        }
+    }
+
+    #[test]
     fn test_parse_jsx_component() {
         let mut parser = Parser::new();
         let source = r#"const comp = <Counter initial={0} step={1} />;"#;
@@ -325,6 +369,58 @@ mod codegen_tests {
         assert!(result.contains("html!(" ));
         assert!(result.contains("<div"));
         assert!(result.contains("class_name"));
+    }
+
+    #[test]
+    fn test_jsx_fragment_to_rust() {
+        let cg = create_codegen();
+        
+        let jsx = JSXExpr {
+            opening: JSXOpening {
+                name: JSXName::Fragment,
+                attrs: vec![],
+                self_closing: false,
+            },
+            children: vec![
+                JSXChild::Text("Hello ".to_string()),
+                JSXChild::JSX(JSXExpr {
+                    opening: JSXOpening {
+                        name: JSXName::Ident("span".to_string()),
+                        attrs: vec![],
+                        self_closing: false,
+                    },
+                    children: vec![
+                        JSXChild::Text("world".to_string()),
+                    ],
+                    closing: None,
+                }),
+            ],
+            closing: None,
+        };
+        
+        let result = cg.jsx_to_rust(&jsx);
+        assert!(result.contains("html!(") );
+        assert!(result.contains("<>"));
+        assert!(result.contains("</>"));
+        assert!(result.contains("<span>"));
+    }
+
+    #[test]
+    fn test_jsx_fragment_empty_to_rust() {
+        let cg = create_codegen();
+        
+        let jsx = JSXExpr {
+            opening: JSXOpening {
+                name: JSXName::Fragment,
+                attrs: vec![],
+                self_closing: false,
+            },
+            children: vec![],
+            closing: None,
+        };
+        
+        let result = cg.jsx_to_rust(&jsx);
+        assert_eq!(result, "html!(<></>)");
     }
     
     #[test]

@@ -1642,7 +1642,13 @@ impl Parser {
         self.expect('<')?;
         self.skip_ws_and_comments();
 
-        let name = self.parse_jsx_name()?;
+        // Fragment: <>...</>
+        let is_fragment = self.check('>');
+        let name = if is_fragment {
+            JSXName::Fragment
+        } else {
+            self.parse_jsx_name()?
+        };
         self.skip_ws_and_comments();
 
         let mut attrs = Vec::new();
@@ -1720,8 +1726,11 @@ impl Parser {
             self.expect('<')?;
             self.expect('/')?;
             self.skip_ws_and_comments();
-            let _close_name = self.parse_jsx_name()?;
-            self.skip_ws_and_comments();
+            // Fragments use </> with no name
+            if !self.check('>') {
+                let _close_name = self.parse_jsx_name()?;
+                self.skip_ws_and_comments();
+            }
             self.expect('>')?;
         }
 

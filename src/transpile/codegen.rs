@@ -1573,6 +1573,7 @@ impl CodeGenerator {
             JSXName::Member { object, property } => format!("{}_{}", object, property),
             JSXName::Namespaced { ns, name } => format!("{}_{}", ns, name),
             JSXName::Dynamic(_) => "Dynamic".to_string(),
+            JSXName::Fragment => String::new(),
         };
 
         let attrs: Vec<String> = x.opening.attrs.iter().filter_map(|a| {
@@ -1630,6 +1631,14 @@ impl CodeGenerator {
 
         let children_str = children.join(" ");
         
+        // Handle fragments
+        if matches!(x.opening.name, JSXName::Fragment) {
+            if children_str.is_empty() {
+                return "<></>".to_string();
+            }
+            return format!("<>{}</>", children_str);
+        }
+
         // PascalCase tags are components, not HTML elements
         let rust_tag = if tag_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
             // Component - use PascalCase
