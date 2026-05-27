@@ -508,12 +508,12 @@
   // Expose globally
   global.Runts = RuntsClient;
 
-  // Auto-bootstrap on DOMContentLoaded
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', bootstrapIslands);
-    } else {
+  // Auto-bootstrap after all resources (including island bundles) have loaded
+  if (typeof window !== 'undefined') {
+    if (document.readyState === 'complete') {
       bootstrapIslands();
+    } else {
+      window.addEventListener('load', bootstrapIslands);
     }
   }
 

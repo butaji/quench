@@ -1,0 +1,7 @@
+# Generated Rust source — runts build creates these from TS/TSX
+src/
+Cargo.lock
+
+# Build cache
+.runts/
+target/

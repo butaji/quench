@@ -589,15 +589,10 @@ impl AppState {
     }
 
     /// Generate island JS bundle from HIR for client hydration
+    /// 
+    /// Island bundles contain ONLY the island component registration —
+    /// the runtime is already loaded by `/_runts/client.js`.
     pub fn generate_island_js(&self, name: &str) -> String {
-        let interpreter = self.interpreter.read();
-        let _manifest = interpreter.get_island_manifest();
-        drop(interpreter);
-
-        // Start with the runtime
-        let mut js = CLIENT_RUNTIME_JS.to_string();
-        js.push('\n');
-
         // Find island source and generate component function from HIR
         let islands_dir = self.root.join("islands");
         let island_path = islands_dir.join(format!("{}.tsx", name));
@@ -611,6 +606,8 @@ impl AppState {
             None
         };
 
+        let mut js = String::new();
+
         if let Some(path) = source_file {
             if let Ok(source) = std::fs::read_to_string(&path) {
                 let mut parser = crate::transpile::Parser::new();
@@ -622,14 +619,6 @@ impl AppState {
                 }
             }
         }
-
-        // Append hydration bootstrap
-        js.push_str(r#"
-// Auto-bootstrap if not already done
-if (typeof document !== 'undefined' && document.readyState !== 'loading') {
-  Runts._bootstrapIslands();
-}
-"#);
 
         js
     }
