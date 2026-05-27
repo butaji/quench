@@ -605,6 +605,8 @@ pub enum JSXName {
     Namespaced { ns: String, name: String },
     /// Dynamic component
     Dynamic(Box<Expr>),
+    /// Fragment (<>...</>)
+    Fragment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

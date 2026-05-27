@@ -73,6 +73,10 @@ impl JsxTransformer {
                 // Dynamic components need special handling
                 "dynamic_component".to_string()
             }
+            JSXName::Fragment => {
+                // Fragments have no tag name
+                String::new()
+            }
         }
     }
     
