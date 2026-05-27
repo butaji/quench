@@ -458,6 +458,9 @@ impl AppState {
             }).collect::<Vec<_>>()
         }).to_string();
 
+        // Generate nav links from actual routes
+        let nav_links = self.build_nav_links();
+
         format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -485,9 +488,7 @@ impl AppState {
 </head>
 <body>
     <nav class="runts-nav">
-        <a href="/">Home</a>
-        <a href="/blog">Blog</a>
-        <a href="/about">About</a>
+        {nav_links}
     </nav>
     <main>
         {content}
@@ -500,7 +501,48 @@ impl AppState {
     <script type="module" src="/_runts/client.js"></script>
 </body>
 </html>
-"#, title = title, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json)
+"#, title = title, nav_links = nav_links, content = result.html, page_data_json = page_data_json, island_manifest_json = island_manifest_json)
+    }
+
+    /// Generate nav links from the current route table
+    fn build_nav_links(&self) -> String {
+        let rt = self.route_table.read();
+        let mut links: Vec<(String, String)> = Vec::new();
+        
+        // Always include home
+        links.push(("/".to_string(), "Home".to_string()));
+        
+        for route in &rt.routes {
+            // Skip dynamic routes, catch-all, and special files for the nav
+            let pattern = &route.pattern;
+            if pattern.contains(':') || pattern.contains('*') || pattern == "/" {
+                continue;
+            }
+            // Clean up pattern for display
+            let label = pattern
+                .trim_start_matches('/')
+                .split('/')
+                .last()
+                .unwrap_or("")
+                .replace('-', " ")
+                .replace('_', " ");
+            if label.is_empty() {
+                continue;
+            }
+            let display: String = label.chars().enumerate().map(|(i, c)| {
+                if i == 0 { c.to_uppercase().to_string() } else { c.to_string() }
+            }).collect();
+            links.push((pattern.clone(), display));
+        }
+        
+        // Deduplicate and sort
+        links.sort_by(|a, b| a.0.cmp(&b.0));
+        links.dedup_by(|a, b| a.0 == b.0);
+        
+        links.into_iter()
+            .map(|(href, label)| format!(r#"<a href="{}">{}</a>"#, href, label))
+            .collect::<Vec<_>>()
+            .join("\n        ")
     }
 
     fn value_to_json(&self, value: &crate::runtime::interpreter::Value) -> serde_json::Value {
