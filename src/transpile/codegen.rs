@@ -926,6 +926,22 @@ impl CodeGenerator {
         self.expr_to_rust_with_hint(expr, None)
     }
 
+    /// Format expression for use as an array index (usize context).
+    /// Whole-number literals are emitted without the `.0` suffix.
+    fn expr_to_rust_index(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Number(n) => {
+                let s = n.to_string();
+                if s.contains('.') || s.contains('e') {
+                    format!("({} as usize)", s)
+                } else {
+                    s // "0", "1", etc. – inferred as usize in index context
+                }
+            }
+            _ => format!("({} as usize)", self.expr_to_rust(expr)),
+        }
+    }
+
     pub fn expr_to_rust_with_hint(&self, expr: &Expr, type_hint: Option<&Type>) -> String {
         match expr {
             Expr::Ident { name } => self.to_snake_case(name),
@@ -1203,18 +1219,18 @@ impl CodeGenerator {
                             "toLowerCase" => return format!("{}.to_lowercase()", obj_code),
                             "toUpperCase" => return format!("{}.to_uppercase()", obj_code),
                             "slice" if !args.is_empty() => {
-                                let start = self.expr_to_rust(&args[0]);
+                                let start = self.expr_to_rust_index(&args[0]);
                                 if args.len() > 1 {
-                                    let end = self.expr_to_rust(&args[1]);
-                                    return format!("{}[({} as usize)..({} as usize)].to_vec()", obj_code, start, end);
+                                    let end = self.expr_to_rust_index(&args[1]);
+                                    return format!("{}[{}..{}].to_vec()", obj_code, start, end);
                                 } else {
-                                    return format!("{}[({} as usize)..].to_vec()", obj_code, start);
+                                    return format!("{}[{}..].to_vec()", obj_code, start);
                                 }
                             }
                             "substring" if !args.is_empty() => {
-                                let start = self.expr_to_rust(&args[0]);
+                                let start = self.expr_to_rust_index(&args[0]);
                                 if args.len() > 1 {
-                                    let end = self.expr_to_rust(&args[1]);
+                                    let end = self.expr_to_rust_index(&args[1]);
                                     return format!("{}[{}..{}]", obj_code, start, end);
                                 } else {
                                     return format!("{}[{}..]", obj_code, start);
@@ -1268,7 +1284,7 @@ impl CodeGenerator {
                 let prop_code = if *computed {
                     // Array/object index access: arr[0], obj[key]
                     // Cast to usize for array indexing
-                    format!("({} as usize)", self.expr_to_rust(property))
+                    self.expr_to_rust_index(property)
                 } else {
                     if let Expr::Ident { name } = property.as_ref() {
                         // Don't transform known HashMap methods
@@ -1633,7 +1649,26 @@ impl CodeGenerator {
     fn jsx_attr_value_to_rust(&self, v: &JSXAttrValue) -> String {
         match v {
             JSXAttrValue::String(s) => format!("{:?}", s),
-            JSXAttrValue::Expr(e) => format!("{}.clone()", self.expr_to_rust(e)),
+            JSXAttrValue::Expr(e) => {
+                let expr_str = self.expr_to_rust(e);
+                if self.expr_needs_clone(e) {
+                    format!("{}.clone()", expr_str)
+                } else {
+                    expr_str
+                }
+            }
+        }
+    }
+
+    /// Determine if an expression needs .clone() when used in JSX.
+    /// Literals and pure expressions that produce new values don't need clone.
+    fn expr_needs_clone(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Number(_) | Expr::String(_) | Expr::Boolean(_) | Expr::Null | Expr::Undefined => false,
+            Expr::Bin { .. } | Expr::Unary { .. } | Expr::Logical { .. } | Expr::Cond { .. } | Expr::Template { .. } => false,
+            Expr::Arrow { .. } => false,
+            Expr::Array { .. } | Expr::Object { .. } => false,
+            _ => true,
         }
     }
 
@@ -1706,9 +1741,12 @@ impl CodeGenerator {
             }
             JSXChild::Expr(e) => {
                 // Expressions need to be wrapped in {} for html!
-                // Clone to handle reference fields in .iter().map() closures
                 let expr_str = self.expr_to_rust(e);
-                format!("{{{}.clone()}}", expr_str)
+                if self.expr_needs_clone(e) {
+                    format!("{{{}.clone()}}", expr_str)
+                } else {
+                    format!("{{{}}}", expr_str)
+                }
             }
             JSXChild::JSX(x) => {
                 // Use inner content for children (no nested html!())
