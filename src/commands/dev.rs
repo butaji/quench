@@ -311,11 +311,11 @@ impl AppState {
                     .unwrap_or("");
 
                 if filename.starts_with('_') {
-                    // Load layouts and middleware separately
-                    if filename.contains("layout") {
+                    // Load layouts, _app, and middleware
+                    if filename.contains("layout") || filename == "_app.tsx" || filename == "_app.ts" {
                         if let Ok(source) = std::fs::read_to_string(&path) {
                             if let Err(e) = interpreter.load_file(&path, &source) {
-                                eprintln!("[runts] Warning: Could not load layout {}: {}", path.display(), e);
+                                eprintln!("[runts] Warning: Could not load special file {}: {}", path.display(), e);
                             }
                         }
                     }

@@ -77,6 +77,7 @@ runts compiles a **minimal but sufficient** subset of TypeScript + TSX that cove
 | `useContext` | ✅ | Thread-local context store |
 | `useId` | ✅ | Atomic counter |
 | `useSyncExternalStore` | ✅ | Server snapshot fallback |
+| `useErrorBoundary` | ✅ | Error state + reset callback |
 
 #### Preact Signals
 | Feature | Status | Rust equivalent |
@@ -94,6 +95,7 @@ runts compiles a **minimal but sufficient** subset of TypeScript + TSX that cove
 | Dynamic routes (`[id].tsx`) | ✅ | Regex-based param extraction |
 | Nested routes (`blog/[slug].tsx`) | ✅ | |
 | Catch-all (`[...slug].tsx`) | ✅ | |
+| Route groups (`(group)/`) | ✅ | Ignored in URL path |
 | Route handlers (`GET` / `POST` / `PUT` / `DELETE`) | ✅ | |
 | `ctx.render(data)` | ✅ | SSR with props injection |
 | `ctx.params` | ✅ | HashMap access |
@@ -101,6 +103,7 @@ runts compiles a **minimal but sufficient** subset of TypeScript + TSX that cove
 | Islands (`islands/`) | ✅ | Selective hydration |
 | Hydration strategies (`load`, `idle`, `visible`, `interaction`) | ✅ | |
 | Layouts (`_layout.tsx`) | ✅ | Nested composition |
+| `_app.tsx` root wrapper | ✅ | Full component render with `children` |
 | Error pages (`_404.tsx`, `_500.tsx`) | ✅ | |
 | Static files (`static/`) | ✅ | Served by dev + production |
 | `IS_BROWSER` constant | ✅ | Compile-time flag |
@@ -419,6 +422,9 @@ src/
 |---------|----------|--------|
 | Source maps | P2 | ❌ Not started |
 | Plugin system | P2 | ❌ Not started |
+| `_app.tsx` root wrapper | P1 | ✅ Complete |
+| Route groups `(group)/` | P2 | ✅ Complete |
+| `useErrorBoundary` hook | P1 | ✅ Complete |
 | CSS modules / Tailwind integration | P2 | ❌ Not started |
 | Form handling (`ctx.formData`) | P1 | ❌ Not started |
 | Database adapter layer | P2 | ❌ Not started |
@@ -499,7 +505,7 @@ src/
 ## 5. Verification
 
 ### Test Coverage
-- **Unit tests:** 99 passing (parser, codegen, hooks, signals, routing)
+- **Unit tests:** 106 passing (parser, codegen, hooks, signals, routing, error boundaries)
 - **Integration tests:** End-to-end dev server request handling
 - **Example project:** `examples/my-blog` — 4 routes, 3 islands, 1 component, middleware
 

@@ -110,6 +110,13 @@ impl Route {
             pattern
         };
         
+        // Strip route group segments: (group) does not affect URL
+        let pattern = pattern
+            .split('/')
+            .filter(|s| !(s.starts_with('(') && s.ends_with(')')))
+            .collect::<Vec<_>>()
+            .join("/");
+        
         Ok(pattern.to_string())
     }
     
@@ -322,5 +329,22 @@ mod tests {
         
         let (route, params) = table.find_route("/api/users/123", HttpMethod::GET).unwrap();
         assert!(route.is_catch_all);
+    }
+
+    #[test]
+    fn test_route_group_ignored_in_url() {
+        let route = Route::from_file_path(&PathBuf::from("routes/(marketing)/about.tsx")).unwrap();
+        assert_eq!(route.pattern, "about");
+        assert_eq!(route.path_template, "/about");
+        
+        let params = route.match_path("/about");
+        assert!(params.is_some());
+    }
+
+    #[test]
+    fn test_route_group_with_param() {
+        let route = Route::from_file_path(&PathBuf::from("routes/(shop)/products/[id].tsx")).unwrap();
+        assert_eq!(route.path_template, "/products/:id");
+        assert_eq!(route.segments, vec!["id"]);
     }
 }

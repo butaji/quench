@@ -104,6 +104,11 @@ pub fn parse_route_path(path: &str) -> RouteInfo {
             segment
         };
         
+        // Skip route group segments: (group) does not affect URL
+        if clean_segment.starts_with('(') && clean_segment.ends_with(')') {
+            continue;
+        }
+        
         if clean_segment.starts_with('[') && clean_segment.ends_with(']') {
             // Dynamic segment: [slug] -> :slug
             let param_name = &clean_segment[1..clean_segment.len()-1];
@@ -335,5 +340,20 @@ mod tests {
         assert_eq!(route.path, "/api/{path}");
         // Segments stores the raw param name including ... for catch-all
         assert!(route.segments.contains(&"...path".to_string()));
+    }
+
+    #[test]
+    fn test_parse_route_path_with_group() {
+        let route = parse_route_path("(marketing)/about");
+        assert_eq!(route.pattern, "(marketing)/about");
+        assert_eq!(route.path, "/about");
+        assert!(route.segments.is_empty());
+    }
+
+    #[test]
+    fn test_parse_route_path_nested_group() {
+        let route = parse_route_path("(shop)/products/[id]");
+        assert_eq!(route.path, "/products/:id");
+        assert_eq!(route.segments, vec!["id"]);
     }
 }

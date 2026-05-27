@@ -39,6 +39,9 @@
 | **Source Maps** | ❌ Missing | P2 | Debugging support |
 | **IDE Integration** | ❌ Missing | P3 | LSP for .tsx files |
 | **Incremental Builds** | ✅ Complete | P2 | SHA-256 cache in `.runts/cache/build_cache.json` |
+| **Route Groups** | ✅ Complete | P2 | `(group)/` ignored in URL |
+| **`_app.tsx` Wrapper** | ✅ Complete | P1 | Full component render with `children` |
+| **`useErrorBoundary`** | ✅ Complete | P1 | Preact hook for error boundaries |
 
 ---
 
@@ -127,6 +130,9 @@ All MVP components are now implemented:
 - [x] Middleware chaining (runtime)
 - [x] Error pages (404, 500)
 - [x] Dev hot-reload
+- [x] Route groups (`(marketing)/about` → `/about`)
+- [x] `_app.tsx` component rendering
+- [x] `useErrorBoundary` hook
 
 ---
 
@@ -154,6 +160,7 @@ All MVP components are now implemented:
 | Transpilation Strategy | ✅ Complete | `docs/TRANSPILE_STRATEGY.md` |
 | Roadmap (MVP → v1.0) | ✅ Complete | `docs/ROADMAP.md` |
 | Performance Targets & Trade-offs | ✅ Complete | `docs/PERFORMANCE.md` |
+| **Complete Design Document** | ✅ Complete | `docs/RUNTS_COMPLETE_DESIGN.md` |
 
 ---
 

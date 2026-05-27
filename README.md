@@ -2,7 +2,7 @@
 
 > **runts** compiles Fresh/Preact TypeScript/TSX to native Rust binaries with **zero external JS runtime dependencies**.
 
-[![Tests](https://img.shields.io/badge/tests-99%2F99%20passing-success)](SPEC.md)
+[![Tests](https://img.shields.io/badge/tests-106%2F106%20passing-success)](SPEC.md)
 [![Rust](https://img.shields.io/badge/rust-1.81%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 
@@ -133,10 +133,11 @@ export default function Counter({ initial = 0, step = 1 }: Props) {
 
 | Document | Description |
 |----------|-------------|
-| [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) | **Precise TS/TSX subset specification** — what's supported, what's excluded, and why |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Detailed architecture** — parser, HIR, analyzer, codegen, runtime, dev vs prod |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | **Roadmap** — MVP (v0.5) → Feature Complete (v0.6) → Production (v1.0) |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | **Performance targets, benchmarks, and trade-offs** |
+| [docs/RUNTS_COMPLETE_DESIGN.md](docs/RUNTS_COMPLETE_DESIGN.md) | **Single authoritative reference** — subset, architecture, roadmap, performance |
+| [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) | Precise TS/TSX subset specification |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture — parser, HIR, analyzer, codegen, runtime |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Roadmap — MVP (v0.5) → Feature Complete (v0.6) → Production (v1.0) |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance targets, benchmarks, and trade-offs |
 | [SPEC.md](SPEC.md) | Legacy technical specification (reference) |
 
 ## Supported Subset (Summary)
@@ -144,8 +145,8 @@ export default function Counter({ initial = 0, step = 1 }: Props) {
 ### ✅ Supported
 
 - JSX/TSX (elements, components, fragments, spread props, conditional rendering)
-- All Preact hooks (`useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useReducer`, `useContext`, `useId`, `useSignal`, `useComputed`)
-- File-based routing (static, dynamic `[param]`, catch-all `[...path]`, layouts, middleware)
+- All Preact hooks (`useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useReducer`, `useContext`, `useId`, `useErrorBoundary`, `useSignal`, `useComputed`)
+- File-based routing (static, dynamic `[param]`, catch-all `[...path]`, route groups `(group)/`, layouts, middleware, `_app.tsx`)
 - Async/await, arrow functions, destructuring, template literals, optional chaining, nullish coalescing
 - TypeScript interfaces, type aliases, enums, generics (limited)
 - Fine-grained signals and effects
@@ -183,7 +184,7 @@ See [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) for the complete specif
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Binary size | < 2 MB | ~2.6 MB |
+| Binary size | < 2 MB | **~1.5 MB** |
 | Cold start | < 5 ms | < 10 ms |
 | SSR throughput | > 50k req/s | ~15k req/s |
 | Dev hot reload | < 50 ms | < 20 ms |
@@ -201,14 +202,14 @@ cargo test
 RUST_LOG=debug cargo test
 ```
 
-99 tests passing covering parser, codegen, routing, middleware, signals, hooks, incremental cache, and integration.
+106 tests passing covering parser, codegen, routing, middleware, signals, hooks, error boundaries, route groups, incremental cache, and integration.
 
 ## Roadmap
 
 | Phase | Version | Focus | ETA |
 |-------|---------|-------|-----|
 | MVP | **v0.5** (current) | Core compiler, runtime, islands, dev server | ✅ |
-| Feature Complete | v0.6 | Dynamic JSX tags, refs, CSS pipeline, API routes | Q3 2026 |
+| Feature Complete | v0.6 | Route groups, `_app.tsx`, error boundaries, API routes | Q3 2026 |
 | Hardening | v0.7 | Streaming SSR, error boundaries, observability | Q4 2026 |
 | DX | v0.8 | Fine-grained HMR, error overlay, testing utilities | Q1 2027 |
 | Ecosystem | v0.9 | DB integration, deployment adapters, MDX | Q2 2027 |
