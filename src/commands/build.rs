@@ -12,11 +12,13 @@ use std::fs;
 use std::process::Command;
 use walkdir::WalkDir;
 use regex::Regex;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
+use serde::{Serialize, Deserialize};
 use crate::config::Config;
 use crate::transpile::{Transpiler, hir::Module, codegen::CodeGenerator, analyzer::Analyzer};
 use crate::commands::parallel;
+use crate::commands::incremental::{BuildCache, CacheEntry, compute_file_hash, IncrementalStats};
 
 /// Build result
 pub struct BuildResult {
@@ -41,7 +43,7 @@ pub struct GeneratedFile {
 }
 
 /// Route entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteEntry {
     pub pattern: String,
     #[allow(dead_code)]
@@ -55,7 +57,7 @@ pub struct RouteEntry {
 }
 
 /// HTTP method
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HttpMethod {
     GET,
     POST,
@@ -73,7 +75,7 @@ impl Default for HttpMethod {
 }
 
 /// Island entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IslandEntry {
     pub name: String,
     #[allow(dead_code)]
@@ -84,7 +86,7 @@ pub struct IslandEntry {
 }
 
 /// Component entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentEntry {
     pub name: String,
     pub path: PathBuf,
@@ -98,6 +100,12 @@ pub async fn run_build(config: &Config, path: PathBuf) -> Result<BuildResult> {
     // Ensure we're in a project directory
     let project_root = find_project_root(&path)?;
     info!("Project root: {:?}", project_root);
+
+    // Use incremental builds when enabled
+    if config.build.incremental {
+        info!("Incremental build enabled");
+        return run_incremental_build(config, &project_root).await;
+    }
 
     // Collect files to transpile
     let mut routes = Vec::new();
@@ -234,6 +242,475 @@ pub async fn run_build(config: &Config, path: PathBuf) -> Result<BuildResult> {
         islands,
         components,
     })
+}
+
+/// Run an incremental build using the cache.
+///
+/// Algorithm:
+/// 1. Load existing cache.
+/// 2. Walk routes/islands/components directories.
+/// 3. For each file, check hash against cache.
+/// 4. Cache hit → reuse generated file + metadata.
+/// 5. Cache miss → transpile, generate, and update cache.
+/// 6. Prune stale entries, save cache.
+/// 7. Regenerate aggregate files (routes.rs, islands.rs, etc.).
+async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<BuildResult> {
+    let mut cache = BuildCache::load(project_root);
+    let mut stats = IncrementalStats::default();
+
+    let mut routes: Vec<RouteEntry> = Vec::new();
+    let mut islands: Vec<IslandEntry> = Vec::new();
+    let mut components: Vec<ComponentEntry> = Vec::new();
+    let mut generated_files: Vec<GeneratedFile> = Vec::new();
+
+    let mut existing_files: Vec<String> = Vec::new();
+
+    // ── Routes ──────────────────────────────────────────────────────────────
+    let routes_dir = project_root.join("routes");
+    if routes_dir.exists() {
+        info!("Processing routes (incremental)...");
+        for entry in WalkDir::new(&routes_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "ts" && ext != "tsx" {
+                continue;
+            }
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if filename.starts_with('_') {
+                continue; // skip special files
+            }
+
+            let rel = pathdiff::diff_paths(path, project_root)
+                .unwrap_or_else(|| path.to_path_buf());
+            let rel_str = rel.to_string_lossy().to_string().replace('\\', "/");
+            existing_files.push(rel_str.clone());
+            stats.files_total += 1;
+
+            let hash = match compute_file_hash(path) {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Failed to hash {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            if cache.is_fresh(&rel_str, &hash) {
+                if let Some(entry) = cache.get(&rel_str) {
+                    generated_files.push(GeneratedFile {
+                        path: project_root.join(&entry.generated_path),
+                        content: entry.generated_content.clone(),
+                    });
+                    if let Some(r) = &entry.route {
+                        routes.push(r.clone());
+                    }
+                    stats.files_cached += 1;
+                    if entry.route.is_some() {
+                        stats.routes_cached += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Cache miss — transpile
+            stats.files_changed += 1;
+            let mut transpiler = Transpiler::new(config);
+            let path_buf = path.to_path_buf();
+            let module = match transpiler.parse_file(&path_buf) {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to parse {:?}: {}", path, e);
+                    continue;
+                }
+            };
+            let mut analyzer = Analyzer::new();
+            if let Err(errors) = analyzer.analyze(&module) {
+                for err in &errors {
+                    error!("Analysis error: {:?}", err);
+                }
+                continue;
+            }
+
+            let mut code_gen = CodeGenerator::new();
+            code_gen.set_generate_handlers(true);
+            let rust_code = match code_gen.generate_module(&module) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Code generation failed for {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let relative = path.strip_prefix(&routes_dir).unwrap_or(path);
+            let pattern = extract_route_pattern(relative);
+            let params = extract_params(&pattern);
+            let methods = extract_http_methods(&module);
+            let component_name = module.items.iter().find_map(|item| {
+                if let crate::transpile::hir::ModuleItem::Export(crate::transpile::hir::Export::Default { expr }) = item {
+                    if let crate::transpile::hir::Expr::Function { decl } = expr {
+                        return Some(decl.name.clone());
+                    }
+                }
+                None
+            });
+
+            let route = RouteEntry {
+                pattern: pattern.clone(),
+                path: path.to_path_buf(),
+                file: relative.to_string_lossy().to_string(),
+                params,
+                methods,
+                component_name: component_name.clone(),
+            };
+            routes.push(route.clone());
+            stats.routes_changed += 1;
+
+            let output_path = compute_output_path(project_root, &routes_dir, relative, "routes");
+            generated_files.push(GeneratedFile {
+                path: output_path.clone(),
+                content: rust_code.clone(),
+            });
+
+            cache.insert(rel_str, CacheEntry {
+                content_hash: hash,
+                generated_path: PathBuf::from(
+                    pathdiff::diff_paths(&output_path, project_root)
+                        .unwrap_or(output_path)
+                        .to_string_lossy()
+                        .to_string()
+                        .replace('\\', "/")
+                ),
+                generated_content: rust_code,
+                route: Some(route),
+                island: None,
+                component: None,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            });
+        }
+    }
+
+    // ── Islands ─────────────────────────────────────────────────────────────
+    let islands_dir = project_root.join("islands");
+    if islands_dir.exists() {
+        info!("Processing islands (incremental)...");
+        for entry in WalkDir::new(&islands_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "ts" && ext != "tsx" {
+                continue;
+            }
+
+            let rel = pathdiff::diff_paths(path, project_root)
+                .unwrap_or_else(|| path.to_path_buf());
+            let rel_str = rel.to_string_lossy().to_string().replace('\\', "/");
+            existing_files.push(rel_str.clone());
+            stats.files_total += 1;
+
+            let hash = match compute_file_hash(path) {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Failed to hash {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            if cache.is_fresh(&rel_str, &hash) {
+                if let Some(entry) = cache.get(&rel_str) {
+                    generated_files.push(GeneratedFile {
+                        path: project_root.join(&entry.generated_path),
+                        content: entry.generated_content.clone(),
+                    });
+                    if let Some(i) = &entry.island {
+                        islands.push(i.clone());
+                    }
+                    stats.files_cached += 1;
+                    if entry.island.is_some() {
+                        stats.islands_cached += 1;
+                    }
+                    continue;
+                }
+            }
+
+            stats.files_changed += 1;
+            let mut transpiler = Transpiler::new(config);
+            let path_buf = path.to_path_buf();
+            let module = match transpiler.parse_file(&path_buf) {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to parse {:?}: {}", path, e);
+                    continue;
+                }
+            };
+            let mut code_gen = CodeGenerator::new();
+            code_gen.set_generate_handlers(false);
+            let rust_code = match code_gen.generate_module(&module) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Code generation failed for {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let name = path.file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            let relative = path.strip_prefix(&islands_dir).unwrap_or(path);
+
+            let island = IslandEntry {
+                name: name.clone(),
+                path: path.to_path_buf(),
+                file: relative.to_string_lossy().to_string(),
+                props_type: None,
+            };
+            islands.push(island.clone());
+            stats.islands_changed += 1;
+
+            let output_path = islands_dir
+                .parent()
+                .unwrap_or(&islands_dir)
+                .join("src")
+                .join("gen")
+                .join("islands")
+                .join(format!("{}.rs", to_snake_case(&name)));
+
+            generated_files.push(GeneratedFile {
+                path: output_path.clone(),
+                content: rust_code.clone(),
+            });
+
+            cache.insert(rel_str, CacheEntry {
+                content_hash: hash,
+                generated_path: PathBuf::from(
+                    pathdiff::diff_paths(&output_path, project_root)
+                        .unwrap_or(output_path.clone())
+                        .to_string_lossy()
+                        .to_string()
+                        .replace('\\', "/")
+                ),
+                generated_content: rust_code,
+                route: None,
+                island: Some(island),
+                component: None,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            });
+        }
+    }
+
+    // ── Components ──────────────────────────────────────────────────────────
+    let components_dir = project_root.join("components");
+    if components_dir.exists() {
+        info!("Processing components (incremental)...");
+        for entry in WalkDir::new(&components_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "ts" && ext != "tsx" {
+                continue;
+            }
+
+            let rel = pathdiff::diff_paths(path, project_root)
+                .unwrap_or_else(|| path.to_path_buf());
+            let rel_str = rel.to_string_lossy().to_string().replace('\\', "/");
+            existing_files.push(rel_str.clone());
+            stats.files_total += 1;
+
+            let hash = match compute_file_hash(path) {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Failed to hash {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            if cache.is_fresh(&rel_str, &hash) {
+                if let Some(entry) = cache.get(&rel_str) {
+                    generated_files.push(GeneratedFile {
+                        path: project_root.join(&entry.generated_path),
+                        content: entry.generated_content.clone(),
+                    });
+                    if let Some(c) = &entry.component {
+                        components.push(c.clone());
+                    }
+                    stats.files_cached += 1;
+                    if entry.component.is_some() {
+                        stats.components_cached += 1;
+                    }
+                    continue;
+                }
+            }
+
+            stats.files_changed += 1;
+            let mut transpiler = Transpiler::new(config);
+            let path_buf = path.to_path_buf();
+            let module = match transpiler.parse_file(&path_buf) {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to parse {:?}: {}", path, e);
+                    continue;
+                }
+            };
+            let mut code_gen = CodeGenerator::new();
+            code_gen.set_generate_handlers(false);
+            let rust_code = match code_gen.generate_module(&module) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Code generation failed for {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let name = path.file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
+
+            let component = ComponentEntry {
+                name: name.clone(),
+                path: path.to_path_buf(),
+                file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            };
+            components.push(component.clone());
+            stats.components_changed += 1;
+
+            let output_path = components_dir
+                .parent()
+                .unwrap_or(&components_dir)
+                .join("src")
+                .join("gen")
+                .join("components")
+                .join(format!("{}.rs", to_snake_case(&name)));
+
+            generated_files.push(GeneratedFile {
+                path: output_path.clone(),
+                content: rust_code.clone(),
+            });
+
+            cache.insert(rel_str, CacheEntry {
+                content_hash: hash,
+                generated_path: PathBuf::from(
+                    pathdiff::diff_paths(&output_path, project_root)
+                        .unwrap_or(output_path.clone())
+                        .to_string_lossy()
+                        .to_string()
+                        .replace('\\', "/")
+                ),
+                generated_content: rust_code,
+                route: None,
+                island: None,
+                component: Some(component),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            });
+        }
+    }
+
+    // Prune deleted files from cache
+    cache.prune_missing(&existing_files);
+
+    // Save updated cache
+    if let Err(e) = cache.save(project_root) {
+        warn!("Failed to save incremental cache: {}", e);
+    }
+
+    // ── Aggregate files (always regenerated) ────────────────────────────────
+    let route_table = generate_route_table(&routes);
+    generated_files.push(GeneratedFile {
+        path: project_root.join("src/routes.rs"),
+        content: route_table,
+    });
+
+    let islands_manifest = generate_islands_manifest(&islands);
+    generated_files.push(GeneratedFile {
+        path: project_root.join("src/islands.rs"),
+        content: islands_manifest,
+    });
+
+    let components_module = generate_components_module(&components);
+    generated_files.push(GeneratedFile {
+        path: project_root.join("src/components.rs"),
+        content: components_module,
+    });
+
+    let lib_content = generate_lib(&routes, &islands, &components);
+    generated_files.push(GeneratedFile {
+        path: project_root.join("src/lib.rs"),
+        content: lib_content,
+    });
+
+    let main_path = project_root.join("src/main.rs");
+    if !main_path.exists() {
+        let main_content = generate_main(project_root);
+        generated_files.push(GeneratedFile {
+            path: main_path,
+            content: main_content,
+        });
+    }
+
+    // Write generated files
+    for file in &generated_files {
+        if let Some(parent) = file.path.parent() {
+            fs::create_dir_all(parent).context("Failed to create directory")?;
+        }
+        fs::write(&file.path, &file.content).context("Failed to write file")?;
+    }
+
+    let file_tuples: Vec<(PathBuf, String)> = generated_files.iter()
+        .map(|f| (f.path.clone(), f.content.clone()))
+        .collect();
+    generate_mod_files(project_root, &file_tuples);
+
+    info!("{}", stats.summary());
+    info!("Build complete! Generated {} files", generated_files.len());
+    info!("  Routes: {}", routes.len());
+    info!("  Islands: {}", islands.len());
+    info!("  Components: {}", components.len());
+
+    Ok(BuildResult {
+        generated_files,
+        routes,
+        islands,
+        components,
+    })
+}
+
+/// Compute output path for a generated Rust file.
+fn compute_output_path(
+    project_root: &Path,
+    base_dir: &Path,
+    relative: &Path,
+    _kind: &str,
+) -> PathBuf {
+    let relative_without_ext = relative.with_extension("");
+    let sanitized: PathBuf = relative_without_ext
+        .components()
+        .map(|c| {
+            let s = c.as_os_str().to_string_lossy().to_string();
+            sanitize_module_name(&s)
+        })
+        .collect();
+    base_dir
+        .parent()
+        .unwrap_or(base_dir)
+        .join("src")
+        .join("gen")
+        .join(sanitized)
+        .with_extension("rs")
 }
 
 /// Find project root
