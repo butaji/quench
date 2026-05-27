@@ -73,7 +73,7 @@ mod generated {
     use super::*;
     
     /// Add an island component
-    pub fn add_island(project_root: &PathBuf, name: &str) -> Result<()> {
+    pub fn add_island(project_root: &std::path::Path, name: &str) -> Result<()> {
         let islands_dir = project_root.join("islands");
         std::fs::create_dir_all(&islands_dir)
             .context("Failed to create islands directory")?;
@@ -94,7 +94,7 @@ mod generated {
     }
 
     /// Add a server component
-    pub fn add_component(project_root: &PathBuf, name: &str) -> Result<()> {
+    pub fn add_component(project_root: &std::path::Path, name: &str) -> Result<()> {
         let components_dir = project_root.join("components");
         std::fs::create_dir_all(&components_dir)
             .context("Failed to create components directory")?;

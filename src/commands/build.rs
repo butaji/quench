@@ -625,7 +625,7 @@ fn generate_route_table(routes: &[RouteEntry]) -> String {
     let methods_import = imports.join(", ");
     code.push_str(&format!("use axum::{{Router, routing::{{{methods_import}}}}};
 "));
-    code.push_str("use axum::body::Body;\n");
+    // Body import removed — not needed in generated wrappers
     code.push_str("use axum::response::IntoResponse;\n");
     code.push_str("use axum::extract::Request;\n");
     code.push_str("use runts_lib::runtime::prelude::*;\n\n");
@@ -670,7 +670,7 @@ fn generate_route_table(routes: &[RouteEntry]) -> String {
             code.push_str("    let resp = ");
             code.push_str(&format!("{}::handle_get(ctx.clone(), req).await;\n", alias));
             code.push_str("    if resp.headers().get(\"X-Runts-Render\").is_some() {\n");
-            code.push_str("        let (parts, body) = resp.into_parts();\n");
+            code.push_str("        let (_parts, body) = resp.into_parts();\n");
             code.push_str("        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();\n");
             code.push_str("        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();\n");
             code.push_str(&format!(
