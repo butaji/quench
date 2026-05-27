@@ -1,1061 +1,328 @@
-//! Development server with instant hot-reload
+//! Production SSR Engine & Server Utilities
 //!
-//! In development mode, runts:
-//! - Parses TS/TSX to HIR (NO Rust compilation)
-//! - Executes HIR directly with the interpreter
-//! - Provides instant hot-reload (<100ms)
-//! - Full parity with production rendering
+//! This module provides the server-side rendering pipeline for production builds.
+//! It is NOT the dev server — see `commands::dev` for that.
+//!
+//! Responsibilities:
+//! - Synchronous VNode → HTML string rendering
+//! - Island hydration manifest generation
+//! - Static file serving helpers
+//! - Production middleware composition
 
-use anyhow::{Result, Context};
-use axum::{
-    body::Body,
-    extract::{Path, State},
-    response::{Html, IntoResponse, Response},
-    routing::get,
-    Router,
-};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use parking_lot::RwLock;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
-use tokio::sync::broadcast;
-use tokio_stream::StreamExt;
+use std::collections::HashMap;
+use serde::Serialize;
 
-use crate::config::Config;
-use crate::runtime::interpreter::{Interpreter, RenderResult, RequestInfo};
+use crate::runtime::vdom::{VNode, Render};
+use crate::runtime::islands::{HydrationStrategy, IslandManifest, IslandManifestEntry};
 
-/// Application state shared across requests
-#[derive(Clone)]
-pub struct AppState {
-    /// Project root
-    pub root: PathBuf,
-
-    /// Route table
-    pub route_table: Arc<RwLock<RouteTable>>,
-
-    /// Interpreter (HIR executor)
-    pub interpreter: Arc<RwLock<Interpreter>>,
-
-    /// Broadcast channel for hot reload events
-    pub reload_tx: broadcast::Sender<ReloadEvent>,
-}
-
-/// Route information
+/// Rendered page result
 #[derive(Debug, Clone)]
-pub struct Route {
-    pub pattern: String,
-    pub regex: regex::Regex,
-    pub file_path: PathBuf,
-    pub methods: Vec<HttpMethod>,
+pub struct PageResult {
+    /// Full HTML document
+    pub html: String,
+    /// HTTP status code
+    pub status: u16,
+    /// Page-specific data (serialized to window.__PAGE_DATA__)
+    pub page_data: serde_json::Value,
+    /// Island instances for hydration
+    pub islands: Vec<IslandInstance>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum HttpMethod {
-    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+/// Island instance embedded in a page
+#[derive(Debug, Clone)]
+pub struct IslandInstance {
+    pub name: String,
+    pub id: String,
+    pub props_json: String,
+    pub strategy: HydrationStrategy,
+    pub html: String,
 }
 
-impl HttpMethod {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "GET" => Some(Self::GET),
-            "POST" => Some(Self::POST),
-            "PUT" => Some(Self::PUT),
-            "DELETE" => Some(Self::DELETE),
-            "PATCH" => Some(Self::PATCH),
-            "HEAD" => Some(Self::HEAD),
-            "OPTIONS" => Some(Self::OPTIONS),
-            _ => None,
+/// Production SSR engine
+pub struct SsrEngine {
+    /// Base HTML template (head, nav, scripts)
+    template: DocumentTemplate,
+}
+
+/// Document template configuration
+#[derive(Debug, Clone)]
+pub struct DocumentTemplate {
+    pub title_prefix: String,
+    pub nav_html: String,
+    pub head_extra: String,
+    pub script_modules: Vec<String>,
+    pub stylesheet_links: Vec<String>,
+}
+
+impl Default for DocumentTemplate {
+    fn default() -> Self {
+        Self {
+            title_prefix: String::new(),
+            nav_html: r#"<nav class="runts-nav">
+    <a href="/">Home</a>
+    <a href="/blog">Blog</a>
+</nav>"#.to_string(),
+            head_extra: String::new(),
+            script_modules: vec![
+                "/_runts/client.js".to_string(),
+            ],
+            stylesheet_links: vec![],
         }
     }
 }
 
-/// Route table for fast lookup
-#[derive(Debug, Clone, Default)]
-pub struct RouteTable {
-    routes: Vec<Route>,
-}
-
-impl RouteTable {
+impl SsrEngine {
+    /// Create a new SSR engine with default template
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
-    }
-
-    pub fn from_routes_dir(routes_dir: &PathBuf) -> Result<Self> {
-        let mut table = Self::new();
-        
-        if !routes_dir.exists() {
-            return Ok(table);
-        }
-
-        // Walk routes directory
-        Self::scan_dir(&routes_dir, routes_dir, &mut table)?;
-        
-        Ok(table)
-    }
-
-    fn scan_dir(base: &PathBuf, current: &PathBuf, table: &mut RouteTable) -> Result<()> {
-        for entry in std::fs::read_dir(current)? {
-            let entry = entry?;
-            let path = entry.path();
-            let filename = entry.file_name().to_string_lossy().to_string();
-
-            if path.is_dir() {
-                Self::scan_dir(base, &path, table)?;
-            } else if filename.ends_with(".tsx") || filename.ends_with(".ts") {
-                // Skip special files (middleware, etc.)
-                if filename.starts_with('_') && !filename.ends_with(".tsx") && !filename.ends_with(".ts") {
-                    continue;
-                }
-
-                let pattern = Self::file_to_pattern(base, &path);
-                let regex = Self::pattern_to_regex(&pattern);
-                
-                table.routes.push(Route {
-                    pattern,
-                    regex,
-                    file_path: path,
-                    methods: vec![HttpMethod::GET],
-                });
-            }
-        }
-        
-        Ok(())
-    }
-
-    fn file_to_pattern(base: &PathBuf, file_path: &PathBuf) -> String {
-        let relative = file_path.strip_prefix(base)
-            .unwrap_or(file_path.as_path());
-        
-        // Get the relative path as a string
-        let relative_str = relative.to_string_lossy().to_string();
-        
-        // Split by path separator and filter empty parts
-        let parts: Vec<&str> = relative_str.split(['/', '\\'])
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if parts.is_empty() {
-            return "/".to_string();
-        }
-
-        let mut segments = Vec::new();
-        
-        for part in &parts {
-            let name = *part;
-            
-            // Skip index files - they represent the directory
-            if name == "index.tsx" || name == "index.ts" {
-                continue;
-            }
-            
-            // Handle dynamic segments: [slug] -> :slug
-            if name.starts_with('[') && name.ends_with(']') {
-                let param = &name[1..name.len()-1];
-                // Handle catch-all: [...slug] -> :slug*
-                if param.starts_with('.') {
-                    let inner = &param[1..];
-                    segments.push(format!("(?P<{}>.*)", inner.trim_start_matches('.')));
-                } else if param.starts_with("...") {
-                    segments.push(format!("(?P<{}>.*)", &param[3..]));
-                } else {
-                    segments.push(format!("(?P<{}>[^/]+)", param));
-                }
-            } else if !name.starts_with('_') {
-                segments.push(name.trim_end_matches(".tsx").trim_end_matches(".ts").to_string());
-            }
-        }
-
-        if segments.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{}", segments.join("/"))
+        Self {
+            template: DocumentTemplate::default(),
         }
     }
 
-    fn pattern_to_regex(pattern: &str) -> regex::Regex {
-        let escaped = pattern
-            .replace('/', "/?/?")
-            .replace("(?P<", "(?P<")
-            .replace(">[^/]+>", ">/[^/]+)")
-            .replace(">.*>", ">/.*)");
-        
-        regex::Regex::new(&format!("^{}$", escaped))
-            .unwrap_or_else(|_| regex::Regex::new("^/$").unwrap())
+    /// Create with custom template
+    pub fn with_template(template: DocumentTemplate) -> Self {
+        Self { template }
     }
 
-    pub fn find_route(&self, path: &str) -> Option<(String, HashMap<String, String>)> {
-        // First try exact match
-        for route in &self.routes {
-            if route.pattern == path {
-                return Some((route.pattern.clone(), HashMap::new()));
-            }
-        }
+    /// Render a complete page from a VNode tree
+    pub fn render_page(
+        &self,
+        title: &str,
+        content: VNode,
+        page_data: impl Serialize,
+        islands: Vec<IslandInstance>,
+    ) -> PageResult {
+        let content_html = content.render_to_html();
+        let page_data_json = serde_json::to_value(&page_data).unwrap_or(serde_json::Value::Null);
 
-        // Then try pattern matching
-        for route in &self.routes {
-            if let Some(caps) = route.regex.captures(path) {
-                let mut params = HashMap::new();
-                for name in route.regex.capture_names() {
-                    if let Some(name) = name {
-                        if let Some(value) = caps.name(name) {
-                            params.insert(name.to_string(), value.as_str().to_string());
-                        }
-                    }
-                }
-                return Some((route.pattern.clone(), params));
-            }
-        }
-
-        None
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ReloadEvent {
-    Changed(PathBuf),
-    Reload,
-    Error(String),
-}
-
-impl AppState {
-    /// Create new application state
-    pub fn new(root: PathBuf, _port: u16) -> Result<Self> {
-        let routes_dir = root.join("routes");
-
-        let route_table = RouteTable::from_routes_dir(&routes_dir)?;
-        let interpreter = Arc::new(RwLock::new(Interpreter::new()));
-
-        // Pre-load all modules
-        Self::preload_modules(&interpreter, &root)?;
-
-        let (reload_tx, _) = broadcast::channel(100);
-
-        Ok(Self {
-            root,
-            route_table: Arc::new(RwLock::new(route_table)),
-            interpreter,
-            reload_tx,
-        })
-    }
-
-    /// Pre-load all TS/TSX modules into interpreter
-    fn preload_modules(interpreter: &Arc<RwLock<Interpreter>>, root: &PathBuf) -> Result<()> {
-        let mut interpreter = interpreter.write();
-
-        // Load islands
-        let islands_dir = root.join("islands");
-        if islands_dir.exists() {
-            for entry in walkdir::WalkDir::new(&islands_dir)
-                .max_depth(2)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("tsx") ||
-                   path.extension().and_then(|e| e.to_str()) == Some("ts") {
-                    if let Ok(source) = std::fs::read_to_string(path) {
-                        if let Err(e) = interpreter.load_file(path, &source) {
-                            eprintln!("[runts] Warning: Could not load {}: {}", path.display(), e);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Load components
-        let components_dir = root.join("components");
-        if components_dir.exists() {
-            for entry in walkdir::WalkDir::new(&components_dir)
-                .max_depth(2)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("tsx") ||
-                   path.extension().and_then(|e| e.to_str()) == Some("ts") {
-                    if let Ok(source) = std::fs::read_to_string(path) {
-                        if let Err(e) = interpreter.load_file(path, &source) {
-                            eprintln!("[runts] Warning: Could not load {}: {}", path.display(), e);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Load routes
-        let routes_dir = root.join("routes");
-        if routes_dir.exists() {
-            Self::load_routes_recursive(&mut interpreter, &routes_dir)?;
-        }
-
-        Ok(())
-    }
-
-    /// Recursively load route files
-    fn load_routes_recursive(interpreter: &mut Interpreter, dir: &PathBuf) -> Result<()> {
-        if !dir.is_dir() {
-            return Ok(());
-        }
-
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                Self::load_routes_recursive(interpreter, &path)?;
-            } else if path.extension().and_then(|e| e.to_str()) == Some("tsx") ||
-                      path.extension().and_then(|e| e.to_str()) == Some("ts") {
-                // Skip middleware and special files for route loading
-                let filename = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-
-                if filename.starts_with('_') {
-                    // Load layouts and middleware separately
-                    if filename.contains("layout") || filename.contains("middleware") {
-                        if let Ok(source) = std::fs::read_to_string(&path) {
-                            if let Err(e) = interpreter.load_file(&path, &source) {
-                                eprintln!("[runts] Warning: Could not load {}: {}", path.display(), e);
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                if let Ok(source) = std::fs::read_to_string(&path) {
-                    if let Err(e) = interpreter.load_file(&path, &source) {
-                        eprintln!("[runts] Warning: Could not load {}: {}", path.display(), e);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Start file watcher for hot reload
-    pub fn start_watcher(&self) -> Result<()> {
-        let reload_tx = self.reload_tx.clone();
-        let interpreter = self.interpreter.clone();
-        let route_table = self.route_table.clone();
-        let root = self.root.clone();
-
-        let mut watcher = RecommendedWatcher::new(
-            move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let paths: Vec<PathBuf> = event.paths.into_iter()
-                        .filter(|p| {
-                            matches!(
-                                p.extension().and_then(|e| e.to_str()),
-                                Some("ts") | Some("tsx") | Some("js") | Some("jsx")
-                            )
-                        })
-                        .collect();
-
-                    if paths.is_empty() {
-                        return;
-                    }
-
-                    let path = &paths[0];
-
-                    // Reload the module
-                    if let Ok(source) = std::fs::read_to_string(path) {
-                        let mut interp = interpreter.write();
-                        if let Err(e) = interp.load_file(path, &source) {
-                            eprintln!("[runts] Error reloading {}: {}", path.display(), e);
-                            let _ = reload_tx.send(ReloadEvent::Error(e));
-                            return;
-                        }
-                    }
-
-                    // Reload route table if routes changed
-                    if path.to_string_lossy().contains("/routes/") {
-                        let routes_dir = root.join("routes");
-                        if let Ok(new_table) = RouteTable::from_routes_dir(&routes_dir) {
-                            *route_table.write() = new_table;
-                        }
-                    }
-
-                    let _ = reload_tx.send(ReloadEvent::Changed(path.clone()));
-                    println!("[runts] Hot reload: {}", path.display());
-                }
-            },
-            notify::Config::default(),
-        )
-        .context("Failed to create file watcher")?;
-
-        // Watch all relevant directories
-        let watch_dirs = vec![
-            self.root.join("routes"),
-            self.root.join("islands"),
-            self.root.join("components"),
-            self.root.join("lib"),
-        ];
-
-        for dir in &watch_dirs {
-            if dir.exists() {
-                if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
-                    eprintln!("[runts] Warning: Could not watch {}: {}", dir.display(), e);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Execute a route and return the rendered HTML
-    pub fn execute_route(&self, path: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult> {
-        let start = Instant::now();
-
-        // Get route info
-        let route_table = self.route_table.read();
-        let (pattern, route_params) = route_table
-            .find_route(path)
-            .unwrap_or_else(|| ("/".to_string(), HashMap::new()));
-
-        // Merge params
-        let mut all_params = route_params;
-        for (k, v) in params {
-            all_params.insert(k, v);
-        }
-
-        // Execute the route using interpreter
-        let result = {
-            let interpreter = self.interpreter.read();
-            interpreter.execute_route(path, "GET", all_params, request)
-                .map_err(|e| anyhow::anyhow!("Handler error: {}", e))
+        let island_manifest = IslandManifest {
+            islands: islands.iter().map(|i| IslandManifestEntry {
+                name: i.name.clone(),
+                selector: format!("[data-island=\"{}\"][data-id=\"{}\"]", i.name, i.id),
+                props: i.props_json.clone(),
+                strategy: i.strategy,
+            }).collect(),
         };
 
-        let elapsed = start.elapsed();
-        if elapsed.as_millis() > 100 {
-            println!("[runts] Slow route execution: {}ms for {}", elapsed.as_millis(), path);
-        }
+        let island_manifest_json = serde_json::to_string(&island_manifest).unwrap_or_default();
 
-        result
-    }
-
-    /// Build full HTML document
-    fn build_html(&self, path: &str, result: &RenderResult) -> String {
-        let title = path_to_title(path);
-        
-        // Convert page data to JSON manually
-        let page_data_json = serde_json::to_string(&result.page_data.to_json())
-            .unwrap_or_else(|_| "{}".to_string());
-
-        // Generate island manifest
-        let islands_json: Vec<serde_json::Value> = result.islands.iter().map(|i| {
-            serde_json::json!({
-                "name": i.name,
-                "id": i.id,
-                "props": serde_json::from_str::<serde_json::Value>(&i.props_json).unwrap_or(serde_json::Value::Null)
-            })
-        }).collect();
-        
-        let island_manifest_json = serde_json::json!({
-            "islands": islands_json
-        }).to_string();
-
-        // Get island manifest from interpreter for available islands
-        let interpreter = self.interpreter.read();
-        let available_islands = interpreter.get_island_manifest();
-        
-        // Generate hydration script for islands
-        let hydration_scripts: Vec<String> = result.islands.iter().map(|island| {
-            format!(r#"<script type="module">
+        let hydration_scripts: Vec<String> = islands.iter().map(|i| {
+            format!(
+                r#"<script type="module">
 import {{ hydrate }} from '/_runts/islands/{}.js';
 hydrate('{}', {});
-</script>"#, island.name, island.id, island.props_json)
+</script>"#,
+                i.name, i.id, i.props_json
+            )
         }).collect();
 
-        format!(r#"<!DOCTYPE html>
+        let stylesheets = self.template.stylesheet_links.iter()
+            .map(|href| format!(r#"<link rel="stylesheet" href="{}" />"#, href))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let scripts = self.template.script_modules.iter()
+            .map(|src| format!(r#"<script type="module" src="{}"></script>"#, src))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let html = format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{}{}</title>
     <link rel="icon" href="/static/favicon.ico">
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }}
-        nav {{ background: #1a1a2e; padding: 1rem; }}
-        nav a {{ color: white; text-decoration: none; margin-right: 1rem; }}
-        nav a:hover {{ text-decoration: underline; }}
-        main {{ max-width: 800px; margin: 2rem auto; padding: 0 1rem; }}
-        .posts {{ list-style: none; }}
-        .posts li {{ margin-bottom: 1rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }}
-        .posts a {{ text-decoration: none; color: inherit; }}
-        .posts a:hover {{ color: #1a1a2e; }}
-        .posts strong {{ font-size: 1.2rem; display: block; margin-bottom: 0.5rem; }}
-        .posts p {{ color: #666; margin: 0; }}
-        .btn {{ display: inline-block; padding: 0.5rem 1rem; background: #1a1a2e; color: white; text-decoration: none; border-radius: 4px; }}
-        .btn:hover {{ background: #16213e; }}
-        [data-island] {{ border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; }}
-        .island-loading {{ color: #999; font-style: italic; }}
-    </style>
+    {}
+    {}
 </head>
 <body>
-    <nav class="runts-nav">
-        <a href="/">Home</a>
-        <a href="/blog">Blog</a>
-        <a href="/about">About</a>
-    </nav>
+    {}
     <main>
-        {content}
+        {}
     </main>
     <script>
-        window.__PAGE_DATA__ = {page_data_json};
-        window.__ISLAND_MANIFEST__ = {island_manifest_json};
-        window.__AVAILABLE_ISLANDS__ = {available_islands};
+        window.__PAGE_DATA__ = {};
+        window.__ISLAND_MANIFEST__ = {};
     </script>
-    {hydration_scripts}
-    <script type="module" src="/_runts/hmr.js"></script>
-    <script type="module" src="/_runts/client.js"></script>
-</body>
-</html>
-"#, 
-    title = title, 
-    content = result.html, 
-    page_data_json = page_data_json, 
-    island_manifest_json = island_manifest_json,
-    available_islands = available_islands,
-    hydration_scripts = hydration_scripts.join("\n"))
-    }
-}
-
-/// Extract request headers from headers map
-fn extract_headers(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-    for (name, value) in headers {
-        if let Ok(v) = value.to_str() {
-            result.insert(name.to_string(), v.to_string());
-        }
-    }
-    result
-}
-
-/// Handle SSR request
-async fn handle_ssr(
-    State(state): State<AppState>,
-    Path(path): Path<String>,
-    headers: axum::extract::HeaderMap,
-) -> impl IntoResponse {
-    let path = if path.is_empty() { "/" } else { &path };
-
-    // Build request info
-    let request = RequestInfo {
-        method: "GET".to_string(),
-        url: format!("http://localhost{}", path),
-        headers: extract_headers(&headers),
-    };
-
-    match state.execute_route(path, HashMap::new(), request) {
-        Ok(result) => {
-            let html = state.build_html(path, &result);
-            Html(html).into_response()
-        }
-        Err(e) => {
-            let html = format!(
-                r#"<!DOCTYPE html>
-<html>
-<head><title>Error</title></head>
-<body>
-    <nav class="runts-nav">
-        <a href="/">Home</a>
-        <a href="/blog">Blog</a>
-    </nav>
-    <main>
-        <h1>Error Rendering: {path}</h1>
-        <pre style="background:#f4f4f4;padding:1rem;overflow:auto;">{error}</pre>
-        <a href="/" class="btn">Go Home</a>
-    </main>
+    {}
+    {}
 </body>
 </html>"#,
-                path = path,
-                error = e.to_string().lines().take(20).collect::<Vec<_>>().join("\n")
-            );
-            Html(html).into_response()
-        }
-    }
-}
-
-/// Handle API routes
-async fn handle_api(
-    State(state): State<AppState>,
-    Path(path): Path<String>,
-    headers: axum::extract::HeaderMap,
-) -> Response {
-    let api_path = format!("/api/{}", path);
-
-    // Build request info
-    let request = RequestInfo {
-        method: "GET".to_string(),
-        url: format!("http://localhost{}", api_path),
-        headers: extract_headers(&headers),
-    };
-
-    // Try to execute as a route first
-    if let Ok(result) = state.execute_route(&api_path, HashMap::new(), request) {
-        // Return the rendered content as JSON
-        let response = serde_json::json!({
-            "path": api_path,
-            "html": result.html,
-            "data": result.page_data.to_json(),
-            "islands": result.islands.iter().map(|i| {
-                serde_json::json!({
-                    "name": i.name,
-                    "id": i.id
-                })
-            }).collect::<Vec<_>>()
-        });
-        
-        return Response::builder()
-            .header("Content-Type", "application/json")
-            .body(Body::from(response.to_string()))
-            .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response());
-    }
-
-    // Simulate API response
-    let response = serde_json::json!({
-        "path": api_path,
-        "message": "API response from runts",
-        "data": {
-            "status": "ok",
-            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-        }
-    });
-
-    Response::builder()
-        .header("Content-Type", "application/json")
-        .body(Body::from(response.to_string()))
-        .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response())
-}
-
-/// Handle static files
-async fn handle_static(path: Path<String>) -> Response {
-    let root = std::env::current_dir().unwrap_or_default();
-    let static_dir = root.join("static");
-    let file_path = static_dir.join(&*path);
-
-    if !file_path.exists() {
-        return Html("<h1>404 - File not found</h1>").into_response();
-    }
-
-    match tokio::fs::read(&file_path).await {
-        Ok(contents) => {
-            let mime = mime_guess::from_path(&file_path)
-                .first_or_octet_stream()
-                .to_string();
-
-            Response::builder()
-                .header("Content-Type", mime)
-                .body(Body::from(contents))
-                .unwrap_or_else(|_| Html("<h1>Error</h1>").into_response())
-        }
-        Err(_) => Html("<h1>Error reading file</h1>").into_response(),
-    }
-}
-
-/// Serve island JS bundle
-async fn handle_island_bundle(Path(name): Path<String>) -> Response {
-    // Generate island bundle with client-side rendering
-    let bundle = format!(r#"
-// Island: {0} - Client bundle for runts
-class {0}Island {{
-    constructor(props, element) {{
-        this.props = props;
-        this.element = element;
-        this.hooks = {{}};
-    }}
-
-    mount() {{
-        console.log('[runts] Mounting island: {0}');
-        this.attachEvents();
-    }}
-
-    attachEvents() {{
-        // Attach event handlers to buttons and form elements
-        const buttons = this.element.querySelectorAll('button');
-        buttons.forEach(btn => {{
-            // Copy onClick handler if present as data attribute
-            const onclick = btn.dataset.onclick;
-            if (onclick) {{
-                try {{
-                    // The handler is stored as a string identifier
-                    // In a real implementation, we'd look up the handler
-                    console.log('[runts] Button clicked for {0}');
-                }} catch (e) {{
-                    console.error('[runts] Handler error:', e);
-                }}
-            }}
-        }});
-    }}
-
-    render() {{
-        // Client-side re-render
-        return this.element.innerHTML;
-    }}
-
-    setState(updater) {{
-        if (typeof updater === 'function') {{
-            this.props = {{ ...this.props, ...updater(this.props) }};
-        }} else {{
-            this.props = {{ ...this.props, ...updater }};
-        }}
-        this.render();
-    }}
-
-    unmount() {{
-        this.element.innerHTML = '';
-    }}
-}}
-
-// Register the island
-if (typeof window !== 'undefined') {{
-    window.__runts_islands__ = window.__runts_islands__ || {{}};
-    window.__runts_islands__['{0}'] = {0}Island;
-}}
-
-// Export for ES modules
-export default {0}Island;
-export {{ {0}Island as {0} }};
-"#, name);
-
-    Response::builder()
-        .header("Content-Type", "application/javascript")
-        .body(Body::from(bundle))
-        .unwrap()
-}
-
-/// SSE endpoint for HMR
-async fn handle_hmr_sse(State(state): State<AppState>) -> Response {
-    use tokio_stream::wrappers::BroadcastStream;
-
-    let rx = state.reload_tx.subscribe();
-    let broadcast_stream = BroadcastStream::new(rx);
-
-    let stream = async_stream::stream! {
-        let mut broadcast_rx = broadcast_stream;
-        while let Some(result) = futures::StreamExt::next(&mut broadcast_rx).await {
-            if let Ok(event) = result {
-                let data = match event {
-                    ReloadEvent::Changed(path) => {
-                        serde_json::json!({
-                            "type": "change",
-                            "path": path.to_string_lossy()
-                        })
-                    }
-                    ReloadEvent::Reload => {
-                        serde_json::json!({ "type": "reload" })
-                    }
-                    ReloadEvent::Error(msg) => {
-                        serde_json::json!({
-                            "type": "error",
-                            "message": msg
-                        })
-                    }
-                };
-                yield Ok::<_, std::convert::Infallible>(format!("data: {}\n\n", data));
-            }
-        }
-    };
-
-    Response::builder()
-        .header("Content-Type", "text/event-stream")
-        .header("Cache-Control", "no-cache")
-        .header("Connection", "keep-alive")
-        .body(Body::from_stream(stream))
-        .unwrap()
-}
-
-/// HMR client script
-async fn hmr_client_script() -> Response {
-    let script = r#"
-(function() {
-    let retryCount = 0;
-    const maxRetries = 5;
-
-    function connect() {
-        const source = new EventSource('/_runts/hmr');
-
-        source.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-
-                switch (data.type) {
-                    case 'change':
-                        console.log('[runts HMR] File changed:', data.path);
-                        window.location.reload();
-                        break;
-
-                    case 'reload':
-                        console.log('[runts HMR] Full reload requested');
-                        window.location.reload();
-                        break;
-
-                    case 'error':
-                        console.error('[runts HMR] Error:', data.message);
-                        break;
-
-                    case 'connected':
-                        console.log('[runts HMR] Connected');
-                        retryCount = 0;
-                        break;
-                }
-            } catch (e) {
-                console.error('[runts HMR] Failed to parse event:', e);
-            }
-        };
-
-        source.onerror = () => {
-            console.warn('[runts HMR] Connection lost, retrying...');
-            source.close();
-            retryCount++;
-
-            if (retryCount < maxRetries) {
-                setTimeout(connect, 1000 * retryCount);
-            } else {
-                console.error('[runts HMR] Max retries reached, please refresh manually');
-            }
-        };
-    }
-
-    connect();
-})();
-"#;
-
-    Response::builder()
-        .header("Content-Type", "application/javascript")
-        .body(Body::from(script))
-        .unwrap()
-}
-
-/// Client-side island hydration
-async fn client_script() -> Response {
-    let script = r#"
-/**
- * runts Client Runtime
- * Handles island hydration and interactivity
- */
-
-(function() {
-    'use strict';
-
-    // Island registry
-    const islands = new Map();
-
-    // Register an island
-    window.__registerIsland__ = function(name, Component) {
-        islands.set(name, Component);
-        console.debug('[runts] Registered island:', name);
-    };
-
-    // Hydrate a single island
-    function hydrateIsland(entry) {
-        const el = document.querySelector(`[data-island="${entry.name}"][data-id="${entry.id}"]`);
-        if (!el) {
-            console.warn('[runts] Island element not found:', entry.name, entry.id);
-            return Promise.resolve();
-        }
-
-        // Check if already hydrated
-        if (el.dataset.hydrated === 'true') {
-            return Promise.resolve();
-        }
-
-        // Get props
-        const props = entry.props || {};
-        
-        // Find or load the island component
-        const Component = islands.get(entry.name);
-        
-        if (Component) {
-            try {
-                const instance = new Component(props, el);
-                instance.mount();
-                el.dataset.hydrated = 'true';
-                console.debug('[runts] Hydrated island:', entry.name);
-                return Promise.resolve(instance);
-            } catch (e) {
-                console.error('[runts] Hydration error for', entry.name, ':', e);
-                return Promise.reject(e);
-            }
-        } else {
-            // Load from server
-            return loadIsland(entry.name).then(() => {
-                const LoadedComponent = islands.get(entry.name);
-                if (LoadedComponent) {
-                    const instance = new LoadedComponent(props, el);
-                    instance.mount();
-                    el.dataset.hydrated = 'true';
-                    console.debug('[runts] Hydrated island (loaded):', entry.name);
-                    return instance;
-                }
-                throw new Error('Component not found after loading: ' + entry.name);
-            });
-        }
-    }
-
-    // Load island bundle from server
-    async function loadIsland(name) {
-        if (islands.has(name)) {
-            return;
-        }
-        
-        try {
-            const response = await fetch(`/_runts/islands/${name}`);
-            if (response.ok) {
-                const text = await response.text();
-                // Execute in module context
-                const blob = new Blob([text], { type: 'application/javascript' });
-                const url = URL.createObjectURL(blob);
-                await import(url);
-                URL.revokeObjectURL(url);
-            }
-        } catch (e) {
-            console.error('[runts] Failed to load island:', name, e);
-            throw e;
-        }
-    }
-
-    // Hydrate all islands on page
-    function hydrateAll() {
-        const manifest = window.__ISLAND_MANIFEST__;
-        if (!manifest || !manifest.islands) {
-            return;
-        }
-        
-        // Also register islands from available islands list
-        const available = window.__AVAILABLE_ISLANDS__;
-        if (available && available.islands) {
-            for (const island of available.islands) {
-                console.debug('[runts] Available island:', island.name);
-            }
-        }
-        
-        const promises = [];
-        for (const entry of manifest.islands) {
-            promises.push(hydrateIsland(entry).catch(e => {
-                console.error('[runts] Failed to hydrate', entry.name, ':', e);
-            }));
-        }
-        
-        return Promise.all(promises);
-    }
-
-    // Auto-initialize on DOM ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            // Small delay to ensure all scripts loaded
-            setTimeout(hydrateAll, 10);
-        });
-    } else {
-        setTimeout(hydrateAll, 10);
-    }
-
-    // Expose API
-    window.__runts__ = {
-        hydrateAll,
-        hydrateIsland,
-        register: window.__registerIsland__,
-        islands,
-        loadIsland
-    };
-})();
-"#;
-
-    Response::builder()
-        .header("Content-Type", "application/javascript")
-        .body(Body::from(script))
-        .unwrap()
-}
-
-/// Run the development server
-pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let dev_port = config.dev.port;
-
-    // Check if we're in a runts project
-    let routes_dir = root.join("routes");
-    if !routes_dir.exists() {
-        anyhow::bail!(
-            "Not a runts project directory. No `routes/` folder found.\n\
-             Run `runts init` to create a new project."
+            self.template.title_prefix,
+            title,
+            stylesheets,
+            self.template.head_extra,
+            self.template.nav_html,
+            content_html,
+            serde_json::to_string(&page_data_json).unwrap_or_default(),
+            island_manifest_json,
+            hydration_scripts.join("\n"),
+            scripts,
         );
+
+        PageResult {
+            html,
+            status: 200,
+            page_data: page_data_json,
+            islands,
+        }
     }
 
-    let state = AppState::new(root.clone(), dev_port)?;
+    /// Render an error page
+    pub fn render_error(
+        &self,
+        status: u16,
+        path: &str,
+        message: Option<&str>,
+    ) -> PageResult {
+        let title = match status {
+            404 => "Page Not Found",
+            500 => "Internal Server Error",
+            _ => "Error",
+        };
 
-    // Start file watcher
-    if let Err(e) = state.start_watcher() {
-        eprintln!("Warning: Could not start file watcher: {}", e);
-    }
+        let default_msg = match status {
+            404 => format!("The page '{}' could not be found.", path),
+            500 => "An unexpected error occurred.".to_string(),
+            _ => format!("Error {} occurred.", status),
+        };
 
-    println!("\n╔══════════════════════════════════════════════════════════════╗");
-    println!("║                runts Dev Server (HIR Mode)               ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║  URL:        http://localhost:{}                           ║", dev_port);
-    println!("║  Root:       {}  ", truncate_path(&root.to_string_lossy(), 50));
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║  Mode:       HIR Interpreter (No Rust Compile)            ║");
-    println!("║  Features:   Full SSR, Islands, Layouts, Hot Reload         ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║  Watching:                                                    ║");
-    println!("║    • routes/     (route handlers & pages)                     ║");
-    println!("║    • islands/   (interactive components)                     ║");
-    println!("║    • components/(static components)                         ║");
-    println!("║    • lib/       (shared code)                               ║");
-    println!("╚══════════════════════════════════════════════════════════════╝");
-    println!();
-    println!("  Press Ctrl+C to stop.\n");
+        let message = message.unwrap_or(&default_msg);
 
-    let app = Router::new()
-        .nest_service("/static", get(handle_static))
-        .route("/_runts/islands/:name", get(handle_island_bundle))
-        .route("/_runts/hmr", get(handle_hmr_sse))
-        .route("/_runts/hmr.js", get(hmr_client_script))
-        .route("/_runts/client.js", get(client_script))
-        .route("/api/*path", get(handle_api))
-        .route("/*path", get(handle_ssr))
-        .route("/", get(handle_ssr))
-        .with_state(state);
+        let content = format!(r#"
+<div style="text-align:center;padding:4rem;font-family:system-ui,sans-serif">
+    <h1 style="font-size:6rem;color:#333;margin:0">{}</h1>
+    <h2 style="font-size:2rem;color:#666;margin:1rem 0">{}</h2>
+    <p style="color:#888">{}</p>
+    <p><a href="/" style="color:#1a1a2e">← Go home</a></p>
+</div>"#, status, title, message);
 
-    let addr = format!("0.0.0.0:{}", dev_port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-
-    println!("[runts] Server listening on http://localhost:{}\n", dev_port);
-    println!("[runts] Hot reload ready! Changes will reflect instantly.\n");
-
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-
-fn path_to_title(path: &str) -> String {
-    if path.is_empty() || path == "/" {
-        "Home".to_string()
-    } else {
-        path.split('/')
-            .filter(|s| !s.is_empty())
-            .last()
-            .map(|s| {
-                let mut chars = s.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(c) => c.to_uppercase().chain(chars).collect(),
-                }
-            })
-            .unwrap_or_else(|| "runts".to_string())
+        PageResult {
+            html: format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{} - {}</title>
+</head>
+<body>
+    {}
+</body>
+</html>"#, status, title, content),
+            status,
+            page_data: serde_json::Value::Null,
+            islands: vec![],
+        }
     }
 }
 
-fn truncate_path(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("...{}", &s[s.len()-max_len+3..])
+impl Default for SsrEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// Static File Serving
+// =============================================================================
+
+use std::path::{Path, PathBuf};
+use tokio::fs;
+
+/// Serve a static file with appropriate MIME type.
+/// Returns (status, content_type, body) or None if not found.
+pub async fn serve_static_file(
+    root: &Path,
+    request_path: &str,
+) -> Option<(u16, String, Vec<u8>)> {
+    let file_path = sanitize_path(root, request_path)?;
+
+    if !file_path.exists() || !file_path.is_file() {
+        return None;
+    }
+
+    // Ensure the resolved path is still within root
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let canonical_file = std::fs::canonicalize(&file_path).ok()?;
+    if !canonical_file.starts_with(&canonical_root) {
+        return None; // Path traversal attempt
+    }
+
+    let contents = fs::read(&file_path).await.ok()?;
+
+    let mime = mime_guess::from_path(&file_path)
+        .first_or_octet_stream()
+        .to_string();
+
+    Some((200, mime, contents))
+}
+
+/// Sanitize a request path into a safe file system path.
+fn sanitize_path(root: &Path, request_path: &str) -> Option<PathBuf> {
+    let trimmed = request_path.trim_start_matches('/');
+    if trimmed.contains("..") {
+        return None;
+    }
+    Some(root.join(trimmed))
+}
+
+// =============================================================================
+// Middleware Composition (Tower)
+// =============================================================================
+
+use tower::{Layer, Service};
+
+/// Compose multiple Tower layers into a single middleware stack.
+pub fn compose_middleware<S>(
+    service: S,
+    _layers: Vec<Box<dyn Layer<S, Service = S> + Send + Sync>>,
+) -> S {
+    // In a full implementation, this would fold layers onto the service.
+    // For now, return the service directly — Axum's Router handles layering.
+    service
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::vdom::VNode;
+
+    #[test]
+    fn test_ssr_basic_page() {
+        let engine = SsrEngine::new();
+        let content = VNode::text("Hello, world!");
+        let result = engine.render_page("Test", content, serde_json::json!({}), vec![]);
+
+        assert!(result.html.contains("<!DOCTYPE html>"));
+        assert!(result.html.contains("<title>Test</title>"));
+        assert!(result.html.contains("Hello, world!"));
+        assert_eq!(result.status, 200);
+    }
+
+    #[test]
+    fn test_ssr_error_page() {
+        let engine = SsrEngine::new();
+        let result = engine.render_error(404, "/missing", None);
+
+        assert!(result.html.contains("404"));
+        assert!(result.html.contains("Page Not Found"));
+        assert_eq!(result.status, 404);
+    }
+
+    #[test]
+    fn test_sanitize_path() {
+        let root = Path::new("/var/www");
+        assert_eq!(
+            sanitize_path(root, "style.css"),
+            Some(PathBuf::from("/var/www/style.css"))
+        );
+        assert_eq!(
+            sanitize_path(root, "../../etc/passwd"),
+            None
+        );
     }
 }
