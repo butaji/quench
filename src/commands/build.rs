@@ -282,7 +282,8 @@ fn process_routes_dir(
             continue;
         }
 
-        // Generate Rust code
+        // Generate Rust code (routes need handlers)
+        code_gen.set_generate_handlers(true);
         let rust_code = match code_gen.generate_module(&module) {
             Ok(code) => code,
             Err(e) => {
@@ -366,6 +367,8 @@ fn process_islands_dir(
             .unwrap_or("Unknown")
             .to_string();
 
+        // Islands don't need route handlers
+        code_gen.set_generate_handlers(false);
         let rust_code = match code_gen.generate_module(&module) {
             Ok(code) => code,
             Err(e) => {
@@ -429,6 +432,8 @@ fn process_components_dir(
             }
         };
 
+        // Components don't need route handlers
+        code_gen.set_generate_handlers(false);
         let rust_code = match code_gen.generate_module(&module) {
             Ok(code) => code,
             Err(e) => {
@@ -491,7 +496,8 @@ fn extract_route_pattern(relative: &Path) -> String {
     };
 
     if pattern.ends_with("/index") {
-        pattern[..pattern.len() - 6].to_string()
+        let stripped = &pattern[..pattern.len() - 6];
+        if stripped.is_empty() { "/".to_string() } else { stripped.to_string() }
     } else {
         pattern
     }
@@ -622,13 +628,13 @@ fn generate_route_table(routes: &[RouteEntry]) -> String {
             };
 
             code.push_str(&format!(
-                "    router = router.route(\"{}\", {}::handle_{});\n",
-                route.pattern, alias, method_name
+                "    router = router.route(\"{}\", {}({}::handle_{}));\n",
+                route.pattern, method_name, alias, method_name
             ));
         }
         if route.methods.is_empty() {
             code.push_str(&format!(
-                "    router = router.route(\"{}\", {}::handle_get);\n",
+                "    router = router.route(\"{}\", get({}::handle_get));\n",
                 route.pattern, alias
             ));
         }

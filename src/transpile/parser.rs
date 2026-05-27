@@ -1209,6 +1209,42 @@ impl Parser {
         else if self.check('!') { self.advance(); Some(UnaryOp::Not) }
         else if self.check('-') { self.advance(); Some(UnaryOp::Minus) }
         else if self.check('+') { self.advance(); Some(UnaryOp::Plus) }
+        else if self.check_word("new") {
+            self.advance_by(3);
+            self.skip_ws_and_comments();
+            let mut callee = Box::new(self.parse_primary()?);
+            loop {
+                self.skip_ws_and_comments();
+                if self.check('.') {
+                    self.advance();
+                    let prop = Box::new(self.parse_primary()?);
+                    callee = Box::new(Expr::Member {
+                        object: callee,
+                        property: prop,
+                        computed: false,
+                        optional: false,
+                    });
+                } else {
+                    break;
+                }
+            }
+            let args = if self.check('(') {
+                self.advance();
+                let mut args = Vec::new();
+                while !self.check(')') {
+                    self.skip_ws_and_comments();
+                    if self.check(')') { break; }
+                    args.push(self.parse_expression()?);
+                    self.skip_ws_and_comments();
+                    if self.check(',') { self.advance(); }
+                }
+                self.expect(')')?;
+                args
+            } else {
+                vec![]
+            };
+            return Ok(Expr::New { callee, args, type_args: vec![] });
+        }
         else { return self.parse_call(); };
 
         self.skip_ws_and_comments();

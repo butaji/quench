@@ -41,7 +41,7 @@ pub fn component_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     
     // Build the expanded output
     let expanded = quote! {
-        #vis #sig #item_fn
+        #item_fn
         
         // Static registration of this component
         #[doc(hidden)]

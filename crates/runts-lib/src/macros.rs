@@ -1,27 +1,7 @@
-//! Macros for runts
+//! Re-exports of runts procedural macros.
 //!
-//! This module provides useful macros for building runts applications.
+//! These macros are defined in the `runts-macros` crate and re-exported here
+//! for convenience so users only need to depend on `runts-lib`.
 
-/// Create a VNode element
-///
-/// # Example
-/// ```rust,ignore
-/// let node = html! {
-///     <div>
-///         <h1>"Hello"</h1>
-///         <p>{ message }</p>
-///     </div>
-/// };
-/// ```
-#[macro_export]
-macro_rules! html {
-    // Match: <tag>children</tag>
-    (< $tag:ident > $($inner:tt)* </ $closing:ident >) => {{
-        $crate::runtime::vdom::VNode::element(stringify!($tag))
-    }};
-    
-    // Match: <tag />
-    (< $tag:ident />) => {{
-        $crate::runtime::vdom::VNode::element(stringify!($tag))
-    }};
-}
+pub use runts_macros::component;
+pub use runts_macros::html;

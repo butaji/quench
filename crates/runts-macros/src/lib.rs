@@ -7,8 +7,8 @@
 mod component;
 mod html;
 
-pub use component::component_macro;
-pub use html::html_macro;
+use component::component_macro;
+use html::html_macro;
 
 /// Entry point for the `#[component]` attribute macro
 #[proc_macro_attribute]
@@ -19,5 +19,5 @@ pub fn component(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
 /// Entry point for the `html!` macro
 #[proc_macro]
 pub fn html(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    html_macro(input)
+    html_macro(input.into()).into()
 }

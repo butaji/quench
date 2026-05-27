@@ -59,6 +59,9 @@ rayon = "1.10"
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 
+# Runtime library (for generated code)
+runts-macros = { path = "crates/runts-macros" }
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 

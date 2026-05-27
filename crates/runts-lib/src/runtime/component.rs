@@ -115,3 +115,22 @@ impl Extend<VNode> for Children {
         self.inner.extend(iter);
     }
 }
+
+/// Component information for registration
+#[derive(Debug, Clone)]
+pub struct ComponentInfo {
+    /// Component name
+    pub name: &'static str,
+    /// Props type name (for serialization)
+    pub props_type: Option<&'static str>,
+}
+
+impl ComponentInfo {
+    /// Create a new component info
+    pub const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            props_type: None,
+        }
+    }
+}
