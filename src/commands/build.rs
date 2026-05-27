@@ -691,7 +691,7 @@ async fn run_incremental_build(config: &Config, project_root: &Path) -> Result<B
 
 /// Compute output path for a generated Rust file.
 fn compute_output_path(
-    project_root: &Path,
+    _project_root: &Path,
     base_dir: &Path,
     relative: &Path,
     _kind: &str,

@@ -19,3 +19,6 @@ target/
 # Rune cache
 target/rune-cache/
 target/hot/
+
+# runts cache
+.runts/

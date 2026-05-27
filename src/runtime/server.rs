@@ -9,7 +9,6 @@
 //! - Static file serving helpers
 //! - Production middleware composition
 
-use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::runtime::vdom::{VNode, Render};
@@ -270,7 +269,7 @@ fn sanitize_path(root: &Path, request_path: &str) -> Option<PathBuf> {
 // Middleware Composition (Tower)
 // =============================================================================
 
-use tower::{Layer, Service};
+use tower::Layer;
 
 /// Compose multiple Tower layers into a single middleware stack.
 pub fn compose_middleware<S>(
