@@ -13,20 +13,20 @@ use crate::gen::index as index;
 pub fn build_router() -> Router {
     let mut router = Router::new();
 
-    //  (index.tsx)
-    router = router.route("", index::handle_get);
+    // / (index.tsx)
+    router = router.route("/", get(index::handle_get));
 
     // /blog (blog/index.tsx)
-    router = router.route("/blog", blog_index::handle_get);
+    router = router.route("/blog", get(blog_index::handle_get));
 
     // /blog/_layout (blog/_layout.tsx)
-    router = router.route("/blog/_layout", blog__layout::handle_get);
+    router = router.route("/blog/_layout", get(blog__layout::handle_get));
 
     // /blog/:slug (blog/[slug].tsx)
-    router = router.route("/blog/:slug", blog_slug::handle_get);
+    router = router.route("/blog/:slug", get(blog_slug::handle_get));
 
     // /about (about.tsx)
-    router = router.route("/about", about::handle_get);
+    router = router.route("/about", get(about::handle_get));
 
     router
 }

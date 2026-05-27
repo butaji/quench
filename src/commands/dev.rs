@@ -106,8 +106,8 @@ impl RouteTable {
             if path.is_dir() {
                 Self::scan_dir(base, &path, table)?;
             } else if filename.ends_with(".tsx") || filename.ends_with(".ts") {
-                // Skip special files (middleware, etc.)
-                if filename.starts_with('_') && !filename.ends_with(".tsx") && !filename.ends_with(".ts") {
+                // Skip special files (middleware, layouts, etc.)
+                if filename.starts_with('_') {
                     continue;
                 }
 
@@ -147,25 +147,28 @@ impl RouteTable {
         for part in &parts {
             let name = *part;
             
+            // Strip extension first
+            let stem = name.trim_end_matches(".tsx").trim_end_matches(".ts");
+            
             // Skip index files - they represent the directory
-            if name == "index.tsx" || name == "index.ts" {
+            if stem == "index" {
                 continue;
             }
             
             // Handle dynamic segments: [slug] -> :slug
-            if name.starts_with('[') && name.ends_with(']') {
-                let param = &name[1..name.len()-1];
+            if stem.starts_with('[') && stem.ends_with(']') {
+                let param = &stem[1..stem.len()-1];
                 // Handle catch-all: [...slug] -> :slug*
-                if param.starts_with('.') {
+                if param.starts_with("...") {
+                    segments.push(format!("(?P<{}>.*)", &param[3..]));
+                } else if param.starts_with('.') {
                     let inner = &param[1..];
                     segments.push(format!("(?P<{}>.*)", inner.trim_start_matches('.')));
-                } else if param.starts_with("...") {
-                    segments.push(format!("(?P<{}>.*)", &param[3..]));
                 } else {
                     segments.push(format!("(?P<{}>[^/]+)", param));
                 }
-            } else if !name.starts_with('_') {
-                segments.push(name.trim_end_matches(".tsx").trim_end_matches(".ts").to_string());
+            } else if !stem.starts_with('_') {
+                segments.push(stem.to_string());
             }
         }
 
@@ -177,21 +180,15 @@ impl RouteTable {
     }
 
     fn pattern_to_regex(pattern: &str) -> regex::Regex {
-        let escaped = pattern
-            .replace('/', "/?/?")
-            .replace("(?P<", "(?P<")
-            .replace(">[^/]+>", ">/[^/]+)")
-            .replace(">.*>", ">/.*)");
-        
-        regex::Regex::new(&format!("^{}$", escaped))
+        regex::Regex::new(&format!("^{}$", pattern))
             .unwrap_or_else(|_| regex::Regex::new("^/$").unwrap())
     }
 
-    pub fn find_route(&self, path: &str) -> Option<(String, HashMap<String, String>)> {
+    pub fn find_route(&self, path: &str) -> Option<(String, HashMap<String, String>, PathBuf)> {
         // First try exact match
         for route in &self.routes {
             if route.pattern == path {
-                return Some((route.pattern.clone(), HashMap::new()));
+                return Some((route.pattern.clone(), HashMap::new(), route.file_path.clone()));
             }
         }
 
@@ -206,7 +203,7 @@ impl RouteTable {
                         }
                     }
                 }
-                return Some((route.pattern.clone(), params));
+                return Some((route.pattern.clone(), params, route.file_path.clone()));
             }
         }
 
@@ -327,9 +324,13 @@ impl AppState {
                 }
 
                 if let Ok(source) = std::fs::read_to_string(&path) {
+                    if path.to_string_lossy().contains("[slug]") {
+                    }
                     if let Err(e) = interpreter.load_file(&path, &source) {
                         eprintln!("[runts] Warning: Could not load {}: {}", path.display(), e);
                     }
+                } else {
+                    eprintln!("[runts] Warning: Could not read {}: {}", path.display(), std::io::Error::last_os_error());
                 }
             }
         }
@@ -413,9 +414,9 @@ impl AppState {
 
         // Get route info
         let route_table = self.route_table.read();
-        let (pattern, route_params) = route_table
+        let (_pattern, route_params, file_path) = route_table
             .find_route(path)
-            .unwrap_or_else(|| ("/".to_string(), HashMap::new()));
+            .unwrap_or_else(|| ("/".to_string(), HashMap::new(), PathBuf::from("routes/index.tsx")));
 
         // Merge params
         let mut all_params = route_params;
@@ -423,10 +424,10 @@ impl AppState {
             all_params.insert(k, v);
         }
 
-        // Execute the route using interpreter
+        // Execute the route using interpreter (pass file path for handler lookup)
         let result = {
             let interpreter = self.interpreter.read();
-            interpreter.execute_route(path, "GET", all_params, request)
+            interpreter.execute_route_by_file(&file_path, "GET", all_params, request)
                 .map_err(|e| anyhow::anyhow!("Handler error: {}", e))
         };
 
@@ -536,7 +537,8 @@ async fn handle_ssr(
     headers: http::HeaderMap,
 ) -> impl IntoResponse {
     let path = path.map(|p| p.0).unwrap_or_default();
-    let path = if path.is_empty() { "/" } else { &path };
+    let path = if path.is_empty() { "/".to_string() } else { format!("/{}", path) };
+    let path = path.as_str();
 
     // Build request info
     let request = RequestInfo {
@@ -924,6 +926,13 @@ pub async fn run_dev_server(config: &Config, _port: u16) -> Result<()> {
     }
 
     let state = AppState::new(root.clone(), dev_port)?;
+
+    // Debug: print routes
+    {
+        let rt = state.route_table.read();
+        for route in &rt.routes {
+        }
+    }
 
     // Start file watcher
     if let Err(e) = state.start_watcher() {

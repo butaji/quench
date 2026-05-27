@@ -292,12 +292,23 @@ impl VNode {
     }
 
     pub fn to_html_string(&self) -> String {
-        let mut html = format!("<{}", self.tag);
+        // Map React attribute names to HTML attribute names
+        fn map_attr_name(name: &str) -> String {
+            match name {
+                "className" => "class".to_string(),
+                "htmlFor" => "for".to_string(),
+                _ => name.to_string(),
+            }
+        }
+
+        let tag = map_attr_name(&self.tag);
+        let mut html = format!("<{}", tag);
         for (key, value) in &self.attrs {
+            let attr_name = map_attr_name(key);
             match value {
-                Value::Bool(true) => { html.push_str(&format!(" {}", key)); }
-                Value::String(s) if !s.is_empty() => { html.push_str(&format!(" {}=\"{}\"", key, html_escape_attr(s))); }
-                Value::Number(n) => { html.push_str(&format!(" {}=\"{}\"", key, n)); }
+                Value::Bool(true) => { html.push_str(&format!(" {}", attr_name)); }
+                Value::String(s) if !s.is_empty() => { html.push_str(&format!(" {}=\"{}\"", attr_name, html_escape_attr(s))); }
+                Value::Number(n) => { html.push_str(&format!(" {}=\"{}\"", attr_name, n)); }
                 Value::Bool(false) => {} // Skip false booleans
                 _ => {}
             }
@@ -311,7 +322,7 @@ impl VNode {
             for child in &self.children { 
                 html.push_str(child); 
             }
-            html.push_str(&format!("</{}>", self.tag));
+            html.push_str(&format!("</{}>", tag));
         }
         html
     }
@@ -538,20 +549,43 @@ impl Interpreter {
                 if name == "handler" {
                     if let Expr::Object { props } = value {
                         for prop in props {
-                            if let ObjectProp::Init { key: PropKey::Ident(method), value: handler_expr } = prop {
-                                if let Expr::Arrow { params, body, is_async } = handler_expr {
+                            match prop {
+                                ObjectProp::Init { key: PropKey::Ident(method), value: handler_expr } => {
+                                    let (params, body, is_async) = match handler_expr {
+                                        Expr::Arrow { params, body, is_async } => {
+                                            (params.clone(), body.as_ref().clone(), *is_async)
+                                        }
+                                        Expr::Function { decl } => {
+                                            (decl.params.clone(), decl.body.as_ref().map(|b| Stmt::Block(b.0.clone())).unwrap_or(Stmt::Block(vec![])), decl.is_async)
+                                        }
+                                        _ => continue,
+                                    };
                                     let handler_method = HandlerMethod {
-                                        params: params.clone(),
-                                        body: match body.as_ref() {
-                                            Stmt::Block(stmts) => stmts.clone(),
-                                            other => vec![other.clone()],
+                                        params,
+                                        body: match body {
+                                            Stmt::Block(stmts) => stmts,
+                                            other => vec![other],
                                         },
-                                        is_async: *is_async,
+                                        is_async,
                                     };
                                     handler_info.methods.insert(method.clone(), handler_method);
                                 }
+                                ObjectProp::Method { key: PropKey::Ident(method), value: decl } => {
+                                    let handler_method = HandlerMethod {
+                                        params: decl.params.clone(),
+                                        body: match decl.body.as_ref() {
+                                            Some(b) => b.0.clone(),
+                                            None => vec![],
+                                        },
+                                        is_async: decl.is_async,
+                                    };
+                                    handler_info.methods.insert(method.clone(), handler_method);
+                                }
+                                _ => {
+                                }
                             }
                         }
+                    } else {
                     }
                 }
             }
@@ -559,6 +593,14 @@ impl Interpreter {
             if let ModuleItem::Export(Export::Default { expr }) = item {
                 if let Expr::Function { decl } = expr {
                     handler_info.component_name = Some(decl.name.clone());
+                    // Also register as a component for rendering
+                    let comp_def = ComponentDef {
+                        name: decl.name.clone(),
+                        file_path: path.to_string(),
+                        params: decl.params.clone(),
+                        body: decl.body.as_ref().map(|b| b.0.clone()).unwrap_or_default(),
+                    };
+                    self.components.write().insert(decl.name.clone(), comp_def);
                 }
             }
         }
@@ -731,6 +773,13 @@ impl Interpreter {
     pub fn execute_route(&self, route_path: &str, method: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult, String> {
         self.execute_route_with_mode(route_path, method, params, request, ExecMode::Full)
     }
+
+    /// Execute a route by its file path (used by dev server)
+    pub fn execute_route_by_file(&self, file_path: &std::path::Path, method: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult, String> {
+        let path_str = file_path.to_string_lossy().to_string();
+        let route_key = path_to_route_key(&path_str);
+        self.execute_route_with_mode(&route_key, method, params, request, ExecMode::Full)
+    }
     
     /// Execute a route with configurable mode
     pub fn execute_route_with_mode(&self, route_path: &str, method: &str, params: HashMap<String, String>, request: RequestInfo, mode: ExecMode) -> Result<RenderResult, String> {
@@ -773,6 +822,19 @@ impl Interpreter {
             ctx.scope.insert(k.clone(), v.clone());
         }
         
+        // Evaluate module-level declarations and add to scope
+        if let Some(module) = self.modules.read().get(&handler.file_path).cloned() {
+            for item in &module.items {
+                if let ModuleItem::Decl(Decl::Variable(v)) = item {
+                    if let Some(init) = &v.init {
+                        if let Ok(val) = self.expr_to_value(init, &ctx) {
+                            ctx.scope.insert(v.name.clone(), val);
+                        }
+                    }
+                }
+            }
+        }
+        
         let method_upper = method.to_uppercase();
         let mut page_data: Value = Value::Object(HashMap::new());
         let mut render_result: Option<String> = None;
@@ -781,6 +843,30 @@ impl Interpreter {
         if mode == ExecMode::Full || mode == ExecMode::HandlerOnly {
             if let Some(handler_method) = handler.methods.get(&method_upper) {
                 ctx.scope.insert("_handler_called".to_string(), Value::Bool(true));
+
+                // Bind handler parameters to scope
+                // Typical Fresh handler: async GET(_req: Request, _ctx: HandlerContext)
+                for (i, param) in handler_method.params.iter().enumerate() {
+                    let param_name = &param.name;
+                    let value = if i == 0 {
+                        // First param is usually the Request
+                        let mut req_obj = HashMap::new();
+                        req_obj.insert("url".to_string(), Value::String(request.url.clone()));
+                        req_obj.insert("method".to_string(), Value::String(request.method.clone()));
+                        Value::Object(req_obj)
+                    } else if i == 1 {
+                        // Second param is usually the Context
+                        let mut ctx_obj = HashMap::new();
+                        ctx_obj.insert("params".to_string(), Value::Object(
+                            ctx.params.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()
+                        ));
+                        ctx_obj.insert("state".to_string(), Value::Object(ctx.state.clone()));
+                        Value::Object(ctx_obj)
+                    } else {
+                        Value::Undefined
+                    };
+                    ctx.scope.insert(param_name.clone(), value);
+                }
                 
                 // Execute handler and check for Response/ctx.render
                 let handler_result = self.execute_handler_full(handler_method, &handler, &mut ctx, route_path)?;
@@ -824,7 +910,7 @@ impl Interpreter {
     }
     
     /// Execute handler body and check for Response/ctx.render
-    fn execute_handler_full(&self, handler: &HandlerMethod, handler_info: &HandlerInfo, ctx: &mut EvalContext, route_path: &str) -> Result<Option<RenderResult>, String> {
+    fn execute_handler_full(&self, handler: &HandlerMethod, _handler_info: &HandlerInfo, ctx: &mut EvalContext, _route_path: &str) -> Result<Option<RenderResult>, String> {
         for stmt in &handler.body {
             match stmt {
                 Stmt::Return { arg: Some(expr) } => {
@@ -832,6 +918,19 @@ impl Interpreter {
                     if let Expr::New { callee, args, .. } = expr {
                         if let Expr::Ident { name } = callee.as_ref() {
                             if name == "Response" {
+                                // Check if body is JSON - if so, parse and use as page data
+                                if let Some(body_expr) = args.first() {
+
+                                    if let Ok(body_val) = self.expr_to_value(body_expr, ctx) {
+                                        let body_str = body_val.to_string();
+                                        if body_str.starts_with('{') || body_str.starts_with('[') {
+                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_str) {
+                                                ctx.state.insert("_page_data".to_string(), json_to_value(json));
+                                                return Ok(None);
+                                            }
+                                        }
+                                    }
+                                }
                                 return self.handle_response(args, ctx);
                             }
                         }
@@ -873,11 +972,11 @@ impl Interpreter {
                     }
                 }
                 
-                // Handle variable declarations that might set state
+                // Handle variable declarations in handler body
                 Stmt::Variable { decl } => {
                     if let Some(init) = &decl.init {
                         if let Ok(val) = self.expr_to_value(init, ctx) {
-                            ctx.state.insert(decl.name.clone(), val);
+                            ctx.scope.insert(decl.name.clone(), val);
                         }
                     }
                 }
@@ -1124,14 +1223,73 @@ impl Interpreter {
             Some(b) => &b.0,
             None => return Ok(String::new()),
         };
-        
-        for stmt in body {
-            if let Stmt::Return { arg: Some(expr) } = stmt {
-                return self.evaluate_expr_to_html(expr, ctx);
+
+        // Unpack destructured parameters into scope
+        let mut local_ctx = ctx.clone();
+        for param in &comp_def.params {
+            if let Some(ref pattern) = param.pattern {
+                // The source value should be in scope under the param name (e.g., _props)
+                if let Some(source_val) = ctx.scope.get(&param.name) {
+                    self.unpack_pattern(pattern, source_val, &mut local_ctx)?;
+                }
             }
         }
-        
+
+        for stmt in body {
+            if let Stmt::Return { arg: Some(expr) } = stmt {
+                return self.evaluate_expr_to_html(expr, &local_ctx);
+            }
+        }
+
         Ok(String::new())
+    }
+
+    /// Unpack a destructuring pattern into the evaluation context
+    fn unpack_pattern(&self, pat: &Pat, source: &Value, ctx: &mut EvalContext) -> Result<(), String> {
+        match pat {
+            Pat::Object { props, .. } => {
+                if let Value::Object(obj) = source {
+                    for prop in props {
+                        match prop {
+                            ObjectPatProp::Init { key, value } => {
+                                let key_val = obj.get(key).cloned().unwrap_or(Value::Undefined);
+                                self.unpack_pattern(value, &key_val, ctx)?;
+                            }
+                            ObjectPatProp::Rest { arg } => {
+                                // For rest, we keep the remaining keys
+                                // This is a simplification - proper rest would filter used keys
+                                self.unpack_pattern(arg, source, ctx)?;
+                            }
+                        }
+                    }
+                } else {
+                    // If source is not an object, try to get members
+                    for prop in props {
+                        if let ObjectPatProp::Init { key, value } = prop {
+                            let key_val = source.get_member(key).unwrap_or(Value::Undefined);
+                            self.unpack_pattern(value, &key_val, ctx)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Pat::Array { elems, .. } => {
+                if let Value::Array(arr) = source {
+                    for (i, elem) in elems.iter().enumerate() {
+                        if let Some(e) = elem {
+                            let val = arr.get(i).cloned().unwrap_or(Value::Undefined);
+                            self.unpack_pattern(e, &val, ctx)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Pat::Ident { name, .. } => {
+                ctx.scope.insert(name.clone(), source.clone());
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
     
     fn apply_layouts(&self, content: &str, layouts: &[LayoutInfo], ctx: &EvalContext) -> Result<String, String> {
@@ -1203,11 +1361,25 @@ impl Interpreter {
                 }
             }
             Expr::Call { callee, args, .. } => {
-                if let Expr::Ident { name } = callee.as_ref() {
-                    let value = self.call_hook_or_function(name, args, ctx)?;
-                    return Ok(value.to_string());
+                match callee.as_ref() {
+                    Expr::Ident { name } => {
+                        let value = self.call_hook_or_function(name, args, ctx)?;
+                        return Ok(value.to_string());
+                    }
+                    Expr::Member { object, property, .. } => {
+                        let obj_val = self.expr_to_value(object, ctx)?;
+                        let method_name = if let Expr::Ident { name } = property.as_ref() {
+                            name.clone()
+                        } else {
+                            return Ok(String::new());
+                        };
+                        let mut method_ctx = ctx.clone();
+                        method_ctx.scope.insert("_this".to_string(), obj_val);
+                        let value = self.call_hook_or_function(&method_name, args, &method_ctx)?;
+                        return Ok(value.to_string());
+                    }
+                    _ => Ok(String::new()),
                 }
-                Ok(String::new())
             }
             Expr::Array { elems } => {
                 let mut html = String::new();
@@ -1323,6 +1495,25 @@ impl Interpreter {
                 }
                 Ok(Value::Undefined)
             }
+            "stringify" => {
+                if let Some(arg) = args.first() {
+                    if let Ok(val) = self.expr_to_value(arg, ctx) {
+                        return Ok(Value::String(val.to_json().to_string()));
+                    }
+                }
+                Ok(Value::String("{}".to_string()))
+            }
+            "parse" => {
+                if let Some(arg) = args.first() {
+                    if let Ok(val) = self.expr_to_value(arg, ctx) {
+                        let s = val.to_string();
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&s) {
+                            return Ok(json_to_value(json));
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             _ => Ok(Value::String(format!("[{}]", name))),
         }
     }
@@ -1340,16 +1531,48 @@ impl Interpreter {
         for attr in &jsx.opening.attrs {
             match attr {
                 JSXAttr::Attr { name, value } => {
+                    // Skip event handlers in SSR
+                    if name.starts_with("on") && name.len() > 2 && name.chars().nth(2).map(|c| c.is_uppercase()).unwrap_or(false) {
+                        continue;
+                    }
                     let attr_value = match value.as_ref() {
                         Some(JSXAttrValue::String(s)) => Value::String(s.clone()),
                         Some(JSXAttrValue::Expr(e)) => self.expr_to_value(e, ctx)?,
                         None => Value::Bool(true),
+                    };
+                    // Convert inline style object to CSS string
+                    let attr_value = if name == "style" {
+                        if let Value::Object(styles) = &attr_value {
+                            let css: Vec<String> = styles.iter().map(|(k, v)| {
+                                let mut css_key = String::new();
+                            for c in k.chars() {
+                                if c == '_' {
+                                    css_key.push('-');
+                                } else if c.is_uppercase() {
+                                    css_key.push('-');
+                                    css_key.push(c.to_ascii_lowercase());
+                                } else {
+                                    css_key.push(c);
+                                }
+                            }
+                                format!("{}: {}", css_key, v.to_string())
+                            }).collect();
+                            Value::String(css.join("; "))
+                        } else {
+                            attr_value
+                        }
+                    } else {
+                        attr_value
                     };
                     vnode.attrs.insert(name.clone(), attr_value);
                 }
                 JSXAttr::Spread { expr } => {
                     if let Value::Object(props) = self.expr_to_value(expr, ctx)? {
                         for (k, v) in props {
+                            // Skip event handlers in spread too
+                            if k.starts_with("on") && k.len() > 2 && k.chars().nth(2).map(|c| c.is_uppercase()).unwrap_or(false) {
+                                continue;
+                            }
                             vnode.attrs.insert(k, v);
                         }
                     }
@@ -1374,24 +1597,9 @@ impl Interpreter {
                     }
                 }
                 JSXChild::Expr(e) => {
-                    if let Expr::Call { callee, .. } = e {
-                        if let Expr::Member { object, property, .. } = callee.as_ref() {
-                            let obj_val = self.expr_to_value(object, ctx)?;
-                            if let Expr::Ident { name: method_name } = property.as_ref().deref() {
-                                if let Some(method) = obj_val.get_member(method_name) {
-                                    let mut method_ctx = ctx.clone();
-                                    method_ctx.scope.insert("_this".to_string(), obj_val);
-                                    if let Value::String(result) = self.call_hook_or_function("map", &[], &method_ctx)? {
-                                        vnode.children.push(result);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let val = self.evaluate_expr_to_html(e, ctx)?;
-                        if !val.is_empty() {
-                            vnode.children.push(val);
-                        }
+                    let val = self.evaluate_expr_to_html(e, ctx)?;
+                    if !val.is_empty() {
+                        vnode.children.push(val);
                     }
                 }
                 JSXChild::JSX(inner_jsx) => {
@@ -1522,6 +1730,11 @@ impl Interpreter {
             Expr::Ident { name } => {
                 if let Some(value) = ctx.scope.get(name) {
                     Ok(value.clone())
+                } else if name == "JSON" {
+                    let mut json_obj = HashMap::new();
+                    json_obj.insert("stringify".to_string(), Value::Function("stringify".to_string()));
+                    json_obj.insert("parse".to_string(), Value::Function("parse".to_string()));
+                    Ok(Value::Object(json_obj))
                 } else {
                     Ok(Value::String(format!("{{{}}}", name)))
                 }
@@ -1666,16 +1879,22 @@ impl Interpreter {
             }
             Expr::Member { object, property, computed, .. } => {
                 let obj_val = self.expr_to_value(object, ctx)?;
-                let key = if let Expr::Ident { name } = property.as_ref() {
-                    name.clone()
+                let key = if *computed {
+                    let key_val = self.expr_to_value(property, ctx)?;
+                    key_val.to_string()
                 } else {
-                    return Ok(Value::Undefined);
+                    if let Expr::Ident { name } = property.as_ref() {
+                        name.clone()
+                    } else {
+                        return Ok(Value::Undefined);
+                    }
                 };
-                if *computed {
-                    Ok(obj_val.get_member(&key).unwrap_or(Value::Undefined))
-                } else {
-                    Ok(obj_val.get_member(&key).unwrap_or(Value::Undefined))
+                let result = obj_val.get_member(&key).unwrap_or(Value::Undefined);
+                if let Value::Object(ref obj) = obj_val {
+                    if obj.keys().any(|k| k.starts_with("intro")) {
+                    }
                 }
+                Ok(result)
             }
             _ => Ok(Value::Undefined),
         }
@@ -1700,6 +1919,23 @@ fn rand_id() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos()).unwrap_or(0);
     format!("{:x}", nanos)
+}
+
+fn json_to_value(json: serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => Value::String(s),
+        serde_json::Value::Array(arr) => Value::Array(arr.into_iter().map(json_to_value).collect()),
+        serde_json::Value::Object(obj) => {
+            let mut map = HashMap::new();
+            for (k, v) in obj {
+                map.insert(k, json_to_value(v));
+            }
+            Value::Object(map)
+        }
+    }
 }
 
 pub fn path_to_route_key(path: &str) -> String {
