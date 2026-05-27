@@ -333,11 +333,11 @@ pub fn to_html(node: &VNode) -> String {
         VNode::Empty => String::new(),
         VNode::Text { value } => escape_html(value),
         VNode::Fragment { children } => children.iter().map(to_html).collect(),
-        VNode::Component { name, children, .. } => {
+        VNode::Component { name, props, children, .. } => {
             // For SSR, try to render through component registry if available,
             // otherwise render children as fallback.
             let children_html: String = children.iter().map(to_html).collect();
-            if let Some(rendered) = try_render_component(name, children) {
+            if let Some(rendered) = try_render_component(name, props, children) {
                 rendered
             } else {
                 format!("<!-- {} -->{}", escape_html(name), children_html)
@@ -399,13 +399,10 @@ where
 }
 
 /// Try to render a registered component. Returns None if not registered.
-fn try_render_component(name: &str, children: &[VNode]) -> Option<String> {
+fn try_render_component(name: &str, props: &std::collections::HashMap<String, serde_json::Value>, children: &[VNode]) -> Option<String> {
     let reg = COMPONENT_REGISTRY.lock().unwrap();
     let renderer = reg.get(name)?;
-    // For SSR without actual props lookup, we pass empty props.
-    // In practice, components that need SSR should be inlined by codegen
-    // or the registry should be populated at startup with prop-aware closures.
-    let vnode = renderer(&std::collections::HashMap::new(), children)?;
+    let vnode = renderer(props, children)?;
     Some(to_html(&vnode))
 }
 

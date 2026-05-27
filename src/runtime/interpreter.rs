@@ -100,7 +100,7 @@ pub struct EvalContext {
     pub scope: HashMap<String, Value>,
     pub params: HashMap<String, String>,
     pub url: String,
-    pub rendered_islands: Vec<RenderedIsland>,
+    pub rendered_islands: std::rc::Rc<std::cell::RefCell<Vec<RenderedIsland>>>,
     pub state: HashMap<String, Value>,
     pub request: Option<RequestInfo>,
 }
@@ -111,7 +111,7 @@ impl Default for EvalContext {
             scope: HashMap::new(),
             params: HashMap::new(),
             url: String::new(),
-            rendered_islands: Vec::new(),
+            rendered_islands: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             state: HashMap::new(),
             request: None,
         }
@@ -807,7 +807,7 @@ impl Interpreter {
             scope: HashMap::new(),
             params: params.clone(),
             url: request.url.clone(),
-            rendered_islands: Vec::new(),
+            rendered_islands: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             state: middleware_state.clone(),
             request: Some(request.clone()),
         };
@@ -899,10 +899,11 @@ impl Interpreter {
             String::new()
         };
         
+        let rendered_islands = ctx.rendered_islands.borrow().clone();
         Ok(RenderResult {
             html: full_html,
             page_data,
-            islands: ctx.rendered_islands,
+            islands: rendered_islands,
             status: 200,
         })
     }
@@ -1233,9 +1234,30 @@ impl Interpreter {
             }
         }
 
+        // Execute all body statements, returning on the first Return
         for stmt in body {
-            if let Stmt::Return { arg: Some(expr) } = stmt {
-                return self.evaluate_expr_to_html(expr, &local_ctx);
+            match stmt {
+                Stmt::Return { arg: Some(expr) } => {
+                    return self.evaluate_expr_to_html(expr, &local_ctx);
+                }
+                Stmt::Return { arg: None } => {
+                    return Ok(String::new());
+                }
+                Stmt::Variable { decl } => {
+                    if let Some(init) = &decl.init {
+                        if let Ok(val) = self.expr_to_value(init, &local_ctx) {
+                            if let Some(ref pat) = decl.pattern {
+                                self.unpack_pattern(pat, &val, &mut local_ctx).ok();
+                            } else {
+                                local_ctx.scope.insert(decl.name.clone(), val);
+                            }
+                        }
+                    }
+                }
+                Stmt::Expr { expr } => {
+                    let _ = self.expr_to_value(expr, &local_ctx);
+                }
+                _ => {}
             }
         }
 
@@ -1583,7 +1605,9 @@ impl Interpreter {
             let islands_guard = self.islands.read();
             if let Some(_island) = islands_guard.get(&tag) {
                 drop(islands_guard);
-                return self.render_island(&tag, &vnode.attrs, &mut ctx.clone());
+                let (html, rendered) = self.render_island(&tag, &vnode.attrs, ctx)?;
+                ctx.rendered_islands.borrow_mut().push(rendered);
+                return Ok(html);
             }
         }
 
@@ -1638,7 +1662,7 @@ impl Interpreter {
         Ok(vnode.to_html_string())
     }
     
-    fn render_island(&self, name: &str, attrs: &HashMap<String, Value>, ctx: &mut EvalContext) -> Result<String, String> {
+    fn render_island(&self, name: &str, attrs: &HashMap<String, Value>, ctx: &EvalContext) -> Result<(String, RenderedIsland), String> {
         let islands_guard = self.islands.read();
         let island = islands_guard.get(name).cloned()
             .ok_or_else(|| format!("Island not found: {}", name))?;
@@ -1688,16 +1712,16 @@ impl Interpreter {
             content = server_html
         );
         
-        ctx.rendered_islands.push(RenderedIsland {
+        let rendered = RenderedIsland {
             name: name.to_string(),
             props: attrs.clone(),
             html: placeholder_html.clone(),
             id: island_id,
             props_json,
             hydrate,
-        });
+        };
         
-        Ok(placeholder_html)
+        Ok((placeholder_html, rendered))
     }
     
     /// Render island content on the server
@@ -1708,10 +1732,30 @@ impl Interpreter {
             props_ctx.scope.insert(k.clone(), v.clone());
         }
         
-        // Find and execute the island component
+        // Execute all body statements, returning on the first Return
         for item in &island.body {
-            if let Stmt::Return { arg: Some(expr) } = item {
-                return self.evaluate_expr_to_html(expr, &props_ctx);
+            match item {
+                Stmt::Return { arg: Some(expr) } => {
+                    return self.evaluate_expr_to_html(expr, &props_ctx);
+                }
+                Stmt::Return { arg: None } => {
+                    return Ok(String::new());
+                }
+                Stmt::Variable { decl } => {
+                    if let Some(init) = &decl.init {
+                        if let Ok(val) = self.expr_to_value(init, &props_ctx) {
+                            if let Some(ref pat) = decl.pattern {
+                                self.unpack_pattern(pat, &val, &mut props_ctx).ok();
+                            } else {
+                                props_ctx.scope.insert(decl.name.clone(), val);
+                            }
+                        }
+                    }
+                }
+                Stmt::Expr { expr } => {
+                    let _ = self.expr_to_value(expr, &props_ctx);
+                }
+                _ => {}
             }
         }
         
