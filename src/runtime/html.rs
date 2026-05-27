@@ -1,28 +1,28 @@
 //! HTML builder helpers
 
 use std::collections::HashMap;
-use crate::runtime::vdom::VNode;
+use crate::runtime::vdom::{VNode, AttrValue};
 
 /// Build an HTML element
 #[allow(dead_code)]
 pub fn html_element(tag: &str, attrs: HashMap<String, serde_json::Value>, children: Vec<VNode>) -> VNode {
-    // serde::Serialize is used indirectly through VNodeValue
-    
     let mut vdom_attrs = HashMap::new();
     for (key, value) in attrs {
-        // Convert JSON values to VNodeValue
-        if let Ok(v) = serde_json::from_value::<crate::runtime::vdom::VNodeValue>(value.clone()) {
-            vdom_attrs.insert(key, v);
-        } else {
-            vdom_attrs.insert(key, crate::runtime::vdom::VNodeValue::Null);
-        }
+        let attr = match value {
+            serde_json::Value::String(s) => AttrValue::String(s),
+            serde_json::Value::Bool(b) => AttrValue::Bool(b),
+            serde_json::Value::Number(n) => AttrValue::Number(n.as_f64().unwrap_or(0.0)),
+            _ => AttrValue::String(value.to_string()),
+        };
+        vdom_attrs.insert(key, attr);
     }
     
     VNode::Element {
         tag: tag.to_string(),
         attrs: vdom_attrs,
-        children,
         events: HashMap::new(),
+        children,
+        key: None,
     }
 }
 
