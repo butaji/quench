@@ -5,8 +5,16 @@
 
 // Re-export commonly used types
 pub use super::vdom::VNode;
+pub use super::islands::{HydrationStrategy, IslandInstance, IslandRegistry, IslandManifest};
+pub use super::hooks::{
+    use_state, use_effect, use_ref, use_memo, use_callback,
+    use_reducer, use_context, create_context, use_id,
+};
+pub use super::signals::{Signal, Computed};
+pub use super::server::{PageResult, SsrEngine};
 
 // Re-export for component macro
+pub use runts_macros::{html, component};
 
 // Note: For html! macro with full JSX support, use runts_macros::html!
 // The basic VNode construction is available via VNode::element() builder
