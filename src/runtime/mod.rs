@@ -25,6 +25,7 @@ pub mod interpreter;
 pub mod middleware;
 
 pub use vdom::VNode;
+#[allow(unused_imports)]
 pub use server::{PageResult, SsrEngine};
 #[allow(unused_imports)]
 pub use middleware::{MiddlewareExecutor, MiddlewareOutcome, MiddlewareDef};

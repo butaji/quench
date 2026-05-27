@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 //! Runts runtime prelude
 //!
 //! This module provides convenient access to all commonly used runtime types.
