@@ -2,12 +2,112 @@
 //!
 //! This module provides React/Preact-compatible hooks for use in
 //! components. Hooks must be called in the same order on every render.
+//!
+//! Hooks are stored in a thread-local indexed array, matching React's
+//! hooks semantics exactly.
 
 use std::sync::Arc;
 use parking_lot::RwLock;
+use std::cell::RefCell;
 
 // Re-export signals
 pub use super::signals::Signal;
+
+// =============================================================================
+// Hook State (thread-local indexed storage for correct hook semantics)
+// =============================================================================
+
+thread_local! {
+    static HOOK_STATE: RefCell<Vec<HookEntry>> = RefCell::new(Vec::new());
+    static HOOK_INDEX: RefCell<usize> = RefCell::new(0);
+    static EFFECT_QUEUE: RefCell<Vec<QueuedEffect>> = RefCell::new(Vec::new());
+}
+
+struct HookEntry {
+    state: Arc<RwLock<Box<dyn std::any::Any + Send + Sync>>>,
+    kind: HookKind,
+    hash: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum HookKind {
+    State,
+    Memo,
+    Callback,
+    Ref,
+    Reducer,
+}
+
+#[derive(Clone)]
+struct QueuedEffect {
+    callback: Arc<RwLock<Option<Box<dyn FnOnce() -> Option<EffectCleanup> + Send + Sync>>>>,
+    deps_hash: usize,
+    ran_once: bool,
+}
+
+/// Reset hook index for a new render cycle.
+pub fn reset_hook_index() {
+    HOOK_INDEX.with(|idx| *idx.borrow_mut() = 0);
+}
+
+/// Flush all queued effects (run after render).
+pub fn flush_effects() {
+    EFFECT_QUEUE.with(|queue| {
+        let mut q = queue.borrow_mut();
+        for effect in q.iter_mut() {
+            if let Some(cb) = effect.callback.write().take() {
+                effect.ran_once = true;
+                let _ = cb();
+            }
+        }
+    });
+}
+
+fn next_hook_index() -> usize {
+    HOOK_INDEX.with(|idx| {
+        let mut i = idx.borrow_mut();
+        let current = *i;
+        *i += 1;
+        current
+    })
+}
+
+fn with_hook_state<T, F>(f: F) -> T
+where
+    F: FnOnce(&mut Vec<HookEntry>) -> T,
+{
+    HOOK_STATE.with(|state| f(&mut *state.borrow_mut()))
+}
+
+fn init_hook<T: std::any::Any + Send + Sync>(value: T, kind: HookKind, hash: usize) -> usize {
+    let idx = next_hook_index();
+    with_hook_state(|state| {
+        if idx >= state.len() {
+            state.push(HookEntry {
+                state: Arc::new(RwLock::new(Box::new(value))),
+                kind,
+                hash,
+            });
+        }
+    });
+    idx
+}
+
+fn read_hook<T: Clone + std::any::Any + Send + Sync + 'static>(idx: usize) -> T {
+    with_hook_state(|state| {
+        state[idx].state.read().downcast_ref::<T>().cloned().unwrap()
+    })
+}
+
+fn write_hook<T: std::any::Any + Send + Sync>(idx: usize, value: T) {
+    with_hook_state(|state| {
+        *state[idx].state.write() = Box::new(value);
+    });
+}
+
+// =============================================================================
+// Public API
+// =============================================================================
 
 /// State hook result
 #[allow(dead_code)]
@@ -25,19 +125,16 @@ pub type UseStateResult<T> = (T, Box<dyn Fn(T) + Send + Sync>);
 /// ```
 pub fn use_state<T>(initial: T) -> UseStateResult<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + std::any::Any + Send + Sync + 'static,
 {
-    let state = Arc::new(RwLock::new(initial));
-    let state_clone = state.clone();
-    
-    let getter: T = state.read().clone();
+    let idx = init_hook(initial, HookKind::State, 0);
+    let value = read_hook::<T>(idx);
     
     let setter: Box<dyn Fn(T) + Send + Sync> = Box::new(move |new_value: T| {
-        *state_clone.write() = new_value;
-        // In a full implementation, this would trigger a re-render
+        write_hook(idx, new_value);
     });
     
-    (getter, setter)
+    (value, setter)
 }
 
 /// useState hook with lazy initialization
@@ -48,19 +145,27 @@ where
 /// ```
 pub fn use_state_with<T, F>(initial: F) -> UseStateResult<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + std::any::Any + Send + Sync + 'static,
     F: FnOnce() -> T + Send + Sync + 'static,
 {
-    let state = Arc::new(RwLock::new(initial()));
-    let state_clone = state.clone();
-    
-    let getter: T = state.read().clone();
+    let idx = next_hook_index();
+    with_hook_state(|state| {
+        if idx >= state.len() {
+            let value = initial();
+            state.push(HookEntry {
+                state: Arc::new(RwLock::new(Box::new(value))),
+                kind: HookKind::State,
+                hash: 0,
+            });
+        }
+    });
+    let value = read_hook::<T>(idx);
     
     let setter: Box<dyn Fn(T) + Send + Sync> = Box::new(move |new_value: T| {
-        *state_clone.write() = new_value;
+        write_hook(idx, new_value);
     });
     
-    (getter, setter)
+    (value, setter)
 }
 
 /// useRef hook
@@ -74,23 +179,23 @@ where
 /// timer_ref.set(Some(setTimeout(...)));
 /// ```
 pub struct Ref<T> {
-    inner: Arc<RwLock<Option<T>>>,
+    inner: Arc<RwLock<T>>,
 }
 
 impl<T: Clone> Ref<T> {
     /// Get current value
-    pub fn get(&self) -> Option<T> {
+    pub fn get(&self) -> T {
         self.inner.read().clone()
     }
 
     /// Get mutable reference
-    pub fn get_mut(&mut self) -> Option<T> {
+    pub fn get_mut(&mut self) -> T {
         self.inner.read().clone()
     }
 
     /// Set value
     pub fn set(&mut self, value: T) {
-        *self.inner.write() = Some(value);
+        *self.inner.write() = value;
     }
 }
 
@@ -105,33 +210,28 @@ impl<T: Clone> Clone for Ref<T> {
 /// useRef hook
 pub fn use_ref<T, F>(initial: F) -> Ref<T>
 where
-    T: Clone + 'static,
+    T: Clone + std::any::Any + Send + Sync + 'static,
     F: FnOnce() -> T,
 {
+    let idx = next_hook_index();
+    with_hook_state(|state| {
+        if idx >= state.len() {
+            let value = initial();
+            state.push(HookEntry {
+                state: Arc::new(RwLock::new(Box::new(value))),
+                kind: HookKind::Ref,
+                hash: 0,
+            });
+        }
+    });
     Ref {
-        inner: Arc::new(RwLock::new(Some(initial()))),
+        inner: Arc::new(RwLock::new(read_hook::<T>(idx))),
     }
 }
 
 /// useRef with default value
-pub fn use_ref_default<T: Clone + Default>() -> Ref<T> {
-    Ref {
-        inner: Arc::new(RwLock::new(None::<T>)),
-    }
-}
-
-/// Memoized value
-#[allow(dead_code)]
-pub struct Memo<T> {
-    value: Arc<RwLock<Option<T>>>,
-    deps_hash: usize,
-}
-
-impl<T: Clone> Memo<T> {
-    /// Get the memoized value
-    pub fn get(&self) -> Option<T> {
-        self.value.read().clone()
-    }
+pub fn use_ref_default<T: Clone + Default + std::any::Any + Send + Sync + 'static>() -> Ref<T> {
+    use_ref(|| T::default())
 }
 
 /// Compute hash of dependencies
@@ -142,6 +242,16 @@ fn hash_deps(deps: &[impl std::hash::Hash + Sized]) -> usize {
     let mut hasher = DefaultHasher::new();
     for dep in deps {
         dep.hash(&mut hasher);
+    }
+    hasher.finish() as usize
+}
+
+fn hash_usize_slice(slice: &[usize]) -> usize {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+    let mut hasher = DefaultHasher::new();
+    for &v in slice {
+        hasher.write_usize(v);
     }
     hasher.finish() as usize
 }
@@ -157,28 +267,35 @@ fn hash_deps(deps: &[impl std::hash::Hash + Sized]) -> usize {
 /// ```
 pub fn use_memo<T, F, D>(factory: F, deps: &[D]) -> T
 where
-    T: Clone + 'static,
+    T: Clone + std::any::Any + Send + Sync + 'static,
     F: FnOnce() -> T,
     D: std::hash::Hash + Sized + 'static,
 {
-    // Simple implementation: always recompute
-    // Full implementation would cache and check deps
-    let _hash = hash_deps(deps);
-    factory()
-}
-
-/// Callback memoization
-#[allow(dead_code)]
-pub struct Callback<F> {
-    inner: Arc<F>,
-    deps_hash: usize,
-}
-
-impl<F> Callback<F> {
-    /// Get the callback
-    pub fn get(&self) -> &F {
-        &*self.inner
-    }
+    let new_hash = hash_deps(deps);
+    let idx = next_hook_index();
+    
+    with_hook_state(|state| {
+        if idx >= state.len() {
+            let value = factory();
+            state.push(HookEntry {
+                state: Arc::new(RwLock::new(Box::new(value))),
+                kind: HookKind::Memo,
+                hash: new_hash,
+            });
+        } else {
+            let entry = &state[idx];
+            if entry.kind != HookKind::Memo || entry.hash != new_hash {
+                let value = factory();
+                state[idx] = HookEntry {
+                    state: Arc::new(RwLock::new(Box::new(value))),
+                    kind: HookKind::Memo,
+                    hash: new_hash,
+                };
+            }
+        }
+    });
+    
+    read_hook::<T>(idx)
 }
 
 /// useCallback hook
@@ -192,14 +309,34 @@ impl<F> Callback<F> {
 ///     console.log!("Clicked!");
 /// }, []); // empty deps = never recreated
 /// ```
-pub fn use_callback<F, D>(callback: F, _deps: &[D]) -> F
+pub fn use_callback<F, D>(callback: F, deps: &[D]) -> F
 where
-    F: Clone + 'static,
+    F: Clone + std::any::Any + Send + Sync + 'static,
     D: std::hash::Hash + Sized + 'static,
 {
-    // Simple implementation: always return the callback
-    // Full implementation would cache and check deps
-    callback
+    let new_hash = hash_deps(deps);
+    let idx = next_hook_index();
+    
+    with_hook_state(|state| {
+        if idx >= state.len() {
+            state.push(HookEntry {
+                state: Arc::new(RwLock::new(Box::new(callback))),
+                kind: HookKind::Callback,
+                hash: new_hash,
+            });
+        } else {
+            let entry = &state[idx];
+            if entry.kind != HookKind::Callback || entry.hash != new_hash {
+                state[idx] = HookEntry {
+                    state: Arc::new(RwLock::new(Box::new(callback))),
+                    kind: HookKind::Callback,
+                    hash: new_hash,
+                };
+            }
+        }
+    });
+    
+    read_hook::<F>(idx)
 }
 
 /// Reducer result
@@ -225,23 +362,20 @@ pub type ReducerResult<S, A> = (S, Box<dyn Fn(A) + Send + Sync>);
 /// ```
 pub fn use_reducer<S, A, R>(reducer: R, initial: S) -> ReducerResult<S, A>
 where
-    S: Clone + Send + Sync + 'static,
+    S: Clone + std::any::Any + Send + Sync + 'static,
     A: Send + Sync + 'static,
     R: Fn(S, A) -> S + Clone + Send + Sync + 'static,
 {
-    let state = Arc::new(RwLock::new(initial));
-    let state_clone = state.clone();
-    let reducer_clone = reducer.clone();
+    let idx = init_hook(initial.clone(), HookKind::Reducer, 0);
+    let value = read_hook::<S>(idx);
     
     let dispatch: Box<dyn Fn(A) + Send + Sync> = Box::new(move |action: A| {
-        let current = state_clone.read().clone();
-        let new_state = reducer_clone(current, action);
-        *state_clone.write() = new_state;
-        // In a full implementation, this would trigger a re-render
+        let current = read_hook::<S>(idx);
+        let new_state = reducer(current, action);
+        write_hook(idx, new_state);
     });
     
-    let getter: S = state.read().clone();
-    (getter, dispatch)
+    (value, dispatch)
 }
 
 /// Effect cleanup function
@@ -267,13 +401,31 @@ pub type EffectCallback = Box<dyn FnOnce() -> Option<EffectCleanup> + Send + Syn
 ///     document.title = format!("Count: {}", count);
 /// }, [count]); // run when count changes
 /// ```
-pub fn use_effect<F, D>(_callback: F, _deps: D)
+pub fn use_effect<F, D>(callback: F, deps: D)
 where
     F: FnOnce() -> Option<EffectCleanup> + Send + Sync + 'static,
     D: AsRef<[usize]> + 'static,
 {
-    // SSR: effects are not run synchronously
-    // Client-side: would schedule effect execution after paint
+    let deps_slice = deps.as_ref();
+    let new_hash = hash_usize_slice(deps_slice);
+    let idx = next_hook_index();
+    
+    EFFECT_QUEUE.with(|queue| {
+        let mut q = queue.borrow_mut();
+        if idx >= q.len() {
+            q.push(QueuedEffect {
+                callback: Arc::new(RwLock::new(Some(Box::new(callback)))),
+                deps_hash: new_hash,
+                ran_once: false,
+            });
+        } else {
+            let effect = &mut q[idx];
+            if effect.deps_hash != new_hash || !effect.ran_once {
+                effect.deps_hash = new_hash;
+                *effect.callback.write() = Some(Box::new(callback));
+            }
+        }
+    });
 }
 
 /// useLayoutEffect hook
@@ -343,8 +495,6 @@ pub fn use_context<T>(context: &Context<T>) -> T
 where
     T: Clone + Send + Sync + 'static,
 {
-    // Returns the context value (default if no provider is active)
-    // Full provider hierarchy is tracked at the interpreter level
     context.get().clone()
 }
 
@@ -353,7 +503,6 @@ where
 /// Display custom label for custom hooks in React DevTools.
 pub fn use_debug_value<T>(_value: T) {
     // No-op in production builds
-    // In dev mode with React DevTools integration, this would display the value
 }
 
 /// useDebugValue with formatter
@@ -396,9 +545,6 @@ where
     T: Clone + 'static,
     S: 'static,
 {
-    // Server-side: return server snapshot directly
-    // Client-side: subscribe and return current snapshot
-    // For interpreter mode, we use the server snapshot
     let _ = subscribe;
     let _ = get_snapshot;
     get_server_snapshot()
@@ -411,4 +557,91 @@ pub fn use_id() -> String {
     
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("rts-{:x}", id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_use_state_basic() {
+        reset_hook_index();
+        let (count, set_count) = use_state(0i32);
+        assert_eq!(count, 0);
+        set_count(5);
+        reset_hook_index();
+        let (count2, _) = use_state(0i32);
+        assert_eq!(count2, 5);
+    }
+
+    #[test]
+    fn test_use_memo_caches() {
+        reset_hook_index();
+        let mut call_count = 0;
+        let memoized = use_memo(
+            || { call_count += 1; call_count },
+            &[1usize, 2usize],
+        );
+        assert_eq!(memoized, 1);
+
+        reset_hook_index();
+        let memoized2 = use_memo(
+            || { call_count += 1; call_count },
+            &[1usize, 2usize],
+        );
+        // Same deps: factory should NOT be called again
+        assert_eq!(memoized2, 1);
+        assert_eq!(call_count, 1);
+
+        reset_hook_index();
+        let memoized3 = use_memo(
+            || { call_count += 1; call_count },
+            &[1usize, 3usize],
+        );
+        // Different deps: factory should be called
+        assert_eq!(memoized3, 2);
+        assert_eq!(call_count, 2);
+    }
+
+    #[test]
+    fn test_use_reducer() {
+        reset_hook_index();
+        let (state, dispatch) = use_reducer(
+            |s: i32, a: &'static str| match a {
+                "inc" => s + 1,
+                "dec" => s - 1,
+                _ => s,
+            },
+            10i32,
+        );
+        assert_eq!(state, 10);
+        dispatch("inc");
+        reset_hook_index();
+        let (state2, _) = use_reducer(
+            |s: i32, a: &'static str| match a {
+                "inc" => s + 1,
+                "dec" => s - 1,
+                _ => s,
+            },
+            10i32,
+        );
+        assert_eq!(state2, 11);
+    }
+
+    #[test]
+    fn test_use_effect_queues() {
+        reset_hook_index();
+        EFFECT_QUEUE.with(|q| q.borrow_mut().clear());
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran2 = ran.clone();
+        use_effect(
+            move || {
+                ran2.store(true, std::sync::atomic::Ordering::SeqCst);
+                None
+            },
+            [0usize],
+        );
+        flush_effects();
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

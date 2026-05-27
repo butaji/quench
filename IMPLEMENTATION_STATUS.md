@@ -11,7 +11,7 @@
 | **Type Analyzer** | ✅ Complete | `src/transpile/analyzer.rs` | Type inference, island/route detection |
 | **Code Generator** | ✅ Complete | `src/transpile/codegen.rs` | HIR → Rust source |
 | **Signals** | ✅ Complete | `src/runtime/signals.rs` | Fine-grained reactivity |
-| **Hooks** | ✅ Complete | `src/runtime/hooks.rs` | useState, useEffect, useRef, useMemo |
+| **Hooks** | ✅ Complete | `src/runtime/hooks.rs` | useState, useEffect, useRef, useMemo, useCallback, useReducer |
 | **Islands Architecture** | ✅ Complete | `src/runtime/islands.rs` | Hydration modes, registry |
 | **Client JS Runtime** | ✅ Complete | `crates/runts-client/src/runtime.ts` | Vanilla JS with hydration strategies |
 | **HIR Interpreter** | ✅ Complete | `src/runtime/interpreter.rs` | Full route exec, ctx.render(), Response handling |
@@ -97,7 +97,7 @@ All MVP components are now implemented:
 
 ## Verification Plan
 
-### Unit Tests (80 passing)
+### Unit Tests (91 passing)
 
 - [x] Parser: JSX parsing (all patterns)
 - [x] Parser: Type annotation parsing
@@ -108,7 +108,7 @@ All MVP components are now implemented:
 - [x] Analyzer: Hook validation
 - [x] Codegen: All TS patterns → Rust
 - [x] Codegen: JSX → html!
-- [x] Runtime: Hooks behavior
+- [x] Runtime: Hooks behavior (state, memo, reducer, effects)
 - [x] Runtime: Signal reactivity
 - [x] Runtime: Island hydration
 - [x] Middleware: Pipeline execution

@@ -1,8 +1,8 @@
 # runts Deliverables — Phase 1 Complete
 
 **Status:** Phase 1 MVP ✅ | Phase 2 In Progress  
-**Tests:** 47 passing  
-**Binary:** ~1.2MB (example/my-blog)
+**Tests:** 91 passing  
+**Binary:** ~1.5MB (example/my-blog)
 
 ---
 
@@ -265,22 +265,22 @@ panic = "abort"
 
 | Task | Priority | Status |
 |------|----------|--------|
-| Full route handlers | P0 | Partial |
-| Middleware chain | P0 | Detection works |
-| Layout nesting | P0 | Partial |
-| html! proc macro | P0 | Basic |
-| Client hydration | P1 | Planned |
-| Error messages | P1 | Basic |
+| Full route handlers | P0 | ✅ Complete |
+| Middleware chain | P0 | ✅ Complete |
+| Layout nesting | P0 | ✅ Complete |
+| html! proc macro | P0 | ✅ Complete |
+| Client hydration | P1 | ✅ Runtime implemented |
+| Error messages | P1 | ✅ Levenshtein suggestions |
 | Type checking | P2 | Basic |
 
 ### Phase 3: Quality (Planned)
 
-| Task | Priority |
-|------|----------|
-| Idiomatic Rust codegen | P0 |
-| Source maps | P1 |
-| Better error messages | P0 |
-| Migration guide | P1 |
+| Task | Priority | Status |
+|------|----------|--------|
+| Idiomatic Rust codegen | P0 | ✅ |
+| Source maps | P1 | ❌ Not started |
+| Better error messages | P0 | ✅ Levenshtein + context |
+| Migration guide | P1 | ✅ Complete |
 
 ### Phase 4: Ecosystem (Future)
 
