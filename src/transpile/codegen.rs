@@ -6,6 +6,29 @@
 use super::hir::*;
 use anyhow::{anyhow, Result};
 
+/// Strip a single layer of unnecessary outer parentheses from a generated expression.
+fn strip_outer_parens(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('(') && s.ends_with(')') {
+        // Simple heuristic: find matching closing paren to avoid stripping
+        // from expressions like `(a + b) * c` when rendered standalone.
+        // For our generated code, outer parens from Bin/Unary are balanced.
+        let mut depth = 0;
+        let bytes = s.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'(' {
+                depth += 1;
+            } else if b == b')' {
+                depth -= 1;
+                if depth == 0 && i == s.len() - 1 {
+                    return strip_outer_parens(&s[1..s.len() - 1]);
+                }
+            }
+        }
+    }
+    s.to_string()
+}
+
 /// Code generator for producing Rust source from HIR
 pub struct CodeGenerator {
     /// Generated imports to include (for future use)
@@ -58,9 +81,32 @@ impl CodeGenerator {
             output.push_str(&format!("//! Source: {}\n", module.source));
         }
         output.push('\n');
+        output.push_str("#![allow(unused_mut, unused_variables, dead_code, unused_imports, noop_method_call, unused_parens, redundant_semicolons)]\n\n");
         output.push_str("use runts_lib::runtime::prelude::*;\n");
         output.push_str("use serde::{Serialize, Deserialize};\n");
-        output.push_str("use axum::{response::IntoResponse, body::Body};\n");
+
+        // Pre-scan to determine if axum imports are needed
+        let mut needs_axum = false;
+        let mut has_default_component = false;
+        for item in &module.items {
+            if let ModuleItem::Export(export) = item {
+                match export {
+                    Export::NamedWithValue { name, .. } if name == "handler" => {
+                        needs_axum = true;
+                    }
+                    Export::Default { expr } if matches!(expr, Expr::Function { .. }) => {
+                        has_default_component = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if self.generate_handlers && has_default_component {
+            needs_axum = true;
+        }
+        if needs_axum {
+            output.push_str("use axum::{response::IntoResponse, body::Body};\n");
+        }
         output.push('\n');
 
         // Collect type definitions for nested struct literal lookup
@@ -693,6 +739,7 @@ impl CodeGenerator {
             }
             Stmt::If { test, consequent, alternate } => {
                 let test_code = self.expr_to_rust(test);
+                let test_code = strip_outer_parens(&test_code);
                 let then_code = self.stmt_to_rust(consequent)?;
                 if let Some(alt) = alternate {
                     let else_code = self.stmt_to_rust(alt)?;
@@ -703,12 +750,13 @@ impl CodeGenerator {
             }
             Stmt::While { test, body } => {
                 let test_code = self.expr_to_rust(test);
+                let test_code = strip_outer_parens(&test_code);
                 let body_code = self.stmt_to_rust(body)?;
                 Ok(format!("while {} {{ {} }}", test_code, body_code))
             }
             Stmt::For { init, test, update, body, .. } => {
                 let init_code = init.as_ref().map(|i| self.for_init_to_rust(i)).unwrap_or_default();
-                let test_code = test.as_ref().map(|t| self.expr_to_rust(t)).unwrap_or_default();
+                let test_code = test.as_ref().map(|t| strip_outer_parens(&self.expr_to_rust(t))).unwrap_or_default();
                 let update_code = update.as_ref().map(|u| self.expr_to_rust(u)).unwrap_or_default();
                 let body_code = self.stmt_to_rust(body)?;
                 Ok(format!("for {}; {}; {} {{ {} }}", init_code, test_code, update_code, body_code))
@@ -726,7 +774,7 @@ impl CodeGenerator {
                 Ok(format!("for {} in {} {{ {} }}", left_code, right_code, body_code))
             }
             Stmt::Switch { discriminant, cases } => {
-                let disc_code = self.expr_to_rust(discriminant);
+                let disc_code = strip_outer_parens(&self.expr_to_rust(discriminant));
                 let mut output = format!("match {} {{\n", disc_code);
                 for case in cases {
                     let test_code = case.test.as_ref()
