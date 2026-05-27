@@ -38,6 +38,8 @@ pub use crate::gen::islands::counter_simple;
 pub use crate::gen::islands::todo_list;
 
 /// Island renderer
-pub async fn render_island(name: &str, _props: serde_json::Value) -> String {
-    format!("<div data-island=\"{}\">\n</div>", name)
+pub async fn render_island(name: &str, props: serde_json::Value) -> String {
+    let props_json = serde_json::to_string(&props).unwrap_or_default();
+    let props_escaped = props_json.replace('&', "&amp;").replace('"', "&quot;");
+    format!(r#"<div data-island="{}" data-props="{}"></div>"#, name, props_escaped)
 }

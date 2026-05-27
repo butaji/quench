@@ -140,7 +140,7 @@ pub struct Callback<F> {
 impl<F> Callback<F> {
     /// Get the callback
     pub fn get(&self) -> &F {
-        &*self.inner
+        &self.inner
     }
 }
 
