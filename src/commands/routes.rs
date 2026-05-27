@@ -72,7 +72,7 @@ pub struct Route {
 
 impl Route {
     /// Create a new route from a file path
-    pub fn from_file_path(file_path: &PathBuf) -> Result<Self> {
+    pub fn from_file_path(file_path: &std::path::Path) -> Result<Self> {
         let pattern = Self::file_path_to_pattern(file_path)?;
         let (path_template, segments, is_catch_all) = Self::pattern_to_template(&pattern);
         let regex = Self::compile_regex(&pattern)?;
@@ -82,14 +82,14 @@ impl Route {
             regex,
             path_template,
             segments,
-            file_path: file_path.clone(),
+            file_path: file_path.to_path_buf(),
             methods: vec![HttpMethod::GET],
             is_catch_all,
         })
     }
     
     /// Convert file path to route pattern
-    fn file_path_to_pattern(file_path: &PathBuf) -> Result<String> {
+    fn file_path_to_pattern(file_path: &std::path::Path) -> Result<String> {
         let path = file_path
             .to_str()
             .ok_or_else(|| anyhow!("Invalid file path"))?;
@@ -240,7 +240,7 @@ impl RouteTable {
     }
     
     /// Build route table from routes directory
-    pub fn from_routes_dir(routes_dir: &PathBuf) -> Result<Self> {
+    pub fn from_routes_dir(routes_dir: &std::path::Path) -> Result<Self> {
         let mut table = Self::new();
         
         if !routes_dir.exists() {

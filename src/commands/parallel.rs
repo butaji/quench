@@ -24,7 +24,7 @@ pub struct ParallelBuildResult {
 
 /// Process all files in parallel
 pub fn process_all_files_parallel(
-    project_root: &PathBuf,
+    project_root: &std::path::Path,
     transpiler: Arc<Transpiler>,
     code_gen: Arc<RwLock<CodeGenerator>>,
 ) -> Result<ParallelBuildResult> {
@@ -64,7 +64,7 @@ pub fn process_all_files_parallel(
 }
 
 /// Collect all .ts/.tsx files from a directory
-fn collect_files(dir: &PathBuf, extensions: &[&str]) -> Vec<PathBuf> {
+fn collect_files(dir: &std::path::Path, extensions: &[&str]) -> Vec<PathBuf> {
     if !dir.exists() {
         return Vec::new();
     }
@@ -89,11 +89,11 @@ fn collect_files(dir: &PathBuf, extensions: &[&str]) -> Vec<PathBuf> {
 /// Process routes in parallel
 fn process_routes_parallel(
     files: &[PathBuf],
-    base: &PathBuf,
+    base: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> (Vec<GeneratedFile>, Vec<RouteEntry>) {
-    let base = base.clone();
+    let base = base;
     
     let results: Vec<(Result<(GeneratedFile, Option<RouteEntry>), TranspileError>, PathBuf)> = files
         .par_iter()
@@ -126,11 +126,11 @@ fn process_routes_parallel(
 /// Process islands in parallel
 fn process_islands_parallel(
     files: &[PathBuf],
-    base: &PathBuf,
+    base: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> (Vec<GeneratedFile>, Vec<IslandEntry>) {
-    let base = base.clone();
+    let base = base;
     
     let results: Vec<(Result<(GeneratedFile, IslandEntry), TranspileError>, PathBuf)> = files
         .par_iter()
@@ -161,7 +161,7 @@ fn process_islands_parallel(
 /// Process components in parallel
 fn process_components_parallel(
     files: &[PathBuf],
-    components_dir: &PathBuf,
+    components_dir: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> (Vec<GeneratedFile>, Vec<ComponentEntry>) {
@@ -205,8 +205,8 @@ impl std::error::Error for TranspileError {}
 
 /// Process a single route file (layouts are generated but not registered as routes)
 fn process_single_route(
-    path: &PathBuf,
-    base: &PathBuf,
+    path: &std::path::Path,
+    base: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, Option<RouteEntry>), TranspileError> {
@@ -217,7 +217,7 @@ fn process_single_route(
     // Skip middleware and error pages entirely
     if filename.starts_with('_') && !filename.contains("layout") {
         return Err(TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: "Skipping special file".to_string(),
         });
     }
@@ -227,14 +227,14 @@ fn process_single_route(
     // Read source
     let source = std::fs::read_to_string(path)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Failed to read: {}", e),
         })?;
 
     // Parse
     let module = transpiler.parse_source(&source)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Parse error: {}", e),
         })?;
 
@@ -242,7 +242,7 @@ fn process_single_route(
     let mut analyzer = Analyzer::new();
     if let Err(errors) = analyzer.analyze(&module) {
         return Err(TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Analysis errors: {:?}", errors),
         });
     }
@@ -252,13 +252,13 @@ fn process_single_route(
     cg.set_generate_handlers(!is_layout);
     let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Code generation: {}", e),
         })?;
 
     // Extract route info
     let relative = path.strip_prefix(base)
-        .unwrap_or(path.as_path());
+        .unwrap_or(path);
     let pattern = extract_route_pattern(relative);
     let params = extract_params(&pattern);
     let methods = extract_http_methods(&module);
@@ -278,7 +278,7 @@ fn process_single_route(
     } else {
         Some(RouteEntry {
             pattern: pattern.clone(),
-            path: path.clone(),
+            path: path.to_path_buf(),
             file: relative.to_string_lossy().to_string(),
             params,
             methods,
@@ -311,22 +311,22 @@ fn process_single_route(
 
 /// Process a single island file
 fn process_single_island(
-    path: &PathBuf,
-    base: &PathBuf,
+    path: &std::path::Path,
+    base: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, IslandEntry), TranspileError> {
     // Read source
     let source = std::fs::read_to_string(path)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Failed to read: {}", e),
         })?;
 
     // Parse
     let module = transpiler.parse_source(&source)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Parse error: {}", e),
         })?;
 
@@ -335,7 +335,7 @@ fn process_single_island(
     cg.set_generate_handlers(false);
     let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Code generation: {}", e),
         })?;
 
@@ -346,11 +346,11 @@ fn process_single_island(
         .to_string();
 
     let relative = path.strip_prefix(base)
-        .unwrap_or(path.as_path());
+        .unwrap_or(path);
 
     let island = IslandEntry {
         name: name.clone(),
-        path: path.clone(),
+        path: path.to_path_buf(),
         file: relative.to_string_lossy().to_string(),
         props_type: None,
     };
@@ -372,22 +372,22 @@ fn process_single_island(
 
 /// Process a single component file
 fn process_single_component(
-    path: &PathBuf,
-    components_dir: &PathBuf,
+    path: &std::path::Path,
+    components_dir: &std::path::Path,
     transpiler: &Arc<Transpiler>,
     _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, ComponentEntry), TranspileError> {
     // Read source
     let source = std::fs::read_to_string(path)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Failed to read: {}", e),
         })?;
 
     // Parse
     let module = transpiler.parse_source(&source)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Parse error: {}", e),
         })?;
 
@@ -396,7 +396,7 @@ fn process_single_component(
     cg.set_generate_handlers(false);
     let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
-            path: path.clone(),
+            path: path.to_path_buf(),
             message: format!("Code generation: {}", e),
         })?;
 
@@ -416,7 +416,7 @@ fn process_single_component(
 
     let component = ComponentEntry {
         name: name.clone(),
-        path: path.clone(),
+        path: path.to_path_buf(),
         file: path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")

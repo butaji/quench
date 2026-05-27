@@ -2,7 +2,6 @@
 //! Route table for the application
 
 use axum::{Router, routing::{get}};
-use axum::body::Body;
 use axum::response::IntoResponse;
 use axum::extract::Request;
 use runts_lib::runtime::prelude::*;
@@ -15,7 +14,7 @@ use crate::gen::index as index;
 async fn wrap_index_home(ctx: HandlerContext, req: Request) -> impl IntoResponse {
     let resp = index::handle_get(ctx.clone(), req).await;
     if resp.headers().get("X-Runts-Render").is_some() {
-        let (parts, body) = resp.into_parts();
+        let (_parts, body) = resp.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         index::home_render_with_data(ctx.params, ctx.url, json).into_response()
@@ -27,7 +26,7 @@ async fn wrap_index_home(ctx: HandlerContext, req: Request) -> impl IntoResponse
 async fn wrap_blog_index_blog_index(ctx: HandlerContext, req: Request) -> impl IntoResponse {
     let resp = blog_index::handle_get(ctx.clone(), req).await;
     if resp.headers().get("X-Runts-Render").is_some() {
-        let (parts, body) = resp.into_parts();
+        let (_parts, body) = resp.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         blog_index::blog_index_render_with_data(ctx.params, ctx.url, json).into_response()
@@ -39,7 +38,7 @@ async fn wrap_blog_index_blog_index(ctx: HandlerContext, req: Request) -> impl I
 async fn wrap_blog_slug_blog_post(ctx: HandlerContext, req: Request) -> impl IntoResponse {
     let resp = blog_slug::handle_get(ctx.clone(), req).await;
     if resp.headers().get("X-Runts-Render").is_some() {
-        let (parts, body) = resp.into_parts();
+        let (_parts, body) = resp.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         blog_slug::blog_post_render_with_data(ctx.params, ctx.url, json).into_response()
@@ -51,7 +50,7 @@ async fn wrap_blog_slug_blog_post(ctx: HandlerContext, req: Request) -> impl Int
 async fn wrap_about_about(ctx: HandlerContext, req: Request) -> impl IntoResponse {
     let resp = about::handle_get(ctx.clone(), req).await;
     if resp.headers().get("X-Runts-Render").is_some() {
-        let (parts, body) = resp.into_parts();
+        let (_parts, body) = resp.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         about::about_render_with_data(ctx.params, ctx.url, json).into_response()
