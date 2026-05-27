@@ -787,8 +787,10 @@ fn generate_islands_manifest(islands: &[IslandEntry]) -> String {
     code.push('\n');
 
     code.push_str("/// Island renderer\n");
-    code.push_str("pub async fn render_island(name: &str, _props: serde_json::Value) -> String {\n");
-    code.push_str("    format!(\"<div data-island=\\\"{}\\\">\\n</div>\", name)\n");
+    code.push_str("pub async fn render_island(name: &str, props: serde_json::Value) -> String {\n");
+    code.push_str("    let props_json = serde_json::to_string(&props).unwrap_or_default();\n");
+    code.push_str("    let props_escaped = props_json.replace('&', \"&amp;\").replace('\"', \"&quot;\");\n");
+    code.push_str("    format!(r#\"<div data-island=\"{}\" data-props=\"{}\"></div>\"#, name, props_escaped)\n");
     code.push_str("}\n");
 
     code

@@ -279,7 +279,7 @@ impl Parser {
                     // Fragment closing: </>
                     if closing_tag.is_empty() {
                         if !self.peek_punct('>') {
-                            return Err(format!("Expected '/>' to close fragment"));
+                            return Err("Expected '/>' to close fragment".to_string());
                         }
                         self.expect_punct('>')?;
                         break;
