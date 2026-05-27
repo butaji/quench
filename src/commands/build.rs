@@ -16,6 +16,7 @@ use tracing::{info, error};
 
 use crate::config::Config;
 use crate::transpile::{Transpiler, hir::Module, codegen::CodeGenerator, analyzer::Analyzer};
+use crate::commands::parallel;
 
 /// Build result
 pub struct BuildResult {
@@ -96,55 +97,75 @@ pub async fn run_build(config: &Config, path: PathBuf) -> Result<BuildResult> {
     let project_root = find_project_root(&path)?;
     info!("Project root: {:?}", project_root);
 
-    // Create transpiler and code generator
-    let mut transpiler = Transpiler::new(config);
-    let mut code_gen = CodeGenerator::new();
-
     // Collect files to transpile
     let mut routes = Vec::new();
     let mut islands = Vec::new();
     let mut components = Vec::new();
     let mut generated_files = Vec::new();
 
-    // Process routes directory
-    let routes_dir = project_root.join("routes");
-    if routes_dir.exists() {
-        info!("Processing routes...");
-        process_routes_dir(
-            &routes_dir, 
-            &routes_dir, 
-            &mut routes, 
-            &mut transpiler, 
-            &mut code_gen, 
-            &mut generated_files
-        )?;
-    }
+    if config.build.parallel {
+        info!("Using parallel transpilation...");
+        use std::sync::Arc;
+        use parking_lot::RwLock;
 
-    // Process islands directory
-    let islands_dir = project_root.join("islands");
-    if islands_dir.exists() {
-        info!("Processing islands...");
-        process_islands_dir(
-            &islands_dir, 
-            &islands_dir, 
-            &mut islands, 
-            &mut transpiler, 
-            &mut code_gen, 
-            &mut generated_files
-        )?;
-    }
+        let transpiler = Arc::new(Transpiler::new(config));
+        let code_gen = Arc::new(RwLock::new(CodeGenerator::new()));
 
-    // Process components directory
-    let components_dir = project_root.join("components");
-    if components_dir.exists() {
-        info!("Processing components...");
-        process_components_dir(
-            &components_dir, 
-            &mut transpiler, 
-            &mut code_gen, 
-            &mut generated_files,
-            &mut components
+        let parallel_result = parallel::process_all_files_parallel(
+            &project_root,
+            transpiler,
+            code_gen,
         )?;
+
+        generated_files = parallel_result.generated_files;
+        routes = parallel_result.routes;
+        islands = parallel_result.islands;
+        components = parallel_result.components;
+    } else {
+        // Create transpiler and code generator
+        let mut transpiler = Transpiler::new(config);
+        let mut code_gen = CodeGenerator::new();
+
+        // Process routes directory
+        let routes_dir = project_root.join("routes");
+        if routes_dir.exists() {
+            info!("Processing routes...");
+            process_routes_dir(
+                &routes_dir,
+                &routes_dir,
+                &mut routes,
+                &mut transpiler,
+                &mut code_gen,
+                &mut generated_files
+            )?;
+        }
+
+        // Process islands directory
+        let islands_dir = project_root.join("islands");
+        if islands_dir.exists() {
+            info!("Processing islands...");
+            process_islands_dir(
+                &islands_dir,
+                &islands_dir,
+                &mut islands,
+                &mut transpiler,
+                &mut code_gen,
+                &mut generated_files
+            )?;
+        }
+
+        // Process components directory
+        let components_dir = project_root.join("components");
+        if components_dir.exists() {
+            info!("Processing components...");
+            process_components_dir(
+                &components_dir,
+                &mut transpiler,
+                &mut code_gen,
+                &mut generated_files,
+                &mut components
+            )?;
+        }
     }
 
     // Generate route table

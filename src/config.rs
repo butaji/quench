@@ -46,6 +46,8 @@ pub struct BuildConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     pub optimization: OptimizationConfig,
+    #[serde(default = "default_true")]
+    pub parallel: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,10 @@ pub struct DevConfig {
     pub hmr: bool,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -80,6 +86,7 @@ impl Default for Config {
                     lto: true,
                     opt_level: "z".to_string(),
                 },
+                parallel: true,
             },
             islands: IslandsConfig {
                 hydration: "eager".to_string(),
