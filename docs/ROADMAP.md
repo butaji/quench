@@ -1,271 +1,316 @@
-# runts — Development Roadmap
+# runts Roadmap
 
-## Versioning Strategy
-
-- **Minor versions (0.x.0):** Feature milestones with breaking changes to supported subset
-- **Patch versions (0.x.y):** Bug fixes, performance improvements, compatibility fixes
-- **1.0.0:** Full Fresh feature parity + stable ABI
+> From MVP to full Fresh coverage.
 
 ---
 
-## Phase 0: Foundation ✅ COMPLETE
+## Phase 0: Foundation (COMPLETE ✓)
 
-**Goal:** Working transpiler with core runtime
+**Status**: All core infrastructure is built and functional.
 
+### Delivered:
 - [x] Recursive descent TS/TSX parser
-- [x] HIR (High-level IR) definition
-- [x] Type analyzer with inference
-- [x] Code generator (HIR → Rust)
-- [x] `html!` proc macro for JSX
-- [x] VDOM types and rendering
-- [x] Signal system (fine-grained reactivity)
-- [x] Hook implementations (useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, useId)
-- [x] Component system with `#[component]` macro
-- [x] Islands architecture (detection, SSR placeholders, hydration)
-- [x] File-based routing
-- [x] Route handlers (GET, POST, PUT, DELETE, PATCH)
-- [x] Middleware pipeline
-- [x] Layout system (`_layout.tsx`)
-- [x] Error pages (`_404.tsx`, `_500.tsx`)
-- [x] Dev server with HIR interpreter
-- [x] File watcher + hot reload
-- [x] Production build command
-- [x] CLI (`init`, `dev`, `build`, `transpile`, `add`)
+- [x] HIR (High-level IR) with full TS construct coverage for subset
+- [x] Semantic analyzer (route/island detection, hook validation, type extraction)
+- [x] Rust code generator (TS → Rust source)
+- [x] HIR interpreter for dev mode (zero compilation)
+- [x] File-based routing with Fresh conventions
+- [x] Middleware pipeline (global + route-scoped)
+- [x] Islands architecture with partial hydration
+- [x] Fine-grained signals (Preact signals equivalent)
+- [x] Hook system (useState, useEffect, useRef, useMemo, useCallback, useReducer, useId)
+- [x] VDOM for SSR
+- [x] Dev server with hot reload (<100ms)
+- [x] Production build pipeline (transpile + cargo build)
+- [x] Client JS runtime (vanilla JS, no React/Preact)
+- [x] `html!` proc macro for JSX-like syntax in Rust
 - [x] Example blog application
+- [x] 80+ unit tests
 
-**Status:** All complete. MVP is functional.
-
----
-
-## Phase 1: Stability & Polish (v0.5.x → v0.6.0) 🔄 CURRENT
-
-**Goal:** Fix critical bugs, improve DX, solidify codegen correctness
-
-### 1.1 Codegen Correctness
-- [ ] Fix type name preservation (PascalCase types, not snake_case)
-- [ ] Fix destructuring codegen for nested patterns
-- [ ] Fix `prev` reference in array update closures
-- [ ] Fix import resolution for relative paths in generated code
-- [ ] Fix component name collision in generated modules
-- [ ] Ensure all generated code passes `cargo check` on first build
-
-### 1.2 Dev Mode Hardening
-- [ ] Graceful parser error recovery (skip bad file, continue)
-- [ ] Error overlay in browser (HTML error page with source context)
-- [ ] Source map generation for debugging
-- [ ] Console output forwarding from island JS to dev server
-- [ ] HMR for CSS/static assets
-
-### 1.3 Fresh Compatibility Gaps
-- [ ] `ctx.render()` with explicit component reference
-- [ ] HandlerContext full API parity
-- [ ] Route groups `(group)/page.tsx`
-- [ ] Catch-all routes `[...slug].tsx`
-- [ ] Optional route segments `[[param]]`
-
-### 1.4 Testing Infrastructure
-- [ ] Parser test suite (100+ cases)
-- [ ] Codegen snapshot tests
-- [ ] End-to-end dev server tests
-- [ ] Production build integration tests
-- [ ] Fresh compatibility test suite (port Fresh examples)
-
-**Target Date:** 2 weeks
-**Deliverable:** `v0.6.0` — stable MVP
+### Architecture:
+```
+Parser → HIR → Analyzer → [Interpreter | Codegen → Rust → Binary]
+```
 
 ---
 
-## Phase 2: Performance & Scale (v0.6.0 → v0.7.0)
+## Phase 1: MVP Stabilization (v0.5.x → v0.6.0)
 
-**Goal:** Production-grade performance and large-project support
+**Goal**: Make the example blog fully functional end-to-end.
 
-### 2.1 Incremental Builds
-- [ ] File content hashing (SHA-256)
-- [ ] `.runts/cache/` directory with parsed HIR cache
-- [ ] Dependency graph for change invalidation
-- [ ] Parallel codegen with `rayon`
-- [ ] Only re-transpile changed + dependent files
+### P1.1 Codegen correctness
+- [ ] Fix island component code generation (closure params, struct initialization)
+- [ ] Fix array `.map()` / `.filter()` closure parameter generation
+- [ ] Fix destructured array pattern from hooks (`const [a, b] = useState(...)`)
+- [ ] Fix optional chaining (`obj?.prop`) codegen
+- [ ] Fix nullish coalescing (`a ?? b`) codegen
+- [ ] Fix spread operator in object literals
+- [ ] Fix ternary expression precedence
 
-### 2.2 Build Optimization
-- [ ] Dead code elimination for unused islands
-- [ ] Tree-shaking of unused routes
-- [ ] CSS extraction and minification
-- [ ] Asset optimization (image compression hashes)
-- [ ] Service worker generation (optional)
+**Acceptance**: All example blog pages render correctly in dev mode and compile to a working binary.
 
-### 2.3 Runtime Performance
-- [ ] String pooling for common HTML tags
-- [ ] VDOM allocation pooling (bump allocator)
-- [ ] Signal dependency tracking optimization
-- [ ] SSR streaming (flush chunks as generated)
-- [ ] HTTP/2 push for critical assets
+### P1.2 Runtime completeness
+- [ ] Implement `useContext` with Context provider/consumer
+- [ ] Implement `useSyncExternalStore` for external state
+- [ ] Implement `useLayoutEffect` (sync after DOM mutation)
+- [ ] Add `useDeferredValue` / `useTransition` (if signals don't cover it)
+- [ ] Add `useImperativeHandle` equivalent for ref forwarding
 
-### 2.4 Large Project Support
-- [ ] Workspace/monorepo support
-- [ ] Shared component libraries
-- [ ] Cross-package island imports
-- [ ] Build report (bundle analysis)
+**Acceptance**: All hooks from the supported subset specification work correctly in both dev and production modes.
 
-**Target Date:** 4 weeks
-**Deliverable:** `v0.7.0` — production ready
+### P1.3 Dev server polish
+- [ ] WebSocket hot reload (browser auto-refresh)
+- [ ] Error overlay in browser
+- [ ] Source location in error messages
+- [ ] Request logging with timing
+- [ ] Static file serving with cache headers
+- [ ] Proxy configuration for API backends
 
----
+**Acceptance**: Dev server experience matches or exceeds Fresh's dev experience.
 
-## Phase 3: Advanced Features (v0.7.0 → v0.8.0)
+### P1.4 Testing
+- [ ] Integration test: dev server renders all example routes
+- [ ] Integration test: production binary serves correct HTML
+- [ ] Integration test: island hydration works in headless browser
+- [ ] Integration test: middleware pipeline executes in correct order
+- [ ] Property-based tests for parser (fuzz TS/TSX snippets)
+- [ ] Benchmark: parse + codegen throughput
 
-**Goal:** Match advanced Fresh/Preact capabilities
-
-### 3.1 Async Components & Suspense
-- [ ] `async function Component()` support
-- [ ] Streaming SSR with Suspense boundaries
-- [ ] `fallback` prop for loading states
-- [ ] Data fetching at component level
-
-### 3.2 Plugin System
-- [ ] Pre-transpile plugin hooks
-- [ ] Post-transpile plugin hooks
-- [ ] Custom codegen plugins
-- [ ] Markdown → TSX plugin (MDX equivalent)
-
-### 3.3 Form Handling
-- [ ] `form` action handlers
-- [ ] Server-side validation
-- [ ] CSRF token generation
-- [ ] Progressive enhancement (form works without JS)
-
-### 3.4 Authentication
-- [ ] Cookie session middleware
-- [ ] JWT verification helpers
-- [ ] OAuth integration patterns
-- [ ] Route guards (auth-required middleware)
-
-### 3.5 Database Integration
-- [ ] First-class Prisma-client-rust support
-- [ ] Supabase client integration
-- [ ] Connection pooling in middleware
-
-**Target Date:** 6 weeks
-**Deliverable:** `v0.8.0` — advanced framework
+**Acceptance**: >90% code coverage, all integration tests passing.
 
 ---
 
-## Phase 4: Ecosystem (v0.8.0 → v0.9.0)
+## Phase 2: Feature Complete Fresh Compatibility (v0.7.0)
 
-**Goal:** Rich developer ecosystem
+**Goal**: 95%+ Fresh API compatibility. Real Fresh projects can migrate with minimal changes.
 
-### 4.1 IDE Integration
-- [ ] LSP server for `.tsx` files
-- [ ] Type error reporting in VS Code
-- [ ] Auto-import for components
-- [ ] Go-to-definition across TS/Rust boundary
-- [ ] Inline hints for generated Rust types
+### P2.1 Advanced routing
+- [ ] Catch-all routes (`[...slug].tsx`)
+- [ ] Optional route params (`[[param]].tsx`)
+- [ ] Route groups (`(group)/route.tsx`)
+- [ ] Route config exports (`export const config = { routeOverride: ... }`)
+- [ ] API routes with full method support (PUT, DELETE, PATCH)
+- [ ] Route preloading / prefetching
 
-### 4.2 Testing
-- [ ] `runts test` command (unit + integration)
-- [ ] Component testing with headless browser
-- [ ] Route handler testing with mock requests
-- [ ] Snapshot testing for rendered HTML
+### P2.2 Layout system
+- [ ] Nested layouts (`_layout.tsx`)
+- [ ] Layout groups
+- [ ] Root layout (`routes/_app.tsx`)
+- [ ] Error boundaries per layout
+- [ ] Parallel routes
 
-### 4.3 Deployment
-- [ ] Docker image generation
-- [ ] Static site export (`runts build --static`)
-- [ ] Vercel/Netlify adapter
-- [ ] Cloudflare Workers adapter (WASM target)
-- [ ] Kubernetes Helm chart
+### P2.3 Islands enhancements
+- [ ] Island-to-island communication via shared signals
+- [ ] Server islands (no client JS, server-rendered only)
+- [ ] Island client:media hydration (`client:media="(min-width: 768px)"`)
+- [ ] Island client:only (skip SSR)
+- [ ] Island CSS scoping
+- [ ] Island preloading / priority hints
 
-### 4.4 Documentation
-- [ ] Interactive documentation site
-- [ ] API reference (auto-generated)
-- [ ] Video tutorial series
-- [ ] Migration guide from Fresh
-- [ ] Migration guide from Next.js
+### P2.4 Data fetching
+- [ ] `handler` with `ctx.render(data)`
+- [ ] Async route components (`export default async function Page()`)
+- [ ] Data loaders (island-level data fetching)
+- [ ] SWR-style caching on client
+- [ ] Server-side mutations (forms + actions)
 
-**Target Date:** 8 weeks
-**Deliverable:** `v0.9.0` — ecosystem maturity
+### P2.5 Fresh APIs
+- [ ] `Head` component for `<head>` manipulation
+- [ ] `asset()` for static file references
+- [ ] `IS_BROWSER` compile-time constant
+- [ ] `ctx.state` for request-scoped state
+- [ ] `ctx.renderNotFound()` / `ctx.renderError()`
 
----
+### P2.6 Standard library expansion
+- [ ] `URL` / `URLSearchParams`
+- [ ] `fetch` with timeout and retry
+- [ ] `FormData` parsing
+- [ ] `Blob` / `File` (server-side)
+- [ ] `TextEncoder` / `TextDecoder`
+- [ ] `atob` / `btoa`
 
-## Phase 5: 1.0 Release (v0.9.0 → v1.0.0)
-
-**Goal:** Stable, trusted, production-proven
-
-### 5.1 Stability
-- [ ] Semantic versioning guarantee
-- [ ] No breaking changes without migration path
-- [ ] Backward compatibility policy
-- [ ] LTS release channel
-
-### 5.2 Performance Benchmarks
-- [ ] SSR throughput: 100k req/s on modest hardware
-- [ ] Build time: <10s for 1000-file project
-- [ ] Binary size: <1MB for hello-world
-- [ ] Memory: <10MB RSS at idle
-
-### 5.3 Production Validation
-- [ ] Run in production at 3+ real companies
-- [ ] Load-tested to 10k concurrent connections
-- [ ] 30-day uptime SLA demonstration
-
-### 5.4 Community
-- [ ] 1000+ GitHub stars
-- [ ] 10+ community plugins
-- [ ] Active Discord/forum
-- [ ] Monthly release cadence
-
-**Target Date:** 12 weeks from v0.9.0
-**Deliverable:** `v1.0.0` — production stable
+### P2.7 Type system
+- [ ] Generic function components
+- [ ] Mapped types (limited)
+- [ ] Type guards (`is` keyword)
+- [ ] `keyof` operator
+- [ ] `typeof` for types
+- [ ] Discriminated unions (full)
 
 ---
 
-## Post-1.0 Vision
+## Phase 3: Performance Optimization (v0.8.0)
 
-### Language Expansion
-- [ ] Vue SFC support (alternative to TSX)
-- [ ] SolidJS-style fine-grained reactivity option
-- [ ] Rust-native component syntax (alternative to TSX)
+**Goal**: Fastest possible server-side rendering in the Rust ecosystem.
 
-### Platform Expansion
-- [ ] iOS/Android via Tauri/Capacitor
-- [ ] Desktop apps via Tauri
-- [ ] WebAssembly edge functions
-- [ ] Embedded systems (no_std target)
+### P3.1 Compile-time optimizations
+- [ ] Incremental compilation (only changed modules)
+- [ ] Parallel codegen (rayon-based)
+- [ ] Lazy module loading in dev mode
+- [ ] Memory-mapped file parsing for large projects
+- [ ] Parser cache (serialized HIR to disk)
 
-### AI Integration
-- [ ] AI-powered component generation
-- [ ] Automatic test generation
-- [ ] Smart migration assistant (Fresh → runts)
-- [ ] Performance bottleneck detection
+### P3.2 Runtime optimizations
+- [ ] String rendering without VDOM (fast path for static routes)
+- [ ] Arena allocation for VNode trees
+- [ ] Zero-copy HTML streaming
+- [ ] Connection pooling for data fetching
+- [ ] HTTP/2 push for island bundles
+
+### P3.3 Client optimizations
+- [ ] Island bundle tree-shaking
+- [ ] Shared runtime chunk (deduplicate signal/hook code)
+- [ ] Preact signals-compatible wire format
+- [ ] Islands hydration without full re-render
+- [ ] Lazy island loading (dynamic import)
+
+### P3.4 Binary size
+- [ ] LTO + strip + panic=abort
+- [ ] Custom allocators (mimalloc)
+- [ ] Feature flags for optional runtime components
+- [ ] UPX compression for distribution
+
+**Target metrics**:
+| Metric | v0.5 | v0.8 Target |
+|--------|------|-------------|
+| Dev reload | <100ms | <50ms |
+| Production build | 30s | <10s |
+| Binary size | 5MB | <2MB |
+| Cold start | <50ms | <10ms |
+| SSR throughput | 50K req/s | 200K req/s |
+| Memory baseline | 20MB | <5MB |
+
+---
+
+## Phase 4: Ecosystem & Tooling (v0.9.0)
+
+**Goal**: Production-ready toolchain with DX matching or exceeding Fresh.
+
+### P4.1 CLI enhancements
+- [ ] `runts add` command (add island, component, route)
+- [ ] `runts test` command (run tests in HIR interpreter)
+- [ ] `runts fmt` command (format TS/TSX)
+- [ ] `runts lint` command (subset-specific linting)
+- [ ] `runts deploy` command (deploy to Vercel/Netlify/Fly)
+- [ ] `runts preview` command (preview production build locally)
+- [ ] `runts analyze` command (bundle size analysis)
+
+### P4.2 IDE support
+- [ ] VS Code extension
+  - [ ] Syntax highlighting
+  - [ ] Error diagnostics
+  - [ ] Go-to-definition
+  - [ ] Auto-import
+  - [ ] Refactoring
+- [ ] LSP server for subset validation
+- [ ] rust-analyzer integration for generated code
+
+### P4.3 Debugging
+- [ ] HIR-level debugger (breakpoints in TS source)
+- [ ] Source maps (TS → HIR → Rust)
+- [ ] Performance profiler (component render times)
+- [ ] Memory profiler (leak detection in signals)
+
+### P4.4 Templates
+- [ ] Official starter templates
+  - [ ] Minimal
+  - [ ] Blog
+  - [ ] E-commerce
+  - [ ] Dashboard
+  - [ ] Documentation site
+- [ ] Community template registry
+
+### P4.5 Plugin system
+- [ ] Plugin API (dynamic libraries)
+- [ ] Tailwind CSS plugin
+- [ ] MDX plugin
+- [ ] Image optimization plugin
+- [ ] Internationalization plugin
+
+---
+
+## Phase 5: Full Coverage (v1.0.0)
+
+**Goal**: 100% Fresh compatibility + unique runts advantages.
+
+### P5.1 Advanced features
+- [ ] Edge runtime compatibility (Cloudflare Workers, Deno Deploy)
+- [ ] Streaming SSR with Suspense-like semantics
+- [ ] Server-sent events (SSE) integration
+- [ ] WebSocket support (server + client)
+- [ ] Background jobs / cron tasks
+- [ ] Database integration (Prisma-like ORM)
+- [ ] Authentication / authorization patterns
+- [ ] Multi-tenancy support
+
+### P5.2 Unique runts features
+- [ ] Compile-time A/B test routing
+- [ ] Static site generation (SSG) mode
+- [ ] Edge-side rendering (ESR)
+- [ ] WASM module integration (Rust crates as islands)
+- [ ] Native module system (import Rust crates directly in TS)
+- [ ] GraphQL integration
+- [ ] tRPC-like end-to-end types
+
+### P5.3 Documentation
+- [ ] Complete API reference
+- [ ] Migration guide (Fresh → runts)
+- [ ] Migration guide (Next.js → runts)
+- [ ] Performance tuning guide
+- [ ] Deployment guides (all platforms)
+- [ ] Video tutorials
+- [ ] Interactive playground
 
 ---
 
 ## Milestone Summary
 
-| Version | Theme | Key Deliverable |
-|---------|-------|-----------------|
-| v0.5.0 | MVP | Working transpiler + dev server |
-| v0.6.0 | Stability | Bug-free codegen, test suite |
-| v0.7.0 | Performance | Incremental builds, <2s builds |
-| v0.8.0 | Advanced | Suspense, plugins, auth, forms |
-| v0.9.0 | Ecosystem | LSP, testing, deployment adapters |
-| v1.0.0 | Stable | Production SLA, LTS, community |
+| Version | Phase | Theme | Key Deliverable |
+|---------|-------|-------|-----------------|
+| v0.5.x | Phase 0 | Foundation | Core compiler + runtime |
+| v0.6.0 | Phase 1 | Stabilization | Working example blog |
+| v0.7.0 | Phase 2 | Compatibility | 95% Fresh API parity |
+| v0.8.0 | Phase 3 | Performance | Fastest Rust SSR |
+| v0.9.0 | Phase 4 | Ecosystem | Production toolchain |
+| v1.0.0 | Phase 5 | Maturity | Full coverage + unique features |
 
 ---
 
-## Contributing Focus Areas
+## Decision Log
 
-**Good first issues:**
-- Parser error message improvements
-- Additional test cases
-- Documentation improvements
-- Example projects
+### Why no SWC/tree-sitter?
+- Hand-written parser is <5% the binary size
+- Full control over error messages for the subset
+- No JS/WASM dependency
+- Easier to extend for Fresh-specific constructs
 
-**High impact:**
-- Incremental build caching
-- LSP server
-- Plugin system architecture
-- Deployment adapters
+### Why HIR interpreter for dev mode?
+- Compilation is 5-30s; interpretation is <100ms
+- Same HIR guarantees parity between dev and production
+- Enables interactive debugging at HIR level
+- Simpler hot reload (just swap AST node)
 
-**Research:**
-- WASM target for edge functions
-- Alternative reactivity backends (Leptos-style)
-- Server Components architecture
+### Why vanilla JS instead of Preact on client?
+- Islands are small; Preact runtime is 3-4KB (overhead)
+- Direct DOM manipulation is faster for small islands
+- No VDOM diffing = less CPU on client
+- Signals handle reactivity directly
+
+### Why Axum instead of Actix or Warp?
+- Tower middleware ecosystem
+- Excellent async/await ergonomics
+- Fastest Rust HTTP framework benchmarks
+- First-class Tokio integration
+
+---
+
+## Contributing
+
+Priority areas for external contributions:
+
+1. **Parser**: Add more TS edge cases, improve error recovery
+2. **Codegen**: Fix array/string method translations, add more standard library coverage
+3. **Client runtime**: Optimize signal graph, add more hydration strategies
+4. **Tests**: Write integration tests, property-based tests
+5. **Documentation**: Improve docs, write tutorials
+6. **Examples**: Build real-world example applications

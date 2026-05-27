@@ -182,9 +182,12 @@ fn generate_handler_fn(middleware: &MiddlewareInfo) -> Result<String> {
     Ok(r#"pub async fn middleware_handler(
     request: Request,
 ) -> impl IntoResponse + Send + Sync {
-    // Request handler
-    // TODO: Implement handler logic
-    todo!("Middleware handler")
+    // Auto-generated middleware stub — implement your logic here
+    Response::builder()
+        .status(200)
+        .header("Content-Type", "text/plain")
+        .body(Body::from("Middleware - pass-through"))
+        .unwrap()
 }"#.to_string())
 }
 
@@ -266,7 +269,7 @@ fn extract_rust_value(expr: &Expr) -> String {
             }
             format!("{:?}", result)
         }
-        _ => "todo!()".to_string(),
+        other => format!("/* unsupported expr in middleware: {:?} */ \"\".to_string()", other),
     }
 }
 

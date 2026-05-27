@@ -188,7 +188,11 @@ impl CodeGenerator {
             }
             _ => {
                 return Ok(format!(
-                    "pub fn {}() -> impl Fn(Request, HandlerContext) -> Response {{ |_, _| todo!() }}",
+                    "pub fn {}() -> impl Fn(Request, HandlerContext) -> Response {{
+    |_, _| {{
+        Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap()
+    }}
+}}",
                     handler_name
                 ));
             }
@@ -212,7 +216,7 @@ impl CodeGenerator {
                     }
                 }
                 if lines.is_empty() {
-                    "{ todo!() }".to_string()
+                    "{ Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap() }".to_string()
                 } else {
                     format!("{{ {} }}", lines.join("; "))
                 }
@@ -225,7 +229,7 @@ impl CodeGenerator {
                     "{}".to_string()
                 }
             }
-            _ => "{ todo!() }".to_string(),
+            _ => "{ Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap() }".to_string(),
         };
         
         Ok(format!(
@@ -857,6 +861,167 @@ impl CodeGenerator {
                                     return format!("serde_json::to_string(&{}).unwrap()", arg);
                                 }
                             }
+                        }
+                        if obj_name == "Date" {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                if prop_name == "now" {
+                                    return format!(
+                                        "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64"
+                                    );
+                                }
+                            }
+                        }
+                        if obj_name == "Math" {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                match prop_name.as_str() {
+                                    "random" => return "rand::random::<f64>()".to_string(),
+                                    "floor" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("({}).floor()", arg);
+                                    }
+                                    "ceil" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("({}).ceil()", arg);
+                                    }
+                                    "round" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("({}).round()", arg);
+                                    }
+                                    "abs" if !args.is_empty() => {
+                                        let arg = self.expr_to_rust(&args[0]);
+                                        return format!("({}).abs()", arg);
+                                    }
+                                    "max" if args.len() >= 2 => {
+                                        let a = self.expr_to_rust(&args[0]);
+                                        let b = self.expr_to_rust(&args[1]);
+                                        return format!("if {} > {} {{ {} }} else {{ {} }}", a, b, a, b);
+                                    }
+                                    "min" if args.len() >= 2 => {
+                                        let a = self.expr_to_rust(&args[0]);
+                                        let b = self.expr_to_rust(&args[1]);
+                                        return format!("if {} < {} {{ {} }} else {{ {} }}", a, b, a, b);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if obj_name == "console" {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                let level = match prop_name.as_str() {
+                                    "log" => "info",
+                                    "warn" => "warn",
+                                    "error" => "error",
+                                    "debug" => "debug",
+                                    _ => "info",
+                                };
+                                let args_code: Vec<String> = args.iter().map(|a| self.expr_to_rust(a)).collect();
+                                return format!("tracing::{}!({})", level, args_code.join(", "));
+                            }
+                        }
+                        if obj_name == "performance" {
+                            if let Expr::Ident { name: prop_name } = property.as_ref() {
+                                if prop_name == "now" {
+                                    return format!(
+                                        "std::time::Instant::now().elapsed().as_secs_f64() * 1000.0"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Array / string method translation
+                    if let Expr::Ident { name: method_name } = property.as_ref() {
+                        let obj_code = self.expr_to_rust(object);
+                        match method_name.as_str() {
+                            // Array methods
+                            "map" if !args.is_empty() => {
+                                let closure = self.expr_to_rust(&args[0]);
+                                return format!("{}.iter().map({}).collect::<Vec<_>>()", obj_code, closure);
+                            }
+                            "filter" if !args.is_empty() => {
+                                let closure = self.expr_to_rust(&args[0]);
+                                return format!("{}.iter().filter({}).cloned().collect::<Vec<_>>()", obj_code, closure);
+                            }
+                            "find" if !args.is_empty() => {
+                                let closure = self.expr_to_rust(&args[0]);
+                                return format!("{}.iter().find({}).cloned()", obj_code, closure);
+                            }
+                            "reduce" if !args.is_empty() => {
+                                let init = self.expr_to_rust(&args[0]);
+                                if args.len() > 1 {
+                                    let closure = self.expr_to_rust(&args[1]);
+                                    return format!("{}.iter().fold({}, {})", obj_code, init, closure);
+                                } else {
+                                    return format!("{}.iter().fold(None, |acc, x| acc.or(Some(x.clone()))).unwrap_or_default()", obj_code);
+                                }
+                            }
+                            "includes" if !args.is_empty() => {
+                                let item = self.expr_to_rust(&args[0]);
+                                return format!("{}.contains(&{})", obj_code, item);
+                            }
+                            "join" if !args.is_empty() => {
+                                let sep = self.expr_to_rust(&args[0]);
+                                return format!("{}.join(&{})", obj_code, sep);
+                            }
+                            "push" if !args.is_empty() => {
+                                let item = self.expr_to_rust(&args[0]);
+                                return format!("{{ let mut __tmp = {}; __tmp.push({}); __tmp }}", obj_code, item);
+                            }
+                            "sort" => {
+                                if args.is_empty() {
+                                    return format!("{{ let mut __tmp = {}; __tmp.sort(); __tmp }}", obj_code);
+                                } else {
+                                    let cmp = self.expr_to_rust(&args[0]);
+                                    return format!("{{ let mut __tmp = {}; __tmp.sort_by({}); __tmp }}", obj_code, cmp);
+                                }
+                            }
+                            "forEach" if !args.is_empty() => {
+                                let closure = self.expr_to_rust(&args[0]);
+                                return format!("{{ for item in {} {{ {}(item); }} }}", obj_code, closure);
+                            }
+                            // String methods
+                            "split" if !args.is_empty() => {
+                                let sep = self.expr_to_rust(&args[0]);
+                                return format!("{}.split(&{}).collect::<Vec<_>>()", obj_code, sep);
+                            }
+                            "trim" => return format!("{}.trim()", obj_code),
+                            "startsWith" if !args.is_empty() => {
+                                let prefix = self.expr_to_rust(&args[0]);
+                                return format!("{}.starts_with(&{})", obj_code, prefix);
+                            }
+                            "endsWith" if !args.is_empty() => {
+                                let suffix = self.expr_to_rust(&args[0]);
+                                return format!("{}.ends_with(&{})", obj_code, suffix);
+                            }
+                            "replace" if args.len() >= 2 => {
+                                let from = self.expr_to_rust(&args[0]);
+                                let to = self.expr_to_rust(&args[1]);
+                                return format!("{}.replace(&{}, &{})", obj_code, from, to);
+                            }
+                            "toLowerCase" => return format!("{}.to_lowercase()", obj_code),
+                            "toUpperCase" => return format!("{}.to_uppercase()", obj_code),
+                            "slice" if !args.is_empty() => {
+                                let start = self.expr_to_rust(&args[0]);
+                                if args.len() > 1 {
+                                    let end = self.expr_to_rust(&args[1]);
+                                    return format!("{}[{}..{}]", obj_code, start, end);
+                                } else {
+                                    return format!("{}[{}..]", obj_code, start);
+                                }
+                            }
+                            "substring" if !args.is_empty() => {
+                                let start = self.expr_to_rust(&args[0]);
+                                if args.len() > 1 {
+                                    let end = self.expr_to_rust(&args[1]);
+                                    return format!("{}[{}..{}]", obj_code, start, end);
+                                } else {
+                                    return format!("{}[{}..]", obj_code, start);
+                                }
+                            }
+                            "indexOf" if !args.is_empty() => {
+                                let item = self.expr_to_rust(&args[0]);
+                                return format!("{}.iter().position(|x| x == &{}).unwrap_or(usize::MAX) as f64", obj_code, item);
+                            }
+                            _ => {}
                         }
                     }
                 }

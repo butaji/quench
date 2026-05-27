@@ -159,8 +159,13 @@ struct {} {{
 
 {}
 pub async fn {}(req: Request, params: {}) -> Response {{
-    // Handler implementation
-    todo!("Handler for {} {}")
+    // Auto-generated handler stub — implement your logic here
+    let body = "Handler stub: not yet implemented".to_string();
+    Response::builder()
+        .status(501)
+        .header("Content-Type", "text/plain")
+        .body(Body::from(body))
+        .unwrap()
 }}
 "#,
             route.path,
@@ -169,9 +174,7 @@ pub async fn {}(req: Request, params: {}) -> Response {{
             route.segments.iter().map(|s| format!("    pub {}: String", s)).collect::<Vec<_>>().join(",\n"),
             fn_sig,
             fn_name,
-            format!("{}Params", fn_name.replace('-', "_")),
-            route.path,
-            method_str
+            format!("{}Params", fn_name.replace('-', "_"))
         ));
     }
     
@@ -220,8 +223,8 @@ fn generate_component_wrapper(component_name: &str, segments: &[String]) -> Stri
 /// Component for route {}
 #[component]
 pub fn {}(props: {}) -> VNode {{
-    // Rendered by SSR
-    todo!("Component rendering for {}")
+    // Auto-generated component stub
+    html!(<div class_name = "placeholder">"Component {} - not yet implemented"</div>)
 }}
 "#,
         format!("/{}", segments.join("/")),

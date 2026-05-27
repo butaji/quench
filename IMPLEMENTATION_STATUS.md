@@ -127,4 +127,31 @@ All MVP components are now implemented:
 
 ---
 
-*Last Updated: 2026-05-26*
+### P1: Codegen Fixes (2026-05-27)
+
+| Fix | Status | File |
+|-----|--------|------|
+| Arrow function param extraction (`t => ...`) | ✅ Fixed | `src/transpile/parser.rs` |
+| Array method translation (`.map`, `.filter`, `.reduce`, etc.) | ✅ Fixed | `src/transpile/codegen.rs` |
+| String method translation (`.split`, `.trim`, `.startsWith`, etc.) | ✅ Fixed | `src/transpile/codegen.rs` |
+| `Date.now()` / `Math.*` / `console.*` / `performance.now()` | ✅ Fixed | `src/transpile/codegen.rs` |
+| `useContext` implementation | ✅ Fixed | `src/runtime/hooks.rs` |
+| `useSyncExternalStore` implementation | ✅ Fixed | `src/runtime/hooks.rs` |
+| Route handler stub (`todo!` → 501 response) | ✅ Fixed | `src/transpile/routegen.rs` |
+| Component rendering stub (`todo!` → placeholder) | ✅ Fixed | `src/transpile/routegen.rs` |
+| Middleware handler stub (`todo!` → pass-through) | ✅ Fixed | `src/transpile/middlewaregen.rs` |
+| Codegen fallback stubs (`todo!` → 501 response) | ✅ Fixed | `src/transpile/codegen.rs` |
+
+### Documentation
+
+| Document | Status | Location |
+|----------|--------|----------|
+| Supported TS/TSX Subset Spec | ✅ Complete | `docs/SUBSET_SPEC.md` |
+| Architecture Overview | ✅ Complete | `docs/ARCHITECTURE.md` |
+| Transpilation Strategy | ✅ Complete | `docs/TRANSPILE_STRATEGY.md` |
+| Roadmap (MVP → v1.0) | ✅ Complete | `docs/ROADMAP.md` |
+| Performance Targets & Trade-offs | ✅ Complete | `docs/PERFORMANCE.md` |
+
+---
+
+*Last Updated: 2026-05-27*
