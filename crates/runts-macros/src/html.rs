@@ -30,6 +30,9 @@ enum Node {
         attrs: Vec<Attr>,
         children: Vec<Node>,
     },
+    Fragment {
+        children: Vec<Node>,
+    },
     Text(String),
     Expr(TokenStream),
 }
@@ -111,6 +114,17 @@ impl Node {
                     }
                 })
             }
+            Node::Fragment { children } => {
+                let child_tokens: Vec<TokenStream> = children.iter().map(|c| {
+                    let child_ts = c.to_tokens();
+                    quote!(__children.push({ #child_ts });)
+                }).collect();
+                quote!({
+                    let mut __children: Vec<::runts_lib::runtime::vdom::VNode> = Vec::new();
+                    #(#child_tokens)*
+                    ::runts_lib::runtime::vdom::VNode::Fragment { children: __children }
+                })
+            }
         }
     }
 }
@@ -165,6 +179,13 @@ impl Parser {
 
     fn parse_element_or_component(&mut self) -> Result<Node, String> {
         self.expect_punct('<')?;
+
+        // Fragment: <>...</>
+        if self.peek_punct('>') {
+            self.advance(); // >
+            let children = self.parse_children("")?;
+            return Ok(Node::Fragment { children });
+        }
 
         let tag = self.expect_ident()?;
         let is_component = tag.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -250,11 +271,19 @@ impl Parser {
     fn parse_children(&mut self, closing_tag: &str) -> Result<Vec<Node>, String> {
         let mut children = Vec::new();
         loop {
-            // Check for closing tag: </tag>
+            // Check for closing tag: </tag> or </> for fragments
             if let (Some(TokenTree::Punct(p1)), Some(TokenTree::Punct(p2))) = (self.peek(), self.peek_n(1)) {
                 if p1.as_char() == '<' && p2.as_char() == '/' {
                     self.advance(); // <
                     self.advance(); // /
+                    // Fragment closing: </>
+                    if closing_tag.is_empty() {
+                        if !self.peek_punct('>') {
+                            return Err(format!("Expected '/>' to close fragment"));
+                        }
+                        self.expect_punct('>')?;
+                        break;
+                    }
                     let close_name = self.expect_ident()?;
                     self.expect_punct('>')?;
                     if close_name != closing_tag {

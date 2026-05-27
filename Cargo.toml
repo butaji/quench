@@ -46,6 +46,7 @@ walkdir = "2.5"
 # Utilities
 parking_lot = "0.12"
 indexmap = { version = "2.5", features = ["serde"] }
+lazy_static = "1.4"
 regex = "1.10"
 bytes = "1.5"
 mime = "0.3"
