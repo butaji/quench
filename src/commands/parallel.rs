@@ -95,7 +95,7 @@ fn process_routes_parallel(
 ) -> (Vec<GeneratedFile>, Vec<RouteEntry>) {
     let base = base.clone();
     
-    let results: Vec<(Result<(GeneratedFile, RouteEntry), TranspileError>, PathBuf)> = files
+    let results: Vec<(Result<(GeneratedFile, Option<RouteEntry>), TranspileError>, PathBuf)> = files
         .par_iter()
         .map(|path| {
             let result = process_single_route(path, &base, transpiler, code_gen);
@@ -108,9 +108,11 @@ fn process_routes_parallel(
 
     for (result, path) in results {
         match result {
-            Ok((file, route)) => {
+            Ok((file, maybe_route)) => {
                 generated_files.push(file);
-                routes.push(route);
+                if let Some(route) = maybe_route {
+                    routes.push(route);
+                }
             }
             Err(e) => {
                 error!("Failed to process route {:?}: {}", path, e);
@@ -200,24 +202,26 @@ impl std::fmt::Display for TranspileError {
 
 impl std::error::Error for TranspileError {}
 
-/// Process a single route file
+/// Process a single route file (layouts are generated but not registered as routes)
 fn process_single_route(
     path: &PathBuf,
     base: &PathBuf,
     transpiler: &Arc<Transpiler>,
-    code_gen: &Arc<RwLock<CodeGenerator>>,
-) -> Result<(GeneratedFile, RouteEntry), TranspileError> {
-    // Skip special files (except _layout)
+    _code_gen: &Arc<RwLock<CodeGenerator>>,
+) -> Result<(GeneratedFile, Option<RouteEntry>), TranspileError> {
     let filename = path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
+    // Skip middleware and error pages entirely
     if filename.starts_with('_') && !filename.contains("layout") {
         return Err(TranspileError {
             path: path.clone(),
             message: "Skipping special file".to_string(),
         });
     }
+
+    let is_layout = filename == "_layout.tsx" || filename == "_layout.ts";
 
     // Read source
     let source = std::fs::read_to_string(path)
@@ -242,9 +246,10 @@ fn process_single_route(
         });
     }
 
-    // Generate
-    let rust_code = code_gen.write()
-        .generate_module(&module)
+    // Generate with a fresh CodeGenerator to avoid shared-state races
+    let mut cg = CodeGenerator::new();
+    cg.set_generate_handlers(!is_layout);
+    let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
             path: path.clone(),
             message: format!("Code generation: {}", e),
@@ -257,12 +262,16 @@ fn process_single_route(
     let params = extract_params(&pattern);
     let methods = extract_http_methods(&module);
 
-    let route = RouteEntry {
-        pattern: pattern.clone(),
-        path: path.clone(),
-        file: relative.to_string_lossy().to_string(),
-        params,
-        methods,
+    let route = if is_layout {
+        None
+    } else {
+        Some(RouteEntry {
+            pattern: pattern.clone(),
+            path: path.clone(),
+            file: relative.to_string_lossy().to_string(),
+            params,
+            methods,
+        })
     };
 
     // Generate output path
@@ -286,7 +295,7 @@ fn process_single_island(
     path: &PathBuf,
     base: &PathBuf,
     transpiler: &Arc<Transpiler>,
-    code_gen: &Arc<RwLock<CodeGenerator>>,
+    _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, IslandEntry), TranspileError> {
     // Read source
     let source = std::fs::read_to_string(path)
@@ -302,9 +311,10 @@ fn process_single_island(
             message: format!("Parse error: {}", e),
         })?;
 
-    // Generate
-    let rust_code = code_gen.write()
-        .generate_module(&module)
+    // Generate with a fresh CodeGenerator (islands don't need route handlers)
+    let mut cg = CodeGenerator::new();
+    cg.set_generate_handlers(false);
+    let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
             path: path.clone(),
             message: format!("Code generation: {}", e),
@@ -345,7 +355,7 @@ fn process_single_island(
 fn process_single_component(
     path: &PathBuf,
     transpiler: &Arc<Transpiler>,
-    code_gen: &Arc<RwLock<CodeGenerator>>,
+    _code_gen: &Arc<RwLock<CodeGenerator>>,
 ) -> Result<(GeneratedFile, ComponentEntry), TranspileError> {
     // Read source
     let source = std::fs::read_to_string(path)
@@ -361,9 +371,10 @@ fn process_single_component(
             message: format!("Parse error: {}", e),
         })?;
 
-    // Generate
-    let rust_code = code_gen.write()
-        .generate_module(&module)
+    // Generate with a fresh CodeGenerator (components don't need route handlers)
+    let mut cg = CodeGenerator::new();
+    cg.set_generate_handlers(false);
+    let rust_code = cg.generate_module(&module)
         .map_err(|e| TranspileError {
             path: path.clone(),
             message: format!("Code generation: {}", e),
