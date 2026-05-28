@@ -560,8 +560,12 @@ mod tests {
 
         let request = RequestInfo {
             method: "GET".to_string(),
-            headers: HashMap::new(),
+            path: "/blog/post-1".to_string(),
             url: "/blog/post-1".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            name: None,
+            id: None,
         };
 
         // Without a component, should return an error

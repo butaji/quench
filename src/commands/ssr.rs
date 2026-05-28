@@ -13,7 +13,7 @@ use serde_json;
 
 use super::routes::{HttpMethod, Route, RouteTable};
 use super::layouts::{LayoutContext, LayoutManager, Layout};
-use crate::transpile::Parser;
+use crate::transpile::TsParser;
 
 /// Island manifest entry
 #[derive(Debug, Clone, serde::Serialize)]
@@ -150,7 +150,7 @@ impl SsrRenderer {
     /// Execute a route handler and return the data for rendering
     async fn execute_handler(&self, route: &Route, ctx: &SsrContext) -> Result<serde_json::Value> {
         let source = fs::read_to_string(&route.file_path)?;
-        let module = match Parser::new().parse_source(&source) {
+        let module = match TsParser::new().parse_source(&source) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("[runts] Warning: Could not parse handler: {}", e);

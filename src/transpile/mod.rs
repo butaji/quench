@@ -16,8 +16,11 @@ mod tests;
 #[cfg(test)]
 mod js_codegen_tests;
 
+#[cfg(test)]
+mod runtime_tests;
+
 pub use crate::config::Config;
-pub use parser::Parser;
+pub use parser::TsParser;
 pub use analyzer::Analyzer;
 pub use codegen::CodeGenerator;
 
@@ -56,7 +59,7 @@ pub enum TranspileError {
 pub struct Transpiler {
     #[allow(dead_code)]
     config: Config,
-    parser: Parser,
+    parser: TsParser,
     analyzer: Analyzer,
     codegen: CodeGenerator,
 }
@@ -65,7 +68,7 @@ impl Transpiler {
     pub fn new(config: &Config) -> Self {
         Self {
             config: config.clone(),
-            parser: Parser::new(),
+            parser: TsParser::new(),
             analyzer: Analyzer::new(),
             codegen: CodeGenerator::new(),
         }
