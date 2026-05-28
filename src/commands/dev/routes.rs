@@ -1,14 +1,20 @@
 //! Route table management
 
 use anyhow::Result;
-use std::path::{Path, PathBuf};
 use regex::Regex;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /// HTTP method
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HttpMethod {
-    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
 }
 
 impl HttpMethod {
@@ -59,8 +65,9 @@ impl RouteTable {
             let path = entry.path();
             if path.is_dir() {
                 Self::scan_dir(base, path, table)?;
-            } else if path.extension().and_then(|e| e.to_str()) == Some("tsx") ||
-                      path.extension().and_then(|e| e.to_str()) == Some("ts") {
+            } else if path.extension().and_then(|e| e.to_str()) == Some("tsx")
+                || path.extension().and_then(|e| e.to_str()) == Some("ts")
+            {
                 if let Some(pattern) = Self::file_to_pattern(base, path) {
                     table.add_route(pattern, path.to_path_buf());
                 }

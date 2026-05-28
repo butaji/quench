@@ -6,15 +6,12 @@
 //! - Provides instant hot-reload (<100ms)
 //! - Full parity with production rendering
 
-pub mod routes;
 pub mod handlers;
+pub mod routes;
 
 use anyhow::Result;
 use parking_lot::RwLock;
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 
 use crate::config::Config;

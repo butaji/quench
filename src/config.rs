@@ -20,7 +20,7 @@ pub struct Config {
 
     /// Dev server configuration
     pub dev: DevConfig,
-    
+
     /// File watching configuration
     pub watch: WatchConfig,
 }
@@ -29,7 +29,7 @@ pub struct Config {
 pub struct WatchConfig {
     /// Patterns to ignore
     pub ignored: Vec<String>,
-    
+
     /// Patterns to include
     #[serde(default)]
     pub include: Vec<String>,
@@ -60,7 +60,7 @@ pub struct OptimizationConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IslandsConfig {
-    pub hydration: String, // "eager" or "lazy"
+    pub hydration: String,  // "eager" or "lazy"
     pub serializer: String, // "json" or "msgpack"
 }
 
@@ -134,10 +134,9 @@ impl Config {
     pub fn load_from_path(path: &PathBuf) -> Result<Self> {
         // Check for existing config
         let config_path = Self::find_config(path)?;
-        
+
         if config_path.exists() {
-            let content = fs::read_to_string(&config_path)
-                .context("Failed to read config file")?;
+            let content = fs::read_to_string(&config_path).context("Failed to read config file")?;
             serde_json::from_str(&content).context("Failed to parse config")
         } else {
             // Return default config

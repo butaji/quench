@@ -20,13 +20,13 @@ pub fn render_value(value: &Value) -> String {
 }
 
 fn render_vnode(vnode: &VNodeValue) -> String {
-    let attrs: String = vnode.attrs.iter()
+    let attrs: String = vnode
+        .attrs
+        .iter()
         .map(|(k, v)| format!(" {}=\"{}\"", k, render_value(v)))
         .collect();
 
-    let children: String = vnode.children.iter()
-        .map(render_value)
-        .collect();
+    let children: String = vnode.children.iter().map(render_value).collect();
 
     if children.is_empty() {
         format!("<{}{} />", vnode.tag, attrs)

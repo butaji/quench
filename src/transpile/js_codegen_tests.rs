@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use super::super::js_codegen::generate_island_js;
     use super::super::hir::*;
+    use super::super::js_codegen::generate_island_js;
 
     fn parse_island(source: &str) -> Module {
         let parser = crate::transpile::TsParser::new();
@@ -31,7 +31,10 @@ export default function Counter({ initial = 0 }: Props) {
         let js = generate_island_js("Counter", &module);
         // Check that JS was generated
         assert!(!js.is_empty(), "Expected JS output");
-        assert!(js.contains("function Counter") || js.contains("Counter"), "Expected Counter function");
+        assert!(
+            js.contains("function Counter") || js.contains("Counter"),
+            "Expected Counter function"
+        );
     }
 
     #[test]
@@ -45,6 +48,9 @@ export default function Hello({ name = "World" }) {
         let js = generate_island_js("Hello", &module);
         // Check that JS was generated
         assert!(!js.is_empty(), "Expected JS output");
-        assert!(js.contains("function Hello") || js.contains("Hello"), "Expected Hello function");
+        assert!(
+            js.contains("function Hello") || js.contains("Hello"),
+            "Expected Hello function"
+        );
     }
 }

@@ -1,8 +1,8 @@
 //! Variable declaration generation
 
-use anyhow::Result;
 use crate::transpile::codegen::CodeGenerator;
 use crate::transpile::hir::*;
+use anyhow::Result;
 
 pub struct VarGen;
 
@@ -14,11 +14,18 @@ impl VarGen {
             VariableKind::Let => "let mut",
             VariableKind::Var => "let",
         };
-        let _type_hint = var.type_.as_ref().map(|t| format!(": {}", cg.type_to_rust(t)));
+        let _type_hint = var
+            .type_
+            .as_ref()
+            .map(|t| format!(": {}", cg.type_to_rust(t)));
         let init = var.init.as_ref().map(|e| {
             let val = cg.expr_to_rust(e);
             if var.kind == VariableKind::Const {
-                format!(": {} = {}", cg.type_to_rust(var.type_.as_ref().unwrap_or(&Type::Unknown)), val)
+                format!(
+                    ": {} = {}",
+                    cg.type_to_rust(var.type_.as_ref().unwrap_or(&Type::Unknown)),
+                    val
+                )
             } else {
                 format!(" = {}", val)
             }

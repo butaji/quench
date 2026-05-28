@@ -95,7 +95,10 @@ impl BuildCache {
             return None;
         }
 
-        info!("Loaded incremental cache with {} entries", cache.entries.len());
+        info!(
+            "Loaded incremental cache with {} entries",
+            cache.entries.len()
+        );
         Some(cache)
     }
 
@@ -107,10 +110,8 @@ impl BuildCache {
                 .with_context(|| format!("Failed to create cache directory {:?}", parent))?;
         }
 
-        let json = serde_json::to_string_pretty(self)
-            .context("Failed to serialize build cache")?;
-        fs::write(&path, json)
-            .with_context(|| format!("Failed to write cache to {:?}", path))?;
+        let json = serde_json::to_string_pretty(self).context("Failed to serialize build cache")?;
+        fs::write(&path, json).with_context(|| format!("Failed to write cache to {:?}", path))?;
 
         debug!("Saved incremental cache to {:?}", path);
         Ok(())
@@ -152,13 +153,14 @@ pub fn compute_file_hash(path: &Path) -> Result<String> {
     use sha2::Digest;
     use std::io::Read;
 
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("Failed to open {:?} for hashing", path))?;
+    let mut file =
+        fs::File::open(path).with_context(|| format!("Failed to open {:?} for hashing", path))?;
     let mut hasher = sha2::Sha256::new();
     let mut buffer = [0u8; 8192];
 
     loop {
-        let n = file.read(&mut buffer)
+        let n = file
+            .read(&mut buffer)
             .with_context(|| format!("Failed to read {:?}", path))?;
         if n == 0 {
             break;
@@ -179,7 +181,10 @@ pub fn compute_hash(source: &str) -> String {
 
 /// Return the path to the on-disk cache file.
 pub fn cache_path(project_root: &Path) -> PathBuf {
-    project_root.join(".runts").join("cache").join("build_cache.json")
+    project_root
+        .join(".runts")
+        .join("cache")
+        .join("build_cache.json")
 }
 
 /// Result of an incremental file processing step.

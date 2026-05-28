@@ -31,7 +31,9 @@ pub struct Analyzer {
 }
 
 impl Default for Analyzer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Analyzer {
@@ -66,34 +68,83 @@ impl Analyzer {
     }
 
     pub fn analyze(&mut self, module: &Module) -> Result<(), Vec<AnalyzeError>> {
-        self.hooks.clear(); self.components.clear(); self.signals.clear(); self.functions.clear(); self.types.clear(); self.warnings.clear(); self.errors.clear();
-        for item in &module.items { match item { ModuleItem::Import(imp) => self.analyze_import(imp), ModuleItem::Decl(decl) => self.analyze_decl(decl), _ => {} } }
-        if self.errors.is_empty() { Ok(()) } else { Err(self.errors.clone()) }
+        self.hooks.clear();
+        self.components.clear();
+        self.signals.clear();
+        self.functions.clear();
+        self.types.clear();
+        self.warnings.clear();
+        self.errors.clear();
+        for item in &module.items {
+            match item {
+                ModuleItem::Import(imp) => self.analyze_import(imp),
+                ModuleItem::Decl(decl) => self.analyze_decl(decl),
+                _ => {}
+            }
+        }
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(self.errors.clone())
+        }
     }
 
-    fn analyze_import(&mut self, imp: &ImportDecl) {
+    fn analyze_import(&mut self, imp: &Import) {
         if imp.source.contains("preact") || imp.source.contains("signals") {
-            for spec in &imp.specifiers { if let ImportSpecifier::Named { name, .. } = spec { self.analyze_import_spec(name); } }
+            for spec in &imp.specifiers {
+                if let ImportSpecifier::Named { name, .. } = spec {
+                    self.analyze_import_spec(name);
+                }
+            }
         }
     }
 
     fn analyze_import_spec(&mut self, name: &str) {
-        if name.starts_with("use") { self.hooks.insert(name.to_string()); }
-        if name == "signal" || name == "computed" || name == "effect" { self.signals.insert(name.to_string()); }
+        if name.starts_with("use") {
+            self.hooks.insert(name.to_string());
+        }
+        if name == "signal" || name == "computed" || name == "effect" {
+            self.signals.insert(name.to_string());
+        }
     }
 
     fn analyze_decl(&mut self, decl: &Decl) {
-        match decl { Decl::Function(f) => { self.functions.insert(f.name.clone()); } Decl::Type(t) => { self.types.insert(t.name.clone()); } Decl::Class(c) => { self.components.insert(c.name.clone()); } Decl::Variable(v) => { drop(v.init.clone()); } }
+        match decl {
+            Decl::Function(f) => {
+                self.functions.insert(f.name.clone());
+            }
+            Decl::Type(t) => {
+                self.types.insert(t.name.clone());
+            }
+            Decl::Class(c) => {
+                self.components.insert(c.name.clone());
+            }
+            Decl::Variable(v) => {
+                drop(v.init.clone());
+            }
+        }
     }
-    
-    pub fn add_warning(&mut self, msg: String) { self.warnings.push(msg); }
-    pub fn add_error(&mut self, err: AnalyzeError) { self.errors.push(err); }
+
+    pub fn add_warning(&mut self, msg: String) {
+        self.warnings.push(msg);
+    }
+    pub fn add_error(&mut self, err: AnalyzeError) {
+        self.errors.push(err);
+    }
 
     pub fn extract_route_pattern(&self, path: &str) -> String {
         let path = path.replace("routes/", "/").replace("routes", "/");
-        let mut pattern = path.replace("/index.tsx", "").replace("/index.ts", "").replace(".tsx", "").replace(".ts", "");
+        let mut pattern = path
+            .replace("/index.tsx", "")
+            .replace("/index.ts", "")
+            .replace(".tsx", "")
+            .replace(".ts", "");
         pattern = pattern.replace("[", ":").replace("]", "");
-        if pattern.is_empty() { "/".to_string() } else { pattern }
+        if pattern.is_empty() {
+            "/".to_string()
+        } else {
+            pattern
+        }
     }
 
     pub fn is_hook_name(&self, name: &str) -> bool {
@@ -101,6 +152,9 @@ impl Analyzer {
     }
 
     pub fn is_signal_name(&self, name: &str) -> bool {
-        name == "signal" || name.starts_with("signal") || name.starts_with("useSignal") || name.starts_with("useComputed")
+        name == "signal"
+            || name.starts_with("signal")
+            || name.starts_with("useSignal")
+            || name.starts_with("useComputed")
     }
 }

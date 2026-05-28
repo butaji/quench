@@ -8,7 +8,9 @@ use std::path::PathBuf;
 
 /// Get the path to the runtime.js file
 pub fn runtime_js_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dist").join("runtime.js")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("dist")
+        .join("runtime.js")
 }
 
 /// Get the path to the runtime.js.map file (source map)
@@ -29,10 +31,10 @@ pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct RuntimeConfig {
     /// Whether to enable debug mode
     pub debug: bool,
-    
+
     /// Default island hydration mode
     pub default_mode: String,
-    
+
     /// Root path for island bundles
     pub bundles_path: String,
 }
@@ -57,10 +59,7 @@ impl RuntimeConfig {
     bundlesPath: "{}",
     version: "{}"
 }};"#,
-            self.debug,
-            self.default_mode,
-            self.bundles_path,
-            RUNTIME_VERSION
+            self.debug, self.default_mode, self.bundles_path, RUNTIME_VERSION
         )
     }
 }

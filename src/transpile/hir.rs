@@ -215,25 +215,41 @@ pub enum Type {
     Symbol,
 
     /// Literal type (string, number, boolean literals)
-    Literal { kind: LiteralKind, value: String },
+    Literal {
+        kind: LiteralKind,
+        value: String,
+    },
 
     /// Reference to another type
-    Ref { name: String, generics: Vec<Type> },
+    Ref {
+        name: String,
+        generics: Vec<Type>,
+    },
 
     /// Union type
-    Union { types: Vec<Type> },
+    Union {
+        types: Vec<Type>,
+    },
 
     /// Intersection type
-    Intersection { types: Vec<Type> },
+    Intersection {
+        types: Vec<Type>,
+    },
 
     /// Array type
-    Array { elem: Box<Type> },
+    Array {
+        elem: Box<Type>,
+    },
 
     /// Tuple type
-    Tuple { types: Vec<Type> },
+    Tuple {
+        types: Vec<Type>,
+    },
 
     /// Object type (interface)
-    Object { members: Vec<ObjectMember> },
+    Object {
+        members: Vec<ObjectMember>,
+    },
 
     /// Function type
     Function {
@@ -243,10 +259,15 @@ pub enum Type {
     },
 
     /// Parenthesized type
-    Paren { type_: Box<Type> },
+    Paren {
+        type_: Box<Type>,
+    },
 
     /// Index access type
-    Index { obj: Box<Type>, index: Box<Type> },
+    Index {
+        obj: Box<Type>,
+        index: Box<Type>,
+    },
 
     /// Conditional type
     Conditional {
@@ -263,7 +284,9 @@ pub enum Type {
     },
 
     /// Template literal type
-    Template { parts: Vec<TemplatePart> },
+    Template {
+        parts: Vec<TemplatePart>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,13 +309,30 @@ pub struct ObjectMember {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Pat {
-    Ident { name: String, type_: Option<Type> },
-    Array { elems: Vec<Option<Pat>>, rest: Option<Box<Pat>> },
-    Object { props: Vec<ObjectPatProp>, rest: Option<Box<Pat>> },
-    Assign { left: Box<Pat>, right: Box<Expr> },
-    Rest { arg: Box<Pat> },
+    Ident {
+        name: String,
+        type_: Option<Type>,
+    },
+    Array {
+        elems: Vec<Option<Pat>>,
+        rest: Option<Box<Pat>>,
+    },
+    Object {
+        props: Vec<ObjectPatProp>,
+        rest: Option<Box<Pat>>,
+    },
+    Assign {
+        left: Box<Pat>,
+        right: Box<Expr>,
+    },
+    Rest {
+        arg: Box<Pat>,
+    },
     /// Default value pattern
-    Default { arg: Box<Pat>, default: Box<Expr> },
+    Default {
+        arg: Box<Pat>,
+        default: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -435,14 +475,19 @@ pub enum Expr {
     Boolean(bool),
     Null,
     Undefined,
-    RegExp { pattern: String, flags: String },
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
     Template {
         parts: Vec<TemplatePart>,
         exprs: Vec<Expr>,
     },
 
     // Identifiers
-    Ident { name: String },
+    Ident {
+        name: String,
+    },
 
     // JSX
     JSX(JSXExpr),
@@ -499,8 +544,12 @@ pub enum Expr {
     },
 
     // Object/Array
-    Object { props: Vec<ObjectProp> },
-    Array { elems: Vec<Option<Expr>> },
+    Object {
+        props: Vec<ObjectProp>,
+    },
+    Array {
+        elems: Vec<Option<Expr>>,
+    },
 
     // Function
     Arrow {
@@ -513,23 +562,39 @@ pub enum Expr {
     },
 
     // Await/Yield
-    Await { arg: Box<Expr> },
-    Yield { arg: Option<Box<Expr>>, delegate: bool },
+    Await {
+        arg: Box<Expr>,
+    },
+    Yield {
+        arg: Option<Box<Expr>>,
+        delegate: bool,
+    },
 
     // Class expression
-    Class { decl: ClassDecl },
+    Class {
+        decl: ClassDecl,
+    },
 
     // Type assertions (limited)
-    TSAs { expr: Box<Expr>, type_: Type },
+    TSAs {
+        expr: Box<Expr>,
+        type_: Type,
+    },
 
     // Meta properties
-    MetaProp { kind: MetaPropKind },
+    MetaProp {
+        kind: MetaPropKind,
+    },
 
     // Sequence expression
-    Seq { exprs: Vec<Expr> },
+    Seq {
+        exprs: Vec<Expr>,
+    },
 
     // Spread
-    Spread { arg: Box<Expr> },
+    Spread {
+        arg: Box<Expr>,
+    },
 
     // Assignment
     Assign {
@@ -542,39 +607,76 @@ pub enum Expr {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BinaryOp {
     // Arithmetic
-    Add, Sub, Mul, Div, Mod, Exp, DivStrict,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Exp,
+    DivStrict,
     // Bitwise
-    BitXor, BitAnd, BitOr, LeftShift, RightShift, RightShiftAll,
+    BitXor,
+    BitAnd,
+    BitOr,
+    LeftShift,
+    RightShift,
+    RightShiftAll,
     // Comparison
-    Eq, Ne, EqStrict, NeStrict, Lt, Le, Gt, Ge,
-    In, InstanceOf,
+    Eq,
+    Ne,
+    EqStrict,
+    NeStrict,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    In,
+    InstanceOf,
     // Logical (but handled as LogicalOp)
-    LogicalAnd, LogicalOr,
+    LogicalAnd,
+    LogicalOr,
     // Nullish
     NullishCoalesce,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnaryOp {
-    Plus, Minus, Not, BitNot, TypeOf, Void,
+    Plus,
+    Minus,
+    Not,
+    BitNot,
+    TypeOf,
+    Void,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UpdateOp {
-    Increment, Decrement,
+    Increment,
+    Decrement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogicalOp {
-    And, Or, NullishCoalesce,
+    And,
+    Or,
+    NullishCoalesce,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AssignOp {
     Assign,
-    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
-    ExpAssign, BitXorAssign, BitAndAssign, BitOrAssign,
-    LeftShiftAssign, RightShiftAssign, RightShiftAllAssign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    ExpAssign,
+    BitXorAssign,
+    BitAndAssign,
+    BitOrAssign,
+    LeftShiftAssign,
+    RightShiftAssign,
+    RightShiftAllAssign,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -621,10 +723,21 @@ impl Eq for PropKey {}
 impl std::hash::Hash for PropKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            PropKey::Ident(s) => { 0u8.hash(state); s.hash(state); }
-            PropKey::String(s) => { 1u8.hash(state); s.hash(state); }
-            PropKey::Number(n) => { 2u8.hash(state); n.to_bits().hash(state); }
-            PropKey::Computed(_) => { 3u8.hash(state); } // Conservative
+            PropKey::Ident(s) => {
+                0u8.hash(state);
+                s.hash(state);
+            }
+            PropKey::String(s) => {
+                1u8.hash(state);
+                s.hash(state);
+            }
+            PropKey::Number(n) => {
+                2u8.hash(state);
+                n.to_bits().hash(state);
+            }
+            PropKey::Computed(_) => {
+                3u8.hash(state);
+            } // Conservative
         }
     }
 }
@@ -671,7 +784,10 @@ pub enum JSXName {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JSXAttr {
     /// Regular attribute
-    Attr { name: String, value: Option<JSXAttrValue> },
+    Attr {
+        name: String,
+        value: Option<JSXAttrValue>,
+    },
     /// Spread attributes
     Spread { expr: Expr },
     /// Event handler

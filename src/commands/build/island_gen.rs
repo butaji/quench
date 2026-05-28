@@ -14,12 +14,16 @@ pub fn scan_islands(project_root: &Path) -> Vec<IslandEntry> {
         return islands;
     }
 
-    for entry in WalkDir::new(&islands_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&islands_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext == "tsx" || ext == "ts" {
-                let name = path.file_stem()
+                let name = path
+                    .file_stem()
                     .and_then(|n| n.to_str())
                     .unwrap_or("Island")
                     .to_string();

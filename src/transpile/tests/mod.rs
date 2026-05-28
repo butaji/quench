@@ -1,27 +1,16 @@
 //! Comprehensive tests for the transpilation pipeline
 
 #[cfg(test)]
-mod parser;
+pub mod parser;
 
 #[cfg(test)]
-mod codegen;
+pub mod codegen;
 
 #[cfg(test)]
-mod analyzer;
+pub mod analyzer;
 
 #[cfg(test)]
-mod routegen;
+pub mod routegen;
 
 #[cfg(test)]
-mod integration;
-
-#[cfg(test)]
-use parser::parser_tests;
-#[cfg(test)]
-use codegen::codegen_tests;
-#[cfg(test)]
-use analyzer::analyzer_tests;
-#[cfg(test)]
-use routegen::routegen_tests;
-#[cfg(test)]
-use integration::integration_tests;
+pub mod integration;

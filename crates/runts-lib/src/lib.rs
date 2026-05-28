@@ -29,7 +29,7 @@
 //! }
 //! ```
 
-pub mod runtime;
 pub mod macros;
+pub mod runtime;
 
 pub use runtime::prelude::*;

@@ -1,14 +1,13 @@
 //! Transpilation pipeline for TS/TSX to Rust
 
-pub mod parser;
 pub mod analyzer;
 pub mod codegen;
-pub mod hir;
-pub mod jsx_transformer;
-pub mod routegen;
-pub mod middlewaregen;
 pub mod errors;
+pub mod hir;
 pub mod js_codegen;
+pub mod middlewaregen;
+pub mod parser;
+pub mod routegen;
 
 #[cfg(test)]
 mod tests;
@@ -20,9 +19,9 @@ mod js_codegen_tests;
 mod runtime_tests;
 
 pub use crate::config::Config;
-pub use parser::TsParser;
 pub use analyzer::Analyzer;
 pub use codegen::CodeGenerator;
+pub use parser::TsParser;
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -83,14 +82,19 @@ impl Transpiler {
     #[allow(dead_code)]
     pub fn analyze(&mut self, module: &hir::Module) -> Result<(), Vec<TranspileError>> {
         self.analyzer.analyze(module).map_err(|errors| {
-            errors.into_iter().map(|e| TranspileError::Type(e.to_string())).collect()
+            errors
+                .into_iter()
+                .map(|e| TranspileError::Type(e.to_string()))
+                .collect()
         })
     }
 
     /// Transpile a single file
     pub fn transpile_file(&mut self, path: &PathBuf) -> Result<String> {
         // Parse
-        let module = self.parser.parse_file(path)
+        let module = self
+            .parser
+            .parse_file(path)
             .context("Failed to parse file")?;
 
         // Analyze
@@ -99,7 +103,9 @@ impl Transpiler {
         }
 
         // Generate
-        let rust_code = self.codegen.generate_module(&module)
+        let rust_code = self
+            .codegen
+            .generate_module(&module)
             .map_err(|e| anyhow::anyhow!("Failed to generate Rust code: {}", e))?;
 
         Ok(rust_code)

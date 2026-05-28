@@ -6,8 +6,8 @@
 //! - Islands use fine-grained signals for updates
 //! - Client-side hydration connects signals to DOM
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Virtual Node Key - used for list reconciliation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,7 +44,7 @@ pub enum AttrValue {
 pub type EventHandler = Box<dyn Fn(JsValue) + Send + Sync>;
 
 /// Virtual Node - represents a rendered element
-/// 
+///
 /// Note: We don't derive Debug or Clone because EventHandler doesn't implement them.
 /// For SSR, we use Render trait instead.
 pub enum VNode {
@@ -52,46 +52,46 @@ pub enum VNode {
     Element {
         /// Tag name (e.g., "div", "span", "p")
         tag: String,
-        
+
         /// Attributes (e.g., class, id, data-*)
         /// For boolean attributes like `disabled`, use `AttrValue::Bool(true)`
         attrs: HashMap<String, AttrValue>,
-        
+
         /// Event handlers (e.g., on_click, on_input)
         /// Stored as (event_name, handler) tuples
         events: HashMap<String, EventHandler>,
-        
+
         /// Child nodes
         children: Vec<VNode>,
-        
+
         /// Key for list reconciliation
         key: Option<Key>,
     },
-    
+
     /// Component instance
     Component {
         /// Component function/type name
         name: String,
-        
+
         /// Props passed to the component
         props: HashMap<String, serde_json::Value>,
-        
+
         /// Children passed as props.children
         children: Vec<VNode>,
-        
+
         /// Key for list reconciliation
         key: Option<Key>,
     },
-    
+
     /// Text content
     Text {
         /// The text value
         value: String,
     },
-    
+
     /// Fragment - group of nodes without a wrapper
     Fragment(Vec<VNode>),
-    
+
     /// Empty node (renders nothing)
     Empty,
 }
@@ -103,7 +103,9 @@ pub enum VNode {
 impl VNode {
     /// Create a text VNode
     pub fn text(value: impl Into<String>) -> Self {
-        VNode::Text { value: value.into() }
+        VNode::Text {
+            value: value.into(),
+        }
     }
 
     /// Create an element VNode
@@ -133,7 +135,7 @@ impl ElementBuilder {
         self.attrs.insert(name.into(), value.into());
         self
     }
-    
+
     /// Add a class (convenience method)
     pub fn class(mut self, class: impl Into<String>) -> Self {
         let class = class.into();
@@ -147,31 +149,31 @@ impl ElementBuilder {
             .or_insert_with(|| AttrValue::String(class));
         self
     }
-    
+
     /// Add an event handler
     pub fn on(mut self, event: impl Into<String>, handler: EventHandler) -> Self {
         self.events.insert(event.into(), handler);
         self
     }
-    
+
     /// Add a child node
     pub fn child(mut self, child: VNode) -> Self {
         self.children.push(child);
         self
     }
-    
+
     /// Add multiple children
     pub fn children(mut self, children: impl IntoIterator<Item = VNode>) -> Self {
         self.children.extend(children);
         self
     }
-    
+
     /// Set the key
     pub fn key(mut self, key: Key) -> Self {
         self.key = Some(key);
         self
     }
-    
+
     /// Build the VNode
     pub fn build(self) -> VNode {
         VNode::Element {
@@ -201,7 +203,7 @@ impl AttrValue {
 pub trait Render {
     /// Render to HTML string (for SSR)
     fn render_to_html(&self) -> String;
-    
+
     /// Render to HTML string with indentation
     fn render_to_html_indented(&self, _indent: usize) -> String {
         self.render_to_html()
@@ -211,12 +213,19 @@ pub trait Render {
 impl Render for VNode {
     fn render_to_html(&self) -> String {
         match self {
-            VNode::Element { tag, attrs, events: _, children, key: _ } => {
-                render_element(tag, attrs, children)
-            }
-            VNode::Component { name: _, props: _, children, key: _ } => {
-                render_component_children(children)
-            }
+            VNode::Element {
+                tag,
+                attrs,
+                events: _,
+                children,
+                key: _,
+            } => render_element(tag, attrs, children),
+            VNode::Component {
+                name: _,
+                props: _,
+                children,
+                key: _,
+            } => render_component_children(children),
             VNode::Text { value } => html_escape(value),
             VNode::Fragment(children) => render_children(children),
             VNode::Empty => String::new(),
@@ -270,7 +279,7 @@ impl Fragment {
     pub fn new(children: Vec<VNode>) -> Self {
         Self { children }
     }
-    
+
     pub fn from_iter<I: IntoIterator<Item = VNode>>(children: I) -> Self {
         Self {
             children: children.into_iter().collect(),
@@ -280,10 +289,7 @@ impl Fragment {
 
 impl Render for Fragment {
     fn render_to_html(&self) -> String {
-        self.children
-            .iter()
-            .map(|c| c.render_to_html())
-            .collect()
+        self.children.iter().map(|c| c.render_to_html()).collect()
     }
 }
 
@@ -307,7 +313,9 @@ impl IntoVNode for String {
 
 impl IntoVNode for &str {
     fn into_vnode(self) -> VNode {
-        VNode::Text { value: self.to_string() }
+        VNode::Text {
+            value: self.to_string(),
+        }
     }
 }
 
@@ -405,21 +413,21 @@ impl JsValue {
     pub fn null() -> Self {
         JsValue
     }
-    
+
     pub fn undefined() -> Self {
         JsValue
     }
-    
+
     pub fn string(s: impl Into<String>) -> Self {
         let _ = s.into();
         JsValue
     }
-    
+
     pub fn number(n: f64) -> Self {
         let _ = n;
         JsValue
     }
-    
+
     pub fn bool(b: bool) -> Self {
         let _ = b;
         JsValue

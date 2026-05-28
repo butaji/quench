@@ -21,9 +21,9 @@ impl ComponentInstance {
     pub fn new(vnode: VNode) -> Self {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        
+
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        
+
         Self {
             vnode,
             id: format!("comp-{:x}", id),
@@ -53,7 +53,7 @@ impl<P: Send + Sync + 'static> Component<P> {
             render: Arc::new(render),
         }
     }
-    
+
     /// Render the component with props
     pub fn render_with(&self, props: P) -> ComponentInstance {
         ComponentInstance::new((self.render)(props))
@@ -71,27 +71,27 @@ impl Children {
     pub fn new() -> Self {
         Self { inner: Vec::new() }
     }
-    
+
     /// Create from a single VNode
     pub fn from_vnode(vnode: VNode) -> Self {
         Self { inner: vec![vnode] }
     }
-    
+
     /// Create from multiple VNodes
     pub fn from_vnodes(vnodes: Vec<VNode>) -> Self {
         Self { inner: vnodes }
     }
-    
+
     /// Get all children
     pub fn as_slice(&self) -> &[VNode] {
         &self.inner
     }
-    
+
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
-    
+
     /// Number of children
     pub fn len(&self) -> usize {
         self.inner.len()

@@ -3,15 +3,15 @@
 //! Provides the runtime support for components, including hooks context,
 //! component metadata, and rendering helpers.
 
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 /// Component metadata for registration
 #[allow(dead_code)]
 pub trait ComponentMeta: Send + Sync {
     /// Get component name
     fn name(&self) -> &'static str;
-    
+
     /// Get props type name (for serialization)
     fn props_type(&self) -> Option<&'static str> {
         None
@@ -30,15 +30,16 @@ impl ComponentRegistry {
             components: RwLock::new(Vec::new()),
         }
     }
-    
+
     /// Register a component
     pub fn register<M: ComponentMeta + 'static>(&self, meta: M) {
         self.components.write().push(Arc::new(meta));
     }
-    
+
     /// Get all registered components
     pub fn components(&self) -> Vec<String> {
-        self.components.read()
+        self.components
+            .read()
             .iter()
             .map(|m| m.name().to_string())
             .collect()
@@ -63,18 +64,18 @@ impl LazyRegistry {
             registry: RwLock::new(None),
         }
     }
-    
+
     pub fn get(&self) -> Arc<ComponentRegistry> {
         let mut guard = self.registry.write();
         if guard.is_none() {
             *guard = Some(ComponentRegistry::new());
         }
-        
+
         // Clone the components vector
         let components = guard.as_ref().unwrap().components.read().clone();
-        
+
         Arc::new(ComponentRegistry {
-            components: RwLock::new(components)
+            components: RwLock::new(components),
         })
     }
 }
@@ -92,7 +93,7 @@ pub fn component_registry() -> Arc<ComponentRegistry> {
 pub struct HookContext {
     /// Current hook index
     hook_index: RwLock<usize>,
-    
+
     /// Hook storage
     hooks: RwLock<Vec<Box<dyn std::any::Any + Send + Sync>>>,
 }
@@ -103,7 +104,7 @@ impl HookContext {
     pub fn get_hook<T: 'static + Clone + Send + Sync>(&self, init: impl FnOnce() -> T) -> T {
         let mut hooks = self.hooks.write();
         let mut index = self.hook_index.write();
-        
+
         if *index < hooks.len() {
             // Return existing hook
             let hook = hooks[*index].downcast_ref::<T>();
@@ -118,7 +119,7 @@ impl HookContext {
             hook
         }
     }
-    
+
     /// Reset hook index for new render
     pub fn reset(&self) {
         *self.hook_index.write() = 0;
@@ -130,7 +131,7 @@ impl HookContext {
 pub struct ComponentInfo {
     /// Component name
     pub name: String,
-    
+
     /// Props type name (for serialization)
     pub props_type: Option<String>,
 }
@@ -143,7 +144,7 @@ impl ComponentInfo {
             props_type: None,
         }
     }
-    
+
     /// Set the props type
     pub fn props_type(mut self, props_type: impl Into<String>) -> Self {
         self.props_type = Some(props_type.into());

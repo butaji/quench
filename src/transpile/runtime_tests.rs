@@ -18,7 +18,7 @@ mod tests {
         let _s2 = "hello".to_string();
         let _s3 = "world".to_string();
         let _s4 = "template".to_string();
-        
+
         // Escape sequences
         let _s5 = "line1\nline2".to_string();
         let _s6 = "tab\there".to_string();
@@ -58,7 +58,7 @@ mod tests {
     fn test_binary_arithmetic() {
         let a: i32 = 10;
         let b: i32 = 3;
-        
+
         let _add: i32 = a + b;
         let _sub: i32 = a - b;
         let _mul: i32 = a * b;
@@ -70,7 +70,7 @@ mod tests {
     fn test_binary_comparison() {
         let a: i32 = 5;
         let b: i32 = 3;
-        
+
         let _eq: bool = a == 5;
         let _neq: bool = a != b;
         let _strict_eq: bool = a == 5;
@@ -85,7 +85,7 @@ mod tests {
     fn test_binary_logical() {
         let t: bool = true;
         let f: bool = false;
-        
+
         let _and: bool = t && f;
         let _or: bool = t || f;
         let _not: bool = !f;
@@ -102,7 +102,7 @@ mod tests {
     fn test_binary_bitwise() {
         let a: u8 = 0b1100;
         let b: u8 = 0b1010;
-        
+
         let _and: u8 = a & b;
         let _or: u8 = a | b;
         let _xor: u8 = a ^ b;
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_array_methods() {
         let arr = vec![3, 1, 4, 1, 5, 9, 2, 6];
-        
+
         let _doubled: Vec<i32> = arr.iter().map(|x| x * 2).collect();
         let _evens: Vec<i32> = arr.iter().filter(|x| *x % 2 == 0).copied().collect();
         let _sum: i32 = arr.iter().sum();
@@ -150,7 +150,7 @@ mod tests {
     fn test_array_spread() {
         let a = vec![1, 2, 3];
         let b = vec![4, 5, 6];
-        
+
         let mut combined = a.clone();
         combined.extend(b.iter().copied());
         let _result = combined;
@@ -173,7 +173,7 @@ mod tests {
         let mut obj: HashMap<&str, i32> = HashMap::new();
         obj.insert("name", 42);
         obj.insert("age", 30);
-        
+
         let _name = obj.get("name").copied();
         let _age = obj.get("age").copied();
     }
@@ -182,10 +182,10 @@ mod tests {
     fn test_nested_objects() {
         let mut inner: HashMap<&str, &str> = HashMap::new();
         inner.insert("city", "NYC");
-        
+
         let mut outer: HashMap<&str, HashMap<&str, &str>> = HashMap::new();
         outer.insert("address", inner);
-        
+
         let _city = outer.get("address").and_then(|m| m.get("city")).copied();
     }
 
@@ -195,7 +195,9 @@ mod tests {
 
     #[test]
     fn test_function_declaration() {
-        fn add(a: i32, b: i32) -> i32 { a + b }
+        fn add(a: i32, b: i32) -> i32 {
+            a + b
+        }
         let _result = add(5, 3);
     }
 
@@ -203,7 +205,7 @@ mod tests {
     fn test_arrow_function() {
         let add = |a: i32, b: i32| a + b;
         let _result = add(5, 3);
-        
+
         let square = |x: i32| x * x;
         let _sq = square(4);
     }
@@ -211,8 +213,11 @@ mod tests {
     #[test]
     fn test_closure() {
         let mut counter = 0;
-        let mut increment = || { counter += 1; counter };
-        
+        let mut increment = || {
+            counter += 1;
+            counter
+        };
+
         let _first = increment();
         let _second = increment();
     }
@@ -221,7 +226,7 @@ mod tests {
     fn test_higher_order_function() {
         let nums = vec![1, 2, 3, 4, 5];
         let _evens: Vec<&i32> = nums.iter().filter(|x| *x % 2 == 0).collect();
-        
+
         let add_n = |n: i32| move |x: i32| x + n;
         let add_5 = add_n(5);
         let _result = add_5(10);
@@ -234,14 +239,20 @@ mod tests {
     #[test]
     fn test_if_else() {
         let x: i32 = 10;
-        
-        let _result = if x > 5 { "big" } else if x > 0 { "small" } else { "negative" };
+
+        let _result = if x > 5 {
+            "big"
+        } else if x > 0 {
+            "small"
+        } else {
+            "negative"
+        };
     }
 
     #[test]
     fn test_match() {
         let day: i32 = 3;
-        
+
         let _name = match day {
             1 => "Monday",
             2 => "Tuesday",
@@ -256,14 +267,18 @@ mod tests {
     #[test]
     fn test_loop() {
         let mut sum = 0i32;
-        for i in 1..=5 { sum += i; }
+        for i in 1..=5 {
+            sum += i;
+        }
         assert_eq!(sum, 15);
     }
 
     #[test]
     fn test_while_loop() {
         let mut count = 0;
-        while count < 3 { count += 1; }
+        while count < 3 {
+            count += 1;
+        }
         assert_eq!(count, 3);
     }
 
@@ -286,7 +301,7 @@ mod tests {
     fn test_optional_chaining() {
         let obj: Option<HashMap<&str, i32>> = None;
         let _value = obj.as_ref().and_then(|m| m.get("key")).copied();
-        
+
         let mut map: HashMap<&str, i32> = HashMap::new();
         map.insert("a", 1);
         let obj2 = Some(map);
@@ -311,10 +326,10 @@ mod tests {
         let mut map: HashMap<&str, i32> = HashMap::new();
         map.insert("name", 42);
         map.insert("age", 30);
-        
+
         let name = map.get("name").copied().unwrap_or(0);
         let age = map.get("age").copied().unwrap_or(0);
-        
+
         assert_eq!(name, 42);
         assert_eq!(age, 30);
     }
@@ -326,8 +341,11 @@ mod tests {
     #[test]
     fn test_struct_creation() {
         #[derive(Debug, Clone, PartialEq)]
-        struct Point { x: f64, y: f64 }
-        
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
         let p = Point { x: 3.0, y: 4.0 };
         assert_eq!(p.x, 3.0);
         assert_eq!(p.y, 4.0);
@@ -336,13 +354,20 @@ mod tests {
     #[test]
     fn test_struct_methods() {
         #[derive(Debug, Clone)]
-        struct Point { x: f64, y: f64 }
-        
-        impl Point {
-            fn new(x: f64, y: f64) -> Self { Self { x, y } }
-            fn distance(&self) -> f64 { (self.x * self.x + self.y * self.y).sqrt() }
+        struct Point {
+            x: f64,
+            y: f64,
         }
-        
+
+        impl Point {
+            fn new(x: f64, y: f64) -> Self {
+                Self { x, y }
+            }
+            fn distance(&self) -> f64 {
+                (self.x * self.x + self.y * self.y).sqrt()
+            }
+        }
+
         let p = Point::new(3.0, 4.0);
         assert_eq!(p.distance(), 5.0);
     }
@@ -350,12 +375,22 @@ mod tests {
     #[test]
     fn test_struct_nested() {
         #[derive(Debug, Clone)]
-        struct Base { name: String }
-        
+        struct Base {
+            name: String,
+        }
+
         #[derive(Debug, Clone)]
-        struct Derived { base: Base, value: i32 }
-        
-        let d = Derived { base: Base { name: "test".to_string() }, value: 42 };
+        struct Derived {
+            base: Base,
+            value: i32,
+        }
+
+        let d = Derived {
+            base: Base {
+                name: "test".to_string(),
+            },
+            value: 42,
+        };
         assert_eq!(d.base.name, "test");
         assert_eq!(d.value, 42);
     }
@@ -367,15 +402,22 @@ mod tests {
     #[test]
     fn test_option_handling() {
         let value: Option<i32> = Some(42);
-        let _result = match value { Some(n) => n * 2, None => 0 };
+        let _result = match value {
+            Some(n) => n * 2,
+            None => 0,
+        };
     }
 
     #[test]
     fn test_result_handling() {
         fn divide(a: i32, b: i32) -> Option<i32> {
-            if b == 0 { None } else { Some(a / b) }
+            if b == 0 {
+                None
+            } else {
+                Some(a / b)
+            }
         }
-        
+
         let _ok = divide(10, 2);
         let _err = divide(10, 0);
     }
@@ -480,7 +522,9 @@ mod tests {
     #[test]
     fn test_loop_performance() {
         let mut sum = 0i64;
-        for i in 0..1_000_000 { sum += i; }
+        for i in 0..1_000_000 {
+            sum += i;
+        }
         assert!(sum > 0);
     }
 
@@ -493,17 +537,26 @@ mod tests {
     #[test]
     fn test_hashmap_lookup_performance() {
         let mut map: HashMap<i32, i32> = HashMap::new();
-        for i in 0..1000 { map.insert(i, i * 2); }
-        
+        for i in 0..1000 {
+            map.insert(i, i * 2);
+        }
+
         let mut sum = 0i32;
-        for i in 0..1000 { sum += map[&i]; }
+        for i in 0..1000 {
+            sum += map[&i];
+        }
         assert_eq!(sum, 999000);
     }
 
     #[test]
     fn test_iterator_benchmark() {
         let nums: Vec<i32> = (0..10000).collect();
-        let result: i32 = nums.iter().filter(|x| *x % 2 == 0).map(|x| x * x).take(100).sum();
+        let result: i32 = nums
+            .iter()
+            .filter(|x| *x % 2 == 0)
+            .map(|x| x * x)
+            .take(100)
+            .sum();
         assert!(result > 0);
     }
 
@@ -540,7 +593,12 @@ mod tests {
     #[test]
     fn test_lazy_evaluation_with_map() {
         let nums = vec![1, 2, 3, 4, 5];
-        let result: Vec<i32> = nums.iter().map(|x| x * 2).filter(|x| *x > 4).take(2).collect();
+        let result: Vec<i32> = nums
+            .iter()
+            .map(|x| x * 2)
+            .filter(|x| *x > 4)
+            .take(2)
+            .collect();
         assert_eq!(result, vec![6, 8]);
     }
 
@@ -566,7 +624,7 @@ mod tests {
                 _ => fib(n - 1) + fib(n - 2),
             }
         }
-        
+
         assert_eq!(fib(0), 0);
         assert_eq!(fib(1), 1);
         assert_eq!(fib(10), 55);
@@ -576,12 +634,15 @@ mod tests {
     fn test_tail_recursive_factorial() {
         fn factorial(n: u64) -> u64 {
             fn fact_helper(n: u64, acc: u64) -> u64 {
-                if n <= 1 { acc }
-                else { fact_helper(n - 1, n * acc) }
+                if n <= 1 {
+                    acc
+                } else {
+                    fact_helper(n - 1, n * acc)
+                }
             }
             fact_helper(n, 1)
         }
-        
+
         assert_eq!(factorial(0), 1);
         assert_eq!(factorial(5), 120);
     }
@@ -605,12 +666,12 @@ mod tests {
 
     #[test]
     fn test_reference_counting() {
-        use std::rc::Rc;
         use std::cell::RefCell;
-        
+        use std::rc::Rc;
+
         let rc = Rc::new(RefCell::new(vec![1, 2, 3]));
         let _rc2 = rc.clone();
-        
+
         rc.borrow_mut().push(4);
         assert_eq!(*rc.borrow(), vec![1, 2, 3, 4]);
         assert_eq!(Rc::strong_count(&rc), 2);
@@ -618,12 +679,12 @@ mod tests {
 
     #[test]
     fn test_atomic_reference_counting() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
-        
+        use std::sync::Arc;
+
         let arc = Arc::new(AtomicUsize::new(0));
         let _arc2 = arc.clone();
-        
+
         arc.fetch_add(1, Ordering::SeqCst);
         assert_eq!(arc.load(Ordering::SeqCst), 1);
         assert_eq!(Arc::strong_count(&arc), 2);

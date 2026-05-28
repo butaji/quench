@@ -9,12 +9,12 @@
 
 pub mod prelude;
 
-pub mod vdom;
 pub mod component;
-pub mod islands;
 pub mod hooks;
-pub mod signals;
+pub mod islands;
 pub mod server;
+pub mod signals;
+pub mod vdom;
 
 /// Compile-time constant for browser detection
 /// This is replaced with `true` or `false` at compile time
