@@ -3,6 +3,7 @@
 //! This module contains tests that verify the runts runtime can correctly
 //! handle all major TypeScript language features.
 
+#![allow(clippy::too_many_lines, clippy::fn_too_many_lines)]
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
