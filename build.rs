@@ -41,11 +41,6 @@ const WHITELIST: &[(&str, &str)] = &[
     ("src/transpile/hir2.rs", "fmt"),
     // OXC builder (will be split into modules)
     ("src/transpile/oxc_builder.rs", "*"),
-    // Commands being refactored
-    ("src/commands/add.rs", "*"),
-    ("src/commands/ssr.rs", "*"),
-    ("src/commands/routes.rs", "*"),
-    ("src/commands/parallel.rs", "*"),
     // Macro crate is separate workspace member
     ("crates/runts-macros/src/html.rs", "*"),
     // Lib crate is separate workspace member

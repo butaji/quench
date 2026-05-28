@@ -154,34 +154,39 @@ impl Route {
     /// Compile pattern to regex
     fn compile_regex(pattern: &str) -> Result<Regex> {
         let mut regex_str = String::from("^/?");
-        
+
         if pattern.is_empty() {
             regex_str.push_str("?$");
         } else {
-            let segments: Vec<&str> = pattern.split('/').collect();
-            for (i, segment) in segments.iter().enumerate() {
-                // Add / between segments (but not at the start)
-                if i > 0 {
-                    regex_str.push('/');
-                }
-                
-                if segment.starts_with('[') && segment.ends_with(']') {
-                    let inner = &segment[1..segment.len()-1];
-                    
-                    if inner.starts_with("...") {
-                        regex_str.push_str("(.*)");
-                    } else {
-                        regex_str.push_str("([^/]+)");
-                    }
-                } else if !segment.is_empty() {
-                    regex_str.push_str(&regex::escape(segment));
-                }
-            }
+            Self::append_segments(&mut regex_str, pattern);
             regex_str.push('$');
         }
-        
+
         Regex::new(&regex_str)
             .map_err(|e| anyhow!("Invalid route pattern '{}': {}", pattern, e))
+    }
+
+    fn append_segments(regex_str: &mut String, pattern: &str) {
+        let segments: Vec<&str> = pattern.split('/').collect();
+        for (i, segment) in segments.iter().enumerate() {
+            if i > 0 {
+                regex_str.push('/');
+            }
+            Self::append_segment(regex_str, segment);
+        }
+    }
+
+    fn append_segment(regex_str: &mut String, segment: &str) {
+        if segment.starts_with('[') && segment.ends_with(']') {
+            let inner = &segment[1..segment.len()-1];
+            if inner.starts_with("...") {
+                regex_str.push_str("(.*)");
+            } else {
+                regex_str.push_str("([^/]+)");
+            }
+        } else if !segment.is_empty() {
+            regex_str.push_str(&regex::escape(segment));
+        }
     }
     
     /// Match a URL path against this route
