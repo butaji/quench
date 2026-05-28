@@ -473,39 +473,38 @@ fn extract_params(pattern: &str) -> Vec<String> {
 /// Extract HTTP methods from route handlers
 fn extract_http_methods(module: &crate::transpile::hir::Module) -> Vec<HttpMethod> {
     let mut methods = vec![HttpMethod::GET];
-    
+
     for item in &module.items {
         if let crate::transpile::hir::ModuleItem::Export(export) = item {
-            match export {
-                crate::transpile::hir::Export::Named { name } => {
-                    let name_lower = name.to_lowercase();
-                    if name_lower.contains("get") && !name_lower.contains("post") {
-                        if !methods.contains(&HttpMethod::GET) {
-                            methods.push(HttpMethod::GET);
-                        }
-                    }
-                    if name_lower.contains("post") {
-                        if !methods.contains(&HttpMethod::POST) {
-                            methods.push(HttpMethod::POST);
-                        }
-                    }
-                    if name_lower.contains("put") {
-                        if !methods.contains(&HttpMethod::PUT) {
-                            methods.push(HttpMethod::PUT);
-                        }
-                    }
-                    if name_lower.contains("delete") {
-                        if !methods.contains(&HttpMethod::DELETE) {
-                            methods.push(HttpMethod::DELETE);
-                        }
-                    }
-                }
-                _ => {}
+            if let crate::transpile::hir::Export::Named { name } = export {
+                let name_lower = name.to_lowercase();
+                add_method_from_name(&mut methods, &name_lower);
             }
         }
     }
-    
+
     methods
+}
+
+fn add_method_from_name(methods: &mut Vec<HttpMethod>, name_lower: &str) {
+    if name_lower.contains("get") && !name_lower.contains("post") {
+        add_unique_method(methods, HttpMethod::GET);
+    }
+    if name_lower.contains("post") {
+        add_unique_method(methods, HttpMethod::POST);
+    }
+    if name_lower.contains("put") {
+        add_unique_method(methods, HttpMethod::PUT);
+    }
+    if name_lower.contains("delete") {
+        add_unique_method(methods, HttpMethod::DELETE);
+    }
+}
+
+fn add_unique_method(methods: &mut Vec<HttpMethod>, method: HttpMethod) {
+    if !methods.contains(&method) {
+        methods.push(method);
+    }
 }
 
 /// Sanitize a file stem into a valid Rust module name.

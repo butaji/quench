@@ -9,6 +9,7 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::fs;
+use serde_json;
 
 use super::routes::{HttpMethod, Route, RouteTable};
 use super::layouts::{LayoutContext, LayoutManager, Layout};
@@ -127,15 +128,11 @@ impl SsrRenderer {
         
         let mut ctx = SsrContext::new(&route.pattern, params);
         
-        // Execute the route handler to get page data
         let page_data = self.execute_handler(route, &ctx).await?;
         ctx.set_page_data(page_data.clone());
         
         let layouts = self.layout_manager.find_layouts_for_path(path);
-        
-        // Render the page component
         let page_html = self.render_page_component(route, &ctx).await?;
-        
         let final_html = self.compose_with_layouts(page_html, &layouts, &ctx).await?;
         
         let html = if let Some(_app_path) = self.layout_manager.get_app_wrapper() {
@@ -152,215 +149,124 @@ impl SsrRenderer {
     
     /// Execute a route handler and return the data for rendering
     async fn execute_handler(&self, route: &Route, ctx: &SsrContext) -> Result<serde_json::Value> {
-        // Check if there's a handler export in the route file
         let source = fs::read_to_string(&route.file_path)?;
-        
-        // Parse the route file
-        let mut parser = Parser::new();
-        let module = match parser.parse_source(&source) {
+        let module = match Parser::new().parse_source(&source) {
             Ok(m) => m,
             Err(e) => {
-                // If parsing fails, return empty data
                 eprintln!("[runts] Warning: Could not parse handler: {}", e);
                 return Ok(serde_json::json!({}));
             }
         };
         
-        // Check for handler export
-        let mut has_handler = false;
-        for item in &module.items {
-            if let crate::transpile::hir::ModuleItem::Export(export) = item {
-                match export {
-                    crate::transpile::hir::Export::NamedWithValue { name, .. } => {
-                        if name == "handler" {
-                            has_handler = true;
-                            break;
-                        }
-                    }
-                    crate::transpile::hir::Export::Named { name } => {
-                        if name == "handler" {
-                            has_handler = true;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        
-        if !has_handler {
-            // No handler, return empty data
+        if !has_handler_export(&module) {
             return Ok(serde_json::json!({}));
         }
         
-        // For dev mode, we simulate the handler response
-        // In a full implementation, this would execute the handler in a sandbox
-        // For now, return a mock response based on route params
-        let mut data = serde_json::Map::new();
-        
-        // Add params to data
-        for (key, value) in &ctx.params {
-            data.insert(key.clone(), serde_json::Value::String(value.clone()));
-        }
-        
-        // Add route info
-        data.insert("route".to_string(), serde_json::Value::String(route.pattern.clone()));
-        
-        // If this is a blog route, add mock blog data
-        if route.pattern.contains("blog") {
-            if let Some(slug) = ctx.params.get("slug") {
-                data.insert("title".to_string(), serde_json::Value::String(format!("Blog post: {}", slug)));
-                data.insert("content".to_string(), serde_json::Value::String(format!("This is the content of blog post '{}'", slug)));
-            } else {
-                data.insert("posts".to_string(), serde_json::json!([
-                    { "slug": "hello-world", "title": "Hello World", "excerpt": "Welcome to runts!" },
-                    { "slug": "getting-started", "title": "Getting Started", "excerpt": "Learn how to build with runts" },
-                ]));
-            }
-        }
-        
-        Ok(serde_json::Value::Object(data))
+        Ok(build_mock_page_data(route, ctx))
     }
     
     /// Render the page component to HTML
     async fn render_page_component(&self, route: &Route, ctx: &SsrContext) -> Result<String> {
-        let _component_name = path_to_component_name(&route.pattern);
-        let page_data = ctx.page_data.as_ref();
-        
-        let mut html = String::new();
-        
-        // Get page data for rendering
-        let page_props_json = if let Some(data) = page_data {
-            serde_json::to_string(data).unwrap_or_default()
-        } else {
-            "{}".to_string()
-        };
-        
-        // Check for islands in the route file
+        let page_props_json = ctx.page_data
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .unwrap_or_else(|| "{}".to_string());
+
         let islands = self.find_islands_in_route(&route.file_path)?;
-        
-        // Generate component HTML based on route
-        html.push_str(&format!(
-            r#"<div class="runts-page" data-route="{}">"#,
-            route.pattern
-        ));
-        
-        // Add page props as JSON for client hydration
-        html.push_str(&format!(
-            r#"<script type="application/json" id="__page_props">{}</script>"#,
-            page_props_json
-        ));
-        
-        // Render based on route pattern
-        html.push_str(&self.render_route_content(route, ctx).await?);
-        
-        // Render islands
-        for island in &islands {
-            let mut ctx_clone = ctx.clone();
-            html.push_str(&self.render_island_placeholder(
-                &island.name,
-                &island.props,
-                &mut ctx_clone
-            ));
-        }
-        
-        html.push_str("</div>");
-        
-        Ok(html)
+        let content = self.render_route_content(route, ctx).await?;
+        let island_html = self.render_islands(&islands, ctx);
+
+        Ok(format!(
+            r#"<div class="runts-page" data-route="{}">\n{}\n<script type="application/json" id="__page_props">{}</script>\n{}\n</div>"#,
+            route.pattern,
+            content,
+            page_props_json,
+            island_html
+        ))
+    }
+
+    fn render_islands(&self, islands: &[IslandRef], ctx: &SsrContext) -> String {
+        islands.iter()
+            .map(|island| {
+                let mut ctx_clone = ctx.clone();
+                self.render_island_placeholder(&island.name, &island.props, &mut ctx_clone)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
     
     /// Render the content of a route
     async fn render_route_content(&self, route: &Route, ctx: &SsrContext) -> Result<String> {
         let component_name = path_to_component_name(&route.pattern);
-        
-        // Generate mock HTML based on the route and data
         let mut content = String::new();
-        
-        if let Some(data) = ctx.page_data.as_ref() {
-            if let Some(obj) = data.as_object() {
-                // Render based on data keys
-                if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
-                    content.push_str(&format!("<h1>{}</h1>", html_escape(title)));
-                }
-                
-                if let Some(content_text) = obj.get("content").and_then(|v| v.as_str()) {
-                    content.push_str(&format!("<p>{}</p>", html_escape(content_text)));
-                }
-                
-                if let Some(posts) = obj.get("posts").and_then(|v| v.as_array()) {
-                    content.push_str("<ul class='posts'>");
-                    for post in posts {
-                        if let Some(post_obj) = post.as_object() {
-                            let slug = post_obj.get("slug").and_then(|v| v.as_str()).unwrap_or("");
-                            let title = post_obj.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                            let excerpt = post_obj.get("excerpt").and_then(|v| v.as_str()).unwrap_or("");
-                            content.push_str(&format!(
-                                "<li><a href='/blog/{0}'><strong>{1}</strong><p>{2}</p></a></li>",
-                                html_escape(slug),
-                                html_escape(title),
-                                html_escape(excerpt)
-                            ));
-                        }
-                    }
-                    content.push_str("</ul>");
-                }
+
+        if let Some(obj) = ctx.page_data.as_ref().and_then(|d| d.as_object()) {
+            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                content.push_str(&format!("<h1>{}</h1>\n", html_escape(title)));
+            }
+            if let Some(text) = obj.get("content").and_then(|v| v.as_str()) {
+                content.push_str(&format!("<p>{}</p>\n", html_escape(text)));
+            }
+            if let Some(posts) = obj.get("posts").and_then(|v| v.as_array()) {
+                content.push_str(&render_posts_list(posts));
             }
         }
-        
-        // If no content, show a placeholder
+
         if content.is_empty() {
             content.push_str(&format!(
-                "<!-- Component: {} would render here in production -->",
+                "<!-- Component: {} would render here in production -->\n",
                 component_name
             ));
         }
-        
+
         Ok(content)
     }
     
     /// Find islands referenced in a route file
     fn find_islands_in_route(&self, route_path: &PathBuf) -> Result<Vec<IslandRef>> {
-        let mut islands = Vec::new();
-        
         if !route_path.exists() {
-            return Ok(islands);
+            return Ok(Vec::new());
         }
-        
+
         let content = fs::read_to_string(route_path)?;
-        
-        // Simple regex to find island imports and usages
-        let import_re = regex::Regex::new(r#"import\s+.*?\s+from\s+["']\.\./islands/(\w+)\.tsx["']"#).unwrap();
-        
-        // Check imports for islands
-        for cap in import_re.captures_iter(&content) {
-            if let Some(name) = cap.get(1) {
-                let island_path = self.islands_dir.join(format!("{}.tsx", name.as_str()));
-                if island_path.exists() {
-                    // Get props from the component usage
-                    let usage_re = regex::Regex::new(&format!(r#"<{}\s+([^>]*?)/?>"#, name.as_str())).unwrap();
-                    let mut props = HashMap::new();
-                    
-                    if let Some(usage_cap) = usage_re.captures(&content) {
-                        if let Some(props_str) = usage_cap.get(1) {
-                            // Parse simple props like initial={5}
-                            let prop_re = regex::Regex::new(r#"(\w+)\s*=\s*\{([^}]+)\}"#).unwrap();
-                            for prop_cap in prop_re.captures_iter(props_str.as_str()) {
-                                if let (Some(key), Some(value)) = (prop_cap.get(1), prop_cap.get(2)) {
-                                    props.insert(key.as_str().to_string(), serde_json::json!(value.as_str()));
-                                }
-                            }
-                        }
-                    }
-                    
-                    islands.push(IslandRef {
-                        name: name.as_str().to_string(),
-                        props,
-                    });
+        let import_re = regex::Regex::new(r#"import\s+.*?\s+from\s+["']\.\./islands/(\w+)\.tsx["']"#)?;
+
+        import_re.captures_iter(&content)
+            .filter_map(|cap| {
+                let name = cap.get(1)?.as_str();
+                self.build_island_ref(name, &content)
+            })
+            .collect::<Result<Vec<_>>>()
+    }
+
+    fn build_island_ref(&self, name: &str, content: &str) -> Option<Result<IslandRef>> {
+        let island_path = self.islands_dir.join(format!("{}.tsx", name));
+        if !island_path.exists() {
+            return None;
+        }
+
+        let props = self.extract_island_props(name, content);
+        Some(Ok(IslandRef {
+            name: name.to_string(),
+            props,
+        }))
+    }
+
+    fn extract_island_props(&self, name: &str, content: &str) -> HashMap<String, serde_json::Value> {
+        let usage_re = regex::Regex::new(&format!(r#"<{}\s+([^>]*?)/?>"#, name)).ok()
+            .and_then(|re| re.captures(content))
+            .and_then(|cap| cap.get(1));
+
+        let mut props = HashMap::new();
+        if let Some(props_str) = usage_re {
+            let prop_re = regex::Regex::new(r#"(\w+)\s*=\s*\{([^}]+)\}"#).unwrap();
+            for prop_cap in prop_re.captures_iter(props_str.as_str()) {
+                if let (Some(key), Some(value)) = (prop_cap.get(1), prop_cap.get(2)) {
+                    props.insert(key.as_str().to_string(), serde_json::json!(value.as_str()));
                 }
             }
         }
-        
-        Ok(islands)
+        props
     }
     
     async fn compose_with_layouts(
@@ -401,54 +307,48 @@ impl SsrRenderer {
     
     fn wrap_in_document(&self, content: String, path: &str, page_data: &serde_json::Value) -> String {
         let title = path_to_title(path);
-        
-        // Serialize page data for client hydration
         let page_data_json = serde_json::to_string(page_data).unwrap_or_else(|_| "{}".to_string());
-        
-        // Generate nav links from actual routes
         let nav_links = self.build_nav_links();
         
-        let mut html = String::new();
-        html.push_str("<!DOCTYPE html>\n");
-        html.push_str("<html lang=\"en\">\n");
-        html.push_str("<head>\n");
-        html.push_str("    <meta charset=\"UTF-8\">\n");
-        html.push_str("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-        html.push_str(&format!("    <title>{}</title>\n", title));
-        html.push_str("    <link rel=\"icon\" href=\"/static/favicon.ico\">\n");
-        html.push_str("    <script type=\"module\" src=\"/_runts/hmr.js\"></script>\n");
-        html.push_str("</head>\n");
-        html.push_str("<body>\n");
-        html.push_str("    <nav class=\"runts-nav\">\n");
-        html.push_str(&nav_links);
-        html.push_str("    </nav>\n");
-        html.push_str(&content);
-        html.push_str("\n");
-        html.push_str("    <script>\n");
-        html.push_str("        // Page data for hydration\n");
-        html.push_str(&format!("        window.__PAGE_DATA__ = {};\n", page_data_json));
-        html.push_str("        // Island manifest\n");
-        html.push_str("        window.__ISLAND_MANIFEST__ = {};\n");
-        html.push_str("    </script>\n");
-        html.push_str("</body>\n");
-        html.push_str("</html>\n");
-        html
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{}</title>
+    <link rel="icon" href="/static/favicon.ico">
+    <script type="module" src="/_runts/hmr.js"></script>
+</head>
+<body>
+    <nav class="runts-nav">
+{}
+    </nav>
+    {}
+    <script>
+        window.__PAGE_DATA__ = {};
+        window.__ISLAND_MANIFEST__ = {{}};
+    </script>
+</body>
+</html>
+"#,
+            title,
+            nav_links,
+            content,
+            page_data_json
+        )
     }
     
     /// Generate nav links from the current route table
     fn build_nav_links(&self) -> String {
-        let mut links: Vec<(String, String)> = Vec::new();
-        
-        // Always include home
-        links.push(("/".to_string(), "Home".to_string()));
+        let mut links = vec![("/".to_string(), "Home".to_string())];
         
         for route in self.route_table.all_routes() {
-            // Skip dynamic routes, catch-all, and special files for the nav
             let pattern = &route.pattern;
             if pattern.contains(':') || pattern.contains('*') || pattern == "/" {
                 continue;
             }
-            // Clean up pattern for display
+            
             let label = pattern
                 .trim_start_matches('/')
                 .split('/')
@@ -456,23 +356,25 @@ impl SsrRenderer {
                 .unwrap_or("")
                 .replace('-', " ")
                 .replace('_', " ");
+            
             if label.is_empty() {
                 continue;
             }
-            let display: String = label.chars().enumerate().map(|(i, c)| {
-                if i == 0 { c.to_uppercase().to_string() } else { c.to_string() }
-            }).collect();
+            
+            let display = label.chars().enumerate()
+                .map(|(i, c)| if i == 0 { c.to_uppercase().to_string() } else { c.to_string() })
+                .collect::<String>();
+            
             links.push((pattern.clone(), display));
         }
         
-        // Deduplicate and sort
         links.sort_by(|a, b| a.0.cmp(&b.0));
         links.dedup_by(|a, b| a.0 == b.0);
         
         links.into_iter()
-            .map(|(href, label)| format!("        <a href=\"{}\">{}</a>\n", href, label))
+            .map(|(href, label)| format!("        <a href=\"{}\">{}</a>", href, label))
             .collect::<Vec<_>>()
-            .join("")
+            .join("\n")
     }
     
     /// Render an island placeholder
@@ -485,11 +387,10 @@ impl SsrRenderer {
         let id = ctx.next_island_id();
         let hash = ctx.island_manifest.add_island(
             name.to_string(),
-            props.keys().map(|s| s.clone()).collect()
+            props.keys().cloned().collect()
         );
         let props_json = serde_json::to_string(props).unwrap_or_default();
         
-        // For SSR, we render a placeholder that will be hydrated by the client
         format!(
             r#"<div data-island="{}" data-id="{}" data-hash="{}" data-props='{}'>
     <span class="runts-island-loading">Loading...</span>
@@ -516,13 +417,11 @@ fn path_to_component_name(path: &str) -> String {
         return "Index".to_string();
     }
     
-    // Get the last segment (the actual route file/component)
     let last_segment = path.split('/')
         .filter(|s| !s.is_empty())
         .last()
         .unwrap_or("Index");
     
-    // Convert to PascalCase
     last_segment.split(|c: char| c == '-' || c == '_')
         .map(|part| {
             let mut chars = part.chars();
@@ -560,6 +459,65 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// Check if a module exports a handler
+fn has_handler_export(module: &crate::transpile::hir::Module) -> bool {
+    module.items.iter().any(|item| {
+        if let crate::transpile::hir::ModuleItem::Export(export) = item {
+            matches!(export,
+                crate::transpile::hir::Export::NamedWithValue { name, .. }
+                    | crate::transpile::hir::Export::Named { name }
+                    if name == "handler"
+            )
+        } else {
+            false
+        }
+    })
+}
+
+/// Build mock page data for a route (dev mode simulation)
+fn build_mock_page_data(route: &Route, ctx: &SsrContext) -> serde_json::Value {
+    let mut data = serde_json::Map::new();
+    for (key, value) in &ctx.params {
+        data.insert(key.clone(), serde_json::Value::String(value.clone()));
+    }
+    data.insert("route".to_string(), serde_json::Value::String(route.pattern.clone()));
+    
+    if route.pattern.contains("blog") {
+        if let Some(slug) = ctx.params.get("slug") {
+            data.insert("title".to_string(), serde_json::Value::String(format!("Blog post: {}", slug)));
+            data.insert("content".to_string(), serde_json::Value::String(format!("Content of '{}'", slug)));
+        } else {
+            data.insert("posts".to_string(), serde_json::json!([
+                { "slug": "hello-world", "title": "Hello World", "excerpt": "Welcome!" },
+            ]));
+        }
+    }
+    
+    serde_json::Value::Object(data)
+}
+
+/// Render a list of blog posts
+fn render_posts_list<'a, I>(posts: I) -> String
+where
+    I: IntoIterator<Item = &'a serde_json::Value>,
+{
+    let items: Vec<String> = posts.into_iter()
+        .filter_map(|post| {
+            let obj = post.as_object()?;
+            let slug = obj.get("slug")?.as_str()?;
+            let title = obj.get("title")?.as_str()?;
+            let excerpt = obj.get("excerpt")?.as_str()?;
+            Some(format!(
+                "<li><a href='/blog/{0}'><strong>{1}</strong><p>{2}</p></a></li>",
+                html_escape(slug),
+                html_escape(title),
+                html_escape(excerpt)
+            ))
+        })
+        .collect();
+    format!("<ul class='posts'>\n{}\n</ul>", items.join("\n"))
 }
 
 /// SSR result
