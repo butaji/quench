@@ -4,6 +4,7 @@ pub mod parser;
 pub mod analyzer;
 pub mod codegen;
 pub mod hir;
+pub mod hir2;
 pub mod jsx_transformer;
 pub mod routegen;
 pub mod middlewaregen;

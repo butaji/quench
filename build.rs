@@ -5,6 +5,68 @@ const MAX_FILE_LINES: usize = 500;
 const MAX_FN_LINES: usize = 40;
 const MAX_FN_COMPLEXITY: usize = 10;
 
+/// Temporary whitelist for files being migrated to oxc.
+/// Each entry: (file_path_suffix, function_name_or_wildcard)
+/// Remove entries as they are refactored.
+const WHITELIST: &[(&str, &str)] = &[
+    // Parser being replaced by oxc
+    ("src/transpile/parser.rs", "*"),
+    // Codegen being split into modules
+    ("src/transpile/codegen.rs", "*"),
+    // JS codegen being replaced by oxc_codegen
+    ("src/transpile/js_codegen.rs", "*"),
+    // Tests being split into test modules
+    ("src/transpile/tests.rs", "*"),
+    // Interpreter being refactored
+    ("src/runtime/interpreter.rs", "*"),
+    // Dev server being modularized
+    ("src/commands/dev.rs", "*"),
+    // Hooks will be replaced by leptos_reactive
+    ("src/runtime/hooks.rs", "*"),
+    // Analyzer being refactored
+    ("src/transpile/analyzer.rs", "*"),
+    // Main will be split into subcommands
+    ("src/main.rs", "main"),
+    // JSX transformer will be replaced by oxc transformer
+    ("src/transpile/jsx_transformer.rs", "*"),
+    // Route generator being refactored
+    ("src/transpile/routegen.rs", "*"),
+    // Middleware runtime interpreter (duplicate of interpreter.rs)
+    ("src/runtime/middleware.rs", "*"),
+    // Middleware generator being replaced
+    ("src/transpile/middlewaregen.rs", "*"),
+    // Signals will be replaced by leptos_reactive
+    ("src/runtime/signals.rs", "*"),
+    // New HIR v2 (Display impl will be split)
+    ("src/transpile/hir2.rs", "fmt"),
+    // OXC builder (will be split into modules)
+    ("src/transpile/oxc_builder.rs", "*"),
+    // Commands being refactored
+    ("src/commands/add.rs", "*"),
+    ("src/commands/ssr.rs", "*"),
+    ("src/commands/routes.rs", "*"),
+    ("src/commands/incremental.rs", "*"),
+    ("src/commands/parallel.rs", "*"),
+    // Macro crate is separate workspace member
+    ("crates/runts-macros/src/html.rs", "*"),
+    // Lib crate is separate workspace member
+    ("crates/runts-lib/src/runtime/islands.rs", "*"),
+    ("crates/runts-lib/src/runtime/vdom.rs", "*"),
+    ("crates/runts-lib/src/runtime/server.rs", "*"),
+    ("crates/runts-client/build.rs", "main"),
+];
+
+fn is_whitelisted(path: &str, fn_name: &str) -> bool {
+    for (file_suffix, fn_pattern) in WHITELIST {
+        if path.ends_with(file_suffix) {
+            if *fn_pattern == "*" || fn_name == *fn_pattern {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/");
@@ -38,12 +100,10 @@ fn main() {
         eprintln!("Limits: file ≤{} lines, fn ≤{} lines, fn complexity ≤{}",
                   MAX_FILE_LINES, MAX_FN_LINES, MAX_FN_COMPLEXITY);
         eprintln!("=============================================\n");
-        // Keep compiling — violations are warnings, not errors.
-        // This allows incremental cleanup of legacy code while
-        // keeping the standards visible for new code.
-    } else {
-        println!("runts-lint: {} file(s) OK", files_checked);
+        std::process::exit(1);
     }
+
+    println!("runts-lint: {} file(s) OK", files_checked);
 }
 
 fn walk_dir(root: &str) -> Vec<PathBuf> {
@@ -85,6 +145,7 @@ struct FnInfo {
 fn check_file(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
+    let path_str = path.to_str().unwrap_or("");
 
     let code_lines = lines
         .iter()
@@ -96,7 +157,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let mut violations = Vec::new();
 
-    if code_lines > MAX_FILE_LINES {
+    if code_lines > MAX_FILE_LINES && !is_whitelisted(path_str, "*") {
         violations.push(format!(
             "[FILE_TOO_LONG] {}: {} code lines (max {})",
             path.display(),
@@ -107,6 +168,9 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let fns = find_functions(&lines);
     for f in &fns {
+        if is_whitelisted(path_str, &f.name) {
+            continue;
+        }
         if f.line_count > MAX_FN_LINES {
             violations.push(format!(
                 "[FN_TOO_LONG] {}::{}: {} lines (max {}) at line {}",

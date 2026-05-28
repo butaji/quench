@@ -1,104 +1,61 @@
-# runts — Architecture & Transpilation Strategy
+# Runts Architecture: AST → HIR → Rust / Runtime
 
-> **Version:** 0.5.0  
-> **Scope:** Parser → HIR → Semantic Analysis → Rust Codegen → Runtime  
-> **Constraint:** Zero external JS runtimes (no V8, no Deno, no WebAssembly JS)
-
----
-
-## 1. High-Level Architecture
+## Pipeline
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         runts Architecture                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  User Code (TS/TSX)                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ routes/  islands/  components/  middleware/  lib/  static/          │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                      │                                       │
-│                                      ▼                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    Transpiler Pipeline                               │   │
-│  │  ┌──────────┐   ┌─────────────┐   ┌─────────────────────────────┐  │   │
-│  │  │  Parser  │──▶│  Analyzer   │──▶│   Rust Code Generator       │  │   │
-│  │  │  (TSX)   │   │ (Semantic)  │   │   (In-Memory)               │  │   │
-│  │  └──────────┘   └─────────────┘   └─────────────────────────────┘  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                      │                                       │
-│              ┌───────────────────────┴───────────────────────┐               │
-│              ▼                                               ▼               │
-│  ┌─────────────────────────┐                     ┌─────────────────────────┐│
-│  │    Development Mode      │                     │    Production Mode      ││
-│  │                          │                     │                          ││
-│  │  HIR → Interpreter       │                     │  Rust codegen → cargo    ││
-│  │  (direct execution)      │                     │  build --release         ││
-│  │                          │                     │  (static binary)         ││
-│  │  File watcher + SSE HMR  │                     │  Axum + Tower server     ││
-│  │  Target: <50ms reload    │                     │  Target: <2MB binary     ││
-│  └─────────────────────────┘                     └─────────────────────────┘│
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+TS/TSX Source (.ts, .tsx)
+    │
+    ▼
+┌─────────────────┐
+│  oxc_parser     │  ← battle-tested, handles all TS/TSX syntax
+│  + oxc_ast      │
+└─────────────────┘
+    │
+    ▼ Program<'a> (oxc AST)
+┌─────────────────┐
+│  HIR Builder    │  ← oxc_ast::Visit traversal, semantic analysis
+│  (one pass)     │    extracts: routes, islands, hooks, types
+└─────────────────┘
+    │
+    ▼ HIR::Module
+    │
+    ├───────────────┬───────────────┐
+    │               │               │
+    ▼               ▼               ▼
+┌─────────┐   ┌─────────┐   ┌─────────┐
+│ Build   │   │ Dev     │   │ Cache   │
+│ Codegen │   │ Interp  │   │ (HIR)   │
+└─────────┘   └─────────┘   └─────────┘
+    │               │               │
+    ▼               ▼               ▼
+ .rs files      HTTP server    .runts/cache/
+ .runts/build/  + hot-reload   (json/bincode)
+    │
+    ▼
+ cargo build
+    │
+    ▼
+ native binary
 ```
 
----
+## Design Principles
 
-## 2. Phase 1: Parser (TSX → HIR)
+1. **HIR is the contract**: Both codegen and interpreter consume the same HIR. No AST leaking into codegen/interpreter.
+2. **Single-pass HIR builder**: oxc AST → HIR in one visit traversal. Semantic info (route/island/hook detection) collected during traversal.
+3. **Serializable HIR**: HIR modules can be cached to disk (JSON/bincode) for incremental builds.
+4. **Dev = interpret HIR, Build = codegen HIR**: Same source of truth, different consumers.
+5. **Type erasure in HIR**: TypeScript types are preserved in HIR for codegen but are semantically erased at runtime (dev interpreter ignores them).
 
-### 2.1 Design Decision: Custom Recursive Descent
+## HIR Design
 
-runts uses a **custom recursive descent parser** rather than swc/oxc. This is a deliberate trade-off:
-
-- **Pros:** Zero parser dependencies, full control over error messages, easy to restrict to our subset, fast compilation of runts itself.
-- **Cons:** TypeScript is a massive language; our parser covers the supported subset only.
-- **Future:** v1.0 will migrate to `oxc_parser` for full TypeScript compliance without maintaining a custom parser.
-
-### 2.2 Parsing Pipeline
-
-```
-TS/TSX Source
-    │
-    ▼
-┌────────────────────────────────────────┐
-│  Tokenizer                             │
-│  • Keywords, identifiers, literals     │
-│  • JSX tokens (<, />, {, })            │
-│  • Template literal fragments          │
-└────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────┐
-│  Recursive Descent Parser              │
-│  • Module items (imports, exports)     │
-│  • Statements (var, if, for, return)   │
-│  • Expressions (call, member, binary)  │
-│  • JSX (elements, components, attrs)   │
-│  • Types (annotations, interfaces)     │
-└────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────┐
-│  HIR Builder                           │
-│  • Flatten hoisted vars                │
-│  • Normalize destructuring             │
-│  • Strip type annotations              │
-│  • Tag JSX with component vs HTML      │
-└────────────────────────────────────────┘
-    │
-    ▼
-HIR Module
-```
-
-### 2.3 HIR (High-Level IR) Structure
-
-The HIR is a simplified, serializable AST that discards TypeScript-specific syntax while preserving all runtime semantics.
+### Module-level
 
 ```rust
 pub struct Module {
-    pub source: String,
-    pub items: Vec<ModuleItem>,
-    pub types: HashMap<String, TypeDef>,
+    pub source: String,           // file path
+    pub items: Vec<ModuleItem>,   // imports, exports, declarations
+    pub types: Vec<TypeDecl>,     // type aliases, interfaces
+    pub semantic: SemanticInfo,   // pre-computed: is_route, is_island, hooks, etc.
 }
 
 pub enum ModuleItem {
@@ -107,591 +64,580 @@ pub enum ModuleItem {
     Decl(Decl),
 }
 
+pub struct Import {
+    pub source: String,
+    pub specifiers: Vec<ImportSpec>,
+    pub kind: ImportKind,         // Value | Type | Namespace
+}
+
+pub enum Export {
+    Named { name: String },
+    NamedValue { name: String, value: Expr },
+    Default { expr: Expr },
+    Handler { methods: Vec<HandlerMethod> },  // detected route handlers
+}
+
+pub struct HandlerMethod {
+    pub method: String,           // GET, POST, PUT, DELETE, PATCH
+    pub handler: Expr,            // arrow function: (req, ctx) => Response
+}
+```
+
+### Declarations
+
+```rust
 pub enum Decl {
-    Function(FunctionDecl),   // function / async function
-    Variable(VariableDecl),   // const / let / var
-    Type(TypeDecl),           // interface / type alias (erased at runtime)
-    Class(ClassDecl),         // Detected → E010 error
+    Function(FunctionDecl),
+    Variable(VariableDecl),
+    Type(TypeDecl),
+    Class(ClassDecl),
+    Enum(EnumDecl),
+}
+
+pub struct FunctionDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub body: Block,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub is_export: bool,
+    pub is_default: bool,
+}
+
+pub struct VariableDecl {
+    pub kind: VarKind,            // Const | Let | Var
+    pub pattern: Pat,
+    pub init: Option<Expr>,
+}
+
+pub struct Param {
+    pub pattern: Pat,
+    pub type_: Option<Type>,
+    pub default: Option<Expr>,
 }
 ```
 
-Key HIR properties:
-- **Typed but erasable:** Every expression carries a `Type`, but codegen ignores it except for struct generation.
-- **Normalized:** `var` is flattened to `let`. Destructuring is expanded to individual assignments.
-- **JSX-native:** JSX is preserved as first-class `JSXExpr` nodes, not desugared to `React.createElement`.
-
----
-
-## 3. Phase 2: Semantic Analyzer
-
-### 3.1 Responsibilities
-
-The analyzer performs **subset validation** and **framework-specific extraction**:
-
-1. **Subset Enforcement** — Reject excluded features (classes, eval, dynamic imports) with precise error codes.
-2. **Hook Validation** — Verify hooks are called at top level, in consistent order, and only inside components.
-3. **Module Classification** — Determine if a file is a route, island, layout, middleware, or component.
-4. **Route Extraction** — Compute the URL pattern from the file path.
-5. **Island Detection** — Mark default exports in `islands/` as interactive components.
-6. **Type Harvesting** — Collect interfaces and type aliases for Rust struct generation.
-
-### 3.2 Module Classification Rules
-
-| Path Pattern | Classification | Detection Rule |
-|-------------|----------------|----------------|
-| `routes/_middleware.ts` | Global middleware | Filename starts with `_middleware` |
-| `routes/_layout.tsx` | Root layout | Filename is `_layout.tsx` |
-| `routes/blog/_layout.tsx` | Section layout | Filename is `_layout.tsx` in subdir |
-| `routes/index.tsx` | Static route | No `[param]` in path |
-| `routes/[slug].tsx` | Dynamic route | Contains `[param]` |
-| `routes/[...path].tsx` | Catch-all route | Contains `[...param]` |
-| `islands/*.tsx` | Island | Inside `islands/` directory |
-| `components/*.tsx` | Static component | Inside `components/` directory |
-
-### 3.3 Hook Rule Checker
+### Patterns (destructuring)
 
 ```rust
-pub fn validate_hooks(body: &[Stmt]) -> Result<(), Vec<AnalyzeError>> {
-    // Depth-first scan of the function body
-    // Any CallExpr to useState/useEffect/etc. must be at depth 0
-    // (top-level of the function, not inside if/for/while/arrow)
-    // 
-    // Violations emit E009 with location
+pub enum Pat {
+    Ident { name: String },
+    Array { elems: Vec<Option<Pat>>, rest: Option<Box<Pat>> },
+    Object { props: Vec<ObjectPatProp>, rest: Option<Box<Pat>> },
+    Rest { arg: Box<Pat> },
+    Assign { left: Box<Pat>, right: Expr },
+}
+
+pub enum ObjectPatProp {
+    KeyValue { key: String, value: Pat },
+    Shorthand { name: String },
+    Rest { arg: Box<Pat> },
 }
 ```
 
----
-
-## 4. Phase 3: Rust Code Generation
-
-### 4.1 Generation Strategy
-
-Codegen transforms HIR into **idiomatic, typed Rust source code** that compiles with `rustc` via `cargo`. The output is never hand-edited; it is regenerated on every production build.
-
-### 4.2 TS/TSX → Rust Transform Rules
-
-#### Functions
-
-```typescript
-// Input
-export default function Home({ data }: PageProps<Data>) {
-  return <div>{data.title}</div>;
-}
-```
+### Statements
 
 ```rust
-// Output
-#[derive(Default, Deserialize)]
-pub struct HomeProps { pub data: Data }
-
-pub fn home(props: HomeProps) -> VNode {
-    html! {
-        <div>{ props.data.title }</div>
-    }
+pub enum Stmt {
+    Block(Vec<Stmt>),
+    Expr(Expr),
+    Var(VariableDecl),
+    Return(Option<Expr>),
+    If { test: Expr, then: Box<Stmt>, else_: Option<Box<Stmt>> },
+    While { test: Expr, body: Box<Stmt> },
+    DoWhile { body: Box<Stmt>, test: Expr },
+    For { init: Option<ForInit>, test: Option<Expr>, update: Option<Expr>, body: Box<Stmt> },
+    ForIn { left: Pat, right: Expr, body: Box<Stmt> },
+    ForOf { left: Pat, right: Expr, body: Box<Stmt>, is_await: bool },
+    Switch { discriminant: Expr, cases: Vec<SwitchCase> },
+    Try { block: Vec<Stmt>, catch: Option<CatchClause>, finally: Option<Vec<Stmt>> },
+    Throw(Expr),
+    Break(Option<String>),
+    Continue(Option<String>),
+    Label { label: String, body: Box<Stmt> },
+    Debugger,
+    Empty,
 }
+
+pub enum ForInit {
+    Var(VariableDecl),
+    Expr(Expr),
+}
+
+pub struct SwitchCase {
+    pub test: Option<Expr>,       // None = default
+    pub body: Vec<Stmt>,
+}
+
+pub struct CatchClause {
+    pub param: Option<Pat>,
+    pub body: Vec<Stmt>,
+}
+
+pub struct Block(pub Vec<Stmt>);
 ```
 
-#### Route Handlers
-
-```typescript
-// Input
-export const handler = {
-  GET: async (req, ctx) => {
-    const post = await getPost(ctx.params.slug);
-    return ctx.render({ post });
-  }
-};
-```
+### Expressions
 
 ```rust
-// Output
-pub async fn handle_get(
-    ctx: HandlerContext,
-    req: Request,
-) -> impl IntoResponse {
-    let post = get_post(ctx.params.slug.clone()).await;
-    let page_data = serde_json::json!({ "post": post });
-    // Render wrapper calls home_render_with_data(...)
-    home_render_with_data(ctx.params, ctx.url, page_data).into_response()
-}
-```
-
-#### Islands
-
-Islands generate **two artifacts**:
-
-1. **Server component** — Same as static component, but wrapped with SSR placeholder + hydration manifest.
-2. **Client bundle** — Generated by `js_codegen.rs` as vanilla JS using the Runts client runtime.
-
-```rust
-// Server-side placeholder (injected during SSR)
-div class="__island__"
-    data-island="Counter"
-    data-id="island-1"
-    data-props="{\"initial\":5,\"step\":1}"
-    data-strategy="visible"
-    {
-        // SSR-rendered HTML
-        p { "Count: 5" }
-        button { "+" }
-    }
-```
-
-#### JSX → `html!` Macro
-
-JSX is transformed into invocations of the `html!` procedural macro (from `runts-macros`):
-
-```typescript
-// Input
-<div class="container">
-  <h1>{title}</h1>
-  {items.map(item => <Item key={item.id} name={item.name} />)}
-</div>
-```
-
-```rust
-// Output
-html! {
-    <div class="container">
-        <h1>{ title }</h1>
-        {
-            items.iter().map(|item| {
-                html! { <Item key={item.id.clone()} name={item.name.clone()} /> }
-            }).collect::<Vec<_>>()
-        }
-    </div>
-}
-```
-
-### 4.3 Type Mapping in Codegen
-
-The codegen uses the HIR type information to emit strongly-typed Rust:
-
-```typescript
-interface User {
-  id: string;
-  age: number;
-  active: boolean;
-  tags: string[];
-  profile: { bio: string } | null;
-}
-```
-
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: String,
-    pub age: f64,
-    pub active: bool,
-    pub tags: Vec<String>,
-    pub profile: Option<Profile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    pub bio: String,
-}
-```
-
----
-
-## 5. Runtime Architecture
-
-### 5.1 Server Runtime Stack (Production)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Axum HTTP Server                             │
-│  • Router from generated routes.rs                               │
-│  • Tower middleware (CORS, compression, trace)                  │
-│  • Static file serving (tower-http)                             │
-├─────────────────────────────────────────────────────────────────┤
-│                     SSR Renderer                                 │
-│  • Component tree → VNode tree                                   │
-│  • VNode → HTML string (synchronous, zero allocation)           │
-│  • Island placeholder injection                                  │
-│  • Layout composition (nested _layout.tsx)                      │
-├─────────────────────────────────────────────────────────────────┤
-│                     VDOM / Template Engine                       │
-│  • VNode: Element | Component | Text | Fragment | Empty         │
-│  • Render trait: render_to_html()                               │
-│  • HTML escaping (automatic)                                    │
-├─────────────────────────────────────────────────────────────────┤
-│                     Reactivity (Signals)                         │
-│  • Signal<T>: fine-grained reactive container                   │
-│  • Computed<T>: auto-derived signal                             │
-│  • Effect: side-effect subscription                             │
-│  • batch() + untrack()                                           │
-├─────────────────────────────────────────────────────────────────┤
-│                     Hooks Engine                                 │
-│  • Thread-local indexed storage (React semantics)               │
-│  • use_state, use_effect, use_ref, use_memo, use_callback       │
-│  • use_reducer, use_context, use_id                             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 5.2 Signal System (Fine-Grained Reactivity)
-
-runts uses a **Leptos-inspired signal system** rather than a full VDOM diffing algorithm:
-
-```rust
-pub struct Signal<T: Clone> {
-    value: Arc<RwLock<T>>,
-    subscribers: Arc<RwLock<HashSet<usize>>>,
-}
-
-impl<T: Clone> Signal<T> {
-    pub fn get(&self) -> T {
-        if let Some(effect_id) = current_effect_id() {
-            self.subscribers.write().insert(effect_id);
-        }
-        self.value.read().clone()
-    }
-
-    pub fn set(&self, value: T) {
-        *self.value.write() = value;
-        self.notify(); // schedules effects
-    }
-}
-```
-
-**Why signals over VDOM diffing?**
-- **Performance:** Updates touch only the affected DOM nodes; no tree diffing.
-- **Memory:** No virtual DOM tree retained on the server; SSR is pure string building.
-- **Predictability:** Effects run exactly when their dependencies change.
-
-On the server, signals are used primarily for:
-- Hook state storage
-- Middleware state propagation
-- Server-side computed values
-
-On the client (in islands), signals drive DOM updates directly.
-
-### 5.3 Islands Architecture & Partial Hydration
-
-```
-Server SSR:
-┌─────────────────────────────────────────────────────────────┐
-│ <html>                                                       │
-│   <body>                                                     │
-│     <nav>...</nav>                ← Static HTML (no JS)     │
-│     <main>                                                    │
-│       <div data-island="Counter"                              │
-│            data-id="i-1"                                      │
-│            data-props="{...}"                                 │
-│            data-strategy="visible">                           │
-│         <p>Count: 5</p>           ← SSR placeholder          │
-│       </div>                                                  │
-│     </main>                                                   │
-│     <script>window.__ISLAND_MANIFEST__=[...]</script>        │
-│     <script src="/_runts/client.js"></script>               │
-│   </body>                                                     │
-│ </html>                                                       │
-└─────────────────────────────────────────────────────────────┘
-
-Client Hydration:
-1. Parse __ISLAND_MANIFEST__
-2. Group islands by hydration strategy
-3. Eager: hydrate immediately
-4. Visible: IntersectionObserver → hydrate when in viewport
-5. Idle: requestIdleCallback → hydrate when browser idle
-6. Manual: expose Runts.hydrateIsland(id) for explicit trigger
-```
-
-**Partial Hydration Guarantees:**
-- Static content is **never** hydrated. No JS bundle is loaded for it.
-- Each island is an independent hydration unit.
-- Islands can be lazy-loaded; the manifest references them by name.
-- SSR HTML inside island placeholders is replaced atomically on hydration.
-
-### 5.4 Client Runtime (Browser)
-
-The client runtime is a **zero-dependency vanilla JS file** (`crates/runts-client/src/runtime.ts`) that provides:
-
-1. **Signal system** — Preact Signals-compatible API
-2. **Effect system** — Auto-subscription, cleanup, batching
-3. **VNode renderer** — Simple DOM diffing for island updates
-4. **Hydration bootstrap** — Discovers and hydrates islands
-
-It is **not** a full React/Preact implementation. It only needs to support the patterns used in islands (the supported subset).
-
-Size budget: **< 5KB gzipped**.
-
----
-
-## 6. Development Mode: HIR Interpreter
-
-### 6.1 Philosophy: Zero Compilation
-
-In development mode, runts **does not compile to Rust**. It parses TS/TSX to HIR and executes the HIR directly via an interpreter. This enables:
-
-- **< 50ms hot reload** (file change → visible update)
-- **No cargo build cycles** during UI iteration
-- **Identical semantics** to production (same parser, same HIR)
-
-### 6.2 Interpreter Architecture
-
-```
-Request
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│  Route Matcher (file-based)             │
-│  • Regex-based pattern matching          │
-│  • Param extraction                      │
-└─────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│  Middleware Pipeline (interpreter)      │
-│  • Execute _middleware.ts bodies         │
-│  • ctx.next() chaining                   │
-│  • State accumulation                    │
-└─────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│  Route Handler (interpreter)            │
-│  • Execute handler.GET/POST body         │
-│  • Support ctx.render(data)              │
-│  • Support new Response()                │
-└─────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│  Component Renderer (interpreter)       │
-│  • Execute default export function       │
-│  • Hook state (thread-local indexed)     │
-│  • JSX → HTML string                     │
-│  • Island placeholder injection          │
-└─────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│  Layout Composition                     │
-│  • Nest layouts from root to leaf        │
-│  • _app.tsx wrapper                      │
-└─────────────────────────────────────────┘
-  │
-  ▼
-HTML Response
-```
-
-### 6.3 Expression Evaluation
-
-The interpreter supports all expressions in the supported subset:
-
-```rust
-pub enum Value {
-    Undefined,
-    Null,
-    Bool(bool),
-    Number(f64),
+pub enum Expr {
+    // Literals
     String(String),
-    Array(Vec<Value>),
-    Object(HashMap<String, Value>),
-    Function(String), // Named reference
+    Number(f64),
+    Bool(bool),
+    Null,
+    Undefined,
+    BigInt(String),
+    RegExp { pattern: String, flags: String },
+    Template { parts: Vec<TemplatePart>, exprs: Vec<Expr> },
+    
+    // Identifiers
+    Ident(String),
+    This,
+    Super,
+    
+    // Operations
+    Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
+    Unary { op: UnaryOp, arg: Box<Expr> },
+    Update { op: UpdateOp, arg: Box<Expr>, prefix: bool },
+    Logical { op: LogicalOp, left: Box<Expr>, right: Box<Expr> },
+    Conditional { test: Box<Expr>, then: Box<Expr>, else_: Box<Expr> },
+    
+    // Access
+    Member { object: Box<Expr>, property: Box<Expr>, computed: bool, optional: bool },
+    
+    // Calls
+    Call { callee: Box<Expr>, args: Vec<Expr> },
+    New { callee: Box<Expr>, args: Vec<Expr> },
+    
+    // Functions
+    Arrow { params: Vec<Param>, body: ArrowBody, is_async: bool },
+    Function(FunctionDecl),
+    
+    // Objects/Arrays
+    Object { props: Vec<Prop> },
+    Array { elems: Vec<Option<Expr>> },
+    
+    // Assignment
+    Assign { op: AssignOp, left: Box<Expr>, right: Box<Expr> },
+    
+    // JSX
+    JSX(JSXExpr),
+    
+    // Async
+    Await(Box<Expr>),
+    Yield { arg: Option<Box<Expr>>, delegate: bool },
+    
+    // Types
+    TypeCast { expr: Box<Expr>, type_: Type },
+    Typeof(Box<Expr>),
+    InstanceOf { left: Box<Expr>, right: Box<Expr> },
+    In { left: Box<Expr>, right: Box<Expr> },
+    
+    // Meta
+    MetaProp(MetaPropKind),
+    Spread(Box<Expr>),
+    Sequence(Vec<Expr>),
+    
+    // Class expression
+    Class(ClassDecl),
+}
+
+pub enum ArrowBody {
+    Expr(Box<Expr>),
+    Block(Block),
+}
+
+pub enum TemplatePart {
+    String(String),
+    Expr(Expr),
 }
 ```
 
-Evaluation is **tree-walk interpretation** — simple, correct, and fast enough for dev mode. No JIT, no bytecode.
+### JSX
 
-### 6.4 Hot Reload Mechanism
+```rust
+pub struct JSXExpr {
+    pub name: JSXName,
+    pub attrs: Vec<JSXAttr>,
+    pub children: Vec<JSXChild>,
+    pub is_fragment: bool,
+    pub is_self_closing: bool,
+    pub key: Option<Expr>,
+}
+
+pub enum JSXName {
+    Ident(String),                    // div, span
+    Member { object: String, property: String },
+    Namespaced { ns: String, name: String },
+    Dynamic(Box<Expr>),
+}
+
+pub enum JSXAttr {
+    Regular { name: String, value: Option<JSXAttrValue> },
+    Spread(Expr),
+    Event { name: String, handler: Expr },    // onClick → on:click
+    Directive { name: String, value: Expr },  // use:action, bind:value
+}
+
+pub enum JSXAttrValue {
+    String(String),
+    Expr(Expr),
+    Boolean(bool),
+}
+
+pub enum JSXChild {
+    Text(String),
+    Expr(Expr),
+    JSX(JSXExpr),
+    Fragment(Vec<JSXChild>),
+    Spread(Expr),
+    Whitespace,                       // significant whitespace
+}
+```
+
+### Types (TypeScript type system)
+
+```rust
+pub enum Type {
+    // Primitives
+    String, Number, Boolean, Null, Undefined,
+    Void, Any, Unknown, Never, BigInt, Symbol,
+    
+    // References
+    Ref { name: String, generics: Vec<Type> },
+    Qualified { left: Box<Type>, right: String },
+    
+    // Composites
+    Array { elem: Box<Type> },
+    Tuple { elems: Vec<Type> },
+    Union { types: Vec<Type> },
+    Intersection { types: Vec<Type> },
+    Object { members: Vec<ObjectMember> },
+    Function { params: Vec<ParamType>, ret: Box<Type>, generics: Vec<GenericParam> },
+    
+    // Advanced
+    Index { object: Box<Type>, index: Box<Type> },
+    Conditional { check: Box<Type>, extends: Box<Type>, true_type: Box<Type>, false_type: Box<Type> },
+    Mapped { param: String, type_: Box<Type> },
+    Paren { type_: Box<Type> },
+    Template { parts: Vec<TemplatePart> },
+    Literal(LiteralType),
+    Infer { param: String },
+    Keyof(Box<Type>),                // keyof T
+    Typeof(Box<Expr>),               // typeof expr
+    Readonly(Box<Type>),             // Readonly<T>
+    Partial(Box<Type>),              // Partial<T>
+    ArrayReadonly(Box<Type>),        // readonly T[]
+    Optional(Box<Type>),             // T?
+}
+
+pub struct ObjectMember {
+    pub key: String,
+    pub type_: Type,
+    pub optional: bool,
+    pub readonly: bool,
+    pub method: bool,               // method signature vs property
+    pub getter: bool,
+    pub setter: bool,
+}
+
+pub struct ParamType {
+    pub name: String,
+    pub type_: Type,
+    pub optional: bool,
+    pub rest: bool,
+}
+
+pub enum LiteralType {
+    String(String),
+    Number(f64),
+    Bool(bool),
+    BigInt(String),
+}
+```
+
+### Semantic Info (pre-computed)
+
+```rust
+pub struct SemanticInfo {
+    pub is_route: bool,
+    pub is_island: bool,
+    pub is_layout: bool,
+    pub is_app: bool,
+    pub is_middleware: bool,
+    pub route_pattern: Option<String>,
+    pub handlers: Vec<HandlerMethod>,
+    pub hooks: Vec<String>,           // useState, useEffect, etc.
+    pub signals: Vec<String>,         // signal, useSignal
+    pub components: Vec<String>,      // exported components
+    pub islands: Vec<String>,         // island components
+    pub imports: Vec<ImportInfo>,
+    pub exports: Vec<String>,
+}
+
+pub struct ImportInfo {
+    pub source: String,
+    pub names: Vec<String>,
+    pub is_type_only: bool,
+}
+```
+
+## HIR Builder (oxc → HIR)
+
+The HIR builder uses `oxc_ast_visit::Visit` to traverse the AST in one pass:
+
+```rust
+pub struct HIRBuilder<'a> {
+    allocator: &'a Allocator,
+    module: Module,
+    semantic: SemanticInfo,
+    errors: Vec<ParseError>,
+}
+
+impl<'a> Visit<'a> for HIRBuilder<'a> {
+    fn visit_program(&mut self, program: &Program<'a>) {
+        for stmt in &program.body {
+            self.visit_statement(stmt);
+        }
+    }
+    
+    fn visit_import_declaration(&mut self, decl: &ImportDeclaration<'a>) {
+        let import = self.convert_import(decl);
+        self.module.items.push(ModuleItem::Import(import));
+    }
+    
+    fn visit_function_declaration(&mut self, func: &Function<'a>) {
+        let decl = self.convert_function(func);
+        self.module.items.push(ModuleItem::Decl(Decl::Function(decl)));
+    }
+    
+    // ... etc
+}
+```
+
+## Build Path: HIR → Rust Codegen
+
+```rust
+pub struct RustCodegen {
+    output: String,
+    imports: HashSet<String>,
+}
+
+impl RustCodegen {
+    pub fn generate_module(&mut self, module: &Module) -> String {
+        // 1. Generate imports
+        self.generate_imports(&module.semantic);
+        
+        // 2. Generate type definitions
+        for decl in &module.types {
+            self.generate_type_decl(decl);
+        }
+        
+        // 3. Generate declarations
+        for item in &module.items {
+            match item {
+                ModuleItem::Decl(decl) => self.generate_decl(decl),
+                ModuleItem::Export(export) => self.generate_export(export),
+                _ => {}
+            }
+        }
+        
+        // 4. Generate route handler wrappers (if route)
+        if module.semantic.is_route {
+            self.generate_route_wrappers(module);
+        }
+        
+        self.output.clone()
+    }
+    
+    fn generate_jsx(&mut self, jsx: &JSXExpr) -> String {
+        if jsx.is_fragment {
+            // Fragment → no wrapper
+            self.generate_jsx_children(&jsx.children)
+        } else if self.is_html_element(&jsx.name) {
+            // HTML element → direct VNode creation
+            format!(
+                "VNode::element(\"{}\"){}.children(vec![{}]).build()",
+                self.jsx_name_to_string(&jsx.name),
+                self.generate_jsx_attrs(&jsx.attrs),
+                self.generate_jsx_children(&jsx.children)
+            )
+        } else {
+            // Component → function call with props
+            let props = self.generate_jsx_props(&jsx.attrs, &jsx.children);
+            format!("{}({})", self.jsx_name_to_string(&jsx.name), props)
+        }
+    }
+}
+```
+
+## Dev Path: HIR → Interpreter
+
+```rust
+pub struct HIRInterpreter {
+    modules: HashMap<String, Module>,
+    components: HashMap<String, FunctionDecl>,
+    islands: HashMap<String, IslandDef>,
+    hooks: HookRegistry,
+}
+
+impl HIRInterpreter {
+    pub async fn execute_route(&self, route: &str, method: &str, request: Request) -> Response {
+        let module = self.modules.get(route).unwrap();
+        let handler = module.semantic.handlers.iter()
+            .find(|h| h.method == method)
+            .unwrap();
+        
+        let mut ctx = EvalContext::new(request);
+        let result = self.eval_expr(&handler.handler, &mut ctx);
+        
+        match result {
+            Value::VNode(vnode) => Response::html(vnode.render_to_html()),
+            Value::Response(resp) => resp,
+            other => Response::json(other),
+        }
+    }
+    
+    fn eval_expr(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
+        match expr {
+            Expr::Call { callee, args } => {
+                let callee_val = self.eval_expr(callee, ctx);
+                let arg_vals: Vec<Value> = args.iter()
+                    .map(|a| self.eval_expr(a, ctx))
+                    .collect();
+                self.call_function(callee_val, arg_vals, ctx)
+            }
+            Expr::JSX(jsx) => {
+                Value::VNode(self.eval_jsx(jsx, ctx))
+            }
+            // ... etc
+        }
+    }
+    
+    fn eval_jsx(&self, jsx: &JSXExpr, ctx: &mut EvalContext) -> VNode {
+        if jsx.is_fragment {
+            VNode::Fragment(
+                jsx.children.iter()
+                    .map(|c| self.eval_jsx_child(c, ctx))
+                    .collect()
+            )
+        } else {
+            VNode::Element {
+                tag: self.jsx_name_to_string(&jsx.name),
+                attrs: self.eval_jsx_attrs(&jsx.attrs, ctx),
+                children: jsx.children.iter()
+                    .map(|c| self.eval_jsx_child(c, ctx))
+                    .collect(),
+            }
+        }
+    }
+}
+```
+
+## Hot Reload Architecture
 
 ```
-File change (notify crate)
+File change detected
     │
     ▼
-Invalidate HIR cache entry
+┌──────────────┐
+│ Re-parse     │  ← oxc_parser (fast, <1ms for typical file)
+│ changed file │
+└──────────────┘
     │
     ▼
-Re-parse changed file → HIR
+┌──────────────┐
+│ Re-build HIR │  ← HIRBuilder::visit_program
+└──────────────┘
     │
     ▼
-Broadcast SSE event to browser
+┌──────────────┐
+│ Update       │  ← swap module in interpreter state
+│ interpreter  │
+└──────────────┘
     │
     ▼
-Browser reloads page (full page refresh)
+┌──────────────┐
+│ Notify       │  ← WebSocket / SSE to browser
+│ browser      │
+└──────────────┘
+    │
+    ▼
+Browser re-fetches island bundles
 ```
 
-**Why full page refresh instead of HMR?**
-- **Correctness:** Interpreter state is fully reset; no stale closures or hooks.
-- **Simplicity:** No need for module hot-swapping or React Fast Refresh equivalent.
-- **Speed:** < 50ms end-to-end means full refresh is acceptable.
+## Caching Strategy
 
-Future v0.8+ may implement fine-grained HMR for CSS and island props.
+```rust
+// Incremental build cache
+pub struct BuildCache {
+    // HIR cache: path → (mtime, HIR module)
+    hir_cache: HashMap<PathBuf, (SystemTime, Module)>,
+    
+    // Dependency graph: module → [deps]
+    deps: HashMap<PathBuf, Vec<PathBuf>>,
+    
+    // Rust codegen cache: HIR hash → generated Rust code
+    codegen_cache: HashMap<u64, String>,
+}
 
----
-
-## 7. Production Mode: Native Compilation
-
-### 7.1 Build Pipeline
-
-```bash
-runts build --release
+impl BuildCache {
+    pub fn get_or_parse(&mut self, path: &Path) -> Result<&Module> {
+        let mtime = fs::metadata(path)?.modified()?;
+        
+        if let Some((cached_mtime, module)) = self.hir_cache.get(path) {
+            if *cached_mtime == mtime {
+                return Ok(module);
+            }
+        }
+        
+        // Parse and build HIR
+        let source = fs::read_to_string(path)?;
+        let module = HIRBuilder::parse(&source, path)?;
+        self.hir_cache.insert(path.to_path_buf(), (mtime, module));
+        Ok(&self.hir_cache.get(path).unwrap().1)
+    }
+}
 ```
 
-```
-Phase 1: Transpile (runts)
-────────────────────────────
-For each TS/TSX file:
-  1. Parse → HIR
-  2. Analyze → validate subset
-  3. Generate → Rust source in src/gen/
-  4. Write mod.rs files
+## Island Boundary Detection
 
-Generate:
-  • src/routes.rs     (Axum router)
-  • src/islands.rs    (Island manifest)
-  • src/components.rs (Component re-exports)
-  • src/lib.rs        (Library root)
-  • src/main.rs       (Entry point, if missing)
+Islands are detected during HIR building by analyzing imports and hook usage:
 
-Phase 2: Compile (cargo)
-────────────────────────
-cargo build --release
-  • LTO = true
-  • codegen-units = 1
-  • panic = abort
-  • strip = true
-
-Output: target/release/<app>  (static binary)
-```
-
-### 7.2 Generated Rust Structure
-
-```
-src/
-├── main.rs              # Entry point: axum::serve
-├── lib.rs               # Re-exports + component registration
-├── routes.rs            # Axum router construction
-├── islands.rs           # Island metadata + re-exports
-├── components.rs        # Component re-exports
-└── gen/
-    ├── mod.rs
-    ├── index.rs         # routes/index.tsx → Rust
-    ├── about.rs
-    ├── blog/
-    │   ├── mod.rs
-    │   ├── index.rs
-    │   ├── slug.rs      # [slug].tsx
-    │   └── _layout.rs
-    ├── islands/
-    │   ├── mod.rs
-    │   ├── counter.rs
-    │   └── todo_list.rs
-    └── components/
-        ├── mod.rs
-        └── header.rs
+```rust
+fn detect_islands(module: &Module) -> Vec<IslandDef> {
+    let mut islands = Vec::new();
+    
+    for item in &module.items {
+        if let ModuleItem::Decl(Decl::Function(func)) = item {
+            // Island criteria:
+            // 1. Uses hooks (useState, useEffect, useSignal, etc.)
+            // 2. Has JSX return
+            // 3. Located in islands/ directory
+            let uses_hooks = func.body.iter()
+                .any(|stmt| contains_hook_call(stmt));
+            let returns_jsx = returns_jsx_type(&func.return_type);
+            
+            if uses_hooks || (module.source.contains("islands/") && returns_jsx) {
+                islands.push(IslandDef {
+                    name: func.name.clone(),
+                    props: func.params.clone(),
+                    client_bundle: format!("islands/{}.js", func.name),
+                });
+            }
+        }
+    }
+    
+    islands
+}
 ```
 
-### 7.3 Binary Size Optimization
+## Key Benefits
 
-| Technique | Impact |
-|-----------|--------|
-| LTO (Link Time Optimization) | Removes unused functions across crates |
-| Single codegen unit | Maximum optimization, slower compile |
-| `panic = abort` | No unwinding tables |
-| `strip = true` | Remove debug symbols |
-| Static linking | No dynamic library dependencies |
-| Compression (optional) | `upx` or `gz` for distribution |
-
-Target: **< 2MB** for a complete app with routing, SSR, and islands.
-
----
-
-## 8. Dev vs Production Comparison
-
-| Aspect | Development | Production |
-|--------|-------------|------------|
-| **Parser** | Custom recursive descent | Same |
-| **Execution** | HIR interpreter | Native Rust binary |
-| **Server** | Axum (interpreter backend) | Axum (generated handlers) |
-| **SSR** | Interpreter tree-walk | Native VNode rendering |
-| **Hot Reload** | < 50ms (HIR cache invalidation) | N/A (static binary) |
-| **Hook State** | Thread-local indexed Vec | Same |
-| **Signals** | Rust signals (interpreter) | Same |
-| **Binary Size** | N/A (runts CLI) | < 2MB |
-| **Throughput** | ~1k req/s (interpreted) | > 50k req/s (native) |
-| **Cold Start** | N/A | < 5ms |
-| **JS Runtime** | None | None |
-
----
-
-## 9. Alternative / More Efficient Solutions
-
-Where the standard approach has trade-offs, runts provides alternatives:
-
-### 9.1 JSX Rendering: VDOM vs Template Literals
-
-- **Default:** VDOM with `VNode` tree → HTML string. Flexible, component-centric.
-- **Alternative:** For pages with no islands, codegen can emit raw `format!` strings instead of VNode trees. This skips all allocation and renders directly to `String`. Activated via `// @static` comment or `components/` directory.
-
-### 9.2 Reactivity: Signals vs VDOM Diffing
-
-- **Default:** Fine-grained signals (Leptos-style) for islands.
-- **Alternative:** For simple islands, the client runtime can use a raw DOM manipulation approach without signals. Activated when an island has no `useState` / `useSignal` hooks.
-
-### 9.3 Hydration: Full vs Partial
-
-- **Default:** Partial hydration per island.
-- **Alternative:** `data-strategy="static"` renders the island server-side and never ships JS for it. Useful for "islands" that only need SSR props but no interactivity.
-
-### 9.4 Routing: File-Based vs Config-Based
-
-- **Default:** File-based routing (`routes/` directory).
-- **Alternative:** Manual route table in `runts.config.json` for dynamic routes that don't map to files.
-
----
-
-## 10. Crate Structure
-
-```
-runts/                          # CLI + compiler
-├── src/
-│   ├── main.rs                 # CLI entry
-│   ├── cli.rs                  # Clap argument parsing
-│   ├── config.rs               # runts.config.json schema
-│   ├── transpile/              # Compiler pipeline
-│   │   ├── parser.rs           # TSX → HIR
-│   │   ├── hir.rs              # HIR definitions
-│   │   ├── analyzer.rs         # Semantic analysis
-│   │   ├── codegen.rs          # HIR → Rust
-│   │   ├── jsx_transformer.rs  # JSX → html! macro
-│   │   ├── js_codegen.rs       # HIR → JS (island bundles)
-│   │   ├── routegen.rs         # Route table generation
-│   │   └── errors.rs           # Error codes + messages
-│   ├── runtime/                # Dev + shared runtime
-│   │   ├── interpreter.rs      # HIR interpreter
-│   │   ├── vdom.rs             # VNode + Render
-│   │   ├── signals.rs          # Signal + Computed + Effect
-│   │   ├── hooks.rs            # useState, useEffect, etc.
-│   │   ├── component.rs        # Component registry
-│   │   ├── islands.rs          # Island registry + SSR placeholders
-│   │   ├── middleware.rs       # Middleware pipeline executor
-│   │   └── server.rs           # SSR engine + static file serving
-│   └── commands/               # CLI subcommands
-│       ├── dev.rs              # Dev server (HIR interpreter)
-│       ├── build.rs            # Production build
-│       ├── init.rs             # Project scaffolding
-│       └── add.rs              # Component/route generator
-│
-crates/
-├── runts-lib/                  # Runtime library (used by generated code)
-│   └── src/runtime/
-│       ├── prelude.rs          # Re-exports for generated modules
-│       └── ...                 # (mirrors src/runtime/)
-├── runts-macros/               # Procedural macros
-│   └── src/
-│       ├── html.rs             # html! macro implementation
-│       └── component.rs        # #[component] macro
-├── runts-client/               # Browser runtime
-│   └── src/runtime.ts          # Vanilla JS signals + hydration
-│
-examples/
-└── my-blog/                    # Working example project
-```
-
----
-
-*Last updated: 2026-05-27*
+1. **Correctness**: oxc_parser handles all TS/TSX edge cases (UTF-8, template literals, type annotations, etc.)
+2. **Performance**: Single-pass HIR builder, cached HIR for incremental builds
+3. **Simplicity**: Interpreter works on HIR directly, no Rust compilation in dev
+4. **Flexibility**: HIR can be serialized, transformed, analyzed independently
+5. **Type safety**: TypeScript types preserved in HIR for codegen, but semantically erased for interpreter
