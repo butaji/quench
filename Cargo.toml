@@ -70,6 +70,15 @@ chrono = { version = "0.4", features = ["serde"] }
 # Cryptographic hashing (incremental build cache)
 sha2 = "0.10"
 
+# OXC — battle-tested TS/TSX parser + codegen
+oxc_parser = "0.133"
+oxc_allocator = "0.133"
+oxc_ast = "0.133"
+oxc_span = "0.133"
+oxc_codegen = "0.133"
+oxc_ast_visit = "0.133"
+oxc_transformer = "0.133"
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.8"

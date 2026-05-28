@@ -212,53 +212,44 @@ impl Render for VNode {
     fn render_to_html(&self) -> String {
         match self {
             VNode::Element { tag, attrs, events: _, children, key: _ } => {
-                let attr_str = attrs
-                    .iter()
-                    .map(|(name, value)| value.to_html_attr(name))
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                
-                let opening = if attr_str.is_empty() {
-                    format!("<{}>", tag)
-                } else {
-                    format!("<{} {}>", tag, attr_str)
-                };
-                
-                let children_html: String = children
-                    .iter()
-                    .map(|c| c.render_to_html())
-                    .collect();
-                
-                format!("{}</{}>", opening + &children_html, tag)
+                render_element(tag, attrs, children)
             }
-            
             VNode::Component { name: _, props: _, children, key: _ } => {
-                // Components are rendered server-side by their children.
-                // The actual component function is invoked at build time
-                // to produce the VNode tree; this runtime path only
-                // renders the already-resolved children.
-                let children_html: String = children
-                    .iter()
-                    .map(|c| c.render_to_html())
-                    .collect();
-                children_html
+                render_component_children(children)
             }
-            
-            VNode::Text { value } => {
-                html_escape(value)
-            }
-            
-            VNode::Fragment(children) => {
-                children
-                    .iter()
-                    .map(|c| c.render_to_html())
-                    .collect()
-            }
-            
+            VNode::Text { value } => html_escape(value),
+            VNode::Fragment(children) => render_children(children),
             VNode::Empty => String::new(),
         }
     }
+}
+
+fn render_element(tag: &str, attrs: &HashMap<String, AttrValue>, children: &[VNode]) -> String {
+    let attr_str = attrs
+        .iter()
+        .map(|(name, value)| value.to_html_attr(name))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let opening = if attr_str.is_empty() {
+        format!("<{}>", tag)
+    } else {
+        format!("<{} {}>", tag, attr_str)
+    };
+    let children_html = render_children(children);
+    format!("{}</{}>", opening + &children_html, tag)
+}
+
+fn render_component_children(children: &[VNode]) -> String {
+    // Components are rendered server-side by their children.
+    // The actual component function is invoked at build time
+    // to produce the VNode tree; this runtime path only
+    // renders the already-resolved children.
+    render_children(children)
+}
+
+fn render_children(children: &[VNode]) -> String {
+    children.iter().map(|c| c.render_to_html()).collect()
 }
 
 /// Escape HTML special characters
