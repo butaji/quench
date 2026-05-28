@@ -301,6 +301,29 @@ mod codegen_tests {
     }
     
     #[test]
+    fn test_generate_string_union_to_enum() {
+        let cg = create_codegen();
+
+        let decl = TypeDecl {
+            name: "Status".to_string(),
+            generics: vec![],
+            type_: Type::Union {
+                types: vec![
+                    Type::Literal { kind: LiteralKind::String, value: "ok".to_string() },
+                    Type::Literal { kind: LiteralKind::String, value: "err".to_string() },
+                    Type::Literal { kind: LiteralKind::String, value: "pending".to_string() },
+                ],
+            },
+        };
+
+        let result = cg.generate_type_decl(&decl).unwrap();
+        assert!(result.contains("pub enum Status"));
+        assert!(result.contains("    Ok,"));
+        assert!(result.contains("    Err,"));
+        assert!(result.contains("    Pending,"));
+    }
+
+    #[test]
     fn test_generate_function_to_rust() {
         let cg = create_codegen();
         

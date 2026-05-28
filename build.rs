@@ -45,7 +45,6 @@ const WHITELIST: &[(&str, &str)] = &[
     ("src/commands/add.rs", "*"),
     ("src/commands/ssr.rs", "*"),
     ("src/commands/routes.rs", "*"),
-    ("src/commands/incremental.rs", "*"),
     ("src/commands/parallel.rs", "*"),
     // Macro crate is separate workspace member
     ("crates/runts-macros/src/html.rs", "*"),

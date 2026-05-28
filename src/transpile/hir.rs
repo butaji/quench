@@ -168,6 +168,14 @@ pub struct ClassMember {
 
 /// Types
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LiteralKind {
+    String,
+    Number,
+    Boolean,
+    BigInt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Type {
     /// Primitive types
@@ -182,6 +190,9 @@ pub enum Type {
     Any,
     BigInt,
     Symbol,
+
+    /// Literal type (string, number, boolean literals)
+    Literal { kind: LiteralKind, value: String },
 
     /// Reference to another type
     Ref { name: String, generics: Vec<Type> },

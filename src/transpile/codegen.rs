@@ -405,7 +405,14 @@ impl CodeGenerator {
         };
 
         let rust_type = self.type_to_rust(&decl.type_);
-        
+
+        // String literal union → Rust enum
+        if let Type::Union { types } = &decl.type_ {
+            if Self::is_string_literal_union(types) {
+                return Ok(self.generate_enum(name, generics_str, types));
+            }
+        }
+
         if let Type::Object { members } = &decl.type_ {
             let mut out = String::new();
             out.push_str("#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]\n");
@@ -426,11 +433,53 @@ impl CodeGenerator {
         Ok(format!("pub type {}{} = {};\n", name, generics_str, rust_type))
     }
 
+    /// Check if all types in a union are string literals.
+    fn is_string_literal_union(types: &[Type]) -> bool {
+        !types.is_empty() && types.iter().all(|t| {
+            matches!(t, Type::Literal { kind: crate::transpile::hir::LiteralKind::String, .. })
+        })
+    }
+
+    /// Generate a Rust enum from string literal union types.
+    fn generate_enum(&self, name: &str, generics_str: String, types: &[Type]) -> String {
+        let mut out = String::new();
+        out.push_str("#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]\n");
+        out.push_str(&format!("pub enum {}{} {{\n", name, generics_str));
+        for t in types {
+            if let Type::Literal { kind: crate::transpile::hir::LiteralKind::String, value } = t {
+                let variant = Self::to_pascal_case(value);
+                out.push_str(&format!("    {},\n", variant));
+            }
+        }
+        out.push_str("}\n");
+        out
+    }
+
+    /// Convert a string to PascalCase (for enum variant names).
+    fn to_pascal_case(s: &str) -> String {
+        s.split('-')
+            .flat_map(|part| part.split('_'))
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                }
+            })
+            .collect()
+    }
+
     pub fn type_to_rust(&self, t: &Type) -> String {
         match t {
             Type::String => "String".to_string(),
             Type::Number => "f64".to_string(),
             Type::Boolean => "bool".to_string(),
+            Type::Literal { kind, value } => match kind {
+                crate::transpile::hir::LiteralKind::String => format!("\"/{}\"", value),
+                crate::transpile::hir::LiteralKind::Number => value.clone(),
+                crate::transpile::hir::LiteralKind::Boolean => value.clone(),
+                crate::transpile::hir::LiteralKind::BigInt => format!("{}i64", value),
+            },
             Type::Null | Type::Undefined | Type::Void => "()".to_string(),
             Type::Never => "!".to_string(),
             Type::Unknown | Type::Any => "serde_json::Value".to_string(),

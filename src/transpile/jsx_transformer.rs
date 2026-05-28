@@ -499,6 +499,12 @@ impl JsxTransformer {
             Type::String => "String".to_string(),
             Type::Number => "f64".to_string(),
             Type::Boolean => "bool".to_string(),
+            Type::Literal { kind, value } => match kind {
+                crate::transpile::hir::LiteralKind::String => format!("\"{}\"", value),
+                crate::transpile::hir::LiteralKind::Number => value.clone(),
+                crate::transpile::hir::LiteralKind::Boolean => value.clone(),
+                crate::transpile::hir::LiteralKind::BigInt => format!("{}i64", value),
+            },
             Type::Null | Type::Undefined | Type::Void => "()".to_string(),
             Type::Never => "!".to_string(),
             Type::Unknown | Type::Any => "serde_json::Value".to_string(),
