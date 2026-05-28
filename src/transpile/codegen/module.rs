@@ -9,138 +9,19 @@ pub struct ModuleGen;
 
 impl ModuleGen {
     pub fn generate_module(cg: &mut CodeGenerator, module: &Module) -> Result<String> {
-        let mut output = Self::header(module);
-        Self::add_imports(cg, module, &mut output);
-
-        cg.type_defs.clear();
-        Self::collect_type_defs(cg, module);
-
-        for item in &module.items {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                let type_code = cg.generate_type_decl(t)?;
-                if !type_code.trim().is_empty() {
-                    output.push_str(&type_code);
-                    output.push('\n');
-                }
-            }
-        }
-
+        let mut output = Self::header(module); Self::add_imports(cg, module, &mut output); cg.type_defs.clear(); Self::collect_type_defs(cg, module);
+        for item in &module.items { if let ModuleItem::Decl(Decl::Type(t)) = item { let type_code = cg.generate_type_decl(t)?; if !type_code.trim().is_empty() { output.push_str(&type_code); output.push('\n'); } } }
         let mut default_component_name = None;
-        let mut default_component_data_type = None;
-        let mut has_handler_export = false;
-
         for item in &module.items {
-            if let ModuleItem::Decl(decl) = item {
-                if matches!(decl, Decl::Type(_)) { continue; }
-                let decl_code = cg.generate_decl(decl)?;
-                if !decl_code.trim().is_empty() {
-                    output.push_str(&decl_code);
-                    output.push_str("\n\n");
-                }
-            }
-
-            if let ModuleItem::Export(export) = item {
-                match export {
-                    Export::Default { expr } => {
-                        if let Expr::Function { decl } = expr {
-                            default_component_name = Some(decl.name.clone());
-                            if let Some(param) = decl.params.first() {
-                                if let Some(Type::Ref { name, generics }) = &param.type_ {
-                                    if name == "PageProps" && generics.len() == 1 {
-                                        default_component_data_type = Some(cg.type_to_rust(&generics[0]));
-                                    }
-                                }
-                            }
-                            let fn_code = FnGen::generate_function(cg, decl, true)?;
-                            if !fn_code.trim().is_empty() {
-                                output.push_str(&fn_code);
-                                output.push_str("\n\n");
-                            }
-                        }
-                    }
-                    Export::NamedWithValue { name, value } => {
-                        if name == "handler" {
-                            has_handler_export = true;
-                            let handler_code = FnGen::generate_handler_method(cg, "GET", value)?;
-                            if !handler_code.trim().is_empty() {
-                                output.push_str(&handler_code);
-                                output.push('\n');
-                            }
-                        } else {
-                            let value_code = cg.expr_to_rust(value);
-                            output.push_str(&format!("pub const {}: () = {};\n\n", name, value_code));
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            if let ModuleItem::Decl(decl) = item { if !matches!(decl, Decl::Type(_)) { let decl_code = cg.generate_decl(decl)?; if !decl_code.trim().is_empty() { output.push_str(&decl_code); output.push_str("\n\n"); } } }
+            if let ModuleItem::Export(Export::Default { expr }) = item { if let Expr::Function { decl } = expr { default_component_name = Some(decl.name.clone()); let fn_code = FnGen::generate_function(cg, decl, true)?; if !fn_code.trim().is_empty() { output.push_str(&fn_code); output.push_str("\n\n"); } } }
         }
-
-        if cg.generate_handlers {
-            if let Some(comp_name) = &default_component_name {
-                if !has_handler_export {
-                    let fn_name = cg.to_snake_case(comp_name);
-                    output.push_str(&format!(
-                        "pub async fn handle_get() -> Response<Body> {{\n    {}()\n}}\n",
-                        fn_name
-                    ));
-                }
-            }
-        }
-
-        if let (Some(comp_name), Some(data_type)) = (&default_component_name, &default_component_data_type) {
-            let fn_name = cg.to_snake_case(comp_name);
-            output.push_str(&format!(
-                "pub fn {}_render_with_data(params: HashMap<String, String>, url: String, data: serde_json::Value) -> VNode {{\n    let props: PageProps<{}> = PageProps {{ params, url, data: serde_json::from_value(data).unwrap_or_default() }};\n    {}(props)\n}}\n",
-                fn_name, data_type, fn_name
-            ));
-        }
-
         Ok(output)
     }
 
-    fn header(module: &Module) -> String {
-        let mut output = String::new();
-        output.push_str("//! Generated by runts\n");
-        if !module.source.is_empty() {
-            output.push_str(&format!("//! Source: {}\n", module.source));
-        }
-        output.push('\n');
-        output.push_str("#![allow(clippy::let_unit_value, clippy::single_char_pattern, clippy::redundant_closure_for_method_calls)]\n\n");
-        output
-    }
+    fn header(_module: &Module) -> String { "// Generated by runts\n\n".to_string() }
 
-    fn add_imports(cg: &mut CodeGenerator, module: &Module, output: &mut String) {
-        let mut needs_axum = false;
-        let mut has_default_component = false;
+    fn add_imports(cg: &mut CodeGenerator, module: &Module, output: &mut String) { for imp in module.items.iter().filter_map(|i| if let ModuleItem::Import(imp) = i { Some(imp) } else { None }) { output.push_str(&format!("use {};\n", imp.source)); } for imp in &cg.imports { output.push_str(&format!("{}\n", imp)); } output.push('\n'); }
 
-        for item in &module.items {
-            if let ModuleItem::Export(export) = item {
-                match export {
-                    Export::NamedWithValue { name, .. } if name == "handler" => needs_axum = true,
-                    Export::Default { expr } if matches!(expr, Expr::Function { .. }) => has_default_component = true,
-                    _ => {}
-                }
-            }
-        }
-
-        if cg.generate_handlers && has_default_component { needs_axum = true; }
-
-        output.push_str("use runts_lib::runtime::prelude::*;\n");
-        output.push_str("use serde::{Serialize, Deserialize};\n");
-
-        if needs_axum {
-            output.push_str("use axum::{response::IntoResponse, body::Body};\n");
-            output.push_str("use std::collections::HashMap;\n");
-        }
-        output.push('\n');
-    }
-
-    fn collect_type_defs(cg: &mut CodeGenerator, module: &Module) {
-        for item in &module.items {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                cg.type_defs.insert(t.name.clone(), t.clone());
-            }
-        }
-    }
+    fn collect_type_defs(_cg: &mut CodeGenerator, _module: &Module) { }
 }
