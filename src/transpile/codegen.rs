@@ -81,7 +81,8 @@ impl CodeGenerator {
             output.push_str(&format!("//! Source: {}\n", module.source));
         }
         output.push('\n');
-        output.push_str("#![allow(unused_mut, unused_variables, dead_code, unused_imports, noop_method_call, unused_parens, redundant_semicolons)]\n\n");
+        // Only allow specific items that are expected in generated code
+        output.push_str("#![allow(clippy::let_unit_value, clippy::single_char_pattern, clippy::redundant_closure_for_method_calls)]\n\n");
         output.push_str("use runts_lib::runtime::prelude::*;\n");
         output.push_str("use serde::{Serialize, Deserialize};\n");
 
@@ -310,25 +311,29 @@ impl CodeGenerator {
                     }
                 }
                 if lines.is_empty() {
-                    "{ Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap() }".to_string()
+                    "Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap()".to_string()
+                } else if lines.len() == 1 {
+                    // Single statement - don't wrap in extra block
+                    lines.into_iter().next().unwrap()
                 } else {
-                    format!("{{ {}; }}", lines.join("; "))
+                    // Multiple statements - join with semicolons
+                    lines.join("; ")
                 }
             }
             Stmt::Return { arg } => {
                 if let Some(e) = arg {
                     let expr_str = self.expr_to_rust(e);
-                    format!("{{ return {}; }}", expr_str)
+                    format!("return {};", expr_str)
                 } else {
-                    "{}".to_string()
+                    "Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap()".to_string()
                 }
             }
-            _ => "{ Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap() }".to_string(),
+            _ => "Response::builder().status(501).body(Body::from(\"Not Implemented\")).unwrap()".to_string(),
         };
         
         Ok(format!(
             r#"pub {}fn {}({}) -> Response<Body> {{
-    {} // Handler body
+    {}
 }}"#,
             async_prefix,
             handler_name,
@@ -1632,8 +1637,107 @@ impl CodeGenerator {
 
     /// Generate JSX element as Rust code (for top-level use)
     pub fn jsx_to_rust(&self, x: &JSXExpr) -> String {
-        let inner = self.jsx_element_inner(x);
+        let inner = self.jsx_element_to_string(x, 0);
         format!("html!({})", inner)
+    }
+
+    /// Convert JSX element to string with simple inline formatting
+    fn jsx_element_to_string(&self, x: &JSXExpr, depth: usize) -> String {
+        let tag_name = match &x.opening.name {
+            JSXName::Ident(s) => s.clone(),
+            JSXName::Member { object, property } => format!("{}_{}", object, property),
+            JSXName::Namespaced { ns, name } => format!("{}_{}", ns, name),
+            JSXName::Dynamic(_) => "Dynamic".to_string(),
+            JSXName::Fragment => String::new(),
+        };
+
+        // Collect attributes
+        let attrs: Vec<String> = x.opening.attrs.iter().filter_map(|a| {
+            match a {
+                JSXAttr::Attr { name, value } => {
+                    let rust_name = self.jsx_attr_to_rust(name);
+                    let value_code = if rust_name == "style" {
+                        value.as_ref()
+                            .map(|v| self.jsx_style_value_to_rust(v))
+                            .unwrap_or_else(|| "\"\"".to_string())
+                    } else {
+                        value.as_ref()
+                            .map(|v| self.jsx_attr_value_to_rust(v))
+                            .unwrap_or_else(|| "true".to_string())
+                    };
+                    if value_code.starts_with('"') || value_code.starts_with("r#") {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else if value_code.parse::<f64>().is_ok() {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else if value_code == "true" || value_code == "false" {
+                        Some(format!("{} = {}", rust_name, value_code))
+                    } else {
+                        Some(format!("{} = {{{}}}", rust_name, value_code))
+                    }
+                }
+                JSXAttr::Spread { expr } => {
+                    Some(format!("..{{{}}}", self.expr_to_rust(expr)))
+                }
+                JSXAttr::Event { name, handler } => {
+                    let rust_name = self.jsx_attr_to_rust(name);
+                    Some(format!("{} = {{{}}}", rust_name, self.expr_to_rust(handler)))
+                }
+                JSXAttr::Bool { name } => {
+                    Some(format!("{} = true", self.jsx_attr_to_rust(name)))
+                }
+                JSXAttr::Expr { name, expr } => {
+                    if let Some(n) = name {
+                        let rust_name = self.jsx_attr_to_rust(n);
+                        Some(format!("{} = {{{}}}", rust_name, self.expr_to_rust(expr)))
+                    } else {
+                        Some(format!("{{{}}}", self.expr_to_rust(expr)))
+                    }
+                }
+            }
+        }).collect();
+
+        // Collect children
+        let children: Vec<String> = x.children.iter().filter_map(|c| {
+            match c {
+                JSXChild::Text(s) => Some(format!("{:?}", s)),
+                JSXChild::Expr(e) => Some(format!("{{{}}}", self.expr_to_rust(e))),
+                JSXChild::JSX(elem) => Some(self.jsx_element_to_string(elem, depth + 1)),
+                JSXChild::Fragment { children: elems } => {
+                    let inner: Vec<String> = elems.iter()
+                        .filter_map(|c| match c {
+                            JSXChild::Text(s) => Some(format!("{:?}", s)),
+                            JSXChild::Expr(e) => Some(format!("{{{}}}", self.expr_to_rust(e))),
+                            JSXChild::JSX(elem) => Some(self.jsx_element_to_string(elem, depth + 1)),
+                            _ => None,
+                        })
+                        .collect();
+                    Some(inner.join(" "))
+                }
+                JSXChild::Spread { expr } => Some(format!("..{{{}}}", self.expr_to_rust(expr))),
+            }
+        }).collect();
+
+        // Format as inline string with proper spacing
+        if tag_name.is_empty() {
+            // Fragment
+            return if children.is_empty() {
+                "<> </>".to_string()
+            } else {
+                format!("<>{}", children.join(" "))
+            };
+        }
+
+        let attr_str = if attrs.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", attrs.join(" "))
+        };
+
+        if children.is_empty() {
+            format!("<{}{}/>", tag_name, attr_str)
+        } else {
+            format!("<{}{}>{}</{}>", tag_name, attr_str, children.join(" "), tag_name)
+        }
     }
     
     /// Generate just the inner content of a JSX element (for use as children)

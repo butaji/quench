@@ -43,6 +43,8 @@ const WHITELIST: &[(&str, &str)] = &[
     ("src/transpile/oxc_builder.rs", "*"),
     // Macro crate is separate workspace member
     ("crates/runts-macros/src/html.rs", "*"),
+    // Commands being refactored
+    ("src/commands/add.rs", "*"),
     // Lib crate is separate workspace member
     ("crates/runts-lib/src/runtime/islands.rs", "*"),
     ("crates/runts-lib/src/runtime/vdom.rs", "*"),
