@@ -10,25 +10,15 @@ pub mod routes;
 pub mod handlers;
 
 use anyhow::Result;
-use axum::{
-    body::Body,
-    extract::{Path, State},
-    response::{Html, IntoResponse, Response},
-    routing::get,
-    Router,
-};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::Arc,
-    time::Instant,
 };
 use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::runtime::interpreter::{Interpreter, RenderResult, RequestInfo};
+use crate::runtime::interpreter::Interpreter;
 
 /// Application state shared across requests
 #[derive(Clone)]

@@ -1,7 +1,6 @@
 //! Route table management
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use regex::Regex;
 use walkdir::WalkDir;

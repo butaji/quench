@@ -2,26 +2,22 @@
 
 use anyhow::Result;
 use axum::{
-    body::Body,
     extract::{Path, State},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
-use notify::RecommendedWatcher;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::Arc,
-    time::Instant,
 };
 use tokio::sync::broadcast;
-use walkdir::WalkDir;
 use tracing::info;
 
 use crate::config::Config;
-use crate::runtime::interpreter::{Interpreter, RenderResult, RequestInfo};
+use crate::runtime::interpreter::{Interpreter, RequestInfo};
 use super::{AppState, ReloadEvent, routes::RouteTable};
 
 /// Extract headers from request
@@ -64,7 +60,7 @@ fn build_nav_links() -> String {
 }
 
 /// Run dev server
-pub async fn run_server(config: &Config, port: u16) -> Result<()> {
+pub async fn run_server(_config: &Config, port: u16) -> Result<()> {
     let project_root = PathBuf::from(".");
     let routes_dir = project_root.join("routes");
 

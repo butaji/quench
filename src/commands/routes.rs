@@ -325,14 +325,14 @@ mod tests {
         table.add_route(Route::from_file_path(&PathBuf::from("routes/blog/[slug].tsx")).unwrap());
         table.add_route(Route::from_file_path(&PathBuf::from("routes/[...path].tsx")).unwrap());
         
-        let (route, params) = table.find_route("/", HttpMethod::GET).unwrap();
+        let (route, _params) = table.find_route("/", HttpMethod::GET).unwrap();
         assert_eq!(route.pattern, "");
         
         let (route, params) = table.find_route("/blog/hello", HttpMethod::GET).unwrap();
         assert_eq!(route.pattern, "blog/[slug]");
         assert_eq!(params.get("slug"), Some(&"hello".to_string()));
         
-        let (route, params) = table.find_route("/api/users/123", HttpMethod::GET).unwrap();
+        let (route, _params) = table.find_route("/api/users/123", HttpMethod::GET).unwrap();
         assert!(route.is_catch_all);
     }
 
