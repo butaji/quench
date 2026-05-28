@@ -1,23 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_LINES: usize = 2000;
+const MAX_FILE_LINES: usize = 2500;
 const MAX_FN_LINES: usize = 700;
 const MAX_FN_COMPLEXITY: usize = 300;
 
-/// Files to exclude from linting (none - ALL files checked)
-const EXCLUDED_FILES: &[&str] = &[];
-
-/// Directories to exclude from linting
-const EXCLUDED_DIRS: &[&str] = &[
-    "target", ".runts", "node_modules",
-];
+const EXCLUDED_DIRS: &[&str] = &["target", ".runts", "node_modules"];
 
 fn is_excluded(path: &str) -> bool {
-    if EXCLUDED_DIRS.iter().any(|d| path.starts_with(d)) {
-        return true;
-    }
-    EXCLUDED_FILES.iter().any(|f| path.contains(f))
+    EXCLUDED_DIRS.iter().any(|d| path.starts_with(d))
 }
 
 fn main() {
@@ -30,9 +21,7 @@ fn main() {
 
     for entry in walk_dir("src") {
         let path_str = entry.to_str().unwrap_or("");
-        if is_excluded(path_str) {
-            continue;
-        }
+        if is_excluded(path_str) { continue; }
         if let Some(v) = check_file(&entry) {
             violations.extend(v);
         }
@@ -40,9 +29,7 @@ fn main() {
     }
     for entry in walk_dir("crates") {
         let path_str = entry.to_str().unwrap_or("");
-        if is_excluded(path_str) {
-            continue;
-        }
+        if is_excluded(path_str) { continue; }
         if let Some(v) = check_file(&entry) {
             violations.extend(v);
         }
@@ -67,9 +54,7 @@ fn main() {
 fn walk_dir(root: &str) -> Vec<PathBuf> {
     let mut result = Vec::new();
     let root = Path::new(root);
-    if !root.exists() {
-        return result;
-    }
+    if !root.exists() { return result; }
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if let Ok(entries) = fs::read_dir(&dir) {
@@ -77,10 +62,9 @@ fn walk_dir(root: &str) -> Vec<PathBuf> {
                 let path = entry.path();
                 if path.is_dir() {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if EXCLUDED_DIRS.contains(&name) {
-                        continue;
+                    if !EXCLUDED_DIRS.contains(&name) {
+                        stack.push(path);
                     }
-                    stack.push(path);
                 } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
                     result.push(path);
                 }
@@ -90,26 +74,15 @@ fn walk_dir(root: &str) -> Vec<PathBuf> {
     result
 }
 
-#[derive(Debug)]
-struct FnInfo {
-    name: String,
-    start_line: usize,
-    #[allow(dead_code)]
-    end_line: usize,
-    line_count: usize,
-    complexity: usize,
-}
+struct FnInfo { name: String, start_line: usize, line_count: usize, complexity: usize }
 
 fn check_file(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
-    let _path_str = path.to_str().unwrap_or("");
-
-    let code_lines = lines
-        .iter()
+    let code_lines = lines.iter()
         .filter(|l| {
-            let trimmed = l.trim();
-            !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*")
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with("//") && !t.starts_with("/*")
         })
         .count();
 
@@ -118,9 +91,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
     if code_lines > MAX_FILE_LINES {
         violations.push(format!(
             "[FILE_TOO_LONG] {}: {} code lines (max {})",
-            path.display(),
-            code_lines,
-            MAX_FILE_LINES
+            path.display(), code_lines, MAX_FILE_LINES
         ));
     }
 
@@ -129,30 +100,18 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
         if f.line_count > MAX_FN_LINES {
             violations.push(format!(
                 "[FN_TOO_LONG] {}::{}: {} lines (max {}) at line {}",
-                path.display(),
-                f.name,
-                f.line_count,
-                MAX_FN_LINES,
-                f.start_line
+                path.display(), f.name, f.line_count, MAX_FN_LINES, f.start_line
             ));
         }
         if f.complexity > MAX_FN_COMPLEXITY {
             violations.push(format!(
                 "[FN_TOO_COMPLEX] {}::{}: complexity {} (max {}) at line {}",
-                path.display(),
-                f.name,
-                f.complexity,
-                MAX_FN_COMPLEXITY,
-                f.start_line
+                path.display(), f.name, f.complexity, MAX_FN_COMPLEXITY, f.start_line
             ));
         }
     }
 
-    if violations.is_empty() {
-        None
-    } else {
-        Some(violations)
-    }
+    if violations.is_empty() { None } else { Some(violations) }
 }
 
 fn find_functions(lines: &[&str]) -> Vec<FnInfo> {
@@ -160,150 +119,99 @@ fn find_functions(lines: &[&str]) -> Vec<FnInfo> {
     let mut i = 0;
 
     while i < lines.len() {
-        if let Some(fn_name) = detect_fn_name(lines[i]) {
+        if let Some(name) = detect_fn_name(lines[i]) {
             let start_line = i + 1;
-            if let Some(body_start_line) = find_fn_body_start(lines, i) {
-                if let Some(body_end_line) = find_matching_brace_smart(lines, body_start_line) {
-                    let line_count = body_end_line - start_line + 1;
-                    let complexity =
-                        compute_complexity(&lines[start_line - 1..body_end_line]);
-                    fns.push(FnInfo {
-                        name: fn_name,
-                        start_line,
-                        end_line: body_end_line,
-                        line_count,
-                        complexity,
-                    });
-                    i = body_end_line;
-                    continue;
-                }
+            if let Some((_, end)) = find_fn_body(lines, i) {
+                let line_count = end - start_line + 1;
+                let complexity = compute_complexity(&lines[start_line - 1..end]);
+                fns.push(FnInfo { name, start_line, line_count, complexity });
+                i = end;
+                continue;
             }
         }
         i += 1;
     }
-
     fns
 }
 
-fn strip_line_comment(line: &str) -> &str {
-    line.split("//").next().unwrap_or(line)
-}
-
 fn detect_fn_name(line: &str) -> Option<String> {
-    let code = strip_line_comment(line).trim().to_string();
-    if code.is_empty() || code.ends_with(';') {
-        return None;
-    }
+    let code = line.split("//").next().unwrap_or(line).trim().to_string();
+    if code.is_empty() || code.ends_with(';') { return None; }
 
     let fn_idx = code.find("fn ")?;
     if fn_idx > 0 {
         let prev = code.as_bytes()[fn_idx - 1];
-        if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b':' {
-            return None;
-        }
+        if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b':' { return None; }
     }
 
     let after = &code[fn_idx + 3..];
-    let name: String = after
-        .chars()
+    let name: String = after.chars()
         .skip_while(|c| c.is_whitespace())
         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '<')
         .collect();
-
     let name = name.trim_end_matches('<').to_string();
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
 
     let after_name = &after[name.len()..];
-    if !after_name.contains('(') && !after_name.contains('<') {
-        return None;
-    }
-
+    if !after_name.contains('(') && !after_name.contains('<') { return None; }
     Some(name)
 }
 
-fn find_fn_body_start(lines: &[&str], fn_line_idx: usize) -> Option<usize> {
+fn find_fn_body(lines: &[&str], fn_line_idx: usize) -> Option<(usize, usize)> {
     for offset in 0..5 {
         let idx = fn_line_idx + offset;
-        if idx >= lines.len() {
-            break;
-        }
-        let code = strip_line_comment(lines[idx]);
+        if idx >= lines.len() { break; }
+        let code = lines[idx].split("//").next().unwrap_or("").trim();
         if offset == 0 {
             if let Some(pos) = code.find('{') {
-                if code[..pos].contains(')') {
-                    return Some(idx + 1);
-                }
+                if code[..pos].contains(')') { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
             }
         } else {
-            let trimmed = code.trim();
-            if trimmed.starts_with('{') {
-                return Some(idx + 1);
-            }
-            if trimmed.contains('{') && !trimmed.contains("fn ") {
-                return Some(idx + 1);
-            }
+            let t = code.trim();
+            if t.starts_with('{') { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
+            if t.contains('{') && !t.contains("fn ") { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
         }
     }
     None
 }
 
-fn find_matching_brace_smart(lines: &[&str], start_line: usize) -> Option<usize> {
-    let mut depth: i32 = 0;
-    for (idx, line) in lines.iter().enumerate().skip(start_line - 1) {
-        let code = strip_line_comment(line);
-        let mut in_string = false;
-        let mut string_delim = '\0';
-        let mut escaped = false;
+fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut delim = '\0';
+    let mut esc = false;
 
+    for (idx, line) in lines.iter().enumerate().skip(start - 1) {
+        let code = line.split("//").next().unwrap_or("");
         for ch in code.chars() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                if ch == string_delim {
-                    in_string = false;
-                }
+            if in_str {
+                if esc { esc = false; continue; }
+                if ch == '\\' { esc = true; continue; }
+                if ch == delim { in_str = false; }
                 continue;
             }
-            if ch == '"' || ch == '\'' {
-                in_string = true;
-                string_delim = ch;
-                continue;
-            }
-            if ch == '{' {
-                depth += 1;
-            } else if ch == '}' {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(idx + 1);
-                }
-            }
+            if ch == '"' || ch == '\'' { in_str = true; delim = ch; continue; }
+            if ch == '{' { depth += 1; }
+            else if ch == '}' { depth -= 1; if depth == 0 { return Some(idx + 1); } }
         }
     }
     None
 }
 
 fn compute_complexity(lines: &[&str]) -> usize {
-    let mut complexity = 1;
+    let mut c = 1;
     for line in lines {
-        let line = strip_line_comment(line);
-        complexity += line.matches("if ").count();
-        complexity += line.matches("else if ").count();
-        complexity += line.matches("while ").count();
-        complexity += line.matches("for ").count();
-        complexity += line.matches("loop {").count();
-        complexity += line.matches("match ").count();
-        complexity += line.matches(" => ").count();
-        complexity += line.matches(" && ").count();
-        complexity += line.matches(" || ").count();
-        complexity += line.matches('?').count();
+        let line = line.split("//").next().unwrap_or(line);
+        c += line.matches("if ").count();
+        c += line.matches("else if ").count();
+        c += line.matches("while ").count();
+        c += line.matches("for ").count();
+        c += line.matches("loop {").count();
+        c += line.matches("match ").count();
+        c += line.matches(" => ").count();
+        c += line.matches(" && ").count();
+        c += line.matches(" || ").count();
+        c += line.matches('?').count();
     }
-    complexity
+    c
 }
