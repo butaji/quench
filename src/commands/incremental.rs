@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::commands::build::{ComponentEntry, GeneratedFile, IslandEntry, RouteEntry};
 
@@ -70,27 +70,21 @@ impl BuildCache {
 
     /// Load cache from disk, or return a fresh cache if invalid/missing.
     pub fn load(project_root: &Path) -> Self {
+        match Self::try_load(project_root) {
+            Some(cache) => cache,
+            None => Self::new(),
+        }
+    }
+
+    fn try_load(project_root: &Path) -> Option<Self> {
         let path = cache_path(project_root);
         if !path.exists() {
             debug!("No incremental cache found at {:?}", path);
-            return Self::new();
+            return None;
         }
 
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("Failed to read cache: {}. Starting fresh.", e);
-                return Self::new();
-            }
-        };
-
-        let cache: BuildCache = match serde_json::from_str(&content) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("Cache JSON corrupted: {}. Starting fresh.", e);
-                return Self::new();
-            }
-        };
+        let content = fs::read_to_string(&path).ok()?;
+        let cache: BuildCache = serde_json::from_str(&content).ok()?;
 
         let expected = cache_environment_key();
         if cache.env_key != expected {
@@ -98,11 +92,11 @@ impl BuildCache {
                 "Cache environment mismatch ({} vs {}). Rebuilding from scratch.",
                 cache.env_key, expected
             );
-            return Self::new();
+            return None;
         }
 
         info!("Loaded incremental cache with {} entries", cache.entries.len());
-        cache
+        Some(cache)
     }
 
     /// Persist cache to disk.

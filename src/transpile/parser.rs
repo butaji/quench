@@ -706,6 +706,10 @@ impl Parser {
                 self.expect('>')?;
                 Type::Ref { name: "T".to_string(), generics }
             }
+            '"' | '\'' => {
+                let lit = self.parse_string()?;
+                Type::Literal { kind: LiteralKind::String, value: lit }
+            }
             _ => {
                 let name = self.parse_identifier()?;
                 let generics = if self.check('<') {
