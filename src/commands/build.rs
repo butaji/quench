@@ -1240,6 +1240,8 @@ fn generate_route_table(routes: &[RouteEntry]) -> String {
     code.push_str("/// Build Axum router from routes\n");
     code.push_str("pub fn build_router() -> Router {\n");
     code.push_str("    let mut router = Router::new();\n\n");
+    code.push_str("    // Add static file serving\n");
+    code.push_str("    router = router.nest_service(\"/static\", tower_http::services::ServeDir::new(\"static\"));\n\n");
 
     for route in routes {
         let alias = to_snake_case(
