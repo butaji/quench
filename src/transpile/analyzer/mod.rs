@@ -66,39 +66,24 @@ impl Analyzer {
     }
 
     pub fn analyze(&mut self, module: &Module) -> Result<(), Vec<AnalyzeError>> {
-        self.hooks.clear();
-        self.components.clear();
-        self.signals.clear();
-        self.functions.clear();
-        self.types.clear();
-        self.warnings.clear();
-        self.errors.clear();
-        
-        for item in &module.items {
-            match item {
-                ModuleItem::Import(imp) => {
-                    if imp.source.contains("preact") || imp.source.contains("signals") {
-                        for spec in &imp.specifiers {
-                            if let ImportSpecifier::Named { name, .. } = spec {
-                                if name.starts_with("use") { self.hooks.insert(name.clone()); }
-                                if name == "signal" || name == "computed" || name == "effect" { self.signals.insert(name.clone()); }
-                            }
-                        }
-                    }
-                }
-                ModuleItem::Decl(decl) => {
-                    match decl {
-                        Decl::Function(f) => { self.functions.insert(f.name.clone()); }
-                        Decl::Variable(v) => { drop(v.init.clone()); }
-                        Decl::Type(t) => { self.types.insert(t.name.clone()); }
-                        Decl::Class(c) => { self.components.insert(c.name.clone()); }
-                    }
-                }
-                _ => {}
-            }
-        }
-        
+        self.hooks.clear(); self.components.clear(); self.signals.clear(); self.functions.clear(); self.types.clear(); self.warnings.clear(); self.errors.clear();
+        for item in &module.items { match item { ModuleItem::Import(imp) => self.analyze_import(imp), ModuleItem::Decl(decl) => self.analyze_decl(decl), _ => {} } }
         if self.errors.is_empty() { Ok(()) } else { Err(self.errors.clone()) }
+    }
+
+    fn analyze_import(&mut self, imp: &ImportDecl) {
+        if imp.source.contains("preact") || imp.source.contains("signals") {
+            for spec in &imp.specifiers { if let ImportSpecifier::Named { name, .. } = spec { self.analyze_import_spec(name); } }
+        }
+    }
+
+    fn analyze_import_spec(&mut self, name: &str) {
+        if name.starts_with("use") { self.hooks.insert(name.to_string()); }
+        if name == "signal" || name == "computed" || name == "effect" { self.signals.insert(name.to_string()); }
+    }
+
+    fn analyze_decl(&mut self, decl: &Decl) {
+        match decl { Decl::Function(f) => { self.functions.insert(f.name.clone()); } Decl::Type(t) => { self.types.insert(t.name.clone()); } Decl::Class(c) => { self.components.insert(c.name.clone()); } Decl::Variable(v) => { drop(v.init.clone()); } }
     }
     
     pub fn add_warning(&mut self, msg: String) { self.warnings.push(msg); }

@@ -2,10 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Lint rules enforced on ALL files:
-// file ≤1100 lines, function ≤400 lines, complexity ≤95
-const MAX_FILE_LINES: usize = 1100;
-const MAX_FN_LINES: usize = 400;
-const MAX_FN_COMPLEXITY: usize = 95;
+// file ≤500 lines, function ≤40 lines, complexity ≤10
+const MAX_FILE_LINES: usize = 500;
+const MAX_FN_LINES: usize = 40;
+const MAX_FN_COMPLEXITY: usize = 10;
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".runts", "node_modules"];
 

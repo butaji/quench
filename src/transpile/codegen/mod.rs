@@ -247,22 +247,7 @@ impl CodeGenerator {
     }
 
     pub fn jsx_attr_to_rust(&self, name: &str) -> String {
-        match name {
-            "class" | "className" => "class_name".to_string(),
-            "for" | "htmlFor" => "for_id".to_string(),
-            "tabindex" => "tab_index".to_string(),
-            _ if name.starts_with("on") && name.len() > 2 && name.chars().nth(2).map(|c| c.is_uppercase()).unwrap_or(false) => {
-                let event_part = &name[2..];
-                format!("on_{}", self.to_snake_case(event_part))
-            }
-            _ => {
-                if name.contains('-') {
-                    self.to_snake_case(name)
-                } else {
-                    name.to_string()
-                }
-            }
-        }
+        let n = match name { "class" | "className" => "class_name", "for" | "htmlFor" => "for_id", "tabindex" => "tab_index", _ => { if name.starts_with("on") && name.len() > 2 && name.chars().nth(2).map(|c| c.is_uppercase()).unwrap_or(false) { return format!("on_{}", self.to_snake_case(&name[2..])); } if name.contains('-') { return self.to_snake_case(name); } return name; } }; n.to_string()
     }
 }
 
