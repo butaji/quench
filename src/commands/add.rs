@@ -9,7 +9,7 @@
 use anyhow::{Result, Context};
 use std::path::{Path, PathBuf};
 use tracing::info;
-use crate::util::{to_pascal_case, to_snake_case};
+use crate::util::to_pascal_case;
 
 /// Re-export ComponentType from cli module
 pub use crate::cli::ComponentType;

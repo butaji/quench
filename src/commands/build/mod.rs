@@ -14,7 +14,7 @@ use tracing::{info, error};
 
 use serde::{Serialize, Deserialize};
 use crate::config::Config;
-use crate::commands::incremental::{BuildCache, compute_file_hash};
+use crate::commands::incremental::BuildCache;
 
 /// Hidden build directory
 pub fn build_dir(project_root: &Path) -> PathBuf {

@@ -4,7 +4,7 @@ mod tests {
     use super::super::hir::*;
 
     fn parse_island(source: &str) -> Module {
-        let mut parser = crate::transpile::TsParser::new();
+        let parser = crate::transpile::TsParser::new();
         parser.parse_tsx(source).unwrap()
     }
 

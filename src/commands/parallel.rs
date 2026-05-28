@@ -262,7 +262,7 @@ fn process_single_route(
     let relative = path.strip_prefix(base)
         .unwrap_or(path);
     let pattern = extract_route_pattern(relative);
-    let params = extract_params(&pattern);
+    let _params = extract_params(&pattern);
     let methods = extract_http_methods(&module);
 
     // Extract default-export component name (if any)
@@ -348,7 +348,7 @@ fn process_single_island(
         .unwrap_or("Unknown")
         .to_string();
 
-    let relative = path.strip_prefix(base)
+    let _relative = path.strip_prefix(base)
         .unwrap_or(path);
 
     let island = IslandEntry {
@@ -522,7 +522,7 @@ fn sanitize_module_name(stem: &str) -> String {
 impl Transpiler {
     /// Parse source string directly
     pub fn parse_source(&self, source: &str) -> Result<crate::transpile::hir::Module, anyhow::Error> {
-        let mut parser = crate::transpile::TsParser::new();
+        let parser = crate::transpile::TsParser::new();
         parser.parse_source(source)
     }
 }
