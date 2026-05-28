@@ -3,9 +3,9 @@
 //! This module provides a Leptos-inspired signal system for fine-grained
 //! reactivity. Signals are the foundation of the islands architecture.
 
-use std::sync::Arc;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 /// Signal type for reactive values
 ///
@@ -62,7 +62,7 @@ impl<T: Clone> Signal<T> {
     {
         let subscribers = self.subscribers.clone();
         subscribers.write().push(Box::new(effect));
-        
+
         move || {
             let mut subs = subscribers.write();
             subs.pop();
@@ -223,12 +223,12 @@ impl<T: Clone> Store<T> {
             signal: Signal::new(state),
         }
     }
-    
+
     /// Get the current state
     pub fn get(&self) -> T {
         self.signal.get()
     }
-    
+
     /// Set the state
     pub fn set(&self, state: T) {
         self.signal.set(state);

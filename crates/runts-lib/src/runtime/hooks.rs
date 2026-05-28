@@ -6,19 +6,19 @@
 //! Note: Some types have `#[allow(dead_code)]` because they are provided
 //! for API compatibility and may be used in future client-side hydration.
 
-use std::sync::Arc;
-use std::marker::PhantomData;
 use parking_lot::RwLock;
+use std::collections::hash_map::DefaultHasher;
 #[allow(unused_imports)]
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 // Re-export signals
-pub use super::signals::Signal;
-pub use super::signals::Computed;
-pub use super::signals::signal;
-pub use super::signals::computed;
 pub use super::signals::batch;
+pub use super::signals::computed;
+pub use super::signals::signal;
+pub use super::signals::Computed;
+pub use super::signals::Signal;
 
 /// State hook result type
 #[allow(dead_code)]
@@ -33,11 +33,11 @@ where
 {
     let state = Arc::new(RwLock::new(initial));
     let state_clone = state.clone();
-    
+
     let setter: Arc<dyn Fn(T) + Send + Sync> = Arc::new(move |new_value: T| {
         *state_clone.write() = new_value;
     });
-    
+
     let getter: T = state.read().clone();
     (getter, setter)
 }
@@ -50,11 +50,11 @@ where
 {
     let state = Arc::new(RwLock::new(initial()));
     let state_clone = state.clone();
-    
+
     let setter: Arc<dyn Fn(T) + Send + Sync> = Arc::new(move |new_value: T| {
         *state_clone.write() = new_value;
     });
-    
+
     let getter: T = state.read().clone();
     (getter, setter)
 }
@@ -167,13 +167,13 @@ where
     let state = Arc::new(RwLock::new(initial));
     let state_clone = state.clone();
     let reducer_clone = reducer.clone();
-    
+
     let dispatch: Arc<dyn Fn(A) + Send + Sync> = Arc::new(move |action: A| {
         let current = state_clone.read().clone();
         let new_state = reducer_clone(current, action);
         *state_clone.write() = new_state;
     });
-    
+
     let getter: S = state.read().clone();
     (getter, dispatch)
 }
@@ -261,7 +261,7 @@ pub fn use_debug_value<T>(_value: T) {
 pub fn use_id() -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    
+
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("rts-{:x}", id)
 }

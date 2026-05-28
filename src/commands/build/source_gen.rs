@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::commands::build::{ComponentEntry, GeneratedFile, RouteEntry, IslandEntry};
+use crate::commands::build::{ComponentEntry, GeneratedFile, IslandEntry, RouteEntry};
 
 /// Scan components directory for component files
 pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
@@ -14,12 +14,16 @@ pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
         return components;
     }
 
-    for entry in WalkDir::new(&components_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&components_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext == "tsx" || ext == "ts" {
-                let name = path.file_stem()
+                let name = path
+                    .file_stem()
                     .and_then(|n| n.to_str())
                     .unwrap_or("Component")
                     .to_string();
@@ -40,7 +44,8 @@ pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Err
     let mut generated = Vec::new();
 
     for file in files {
-        let relative = file.file_name()
+        let relative = file
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("mod.rs")
             .replace(".tsx", ".rs")
@@ -56,7 +61,11 @@ pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Err
 }
 
 /// Generate lib.rs
-pub fn generate_lib(_routes: &[RouteEntry], islands: &[IslandEntry], components: &[ComponentEntry]) -> String {
+pub fn generate_lib(
+    _routes: &[RouteEntry],
+    islands: &[IslandEntry],
+    components: &[ComponentEntry],
+) -> String {
     let mut output = String::new();
     output.push_str("//! Auto-generated library\n\n");
 

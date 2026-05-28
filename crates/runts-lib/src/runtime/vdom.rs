@@ -1,83 +1,64 @@
 //! Virtual DOM implementation
-//!
-//! This module provides the VNode type for representing elements
-//! in the virtual DOM tree.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Attribute value
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AttrValue {
-    /// String value
     String(String),
-    /// Boolean value
     Bool(bool),
-    /// Number value
     Number(f64),
 }
+impl std::fmt::Display for AttrValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(s) => write!(f, "{}", s),
+            Self::Bool(b) => write!(f, "{}", b),
+            Self::Number(n) => write!(f, "{}", n),
+        }
+    }
+}
 
-/// Virtual Node - representation of a DOM element
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum VNode {
-    /// HTML/SVG element
+    #[default]
+    Empty,
+    Text {
+        value: String,
+    },
     Element {
-        /// Tag name (e.g., "div", "span", "a")
         tag: String,
-        /// Attributes (key-value pairs)
         attrs: HashMap<String, AttrValue>,
-        /// Event handlers (event name -> handler id)
         #[serde(default)]
         events: HashMap<String, String>,
-        /// Child nodes
         #[serde(default)]
         children: Vec<VNode>,
-        /// Key for reconciliation
         #[serde(skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
-    /// Text node
-    Text {
-        /// Text content
-        value: String,
-    },
-    /// Component placeholder (rendered by the component function)
     Component {
-        /// Component name
         name: String,
-        /// Props
         #[serde(default)]
-        props: std::collections::HashMap<String, serde_json::Value>,
-        /// Children
+        props: HashMap<String, serde_json::Value>,
         #[serde(default)]
         children: Vec<VNode>,
     },
-    /// Fragment (multiple children without a wrapper)
     Fragment {
-        /// Child nodes
         #[serde(default)]
         children: Vec<VNode>,
     },
-    /// Empty node (renders nothing)
-    #[default]
-    Empty,
 }
 
 impl VNode {
-    /// Create an empty node
     pub fn empty() -> Self {
         Self::Empty
     }
-
-    /// Create a text node
     pub fn text<S: Into<String>>(value: S) -> Self {
-        Self::Text { value: value.into() }
+        Self::Text {
+            value: value.into(),
+        }
     }
-
-    /// Create an element
     pub fn element<S: Into<String>>(tag: S) -> Self {
         Self::Element {
             tag: tag.into(),
@@ -87,376 +68,73 @@ impl VNode {
             key: None,
         }
     }
-
-    /// Create a fragment
     pub fn fragment(children: Vec<VNode>) -> Self {
         Self::Fragment { children }
     }
-
-    /// Add an attribute
     pub fn attr<S: Into<String>, V: Into<AttrValue>>(mut self, name: S, value: V) -> Self {
         if let Self::Element { attrs, .. } = &mut self {
             attrs.insert(name.into(), value.into());
         }
         self
     }
-
-    /// Add a child node
     pub fn child(mut self, child: VNode) -> Self {
         if let Self::Element { children, .. } = &mut self {
             children.push(child);
         }
         self
     }
-
-    /// Add multiple children
-    pub fn children(mut self, children: Vec<VNode>) -> Self {
-        if let Self::Element { children: self_children, .. } = &mut self {
-            self_children.extend(children);
+    pub fn to_html(&self) -> String {
+        match self {
+            Self::Empty => String::new(),
+            Self::Text { value } => value.clone(),
+            Self::Element {
+                tag,
+                attrs,
+                children,
+                ..
+            } => {
+                let attrs_str = attrs
+                    .iter()
+                    .map(|(k, v)| format!(r#"{}="{}""#, k, v))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let children_html = children.iter().map(|c| c.to_html()).collect::<String>();
+                if children_html.is_empty() {
+                    format!("<{} {} />", tag, attrs_str)
+                } else {
+                    format!("<{} {}>{}</{}>", tag, attrs_str, children_html, tag)
+                }
+            }
+            Self::Component { name, children, .. } => {
+                children.iter().map(|c| c.to_html()).collect()
+            }
+            Self::Fragment { children } => children.iter().map(|c| c.to_html()).collect(),
         }
-        self
-    }
-
-    /// Set the key
-    pub fn key<S: Into<String>>(mut self, key: S) -> Self {
-        if let Self::Element { key: k, .. } = &mut self {
-            *k = Some(key.into());
-        }
-        self
     }
 }
 
 impl From<String> for AttrValue {
     fn from(s: String) -> Self {
-        AttrValue::String(s)
+        Self::String(s)
     }
 }
-
 impl From<&str> for AttrValue {
     fn from(s: &str) -> Self {
-        AttrValue::String(s.to_string())
+        Self::String(s.to_string())
     }
 }
-
 impl From<bool> for AttrValue {
     fn from(b: bool) -> Self {
-        AttrValue::Bool(b)
+        Self::Bool(b)
     }
 }
-
 impl From<f64> for AttrValue {
     fn from(n: f64) -> Self {
-        AttrValue::Number(n)
+        Self::Number(n)
     }
 }
-
-impl From<usize> for AttrValue {
-    fn from(n: usize) -> Self {
-        AttrValue::Number(n as f64)
-    }
-}
-
-impl From<u32> for AttrValue {
-    fn from(n: u32) -> Self {
-        AttrValue::Number(n as f64)
-    }
-}
-
 impl From<i32> for AttrValue {
     fn from(n: i32) -> Self {
-        AttrValue::Number(n as f64)
+        Self::Number(n as f64)
     }
-}
-
-/// Trait for types that can be converted into VNodes for the html! macro
-pub trait IntoVNode {
-    fn into_vnode(self) -> VNode;
-}
-
-impl IntoVNode for VNode {
-    fn into_vnode(self) -> VNode { self }
-}
-
-impl IntoVNode for Option<VNode> {
-    fn into_vnode(self) -> VNode {
-        self.unwrap_or_else(VNode::empty)
-    }
-}
-
-impl IntoVNode for String {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self)
-    }
-}
-
-impl IntoVNode for &String {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.clone())
-    }
-}
-
-impl IntoVNode for &str {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for Vec<VNode> {
-    fn into_vnode(self) -> VNode {
-        VNode::fragment(self)
-    }
-}
-
-impl IntoVNode for f64 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for f32 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for i64 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for i32 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for i16 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for i8 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for u64 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for u32 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for u16 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for u8 {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for usize {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for isize {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-impl IntoVNode for bool {
-    fn into_vnode(self) -> VNode {
-        VNode::text(self.to_string())
-    }
-}
-
-/// Helper to convert a value into a VNode
-pub fn into_vnode<T: IntoVNode>(value: T) -> VNode {
-    value.into_vnode()
-}
-
-/// Axum response support for VNode
-impl axum::response::IntoResponse for VNode {
-    fn into_response(self) -> axum::response::Response {
-        let html = to_html(&self);
-        axum::response::Response::builder()
-            .header("Content-Type", "text/html; charset=utf-8")
-            .body(axum::body::Body::from(html))
-            .unwrap()
-    }
-}
-
-/// Map React-style attribute names to HTML attribute names
-fn map_attr_name(name: &str) -> &str {
-    match name {
-        "class_name" => "class",
-        "for_id" => "for",
-        "html_for" => "for",
-        "tab_index" => "tabindex",
-        "read_only" => "readonly",
-        "max_length" => "maxlength",
-        "auto_focus" => "autofocus",
-        "auto_complete" => "autocomplete",
-        "content_editable" => "contenteditable",
-        "cross_origin" => "crossorigin",
-        "http_equiv" => "http-equiv",
-        "no_validate" => "novalidate",
-        "form_action" => "formaction",
-        "form_enc_type" => "formenctype",
-        "form_method" => "formmethod",
-        "form_no_validate" => "formnovalidate",
-        "form_target" => "formtarget",
-        "use_map" => "usemap",
-        "date_time" => "datetime",
-        _ => name,
-    }
-}
-
-/// Convert a VNode to HTML string
-pub fn to_html(node: &VNode) -> String {
-    match node {
-        VNode::Empty => String::new(),
-        VNode::Text { value } => escape_html(value),
-        VNode::Fragment { children } => children.iter().map(to_html).collect(),
-        VNode::Component { name, props, children, .. } => {
-            // For SSR, try to render through component registry if available,
-            // otherwise render children as fallback.
-            let children_html: String = children.iter().map(to_html).collect();
-            let rendered = if let Some(rendered) = try_render_component(name, props, children) {
-                rendered
-            } else {
-                format!("<!-- {} -->{}", escape_html(name), children_html)
-            };
-            // Wrap islands with hydration markers
-            if is_island(name) {
-                let props_json = serde_json::to_string(props).unwrap_or_default();
-                let props_escaped = props_json.replace('&', "&amp;").replace('"', "&quot;");
-                format!(
-                    r#"<div data-island="{}" data-props="{}">{}</div>"#,
-                    escape_html(name),
-                    props_escaped,
-                    rendered
-                )
-            } else {
-                rendered
-            }
-        }
-        VNode::Element { tag, attrs, children, .. } => {
-            let mut html = format!("<{}", tag);
-            
-            // Add attributes
-            for (name, value) in attrs {
-                let html_name = map_attr_name(name);
-                match value {
-                    AttrValue::String(s) => {
-                        html.push_str(&format!(" {}=\"{}\"", html_name, escape_attr(s)));
-                    }
-                    AttrValue::Bool(true) => {
-                        html.push_str(&format!(" {}=\"{}\"", html_name, html_name));
-                    }
-                    AttrValue::Bool(false) => {
-                        // Skip false booleans
-                    }
-                    AttrValue::Number(n) => {
-                        html.push_str(&format!(" {}=\"{}\"", html_name, n));
-                    }
-                }
-            }
-            
-            if children.is_empty() {
-                // Self-closing tag
-                html.push_str("/>");
-            } else {
-                html.push('>');
-                for child in children {
-                    html.push_str(&to_html(child));
-                }
-                html.push_str(&format!("</{}>", tag));
-            }
-            
-            html
-        }
-    }
-}
-
-use std::sync::{Arc, Mutex};
-
-pub type ComponentRenderer = Arc<dyn Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync>;
-
-lazy_static::lazy_static! {
-    static ref COMPONENT_REGISTRY: Mutex<std::collections::HashMap<String, ComponentRenderer>> =
-        Mutex::new(std::collections::HashMap::new());
-    static ref ISLAND_REGISTRY: Mutex<std::collections::HashMap<String, ComponentRenderer>> =
-        Mutex::new(std::collections::HashMap::new());
-}
-
-/// Register a component for SSR rendering.
-/// The callback receives props and children, and should return a VNode.
-pub fn register_component<F>(name: &str, renderer: F)
-where
-    F: Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync + 'static,
-{
-    let mut reg = COMPONENT_REGISTRY.lock().unwrap();
-    reg.insert(name.to_string(), Arc::new(renderer));
-}
-
-/// Register an island for SSR rendering.
-/// Islands are wrapped with hydration markers during SSR.
-pub fn register_island<F>(name: &str, renderer: F)
-where
-    F: Fn(&std::collections::HashMap<String, serde_json::Value>, &[VNode]) -> Option<VNode> + Send + Sync + 'static,
-{
-    let arc_renderer: ComponentRenderer = Arc::new(renderer);
-    {
-        let mut comp_reg = COMPONENT_REGISTRY.lock().unwrap();
-        comp_reg.insert(name.to_string(), arc_renderer.clone());
-    }
-    {
-        let mut island_reg = ISLAND_REGISTRY.lock().unwrap();
-        island_reg.insert(name.to_string(), arc_renderer);
-    }
-}
-
-/// Try to render a registered component. Returns None if not registered.
-fn try_render_component(name: &str, props: &std::collections::HashMap<String, serde_json::Value>, children: &[VNode]) -> Option<String> {
-    let reg = COMPONENT_REGISTRY.lock().unwrap();
-    let renderer = reg.get(name)?;
-    let vnode = renderer(props, children)?;
-    Some(to_html(&vnode))
-}
-
-/// Check if a component name is a registered island.
-fn is_island(name: &str) -> bool {
-    let reg = ISLAND_REGISTRY.lock().unwrap();
-    reg.contains_key(name)
-}
-
-/// Escape HTML special characters
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-/// Escape attribute values
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }

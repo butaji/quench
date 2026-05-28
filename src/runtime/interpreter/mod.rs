@@ -5,10 +5,10 @@
 pub mod eval;
 pub mod render;
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 use crate::transpile::hir::*;
 
@@ -145,8 +145,19 @@ impl std::fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
-            Value::Array(arr) => write!(f, "[{}]", arr.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
-            Value::Object(obj) => write!(f, "{{{}}}", obj.keys().cloned().collect::<Vec<_>>().join(", ")),
+            Value::Array(arr) => write!(
+                f,
+                "[{}]",
+                arr.iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Value::Object(obj) => write!(
+                f,
+                "{{{}}}",
+                obj.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
             Value::Function(name) => write!(f, "fn {}", name),
             Value::VNode(v) => write!(f, "<{} />", v.tag),
         }
@@ -211,14 +222,22 @@ impl Interpreter {
         let module = parser.parse_source(source)?;
 
         let path_str = path.to_string_lossy().to_string();
-        self.modules.write().insert(path_str.clone(), module.clone());
+        self.modules
+            .write()
+            .insert(path_str.clone(), module.clone());
 
         for item in &module.items {
             match item {
                 ModuleItem::Export(export) => {
                     if let Export::Default { expr } = export {
                         if let Expr::Function { decl } = expr {
-                            if decl.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                            if decl
+                                .name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false)
+                            {
                                 let component = ComponentDef {
                                     name: decl.name.clone(),
                                     file_path: path_str.clone(),
@@ -237,7 +256,11 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn render_route(&self, _pattern: &str, params: HashMap<String, String>) -> Result<String, anyhow::Error> {
+    pub fn render_route(
+        &self,
+        _pattern: &str,
+        params: HashMap<String, String>,
+    ) -> Result<String, anyhow::Error> {
         let ctx = EvalContext {
             scope: HashMap::new(),
             props: HashMap::new(),
@@ -257,7 +280,11 @@ impl Interpreter {
         }
     }
 
-    fn render_component(&self, component: &ComponentDef, _ctx: &EvalContext) -> Result<String, anyhow::Error> {
+    fn render_component(
+        &self,
+        component: &ComponentDef,
+        _ctx: &EvalContext,
+    ) -> Result<String, anyhow::Error> {
         Ok(format!("<div>{}</div>", component.name))
     }
 
@@ -273,7 +300,12 @@ impl Interpreter {
     }
 
     /// Execute a route by file path
-    pub fn execute_route_by_file(&self, _path: &str, _params: HashMap<String, String>, _request: RequestInfo) -> Result<RenderResult, anyhow::Error> {
+    pub fn execute_route_by_file(
+        &self,
+        _path: &str,
+        _params: HashMap<String, String>,
+        _request: RequestInfo,
+    ) -> Result<RenderResult, anyhow::Error> {
         Ok(RenderResult {
             status: 200,
             headers: HashMap::new(),
@@ -285,7 +317,12 @@ impl Interpreter {
     }
 
     /// Execute a route
-    pub fn execute_route(&self, path: &str, params: HashMap<String, String>, request: RequestInfo) -> Result<RenderResult, anyhow::Error> {
+    pub fn execute_route(
+        &self,
+        path: &str,
+        params: HashMap<String, String>,
+        request: RequestInfo,
+    ) -> Result<RenderResult, anyhow::Error> {
         self.execute_route_by_file(path, params, request)
     }
 }

@@ -64,7 +64,9 @@ pub fn generate_route_table(routes: &[RouteEntry]) -> String {
     output.push_str("//! Auto-generated route table\n\n");
 
     for route in routes {
-        let methods_str = route.methods.iter()
+        let methods_str = route
+            .methods
+            .iter()
             .map(|m| format!("\"{}\"", m))
             .collect::<Vec<_>>()
             .join(", ");
@@ -72,8 +74,7 @@ pub fn generate_route_table(routes: &[RouteEntry]) -> String {
         output.push_str(&format!(
             r#"// Route: {} [{}]
 "#,
-            route.pattern,
-            methods_str
+            route.pattern, methods_str
         ));
     }
 

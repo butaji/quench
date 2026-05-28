@@ -37,7 +37,8 @@ fn get_runts_lib_path() -> PathBuf {
 }
 
 fn build_cargo_toml(app_name: &str, runts_lib_path: &Path) -> String {
-    format!(r#"[package]
+    format!(
+        r#"[package]
 name = "{app_name}"
 version = "0.1.0"
 edition = "2021"
@@ -65,5 +66,7 @@ tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
 [profile.release]
 lto = true
 codegen-units = 1
-"#, runts_lib_path.display())
+"#,
+        runts_lib_path.display()
+    )
 }

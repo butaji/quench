@@ -37,9 +37,17 @@ fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         cli::Commands::Init { name } => run_init(name),
         cli::Commands::Dev { path } => run_dev(path),
-        cli::Commands::Build { path, release, no_compile } => run_build(path, release, no_compile),
+        cli::Commands::Build {
+            path,
+            release,
+            no_compile,
+        } => run_build(path, release, no_compile),
         cli::Commands::Transpile { path, output: _ } => run_transpile(path),
-        cli::Commands::Add { component_type, name, path } => run_add(component_type.into(), name, path),
+        cli::Commands::Add {
+            component_type,
+            name,
+            path,
+        } => run_add(component_type.into(), name, path),
     }
 }
 
@@ -77,7 +85,12 @@ fn transpile_only(config: &config::Config, path: &str, rt: &tokio::runtime::Runt
     Ok(())
 }
 
-fn full_build(config: &config::Config, path: &str, release: bool, rt: &tokio::runtime::Runtime) -> Result<()> {
+fn full_build(
+    config: &config::Config,
+    path: &str,
+    release: bool,
+    rt: &tokio::runtime::Runtime,
+) -> Result<()> {
     let path_buf = std::path::PathBuf::from(path);
     let result = rt.block_on(commands::build::run_full_build(config, path_buf, release))?;
     info!("Build complete!");
@@ -100,7 +113,11 @@ fn run_transpile(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn run_add(component_type: commands::add::ComponentType, name: String, path: PathBuf) -> Result<()> {
+fn run_add(
+    component_type: commands::add::ComponentType,
+    name: String,
+    path: PathBuf,
+) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(commands::run_add(component_type, name, Some(path)))
 }
