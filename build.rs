@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_LINES: usize = 2500;
-const MAX_FN_LINES: usize = 700;
-const MAX_FN_COMPLEXITY: usize = 300;
+// Lint rules enforced on ALL files:
+// file ≤1100 lines, function ≤400 lines, complexity ≤95
+const MAX_FILE_LINES: usize = 1100;
+const MAX_FN_LINES: usize = 400;
+const MAX_FN_COMPLEXITY: usize = 95;
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".runts", "node_modules"];
 
@@ -158,18 +160,18 @@ fn detect_fn_name(line: &str) -> Option<String> {
 }
 
 fn find_fn_body(lines: &[&str], fn_line_idx: usize) -> Option<(usize, usize)> {
-    for offset in 0..5 {
+    for offset in 0..10 {
         let idx = fn_line_idx + offset;
         if idx >= lines.len() { break; }
         let code = lines[idx].split("//").next().unwrap_or("").trim();
+        if code.is_empty() { continue; }
         if offset == 0 {
             if let Some(pos) = code.find('{') {
                 if code[..pos].contains(')') { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
             }
         } else {
             let t = code.trim();
-            if t.starts_with('{') { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
-            if t.contains('{') && !t.contains("fn ") { return Some((idx + 2, find_matching_brace(lines, idx + 1)?)); }
+            if t.starts_with('{') { return Some((idx + 1, find_matching_brace(lines, idx + 1)?)); }
         }
     }
     None
@@ -179,18 +181,20 @@ fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
     let mut depth = 0i32;
     let mut in_str = false;
     let mut delim = '\0';
+    let mut in_char = false;
     let mut esc = false;
 
     for (idx, line) in lines.iter().enumerate().skip(start - 1) {
         let code = line.split("//").next().unwrap_or("");
         for ch in code.chars() {
-            if in_str {
+            if in_str || in_char {
                 if esc { esc = false; continue; }
                 if ch == '\\' { esc = true; continue; }
-                if ch == delim { in_str = false; }
+                if ch == delim { in_str = false; in_char = false; }
                 continue;
             }
-            if ch == '"' || ch == '\'' { in_str = true; delim = ch; continue; }
+            if ch == '"' { in_str = true; delim = ch; continue; }
+            if ch == '\'' { in_char = true; delim = ch; continue; }
             if ch == '{' { depth += 1; }
             else if ch == '}' { depth -= 1; if depth == 0 { return Some(idx + 1); } }
         }
