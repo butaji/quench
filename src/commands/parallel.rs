@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use walkdir::WalkDir;
+use crate::commands::dev::routes::HttpMethod;
 use tracing::{info, error};
 
 use crate::transpile::{Transpiler, codegen::CodeGenerator, analyzer::Analyzer};
+use crate::util::to_snake_case;
 
-use super::build::{GeneratedFile, RouteEntry, IslandEntry, ComponentEntry, HttpMethod};
+use super::build::{GeneratedFile, RouteEntry, IslandEntry, ComponentEntry};
 
 /// Parallel transpilation result
 pub struct ParallelBuildResult {
@@ -276,13 +278,12 @@ fn process_single_route(
     let route = if is_layout {
         None
     } else {
+        let methods_str: Vec<String> = methods.iter().map(|m| format!("{:?}", m)).collect();
         Some(RouteEntry {
             pattern: pattern.clone(),
-            path: path.to_path_buf(),
-            file: relative.to_string_lossy().to_string(),
-            params,
-            methods,
-            component_name,
+            methods: methods_str,
+            file: path.to_path_buf(),
+            component: component_name,
         })
     };
 
@@ -352,9 +353,8 @@ fn process_single_island(
 
     let island = IslandEntry {
         name: name.clone(),
-        path: path.to_path_buf(),
-        file: relative.to_string_lossy().to_string(),
-        props_type: None,
+        file: path.to_path_buf(),
+        props: vec![],
     };
 
     // Generate output path
@@ -422,11 +422,7 @@ fn process_single_component(
 
     let component = ComponentEntry {
         name: name.clone(),
-        path: path.to_path_buf(),
-        file: path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Unknown")
-            .to_string(),
+        file: path.to_path_buf(),
     };
 
     Ok((GeneratedFile {
@@ -520,18 +516,6 @@ fn sanitize_module_name(stem: &str) -> String {
         }
     }
     to_snake_case(&s)
-}
-
-/// Convert to snake_case
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap_or(c));
-    }
-    result
 }
 
 /// Extend Transpiler with parse_source method

@@ -94,9 +94,11 @@ impl MiddlewareExecutor {
     ) -> MiddlewareOutcome {
         let mut ctx = EvalContext {
             scope: HashMap::new(),
+            props: HashMap::new(),
             params,
             url: request.url.clone(),
-            rendered_islands: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            island_props: None,
+            rendered_islands: Vec::new(),
             state: self.load_state_from_request(request),
             request: Some(request.clone()),
         };
@@ -495,6 +497,7 @@ impl MiddlewareExecutor {
                 Value::Array(_) => "object",
                 Value::Object(_) => "object",
                 Value::Function(_) => "function",
+                Value::VNode(_) => "object",
             }.to_string()),
             UnaryOp::Void => Value::Undefined,
             _ => Value::Null,

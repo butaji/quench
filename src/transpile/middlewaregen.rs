@@ -3,6 +3,7 @@
 //! Transforms Fresh-style `_middleware.ts` files into Axum middleware:
 
 use super::hir::*;
+use crate::util::to_pascal_case;
 use anyhow::Result;
 
 /// Middleware information
@@ -271,24 +272,6 @@ fn extract_rust_value(expr: &Expr) -> String {
         }
         other => format!("/* unsupported expr in middleware: {:?} */ \"\".to_string()", other),
     }
-}
-
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    
-    for c in s.chars() {
-        if c == '_' || c == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    
-    result
 }
 
 /// Generate middleware from module
