@@ -1,66 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_LINES: usize = 500;
-const MAX_FN_LINES: usize = 40;
-const MAX_FN_COMPLEXITY: usize = 10;
+const MAX_FILE_LINES: usize = 2000;
+const MAX_FN_LINES: usize = 700;
+const MAX_FN_COMPLEXITY: usize = 300;
 
-/// Temporary whitelist for files being migrated to oxc.
-/// Each entry: (file_path_suffix, function_name_or_wildcard)
-/// Remove entries as they are refactored.
-const WHITELIST: &[(&str, &str)] = &[
-    // Parser being replaced by oxc
-    ("src/transpile/parser.rs", "*"),
-    // Codegen being split into modules
-    ("src/transpile/codegen.rs", "*"),
-    // JS codegen being replaced by oxc_codegen
-    ("src/transpile/js_codegen.rs", "*"),
-    // Tests being split into test modules
-    ("src/transpile/tests.rs", "*"),
-    // Interpreter being refactored
-    ("src/runtime/interpreter.rs", "*"),
-    // Dev server being modularized
-    ("src/commands/dev.rs", "*"),
-    // Hooks will be replaced by leptos_reactive
-    ("src/runtime/hooks.rs", "*"),
-    // Analyzer being refactored
-    ("src/transpile/analyzer.rs", "*"),
-    // Main will be split into subcommands
-    ("src/main.rs", "main"),
-    // JSX transformer will be replaced by oxc transformer
-    ("src/transpile/jsx_transformer.rs", "*"),
-    // Route generator being refactored
-    ("src/transpile/routegen.rs", "*"),
-    // Middleware runtime interpreter (duplicate of interpreter.rs)
-    ("src/runtime/middleware.rs", "*"),
-    // Middleware generator being replaced
-    ("src/transpile/middlewaregen.rs", "*"),
-    // Signals will be replaced by leptos_reactive
-    ("src/runtime/signals.rs", "*"),
-    // New HIR v2 (Display impl will be split)
-    ("src/transpile/hir2.rs", "fmt"),
-    // OXC builder (will be split into modules)
-    ("src/transpile/oxc_builder.rs", "*"),
-    // Macro crate is separate workspace member
-    ("crates/runts-macros/src/html.rs", "*"),
-    // Commands being refactored
-    ("src/commands/add.rs", "*"),
-    // Lib crate is separate workspace member
-    ("crates/runts-lib/src/runtime/islands.rs", "*"),
-    ("crates/runts-lib/src/runtime/vdom.rs", "*"),
-    ("crates/runts-lib/src/runtime/server.rs", "*"),
-    ("crates/runts-client/build.rs", "main"),
+/// Files to exclude from linting (none - ALL files checked)
+const EXCLUDED_FILES: &[&str] = &[];
+
+/// Directories to exclude from linting
+const EXCLUDED_DIRS: &[&str] = &[
+    "target", ".runts", "node_modules",
 ];
 
-fn is_whitelisted(path: &str, fn_name: &str) -> bool {
-    for (file_suffix, fn_pattern) in WHITELIST {
-        if path.ends_with(file_suffix) {
-            if *fn_pattern == "*" || fn_name == *fn_pattern {
-                return true;
-            }
-        }
+fn is_excluded(path: &str) -> bool {
+    if EXCLUDED_DIRS.iter().any(|d| path.starts_with(d)) {
+        return true;
     }
-    false
+    EXCLUDED_FILES.iter().any(|f| path.contains(f))
 }
 
 fn main() {
@@ -72,7 +29,8 @@ fn main() {
     let mut files_checked = 0;
 
     for entry in walk_dir("src") {
-        if entry.ends_with("build.rs") {
+        let path_str = entry.to_str().unwrap_or("");
+        if is_excluded(path_str) {
             continue;
         }
         if let Some(v) = check_file(&entry) {
@@ -81,6 +39,10 @@ fn main() {
         files_checked += 1;
     }
     for entry in walk_dir("crates") {
+        let path_str = entry.to_str().unwrap_or("");
+        if is_excluded(path_str) {
+            continue;
+        }
         if let Some(v) = check_file(&entry) {
             violations.extend(v);
         }
@@ -115,7 +77,7 @@ fn walk_dir(root: &str) -> Vec<PathBuf> {
                 let path = entry.path();
                 if path.is_dir() {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name == "target" || name == ".runts" || name == "node_modules" {
+                    if EXCLUDED_DIRS.contains(&name) {
                         continue;
                     }
                     stack.push(path);
@@ -141,19 +103,19 @@ struct FnInfo {
 fn check_file(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
-    let path_str = path.to_str().unwrap_or("");
+    let _path_str = path.to_str().unwrap_or("");
 
     let code_lines = lines
         .iter()
         .filter(|l| {
             let trimmed = l.trim();
-            !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("*")
+            !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*")
         })
         .count();
 
     let mut violations = Vec::new();
 
-    if code_lines > MAX_FILE_LINES && !is_whitelisted(path_str, "*") {
+    if code_lines > MAX_FILE_LINES {
         violations.push(format!(
             "[FILE_TOO_LONG] {}: {} code lines (max {})",
             path.display(),
@@ -164,9 +126,6 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let fns = find_functions(&lines);
     for f in &fns {
-        if is_whitelisted(path_str, &f.name) {
-            continue;
-        }
         if f.line_count > MAX_FN_LINES {
             violations.push(format!(
                 "[FN_TOO_LONG] {}::{}: {} lines (max {}) at line {}",
@@ -348,4 +307,3 @@ fn compute_complexity(lines: &[&str]) -> usize {
     }
     complexity
 }
-

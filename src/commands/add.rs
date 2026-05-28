@@ -7,28 +7,12 @@
 //! - Middleware
 
 use anyhow::{Result, Context};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
+use crate::util::{to_pascal_case, to_snake_case};
 
-/// Component type for the add command
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ComponentType {
-    Island,
-    Component,
-    Route,
-    Middleware,
-}
-
-impl ComponentType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ComponentType::Island => "island",
-            ComponentType::Component => "component",
-            ComponentType::Route => "route",
-            ComponentType::Middleware => "middleware",
-        }
-    }
-}
+/// Re-export ComponentType from cli module
+pub use crate::cli::ComponentType;
 
 /// Run the add command
 pub async fn run_add(
@@ -38,16 +22,18 @@ pub async fn run_add(
 ) -> Result<()> {
     let project_root = find_project_root(path.as_ref())?;
     info!("Adding {} '{}' to {:?}", component_type.as_str(), name, project_root);
-
-    match component_type {
-        ComponentType::Island => add_island(&project_root, &name)?,
-        ComponentType::Component => add_component(&project_root, &name)?,
-        ComponentType::Route => add_route(&project_root, &name)?,
-        ComponentType::Middleware => add_middleware(&project_root, &name)?,
-    }
-
+    add_component_type(component_type, &project_root, &name)?;
     info!("Successfully created {} '{}'", component_type.as_str(), name);
     Ok(())
+}
+
+fn add_component_type(component_type: ComponentType, project_root: &Path, name: &str) -> Result<()> {
+    match component_type {
+        ComponentType::Island => add_island(&project_root.to_path_buf(), name),
+        ComponentType::Component => add_component(&project_root.to_path_buf(), name),
+        ComponentType::Route => add_route(&project_root.to_path_buf(), name),
+        ComponentType::Middleware => add_middleware(&project_root.to_path_buf(), name),
+    }
 }
 
 /// Find project root
@@ -117,39 +103,25 @@ mod generated {
     /// Add a route
     pub fn add_route(project_root: &PathBuf, name: &str) -> Result<()> {
         let routes_dir = project_root.join("routes");
-        std::fs::create_dir_all(&routes_dir)
-            .context("Failed to create routes directory")?;
-
-        let content = generate_route_code(name);
-        let route_parts: Vec<&str> = name.split('/').collect();
-        let mut file_path = routes_dir.clone();
-        
-        for part in route_parts.iter() {
-            if part.starts_with('[') {
-                file_path = file_path.join(format!("{}.tsx", part));
-                break;
-            } else if *part == "index" && part == route_parts.last().unwrap_or(&"") {
-                file_path = file_path.join("index.tsx");
-                break;
-            } else {
-                file_path = file_path.join(part);
-            }
-        }
-
-        if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create route directory")?;
-        }
-
-        if file_path.exists() {
-            anyhow::bail!("Route '{}' already exists at {:?}", name, file_path);
-        }
-
-        std::fs::write(&file_path, content)
-            .context("Failed to write route file")?;
-
+        std::fs::create_dir_all(&routes_dir).context("Failed to create routes directory")?;
+        let file_path = resolve_route_path(&routes_dir, name)?;
+        if file_path.exists() { anyhow::bail!("Route '{}' already exists at {:?}", name, file_path); }
+        std::fs::write(&file_path, generate_route_code(name)).context("Failed to write route file")?;
         info!("  Created: routes/{}.tsx", name);
         Ok(())
+    }
+
+    fn resolve_route_path(routes_dir: &Path, name: &str) -> Result<PathBuf> {
+        let parts: Vec<&str> = name.split('/').collect();
+        let mut file_path = routes_dir.to_path_buf();
+        for part in &parts { file_path = file_path.join(part); }
+        let final_path = if file_path.to_string_lossy().contains('[') || file_path.to_string_lossy().ends_with("index") {
+            PathBuf::from(format!("{}.tsx", file_path.to_string_lossy()))
+        } else {
+            file_path.with_file_name(format!("{}.tsx", parts.last().unwrap_or(&name)))
+        };
+        if let Some(parent) = final_path.parent() { std::fs::create_dir_all(parent)?; }
+        Ok(final_path)
     }
 
     /// Add middleware
@@ -177,24 +149,6 @@ mod generated {
 
         info!("  Created: routes/{}/_middleware.ts", name);
         Ok(())
-    }
-
-    fn to_pascal_case(name: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-
-        for c in name.chars() {
-            if c == '-' || c == '_' || c == ' ' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.extend(c.to_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-
-        result
     }
 
     fn generate_island_code(name: &str) -> String {

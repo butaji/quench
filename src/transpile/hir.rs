@@ -49,6 +49,13 @@ pub enum ImportSpecifier {
     Namespace { name: String },
 }
 
+/// Import kind
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ImportKind {
+    Value,
+    Type,
+}
+
 /// Export statement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -148,6 +155,22 @@ pub struct TypeDecl {
     pub name: String,
     pub generics: Vec<GenericParam>,
     pub type_: Type,
+}
+
+/// Type member (for interface/object types)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeMember {
+    pub key: String,
+    pub type_: Type,
+    pub optional: bool,
+    pub readonly: bool,
+}
+
+/// Catch clause
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatchClause {
+    pub param: String,
+    pub body: Box<Block>,
 }
 
 /// Class declaration (for validation)
@@ -579,6 +602,31 @@ pub enum PropKey {
     String(String),
     Number(f64),
     Computed(Expr),
+}
+
+impl PartialEq for PropKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PropKey::Ident(a), PropKey::Ident(b)) => a == b,
+            (PropKey::String(a), PropKey::String(b)) => a == b,
+            (PropKey::Number(a), PropKey::Number(b)) => a == b,
+            (PropKey::Computed(_), PropKey::Computed(_)) => false, // Conservative: computed keys not equal
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PropKey {}
+
+impl std::hash::Hash for PropKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            PropKey::Ident(s) => { 0u8.hash(state); s.hash(state); }
+            PropKey::String(s) => { 1u8.hash(state); s.hash(state); }
+            PropKey::Number(n) => { 2u8.hash(state); n.to_bits().hash(state); }
+            PropKey::Computed(_) => { 3u8.hash(state); } // Conservative
+        }
+    }
 }
 
 /// JSX expressions

@@ -4,6 +4,7 @@
 //! This is a key part of the transpilation pipeline.
 
 use super::hir::*;
+use crate::util::to_snake_case;
 
 /// JSX transformer that converts JSX to html! macro calls
 /// 
@@ -52,21 +53,21 @@ impl JsxTransformer {
                 // Convert PascalCase to snake_case for components
                 // Lowercase for HTML elements
                 if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                    Self::to_snake_case(s)
+                    to_snake_case(s)
                 } else {
                     s.clone()
                 }
             }
             JSXName::Member { object, property } => {
                 format!("{}_{}", 
-                    Self::to_snake_case(object),
-                    Self::to_snake_case(property)
+                    to_snake_case(object),
+                    to_snake_case(property)
                 )
             }
             JSXName::Namespaced { ns, name } => {
                 format!("{}_{}", 
-                    Self::to_snake_case(ns),
-                    Self::to_snake_case(name)
+                    to_snake_case(ns),
+                    to_snake_case(name)
                 )
             }
             JSXName::Dynamic(_) => {
@@ -176,7 +177,7 @@ impl JsxTransformer {
         match expr {
             Expr::Ident { name } => {
                 // Convert identifiers to snake_case
-                Self::to_snake_case(name)
+                to_snake_case(name)
             }
             Expr::String(s) => {
                 format!("{:?}", s)
@@ -235,7 +236,7 @@ impl JsxTransformer {
                     format!("[{}]", Self::transform_expr(property))
                 } else {
                     match property.as_ref() {
-                        Expr::Ident { name } => format!(".{}", Self::to_snake_case(name)),
+                        Expr::Ident { name } => format!(".{}", to_snake_case(name)),
                         _ => format!(".({})", Self::transform_expr(property)),
                     }
                 };
@@ -322,7 +323,7 @@ impl JsxTransformer {
                     fields.push(format!("{}: {}", k, v));
                 }
                 ObjectProp::Shorthand { name } => {
-                    fields.push(Self::to_snake_case(name));
+                    fields.push(to_snake_case(name));
                 }
                 ObjectProp::Spread { value } => {
                     let v = Self::transform_expr(value);
@@ -342,7 +343,7 @@ impl JsxTransformer {
                         .map(|b| Stmt::Block(b.0.clone()))
                         .unwrap_or(Stmt::Empty);
                     let v = Self::transform_arrow(&value.params, &body);
-                    fields.push(format!("get_{}: {}", Self::to_snake_case(&k), v));
+                    fields.push(format!("get_{}: {}", to_snake_case(&k), v));
                 }
                 ObjectProp::Set { key, value } => {
                     let k = Self::prop_key_to_string(key);
@@ -351,7 +352,7 @@ impl JsxTransformer {
                         .map(|b| Stmt::Block(b.0.clone()))
                         .unwrap_or(Stmt::Empty);
                     let v = Self::transform_arrow(&value.params, &body);
-                    fields.push(format!("set_{}: (|{}: {}| {{ {} }})", Self::to_snake_case(&k), Self::to_snake_case(&value.params.first().map(|p| &p.name).unwrap_or(&"value".to_string())), param_type, v));
+                    fields.push(format!("set_{}: (|{}: {}| {{ {} }})", to_snake_case(&k), to_snake_case(&value.params.first().map(|p| &p.name).unwrap_or(&"value".to_string())), param_type, v));
                 }
             }
         }
@@ -362,7 +363,7 @@ impl JsxTransformer {
     /// Transform an arrow function
     fn transform_arrow(params: &[Param], body: &Stmt) -> String {
         let params_str: Vec<String> = params.iter()
-            .map(|p| Self::to_snake_case(&p.name))
+            .map(|p| to_snake_case(&p.name))
             .collect();
         
         let body_str = Self::transform_stmt(body);
@@ -399,7 +400,7 @@ impl JsxTransformer {
     /// Convert property key to string
     fn prop_key_to_string(key: &PropKey) -> String {
         match key {
-            PropKey::Ident(s) => Self::to_snake_case(s),
+            PropKey::Ident(s) => to_snake_case(s),
             PropKey::String(s) => format!("{:?}", s),
             PropKey::Number(n) => n.to_string(),
             PropKey::Computed(e) => Self::transform_expr(e),
@@ -458,33 +459,21 @@ impl JsxTransformer {
             // Event handlers - convert onClick to on_click
             _ if name.starts_with("on") && name.len() > 2 => {
                 let event = &name[2..];
-                format!("on_{}", Self::to_snake_case(event))
+                format!("on_{}", to_snake_case(event))
             }
             // data-* attributes - convert to snake_case
             _ if name.starts_with("data-") => {
-                format!("data_{}", Self::to_snake_case(&name[5..]))
+                format!("data_{}", to_snake_case(&name[5..]))
             }
             // aria-* attributes - convert to snake_case
             _ if name.starts_with("aria-") => {
-                format!("aria_{}", Self::to_snake_case(&name[5..]))
+                format!("aria_{}", to_snake_case(&name[5..]))
             }
             // Default: convert to snake_case
-            _ => Self::to_snake_case(name),
+            _ => to_snake_case(name),
         }
     }
-    
-    /// Convert PascalCase to snake_case
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-        }
-        result
-    }
-    
+
     /// Escape string for HTML
     fn escape_string(s: &str) -> String {
         s.replace('&', "&amp;")

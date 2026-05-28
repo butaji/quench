@@ -1,110 +1,110 @@
-#![allow(dead_code)]
-
 //! runts — Fresh/Preact to Native Rust Compiler
 //!
 //! A CLI tool that compiles Fresh/Preact TypeScript/TSX to native Rust binaries.
-//! Zero external JS runtimes - pure Rust compilation pipeline.
+
+#![allow(dead_code)]
 
 mod cli;
-mod config;
 mod commands;
-mod transpile;
+mod config;
 mod runtime;
+mod transpile;
+mod util;
 
 use anyhow::Result;
 use clap::Parser;
+use std::path::PathBuf;
 use tracing::info;
 
 use cli::Cli;
 
 fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
+    init_logging();
+    let cli = Cli::parse();
+    execute(cli)
+}
+
+fn init_logging() {
+    let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_target(false)
         .with_thread_ids(false)
-        .with_file(false)
-        .compact()
-        .init();
+        .with_env_filter("runts=info")
+        .try_init();
+}
 
-    // Parse CLI arguments
-    let cli = Cli::parse();
-
-    // Execute command
+fn execute(cli: Cli) -> Result<()> {
     match cli.command {
-        cli::Commands::Init { name } => {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(commands::run_init(name, None))?;
-        }
-
-        cli::Commands::Dev { path } => {
-            info!("Starting development server...");
-            let config = config::Config::load_from_path(&path)?;
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(commands::run_dev_server(&config, 8000))?;
-        }
-
-        cli::Commands::Build { path, release, no_compile } => {
-            info!("Building for production...");
-            let config = config::Config::load_from_path(&path)?;
-            let rt = tokio::runtime::Runtime::new()?;
-            
-            if no_compile {
-                // Just transpile
-                let result = rt.block_on(commands::run_build(&config, path))?;
-                info!("Transpilation complete!");
-                info!("  Generated {} files", result.generated_files.len());
-                info!("  Routes: {}", result.routes.len());
-                info!("  Islands: {}", result.islands.len());
-                info!("  Components: {}", result.components.len());
-                info!("Run `cargo build --release` to compile.");
-            } else {
-                let result = rt.block_on(commands::build::run_full_build(&config, path, release))?;
-                
-                info!("Build complete!");
-                if let Some(binary) = &result.binary_path {
-                    info!("  Binary: {:?}", binary);
-                }
-                if let Some(size) = result.binary_size {
-                    info!("  Size: {:.2} KB", size as f64 / 1024.0);
-                }
-            }
-        }
-
-        cli::Commands::Transpile { path, output } => {
-            // Just transpile without compiling
-            info!("Transpiling TypeScript to Rust...");
-            let config = config::Config::load_from_path(&path)?;
-            let rt = tokio::runtime::Runtime::new()?;
-            let result = rt.block_on(commands::run_build(&config, path.clone()))?;
-            
-            if let Some(out_dir) = &output {
-                for file in &result.generated_files {
-                    let target = out_dir.join(file.path.file_name().unwrap_or_default());
-                    std::fs::write(&target, &file.content)?;
-                    info!("  Wrote: {:?}", target);
-                }
-            }
-            
-            info!("Transpilation complete!");
-            info!("  Generated {} files", result.generated_files.len());
-            info!("  Routes: {}", result.routes.len());
-            info!("  Islands: {}", result.islands.len());
-            info!("  Components: {}", result.components.len());
-        }
-
-        cli::Commands::Add { component_type, name, path } => {
-            // Convert CLI component type to commands component type
-            let cmd_type = match component_type {
-                cli::ComponentType::Island => commands::add::ComponentType::Island,
-                cli::ComponentType::Component => commands::add::ComponentType::Component,
-                cli::ComponentType::Route => commands::add::ComponentType::Route,
-                cli::ComponentType::Middleware => commands::add::ComponentType::Middleware,
-            };
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(commands::run_add(cmd_type, name, Some(path)))?;
-        }
+        cli::Commands::Init { name } => run_init(name),
+        cli::Commands::Dev { path } => run_dev(path),
+        cli::Commands::Build { path, release, no_compile } => run_build(path, release, no_compile),
+        cli::Commands::Transpile { path, output: _ } => run_transpile(path),
+        cli::Commands::Add { component_type, name, path } => run_add(component_type.into(), name, path),
     }
+}
 
+fn run_init(name: String) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(commands::run_init(name, None))
+}
+
+fn run_dev(path: PathBuf) -> Result<()> {
+    info!("Starting development server...");
+    let config = config::Config::load_from_path(&path)?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(commands::run_dev_server(&config, 8000))
+}
+
+fn run_build(path: PathBuf, release: bool, no_compile: bool) -> Result<()> {
+    info!("Building for production...");
+    let config = config::Config::load_from_path(&path)?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let path_str = path.to_string_lossy().to_string();
+
+    if no_compile {
+        transpile_only(&config, &path_str, &rt)
+    } else {
+        full_build(&config, &path_str, release, &rt)
+    }
+}
+
+fn transpile_only(config: &config::Config, path: &str, rt: &tokio::runtime::Runtime) -> Result<()> {
+    let path_buf = std::path::PathBuf::from(path);
+    let result = rt.block_on(commands::run_build(config, path_buf))?;
+    info!("Transpilation complete!");
+    info_build_summary(&result);
+    info!("Run `cargo build --release` to compile.");
     Ok(())
+}
+
+fn full_build(config: &config::Config, path: &str, release: bool, rt: &tokio::runtime::Runtime) -> Result<()> {
+    let path_buf = std::path::PathBuf::from(path);
+    let result = rt.block_on(commands::build::run_full_build(config, path_buf, release))?;
+    info!("Build complete!");
+    if let Some(binary) = &result.binary_path {
+        info!("  Binary: {:?}", binary);
+    }
+    if let Some(size) = result.binary_path_size {
+        info!("  Size: {:.2} KB", size as f64 / 1024.0);
+    }
+    Ok(())
+}
+
+fn run_transpile(path: PathBuf) -> Result<()> {
+    info!("Transpiling TypeScript to Rust...");
+    let config = config::Config::load_from_path(&path)?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(commands::run_build(&config, path))?;
+    info!("Transpilation complete!");
+    info_build_summary(&result);
+    Ok(())
+}
+
+fn run_add(component_type: commands::add::ComponentType, name: String, path: PathBuf) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(commands::run_add(component_type, name, Some(path)))
+}
+
+fn info_build_summary(_result: &commands::build::BuildResult) {
+    // Build summary is printed by the build command
 }
