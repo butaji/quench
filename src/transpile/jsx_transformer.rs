@@ -506,13 +506,14 @@ impl JsxTransformer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::to_snake_case;
     
     #[test]
     fn test_snake_case() {
-        assert_eq!(JsxTransformer::to_snake_case("useState"), "use_state");
-        assert_eq!(JsxTransformer::to_snake_case("onClick"), "on_click");
-        assert_eq!(JsxTransformer::to_snake_case("className"), "class_name");
-        assert_eq!(JsxTransformer::to_snake_case("HelloWorld"), "hello_world");
+        assert_eq!(to_snake_case("useState"), "use_state");
+        assert_eq!(to_snake_case("onClick"), "on_click");
+        assert_eq!(to_snake_case("className"), "class_name");
+        assert_eq!(to_snake_case("HelloWorld"), "hello_world");
     }
     
     #[test]

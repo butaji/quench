@@ -1814,6 +1814,7 @@ dependencies = [
  "oxc_codegen",
  "oxc_parser",
  "oxc_span",
+ "oxc_syntax",
  "oxc_transformer",
  "parking_lot",
  "pathdiff",

@@ -78,6 +78,7 @@ oxc_span = "0.133"
 oxc_codegen = "0.133"
 oxc_ast_visit = "0.133"
 oxc_transformer = "0.133"
+oxc_syntax = "0.133"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
