@@ -58,24 +58,31 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
             let body = func.body.as_ref()
                 .map(|b| hir::Block(b.statements.iter().filter_map(convert_stmt_to_stmt).collect()))
                 .unwrap_or_default();
+            let return_type = func.return_type.as_ref()
+                .map(|t| convert_ts_type(&t.type_annotation));
             let decl = hir::FunctionDecl {
-                name, generics: vec![], params, return_type: None,
+                name, generics: vec![], params, return_type,
                 body: Some(body), is_async: func.r#async,
                 is_generator: func.generator, decorators: vec![],
             };
-            Some(hir::ModuleItem::Export(hir::Export::NamedWithValue {
-                name: decl.name.clone(),
-                value: hir::Expr::Function { decl },
-            }))
+            Some(hir::ModuleItem::Decl(hir::Decl::Function(decl)))
         }
         Statement::VariableDeclaration(var_decl) => {
-            if let Some((i, decl)) = var_decl.declarations.iter().enumerate().next() {
-                let name = format!("var{}", i);
+            if let Some(decl) = var_decl.declarations.first() {
+                let name = "var".to_string();
                 let init = decl.init.as_ref().and_then(convert_expr);
-                return Some(hir::ModuleItem::Export(hir::Export::NamedWithValue {
+                let kind = match var_decl.kind {
+                    VariableDeclarationKind::Const => hir::VariableKind::Const,
+                    VariableDeclarationKind::Let => hir::VariableKind::Let,
+                    _ => hir::VariableKind::Var,
+                };
+                return Some(hir::ModuleItem::Decl(hir::Decl::Variable(hir::VariableDecl {
                     name,
-                    value: init.unwrap_or(hir::Expr::Null),
-                }));
+                    kind,
+                    type_: None,
+                    init,
+                    pattern: None,
+                })));
             }
             None
         }
@@ -123,13 +130,21 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
                         }));
                     }
                     Declaration::VariableDeclaration(var) => {
-                        if let Some((i, v)) = var.declarations.iter().enumerate().next() {
-                            let name = format!("var{}", i);
+                        if let Some(v) = var.declarations.first() {
+                            let name = "var".to_string();
                             let init = v.init.as_ref().and_then(convert_expr);
-                            return Some(hir::ModuleItem::Export(hir::Export::NamedWithValue {
+                            let kind = match var.kind {
+                                VariableDeclarationKind::Const => hir::VariableKind::Const,
+                                VariableDeclarationKind::Let => hir::VariableKind::Let,
+                                _ => hir::VariableKind::Var,
+                            };
+                            return Some(hir::ModuleItem::Decl(hir::Decl::Variable(hir::VariableDecl {
                                 name,
-                                value: init.unwrap_or(hir::Expr::Null),
-                            }));
+                                kind,
+                                type_: None,
+                                init,
+                                pattern: None,
+                            })));
                         }
                     }
                     _ => {}
@@ -140,6 +155,53 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
         Statement::ExportDefaultDeclaration(_decl) => {
             // Export default needs special handling - return empty for now
             None
+        }
+        Statement::TSTypeAliasDeclaration(alias) => {
+            // Handle TypeAlias: type Foo = ...
+            let name = alias.id.name.to_string();
+            let type_ = convert_ts_type(&alias.type_annotation);
+            Some(hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl {
+                name,
+                generics: vec![],
+                type_,
+            })))
+        }
+        Statement::TSInterfaceDeclaration(iface) => {
+            // Handle Interface: interface Foo { ... }
+            let name = iface.id.name.to_string();
+            let members: Vec<_> = iface.body.body.iter().filter_map(|m| {
+                if let oxc_ast::ast::TSSignature::TSPropertySignature(p) = m {
+                    let p = p.as_ref();
+                    Some(hir::ObjectMember {
+                        key: p.key.name().map(|n| n.to_string()).unwrap_or_default(),
+                        optional: p.optional,
+                        readonly: p.readonly,
+                        type_: p.type_annotation.as_ref()
+                            .map(|t| convert_ts_type(&t.type_annotation))
+                            .unwrap_or(hir::Type::Unknown),
+                    })
+                } else { None }
+            }).collect();
+            Some(hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl {
+                name,
+                generics: vec![],
+                type_: hir::Type::Object { members },
+            })))
+        }
+        Statement::ClassDeclaration(cls) => {
+            // Handle class declarations
+            let name = cls.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
+            let extends = cls.super_class.as_ref().and_then(|e| {
+                if let oxc_ast::ast::Expression::Identifier(id) = e {
+                    Some(hir::Type::Ref { name: id.name.to_string(), generics: vec![] })
+                } else { None }
+            });
+            Some(hir::ModuleItem::Decl(hir::Decl::Class(hir::ClassDecl {
+                name,
+                extends,
+                implements: vec![],
+                members: vec![],
+            })))
         }
         _ => None,
     }
@@ -231,6 +293,22 @@ fn convert_expr(expr: &oxc_ast::ast::Expression) -> Option<hir::Expr> {
                 } else { None }
             }).collect();
             Some(hir::Expr::Object { props })
+        }
+        
+        Expression::JSXElement(elem) => {
+            Some(hir::Expr::JSX(convert_jsx_element(elem)))
+        }
+        
+        Expression::JSXFragment(frag) => {
+            Some(hir::Expr::JSX(hir::JSXExpr {
+                opening: hir::JSXOpening {
+                    name: hir::JSXName::Fragment,
+                    attrs: vec![],
+                    self_closing: false,
+                },
+                children: frag.children.iter().filter_map(convert_jsx_child).collect(),
+                closing: None,
+            }))
         }
         
         Expression::BinaryExpression(bin) => {
@@ -362,6 +440,142 @@ fn convert_expr(expr: &oxc_ast::ast::Expression) -> Option<hir::Expr> {
         }
         
         Expression::AwaitExpression(a) => convert_expr(&a.argument).map(|arg| hir::Expr::Await { arg: Box::new(arg) }),
+        _ => None,
+    }
+}
+
+fn convert_ts_type(type_: &oxc_ast::ast::TSType) -> hir::Type {
+    use oxc_ast::ast::*;
+    match type_ {
+        TSType::TSNumberKeyword(_) => hir::Type::Number,
+        TSType::TSStringKeyword(_) => hir::Type::String,
+        TSType::TSBooleanKeyword(_) => hir::Type::Boolean,
+        TSType::TSVoidKeyword(_) => hir::Type::Void,
+        TSType::TSNullKeyword(_) => hir::Type::Null,
+        TSType::TSUndefinedKeyword(_) => hir::Type::Undefined,
+        TSType::TSObjectKeyword(_) => hir::Type::Object { members: vec![] },
+        TSType::TSArrayType(arr) => hir::Type::Array { elem: Box::new(convert_ts_type(&arr.element_type)) },
+        TSType::TSTypeReference(type_ref) => {
+            let name = match &type_ref.type_name {
+                oxc_ast::ast::TSTypeName::IdentifierReference(id) => id.name.to_string(),
+                oxc_ast::ast::TSTypeName::QualifiedName(q) => format!("{}.{}", 
+                    match &q.left {
+                        oxc_ast::ast::TSTypeName::IdentifierReference(id) => id.name.to_string(),
+                        _ => "".to_string(),
+                    },
+                    q.right.name.to_string()
+                ),
+                _ => "unknown".to_string(),
+            };
+            hir::Type::Ref { name, generics: vec![] }
+        }
+        TSType::TSUnionType(union) => {
+            let types: Vec<_> = union.types.iter().map(convert_ts_type).collect();
+            hir::Type::Union { types }
+        }
+        TSType::TSIntersectionType(intersection) => {
+            let types: Vec<_> = intersection.types.iter().map(convert_ts_type).collect();
+            hir::Type::Intersection { types }
+        }
+        TSType::TSParenthesizedType(paren) => convert_ts_type(&paren.type_annotation),
+        TSType::TSFunctionType(func) => {
+            let params: Vec<_> = func.params.items.iter().map(|p| {
+                p.type_annotation.as_ref()
+                    .map(|t| convert_ts_type(&t.type_annotation))
+                    .unwrap_or(hir::Type::Unknown)
+            }).collect();
+            hir::Type::Function {
+                params,
+                ret: Box::new(convert_ts_type(&func.return_type.type_annotation)),
+                generics: vec![],
+            }
+        }
+        _ => hir::Type::Unknown,
+    }
+}
+
+fn convert_jsx_expression(expr: &oxc_ast::ast::JSXExpression) -> Option<hir::Expr> {
+    use oxc_ast::ast::*;
+    match expr {
+        JSXExpression::EmptyExpression(_) => Some(hir::Expr::Null),
+        JSXExpression::Identifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
+        JSXExpression::NumericLiteral(n) => Some(hir::Expr::Number(n.value)),
+        JSXExpression::StringLiteral(s) => Some(hir::Expr::String(s.value.to_string())),
+        JSXExpression::BooleanLiteral(b) => Some(hir::Expr::Boolean(b.value)),
+        JSXExpression::NullLiteral(_) => Some(hir::Expr::Null),
+        _ => expr.as_expression().and_then(|e| convert_expr(e)),
+    }
+}
+
+fn convert_jsx_element(elem: &oxc_ast::ast::JSXElement) -> hir::JSXExpr {
+    use oxc_ast::ast::*;
+    
+    let opening_elem = elem.opening_element.as_ref();
+    let name = match &opening_elem.name {
+        JSXElementName::Identifier(id) => hir::JSXName::Ident(id.name.to_string()),
+        JSXElementName::NamespacedName(ns) => hir::JSXName::Ident(format!("{}:{}", ns.namespace.name.to_string(), ns.name.name.to_string())),
+        JSXElementName::MemberExpression(_) => hir::JSXName::Ident("member".to_string()),
+        JSXElementName::IdentifierReference(id) => hir::JSXName::Ident(id.name.to_string()),
+        JSXElementName::ThisExpression(_) => hir::JSXName::Ident("this".to_string()),
+    };
+    
+    let opening = hir::JSXOpening {
+        name,
+        attrs: opening_elem.attributes.iter().filter_map(|attr| {
+            match attr {
+                JSXAttributeItem::Attribute(attr) => {
+                    let attr_name = match &attr.name {
+                        JSXAttributeName::Identifier(id) => id.name.to_string(),
+                        JSXAttributeName::NamespacedName(ns) => format!("{}:{}", ns.namespace.name.to_string(), ns.name.name.to_string()),
+                    };
+                    let value = attr.value.as_ref().and_then(|v| match v {
+                        JSXAttributeValue::ExpressionContainer(e) => {
+                            convert_jsx_expression(&e.expression).map(|e| hir::JSXAttrValue::Expr(e))
+                        }
+                        JSXAttributeValue::StringLiteral(s) => {
+                            Some(hir::JSXAttrValue::String(s.value.to_string()))
+                        }
+                        _ => None,
+                    });
+                    Some(hir::JSXAttr::Attr { name: attr_name, value })
+                }
+                _ => None,
+            }
+        }).collect(),
+        self_closing: elem.closing_element.is_none(),
+    };
+    
+    hir::JSXExpr {
+        opening,
+        children: elem.children.iter().filter_map(convert_jsx_child).collect(),
+        closing: elem.closing_element.as_ref().map(|c| hir::JSXClosing {
+            name: match &c.name {
+                JSXElementName::Identifier(id) => hir::JSXName::Ident(id.name.to_string()),
+                _ => hir::JSXName::Ident("unknown".to_string()),
+            },
+        }),
+    }
+}
+
+fn convert_jsx_child(child: &oxc_ast::ast::JSXChild) -> Option<hir::JSXChild> {
+    use oxc_ast::ast::*;
+    match child {
+        JSXChild::Text(t) => Some(hir::JSXChild::Text(t.value.to_string())),
+        JSXChild::ExpressionContainer(e) => {
+            convert_jsx_expression(&e.expression).map(|expr| hir::JSXChild::Expr(expr))
+        }
+        JSXChild::Element(elem) => Some(hir::JSXChild::JSX(convert_jsx_element(elem))),
+        JSXChild::Fragment(frag) => {
+            Some(hir::JSXChild::JSX(hir::JSXExpr {
+                opening: hir::JSXOpening {
+                    name: hir::JSXName::Fragment,
+                    attrs: vec![],
+                    self_closing: false,
+                },
+                children: frag.children.iter().filter_map(convert_jsx_child).collect(),
+                closing: None,
+            }))
+        }
         _ => None,
     }
 }
