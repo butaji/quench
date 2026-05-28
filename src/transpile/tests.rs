@@ -9,7 +9,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_import() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"import { useState } from "preact/hooks";"#);
         assert!(result.is_ok());
         
@@ -24,7 +24,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_type_alias() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"type Props = { count: number; };"#);
         if result.is_err() {
         }
@@ -40,7 +40,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_interface() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"interface CounterProps {
             initial?: number;
             step?: number;
@@ -63,7 +63,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_function() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"function add(a: number, b: number): number {
             return a + b;
         }"#);
@@ -81,7 +81,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_async_function() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"async function fetchData(url: string): Promise<Response> {
             return fetch(url);
         }"#);
@@ -97,7 +97,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_jsx_element() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(r#"const elem = <div>Hello</div>;"#);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
@@ -121,7 +121,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_jsx_fragment() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(r#"const elem = <>Hello <span>world</span></>;"#);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
@@ -144,7 +144,7 @@ mod parser_tests {
 
     #[test]
     fn test_parse_jsx_fragment_empty() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(r#"const elem = <></>;"#);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
@@ -165,7 +165,7 @@ mod parser_tests {
 
     #[test]
     fn test_parse_jsx_component() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let source = r#"const comp = <Counter initial={0} step={1} />;"#;
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
@@ -191,7 +191,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_template_literal() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const msg = `Hello ${name}, you have ${count} items`;"#);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         
@@ -212,7 +212,7 @@ mod parser_tests {
     
     #[test]
     fn test_parse_destructuring_object() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const { name, age } = person;"#);
         assert!(result.is_ok());
         
@@ -221,34 +221,34 @@ mod parser_tests {
             ModuleItem::Decl(Decl::Variable(v)) => v,
             _ => panic!("Expected variable declaration"),
         };
-        // Destructuring is simplified to single variable
-        assert_eq!(var_decl.name, "var");
+        // Object destructuring returns "obj"
+        assert_eq!(var_decl.name, "obj");
     }
     
     #[test]
     fn test_parse_destructuring_array() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const [first, ...rest] = items;"#);
         assert!(result.is_ok());
     }
     
     #[test]
     fn test_parse_conditional() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const result = count > 0 ? "positive" : "negative";"#);
         assert!(result.is_ok());
     }
     
     #[test]
     fn test_parse_logical_operators() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const a = x && y || z;"#);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
     }
     
     #[test]
     fn test_parse_use_state() {
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_source(r#"const [count, setCount] = useState(0);"#);
         assert!(result.is_ok());
         
@@ -257,8 +257,8 @@ mod parser_tests {
             ModuleItem::Decl(Decl::Variable(v)) => v,
             _ => panic!("Expected variable declaration"),
         };
-        // Destructuring is simplified to single variable
-        assert_eq!(var_decl.name, "var");
+        // Array destructuring returns "arr"
+        assert_eq!(var_decl.name, "arr");
     }
 }
 
@@ -423,7 +423,7 @@ mod codegen_tests {
             closing: None,
         };
         
-        let result = cg.jsx_to_rust(&jsx);
+        let _result = cg.jsx_to_rust(&jsx);
         let result = cg.jsx_to_rust(&jsx);
         assert!(result.contains("html!"));
         assert!(result.contains("<>") || result.contains("</>"));
@@ -770,7 +770,7 @@ mod analyzer_tests {
 
 #[cfg(test)]
 mod routegen_tests {
-    use super::routegen::{parse_route_path, extract_handlers, generate_params_struct, RouteInfo};
+    use super::routegen::{parse_route_path, generate_params_struct};
     
     #[test]
     fn test_parse_route_path_static() {
@@ -827,7 +827,7 @@ mod routegen_tests {
 mod integration_tests {
     use super::parser::TsParser;
     use super::hir::*;
-    use super::codegen::CodeGenerator;
+    
     use super::analyzer::Analyzer;
     
     #[test]
@@ -842,7 +842,7 @@ export default function Greeting({ name }: Props) {
 }
 "#;
         
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         // Check for type declaration
@@ -876,7 +876,7 @@ export default function Counter({ initial = 0 }: CounterProps) {
 }
 "#;
         
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).unwrap();
         
         // Verify imports
@@ -904,7 +904,7 @@ export default function Post() {
 }
 "#;
         
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         // Verify module has items
@@ -925,7 +925,7 @@ export default function Counter({ initial = 0 }: Props) {
 "#;
         
         // Parse
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         // Verify module has items
@@ -964,7 +964,7 @@ export default function BlogPost({ data }: PageProps<PostData>) {
 "#;
         
         // Parse
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         // Verify module has items
@@ -988,7 +988,7 @@ export default function TodoList({ items }: Props) {
 "#;
         
         // Parse
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         // Verify module has items
@@ -1009,7 +1009,7 @@ export default function Counter() {
 }
 "#;
         
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
         
         let mut analyzer = Analyzer::new();
@@ -1033,7 +1033,7 @@ export default function Counter() {
             const world = 'world';
             const template = `template`;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse string literals: {:?}", result.err());
     }
@@ -1047,7 +1047,7 @@ export default function Counter() {
             const hex = 0xFF;
             const binary = 0b1010;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse number literals: {:?}", result.err());
     }
@@ -1059,7 +1059,7 @@ export default function Counter() {
             const f = false;
             const n = null;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse boolean/null: {:?}", result.err());
     }
@@ -1075,7 +1075,7 @@ export default function Counter() {
                 return "Hello, " + name;
             }
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse functions: {:?}", result.err());
         
@@ -1097,7 +1097,7 @@ export default function Counter() {
             const lt = 3 < 5;
             const gt = 5 > 3;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse binary expressions: {:?}", result.err());
     }
@@ -1110,7 +1110,7 @@ export default function Counter() {
             const not = !true;
             const coalesce = null ?? "default";
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse logical expressions: {:?}", result.err());
     }
@@ -1120,7 +1120,7 @@ export default function Counter() {
         let source = r#"
             const ternary = x > 0 ? "positive" : "negative";
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse conditional: {:?}", result.err());
     }
@@ -1131,7 +1131,7 @@ export default function Counter() {
             const arr = [1, 2, 3];
             const nested = [[1, 2], [3, 4]];
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse arrays: {:?}", result.err());
     }
@@ -1142,7 +1142,7 @@ export default function Counter() {
             const obj = { a: 1, b: 2 };
             const nested = { outer: { inner: 1 } };
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse objects: {:?}", result.err());
     }
@@ -1153,7 +1153,7 @@ export default function Counter() {
             const add = (a: number, b: number): number => a + b;
             const greet = (name: string) => "Hello, " + name;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse arrow functions: {:?}", result.err());
     }
@@ -1163,7 +1163,7 @@ export default function Counter() {
         let source = r#"
             const greeting = `Hello, ${name}!`;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse templates: {:?}", result.err());
     }
@@ -1175,7 +1175,7 @@ export default function Counter() {
             import bar from 'default';
             import * as ns from 'namespace';
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse imports: {:?}", result.err());
     }
@@ -1186,7 +1186,7 @@ export default function Counter() {
             export const a = 1;
             export function foo() { return 1; }
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse exports: {:?}", result.err());
     }
@@ -1197,7 +1197,7 @@ export default function Counter() {
             const val = obj.property;
             const computed = arr[0];
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse member expressions: {:?}", result.err());
     }
@@ -1208,7 +1208,7 @@ export default function Counter() {
             const result = foo(1, 2);
             const chained = obj.method().property;
         "#;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let result = parser.parse_tsx(source);
         assert!(result.is_ok(), "Failed to parse call expressions: {:?}", result.err());
     }

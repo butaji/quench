@@ -3,7 +3,7 @@
 use std::path::Path;
 use walkdir::WalkDir;
 
-use crate::commands::build::{IslandEntry, PropEntry, PathBuf};
+use crate::commands::build::IslandEntry;
 
 /// Scan islands directory for island files
 pub fn scan_islands(project_root: &Path) -> Vec<IslandEntry> {

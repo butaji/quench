@@ -207,7 +207,7 @@ impl Interpreter {
     }
 
     pub fn load_module(&mut self, path: &Path, source: &str) -> Result<(), anyhow::Error> {
-        let mut parser = crate::transpile::TsParser::new();
+        let parser = crate::transpile::TsParser::new();
         let module = parser.parse_source(source)?;
 
         let path_str = path.to_string_lossy().to_string();
@@ -264,7 +264,7 @@ impl Interpreter {
     /// Load a file into the interpreter
     pub fn load_file(&mut self, path: &str, source: &str) -> Result<(), anyhow::Error> {
         use crate::transpile::parser::TsParser;
-        let mut parser = TsParser::new();
+        let parser = TsParser::new();
         let module = parser.parse_source(source)?;
         // Store the module for later use
         let mut modules = self.modules.write();

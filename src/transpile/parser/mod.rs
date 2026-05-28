@@ -47,14 +47,9 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
     match stmt {
         Statement::FunctionDeclaration(func) => {
             let name = func.id.as_ref()?.name.to_string();
-            let params: Vec<_> = (0..func.params.items.len())
-                .map(|i| hir::Param {
-                    name: format!("arg{}", i),
-                    type_: None,
-                    optional: false,
-                    default: None,
-                    pattern: None,
-                }).collect();
+            let params: Vec<_> = func.params.items.iter()
+                .map(|p| convert_param(p))
+                .collect();
             let body = func.body.as_ref()
                 .map(|b| hir::Block(b.statements.iter().filter_map(convert_stmt_to_stmt).collect()))
                 .unwrap_or_default();
@@ -69,7 +64,7 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
         }
         Statement::VariableDeclaration(var_decl) => {
             if let Some(decl) = var_decl.declarations.first() {
-                let name = "var".to_string();
+                let name = extract_binding_name(&decl.id);
                 let init = decl.init.as_ref().and_then(convert_expr);
                 let kind = match var_decl.kind {
                     VariableDeclarationKind::Const => hir::VariableKind::Const,
@@ -109,18 +104,14 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
                 match d {
                     Declaration::FunctionDeclaration(func) => {
                         let name = func.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
-                        let params: Vec<_> = (0..func.params.items.len())
-                            .map(|i| hir::Param {
-                                name: format!("arg{}", i),
-                                type_: None, optional: false,
-                                default: None,
-                                pattern: None,
-                            }).collect();
+                        let params: Vec<_> = func.params.items.iter().map(convert_param).collect();
                         let body = func.body.as_ref()
                             .map(|b| hir::Block(b.statements.iter().filter_map(convert_stmt_to_stmt).collect()))
                             .unwrap_or_default();
+                        let return_type = func.return_type.as_ref()
+                            .map(|t| convert_ts_type(&t.type_annotation));
                         let decl = hir::FunctionDecl {
-                            name: name.clone(), generics: vec![], params, return_type: None,
+                            name: name.clone(), generics: vec![], params, return_type,
                             body: Some(body), is_async: func.r#async,
                             is_generator: func.generator, decorators: vec![],
                         };
@@ -131,7 +122,7 @@ fn convert_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::ModuleItem> {
                     }
                     Declaration::VariableDeclaration(var) => {
                         if let Some(v) = var.declarations.first() {
-                            let name = "var".to_string();
+                            let name = extract_binding_name(&v.id);
                             let init = v.init.as_ref().and_then(convert_expr);
                             let kind = match var.kind {
                                 VariableDeclarationKind::Const => hir::VariableKind::Const,
@@ -219,7 +210,7 @@ fn convert_stmt_to_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::Stmt> {
         }
         Statement::VariableDeclaration(var_decl) => {
             if let Some(decl) = var_decl.declarations.first() {
-                let name = "var".to_string();
+                let name = extract_binding_name(&decl.id);
                 let init = decl.init.as_ref().and_then(convert_expr);
                 return Some(hir::Stmt::Variable { decl: hir::VariableDecl {
                     name,
@@ -245,18 +236,14 @@ fn convert_stmt_to_stmt(stmt: &oxc_ast::ast::Statement) -> Option<hir::Stmt> {
         Statement::EmptyStatement(_) => None,
         Statement::FunctionDeclaration(func) => {
             let name = func.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
-            let params: Vec<_> = (0..func.params.items.len())
-                .map(|i| hir::Param {
-                    name: format!("arg{}", i),
-                    type_: None, optional: false,
-                    default: None,
-                    pattern: None,
-                }).collect();
+            let params: Vec<_> = func.params.items.iter().map(convert_param).collect();
             let body = func.body.as_ref()
                 .map(|b| hir::Block(b.statements.iter().filter_map(convert_stmt_to_stmt).collect()))
                 .unwrap_or_default();
+            let return_type = func.return_type.as_ref()
+                .map(|t| convert_ts_type(&t.type_annotation));
             Some(hir::Stmt::Function { decl: hir::FunctionDecl {
-                name, generics: vec![], params, return_type: None,
+                name, generics: vec![], params, return_type,
                 body: Some(body), is_async: func.r#async,
                 is_generator: func.generator, decorators: vec![],
             }})
@@ -393,26 +380,14 @@ fn convert_expr(expr: &oxc_ast::ast::Expression) -> Option<hir::Expr> {
         }
         
         Expression::ArrowFunctionExpression(arrow) => {
-            let params: Vec<_> = (0..arrow.params.items.len())
-                .map(|i| hir::Param {
-                    name: format!("arg{}", i),
-                    type_: None, optional: false,
-                    default: None,
-                    pattern: None,
-                }).collect();
+            let params: Vec<_> = arrow.params.items.iter().map(convert_param).collect();
             let body = hir::Stmt::Return { arg: None };
             Some(hir::Expr::Arrow { params, body: Box::new(body), is_async: arrow.r#async })
         }
         
         Expression::FunctionExpression(func) => {
             let name = func.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
-            let params: Vec<_> = (0..func.params.items.len())
-                .map(|i| hir::Param {
-                    name: format!("arg{}", i),
-                    type_: None, optional: false,
-                    default: None,
-                    pattern: None,
-                }).collect();
+            let params: Vec<_> = func.params.items.iter().map(convert_param).collect();
             let body = func.body.as_ref()
                 .map(|b| hir::Block(b.statements.iter().filter_map(convert_stmt_to_stmt).collect()))
                 .unwrap_or_default();
@@ -577,5 +552,31 @@ fn convert_jsx_child(child: &oxc_ast::ast::JSXChild) -> Option<hir::JSXChild> {
             }))
         }
         _ => None,
+    }
+}
+
+/// Extract binding name from a pattern (handles destructuring)
+fn extract_binding_name(pattern: &oxc_ast::ast::BindingPattern) -> String {
+    use oxc_ast::ast::*;
+    match pattern {
+        BindingPattern::BindingIdentifier(id) => id.name.to_string(),
+        BindingPattern::ObjectPattern(_) => "obj".to_string(),
+        BindingPattern::ArrayPattern(_) => "arr".to_string(),
+        BindingPattern::AssignmentPattern(a) => extract_binding_name(&a.left),
+    }
+}
+
+/// Convert an oxc formal parameter to HIR Param
+fn convert_param(param: &oxc_ast::ast::FormalParameter) -> hir::Param {
+    
+    let name = extract_binding_name(&param.pattern);
+    let type_ = param.type_annotation.as_ref()
+        .map(|t| convert_ts_type(&t.type_annotation));
+    hir::Param {
+        name,
+        type_,
+        optional: param.optional,
+        default: param.initializer.as_ref().and_then(|e| convert_expr(e)),
+        pattern: None,
     }
 }

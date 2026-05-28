@@ -1,10 +1,9 @@
 //! Route generation
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
-use regex::Regex;
 
-use crate::commands::build::{RouteEntry, GeneratedFile, PathBuf as BuildPathBuf};
+use crate::commands::build::RouteEntry;
 
 /// Scan routes directory for route files
 pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
