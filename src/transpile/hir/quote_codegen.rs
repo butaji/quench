@@ -195,7 +195,7 @@ impl QuoteCodegen {
         
         match alt {
             Some(a) => {
-                let alt = self.gen_block_stmt(a);
+                let alt = self.gen_block_stmt(&Box::new(a.clone()));
                 quote! {
                     if #test {
                         #cons
@@ -237,10 +237,10 @@ impl QuoteCodegen {
     fn gen_lit_expr(&self, expr: &Expr) -> Option<TokenStream> {
         use super::Expr as E;
         match expr {
-            E::Number(n) => Some(self.gen_number(n)),
-            E::String(s) => Some(self.gen_string(s)),
-            E::Boolean(b) => Some(self.gen_bool(*b)),
-            E::Null | E::Undefined => Some(self.gen_nullish()),
+            E::Number(n) => Some(quote! { #n }),
+            E::String(s) => Some(quote! { #s.to_string() }),
+            E::Boolean(b) => Some(quote! { #b }),
+            E::Null | E::Undefined => Some(quote! { Value::Null }),
             _ => None,
         }
     }
@@ -292,16 +292,16 @@ impl QuoteCodegen {
     }
     
     fn bin_op(&self, op: &super::BinaryOp) -> TokenStream {
-        self.arith_bin_op(op).or_else(|| self.cmp_bin_op(op)).unwrap_or_else(|| self.cmp_op("=="))
+        self.arith_bin_op(op).or_else(|| self.cmp_bin_op(op)).unwrap_or_else(|| quote! { == })
     }
     
     fn arith_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
         use super::BinaryOp as B;
         match op {
-            B::Add => Some(self.arith_op("+")),
-            B::Sub => Some(self.arith_op("-")),
-            B::Mul => Some(self.arith_op("*")),
-            B::Div => Some(self.arith_op("/")),
+            B::Add => Some(quote! { + }),
+            B::Sub => Some(quote! { - }),
+            B::Mul => Some(quote! { * }),
+            B::Div => Some(quote! { / }),
             _ => None,
         }
     }
@@ -309,24 +309,14 @@ impl QuoteCodegen {
     fn cmp_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
         use super::BinaryOp as B;
         match op {
-            B::Eq => Some(self.cmp_op("==")),
-            B::Neq => Some(self.cmp_op("!=")),
-            B::Lt => Some(self.cmp_op("<")),
-            B::Lte => Some(self.cmp_op("<=")),
-            B::Gt => Some(self.cmp_op(">")),
-            B::Gte => Some(self.cmp_op(">=")),
+            B::Eq => Some(quote! { == }),
+            B::Neq => Some(quote! { != }),
+            B::Lt => Some(quote! { < }),
+            B::Lte => Some(quote! { <= }),
+            B::Gt => Some(quote! { > }),
+            B::Gte => Some(quote! { >= }),
             _ => None,
         }
-    }
-    
-    fn arith_op(&self, op: &str) -> TokenStream {
-        let op = syn::Ident::new(op, proc_macro2::Span::call_site());
-        quote! { #op }
-    }
-    
-    fn cmp_op(&self, op: &str) -> TokenStream {
-        let op = syn::Ident::new(op, proc_macro2::Span::call_site());
-        quote! { #op }
     }
 }
 
