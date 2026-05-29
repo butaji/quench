@@ -234,11 +234,15 @@ impl Interpreter {
     }
 
     fn eval_new(&self, callee: &Box<Expr>, arguments: &[Expr]) -> String {
-        let callee_str = format!("{:?}", callee);
-        if callee_str.contains("Array") {
+        // Evaluate the callee to get the class name
+        let class_name = match &**callee {
+            Expr::Ident { name } => name.clone(),
+            _ => format!("{:?}", callee),
+        };
+        if class_name == "Array" {
             format!("[{}]", arguments.iter().map(|a| self.eval_expr(a)).collect::<Vec<_>>().join(", "))
         } else {
-            format!("Object<{}>", callee_str)
+            format!("Instance<{}>", class_name)
         }
     }
 
@@ -319,14 +323,25 @@ impl Interpreter {
     }
 
     fn eval_call(&self, callee: &Expr, args: &[Expr]) -> String {
+        // Special handling for console.log
+        if let Expr::StaticMember { obj, property } = callee {
+            let obj_str = self.eval_expr(obj);
+            if obj_str.contains("console") && property == "log" {
+                let arg_strs: Vec<String> = args.iter().map(|a| self.eval_expr(a)).collect();
+                println!("{}", arg_strs.join(" "));
+                return arg_strs.join(" ");
+            }
+            // Return method call representation for other cases
+            return format!("{}.{}({:?})", obj_str, property, args);
+        }
         let callee_expr = match callee {
             Expr::Ident { name } => {
-                // Look up variable
-                self.vars
-                    .read()
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| callee.clone())
+                self.vars.read().get(name).cloned().unwrap_or_else(|| callee.clone())
+            }
+            Expr::Member { obj, property, .. } => {
+                let obj_str = self.eval_expr(obj);
+                let prop_str = self.eval_expr(property);
+                return format!("{}[{}]({:?})", obj_str, prop_str, args);
             }
             _ => callee.clone(),
         };
