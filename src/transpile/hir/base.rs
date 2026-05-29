@@ -107,6 +107,10 @@ pub struct FunctionDecl {
     pub is_async: bool,
     pub is_generator: bool,
     pub decorators: Vec<Decorator>,
+    /// Whether this function can throw
+    pub throws: bool,
+    /// The error type if throws is true (None = JsValue)
+    pub error_type: Option<Type>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
