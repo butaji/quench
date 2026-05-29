@@ -3,30 +3,43 @@
 use crate::transpile::hir;
 use oxc_ast::ast::*;
 
-fn var_decl_to_hir(v: &VariableDeclaration) -> Option<hir::VariableDecl> {
-    let decl = v.declarations.first()?;
-    let name = match &decl.id {
-        BindingPattern::BindingIdentifier(i) => i.name.to_string(),
-        _ => return None,
-    };
-    let kind = match v.kind {
-        VariableDeclarationKind::Const => hir::VariableKind::Const,
-        VariableDeclarationKind::Let => hir::VariableKind::Let,
-        _ => hir::VariableKind::Var,
-    };
-    let init = decl.init.as_ref().map(|_| hir::Expr::Null);
-    Some(hir::VariableDecl { name, kind, type_: None, init, pattern: None })
+fn var_to_decl(v: &VariableDeclaration) -> hir::Decl {
+    let decl = v.declarations.first();
+    let name = decl.and_then(|d| match &d.id {
+        BindingPattern::BindingIdentifier(i) => Some(i.name.to_string()),
+        _ => None,
+    }).unwrap_or_default();
+    hir::Decl::Variable(hir::VariableDecl { name, kind: hir::VariableKind::Const, type_: None, init: None, pattern: None })
+}
+
+fn func_to_decl(f: &Function) -> hir::Decl {
+    hir::Decl::Function(hir::FunctionDecl {
+        name: f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default(),
+        generics: vec![],
+        params: vec![],
+        return_type: None,
+        body: None,
+        is_async: f.r#async,
+        is_generator: false,
+        decorators: vec![],
+    })
+}
+
+fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
+    let specs = i.specifiers.as_ref().map_or(vec![], |v| v.iter().map(|s| match s {
+        ImportDeclarationSpecifier::ImportSpecifier(s) => hir::ImportSpecifier::Named { name: s.local.name.to_string(), alias: None },
+        ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => hir::ImportSpecifier::Default { name: s.local.name.to_string() },
+        ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => hir::ImportSpecifier::Namespace { name: s.local.name.to_string() },
+    }).collect());
+    hir::ModuleItem::Import(hir::Import { source: i.source.value.to_string(), specifiers: specs, type_only: false })
 }
 
 pub fn convert_module_item(stmt: &Statement) -> Option<hir::ModuleItem> {
     match stmt {
-        Statement::FunctionDeclaration(f) => Some(hir::ModuleItem::Decl(hir::Decl::Function(hir::FunctionDecl { name: f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default(), generics: vec![], params: vec![], return_type: None, body: None, is_async: f.r#async, is_generator: false, decorators: vec![] }))),
-        Statement::VariableDeclaration(v) => var_decl_to_hir(v).map(|v| hir::ModuleItem::Decl(hir::Decl::Variable(v))),
-        Statement::ImportDeclaration(i) => Some(hir::ModuleItem::Import(hir::Import { source: i.source.value.to_string(), specifiers: vec![], type_only: false })),
-        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
-            ExportDefaultDeclarationKind::FunctionDeclaration(f) => Some(hir::ModuleItem::Decl(hir::Decl::Function(hir::FunctionDecl { name: f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default(), generics: vec![], params: vec![], return_type: None, body: None, is_async: f.r#async, is_generator: false, decorators: vec![] }))),
-            _ => None,
-        },
+        Statement::FunctionDeclaration(f) => Some(hir::ModuleItem::Decl(func_to_decl(f))),
+        Statement::VariableDeclaration(v) => Some(hir::ModuleItem::Decl(var_to_decl(v))),
+        Statement::ImportDeclaration(i) => Some(import_to_hir(i)),
+        Statement::TSInterfaceDeclaration(i) => Some(hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl { name: i.id.name.to_string(), generics: vec![], type_: hir::Type::Object { members: vec![] } }))),
         _ => None,
     }
 }
