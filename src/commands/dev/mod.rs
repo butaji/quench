@@ -1,8 +1,8 @@
 //! Development server with instant hot-reload
 //!
 //! In development mode, runts:
-//! - Parses TS/TSX to HIR (NO Rust compilation)
-//! - Executes HIR directly with the interpreter
+//! - Parses TS/TSX using OXC
+//! - Executes JS with QuickJS runtime
 //! - Provides instant hot-reload (<100ms)
 //! - Full parity with production rendering
 
@@ -15,7 +15,7 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::runtime::interpreter::Interpreter;
+use crate::runtime::quickjs::QuickJsRuntime;
 
 /// Application state shared across requests
 #[derive(Clone)]
@@ -24,8 +24,8 @@ pub struct AppState {
     pub root: PathBuf,
     /// Route table
     pub route_table: Arc<RwLock<routes::RouteTable>>,
-    /// Interpreter (HIR executor)
-    pub interpreter: Arc<RwLock<Interpreter>>,
+    /// QuickJS runtime for JS execution
+    pub js_runtime: Arc<RwLock<QuickJsRuntime>>,
     /// Broadcast channel for hot reload events
     pub reload_tx: broadcast::Sender<ReloadEvent>,
     /// File watcher (kept alive to prevent drop)

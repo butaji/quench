@@ -1,28 +1,23 @@
 //! QuickJS-based JavaScript runtime for dev with hot reload
 //! 
 //! Uses rquickjs for ES2020 JavaScript execution.
-//! In-memory evaluation, instant hot reload on file changes.
+//! Thread-safe: creates new runtime per eval for simplicity.
 
-use std::sync::Arc;
-use rquickjs::{Runtime, Context, Value};
-
-/// QuickJS runtime with hot reload support
-pub struct QuickJsRuntime {
-    runtime: Arc<Runtime>,
-}
+/// QuickJS runtime - thread-safe, creates new runtime per eval
+pub struct QuickJsRuntime;
 
 impl QuickJsRuntime {
     /// Create a new QuickJS runtime
     pub fn new() -> Self {
-        let runtime = Runtime::new().expect("Failed to create QuickJS runtime");
-        Self {
-            runtime: Arc::new(runtime),
-        }
+        Self
     }
     
     /// Evaluate JavaScript code and return the result as string
     pub fn eval(&self, code: &str) -> Result<String, JsError> {
-        let ctx = Context::full(&self.runtime)
+        let runtime = rquickjs::Runtime::new()
+            .map_err(|e| JsError::new(format!("Failed to create runtime: {:?}", e)))?;
+        
+        let ctx = rquickjs::Context::full(&runtime)
             .map_err(|e| JsError::new(format!("Failed to create context: {:?}", e)))?;
         
         ctx.with(|ctx| {
@@ -30,12 +25,6 @@ impl QuickJsRuntime {
                 .map_err(|e| JsError::new(format!("Eval error: {:?}", e)))?;
             Ok(value_to_string(value))
         })
-    }
-    
-    /// Reset runtime for hot reload (drop and recreate)
-    pub fn reset(&mut self) {
-        let new_runtime = Runtime::new().expect("Failed to create QuickJS runtime");
-        self.runtime = Arc::new(new_runtime);
     }
 }
 
@@ -72,7 +61,7 @@ impl std::fmt::Display for JsError {
 impl std::error::Error for JsError {}
 
 /// Convert QuickJS value to displayable string
-fn value_to_string(value: Value<'_>) -> String {
+fn value_to_string(value: rquickjs::Value<'_>) -> String {
     if value.is_undefined() {
         "undefined".to_string()
     } else if value.is_null() {
@@ -87,35 +76,5 @@ fn value_to_string(value: Value<'_>) -> String {
         value.as_bool().unwrap_or(false).to_string()
     } else {
         format!("{:?}", value)
-    }
-}
-
-/// Session for managing dev runtime with hot reload
-pub struct QuickJsSession {
-    runtime: QuickJsRuntime,
-}
-
-impl QuickJsSession {
-    /// Create a new session
-    pub fn new() -> Self {
-        Self {
-            runtime: QuickJsRuntime::new(),
-        }
-    }
-    
-    /// Evaluate JavaScript
-    pub fn eval(&self, code: &str) -> Result<String, JsError> {
-        self.runtime.eval(code)
-    }
-    
-    /// Hot reload - reset the runtime
-    pub fn reload(&mut self) {
-        self.runtime.reset();
-    }
-}
-
-impl Default for QuickJsSession {
-    fn default() -> Self {
-        Self::new()
     }
 }
