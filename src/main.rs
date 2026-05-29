@@ -37,6 +37,7 @@ fn init_logging() {
 fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         cli::Commands::Eval { expr } => run_eval(&expr),
+        cli::Commands::Codegen { source, expr } => run_codegen(source, expr),
         cli::Commands::Init { name } => run_init(name),
         cli::Commands::Dev { path } => run_dev(path),
         cli::Commands::Build {
@@ -181,6 +182,39 @@ fn print_result(result: &str) {
     } else {
         println!("{}", result);
     }
+}
+
+/// Run in-memory Rust codegen from TypeScript using QuoteCodegen
+fn run_codegen(source: Option<String>, expr: Option<String>) -> Result<()> {
+    use transpile::hir::QuoteCodegen;
+    use transpile::hir::Stmt;
+    
+    let input = expr.or(source).unwrap_or_default();
+    if input.is_empty() {
+        println!("// No input provided");
+        return Ok(());
+    }
+    
+    // Parse TypeScript to HIR
+    let parser = transpile::TsParser::new();
+    let module = parser.parse_source(&input)?;
+    
+    // Extract statements from module items
+    let stmts: Vec<Stmt> = module.items.into_iter().filter_map(|item| {
+        match item {
+            transpile::hir::ModuleItem::Stmt(s) => Some(s),
+            _ => None,
+        }
+    }).collect();
+    
+    // Generate Rust using QuoteCodegen (in-memory, no files)
+    let cg = QuoteCodegen::default();
+    let tokens = cg.gen_module(&stmts);
+    
+    // Output the generated Rust code
+    println!("{}", tokens);
+    
+    Ok(())
 }
 
 fn run_add(

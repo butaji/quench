@@ -60,6 +60,17 @@ pub enum Commands {
         expr: String,
     },
 
+    /// Generate Rust code from TypeScript using QuoteCodegen (in-memory)
+    Codegen {
+        /// Source file or expression
+        #[arg(short, long)]
+        source: Option<String>,
+
+        /// Expression to codegen (alternative to source file)
+        #[arg(short, long)]
+        expr: Option<String>,
+    },
+
     /// Add a new component or route
     Add {
         /// Type of component to add
