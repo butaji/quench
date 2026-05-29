@@ -2,10 +2,10 @@
 
 use crate::transpile::hir::*;
 
-pub fn execute_stmt(stmt: &Stmt) -> Value {
+pub fn execute_stmt(_stmt: &Stmt) -> Value {
     Value::Null
 }
-pub fn expr_to_value(expr: &Expr) -> Value {
+pub fn expr_to_value(_expr: &Expr) -> Value {
     Value::Null
 }
 pub fn apply_binary_op(_op: &BinaryOp, _left: Value, _right: Value) -> Value {
