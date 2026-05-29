@@ -127,6 +127,7 @@ fn run_eval(expr: &str) -> Result<()> {
     if is_statement_keyword(trimmed) {
         match parser.parse_source(trimmed) {
             Ok(module) => {
+                // Analysis passes run during parsing
                 let result = interpreter.eval_module_stmts(&module);
                 print_result(&result);
                 Ok(())
@@ -138,6 +139,7 @@ fn run_eval(expr: &str) -> Result<()> {
         let source = format!("const __result = {};", trimmed);
         match parser.parse_source(&source) {
             Ok(module) => {
+                // Analysis passes run during parsing
                 let result = interpreter.eval_module(&module);
                 print_result(&result);
                 Ok(())
