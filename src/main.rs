@@ -13,9 +13,9 @@ mod util;
 
 use anyhow::Result;
 use clap::Parser;
-use transpile::hir;
 use std::path::PathBuf;
 use tracing::info;
+use transpile::hir;
 
 use cli::Cli;
 
@@ -117,10 +117,33 @@ fn run_transpile(path: PathBuf) -> Result<()> {
 
 fn run_eval(expr: &str) -> Result<()> {
     let parser = transpile::TsParser::new();
-    let source = format!("const __result = {};", expr);
-    let module = parser.parse_tsx(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
     let interpreter = runtime::interpreter::Interpreter::new();
-    let result = interpreter.eval_module(&module);
+    let stmts: Vec<_> = expr.split(';').filter(|s| !s.trim().is_empty()).collect();
+    if stmts.is_empty() {
+        println!("undefined");
+        return Ok(());
+    }
+    let mut result = String::new();
+    for stmt in stmts {
+        let trimmed = stmt.trim();
+        // If it's a declaration, parse as statement. Otherwise wrap as expression.
+        let source = if trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+        {
+            format!("{};", trimmed)
+        } else {
+            format!("const __result = {};", trimmed)
+        };
+        match parser.parse_tsx(&source) {
+            Ok(module) => {
+                result = interpreter.eval_module(&module);
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Parse error: {}", e));
+            }
+        }
+    }
     if result.is_empty() {
         println!("undefined");
     } else {
