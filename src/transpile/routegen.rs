@@ -47,23 +47,26 @@ pub struct RouteInfo {
 }
 
 pub fn parse_route_path(path: &str) -> RouteInfo {
-    let path = path.trim_matches('/');
+    let original = path.trim_matches('/').to_string();
+    // Strip file extension for processing
+    let path = original.replace(".tsx", "").replace(".ts", "");
     let mut segments = Vec::new();
     let mut url_path = String::new();
     for segment in path.split('/') {
         if segment.starts_with('[') && segment.ends_with(']') {
-            let name = segment
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .replace("...", "");
-            segments.push(name.clone());
-            url_path.push_str(&format!("/:{}", name));
-        } else if !segment.is_empty() && !segment.contains('.') {
+            let name = segment.trim_start_matches('[').trim_end_matches(']');
+            segments.push(name.to_string());
+            if name.starts_with("...") {
+                url_path.push_str(&format!("/:{}", name));
+            } else {
+                url_path.push_str(&format!("/:{}", name));
+            }
+        } else if !segment.is_empty() {
             url_path.push_str(&format!("/{}", segment));
         }
     }
     RouteInfo {
-        pattern: path.to_string(),
+        pattern: original,
         path: if url_path.is_empty() {
             "/".to_string()
         } else {
@@ -72,7 +75,7 @@ pub fn parse_route_path(path: &str) -> RouteInfo {
         segments,
         handlers: vec![],
         component: None,
-        file_path: path.to_string(),
+        file_path: path,
     }
 }
 
