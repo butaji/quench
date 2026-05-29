@@ -118,38 +118,54 @@ fn run_transpile(path: PathBuf) -> Result<()> {
 fn run_eval(expr: &str) -> Result<()> {
     let parser = transpile::TsParser::new();
     let interpreter = runtime::interpreter::Interpreter::new();
-    let stmts: Vec<_> = expr.split(';').filter(|s| !s.trim().is_empty()).collect();
-    if stmts.is_empty() {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
         println!("undefined");
         return Ok(());
     }
-    let mut result = String::new();
-    for stmt in stmts {
-        let trimmed = stmt.trim();
-        // If it's a declaration, parse as statement. Otherwise wrap as expression.
-        let source = if trimmed.starts_with("const ")
-            || trimmed.starts_with("let ")
-            || trimmed.starts_with("var ")
-        {
-            format!("{};", trimmed)
-        } else {
-            format!("const __result = {};", trimmed)
-        };
-        match parser.parse_tsx(&source) {
+    // Check if it's a statement (not an expression)
+    if is_statement_keyword(trimmed) {
+        match parser.parse_source(trimmed) {
             Ok(module) => {
-                result = interpreter.eval_module(&module);
+                let result = interpreter.eval_module_stmts(&module);
+                print_result(&result);
+                Ok(())
             }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Parse error: {}", e));
+            Err(e) => Err(anyhow::anyhow!("Parse error: {}", e)),
+        }
+    } else {
+        // Wrap as expression
+        let source = format!("const __result = {};", trimmed);
+        match parser.parse_source(&source) {
+            Ok(module) => {
+                let result = interpreter.eval_module(&module);
+                print_result(&result);
+                Ok(())
             }
+            Err(e) => Err(anyhow::anyhow!("Parse error: {}", e)),
         }
     }
+}
+fn prepare_source(stmt: &str) -> String {
+    let trimmed = stmt.trim();
+    if is_statement_keyword(trimmed) {
+        stmt.to_string()
+    } else {
+        format!("const __result = {};", stmt)
+    }
+}
+fn is_statement_keyword(s: &str) -> bool {
+    let kws = ["if ", "for ", "while ", "return ", "throw ", "try ",
+               "switch ", "do ", "let ", "const ", "var ", "function ",
+               "class ", "{"];
+    kws.iter().any(|k| s.starts_with(k))
+}
+fn print_result(result: &str) {
     if result.is_empty() {
         println!("undefined");
     } else {
         println!("{}", result);
     }
-    Ok(())
 }
 
 fn run_add(

@@ -1,6 +1,6 @@
 //! Statement types
 
-use super::{Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, GenericParam, Type};
+use super::{Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, GenericParam, ImportSpecifier, Type};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -98,11 +98,4 @@ pub enum ForInit {
 pub struct SwitchCase {
     pub test: Option<Expr>,
     pub consequent: Vec<Stmt>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ImportSpecifier {
-    Named { name: String, alias: Option<String> },
-    Default { name: String },
-    Namespace { name: String },
 }

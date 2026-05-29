@@ -225,6 +225,9 @@ pub enum ObjectProp {
         value: Expr,
         computed: bool,
     },
+    Spread {
+        arg: Expr,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

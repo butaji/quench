@@ -16,6 +16,7 @@ pub enum ModuleItem {
     Import(Import),
     Export(Export),
     Decl(Decl),
+    Stmt(Stmt),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub struct Import {
     pub type_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ImportSpecifier {
     Named { name: String, alias: Option<String> },

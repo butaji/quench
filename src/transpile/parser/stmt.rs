@@ -53,16 +53,16 @@ fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
     let specs = i.specifiers.as_ref().map_or(vec![], |v| {
         v.iter()
             .map(|s| match s {
-                ImportDeclarationSpecifier::ImportSpecifier(s) => hir::ImportSpecifier::Named {
+                oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(s) => hir::ImportSpecifier::Named {
                     name: s.local.name.to_string(),
                     alias: None,
                 },
-                ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
+                oxc_ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
                     hir::ImportSpecifier::Default {
                         name: s.local.name.to_string(),
                     }
                 }
-                ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => {
+                oxc_ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => {
                     hir::ImportSpecifier::Namespace {
                         name: s.local.name.to_string(),
                     }
@@ -75,6 +75,52 @@ fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
         specifiers: specs,
         type_only: false,
     })
+}
+
+fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
+    match s {
+        Statement::ExpressionStatement(e) => hir::Stmt::Expr { expr: convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined) },
+        Statement::IfStatement(stmt) => hir::Stmt::If {
+            test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
+            consequent: Box::new(stmt_to_hir_stmt(&stmt.consequent)),
+            alternate: stmt.alternate.as_ref().map(|a| Box::new(stmt_to_hir_stmt(a))),
+        },
+        Statement::WhileStatement(stmt) => hir::Stmt::While {
+            test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
+            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+        },
+        Statement::ForStatement(stmt) => hir::Stmt::For {
+            init: None,
+            test: stmt.test.as_ref().and_then(|t| convert_expr(t)),
+            update: stmt.update.as_ref().and_then(|u| convert_expr(u)),
+            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+        },
+        Statement::ReturnStatement(r) => hir::Stmt::Return { arg: r.argument.as_ref().and_then(|a| convert_expr(a)) },
+        Statement::BreakStatement(_) => hir::Stmt::Break { label: None },
+        Statement::ContinueStatement(_) => hir::Stmt::Continue { label: None },
+        Statement::BlockStatement(b) => hir::Stmt::Block(b.body.iter().map(stmt_to_hir_stmt).collect()),
+        Statement::EmptyStatement(_) => hir::Stmt::Empty,
+        Statement::VariableDeclaration(v) => {
+            // Convert to a Block with assignments
+            let mut stmts = vec![];
+            for decl in &v.declarations {
+                let name = match &decl.id {
+                    BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+                    _ => continue,
+                };
+                let init = decl.init.as_ref().and_then(convert_expr);
+                // Create: name = init
+                let assign = hir::Expr::Assign {
+                    op: hir::AssignOp::Assign,
+                    left: Box::new(hir::Expr::Ident { name: name.clone() }),
+                    right: Box::new(init.unwrap_or(hir::Expr::Undefined)),
+                };
+                stmts.push(hir::Stmt::Expr { expr: assign });
+            }
+            hir::Stmt::Block(stmts)
+        }
+        _ => hir::Stmt::Empty,
+    }
 }
 
 fn class_to_hir(c: &Class) -> hir::Decl {
@@ -139,6 +185,6 @@ pub fn convert_module_item(stmt: &Statement) -> Option<hir::ModuleItem> {
                 type_: hir::Type::Object { members: vec![] },
             })))
         }
-        _ => None,
+        _ => Some(hir::ModuleItem::Stmt(stmt_to_hir_stmt(stmt))),
     }
 }
