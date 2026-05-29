@@ -139,6 +139,7 @@ fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
                     default: None,
                     optional: p.optional,
                     pattern: None,
+                    ownership: hir::Ownership::Owned,
                 })
             } else {
                 None
