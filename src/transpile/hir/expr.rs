@@ -60,6 +60,11 @@ pub enum Expr {
         members: Vec<ObjectMemberExpr>,
     },
     Function(FunctionDecl),
+    ArrowFunction {
+        params: Vec<Param>,
+        body: Box<Expr>,
+        is_async: bool,
+    },
     Await {
         arg: Box<Expr>,
     },

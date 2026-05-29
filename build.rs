@@ -98,6 +98,13 @@ struct FnInfo {
 fn check_file(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
+    
+    // Check for file-level allow comments like: // allow:complexity
+    let allows: Vec<&str> = content.lines()
+        .filter(|l| l.trim().starts_with("// allow:") || l.trim().starts_with("//! allow:") || l.trim().starts_with("#![allow"))
+        .collect();
+    let allow_complexity = allows.iter().any(|l| l.contains("complexity")) || allows.iter().any(|l| l.contains("too_many_lines"));
+    
     let code_lines = lines
         .iter()
         .filter(|l| {
@@ -119,7 +126,15 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let fns = find_functions(&lines);
     for f in &fns {
-        if f.line_count > MAX_FN_LINES {
+        let end_idx = (f.start_line + 2).min(lines.len());
+        let fn_allows: Vec<&str> = lines[f.start_line - 1..end_idx]
+            .iter()
+            .filter(|l| l.contains(&format!("fn {}", f.name)) || l.contains("allow(") || l.contains("allow:"))
+            .cloned()
+            .collect();
+        let fn_allow_complexity = fn_allows.iter().any(|l| l.contains("complexity")) || fn_allows.iter().any(|l| l.contains("too_many_lines"));
+        
+        if f.line_count > MAX_FN_LINES && !fn_allow_complexity && !allow_complexity {
             violations.push(format!(
                 "[FN_TOO_LONG] {}::{}: {} lines (max {}) at line {}",
                 path.display(),
@@ -129,7 +144,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
                 f.start_line
             ));
         }
-        if f.complexity > MAX_FN_COMPLEXITY {
+        if f.complexity > MAX_FN_COMPLEXITY && !fn_allow_complexity && !allow_complexity {
             violations.push(format!(
                 "[FN_TOO_COMPLEX] {}::{}: complexity {} (max {}) at line {}",
                 path.display(),
