@@ -2,7 +2,6 @@
 
 pub mod component;
 pub mod hooks;
-pub mod interpreter;
 pub mod islands;
 pub mod middleware;
 pub mod prelude;

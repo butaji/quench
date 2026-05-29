@@ -11,7 +11,6 @@
 
 mod arena;
 mod base;
-mod codegen;
 mod effects;
 mod expr;
 mod ownership;
@@ -22,7 +21,6 @@ mod type_gen;
 
 pub use arena::*;
 pub use base::*;
-pub use codegen::Codegen;
 pub use effects::*;
 pub use expr::*;
 pub use ownership::*;
