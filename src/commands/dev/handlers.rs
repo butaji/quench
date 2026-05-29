@@ -1,7 +1,7 @@
 //! HTTP request handlers
 
-use crate::config::Config;
 use crate::commands::dev::AppState;
+use crate::config::Config;
 use crate::runtime::interpreter::Interpreter;
 use anyhow::Result;
 use axum::{response::Html, routing::get, Router};
@@ -18,12 +18,16 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
     let reload_tx_for_watcher = reload_tx.clone();
 
     let watcher = match notify::recommended_watcher(move |_| {
-        let _ = reload_tx_for_watcher.send(crate::commands::dev::ReloadEvent::ModuleChanged(".".to_string()));
+        let _ = reload_tx_for_watcher.send(crate::commands::dev::ReloadEvent::ModuleChanged(
+            ".".to_string(),
+        ));
     }) {
         Ok(w) => Arc::new(std::sync::Mutex::new(w)),
         Err(e) => {
             tracing::warn!("File watcher failed to start: {}. Hot reload disabled.", e);
-            Arc::new(std::sync::Mutex::new(notify::recommended_watcher(move |_| {}).unwrap()))
+            Arc::new(std::sync::Mutex::new(
+                notify::recommended_watcher(move |_| {}).unwrap(),
+            ))
         }
     };
 
@@ -44,7 +48,7 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
 
     let addr = format!("0.0.0.0:{}", port);
     tracing::info!("Starting dev server on http://{}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Server running! Press Ctrl+C to stop.");
     axum::serve(listener, app).await?;
@@ -52,23 +56,29 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
 }
 
 async fn handler() -> Html<String> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html>
 <head><title>Runts Dev</title></head>
 <body>
 <h1>Welcome to Runts!</h1>
 <p>Start building your app by editing files in the <code>routes/</code> directory.</p>
 </body>
-</html>"#.to_string())
+</html>"#
+            .to_string(),
+    )
 }
 
 async fn blog_handler() -> Html<String> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html>
 <head><title>Blog</title></head>
 <body>
 <h1>Blog</h1>
 <p>Blog posts will appear here.</p>
 </body>
-</html>"#.to_string())
+</html>"#
+            .to_string(),
+    )
 }
