@@ -9,11 +9,13 @@
 //! - Semantic ownership: HIR owns the semantics, not runtime strings
 
 mod base;
+mod codegen;
 mod expr;
 mod pat;
 mod stmt;
 
 pub use base::*;
+pub use codegen::Codegen;
 pub use expr::*;
 pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
