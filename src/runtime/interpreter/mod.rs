@@ -230,7 +230,7 @@ impl Interpreter {
             match item {
                 ModuleItem::Export(export) => {
                     if let Export::Default { expr } = export {
-                        if let Expr::Function { decl } = expr {
+                        if let Expr::Function(decl) = expr {
                             if decl
                                 .name
                                 .chars()
