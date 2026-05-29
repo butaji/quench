@@ -2,8 +2,11 @@
 
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use anyhow::{Context, Result};
 
 use crate::commands::build::{ComponentEntry, GeneratedFile, IslandEntry, RouteEntry};
+use crate::transpile::hir::QuoteCodegen;
+use crate::transpile::parser::TsParser;
 
 /// Scan components directory for component files
 pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
@@ -39,9 +42,11 @@ pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
     components
 }
 
-/// Generate source files from TypeScript
+/// Generate source files from TypeScript using QuoteCodegen
 pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Error> {
     let mut generated = Vec::new();
+    let parser = TsParser::new();
+    let codegen = QuoteCodegen::default();
 
     for file in files {
         let relative = file
@@ -51,9 +56,36 @@ pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Err
             .replace(".tsx", ".rs")
             .replace(".ts", ".rs");
 
+        // Parse TypeScript to HIR
+        let source = std::fs::read_to_string(file)
+            .with_context(|| format!("Failed to read {}", file.display()))?;
+        
+        let module = match parser.parse_source(&source) {
+            Ok(m) => m,
+            Err(e) => {
+                // If parsing fails, generate a stub
+                generated.push(GeneratedFile {
+                    path: PathBuf::from(format!("src/gen/{}", relative)),
+                    content: format!("// Parse error: {}", e),
+                });
+                continue;
+            }
+        };
+
+        // Generate Rust using QuoteCodegen
+        let stmts: Vec<_> = module.items.into_iter()
+            .filter_map(|item| match item {
+                crate::transpile::hir::ModuleItem::Stmt(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        
+        let tokens = codegen.gen_module(&stmts);
+        let rust_code = tokens.to_string();
+
         generated.push(GeneratedFile {
             path: PathBuf::from(format!("src/gen/{}", relative)),
-            content: format!("// Generated from {}\n", file.display()),
+            content: format!("// Generated from {}\n\n{}", file.display(), rust_code),
         });
     }
 
