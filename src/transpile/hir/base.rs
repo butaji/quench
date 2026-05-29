@@ -50,6 +50,44 @@ pub enum Export {
     All { source: String },
 }
 
+/// Ownership qualifier - mirrors Rust's borrow semantics
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Ownership {
+    /// Owned value - takes ownership, moves on assignment
+    Owned,
+    /// Shared borrow - read-only access
+    Borrow,
+    /// Mutable borrow - read-write access
+    Mut,
+}
+
+impl Default for Ownership {
+    fn default() -> Self {
+        Ownership::Owned
+    }
+}
+
+impl Ownership {
+    /// Returns true if this ownership represents a borrow (shared or mutable)
+    pub fn is_borrow(&self) -> bool {
+        matches!(self, Ownership::Borrow | Ownership::Mut)
+    }
+    
+    /// Returns true if this ownership represents a mutable borrow
+    pub fn is_mut(&self) -> bool {
+        matches!(self, Ownership::Mut)
+    }
+    
+    /// Get Rust lifetime annotation (empty for owned, ''' for borrow, ''' for mut)
+    pub fn rust_lifetime(&self) -> &'static str {
+        match self {
+            Ownership::Owned => "",
+            Ownership::Borrow => "&'",
+            Ownership::Mut => "&'mut ",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Decl {
@@ -78,6 +116,7 @@ pub struct Param {
     pub default: Option<Expr>,
     pub optional: bool,
     pub pattern: Option<Pat>,
+    pub ownership: Ownership,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
