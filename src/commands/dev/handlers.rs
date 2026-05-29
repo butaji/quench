@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 
-pub async fn run_server(config: &Config, port: u16) -> Result<()> {
+pub async fn run_server(_config: &Config, port: u16) -> Result<()> {
     let state = create_app_state()?;
     let app = create_router(state);
     start_server(app, port).await

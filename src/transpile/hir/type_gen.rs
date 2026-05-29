@@ -2,7 +2,7 @@
 //! 
 //! Converts HIR Type to Rust type strings
 
-use super::{Expr, Stmt, Type};
+use super::Type;
 
 /// Type code generator
 pub struct TypeGen;

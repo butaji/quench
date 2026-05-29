@@ -30,7 +30,6 @@ impl HandlerContext {
     }
 }
 
-pub use http::{Request, Response};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {

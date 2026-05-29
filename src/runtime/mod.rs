@@ -12,6 +12,3 @@ pub mod server;
 pub mod signals;
 pub mod vdom;
 
-pub use vdom::VNode;
-pub use jsx::render_jsx;
-pub use preact_hooks::{use_state, use_effect, use_context, use_ref, use_memo, render_component};

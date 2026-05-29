@@ -105,7 +105,7 @@ impl VNode {
                     format!("<{} {}>{}</{}>", tag, attrs_str, children_html, tag)
                 }
             }
-            Self::Component { name, children, .. } => {
+            Self::Component { name: _, children, .. } => {
                 children.iter().map(|c| c.to_html()).collect()
             }
             Self::Fragment { children } => children.iter().map(|c| c.to_html()).collect(),

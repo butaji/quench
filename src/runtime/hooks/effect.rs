@@ -1,4 +1,3 @@
-use super::*;
 
 pub fn use_effect<F, D>(_callback: F, _deps: D)
 where

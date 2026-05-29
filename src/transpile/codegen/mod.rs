@@ -16,11 +16,8 @@ pub use function::FnGen;
 pub use infer::TypeInfer;
 pub use jsx::CodeGenJsx;
 pub use module::ModuleGen;
-pub use pat::PatGen;
-pub use response::ResponseGen;
 pub use stmt::CodeGenStmt;
 pub use type_gen::TypeGen;
-pub use variable::VarGen;
 
 pub struct CodeGenerator {
     pub imports: Vec<String>,
@@ -96,7 +93,7 @@ impl CodeGenerator {
     }
     pub fn generate_type_decl(
         &self,
-        t: &crate::transpile::hir::TypeDecl,
+        _t: &crate::transpile::hir::TypeDecl,
     ) -> anyhow::Result<String> {
         Ok(String::new())
     }

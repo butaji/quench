@@ -125,8 +125,63 @@ fn conv_cond(c: &ConditionalExpression) -> Option<hir::Expr> {
     })
 }
 
-fn conv_assign(_a: &AssignmentExpression) -> Option<hir::Expr> {
-    None // TODO: assignment operators not yet supported
+fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
+    use oxc_syntax::operator::AssignmentOperator as OxcAssignOp;
+    let op = match a.operator {
+        OxcAssignOp::Assign => hir::AssignOp::Assign,
+        OxcAssignOp::Addition => hir::AssignOp::AddAssign,
+        OxcAssignOp::Subtraction => hir::AssignOp::SubAssign,
+        OxcAssignOp::Multiplication => hir::AssignOp::MulAssign,
+        OxcAssignOp::Division => hir::AssignOp::DivAssign,
+        OxcAssignOp::Remainder => hir::AssignOp::ModAssign,
+        OxcAssignOp::Exponential => hir::AssignOp::ExpAssign,
+        OxcAssignOp::BitwiseXOR => hir::AssignOp::BitXorAssign,
+        OxcAssignOp::BitwiseAnd => hir::AssignOp::BitAndAssign,
+        OxcAssignOp::BitwiseOR => hir::AssignOp::BitOrAssign,
+        OxcAssignOp::ShiftLeft => hir::AssignOp::ShlAssign,
+        OxcAssignOp::ShiftRight => hir::AssignOp::ShrAssign,
+        OxcAssignOp::ShiftRightZeroFill => hir::AssignOp::UShrAssign,
+        _ => return None, // Logical operators need special handling
+    };
+    Some(hir::Expr::Assign {
+        op,
+        left: Box::new(conv_assignment_target(&a.left)?),
+        right: Box::new(convert_expr(&a.right)?),
+    })
+}
+
+fn conv_assignment_target(target: &AssignmentTarget) -> Option<hir::Expr> {
+    use AssignmentTarget as At;
+    match target {
+        At::AssignmentTargetIdentifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
+        At::StaticMemberExpression(m) => Some(hir::Expr::StaticMember {
+            obj: Box::new(convert_expr(&m.object)?),
+            property: m.property.name.to_string(),
+        }),
+        At::ComputedMemberExpression(m) => Some(hir::Expr::Member {
+            obj: Box::new(convert_expr(&m.object)?),
+            property: Box::new(convert_expr(&m.expression)?),
+            computed: true,
+        }),
+        _ => None,
+    }
+}
+
+fn conv_simple_assignment_target(target: &SimpleAssignmentTarget) -> Option<hir::Expr> {
+    use SimpleAssignmentTarget as Sat;
+    match target {
+        Sat::AssignmentTargetIdentifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
+        Sat::StaticMemberExpression(m) => Some(hir::Expr::StaticMember {
+            obj: Box::new(convert_expr(&m.object)?),
+            property: m.property.name.to_string(),
+        }),
+        Sat::ComputedMemberExpression(m) => Some(hir::Expr::Member {
+            obj: Box::new(convert_expr(&m.object)?),
+            property: Box::new(convert_expr(&m.expression)?),
+            computed: true,
+        }),
+        _ => None,
+    }
 }
 
 fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
@@ -208,8 +263,16 @@ fn conv_static_member(m: &StaticMemberExpression) -> Option<hir::Expr> {
     })
 }
 
-fn conv_update(_u: &UpdateExpression) -> Option<hir::Expr> {
-    None // TODO: update expressions not fully supported
+fn conv_update(u: &UpdateExpression) -> Option<hir::Expr> {
+    let op = match u.operator {
+        UpdateOperator::Increment => hir::UpdateOp::PlusPlus,
+        UpdateOperator::Decrement => hir::UpdateOp::MinusMinus,
+    };
+    Some(hir::Expr::Update {
+        op,
+        arg: Box::new(conv_simple_assignment_target(&u.argument)?),
+        prefix: u.prefix,
+    })
 }
 
 fn conv_unary(u: &UnaryExpression) -> Option<hir::Expr> {

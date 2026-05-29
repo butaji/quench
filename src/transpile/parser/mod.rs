@@ -5,7 +5,6 @@ pub mod jsx;
 pub mod stmt;
 
 use crate::transpile::hir;
-use crate::transpile::hir::{analyze_module_effects, infer_module_ownership};
 use anyhow::Result;
 use std::path::Path;
 

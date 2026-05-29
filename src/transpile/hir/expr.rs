@@ -1,6 +1,6 @@
 //! Expression types
 
-use super::{Block, ClassMember, Decorator, FunctionDecl, GenericParam, Param, TemplatePart, Type};
+use super::{ClassMember, FunctionDecl, Param, TemplatePart, Type};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
