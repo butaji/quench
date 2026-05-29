@@ -149,7 +149,7 @@ fn class_to_hir(c: &Class) -> hir::Decl {
             };
             let params: Vec<hir::Param> = func.params.items.iter().filter_map(|param| {
                 if let BindingPattern::BindingIdentifier(i) = &param.pattern {
-                    Some(hir::Param { name: i.name.to_string(), type_: None, default: None, optional: param.optional, pattern: None })
+                    Some(hir::Param { name: i.name.to_string(), type_: None, default: None, optional: param.optional, pattern: None, ownership: hir::Ownership::Owned })
                 } else { None }
             }).collect();
             Some(hir::ClassMethod { name, params, body, kind: hir::MethodKind::Method })

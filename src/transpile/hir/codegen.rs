@@ -218,10 +218,17 @@ impl Codegen {
     }
 
     fn gen_params(&mut self, params: &[super::Param]) -> String {
-        params.iter().map(|p| {
-            let t = p.type_.as_ref().map(|x| format!(": {}", self.gen_type(x))).unwrap_or_default();
-            format!("{}{}", p.name, t)
-        }).collect::<Vec<_>>().join(", ")
+        params.iter().map(|p| self.gen_param(p)).collect::<Vec<_>>().join(", ")
+    }
+    
+    fn gen_param(&self, param: &super::Param) -> String {
+        let name = &param.name;
+        let ty = param.type_.as_ref().map(|x| format!(": {}", self.gen_type(x))).unwrap_or_default();
+        match param.ownership {
+            super::Ownership::Owned => format!("{}{}", name, ty),
+            super::Ownership::Borrow => format!("&{}", name),
+            super::Ownership::Mut => format!("&mut {}", name),
+        }
     }
 
     fn gen_ret_type(&mut self, ret: &Option<Type>) -> String {

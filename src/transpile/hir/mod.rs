@@ -11,12 +11,14 @@
 mod base;
 mod codegen;
 mod expr;
+mod ownership;
 mod pat;
 mod stmt;
 
 pub use base::*;
 pub use codegen::Codegen;
 pub use expr::*;
+pub use ownership::*;
 pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
 
