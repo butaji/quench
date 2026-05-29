@@ -22,9 +22,12 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
         Expression::AssignmentExpression(a) => conv_assign(a),
         Expression::ArrowFunctionExpression(a) => conv_arrow(a),
         Expression::CallExpression(c) => conv_call(c),
+        Expression::NewExpression(n) => conv_new(n),
         Expression::UpdateExpression(u) => conv_update(u),
         Expression::UnaryExpression(u) => conv_unary(u),
         Expression::ParenthesizedExpression(p) => convert_expr(&p.expression),
+        Expression::ComputedMemberExpression(m) => conv_computed_member(m),
+        Expression::StaticMemberExpression(m) => conv_static_member(m),
         _ => None,
     }
 }
@@ -124,6 +127,28 @@ fn conv_call(c: &CallExpression) -> Option<hir::Expr> {
     Some(hir::Expr::Call {
         callee,
         arguments: args,
+    })
+}
+
+fn conv_new(n: &NewExpression) -> Option<hir::Expr> {
+    Some(hir::Expr::New {
+        callee: Box::new(convert_expr(&n.callee)?),
+        arguments: n.arguments.iter().filter_map(|a| a.as_expression().and_then(convert_expr)).collect(),
+    })
+}
+
+fn conv_computed_member(m: &ComputedMemberExpression) -> Option<hir::Expr> {
+    Some(hir::Expr::Member {
+        obj: Box::new(convert_expr(&m.object)?),
+        property: Box::new(convert_expr(&m.expression)?),
+        computed: true,
+    })
+}
+
+fn conv_static_member(m: &StaticMemberExpression) -> Option<hir::Expr> {
+    Some(hir::Expr::StaticMember {
+        obj: Box::new(convert_expr(&m.object)?),
+        property: m.property.name.to_string(),
     })
 }
 

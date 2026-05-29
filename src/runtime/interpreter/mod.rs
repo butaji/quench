@@ -214,9 +214,66 @@ impl Interpreter {
                 alternate,
             } => self.eval_cond(test, consequent, alternate),
             Expr::Call { callee, arguments } => self.eval_call(callee, arguments),
+            Expr::New { callee, arguments } => self.eval_new(callee, arguments),
+            Expr::Member { obj, property, computed } => self.eval_member(obj, property, *computed),
+            Expr::StaticMember { obj, property } => self.eval_static_member(obj, property),
+            Expr::Array { elems } => self.eval_array(elems),
             Expr::ArrowFunction { body, .. } => self.eval_expr(body),
             _ => format!("{:?}", expr),
         }
+    }
+
+    fn eval_array(&self, elems: &[Option<Expr>]) -> String {
+        let items: Vec<String> = elems.iter().map(|e| {
+            match e {
+                Some(expr) => self.eval_expr(expr),
+                None => "undefined".to_string(),
+            }
+        }).collect();
+        format!("[{}]", items.join(", "))
+    }
+
+    fn eval_new(&self, callee: &Box<Expr>, arguments: &[Expr]) -> String {
+        let callee_str = format!("{:?}", callee);
+        if callee_str.contains("Array") {
+            format!("[{}]", arguments.iter().map(|a| self.eval_expr(a)).collect::<Vec<_>>().join(", "))
+        } else {
+            format!("Object<{}>", callee_str)
+        }
+    }
+
+    fn eval_member(&self, obj: &Box<Expr>, property: &Box<Expr>, computed: bool) -> String {
+        let obj_str = self.eval_expr(obj);
+        let prop_str = self.eval_expr(property);
+        // Handle array length
+        if obj_str.starts_with('[') {
+            if !computed {
+                // Static property access like arr.length
+                if prop_str == "length" {
+                    let count = obj_str.matches(',').count() + 1;
+                    if obj_str == "[]" { return "0".to_string(); }
+                    return format!("{}", count);
+                }
+            } else {
+                // Computed index like arr[0]
+                let idx = prop_str.parse::<usize>().unwrap_or(0);
+                let elements: Vec<&str> = obj_str[1..obj_str.len()-1].split(", ").collect();
+                if let Some(elem) = elements.get(idx) {
+                    return elem.trim().to_string();
+                }
+            }
+        }
+        format!("{}[{}]", obj_str, prop_str)
+    }
+
+    fn eval_static_member(&self, obj: &Box<Expr>, property: &str) -> String {
+        let obj_str = self.eval_expr(obj);
+        if obj_str.starts_with('[') && property == "length" {
+            let count = obj_str.matches(',').count() + 1;
+            if obj_str == "[]" { return "0".to_string(); }
+            return format!("{}", count);
+        }
+        format!("{}.{}", obj_str, property)
     }
 
     fn eval_logical(&self, op: &LogicalOp, left: &Expr, right: &Expr) -> String {
