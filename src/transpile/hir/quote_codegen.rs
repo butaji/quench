@@ -4,7 +4,7 @@
 //! This enables compile-time validation and better error messages.
 
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use quote::quote;
 
 use super::{Expr, FunctionDecl, Ownership, Stmt, Type};
 
@@ -229,6 +229,8 @@ impl QuoteCodegen {
         self.gen_lit_expr(expr)
             .or_else(|| self.gen_ident_expr(expr))
             .or_else(|| self.gen_bin_expr_opt(expr))
+            .or_else(|| self.gen_assign_expr_opt(expr))
+            .or_else(|| self.gen_update_expr_opt(expr))
             .or_else(|| self.gen_call_expr_opt(expr))
             .or_else(|| self.gen_member_expr_opt(expr))
             .unwrap_or_else(|| quote! { Value::Null })
@@ -251,6 +253,43 @@ impl QuoteCodegen {
     
     fn gen_bin_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
         if let super::Expr::Bin { op, left, right } = expr { Some(self.gen_bin_expr(op, left, right)) } else { None }
+    }
+    
+    fn gen_assign_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
+        if let super::Expr::Assign { op, left, right } = expr {
+            Some(self.gen_assign_expr(op, left, right))
+        } else { None }
+    }
+    
+    fn gen_assign_expr(&self, op: &super::AssignOp, left: &Expr, right: &Expr) -> TokenStream {
+        use super::AssignOp as A;
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
+        match op {
+            A::Assign => quote! { { let __v = #rhs; #lhs = __v; __v } },
+            A::AddAssign => quote! { { let __v = #lhs + #rhs; #lhs = __v; __v } },
+            A::SubAssign => quote! { { let __v = #lhs - #rhs; #lhs = __v; __v } },
+            A::MulAssign => quote! { { let __v = #lhs * #rhs; #lhs = __v; __v } },
+            A::DivAssign => quote! { { let __v = #lhs / #rhs; #lhs = __v; __v } },
+            _ => quote! { { let __v = #rhs; #lhs = __v; __v } },
+        }
+    }
+    
+    fn gen_update_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
+        if let super::Expr::Update { op, arg, prefix } = expr {
+            Some(self.gen_update_expr(op, arg, *prefix))
+        } else { None }
+    }
+    
+    fn gen_update_expr(&self, op: &super::UpdateOp, arg: &Expr, prefix: bool) -> TokenStream {
+        use super::UpdateOp as U;
+        let val = self.gen_expr(arg);
+        match op {
+            U::PlusPlus if prefix => quote! { { let __v: f64 = #val + 1.0; #val = __v; __v } },
+            U::PlusPlus => quote! { { let __v = #val; #val += 1.0; __v } },
+            U::MinusMinus if prefix => quote! { { let __v: f64 = #val - 1.0; #val = __v; __v } },
+            U::MinusMinus => quote! { { let __v = #val; #val -= 1.0; __v } },
+        }
     }
     
     fn gen_call_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {

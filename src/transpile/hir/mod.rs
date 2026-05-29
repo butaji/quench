@@ -19,14 +19,11 @@ mod quote_codegen;
 mod stmt;
 mod type_gen;
 
-pub use arena::*;
 pub use base::*;
 pub use effects::*;
-pub use expr::*;
 pub use ownership::*;
 pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
-pub use type_gen::TypeGen;
 pub use quote_codegen::QuoteCodegen;
 
 /// Inference mode for type/ownership analysis

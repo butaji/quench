@@ -1,7 +1,7 @@
 //! Statement types
 
 use super::{
-    Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, GenericParam, ImportSpecifier, Type,
+    Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, ImportSpecifier,
 };
 use serde::{Deserialize, Serialize};
 

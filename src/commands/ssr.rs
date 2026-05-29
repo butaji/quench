@@ -1,6 +1,5 @@
 //! Server-Side Rendering
 
-use crate::transpile::TsParser;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, serde::Serialize)]

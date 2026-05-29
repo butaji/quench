@@ -1,7 +1,6 @@
 //! Route handler generation
 
 use super::hir::*;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteMethod {
@@ -94,6 +93,6 @@ pub fn generate_params_struct(params: &[String]) -> String {
     }
 }
 
-pub fn extract_handlers(module: &Module) -> Vec<RouteHandler> {
+pub fn extract_handlers(_module: &Module) -> Vec<RouteHandler> {
     vec![]
 }
