@@ -9,6 +9,7 @@
 //! - Arena-first memory: all allocations via bumpalo arena
 //! - Semantic ownership: HIR owns the semantics, not runtime strings
 
+mod arena;
 mod base;
 mod codegen;
 mod effects;
@@ -18,6 +19,7 @@ mod pat;
 mod stmt;
 mod type_gen;
 
+pub use arena::*;
 pub use base::*;
 pub use codegen::Codegen;
 pub use effects::*;
