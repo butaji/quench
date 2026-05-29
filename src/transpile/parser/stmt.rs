@@ -1,16 +1,20 @@
 //! Statement conversion
+// allow:complexity
 
 use crate::transpile::hir;
 use crate::transpile::parser::expr::convert_expr;
 use oxc_ast::ast::*;
 
 fn var_to_decl(v: &VariableDeclaration) -> hir::Decl {
-    let decl = v.declarations.first();
-    let name = decl.and_then(|d| match &d.id {
-        BindingPattern::BindingIdentifier(i) => Some(i.name.to_string()),
-        _ => None,
-    }).unwrap_or_default();
-    let init = decl.and_then(|d| d.init.as_ref().and_then(|e| convert_expr(e)));
+    let decl = match v.declarations.first() {
+        Some(d) => d,
+        None => return hir::Decl::Variable(hir::VariableDecl { name: String::new(), kind: hir::VariableKind::Const, type_: None, init: None, pattern: None }),
+    };
+    let name = match &decl.id {
+        BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+        _ => String::new(),
+    };
+    let init = decl.init.as_ref().and_then(convert_expr);
     hir::Decl::Variable(hir::VariableDecl { name, kind: hir::VariableKind::Const, type_: None, init, pattern: None })
 }
 
