@@ -1,7 +1,7 @@
 //! HTTP request handlers
 
 use crate::config::Config;
-use crate::commands::dev::{AppState, ReloadEvent};
+use crate::commands::dev::AppState;
 use crate::runtime::interpreter::Interpreter;
 use anyhow::Result;
 use axum::{response::Html, routing::get, Router};
@@ -14,16 +14,25 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
     let project_root = PathBuf::from(".");
     let route_table = Arc::new(RwLock::new(crate::commands::dev::routes::RouteTable::new()));
     let interpreter = Arc::new(RwLock::new(Interpreter::new()));
-    let (reload_tx, _) = broadcast::channel(100);
+    let (reload_tx, _reload_rx) = broadcast::channel(100);
+    let reload_tx_for_watcher = reload_tx.clone();
+
+    let watcher = match notify::recommended_watcher(move |_| {
+        let _ = reload_tx_for_watcher.send(crate::commands::dev::ReloadEvent::ModuleChanged(".".to_string()));
+    }) {
+        Ok(w) => Arc::new(std::sync::Mutex::new(w)),
+        Err(e) => {
+            tracing::warn!("File watcher failed to start: {}. Hot reload disabled.", e);
+            Arc::new(std::sync::Mutex::new(notify::recommended_watcher(move |_| {}).unwrap()))
+        }
+    };
 
     let state = AppState {
         root: project_root,
         route_table,
         interpreter,
-        reload_tx: reload_tx.clone(),
-        watcher: Arc::new(std::sync::Mutex::new(notify::recommended_watcher(move |_| {
-            let _ = reload_tx.send(ReloadEvent::ModuleChanged(".".to_string()));
-        })?)),
+        reload_tx,
+        watcher,
     };
 
     let app = Router::new()
@@ -37,6 +46,7 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
     tracing::info!("Starting dev server on http://{}", addr);
     
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Server running! Press Ctrl+C to stop.");
     axum::serve(listener, app).await?;
     Ok(())
 }
