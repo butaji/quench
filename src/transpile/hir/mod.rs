@@ -16,6 +16,7 @@ mod expr;
 mod ownership;
 mod pat;
 mod stmt;
+mod type_gen;
 
 pub use base::*;
 pub use codegen::Codegen;
@@ -24,6 +25,7 @@ pub use expr::*;
 pub use ownership::*;
 pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
+pub use type_gen::TypeGen;
 
 /// Inference mode for type/ownership analysis
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

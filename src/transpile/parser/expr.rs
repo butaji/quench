@@ -37,23 +37,22 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
 fn conv_template(t: &TemplateLiteral) -> Option<hir::Expr> {
     let mut parts = vec![];
     let mut exprs = vec![];
-    
+
     for quasi in &t.quasis {
         parts.push(hir::TemplatePart::String(quasi.value.raw.to_string()));
     }
     for expr in &t.expressions {
         exprs.push(convert_expr(expr)?);
     }
-    
-    Some(hir::Expr::Template {
-        parts,
-        exprs,
-    })
+
+    Some(hir::Expr::Template { parts, exprs })
 }
 
 fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
-    let members: Vec<hir::ObjectMemberExpr> = o.properties.iter().filter_map(|prop| {
-        match prop {
+    let members: Vec<hir::ObjectMemberExpr> = o
+        .properties
+        .iter()
+        .filter_map(|prop| match prop {
             ObjectPropertyKind::ObjectProperty(p) => {
                 let key = match &p.key {
                     PropertyKey::StaticIdentifier(i) => hir::PropKey::Str(i.name.to_string()),
@@ -63,12 +62,16 @@ fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
                 };
                 let value = convert_expr(&p.value)?;
                 Some(hir::ObjectMemberExpr {
-                    prop: hir::ObjectProp::Init { key, value, computed: p.computed },
+                    prop: hir::ObjectProp::Init {
+                        key,
+                        value,
+                        computed: p.computed,
+                    },
                 })
             }
             ObjectPropertyKind::SpreadProperty(_) => None,
-        }
-    }).collect();
+        })
+        .collect();
     Some(hir::Expr::Object { members })
 }
 
@@ -182,7 +185,11 @@ fn conv_call(c: &CallExpression) -> Option<hir::Expr> {
 fn conv_new(n: &NewExpression) -> Option<hir::Expr> {
     Some(hir::Expr::New {
         callee: Box::new(convert_expr(&n.callee)?),
-        arguments: n.arguments.iter().filter_map(|a| a.as_expression().and_then(convert_expr)).collect(),
+        arguments: n
+            .arguments
+            .iter()
+            .filter_map(|a| a.as_expression().and_then(convert_expr))
+            .collect(),
     })
 }
 

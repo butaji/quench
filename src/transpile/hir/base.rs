@@ -72,12 +72,12 @@ impl Ownership {
     pub fn is_borrow(&self) -> bool {
         matches!(self, Ownership::Borrow | Ownership::Mut)
     }
-    
+
     /// Returns true if this ownership represents a mutable borrow
     pub fn is_mut(&self) -> bool {
         matches!(self, Ownership::Mut)
     }
-    
+
     /// Get Rust lifetime annotation (empty for owned, ''' for borrow, ''' for mut)
     pub fn rust_lifetime(&self) -> &'static str {
         match self {
