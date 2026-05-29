@@ -280,7 +280,7 @@ fn process_single_route(
             expr,
         }) = item
         {
-            if let crate::transpile::hir::Expr::Function { decl } = expr {
+            if let crate::transpile::hir::Expr::Function(decl) = expr {
                 return Some(decl.name.clone());
             }
         }
