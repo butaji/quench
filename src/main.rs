@@ -117,36 +117,19 @@ fn run_transpile(path: PathBuf) -> Result<()> {
 }
 
 fn run_eval(expr: &str) -> Result<()> {
-    let parser = transpile::TsParser::new();
-    let interpreter = runtime::interpreter::Interpreter::new();
     let trimmed = expr.trim();
     if trimmed.is_empty() {
         println!("undefined");
         return Ok(());
     }
-    // Check if it's a statement (not an expression)
-    if is_statement_keyword(trimmed) {
-        match parser.parse_source(trimmed) {
-            Ok(module) => {
-                // Analysis passes run during parsing
-                let result = interpreter.eval_module_stmts(&module);
-                print_result(&result);
-                Ok(())
-            }
-            Err(e) => Err(anyhow::anyhow!("Parse error: {}", e)),
+    // Use QuickJS for evaluation (in-memory, hot reload ready)
+    let js = runtime::quickjs::QuickJsRuntime::new();
+    match js.eval(trimmed) {
+        Ok(result) => {
+            println!("{}", result);
+            Ok(())
         }
-    } else {
-        // Wrap as expression
-        let source = format!("const __result = {};", trimmed);
-        match parser.parse_source(&source) {
-            Ok(module) => {
-                // Analysis passes run during parsing
-                let result = interpreter.eval_module(&module);
-                print_result(&result);
-                Ok(())
-            }
-            Err(e) => Err(anyhow::anyhow!("Parse error: {}", e)),
-        }
+        Err(e) => Err(anyhow::anyhow!("JS error: {}", e)),
     }
 }
 fn prepare_source(stmt: &str) -> String {
