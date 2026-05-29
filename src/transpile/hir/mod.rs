@@ -5,11 +5,13 @@
 //! Design principles:
 //! - Shape specialization: known object shapes -> structs, dynamic -> HashMap
 //! - Ownership inference: borrow/own/mut mirrors Rust semantics
+//! - Effect inference: throw -> Result<T, E>
 //! - Arena-first memory: all allocations via bumpalo arena
 //! - Semantic ownership: HIR owns the semantics, not runtime strings
 
 mod base;
 mod codegen;
+mod effects;
 mod expr;
 mod ownership;
 mod pat;
@@ -17,6 +19,7 @@ mod stmt;
 
 pub use base::*;
 pub use codegen::Codegen;
+pub use effects::*;
 pub use expr::*;
 pub use ownership::*;
 pub use pat::*;
