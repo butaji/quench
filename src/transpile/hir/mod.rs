@@ -16,6 +16,7 @@ mod effects;
 mod expr;
 mod ownership;
 mod pat;
+mod quote_codegen;
 mod stmt;
 mod type_gen;
 
@@ -28,6 +29,7 @@ pub use ownership::*;
 pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
 pub use type_gen::TypeGen;
+pub use quote_codegen::QuoteCodegen;
 
 /// Inference mode for type/ownership analysis
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
