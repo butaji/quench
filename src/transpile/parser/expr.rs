@@ -16,6 +16,8 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
         Expression::ArrayExpression(a) => Some(hir::Expr::Array {
             elems: arr_elems(&a),
         }),
+        Expression::ObjectExpression(o) => conv_object(o),
+        Expression::TemplateLiteral(t) => conv_template(t),
         Expression::BinaryExpression(b) => conv_bin(b),
         Expression::LogicalExpression(l) => conv_log(l),
         Expression::ConditionalExpression(c) => conv_cond(c),
@@ -30,6 +32,44 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
         Expression::StaticMemberExpression(m) => conv_static_member(m),
         _ => None,
     }
+}
+
+fn conv_template(t: &TemplateLiteral) -> Option<hir::Expr> {
+    let mut parts = vec![];
+    let mut exprs = vec![];
+    
+    for quasi in &t.quasis {
+        parts.push(hir::TemplatePart::String(quasi.value.raw.to_string()));
+    }
+    for expr in &t.expressions {
+        exprs.push(convert_expr(expr)?);
+    }
+    
+    Some(hir::Expr::Template {
+        parts,
+        exprs,
+    })
+}
+
+fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
+    let members: Vec<hir::ObjectMemberExpr> = o.properties.iter().filter_map(|prop| {
+        match prop {
+            ObjectPropertyKind::ObjectProperty(p) => {
+                let key = match &p.key {
+                    PropertyKey::StaticIdentifier(i) => hir::PropKey::Str(i.name.to_string()),
+                    PropertyKey::StringLiteral(s) => hir::PropKey::Str(s.value.to_string()),
+                    PropertyKey::NumericLiteral(n) => hir::PropKey::Num(n.value),
+                    _ => return None,
+                };
+                let value = convert_expr(&p.value)?;
+                Some(hir::ObjectMemberExpr {
+                    prop: hir::ObjectProp::Init { key, value, computed: p.computed },
+                })
+            }
+            ObjectPropertyKind::SpreadProperty(_) => None,
+        }
+    }).collect();
+    Some(hir::Expr::Object { members })
 }
 
 fn arr_elems(a: &ArrayExpression) -> Vec<Option<hir::Expr>> {
@@ -48,6 +88,14 @@ fn conv_bin(b: &BinaryExpression) -> Option<hir::Expr> {
         BinaryOperator::Multiplication => hir::BinaryOp::Mul,
         BinaryOperator::Division => hir::BinaryOp::Div,
         BinaryOperator::Remainder => hir::BinaryOp::Mod,
+        BinaryOperator::LessThan => hir::BinaryOp::Lt,
+        BinaryOperator::LessEqualThan => hir::BinaryOp::Lte,
+        BinaryOperator::GreaterThan => hir::BinaryOp::Gt,
+        BinaryOperator::GreaterEqualThan => hir::BinaryOp::Gte,
+        BinaryOperator::Equality => hir::BinaryOp::Eq,
+        BinaryOperator::StrictEquality => hir::BinaryOp::StrictEq,
+        BinaryOperator::Inequality => hir::BinaryOp::Neq,
+        BinaryOperator::StrictInequality => hir::BinaryOp::StrictNeq,
         _ => return None,
     };
     Some(hir::Expr::Bin { op, left, right })
@@ -57,7 +105,7 @@ fn conv_log(l: &LogicalExpression) -> Option<hir::Expr> {
     let op = match l.operator {
         LogicalOperator::And => hir::LogicalOp::And,
         LogicalOperator::Or => hir::LogicalOp::Or,
-        _ => return None,
+        LogicalOperator::Coalesce => hir::LogicalOp::NullishCoalescing,
     };
     Some(hir::Expr::Logical {
         op,
@@ -158,12 +206,13 @@ fn conv_update(_u: &UpdateExpression) -> Option<hir::Expr> {
 
 fn conv_unary(u: &UnaryExpression) -> Option<hir::Expr> {
     let op = match u.operator {
+        UnaryOperator::UnaryNegation => hir::UnaryOp::Minus,
+        UnaryOperator::UnaryPlus => hir::UnaryOp::Plus,
         UnaryOperator::LogicalNot => hir::UnaryOp::Not,
         UnaryOperator::BitwiseNot => hir::UnaryOp::BitNot,
         UnaryOperator::Typeof => hir::UnaryOp::Typeof,
         UnaryOperator::Void => hir::UnaryOp::Void,
         UnaryOperator::Delete => hir::UnaryOp::Delete,
-        _ => return None,
     };
     Some(hir::Expr::Unary {
         op,
