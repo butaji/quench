@@ -43,6 +43,9 @@ futures = "0.3"
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
+# JavaScript runtime (QuickJS)
+rquickjs = "0.12"
+
 # File watching
 notify = "6.1"
 walkdir = "2.5"
@@ -64,6 +67,11 @@ rayon = "1.10"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
+
+# Rust codegen (for HIR -> Rust)
+quote = "1.0"
+proc-macro2 = "1.0"
+syn = { version = "2.0", features = ["full"] }
 
 # Runtime library (for generated code)
 runts-macros = { path = "crates/runts-macros" }
