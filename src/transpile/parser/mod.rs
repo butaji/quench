@@ -5,6 +5,7 @@ pub mod jsx;
 pub mod stmt;
 
 use crate::transpile::hir;
+use crate::transpile::hir::{analyze_module_effects, infer_module_ownership};
 use anyhow::Result;
 use std::path::Path;
 
@@ -29,11 +30,24 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
         .iter()
         .filter_map(stmt::convert_module_item)
         .collect();
-    Ok(hir::Module {
+    let mut module = hir::Module {
         source: String::new(),
         items,
         types: std::collections::HashMap::new(),
-    })
+    };
+    // Run ownership and effect analysis passes
+    run_analysis_passes(&mut module);
+    Ok(module)
+}
+
+/// Run ownership and effect analysis on parsed module
+fn run_analysis_passes(module: &mut hir::Module) {
+    for item in &mut module.items {
+        if let hir::ModuleItem::Stmt(hir::Stmt::FunctionDecl(ref mut func)) = item {
+            hir::infer_function_ownership(func);
+            hir::analyze_effects(func);
+        }
+    }
 }
 
 pub fn parse_file(path: &Path) -> Result<hir::Module> {
