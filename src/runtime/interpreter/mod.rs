@@ -2,9 +2,9 @@
 // allow:complexity
 
 pub mod eval;
-pub mod render;
 #[cfg(test)]
 mod eval_tests;
+pub mod render;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -22,6 +22,7 @@ pub struct Interpreter {
     middleware: Arc<RwLock<Vec<MiddlewareInfo>>>,
     error_pages: Arc<RwLock<HashMap<u16, String>>>,
     islands: Arc<RwLock<HashMap<String, IslandInfo>>>,
+    vars: Arc<RwLock<HashMap<String, Expr>>>,
 }
 
 #[derive(Clone)]
@@ -149,23 +150,38 @@ impl Interpreter {
             middleware: Arc::new(RwLock::new(Vec::new())),
             error_pages: Arc::new(RwLock::new(HashMap::new())),
             islands: Arc::new(RwLock::new(HashMap::new())),
+            vars: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn eval_module(&self, module: &Module) -> String {
+        let mut result = String::new();
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Variable(var)) = item {
+                let name = var.name.clone();
                 if let Some(init) = &var.init {
-                    return self.eval_expr(init);
+                    // Store the Expr for later use
+                    if !name.is_empty() {
+                        self.vars.write().insert(name.clone(), (*init).clone());
+                    }
+                    // For function expressions, store but don't evaluate (returns the func)
+                    // For other expressions, evaluate
+                    if matches!(&*init, Expr::ArrowFunction { .. }) {
+                        result = format!("{:?}", init);
+                    } else {
+                        result = self.eval_expr(init);
+                    }
                 }
             }
         }
-        String::new()
+        result
     }
 
     fn eval_expr(&self, expr: &Expr) -> String {
         let s = self.eval_simple(expr);
-        if !s.is_empty() { return s; }
+        if !s.is_empty() {
+            return s;
+        }
         self.eval_complex(expr)
     }
 
@@ -176,7 +192,14 @@ impl Interpreter {
             Expr::Boolean(b) => b.to_string(),
             Expr::Null => "null".into(),
             Expr::Undefined => "undefined".into(),
-            Expr::Ident { name } => name.clone(),
+            Expr::Ident { name } => {
+                // Look up variable - if found, evaluate it
+                if let Some(var_expr) = self.vars.read().get(name) {
+                    self.eval_expr(var_expr)
+                } else {
+                    name.clone()
+                }
+            }
             _ => String::new(),
         }
     }
@@ -185,7 +208,11 @@ impl Interpreter {
         match expr {
             Expr::Bin { op, left, right } => self.eval_bin_op(op, left, right),
             Expr::Logical { op, left, right } => self.eval_logical(op, left, right),
-            Expr::Cond { test, consequent, alternate } => self.eval_cond(test, consequent, alternate),
+            Expr::Cond {
+                test,
+                consequent,
+                alternate,
+            } => self.eval_cond(test, consequent, alternate),
             Expr::Call { callee, arguments } => self.eval_call(callee, arguments),
             Expr::ArrowFunction { body, .. } => self.eval_expr(body),
             _ => format!("{:?}", expr),
@@ -202,15 +229,27 @@ impl Interpreter {
     }
 
     fn and_op(&self, left: &str, right: &Expr) -> String {
-        if left == "false" || left == "null" || left == "0" || left.is_empty() { left.to_string() } else { self.eval_expr(right) }
+        if left == "false" || left == "null" || left == "0" || left.is_empty() {
+            left.to_string()
+        } else {
+            self.eval_expr(right)
+        }
     }
 
     fn or_op(&self, left: &str, right: &Expr) -> String {
-        if left == "false" || left == "null" || left == "0" || left.is_empty() { self.eval_expr(right) } else { left.to_string() }
+        if left == "false" || left == "null" || left == "0" || left.is_empty() {
+            self.eval_expr(right)
+        } else {
+            left.to_string()
+        }
     }
 
     fn nullish_op(&self, left: &str, right: &Expr) -> String {
-        if left == "null" || left == "undefined" { self.eval_expr(right) } else { left.to_string() }
+        if left == "null" || left == "undefined" {
+            self.eval_expr(right)
+        } else {
+            left.to_string()
+        }
     }
 
     fn eval_cond(&self, test: &Expr, consequent: &Expr, alternate: &Expr) -> String {
@@ -223,10 +262,21 @@ impl Interpreter {
     }
 
     fn eval_call(&self, callee: &Expr, args: &[Expr]) -> String {
-        if let Expr::ArrowFunction { params, body, .. } = callee {
-            return self.eval_arrow_func(params, body, args);
+        let callee_expr = match callee {
+            Expr::Ident { name } => {
+                // Look up variable
+                self.vars
+                    .read()
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| callee.clone())
+            }
+            _ => callee.clone(),
+        };
+        if let Expr::ArrowFunction { params, body, .. } = callee_expr {
+            return self.eval_arrow_func(&params, &body, args);
         }
-        format!("Call<{:?}>", callee)
+        format!("Call<{:?}>", callee_expr)
     }
 
     fn eval_arrow_func(&self, params: &[Param], body: &Box<Expr>, args: &[Expr]) -> String {
@@ -288,7 +338,9 @@ impl Interpreter {
     }
 
     fn eval_bin_op(&self, op: &BinaryOp, left: &Expr, right: &Expr) -> String {
-        if matches!(op, BinaryOp::Add) && (matches!(left, Expr::String(_)) || matches!(right, Expr::String(_))) {
+        if matches!(op, BinaryOp::Add)
+            && (matches!(left, Expr::String(_)) || matches!(right, Expr::String(_)))
+        {
             return format!("{}{}", self.eval_expr(left), self.eval_expr(right));
         }
         self.eval_num_bin_op(op, left, right)
@@ -297,10 +349,22 @@ impl Interpreter {
     fn eval_bin_op_str(&self, left: &str, right: &str, op: &BinaryOp) -> String {
         if matches!(op, BinaryOp::Add) {
             // Check if either is a string
-            if left.starts_with('"') || right.starts_with('"') || left.starts_with('\'') || right.starts_with('\'') {
+            if left.starts_with('"')
+                || right.starts_with('"')
+                || left.starts_with('\'')
+                || right.starts_with('\'')
+            {
                 let ls = left.trim_matches('"').trim_matches('\'');
                 let rs = right.trim_matches('"').trim_matches('\'');
-                return format!("{}\"{}\"", if left.starts_with('"') || left.starts_with('\'') { String::new() } else { format!("{}", left) }, rs);
+                return format!(
+                    "{}\"{}\"",
+                    if left.starts_with('"') || left.starts_with('\'') {
+                        String::new()
+                    } else {
+                        format!("{}", left)
+                    },
+                    rs
+                );
             }
         }
         let l: f64 = left.parse().unwrap_or(0.0);
@@ -332,12 +396,20 @@ impl Interpreter {
         let parser = crate::transpile::TsParser::new();
         let module = parser.parse_source(source)?;
         let path_str = path.to_string_lossy().to_string();
-        self.modules.write().insert(path_str.clone(), module.clone());
+        self.modules
+            .write()
+            .insert(path_str.clone(), module.clone());
         for item in &module.items {
             if let ModuleItem::Export(export) = item {
                 if let Export::Default { expr } = export {
                     if let Expr::Function(decl) = expr {
-                        if decl.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        if decl
+                            .name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                        {
                             let component = ComponentDef {
                                 name: decl.name.clone(),
                                 file_path: path_str.clone(),
@@ -353,43 +425,21 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn render_route(&self, _pattern: &str, params: HashMap<String, String>) -> Result<String, anyhow::Error> {
+    pub fn render_route(
+        &self,
+        _pattern: &str,
+        params: HashMap<String, String>,
+    ) -> Result<String, anyhow::Error> {
         let ctx = EvalContext { params, ..Default::default() };
         let components = self.components.read();
         if let Some(component) = components.get("Home") {
-            self.render_component(component, &ctx)
+            let html = format!("<div data-component=\"{}\">{}</div>",
+                component.name,
+                render::render_component_body(&component.body, &ctx)
+            );
+            Ok(html)
         } else {
             Ok(String::new())
-        }
-    }
-
-    fn render_component(&self, component: &ComponentDef, ctx: &EvalContext) -> Result<String, anyhow::Error> {
-        let mut html = String::new();
-        html.push_str(&format!("<div data-component=\"{}\">", component.name));
-        for stmt in &component.body {
-            html.push_str(&self.render_stmt(stmt, ctx)?);
-        }
-        html.push_str("</div>");
-        Ok(html)
-    }
-
-    fn render_stmt(&self, stmt: &Stmt, ctx: &EvalContext) -> Result<String, anyhow::Error> {
-        match stmt {
-            Stmt::Return { arg: Some(expr) } => Ok(format!("{{{{{}}}}}", self.render_expr(expr, ctx)?)),
-            Stmt::Block(stmts) => {
-                let mut html = String::new();
-                for s in stmts { html.push_str(&self.render_stmt(s, ctx)?); }
-                Ok(html)
-            }
-            _ => Ok(String::new()),
-        }
-    }
-
-    fn render_expr(&self, expr: &Expr, ctx: &EvalContext) -> Result<String, anyhow::Error> {
-        match expr {
-            Expr::String(s) => Ok(s.clone()),
-            Expr::Ident { name } => Ok(ctx.scope.get(name).map(|v| format!("{}", v)).unwrap_or_else(|| format!("{{{}}}", name))),
-            _ => Ok(String::new()),
         }
     }
 
@@ -400,44 +450,11 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn execute_route_by_file(&self, file: &str) -> Result<String, anyhow::Error> {
-        let modules = self.modules.read();
-        if let Some(module) = modules.get(file) {
-            let mut html = String::new();
-            for item in &module.items {
-                if let ModuleItem::Decl(Decl::Function(func)) = item {
-                    if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        html.push_str(&format!("<div data-component=\"{}\">", func.name));
-                        if let Some(body) = &func.body {
-                            for stmt in &body.0 { html.push_str(&self.render_stmt(stmt, &EvalContext::default())?); }
-                        }
-                        html.push_str("</div>");
-                    }
-                }
-            }
-            Ok(html)
-        } else {
-            Ok(String::new())
-        }
-    }
-
     pub fn execute_route(&self, path: &str, params: HashMap<String, String>) -> Result<String, anyhow::Error> {
         let ctx = EvalContext { params, ..Default::default() };
         let modules = self.modules.read();
         if let Some(module) = modules.get(path) {
-            let mut html = String::new();
-            for item in &module.items {
-                if let ModuleItem::Decl(Decl::Function(func)) = item {
-                    if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        html.push_str(&format!("<div data-component=\"{}\">", func.name));
-                        if let Some(body) = &func.body {
-                            for stmt in &body.0 { html.push_str(&self.render_stmt(stmt, &ctx)?); }
-                        }
-                        html.push_str("</div>");
-                    }
-                }
-            }
-            Ok(html)
+            Ok(render::execute_module_items(&module.items, &ctx))
         } else {
             Ok(String::new())
         }
@@ -445,7 +462,9 @@ impl Interpreter {
 }
 
 impl Default for Interpreter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone)]

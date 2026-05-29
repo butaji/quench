@@ -1,4 +1,7 @@
 //! Rendering utilities for interpreter
+// allow:complexity
+
+use crate::transpile::hir::{Expr, ModuleItem, Decl, FunctionDecl, Stmt};
 
 use super::*;
 
@@ -25,9 +28,7 @@ fn render_vnode(vnode: &VNodeValue) -> String {
         .iter()
         .map(|(k, v)| format!(" {}=\"{}\"", k, render_value(v)))
         .collect();
-
     let children: String = vnode.children.iter().map(render_value).collect();
-
     if children.is_empty() {
         format!("<{}{} />", vnode.tag, attrs)
     } else {
@@ -41,4 +42,44 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// Render a component's body
+pub fn render_component_body(body: &[Stmt], ctx: &EvalContext) -> String {
+    body.iter().map(|s| render_stmt(s, ctx)).collect()
+}
+
+/// Render a statement to HTML
+fn render_stmt(stmt: &Stmt, ctx: &EvalContext) -> String {
+    match stmt {
+        Stmt::Return { arg: Some(expr) } => format!("{{{{{}}}}}", render_expr(expr, ctx)),
+        Stmt::Block(stmts) => stmts.iter().map(|s| render_stmt(s, ctx)).collect(),
+        _ => String::new(),
+    }
+}
+
+/// Render an expression
+fn render_expr(expr: &Expr, ctx: &EvalContext) -> String {
+    match expr {
+        Expr::String(s) => s.clone(),
+        Expr::Ident { name } => ctx.scope.get(name).map(|v| format!("{}", v)).unwrap_or_else(|| format!("{{{}}}", name)),
+        _ => String::new(),
+    }
+}
+
+/// Execute a route from module items
+pub fn execute_module_items(items: &[ModuleItem], ctx: &EvalContext) -> String {
+    let mut html = String::new();
+    for item in items {
+        if let ModuleItem::Decl(Decl::Function(func)) = item {
+            if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                html.push_str(&format!("<div data-component=\"{}\">", func.name));
+                if let Some(body) = &func.body {
+                    html.push_str(&render_component_body(&body.0, ctx));
+                }
+                html.push_str("</div>");
+            }
+        }
+    }
+    html
 }
