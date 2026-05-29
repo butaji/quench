@@ -13,6 +13,7 @@ mod util;
 
 use anyhow::Result;
 use clap::Parser;
+use transpile::hir;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -35,6 +36,7 @@ fn init_logging() {
 
 fn execute(cli: Cli) -> Result<()> {
     match cli.command {
+        cli::Commands::Eval { expr } => run_eval(&expr),
         cli::Commands::Init { name } => run_init(name),
         cli::Commands::Dev { path } => run_dev(path),
         cli::Commands::Build {
@@ -110,6 +112,15 @@ fn run_transpile(path: PathBuf) -> Result<()> {
     let result = rt.block_on(commands::run_build(&config, path))?;
     info!("Transpilation complete!");
     info_build_summary(&result);
+    Ok(())
+}
+
+fn run_eval(expr: &str) -> Result<()> {
+    let parser = transpile::TsParser::new();
+    let source = format!("const __result = {};", expr);
+    let module = parser.parse_tsx(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    println!("{}", source);
+    println!("{:?}", module);
     Ok(())
 }
 

@@ -54,6 +54,12 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Evaluate a TypeScript expression
+    Eval {
+        /// The expression to evaluate
+        expr: String,
+    },
+
     /// Add a new component or route
     Add {
         /// Type of component to add

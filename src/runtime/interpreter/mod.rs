@@ -1,6 +1,4 @@
 //! HIR Interpreter for Development Mode
-//!
-//! Executes HIR directly without Rust code generation.
 
 pub mod eval;
 pub mod render;
@@ -23,7 +21,6 @@ pub struct Interpreter {
     islands: Arc<RwLock<HashMap<String, IslandInfo>>>,
 }
 
-/// Component definition
 #[derive(Clone)]
 struct ComponentDef {
     name: String,
@@ -32,7 +29,6 @@ struct ComponentDef {
     body: Vec<Stmt>,
 }
 
-/// Handler information
 #[derive(Clone)]
 struct HandlerInfo {
     file_path: String,
@@ -41,7 +37,6 @@ struct HandlerInfo {
     props_type: Option<String>,
 }
 
-/// Single handler method
 #[derive(Clone)]
 struct HandlerMethod {
     params: Vec<Param>,
@@ -49,7 +44,6 @@ struct HandlerMethod {
     is_async: bool,
 }
 
-/// Layout information
 #[derive(Clone)]
 struct LayoutInfo {
     file_path: String,
@@ -59,7 +53,6 @@ struct LayoutInfo {
     body: Vec<Stmt>,
 }
 
-/// Middleware information
 #[derive(Clone)]
 struct MiddlewareInfo {
     file_path: String,
@@ -70,7 +63,6 @@ struct MiddlewareInfo {
     pattern: Option<String>,
 }
 
-/// Island information
 #[derive(Clone)]
 struct IslandInfo {
     file_path: String,
@@ -81,7 +73,6 @@ struct IslandInfo {
     body: Vec<Stmt>,
 }
 
-/// Evaluation context for a single render
 #[derive(Debug, Clone)]
 pub struct EvalContext {
     pub scope: HashMap<String, Value>,
@@ -109,7 +100,6 @@ impl Default for EvalContext {
     }
 }
 
-/// Runtime value
 #[derive(Debug, Clone)]
 pub enum Value {
     Null,
@@ -123,20 +113,6 @@ pub enum Value {
     VNode(VNodeValue),
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Value::Null, Value::Null) => true,
-            (Value::Undefined, Value::Undefined) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-impl Eq for Value {}
-
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -144,55 +120,11 @@ impl std::fmt::Display for Value {
             Value::Undefined => write!(f, "undefined"),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
-            Value::String(s) => write!(f, "{}", s),
-            Value::Array(arr) => write!(
-                f,
-                "[{}]",
-                arr.iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Value::Object(obj) => write!(
-                f,
-                "{{{}}}",
-                obj.keys().cloned().collect::<Vec<_>>().join(", ")
-            ),
-            Value::Function(name) => write!(f, "fn {}", name),
-            Value::VNode(v) => write!(f, "<{} />", v.tag),
-        }
-    }
-}
-
-impl Value {
-    pub fn as_bool(&self) -> bool {
-        match self {
-            Value::Bool(b) => *b,
-            Value::String(s) => !s.is_empty(),
-            Value::Number(n) => *n != 0.0,
-            Value::Null | Value::Undefined => false,
-            Value::Array(arr) => !arr.is_empty(),
-            Value::Object(_) => true,
-            Value::Function(_) => true,
-            Value::VNode(_) => true,
-        }
-    }
-
-    pub fn as_number(&self) -> f64 {
-        match self {
-            Value::Number(n) => *n,
-            Value::Bool(true) => 1.0,
-            Value::Bool(false) => 0.0,
-            Value::String(s) => s.parse().unwrap_or(0.0),
-            Value::Null | Value::Undefined => 0.0,
-            _ => 0.0,
-        }
-    }
-
-    pub fn get_member(&self, key: &str) -> Option<Value> {
-        match self {
-            Value::Object(map) => map.get(key).cloned(),
-            _ => None,
+            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::Array(arr) => write!(f, "{:?}", arr),
+            Value::Object(obj) => write!(f, "{:?}", obj),
+            Value::Function(name) => write!(f, "function {}() {{}}", name),
+            Value::VNode(vnode) => write!(f, "<{} />", vnode.tag),
         }
     }
 }
@@ -217,61 +149,44 @@ impl Interpreter {
         }
     }
 
+    pub fn eval_module(&self, module: &Module) -> String {
+        for item in &module.items {
+            if let ModuleItem::Decl(Decl::Variable(var)) = item {
+                if let Some(init) = &var.init {
+                    return format!("{:?}", init);
+                }
+            }
+        }
+        String::new()
+    }
+
     pub fn load_module(&mut self, path: &Path, source: &str) -> Result<(), anyhow::Error> {
         let parser = crate::transpile::TsParser::new();
         let module = parser.parse_source(source)?;
-
         let path_str = path.to_string_lossy().to_string();
-        self.modules
-            .write()
-            .insert(path_str.clone(), module.clone());
-
+        self.modules.write().insert(path_str.clone(), module.clone());
         for item in &module.items {
-            match item {
-                ModuleItem::Export(export) => {
-                    if let Export::Default { expr } = export {
-                        if let Expr::Function(decl) = expr {
-                            if decl
-                                .name
-                                .chars()
-                                .next()
-                                .map(|c| c.is_uppercase())
-                                .unwrap_or(false)
-                            {
-                                let component = ComponentDef {
-                                    name: decl.name.clone(),
-                                    file_path: path_str.clone(),
-                                    params: decl.params.clone(),
-                                    body: decl.body.clone().unwrap_or_default().0,
-                                };
-                                self.components.write().insert(decl.name.clone(), component);
-                            }
+            if let ModuleItem::Export(export) = item {
+                if let Export::Default { expr } = export {
+                    if let Expr::Function(decl) = expr {
+                        if decl.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                            let component = ComponentDef {
+                                name: decl.name.clone(),
+                                file_path: path_str.clone(),
+                                params: decl.params.clone(),
+                                body: decl.body.clone().unwrap_or_default().0,
+                            };
+                            self.components.write().insert(decl.name.clone(), component);
                         }
                     }
                 }
-                _ => {}
             }
         }
-
         Ok(())
     }
 
-    pub fn render_route(
-        &self,
-        _pattern: &str,
-        params: HashMap<String, String>,
-    ) -> Result<String, anyhow::Error> {
-        let ctx = EvalContext {
-            scope: HashMap::new(),
-            props: HashMap::new(),
-            params,
-            url: String::new(),
-            island_props: None,
-            rendered_islands: vec![],
-            request: None,
-            state: HashMap::new(),
-        };
-
+    pub fn render_route(&self, _pattern: &str, params: HashMap<String, String>) -> Result<String, anyhow::Error> {
+        let ctx = EvalContext { params, ..Default::default() };
         let components = self.components.read();
         if let Some(component) = components.get("Home") {
             self.render_component(component, &ctx)
@@ -280,78 +195,95 @@ impl Interpreter {
         }
     }
 
-    fn render_component(
-        &self,
-        component: &ComponentDef,
-        _ctx: &EvalContext,
-    ) -> Result<String, anyhow::Error> {
-        Ok(format!("<div>{}</div>", component.name))
+    fn render_component(&self, component: &ComponentDef, ctx: &EvalContext) -> Result<String, anyhow::Error> {
+        let mut html = String::new();
+        html.push_str(&format!("<div data-component=\"{}\">", component.name));
+        for stmt in &component.body {
+            html.push_str(&self.render_stmt(stmt, ctx)?);
+        }
+        html.push_str("</div>");
+        Ok(html)
     }
 
-    /// Load a file into the interpreter
+    fn render_stmt(&self, stmt: &Stmt, ctx: &EvalContext) -> Result<String, anyhow::Error> {
+        match stmt {
+            Stmt::Return { arg: Some(expr) } => Ok(format!("{{{{{}}}}}", self.render_expr(expr, ctx)?)),
+            Stmt::Block(stmts) => {
+                let mut html = String::new();
+                for s in stmts { html.push_str(&self.render_stmt(s, ctx)?); }
+                Ok(html)
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn render_expr(&self, expr: &Expr, ctx: &EvalContext) -> Result<String, anyhow::Error> {
+        match expr {
+            Expr::String(s) => Ok(s.clone()),
+            Expr::Ident { name } => Ok(ctx.scope.get(name).map(|v| format!("{}", v)).unwrap_or_else(|| format!("{{{}}}", name))),
+            _ => Ok(String::new()),
+        }
+    }
+
     pub fn load_file(&mut self, path: &str, source: &str) -> Result<(), anyhow::Error> {
-        use crate::transpile::parser::TsParser;
-        let parser = TsParser::new();
+        let parser = crate::transpile::TsParser::new();
         let module = parser.parse_source(source)?;
-        // Store the module for later use
-        let mut modules = self.modules.write();
-        modules.insert(path.to_string(), module);
+        self.modules.write().insert(path.to_string(), module);
         Ok(())
     }
 
-    /// Execute a route by file path
-    pub fn execute_route_by_file(
-        &self,
-        _path: &str,
-        _params: HashMap<String, String>,
-        _request: RequestInfo,
-    ) -> Result<RenderResult, anyhow::Error> {
-        Ok(RenderResult {
-            status: 200,
-            headers: HashMap::new(),
-            body: String::new(),
-            html: String::new(),
-            page_data: None,
-            islands: vec![],
-        })
+    pub fn execute_route_by_file(&self, file: &str) -> Result<String, anyhow::Error> {
+        let modules = self.modules.read();
+        if let Some(module) = modules.get(file) {
+            let mut html = String::new();
+            for item in &module.items {
+                if let ModuleItem::Decl(Decl::Function(func)) = item {
+                    if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        html.push_str(&format!("<div data-component=\"{}\">", func.name));
+                        if let Some(body) = &func.body {
+                            for stmt in &body.0 { html.push_str(&self.render_stmt(stmt, &EvalContext::default())?); }
+                        }
+                        html.push_str("</div>");
+                    }
+                }
+            }
+            Ok(html)
+        } else {
+            Ok(String::new())
+        }
     }
 
-    /// Execute a route
-    pub fn execute_route(
-        &self,
-        path: &str,
-        params: HashMap<String, String>,
-        request: RequestInfo,
-    ) -> Result<RenderResult, anyhow::Error> {
-        self.execute_route_by_file(path, params, request)
+    pub fn execute_route(&self, path: &str, params: HashMap<String, String>) -> Result<String, anyhow::Error> {
+        let ctx = EvalContext { params, ..Default::default() };
+        let modules = self.modules.read();
+        if let Some(module) = modules.get(path) {
+            let mut html = String::new();
+            for item in &module.items {
+                if let ModuleItem::Decl(Decl::Function(func)) = item {
+                    if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        html.push_str(&format!("<div data-component=\"{}\">", func.name));
+                        if let Some(body) = &func.body {
+                            for stmt in &body.0 { html.push_str(&self.render_stmt(stmt, &ctx)?); }
+                        }
+                        html.push_str("</div>");
+                    }
+                }
+            }
+            Ok(html)
+        } else {
+            Ok(String::new())
+        }
     }
 }
 
 impl Default for Interpreter {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
-/// Request information for rendering
 #[derive(Debug, Clone)]
 pub struct RequestInfo {
     pub method: String,
     pub path: String,
-    pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub name: Option<String>,
-    pub id: Option<String>,
-}
-
-/// Render result from a route
-#[derive(Debug, Clone)]
-pub struct RenderResult {
-    pub status: u16,
-    pub headers: HashMap<String, String>,
-    pub body: String,
-    pub html: String,
-    pub page_data: Option<String>,
-    pub islands: Vec<String>,
 }
