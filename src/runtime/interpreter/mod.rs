@@ -153,11 +153,42 @@ impl Interpreter {
         for item in &module.items {
             if let ModuleItem::Decl(Decl::Variable(var)) = item {
                 if let Some(init) = &var.init {
-                    return format!("{:?}", init);
+                    return self.eval_expr(init);
                 }
             }
         }
         String::new()
+    }
+
+    fn eval_expr(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Number(n) => format!("{}", n),
+            Expr::String(s) => s.clone(),
+            Expr::Boolean(b) => b.to_string(),
+            Expr::Null => "null".into(),
+            Expr::Undefined => "undefined".into(),
+            Expr::Bin { op, left, right } => self.eval_bin_op(op, left, right),
+            _ => format!("{:?}", expr),
+        }
+    }
+
+    fn eval_bin_op(&self, op: &BinaryOp, left: &Expr, right: &Expr) -> String {
+        if matches!(op, BinaryOp::Add) && (matches!(left, Expr::String(_)) || matches!(right, Expr::String(_))) {
+            return format!("{}{}", self.eval_expr(left), self.eval_expr(right));
+        }
+        self.eval_num_bin_op(op, left, right)
+    }
+
+    fn eval_num_bin_op(&self, op: &BinaryOp, left: &Expr, right: &Expr) -> String {
+        let l = self.eval_expr(left).parse::<f64>().unwrap_or(0.0);
+        let r = self.eval_expr(right).parse::<f64>().unwrap_or(0.0);
+        match op {
+            BinaryOp::Add => format!("{}", l + r),
+            BinaryOp::Sub => format!("{}", l - r),
+            BinaryOp::Mul => format!("{}", l * r),
+            BinaryOp::Div => format!("{}", l / r),
+            _ => format!("{:?}", op),
+        }
     }
 
     pub fn load_module(&mut self, path: &Path, source: &str) -> Result<(), anyhow::Error> {

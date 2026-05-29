@@ -119,8 +119,11 @@ fn run_eval(expr: &str) -> Result<()> {
     let parser = transpile::TsParser::new();
     let source = format!("const __result = {};", expr);
     let module = parser.parse_tsx(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    println!("{}", source);
-    println!("{:?}", module);
+    eprintln!("Module: {:?}", module);
+    let interpreter = runtime::interpreter::Interpreter::new();
+    let result = interpreter.eval_module(&module);
+    eprintln!("Result: '{}'", result);
+    println!("{}", result);
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 //! Statement conversion
 
 use crate::transpile::hir;
+use crate::transpile::parser::expr::convert_expr;
 use oxc_ast::ast::*;
 
 fn var_to_decl(v: &VariableDeclaration) -> hir::Decl {
@@ -9,7 +10,8 @@ fn var_to_decl(v: &VariableDeclaration) -> hir::Decl {
         BindingPattern::BindingIdentifier(i) => Some(i.name.to_string()),
         _ => None,
     }).unwrap_or_default();
-    hir::Decl::Variable(hir::VariableDecl { name, kind: hir::VariableKind::Const, type_: None, init: None, pattern: None })
+    let init = decl.and_then(|d| d.init.as_ref().and_then(|e| convert_expr(e)));
+    hir::Decl::Variable(hir::VariableDecl { name, kind: hir::VariableKind::Const, type_: None, init, pattern: None })
 }
 
 fn func_to_decl(f: &Function) -> hir::Decl {
