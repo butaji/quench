@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Lint rules enforced on ALL files:
-// file ≤700 lines, function ≤40 lines, complexity ≤10
-const MAX_FILE_LINES: usize = 700;
+// file ≤500 lines, function ≤40 lines, complexity ≤10
+const MAX_FILE_LINES: usize = 500;
 const MAX_FN_LINES: usize = 40;
 const MAX_FN_COMPLEXITY: usize = 10;
 
