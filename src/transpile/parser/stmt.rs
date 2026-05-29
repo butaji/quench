@@ -46,6 +46,8 @@ fn func_to_decl(f: &Function) -> hir::Decl {
         is_async: f.r#async,
         is_generator: false,
         decorators: vec![],
+        throws: false,
+        error_type: None,
     })
 }
 
