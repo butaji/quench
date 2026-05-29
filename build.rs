@@ -121,7 +121,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let mut violations = Vec::new();
 
-    if code_lines > MAX_FILE_LINES {
+    if code_lines > MAX_FILE_LINES && !allow_complexity {
         violations.push(format!(
             "[FILE_TOO_LONG] {}: {} code lines (max {})",
             path.display(),

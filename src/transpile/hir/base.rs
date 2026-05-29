@@ -129,6 +129,23 @@ pub struct ClassDecl {
     pub extends: Option<Type>,
     pub members: Vec<ClassMember>,
     pub generics: Vec<GenericParam>,
+    pub methods: Vec<ClassMethod>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClassMethod {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub body: Expr,
+    pub kind: MethodKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MethodKind {
+    Constructor,
+    Method,
+    Getter,
+    Setter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
