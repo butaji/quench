@@ -1,7 +1,7 @@
 //! Rendering utilities for interpreter
 // allow:complexity
 
-use crate::transpile::hir::{Expr, ModuleItem, Decl, FunctionDecl, Stmt};
+use crate::transpile::hir::{Decl, Expr, FunctionDecl, ModuleItem, Stmt};
 
 use super::*;
 
@@ -62,7 +62,11 @@ fn render_stmt(stmt: &Stmt, ctx: &EvalContext) -> String {
 fn render_expr(expr: &Expr, ctx: &EvalContext) -> String {
     match expr {
         Expr::String(s) => s.clone(),
-        Expr::Ident { name } => ctx.scope.get(name).map(|v| format!("{}", v)).unwrap_or_else(|| format!("{{{}}}", name)),
+        Expr::Ident { name } => ctx
+            .scope
+            .get(name)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| format!("{{{}}}", name)),
         _ => String::new(),
     }
 }
@@ -72,7 +76,13 @@ pub fn execute_module_items(items: &[ModuleItem], ctx: &EvalContext) -> String {
     let mut html = String::new();
     for item in items {
         if let ModuleItem::Decl(Decl::Function(func)) = item {
-            if func.name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            if func
+                .name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+            {
                 html.push_str(&format!("<div data-component=\"{}\">", func.name));
                 if let Some(body) = &func.body {
                     html.push_str(&render_component_body(&body.0, ctx));

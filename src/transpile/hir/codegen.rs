@@ -1,14 +1,15 @@
 //! Rust code generation from HIR
-//! 
+//!
 //! Designed to meet linter constraints: file ≤500 lines, fn ≤40 lines, complexity ≤10
 
-use super::{Expr, FunctionDecl, Stmt, Type};
+use super::{Expr, FunctionDecl, Stmt, Type, TypeGen};
 use std::collections::HashMap;
 
 /// Code generation context
 pub struct Codegen {
     structs: HashMap<String, StructDef>,
     depth: usize,
+    type_gen: TypeGen,
 }
 
 #[derive(Clone)]
@@ -58,7 +59,8 @@ impl Codegen {
             let fields = self.infer_object_fields(members);
             if !fields.is_empty() {
                 let name = format!("Anon_{}", self.structs.len());
-                self.structs.insert(name.clone(), StructDef { name, fields });
+                self.structs
+                    .insert(name.clone(), StructDef { name, fields });
             }
         }
     }
@@ -112,25 +114,39 @@ impl Codegen {
     fn infer_object_type(&self, members: &[super::ObjectMemberExpr]) -> Type {
         let fields = self.infer_object_fields(members);
         Type::Object {
-            members: fields.into_iter().map(|(k, t)| super::TypeMember {
-                key: k, type_: t, optional: false, readonly: false,
-            }).collect(),
+            members: fields
+                .into_iter()
+                .map(|(k, t)| super::TypeMember {
+                    key: k,
+                    type_: t,
+                    optional: false,
+                    readonly: false,
+                })
+                .collect(),
         }
     }
 
     fn infer_array_type(&self, elems: &[Option<Expr>]) -> Type {
-        let types: Vec<Type> = elems.iter().filter_map(|e| e.as_ref().map(|e| self.infer_type(e))).collect();
+        let types: Vec<Type> = elems
+            .iter()
+            .filter_map(|e| e.as_ref().map(|e| self.infer_type(e)))
+            .collect();
         if types.is_empty() {
             Type::Any
         } else {
-            Type::Array { elem: Box::new(types.into_iter().next().unwrap_or(Type::Any)) }
+            Type::Array {
+                elem: Box::new(types.into_iter().next().unwrap_or(Type::Any)),
+            }
         }
     }
 
     fn gen_struct(&self, def: &StructDef) -> String {
-        let mut out = format!("#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct {} {{\n", def.name);
+        let mut out = format!(
+            "#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct {} {{\n",
+            def.name
+        );
         for (f, t) in &def.fields {
-            out.push_str(&format!("    pub {}: {},\n", f, self.gen_type(t)));
+            out.push_str(&format!("    pub {}: {},\n", f, self.type_gen.gen_type(t)));
         }
         out.push_str("}\n");
         out
@@ -142,9 +158,18 @@ impl Codegen {
             Stmt::FunctionDecl(f) => self.gen_fn_decl(f),
             Stmt::Block(stmts) => self.gen_block(stmts),
             Stmt::Return { arg } => self.gen_return(arg),
-            Stmt::If { test, consequent, alternate } => self.gen_if(test, consequent, alternate),
+            Stmt::If {
+                test,
+                consequent,
+                alternate,
+            } => self.gen_if(test, consequent, alternate),
             Stmt::While { test, body } => self.gen_while(test, body),
-            Stmt::For { init, test, update, body } => self.gen_for(init, test, update, body),
+            Stmt::For {
+                init,
+                test,
+                update,
+                body,
+            } => self.gen_for(init, test, update, body),
             _ => String::new(),
         }
     }
@@ -184,7 +209,13 @@ impl Codegen {
         format!("while {} {{\n{}\n}}\n", t, indent(&b))
     }
 
-    fn gen_for(&mut self, init: &Option<super::ForInit>, test: &Option<Expr>, update: &Option<Expr>, body: &Box<Stmt>) -> String {
+    fn gen_for(
+        &mut self,
+        init: &Option<super::ForInit>,
+        test: &Option<Expr>,
+        update: &Option<Expr>,
+        body: &Box<Stmt>,
+    ) -> String {
         let i = self.gen_for_init(init);
         let t = self.gen_opt_expr(test);
         let u = self.gen_opt_expr(update);
@@ -195,9 +226,10 @@ impl Codegen {
     fn gen_for_init(&mut self, init: &Option<super::ForInit>) -> String {
         match init {
             Some(super::ForInit::Variable(_, decls)) => {
-                let parts: Vec<String> = decls.iter().filter_map(|(n, i)| {
-                    i.as_ref().map(|e| format!("{}: {}", n, self.gen_expr(e)))
-                }).collect();
+                let parts: Vec<String> = decls
+                    .iter()
+                    .filter_map(|(n, i)| i.as_ref().map(|e| format!("{}: {}", n, self.gen_expr(e))))
+                    .collect();
                 format!("let {}", parts.join(", "))
             }
             Some(super::ForInit::Expr(e)) => self.gen_expr(e),
@@ -211,28 +243,49 @@ impl Codegen {
 
     fn gen_fn_decl(&mut self, func: &FunctionDecl) -> String {
         let params = self.gen_params(&func.params);
-        let ret = self.gen_ret_type(&func.return_type);
+        let ret = self.gen_ret_type(&func.return_type, func.throws, &func.error_type);
         let body = self.gen_fn_body(&func.body);
         let a = if func.is_async { "async " } else { "" };
-        format!("pub {}fn {}({}){} {{\n{}\n}}\n", a, func.name, params, ret, indent(&body))
+        format!(
+            "pub {}fn {}({}){} {{\n{}\n}}\n",
+            a,
+            func.name,
+            params,
+            ret,
+            indent(&body)
+        )
     }
-
+    
     fn gen_params(&mut self, params: &[super::Param]) -> String {
-        params.iter().map(|p| self.gen_param(p)).collect::<Vec<_>>().join(", ")
+        params
+            .iter()
+            .map(|p| self.gen_param(p))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
     
     fn gen_param(&self, param: &super::Param) -> String {
         let name = &param.name;
-        let ty = param.type_.as_ref().map(|x| format!(": {}", self.gen_type(x))).unwrap_or_default();
+        let ty = param
+            .type_
+            .as_ref()
+            .map(|x| format!(": {}", self.type_gen.gen_type(x)))
+            .unwrap_or_default();
         match param.ownership {
             super::Ownership::Owned => format!("{}{}", name, ty),
             super::Ownership::Borrow => format!("&{}", name),
             super::Ownership::Mut => format!("&mut {}", name),
         }
     }
-
-    fn gen_ret_type(&mut self, ret: &Option<Type>) -> String {
-        ret.as_ref().map(|t| format!(" -> {}", self.gen_type(t))).unwrap_or_default()
+    
+    fn gen_ret_type(&mut self, ret: &Option<Type>, throws: bool, error_type: &Option<Type>) -> String {
+        let base_ret = ret.as_ref().map(|t| self.type_gen.gen_type(t)).unwrap_or_else(|| "()".to_string());
+        if throws {
+            let err_type = error_type.as_ref().map(|t| self.type_gen.gen_type(t)).unwrap_or_else(|| "JsValue".to_string());
+            format!(" -> Result<{}, {}>", base_ret, err_type)
+        } else {
+            format!(" -> {}", base_ret)
+        }
     }
 
     fn gen_fn_body(&mut self, body: &Option<super::Block>) -> String {
@@ -277,9 +330,17 @@ impl Codegen {
     fn gen_expr_c(&mut self, expr: &Expr) -> String {
         use super::Expr as E;
         match expr {
-            E::Cond { test, consequent, alternate } => self.gen_cond(test, consequent, alternate),
+            E::Cond {
+                test,
+                consequent,
+                alternate,
+            } => self.gen_cond(test, consequent, alternate),
             E::Call { callee, arguments } => self.gen_call(callee, arguments),
-            E::Member { obj, property, computed } => self.gen_member(obj, property, *computed),
+            E::Member {
+                obj,
+                property,
+                computed,
+            } => self.gen_member(obj, property, *computed),
             E::StaticMember { obj, property } => self.gen_static(obj, property),
             _ => self.gen_expr_d(expr),
         }
@@ -302,9 +363,14 @@ impl Codegen {
     }
 
     fn gen_array(&mut self, elems: &[Option<Expr>]) -> String {
-        let inner: Vec<String> = elems.iter().map(|e| {
-            e.as_ref().map(|x| self.gen_expr(x)).unwrap_or_else(|| "Value::Undefined".to_string())
-        }).collect();
+        let inner: Vec<String> = elems
+            .iter()
+            .map(|e| {
+                e.as_ref()
+                    .map(|x| self.gen_expr(x))
+                    .unwrap_or_else(|| "Value::Undefined".to_string())
+            })
+            .collect();
         format!("vec![{}]", inner.join(", "))
     }
 
@@ -314,17 +380,31 @@ impl Codegen {
             return "serde_json::json!({})".to_string();
         }
         let name = self.get_struct_for_fields(&fields);
-        let vals: Vec<String> = fields.iter().filter_map(|(k, _)| {
-            members.iter().find(|m| {
-                if let super::ObjectProp::Init { key: super::PropKey::Str(s), .. } = &m.prop {
-                    s == k
-                } else { false }
-            }).and_then(|m| {
-                if let super::ObjectProp::Init { value, .. } = &m.prop {
-                    Some(format!("{}: {}", k, self.gen_expr(value)))
-                } else { None }
+        let vals: Vec<String> = fields
+            .iter()
+            .filter_map(|(k, _)| {
+                members
+                    .iter()
+                    .find(|m| {
+                        if let super::ObjectProp::Init {
+                            key: super::PropKey::Str(s),
+                            ..
+                        } = &m.prop
+                        {
+                            s == k
+                        } else {
+                            false
+                        }
+                    })
+                    .and_then(|m| {
+                        if let super::ObjectProp::Init { value, .. } = &m.prop {
+                            Some(format!("{}: {}", k, self.gen_expr(value)))
+                        } else {
+                            None
+                        }
+                    })
             })
-        }).collect();
+            .collect();
         format!("{} {{ {} }}", name, vals.join(", "))
     }
 
@@ -347,10 +427,19 @@ impl Codegen {
     fn bin_op_str(&self, op: &super::BinaryOp) -> &'static str {
         use super::BinaryOp as B;
         match op {
-            B::Add => "+", B::Sub => "-", B::Mul => "*", B::Div => "/", B::Mod => "%",
-            B::Eq | B::StrictEq => "==", B::Neq | B::StrictNeq => "!=",
-            B::Lt => "<", B::Lte => "<=", B::Gt => ">", B::Gte => ">=",
-            B::LogicalAnd => "&&", B::LogicalOr => "||",
+            B::Add => "+",
+            B::Sub => "-",
+            B::Mul => "*",
+            B::Div => "/",
+            B::Mod => "%",
+            B::Eq | B::StrictEq => "==",
+            B::Neq | B::StrictNeq => "!=",
+            B::Lt => "<",
+            B::Lte => "<=",
+            B::Gt => ">",
+            B::Gte => ">=",
+            B::LogicalAnd => "&&",
+            B::LogicalOr => "||",
             _ => "/* op */",
         }
     }
@@ -425,80 +514,21 @@ impl Codegen {
     }
 
     // Type generation - split by category
-
-    fn gen_type(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty {
-            T::String | T::Number | T::Boolean | T::Void | T::Never | T::Unknown | T::BigInt | T::Any => self.gen_type_prim(ty),
-            _ => self.gen_type_complex(ty),
-        }
-    }
-
-    fn gen_type_prim(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty {
-            T::String | T::Number | T::Boolean => self.gen_type_num(ty),
-            T::Void | T::Never | T::Unknown => self.gen_type_void(ty),
-            T::BigInt | T::Any => self.gen_type_big(ty),
-            _ => "Value".to_string(),
-        }
-    }
-
-    fn gen_type_num(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty { T::String => "String".to_string(), T::Number => "f64".to_string(), T::Boolean => "bool".to_string(), _ => "Value".to_string() }
-    }
-
-    fn gen_type_void(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty { T::Void => "()".to_string(), T::Never => "!".to_string(), T::Unknown => "Value".to_string(), _ => "Value".to_string() }
-    }
-
-    fn gen_type_big(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty { T::BigInt => "i64".to_string(), T::Any => "serde_json::Value".to_string(), _ => "Value".to_string() }
-    }
-
-    fn gen_type_complex(&self, ty: &Type) -> String {
-        use super::Type as T;
-        match ty {
-            T::Array { elem } => format!("Vec<{}>", self.gen_type(elem)),
-            T::Object { members } if members.is_empty() => "serde_json::Value".to_string(),
-            T::Object { members } => self.gen_inline_object(members),
-            T::Function { params, ret } => self.gen_fn_type(params, ret),
-            T::Ref { name, generics } => self.gen_ref(name, generics),
-            _ => "Value".to_string(),
-        }
-    }
-
-    fn gen_inline_object(&self, members: &[super::TypeMember]) -> String {
-        let fs: Vec<String> = members.iter().map(|m| {
-            format!("{}: {}", m.key, self.gen_type(&m.type_))
-        }).collect();
-        format!("{{ {} }}", fs.join(", "))
-    }
-
-    fn gen_fn_type(&self, params: &[Type], ret: &Box<Type>) -> String {
-        let ps: Vec<String> = params.iter().map(|p| self.gen_type(p)).collect();
-        format!("fn({}) -> {}", ps.join(", "), self.gen_type(ret))
-    }
-
-    fn gen_ref(&self, name: &str, generics: &[Type]) -> String {
-        if generics.is_empty() {
-            name.to_string()
-        } else {
-            let gs: Vec<String> = generics.iter().map(|g| self.gen_type(g)).collect();
-            format!("{}<{}>", name, gs.join(", "))
-        }
-    }
 }
 
 fn indent(s: &str) -> String {
-    s.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n")
+    s.lines()
+        .map(|l| format!("    {}", l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl Default for Codegen {
     fn default() -> Self {
-        Self { structs: HashMap::new(), depth: 0 }
+        Self {
+            structs: HashMap::new(),
+            depth: 0,
+            type_gen: TypeGen::default(),
+        }
     }
 }
