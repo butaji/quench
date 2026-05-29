@@ -2,7 +2,7 @@
 
 use crate::commands::dev::AppState;
 use crate::config::Config;
-use crate::runtime::interpreter::Interpreter;
+use crate::runtime::quickjs::QuickJsRuntime;
 use anyhow::Result;
 use axum::{response::Html, routing::get, Router};
 use parking_lot::RwLock;
@@ -13,7 +13,7 @@ use tower_http::services::ServeDir;
 pub async fn run_server(config: &Config, port: u16) -> Result<()> {
     let project_root = PathBuf::from(".");
     let route_table = Arc::new(RwLock::new(crate::commands::dev::routes::RouteTable::new()));
-    let interpreter = Arc::new(RwLock::new(Interpreter::new()));
+    let js_runtime = Arc::new(RwLock::new(QuickJsRuntime::new()));
     let (reload_tx, _reload_rx) = broadcast::channel(100);
     let reload_tx_for_watcher = reload_tx.clone();
 
@@ -34,7 +34,7 @@ pub async fn run_server(config: &Config, port: u16) -> Result<()> {
     let state = AppState {
         root: project_root,
         route_table,
-        interpreter,
+        js_runtime,
         reload_tx,
         watcher,
     };
