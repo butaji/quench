@@ -55,10 +55,12 @@ fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
     let specs = i.specifiers.as_ref().map_or(vec![], |v| {
         v.iter()
             .map(|s| match s {
-                oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(s) => hir::ImportSpecifier::Named {
-                    name: s.local.name.to_string(),
-                    alias: None,
-                },
+                oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(s) => {
+                    hir::ImportSpecifier::Named {
+                        name: s.local.name.to_string(),
+                        alias: None,
+                    }
+                }
                 oxc_ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
                     hir::ImportSpecifier::Default {
                         name: s.local.name.to_string(),
@@ -81,11 +83,16 @@ fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
 
 fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
     match s {
-        Statement::ExpressionStatement(e) => hir::Stmt::Expr { expr: convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined) },
+        Statement::ExpressionStatement(e) => hir::Stmt::Expr {
+            expr: convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined),
+        },
         Statement::IfStatement(stmt) => hir::Stmt::If {
             test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
             consequent: Box::new(stmt_to_hir_stmt(&stmt.consequent)),
-            alternate: stmt.alternate.as_ref().map(|a| Box::new(stmt_to_hir_stmt(a))),
+            alternate: stmt
+                .alternate
+                .as_ref()
+                .map(|a| Box::new(stmt_to_hir_stmt(a))),
         },
         Statement::WhileStatement(stmt) => hir::Stmt::While {
             test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
@@ -97,10 +104,14 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
             update: stmt.update.as_ref().and_then(|u| convert_expr(u)),
             body: Box::new(stmt_to_hir_stmt(&stmt.body)),
         },
-        Statement::ReturnStatement(r) => hir::Stmt::Return { arg: r.argument.as_ref().and_then(|a| convert_expr(a)) },
+        Statement::ReturnStatement(r) => hir::Stmt::Return {
+            arg: r.argument.as_ref().and_then(|a| convert_expr(a)),
+        },
         Statement::BreakStatement(_) => hir::Stmt::Break { label: None },
         Statement::ContinueStatement(_) => hir::Stmt::Continue { label: None },
-        Statement::BlockStatement(b) => hir::Stmt::Block(b.body.iter().map(stmt_to_hir_stmt).collect()),
+        Statement::BlockStatement(b) => {
+            hir::Stmt::Block(b.body.iter().map(stmt_to_hir_stmt).collect())
+        }
         Statement::EmptyStatement(_) => hir::Stmt::Empty,
         Statement::VariableDeclaration(v) => {
             // Convert to a Block with assignments
@@ -126,38 +137,80 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
 }
 
 fn class_to_hir(c: &Class) -> hir::Decl {
-    let methods: Vec<hir::ClassMethod> = c.body.body.iter().filter_map(|m| {
-        if let ClassElement::MethodDefinition(def) = m {
-            let name = match &def.key {
-                PropertyKey::StaticIdentifier(i) => i.name.to_string(),
-                PropertyKey::PrivateIdentifier(i) => format!("#{}", i.name),
-                _ => String::new(),
-            };
-            // def.value is a Function struct
-            let func = &*def.value;
-            let body = if let Some(body_box) = &func.body {
-                // Extract expression from first statement
-                if let Some(stmt) = body_box.statements.first() {
-                    match stmt {
-                        Statement::ExpressionStatement(e) => convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined),
-                        Statement::ReturnStatement(r) => r.argument.as_ref().and_then(|a| convert_expr(a)).unwrap_or(hir::Expr::Undefined),
-                        _ => hir::Expr::Undefined,
+    let methods: Vec<hir::ClassMethod> = c
+        .body
+        .body
+        .iter()
+        .filter_map(|m| {
+            if let ClassElement::MethodDefinition(def) = m {
+                let name = match &def.key {
+                    PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                    PropertyKey::PrivateIdentifier(i) => format!("#{}", i.name),
+                    _ => String::new(),
+                };
+                // def.value is a Function struct
+                let func = &*def.value;
+                let body = if let Some(body_box) = &func.body {
+                    // Extract expression from first statement
+                    if let Some(stmt) = body_box.statements.first() {
+                        match stmt {
+                            Statement::ExpressionStatement(e) => {
+                                convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined)
+                            }
+                            Statement::ReturnStatement(r) => r
+                                .argument
+                                .as_ref()
+                                .and_then(|a| convert_expr(a))
+                                .unwrap_or(hir::Expr::Undefined),
+                            _ => hir::Expr::Undefined,
+                        }
+                    } else {
+                        hir::Expr::Undefined
                     }
                 } else {
                     hir::Expr::Undefined
-                }
+                };
+                let params: Vec<hir::Param> = func
+                    .params
+                    .items
+                    .iter()
+                    .filter_map(|param| {
+                        if let BindingPattern::BindingIdentifier(i) = &param.pattern {
+                            Some(hir::Param {
+                                name: i.name.to_string(),
+                                type_: None,
+                                default: None,
+                                optional: param.optional,
+                                pattern: None,
+                                ownership: hir::Ownership::Owned,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Some(hir::ClassMethod {
+                    name,
+                    params,
+                    body,
+                    kind: hir::MethodKind::Method,
+                })
             } else {
-                hir::Expr::Undefined
-            };
-            let params: Vec<hir::Param> = func.params.items.iter().filter_map(|param| {
-                if let BindingPattern::BindingIdentifier(i) = &param.pattern {
-                    Some(hir::Param { name: i.name.to_string(), type_: None, default: None, optional: param.optional, pattern: None, ownership: hir::Ownership::Owned })
-                } else { None }
-            }).collect();
-            Some(hir::ClassMethod { name, params, body, kind: hir::MethodKind::Method })
-        } else { None }
-    }).collect();
-    hir::Decl::Class(hir::ClassDecl { name: c.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default(), extends: None, members: vec![], generics: vec![], methods })
+                None
+            }
+        })
+        .collect();
+    hir::Decl::Class(hir::ClassDecl {
+        name: c
+            .id
+            .as_ref()
+            .map(|i| i.name.to_string())
+            .unwrap_or_default(),
+        extends: None,
+        members: vec![],
+        generics: vec![],
+        methods,
+    })
 }
 
 pub fn convert_module_item(stmt: &Statement) -> Option<hir::ModuleItem> {

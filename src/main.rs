@@ -155,9 +155,22 @@ fn prepare_source(stmt: &str) -> String {
     }
 }
 fn is_statement_keyword(s: &str) -> bool {
-    let kws = ["if ", "for ", "while ", "return ", "throw ", "try ",
-               "switch ", "do ", "let ", "const ", "var ", "function ",
-               "class ", "{"];
+    let kws = [
+        "if ",
+        "for ",
+        "while ",
+        "return ",
+        "throw ",
+        "try ",
+        "switch ",
+        "do ",
+        "let ",
+        "const ",
+        "var ",
+        "function ",
+        "class ",
+        "{",
+    ];
     kws.iter().any(|k| s.starts_with(k))
 }
 fn print_result(result: &str) {

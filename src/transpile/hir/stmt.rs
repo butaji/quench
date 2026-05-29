@@ -1,6 +1,8 @@
 //! Statement types
 
-use super::{Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, GenericParam, ImportSpecifier, Type};
+use super::{
+    Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, GenericParam, ImportSpecifier, Type,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
