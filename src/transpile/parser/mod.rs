@@ -23,12 +23,7 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
     if !ret.errors.is_empty() {
         anyhow::bail!("Parse error: {:?}", ret.errors[0]);
     }
-    let items: Vec<_> = ret
-        .program
-        .body
-        .iter()
-        .filter_map(stmt::convert_module_item)
-        .collect();
+    let items: Vec<_> = ret.program.body.iter().filter_map(stmt::convert_module_item).collect();
     Ok(hir::Module {
         source: String::new(),
         items,

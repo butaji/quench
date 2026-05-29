@@ -1,5 +1,6 @@
 //! HIR Interpreter for Development Mode
-// allow:complexity
+
+// allow:too_many_lines,complexity
 
 pub mod eval;
 #[cfg(test)]
@@ -23,6 +24,14 @@ pub struct Interpreter {
     error_pages: Arc<RwLock<HashMap<u16, String>>>,
     islands: Arc<RwLock<HashMap<String, IslandInfo>>>,
     vars: Arc<RwLock<HashMap<String, Expr>>>,
+    classes: Arc<RwLock<HashMap<String, ClassDecl>>>,
+    instances: Arc<RwLock<HashMap<String, ClassInstance>>>,
+}
+
+#[derive(Clone, Debug)]
+struct ClassInstance {
+    class_name: String,
+    id: usize,
 }
 
 #[derive(Clone)]
@@ -151,27 +160,36 @@ impl Interpreter {
             error_pages: Arc::new(RwLock::new(HashMap::new())),
             islands: Arc::new(RwLock::new(HashMap::new())),
             vars: Arc::new(RwLock::new(HashMap::new())),
+            classes: Arc::new(RwLock::new(HashMap::new())),
+            instances: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn eval_module(&self, module: &Module) -> String {
         let mut result = String::new();
         for item in &module.items {
-            if let ModuleItem::Decl(Decl::Variable(var)) = item {
-                let name = var.name.clone();
-                if let Some(init) = &var.init {
-                    // Store the Expr for later use
-                    if !name.is_empty() {
-                        self.vars.write().insert(name.clone(), (*init).clone());
-                    }
-                    // For function expressions, store but don't evaluate (returns the func)
-                    // For other expressions, evaluate
-                    if matches!(&*init, Expr::ArrowFunction { .. }) {
-                        result = format!("{:?}", init);
-                    } else {
-                        result = self.eval_expr(init);
+            match item {
+                ModuleItem::Decl(Decl::Variable(var)) => {
+                    let name = var.name.clone();
+                    if let Some(init) = &var.init {
+                        if matches!(&*init, Expr::ArrowFunction { .. }) {
+                            self.vars.write().insert(name.clone(), (*init).clone());
+                            result = format!("{:?}", init);
+                        } else if matches!(&*init, Expr::New { .. }) {
+                            // Evaluate new expression and store result string
+                            let instance_name = self.eval_expr(init);
+                            self.vars.write().insert(name.clone(), Expr::Ident { name: instance_name.clone() });
+                            result = instance_name;
+                        } else {
+                            self.vars.write().insert(name.clone(), (*init).clone());
+                            result = self.eval_expr(init);
+                        }
                     }
                 }
+                ModuleItem::Decl(Decl::Class(class)) => {
+                    self.classes.write().insert(class.name.clone(), class.clone());
+                }
+                _ => {}
             }
         }
         result
@@ -240,10 +258,14 @@ impl Interpreter {
             _ => format!("{:?}", callee),
         };
         if class_name == "Array" {
-            format!("[{}]", arguments.iter().map(|a| self.eval_expr(a)).collect::<Vec<_>>().join(", "))
-        } else {
-            format!("Instance<{}>", class_name)
+            return format!("[{}]", arguments.iter().map(|a| self.eval_expr(a)).collect::<Vec<_>>().join(", "));
         }
+        // Create instance and store it
+        let instance_id = self.instances.read().len();
+        let instance_name = format!("{}@{}", class_name, instance_id);
+        let instance = ClassInstance { class_name: class_name.clone(), id: instance_id };
+        self.instances.write().insert(instance_name.clone(), instance);
+        instance_name
     }
 
     fn eval_member(&self, obj: &Box<Expr>, property: &Box<Expr>, computed: bool) -> String {
@@ -331,7 +353,17 @@ impl Interpreter {
                 println!("{}", arg_strs.join(" "));
                 return arg_strs.join(" ");
             }
-            // Return method call representation for other cases
+            // Handle instance method calls
+            if obj_str.contains('@') {
+                let method_name = property;
+                if let Some(instance) = self.instances.read().get(&obj_str) {
+                    if let Some(class) = self.classes.read().get(&instance.class_name) {
+                        if let Some(method) = class.methods.iter().find(|m| m.name == *method_name) {
+                            return self.eval_method(&method, args);
+                        }
+                    }
+                }
+            }
             return format!("{}.{}({:?})", obj_str, property, args);
         }
         let callee_expr = match callee {
@@ -349,6 +381,16 @@ impl Interpreter {
             return self.eval_arrow_func(&params, &body, args);
         }
         format!("Call<{:?}>", callee_expr)
+    }
+
+    fn eval_method(&self, method: &ClassMethod, args: &[Expr]) -> String {
+        let mut ctx = EvalContext::default();
+        for (i, p) in method.params.iter().enumerate() {
+            if let Some(arg) = args.get(i) {
+                ctx.scope.insert(p.name.clone(), self.expr_to_value(arg));
+            }
+        }
+        self.eval_expr_with_ctx(&method.body, &ctx)
     }
 
     fn eval_arrow_func(&self, params: &[Param], body: &Box<Expr>, args: &[Expr]) -> String {
