@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HydrationStrategy {
     Eager,
@@ -16,6 +17,7 @@ impl Default for HydrationStrategy {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IslandDescriptor {
     pub name: String,
@@ -25,16 +27,19 @@ pub struct IslandDescriptor {
     pub ssr_capable: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IslandInstance {
     pub name: String,
     pub props: serde_json::Value,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IslandManifest {
     pub islands: std::collections::HashMap<String, IslandManifestEntry>,
 }
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IslandManifestEntry {
     pub name: String,
@@ -43,6 +48,7 @@ pub struct IslandManifestEntry {
     pub module_path: String,
 }
 
+#[allow(dead_code)]
 impl IslandManifest {
     pub fn new() -> Self {
         Self {
@@ -56,5 +62,6 @@ impl IslandManifest {
 }
 
 pub mod signal_integration {
+    #[allow(dead_code)]
     pub struct SignalIslandState;
 }

@@ -202,6 +202,21 @@ mod parser_tests {
         assert_eq!(func.name, "add");
     }
     #[test]
+    fn test_parse_errors_aggregated() {
+        let parser = TsParser::new();
+        // This source has multiple parse errors
+        let source = "const x = <<<; export default function() {};";
+        let result = parser.parse_source(source);
+        assert!(result.is_err(), "Parsing should fail with errors");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Parse errors:") || err.to_lowercase().contains("parse error"),
+            "Error should mention parse errors, got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_export_default_function_with_jsx_json() {
         let source = r#"export default function Hello() { return <div>Hello</div>; }"#;
         let module = TsParser::new().parse_tsx(source).expect("Parsing should succeed");

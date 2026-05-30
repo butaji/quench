@@ -9,8 +9,10 @@ use quote::quote;
 use super::{Expr, FunctionDecl, Ownership, Stmt, Type};
 
 /// Quote-based code generator
+#[allow(dead_code)]
 pub struct QuoteCodegen;
 
+#[allow(dead_code)]
 impl QuoteCodegen {
     /// Generate a complete Rust module from HIR
     pub fn gen_module(&self, stmts: &[Stmt]) -> TokenStream {

@@ -1,7 +1,6 @@
 //! Transpilation pipeline for TS/TSX to Rust
 
 pub mod analyzer;
-pub mod codegen;
 pub mod errors;
 pub mod hir;
 pub mod js_codegen;
@@ -18,11 +17,8 @@ mod js_codegen_tests;
 #[cfg(test)]
 mod runtime_tests;
 
-pub use crate::config::Config;
-pub use analyzer::Analyzer;
 pub use parser::TsParser;
 
-use std::path::PathBuf;
 
 /// Transpilation result
 #[allow(dead_code)]

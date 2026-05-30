@@ -244,6 +244,7 @@ pub fn infer_function_ownership(func: &mut FunctionDecl) {
 }
 
 /// Infer ownership for all functions in a module
+#[allow(dead_code)]
 pub fn infer_module_ownership(stmts: &[Stmt]) -> Vec<Ownership> {
     let mut result = Vec::new();
     for stmt in stmts {
@@ -256,6 +257,7 @@ pub fn infer_module_ownership(stmts: &[Stmt]) -> Vec<Ownership> {
 }
 
 /// Get a summary of parameter ownership for documentation/debugging
+#[allow(dead_code)]
 pub fn ownership_summary(params: &[Param]) -> String {
     params
         .iter()

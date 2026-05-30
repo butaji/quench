@@ -6,11 +6,13 @@ pub mod memo;
 pub mod state;
 
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Ref<T: Clone> {
     inner: std::rc::Rc<std::cell::RefCell<Option<T>>>,
 }
 
+#[allow(dead_code)]
 impl<T: Clone> Ref<T> {
     pub fn new(value: T) -> Self {
         Self {
@@ -25,6 +27,7 @@ impl<T: Clone> Ref<T> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct UseStateResult<T: Clone> {
     pub value: T,
@@ -41,5 +44,7 @@ impl<T: Clone + Send + Sync + 'static> UseStateResult<T> {
     }
 }
 
+#[allow(dead_code)]
 pub fn reset_hook_index() {}
+#[allow(dead_code)]
 pub fn flush_effects() {}

@@ -303,6 +303,7 @@ pub struct TypeDef {
     pub type_: Type,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticInfo {
     pub scope_id: usize,

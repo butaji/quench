@@ -21,6 +21,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Key(pub String);
 
+#[allow(dead_code)]
 impl Key {
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
@@ -55,6 +56,7 @@ pub type EventHandler = Box<dyn Fn(JsValue) + Send + Sync>;
 ///
 /// Note: We don't derive Debug or Clone because EventHandler doesn't implement them.
 /// For SSR, we use Render trait instead.
+#[allow(dead_code)]
 pub enum VNode {
     /// HTML/SVG element
     Element {
@@ -108,6 +110,7 @@ pub enum VNode {
 // For SSR, we use Render trait instead.
 
 /// Create a VNode from an element
+#[allow(dead_code)]
 impl VNode {
     /// Create a text VNode
     pub fn text(value: impl Into<String>) -> Self {
@@ -129,6 +132,7 @@ impl VNode {
 }
 
 /// Builder pattern for element VNodes
+#[allow(dead_code)]
 pub struct ElementBuilder {
     tag: String,
     attrs: HashMap<String, AttrValue>,
@@ -137,6 +141,7 @@ pub struct ElementBuilder {
     key: Option<Key>,
 }
 
+#[allow(dead_code)]
 impl ElementBuilder {
     /// Add an attribute
     pub fn attr(mut self, name: impl Into<String>, value: impl Into<AttrValue>) -> Self {
@@ -283,6 +288,7 @@ pub struct Fragment {
     children: Vec<VNode>,
 }
 
+#[allow(dead_code)]
 impl Fragment {
     pub fn new(children: Vec<VNode>) -> Self {
         Self { children }
@@ -343,6 +349,7 @@ impl<T: IntoVNode> IntoVNode for Option<T> {
 }
 
 /// Convert a value into a VNode
+#[allow(dead_code)]
 pub fn into_vnode<T: IntoVNode>(value: T) -> VNode {
     value.into_vnode()
 }
@@ -417,6 +424,7 @@ impl From<f64> for AttrValue {
 #[derive(Debug, Clone)]
 pub struct JsValue;
 
+#[allow(dead_code)]
 impl JsValue {
     pub fn null() -> Self {
         JsValue

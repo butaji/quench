@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
-use tracing::{error, info};
+use tracing::info;
 use walkdir::WalkDir;
 
 use crate::config::Config;

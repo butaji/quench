@@ -3,6 +3,7 @@
 use super::hir::*;
 use std::collections::HashSet;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AnalyzeError {
     #[error("Unsupported feature: {feature} at {location}")]
@@ -13,6 +14,7 @@ pub enum AnalyzeError {
     ImportError { message: String, location: String },
 }
 
+#[allow(dead_code)]
 pub struct Analyzer {
     pub hooks: HashSet<String>,
     pub components: HashSet<String>,
@@ -36,6 +38,7 @@ impl Default for Analyzer {
     }
 }
 
+#[allow(dead_code)]
 impl Analyzer {
     pub fn new() -> Self {
         Self {

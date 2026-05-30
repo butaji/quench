@@ -7,6 +7,7 @@
 use super::{Block, Expr, FunctionDecl, Stmt, Type};
 
 /// Context for effect analysis
+#[allow(dead_code)]
 struct EffectAnalyzer {
     /// Whether the current scope can throw
     can_throw: bool,
@@ -14,6 +15,7 @@ struct EffectAnalyzer {
     error_types: Vec<Type>,
 }
 
+#[allow(dead_code)]
 impl EffectAnalyzer {
     fn new() -> Self {
         Self {
@@ -450,6 +452,7 @@ pub fn analyze_effects(func: &FunctionDecl) -> (bool, Option<Type>) {
 }
 
 /// Analyze all functions in a module for effects
+#[allow(dead_code)]
 pub fn analyze_module_effects(stmts: &[Stmt]) {
     for stmt in stmts {
         if let Stmt::FunctionDecl(func) = stmt {

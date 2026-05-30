@@ -4,9 +4,6 @@
 pub mod parser;
 
 #[cfg(test)]
-pub mod codegen;
-
-#[cfg(test)]
 pub mod analyzer;
 
 #[cfg(test)]

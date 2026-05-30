@@ -22,11 +22,11 @@ mod type_gen;
 pub use base::*;
 pub use effects::*;
 pub use ownership::*;
-pub use pat::*;
 pub use stmt::{ForInit, SwitchCase};
 pub use quote_codegen::QuoteCodegen;
 
 /// Inference mode for type/ownership analysis
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferenceMode {
     /// Strict mode - reject patterns that can't map to Rust

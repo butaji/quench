@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Layout information
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Layout {
     /// Layout file path
@@ -24,12 +25,14 @@ pub struct Layout {
 }
 
 /// Layout manager for composing layouts
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LayoutManager {
     layouts: Vec<Layout>,
     app_wrapper: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 impl LayoutManager {
     pub fn new() -> Self {
         Self::default()
@@ -124,6 +127,7 @@ impl LayoutManager {
 }
 
 /// Layout context passed during rendering
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LayoutContext {
     /// Shared state from middleware
@@ -133,6 +137,7 @@ pub struct LayoutContext {
     pub layout_data: HashMap<String, serde_json::Value>,
 }
 
+#[allow(dead_code)]
 impl LayoutContext {
     pub fn new() -> Self {
         Self::default()

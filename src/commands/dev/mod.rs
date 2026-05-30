@@ -3,8 +3,6 @@
 //! Core owns: file watching, outer loop, QuickJS context
 //! Plugin hooks: dev_init, dev_run_once, dev_reload
 
-pub mod routes;
-
 use crate::config::Config;
 use crate::plugin;
 use notify::Watcher;

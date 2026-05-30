@@ -24,7 +24,12 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
     }
     let ret = OxcParser::new(&allocator, source, source_type).parse();
     if !ret.errors.is_empty() {
-        anyhow::bail!("Parse error: {:?}", ret.errors[0]);
+        let error_messages: Vec<String> = ret
+            .errors
+            .iter()
+            .map(|e| format!("{:?}", e))
+            .collect();
+        anyhow::bail!("Parse errors:\n{}", error_messages.join("\n"));
     }
     let items: Vec<_> = ret
         .program
@@ -59,6 +64,7 @@ fn run_analysis_passes(module: &mut hir::Module) {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse_file(path: &Path) -> Result<hir::Module> {
     let source = std::fs::read_to_string(path)?;
     parse_source(
@@ -68,6 +74,7 @@ pub fn parse_file(path: &Path) -> Result<hir::Module> {
 }
 
 pub struct TsParser;
+#[allow(dead_code)]
 impl TsParser {
     pub fn new() -> Self {
         Self

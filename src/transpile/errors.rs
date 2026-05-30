@@ -2,6 +2,7 @@
 
 use std::cmp::min;
 
+#[allow(dead_code)]
 pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let (s1, s2) = (
         s1.chars().collect::<Vec<_>>(),
@@ -27,6 +28,7 @@ pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     prev[len1]
 }
 
+#[allow(dead_code)]
 pub fn suggest_correction(word: &str, valid: &[&str], max_distance: usize) -> Option<String> {
     valid
         .iter()
@@ -36,6 +38,7 @@ pub fn suggest_correction(word: &str, valid: &[&str], max_distance: usize) -> Op
         .map(|(v, _)| (*v).to_string())
 }
 
+#[allow(dead_code)]
 pub fn find_closest(word: &str, valid: &[&str]) -> Option<(String, usize)> {
     valid
         .iter()
@@ -44,6 +47,7 @@ pub fn find_closest(word: &str, valid: &[&str]) -> Option<(String, usize)> {
         .map(|(v, d)| ((*v).to_string(), d))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct LocatedError {
     pub message: String,

@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// HTTP methods
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     GET,
@@ -23,6 +24,7 @@ pub enum HttpMethod {
     OPTIONS,
 }
 
+#[allow(dead_code)]
 impl HttpMethod {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
@@ -39,6 +41,7 @@ impl HttpMethod {
 }
 
 /// Route handler definition
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RouteHandler {
     pub method: HttpMethod,
@@ -46,6 +49,7 @@ pub struct RouteHandler {
 }
 
 /// Route definition
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Route {
     /// File path pattern (e.g., "blog/[slug]")
@@ -70,6 +74,7 @@ pub struct Route {
     pub is_catch_all: bool,
 }
 
+#[allow(dead_code)]
 impl Route {
     /// Create a new route from a file path
     pub fn from_file_path(file_path: &std::path::Path) -> Result<Self> {
@@ -209,11 +214,13 @@ impl Route {
 }
 
 /// Route table for managing all routes
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct RouteTable {
     routes: Vec<Route>,
 }
 
+#[allow(dead_code)]
 impl RouteTable {
     pub fn new() -> Self {
         Self { routes: Vec::new() }
