@@ -30,6 +30,12 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
         Expression::ParenthesizedExpression(p) => convert_expr(&p.expression),
         Expression::ComputedMemberExpression(m) => conv_computed_member(m),
         Expression::StaticMemberExpression(m) => conv_static_member(m),
+        Expression::JSXElement(elem) => Some(hir::Expr::JSX(
+            crate::transpile::parser::jsx::convert_jsx_element(elem)
+        )),
+        Expression::JSXFragment(frag) => Some(hir::Expr::JSX(
+            crate::transpile::parser::jsx::convert_jsx_fragment(frag)
+        )),
         _ => None,
     }
 }
