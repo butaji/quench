@@ -38,58 +38,8 @@ impl Plugin for ReactPlugin {
     }
 
     fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
-        let mut routes_code = String::new();
-        let mut has_routes = false;
-
-        for module in modules {
-            if let Some(source_path) = &module.source_path {
-                if source_path.contains("server") || source_path.contains("main") {
-                    has_routes = true;
-                    let route_path = extract_route_path(source_path);
-                    let handler_name = extract_handler_name(source_path);
-                    routes_code.push_str(&format!(
-                        "        .route(\"{}\", axum::routing::get({}))\n",
-                        route_path, handler_name
-                    ));
-                }
-            }
-        }
-
-        if !has_routes {
-            routes_code.push_str("        .route(\"/\", axum::routing::get(handler))\n");
-        }
-
-        Ok(format!(r#"use axum::{{
-    Router,
-    routing::get,
-    response::Html,
-    extract::Path,
-    http::StatusCode,
-    response::{{IntoResponse, Response}},
-}};
-use tokio::net::TcpListener;
-use std::net::SocketAddr;
-
-#[tokio::main]
-async fn main() {{
-    let app = Router::new()
-{routes_code}
-        .into_make_service();
-
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    let listener = TcpListener::bind(addr).await.unwrap();
-    println!("React SSR server running on http://{{}}", addr);
-    axum::serve(listener, app).await.unwrap();
-}}
-
-async fn handler() -> impl IntoResponse {{
-    let body = App::render();
-    Html(format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>React SSR</title></head><body>{{body}}</body></html>",
-        body = body
-    ))
-}}
-"#))
+        let routes_code = collect_routes_code(modules);
+        Ok(generate_axum_main(&routes_code))
     }
 
     fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
@@ -160,8 +110,139 @@ mod tests {{
         let handler_name = extract_handler_name(file_path);
         let route_path = extract_route_path(file_path);
         let component_name = extract_component_from_imports(file_path);
+        generate_server_handler(&handler_name, &route_path, &component_name, file_path)
+    }
 
-        format!(r#"//! React SSR server: {file_path}
+    fn codegen_generic_module(&self) -> String {
+        r#"//! Generic React module
+//!
+//! Default code generation for unclassified React files
+
+pub struct GenericComponent;
+
+impl GenericComponent {
+    pub fn render() -> String {
+        "<div>Generic Component</div>".to_string()
+    }
+}
+"#.to_string()
+    }
+}
+
+fn extract_component_name(file_path: &str) -> String {
+    file_path
+        .split('/')
+        .last()
+        .unwrap_or("Component")
+        .replace(".jsx", "")
+        .replace(".js", "")
+        .replace("index", "Index")
+}
+
+fn extract_handler_name(file_path: &str) -> String {
+    let base = file_path
+        .split('/')
+        .last()
+        .unwrap_or("server")
+        .replace(".js", "")
+        .replace(".jsx", "");
+    
+    if base == "server" || base == "server1" || base == "server2" {
+        "handler".to_string()
+    } else {
+        format!("handler_{}", base.replace("server", ""))
+    }
+}
+
+fn extract_route_path(file_path: &str) -> String {
+    let file_name = file_path.split('/').last().unwrap_or("server.js");
+    
+    if file_name == "server.js" || file_name == "server1.js" {
+        "/".to_string()
+    } else if file_name == "server2.js" {
+        "/2".to_string()
+    } else {
+        let base = file_name.replace(".js", "").replace("server", "");
+        if base.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", base)
+        }
+    }
+}
+
+fn extract_component_from_imports(_file_path: &str) -> String {
+    // TODO(v0.2): Parse actual imports to find the component
+    // For v0.1, default to App
+    "App".to_string()
+}
+
+fn collect_routes_code(modules: &[runts_plugin::hir::Module]) -> String {
+    let mut routes_code = String::new();
+    let mut has_routes = false;
+
+    for module in modules {
+        if let Some(source_path) = &module.source_path {
+            if source_path.contains("server") || source_path.contains("main") {
+                has_routes = true;
+                let route_path = extract_route_path(source_path);
+                let handler_name = extract_handler_name(source_path);
+                routes_code.push_str(&format!(
+                    "        .route(\"{}\", axum::routing::get({}))\n",
+                    route_path, handler_name
+                ));
+            }
+        }
+    }
+
+    if !has_routes {
+        routes_code.push_str("        .route(\"/\", axum::routing::get(handler))\n");
+    }
+
+    routes_code
+}
+
+fn generate_axum_main(routes_code: &str) -> String {
+    format!(r#"use axum::{{
+    Router,
+    routing::get,
+    response::Html,
+    extract::Path,
+    http::StatusCode,
+    response::{{IntoResponse, Response}},
+}};
+use tokio::net::TcpListener;
+use std::net::SocketAddr;
+
+#[tokio::main]
+async fn main() {{
+    let app = Router::new()
+{routes_code}
+        .into_make_service();
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let listener = TcpListener::bind(addr).await.unwrap();
+    println!("React SSR server running on http://{{}}", addr);
+    axum::serve(listener, app).await.unwrap();
+}}
+
+async fn handler() -> impl IntoResponse {{
+    let body = App::render();
+    Html(format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>React SSR</title></head><body>{{body}}</body></html>",
+        body = body
+    ))
+}}
+"#)
+}
+
+fn generate_server_handler(
+    handler_name: &str,
+    route_path: &str,
+    component_name: &str,
+    file_path: &str,
+) -> String {
+    format!(r#"//! React SSR server: {file_path}
 //!
 //! Generated Axum route handler for React streaming SSR
 
@@ -243,76 +324,12 @@ mod tests {{
         assert!(body_str.contains("<!DOCTYPE html>"));
     }}
 }}
-"#, 
-        handler_name = handler_name, 
-        route_path = route_path, 
+"#,
+        handler_name = handler_name,
+        route_path = route_path,
         component_name = component_name,
         file_path = file_path
     )
-    }
-
-    fn codegen_generic_module(&self) -> String {
-        r#"//! Generic React module
-//!
-//! Default code generation for unclassified React files
-
-pub struct GenericComponent;
-
-impl GenericComponent {
-    pub fn render() -> String {
-        "<div>Generic Component</div>".to_string()
-    }
-}
-"#.to_string()
-    }
-}
-
-fn extract_component_name(file_path: &str) -> String {
-    file_path
-        .split('/')
-        .last()
-        .unwrap_or("Component")
-        .replace(".jsx", "")
-        .replace(".js", "")
-        .replace("index", "Index")
-}
-
-fn extract_handler_name(file_path: &str) -> String {
-    let base = file_path
-        .split('/')
-        .last()
-        .unwrap_or("server")
-        .replace(".js", "")
-        .replace(".jsx", "");
-    
-    if base == "server" || base == "server1" || base == "server2" {
-        "handler".to_string()
-    } else {
-        format!("handler_{}", base.replace("server", ""))
-    }
-}
-
-fn extract_route_path(file_path: &str) -> String {
-    let file_name = file_path.split('/').last().unwrap_or("server.js");
-    
-    if file_name == "server.js" || file_name == "server1.js" {
-        "/".to_string()
-    } else if file_name == "server2.js" {
-        "/2".to_string()
-    } else {
-        let base = file_name.replace(".js", "").replace("server", "");
-        if base.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{}", base)
-        }
-    }
-}
-
-fn extract_component_from_imports(_file_path: &str) -> String {
-    // TODO(v0.2): Parse actual imports to find the component
-    // For v0.1, default to App
-    "App".to_string()
 }
 
 #[cfg(test)]
