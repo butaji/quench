@@ -4,16 +4,119 @@
 //! Decl::Function items with JSX bodies. Uses codegen.rs helpers to generate
 //! VNode-based Rust code.
 
+#![allow(unsafe_code)]
+
 use proc_macro2::TokenStream;
 use runts_plugin::{CargoDep, DevAction, DevContext, DevState, Plugin, PluginError, RouteInfo};
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 use crate::codegen::{jsx_element, jsx_expr, jsx_fragment, jsx_text, page_component};
 
 pub struct FreshPlugin;
 
-struct FreshDevState;
+/// Dev state for Fresh plugin - tracks server process
+struct FreshDevState {
+    /// Project root directory
+    project_root: PathBuf,
+    /// Whether server has been spawned
+    spawned: Arc<Mutex<bool>>,
+    /// Child process handle (None until spawned)
+    child: Arc<Mutex<Option<std::process::Child>>>,
+}
 
 impl DevState for FreshDevState {}
+
+impl FreshDevState {
+    fn new(project_root: PathBuf) -> Self {
+        Self {
+            project_root,
+            spawned: Arc::new(Mutex::new(false)),
+            child: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Spawn the dev server if not already spawned
+    fn ensure_server_running(&self) -> Result<(), PluginError> {
+        // Check if already spawned
+        {
+            let mut spawned = self.spawned.lock().unwrap();
+            if *spawned {
+                // Check if still running
+                let mut child_guard = self.child.lock().unwrap();
+                if let Some(ref mut child) = *child_guard {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {
+                            // Server exited
+                            *spawned = false;
+                            *child_guard = None;
+                        }
+                        Ok(None) => {
+                            // Still running
+                            return Ok(());
+                        }
+                        Err(_) => {
+                            // Can't check, assume dead
+                            *spawned = false;
+                            *child_guard = None;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Need to spawn
+        let binary_path = self.project_root.join("target").join("debug").join("runts-app");
+
+        // Compile if needed
+        if !binary_path.exists() {
+            self.compile_project()?;
+        }
+
+        // Spawn server
+        println!("Starting dev server at http://127.0.0.1:8000");
+        println!("Note: Hot reload coming in v0.2 - restart server manually for now");
+
+        let child = Command::new(&binary_path)
+            .current_dir(&self.project_root)
+            .spawn()
+            .map_err(|e| PluginError::dev("fresh", format!("failed to start server: {}", e)))?;
+
+        {
+            let mut spawned = self.spawned.lock().unwrap();
+            *spawned = true;
+            let mut child_guard = self.child.lock().unwrap();
+            *child_guard = Some(child);
+        }
+
+        Ok(())
+    }
+
+    fn compile_project(&self) -> Result<(), PluginError> {
+        // Use cargo to compile the project
+        // For dev mode, we compile from .runts/build directory
+        let build_dir = self.project_root.join(".runts").join("build");
+
+        if !build_dir.exists() {
+            return Err(PluginError::dev("fresh", "runts build directory not found. Run 'runts build' first."));
+        }
+
+        println!("Compiling...");
+        let output = Command::new("cargo")
+            .current_dir(&build_dir)
+            .args(&["build"])
+            .output()
+            .map_err(|e| PluginError::dev("fresh", format!("cargo build failed: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(PluginError::dev("fresh", format!("cargo build failed:\n{}", stderr)));
+        }
+
+        Ok(())
+    }
+}
 
 impl Plugin for FreshPlugin {
     fn name(&self) -> &str { "fresh" }
@@ -58,13 +161,46 @@ impl Plugin for FreshPlugin {
         self.generate_main_entry(modules)
     }
 
-    fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
-        Ok(Box::new(FreshDevState))
+    fn dev_init(&self, ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
+        Ok(Box::new(FreshDevState::new(ctx.root.clone())))
     }
-    fn dev_run_once(&self, _state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+        // Downcast to FreshDevState using pointer cast
+        // This is safe because we know the actual type
+        let dev_state = unsafe {
+            let ptr = state as *mut dyn DevState as *mut FreshDevState;
+            &*ptr
+        };
+
+        dev_state.ensure_server_running()?;
+
         Ok(DevAction::Continue)
     }
-    fn dev_reload(&self, _ctx: &mut DevContext, _state: &mut dyn DevState) -> Result<(), PluginError> {
+    fn dev_reload(&self, ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError> {
+        // Recompile on file changes
+        let dev_state = unsafe {
+            let ptr = state as *mut dyn DevState as *mut FreshDevState;
+            &*ptr
+        };
+
+        println!("File change detected, recompiling...");
+        dev_state.compile_project()?;
+
+        // Kill old server
+        {
+            let mut spawned = dev_state.spawned.lock().unwrap();
+            let mut child_guard = dev_state.child.lock().unwrap();
+            if let Some(ref mut child) = *child_guard {
+                let _ = child.kill();
+            }
+            *spawned = false;
+            *child_guard = None;
+        }
+
+        // Spawn new server
+        dev_state.ensure_server_running()?;
+
+        println!("Modules rescanned: {} files", ctx.modules.len());
         Ok(())
     }
 }
@@ -850,5 +986,43 @@ mod tests {
         let result = plugin.try_codegen_jsx(&items_json, &hir);
 
         assert!(result.is_none(), "Should return None for non-function declarations");
+    }
+
+    #[test]
+    fn test_dev_state_init() {
+        use std::path::PathBuf;
+        let plugin = FreshPlugin;
+        let mut ctx = DevContext {
+            root: PathBuf::from("/tmp/test-project"),
+            modules: vec![],
+        };
+        let state = plugin.dev_init(&mut ctx);
+        assert!(state.is_ok(), "Should initialize dev state");
+        let _ = state.unwrap();
+    }
+
+    #[test]
+    fn test_dev_state_spawn_requires_build_dir() {
+        use std::path::PathBuf;
+        use std::fs;
+
+        let plugin = FreshPlugin;
+        let project_root = PathBuf::from("/tmp/nonexistent-runts-test");
+        let _ = fs::create_dir_all(&project_root);
+
+        let mut ctx = DevContext {
+            root: project_root.clone(),
+            modules: vec!["test.tsx".to_string()],
+        };
+        let state = plugin.dev_init(&mut ctx);
+        assert!(state.is_ok(), "Should initialize dev state");
+        let mut state = state.unwrap();
+
+        // dev_run_once should error since build dir doesn't exist
+        let result = plugin.dev_run_once(&mut *state);
+        assert!(result.is_err(), "Should error when .runts/build missing");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&project_root);
     }
 }
