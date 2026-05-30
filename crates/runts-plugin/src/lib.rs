@@ -159,7 +159,9 @@ pub mod hir {
         pub source_path: Option<String>,
         /// Route info if this module is a route
         pub route_info: Option<super::RouteInfo>,
-        /// Raw HIR items as JSON Value (opaque to plugin trait, parsed by plugins)
+        /// Raw HIR items as JSON Value (opaque to plugin trait, parsed by plugins).
+        /// Named `items_json` internally but accepts `items` from core's HIR JSON.
+        #[serde(alias = "items")]
         pub items_json: Option<serde_json::Value>,
     }
 
@@ -241,5 +243,34 @@ mod tests {
         let json = serde_json::to_string(&module).unwrap();
         assert!(json.contains("test.tsx"));
         assert!(json.contains("/"));
+    }
+
+    #[test]
+    fn test_hir_json_contract_items_alias() {
+        // Core serializes HIR with "items" field, plugins expect "items_json".
+        // This test verifies the alias works: JSON with "items" deserializes to items_json.
+        let json_with_items = r#"{
+            "source_path": "test.tsx",
+            "items": [{"kind": "Import", "source": "react", "specifiers": [], "type_only": false}]
+        }"#;
+        let module: hir::Module = serde_json::from_str(json_with_items).unwrap();
+        assert!(module.items_json.is_some(), "items_json should be populated from 'items' field");
+        assert!(module.source_path.as_deref() == Some("test.tsx"));
+    }
+
+    #[test]
+    fn test_hir_json_contract_round_trip() {
+        // Test that serializing with items_json and deserializing works
+        let items_value = serde_json::json!([
+            {"kind": "Import", "source": "react", "specifiers": [], "type_only": false}
+        ]);
+        let module = hir::Module {
+            source_path: Some("test.tsx".to_string()),
+            route_info: None,
+            items_json: Some(items_value.clone()),
+        };
+        let json = serde_json::to_string(&module).unwrap();
+        let parsed: hir::Module = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.items_json, Some(items_value));
     }
 }
