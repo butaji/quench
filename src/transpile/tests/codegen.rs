@@ -9,7 +9,7 @@ mod codegen_tests {
 
     #[test]
     fn test_generate_interface_to_struct() {
-        let mut cg = create_codegen();
+        let cg = create_codegen();
         let decl = TypeDecl {
             name: "CounterProps".to_string(),
             generics: vec![],
