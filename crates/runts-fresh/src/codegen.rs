@@ -11,7 +11,7 @@ use quote::{format_ident, quote};
 /// -> `VNode::Element { tag: "div", attrs: { "class": "home" }, children: [...] }`
 pub fn jsx_element(
     tag: &str,
-    attrs: Vec<(&str, TokenStream)>,
+    attrs: Vec<(String, TokenStream)>,
     children: Vec<TokenStream>,
 ) -> TokenStream {
     let tag_str = tag;
