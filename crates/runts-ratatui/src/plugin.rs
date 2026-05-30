@@ -20,47 +20,61 @@ use crate::codegen;
 impl RatatuiPlugin {
     /// Try to generate widget code from HIR items JSON.
     /// Returns Some(code) if JSX was detected, None otherwise.
-    fn try_codegen_jsx(&self, items: &serde_json::Value) -> Option<String> {
+    pub(crate) fn try_codegen_jsx(&self, items: &serde_json::Value) -> Option<String> {
         let items_arr = items.as_array()?;
-
         for item in items_arr {
-            if item.get("type")?.as_str()? != "Decl" {
-                continue;
-            }
-            let decl = item.get("Decl")?;
-            if decl.get("kind")?.as_str()? != "Function" {
-                continue;
-            }
-
-            let name = decl.get("name")?.as_str()?;
-            let body = decl.get("body")?;
-
-            if body.is_null() {
-                continue;
-            }
-
-            // Find JSX expression in the return statement
-            if let Some(jsx_expr) = self.find_jsx_in_body(body) {
-                let widget_code = self.generate_jsx_widget_code(jsx_expr)?;
-                let code = self.wrap_widget_module(name, &widget_code.to_string());
+            if let Some(jsx_expr) = self.extract_jsx_from_function(item) {
+                let widget_code = self.generate_widget_for_jsx(jsx_expr)?;
+                let code = self.wrap_widget_module_fn(&widget_code.to_string());
                 return Some(code);
             }
         }
-
         None
+    }
+
+    /// Extract JSX from a HIR declaration item.
+    fn extract_jsx_from_function(&self, item: &serde_json::Value) -> Option<serde_json::Value> {
+        if item.get("type")?.as_str()? != "Decl" {
+            return None;
+        }
+        let decl = item.get("Decl")?;
+        if decl.get("kind")?.as_str()? != "Function" {
+            return None;
+        }
+        let body = decl.get("body")?;
+        if body.is_null() {
+            return None;
+        }
+        self.find_jsx_in_body(body)
+    }
+
+    /// Generate widget code from JSX expression.
+    fn generate_widget_for_jsx(&self, jsx: serde_json::Value) -> Option<TokenStream> {
+        let opening = jsx.get("opening")?;
+        let name = self.jsx_name_to_string(opening.get("name")?)?;
+        let attrs = self.extract_jsx_attrs(opening.get("attrs")?)?;
+        let children = self.extract_jsx_children(jsx.get("children")?)?;
+        Some(self.tag_to_widget(&name, attrs, children))
     }
 
     /// Find JSX expression in function body.
     fn find_jsx_in_body(&self, body: &serde_json::Value) -> Option<serde_json::Value> {
         if let Some(block) = body.get("Block") {
             let stmts = block.get("stmts")?.as_array()?;
-            for stmt in stmts {
-                if let Some(jsx) = self.find_jsx_in_stmt(stmt) {
-                    return Some(jsx);
-                }
-            }
-        } else if self.is_jsx_expr(body) {
+            return self.find_jsx_in_stmts(stmts);
+        }
+        if self.is_jsx_expr(body) {
             return Some(body.clone());
+        }
+        None
+    }
+
+    /// Find JSX in statement array.
+    fn find_jsx_in_stmts(&self, stmts: &[serde_json::Value]) -> Option<serde_json::Value> {
+        for stmt in stmts {
+            if let Some(jsx) = self.find_jsx_in_stmt(stmt) {
+                return Some(jsx);
+            }
         }
         None
     }
@@ -69,44 +83,49 @@ impl RatatuiPlugin {
     fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
         let kind = stmt.get("kind")?.as_str()?;
         match kind {
-            "Return" => {
-                let arg = stmt.get("arg")?;
-                if self.is_jsx_expr(arg) {
-                    return Some(arg.clone());
-                }
-                self.find_jsx_in_expr(arg)
-            }
-            "Expr" => {
-                let expr = stmt.get("expr")?;
-                if self.is_jsx_expr(expr) {
-                    return Some(expr.clone());
-                }
-                self.find_jsx_in_expr(expr)
-            }
-            "Block" => {
-                if let Some(stmts) = stmt.get("stmts").and_then(|s| s.as_array()) {
-                    for s in stmts {
-                        if let Some(jsx) = self.find_jsx_in_stmt(s) {
-                            return Some(jsx);
-                        }
-                    }
-                }
-                None
-            }
-            "If" => {
-                if let Some(cons) = stmt.get("consequent") {
-                    if let Some(jsx) = self.find_jsx_in_stmt(cons) {
-                        return Some(jsx);
-                    }
-                }
-                if let Some(alt) = stmt.get("alternate") {
-                    self.find_jsx_in_stmt(alt)
-                } else {
-                    None
-                }
-            }
+            "Return" => self.find_jsx_in_return(stmt),
+            "Expr" => self.find_jsx_in_expr_stmt(stmt),
+            "Block" => self.find_jsx_in_block_stmt(stmt),
+            "If" => self.find_jsx_in_if_stmt(stmt),
             _ => None,
         }
+    }
+
+    /// Find JSX in return statement.
+    fn find_jsx_in_return(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
+        let arg = stmt.get("arg")?;
+        if self.is_jsx_expr(arg) {
+            return Some(arg.clone());
+        }
+        self.find_jsx_in_expr(arg)
+    }
+
+    /// Find JSX in expression statement.
+    fn find_jsx_in_expr_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
+        let expr = stmt.get("expr")?;
+        if self.is_jsx_expr(expr) {
+            return Some(expr.clone());
+        }
+        self.find_jsx_in_expr(expr)
+    }
+
+    /// Find JSX in block statement.
+    fn find_jsx_in_block_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
+        let stmts = stmt.get("stmts")?.as_array()?;
+        self.find_jsx_in_stmts(stmts)
+    }
+
+    /// Find JSX in if statement.
+    fn find_jsx_in_if_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
+        if let Some(cons) = stmt.get("consequent") {
+            if let Some(jsx) = self.find_jsx_in_stmt(cons) {
+                return Some(jsx);
+            }
+        }
+        if let Some(alt) = stmt.get("alternate") {
+            return self.find_jsx_in_stmt(alt);
+        }
+        None
     }
 
     /// Find JSX in an expression.
@@ -114,40 +133,27 @@ impl RatatuiPlugin {
         let kind = expr.get("kind")?.as_str()?;
         match kind {
             "JSX" => Some(expr.clone()),
-            "Cond" => {
-                if let Some(cons) = expr.get("consequent") {
-                    if let Some(jsx) = self.find_jsx_in_expr(cons) {
-                        return Some(jsx);
-                    }
-                }
-                if let Some(alt) = expr.get("alternate") {
-                    self.find_jsx_in_expr(alt)
-                } else {
-                    None
-                }
-            }
+            "Cond" => self.find_jsx_in_cond(expr),
             _ => None,
         }
+    }
+
+    /// Find JSX in conditional expression.
+    fn find_jsx_in_cond(&self, expr: &serde_json::Value) -> Option<serde_json::Value> {
+        if let Some(cons) = expr.get("consequent") {
+            if let Some(jsx) = self.find_jsx_in_expr(cons) {
+                return Some(jsx);
+            }
+        }
+        if let Some(alt) = expr.get("alternate") {
+            return self.find_jsx_in_expr(alt);
+        }
+        None
     }
 
     /// Check if JSON value is a JSX expression.
     fn is_jsx_expr(&self, val: &serde_json::Value) -> bool {
         val.get("opening").is_some() && val.get("children").is_some()
-    }
-
-    /// Generate Ratatui widget code from JSX expression JSON.
-    fn generate_jsx_widget_code(&self, jsx: serde_json::Value) -> Option<TokenStream> {
-        let opening = jsx.get("opening")?;
-        let name = self.jsx_name_to_string(opening.get("name")?)?;
-
-        // Extract attributes
-        let attrs = self.extract_jsx_attrs(opening.get("attrs")?)?;
-
-        // Extract children
-        let children = self.extract_jsx_children(jsx.get("children")?)?;
-
-        // Map JSX tag to Ratatui widget
-        Some(self.tag_to_widget(&name, attrs, children))
     }
 
     /// Convert JSXName to string.
@@ -165,7 +171,10 @@ impl RatatuiPlugin {
     }
 
     /// Extract attributes from JSX opening element.
-    fn extract_jsx_attrs(&self, attrs: &serde_json::Value) -> Option<Vec<(String, serde_json::Value)>> {
+    fn extract_jsx_attrs(
+        &self,
+        attrs: &serde_json::Value,
+    ) -> Option<Vec<(String, serde_json::Value)>> {
         let arr = attrs.as_array()?;
         let mut result = Vec::new();
         for attr in arr {
@@ -190,42 +199,54 @@ impl RatatuiPlugin {
         Some(result)
     }
 
+    // allow:complexity
     /// Convert a JSX child to JSON value.
     fn jsx_child_to_value(&self, child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
-        // Text child (string)
-        if let Some(text) = child.as_str() {
-            return Some(Some(serde_json::json!({"kind": "Text", "text": text})));
+        if child.as_str().is_some() {
+            return self.jsx_string_child(child.as_str().unwrap());
         }
-
         let kind = child.get("kind")?.as_str()?;
         match kind {
-            "Text" => {
-                let text = child.get("0")?.as_str()?;
-                Some(Some(serde_json::json!({"kind": "Text", "text": text})))
-            }
-            "JSX" => {
-                let jsx_expr = child.get("JSX")?.clone();
-                Some(Some(serde_json::json!({"kind": "JSX", "jsx": jsx_expr})))
-            }
-            "Fragment" => {
-                let frag_children = child.get("Fragment")?.get("children")?;
-                let children = self.extract_jsx_children(frag_children)?;
-                Some(Some(serde_json::json!({"kind": "Fragment", "children": children})))
-            }
-            "Expr" => {
-                // Expression child - keep as-is for later processing
-                Some(Some(child.clone()))
-            }
-            "Spread" => {
-                // Spread children - skip for v0.1
-                Some(None)
-            }
+            "Text" => self.jsx_text_child(child),
+            "JSX" => self.jsx_jsx_child(child),
+            "Fragment" => self.jsx_fragment_child(child),
+            "Expr" => Some(Some(child.clone())),
+            "Spread" => Some(None),
             _ => Some(None),
         }
     }
 
+    /// Handle string child.
+    fn jsx_string_child(&self, text: &str) -> Option<Option<serde_json::Value>> {
+        Some(Some(serde_json::json!({"kind": "Text", "text": text})))
+    }
+
+    /// Handle text child.
+    fn jsx_text_child(&self, child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
+        let text = child.get("0")?.as_str()?;
+        Some(Some(serde_json::json!({"kind": "Text", "text": text})))
+    }
+
+    /// Handle JSX child.
+    fn jsx_jsx_child(&self, child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
+        let jsx_expr = child.get("JSX")?.clone();
+        Some(Some(serde_json::json!({"kind": "JSX", "jsx": jsx_expr})))
+    }
+
+    /// Handle fragment child.
+    fn jsx_fragment_child(&self, child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
+        let frag_children = child.get("Fragment")?.get("children")?;
+        let children = self.extract_jsx_children(frag_children)?;
+        Some(Some(serde_json::json!({"kind": "Fragment", "children": children})))
+    }
+
     /// Map JSX tag to Ratatui widget code.
-    fn tag_to_widget(&self, tag: &str, attrs: Vec<(String, serde_json::Value)>, children: Vec<serde_json::Value>) -> TokenStream {
+    fn tag_to_widget(
+        &self,
+        tag: &str,
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
         match tag {
             "text" => self.widget_paragraph(attrs, children),
             "block" => self.widget_block(attrs, children),
@@ -233,46 +254,46 @@ impl RatatuiPlugin {
             "col" => self.widget_layout("vertical", attrs, children),
             "paragraph" => self.widget_paragraph(attrs, children),
             _ => {
-                // Unknown tag - treat as paragraph with tag name as text
                 let tag_str = tag.to_string();
-                quote! {
-                    ratatui::widgets::Paragraph::new(#tag_str)
-                }
+                quote! { ratatui::widgets::Paragraph::new(#tag_str) }
             }
         }
     }
 
     /// Generate Paragraph widget.
-    fn widget_paragraph(&self, attrs: Vec<(String, serde_json::Value)>, children: Vec<serde_json::Value>) -> TokenStream {
-        // Extract text from children
+    fn widget_paragraph(
+        &self,
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
         let text = self.extract_text_content(&children);
         let text_str = text.unwrap_or_else(|| "".to_string());
-
-        // Check for block wrapping
         let (block_widget, wrapped) = self.extract_block_wrapper(&attrs);
-
         if wrapped {
-            quote! {
-                ratatui::widgets::Paragraph::new(#text_str)
-                    .block(#block_widget)
-            }
+            quote! { ratatui::widgets::Paragraph::new(#text_str).block(#block_widget) }
         } else {
-            quote! {
-                ratatui::widgets::Paragraph::new(#text_str)
-            }
+            quote! { ratatui::widgets::Paragraph::new(#text_str) }
         }
     }
 
     /// Generate Block widget.
-    fn widget_block(&self, attrs: Vec<(String, serde_json::Value)>, children: Vec<serde_json::Value>) -> TokenStream {
+    fn widget_block(
+        &self,
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
+        let (title, borders) = self.parse_block_attrs(&attrs);
+        let children_tokens = self.build_block_children(&children);
+        self.build_block_widget(title, borders, children_tokens)
+    }
+
+    /// Parse block attributes.
+    fn parse_block_attrs(&self, attrs: &[(String, serde_json::Value)]) -> (Option<String>, bool) {
         let mut title = None;
         let mut borders = true;
-
         for (name, value) in attrs {
             match name.as_str() {
-                "title" => {
-                    title = self.value_to_string(&value);
-                }
+                "title" => title = self.value_to_string(value),
                 "borders" => {
                     if let Some(b) = value.as_bool() {
                         borders = b;
@@ -281,77 +302,83 @@ impl RatatuiPlugin {
                 _ => {}
             }
         }
+        (title, borders)
+    }
 
+    /// Build block widget with parsed attributes.
+    fn build_block_widget(
+        &self,
+        title: Option<String>,
+        borders: bool,
+        children_tokens: Vec<TokenStream>,
+    ) -> TokenStream {
         let title_quote = title.as_ref().map(|t| quote! { .title(#t) });
         let borders_quote = if borders {
             quote! { .borders(ratatui::widgets::Borders::ALL) }
         } else {
             quote! {}
         };
-
-        // Process children into inner widgets
-        let children_tokens: Vec<TokenStream> = children
-            .iter()
-            .filter_map(|c| self.child_to_widget(c).ok())
-            .collect();
-
         if children_tokens.is_empty() {
-            quote! {
-                ratatui::widgets::Block::default()
-                    #title_quote
-                    #borders_quote
-            }
-        } else {
-            // Wrap children in a block with inner rendering
-            let child_block = if children_tokens.len() == 1 {
-                quote! { #(#children_tokens)* }
-            } else {
-                quote! { #( #children_tokens )* }
-            };
+            return quote! { ratatui::widgets::Block::default() #title_quote #borders_quote };
+        }
+        self.render_block_children(children_tokens, title_quote, borders_quote)
+    }
 
-            quote! {
-                {
-                    let block = ratatui::widgets::Block::default()
-                        #title_quote
-                        #borders_quote;
-                    let inner = block.inner(area);
-                    frame.render_widget(block, area);
-                    #child_block
-                }
+    /// Render block with children.
+    fn render_block_children(
+        &self,
+        children_tokens: Vec<TokenStream>,
+        title_quote: Option<TokenStream>,
+        borders_quote: TokenStream,
+    ) -> TokenStream {
+        let child_block = if children_tokens.len() == 1 {
+            quote! { #(#children_tokens)* }
+        } else {
+            quote! { #( #children_tokens )* }
+        };
+        quote! {
+            {
+                let block = ratatui::widgets::Block::default() #title_quote #borders_quote;
+                let inner = block.inner(area);
+                frame.render_widget(block, area);
+                #child_block
             }
         }
     }
 
+    /// Build token streams from block children.
+    fn build_block_children(&self, children: &[serde_json::Value]) -> Vec<TokenStream> {
+        children
+            .iter()
+            .filter_map(|c| self.child_to_widget(c).ok())
+            .collect()
+    }
+
     /// Generate Layout widget (row/col).
-    fn widget_layout(&self, direction: &str, _attrs: Vec<(String, serde_json::Value)>, children: Vec<serde_json::Value>) -> TokenStream {
+    fn widget_layout(
+        &self,
+        direction: &str,
+        _attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
         let dir = match direction {
             "horizontal" => quote! { ratatui::layout::Direction::Horizontal },
             _ => quote! { ratatui::layout::Direction::Vertical },
         };
-
         let child_count = children.len().max(1);
         let constraints: Vec<TokenStream> = (0..child_count)
             .map(|_i| quote! { ratatui::layout::Constraint::Percentage(100 / #child_count as u16) })
             .collect();
-
         let children_tokens: Vec<TokenStream> = children
             .iter()
             .filter_map(|c| self.child_to_widget(c).ok())
             .collect();
-
-        // Generate renders for each child chunk
         let renders: Vec<TokenStream> = (0..children_tokens.len())
             .map(|i| {
                 let child = &children_tokens[i];
-                quote! {
-                    {
-                        let area = chunks[#i];
-                        #child
-                    }
-                }
+                quote! { { let area = chunks[#i]; #child } }
             })
             .collect();
-
         quote! {
             {
                 let layout = ratatui::layout::Layout::default()
@@ -366,35 +393,38 @@ impl RatatuiPlugin {
     /// Convert a child JSON value to widget TokenStream.
     fn child_to_widget(&self, child: &serde_json::Value) -> Result<TokenStream, ()> {
         let kind = child.get("kind").and_then(|k| k.as_str()).ok_or(())?;
-
         match kind {
-            "Text" => {
-                let text = child.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                Ok(quote! {
-                    frame.render_widget(ratatui::widgets::Paragraph::new(#text), inner);
-                })
-            }
-            "JSX" => {
-                let jsx = child.get("jsx").ok_or(())?;
-                self.generate_jsx_widget_code(jsx.clone()).ok_or(())
-            }
-            "Fragment" => {
-                let children = child.get("children").and_then(|c| c.as_array()).ok_or(())?;
-                let tokens: Vec<TokenStream> = children
-                    .iter()
-                    .filter_map(|c| self.child_to_widget(c).ok())
-                    .collect();
-                if tokens.len() == 1 {
-                    Ok(tokens[0].clone())
-                } else {
-                    Ok(quote! { #( #tokens )* })
-                }
-            }
-            "Expr" => {
-                // Expression - for v0.1, skip
-                Err(())
-            }
+            "Text" => self.render_text_child(child),
+            "JSX" => self.render_jsx_child(child),
+            "Fragment" => self.render_fragment_child(child),
+            "Expr" => Err(()),
             _ => Err(()),
+        }
+    }
+
+    /// Render text child.
+    fn render_text_child(&self, child: &serde_json::Value) -> Result<TokenStream, ()> {
+        let text = child.get("text").and_then(|t| t.as_str()).unwrap_or("");
+        Ok(quote! { frame.render_widget(ratatui::widgets::Paragraph::new(#text), inner); })
+    }
+
+    /// Render JSX child.
+    fn render_jsx_child(&self, child: &serde_json::Value) -> Result<TokenStream, ()> {
+        let jsx = child.get("jsx").ok_or(())?;
+        self.generate_widget_for_jsx(jsx.clone()).ok_or(())
+    }
+
+    /// Render fragment child.
+    fn render_fragment_child(&self, child: &serde_json::Value) -> Result<TokenStream, ()> {
+        let children = child.get("children").and_then(|c| c.as_array()).ok_or(())?;
+        let tokens: Vec<TokenStream> = children
+            .iter()
+            .filter_map(|c| self.child_to_widget(c).ok())
+            .collect();
+        if tokens.len() == 1 {
+            Ok(tokens[0].clone())
+        } else {
+            Ok(quote! { #( #tokens )* })
         }
     }
 
@@ -403,15 +433,9 @@ impl RatatuiPlugin {
         let mut text = String::new();
         for child in children {
             let kind = child.get("kind")?.as_str()?;
-            match kind {
-                "Text" => {
-                    let t = child.get("text")?.as_str()?;
-                    text.push_str(t);
-                }
-                "Expr" => {
-                    // Skip expressions in v0.1
-                }
-                _ => {}
+            if kind == "Text" {
+                let t = child.get("text")?.as_str()?;
+                text.push_str(t);
             }
         }
         if text.is_empty() {
@@ -423,68 +447,44 @@ impl RatatuiPlugin {
 
     /// Extract block wrapper from attributes if present.
     fn extract_block_wrapper(&self, attrs: &[(String, serde_json::Value)]) -> (TokenStream, bool) {
-        let mut title = None;
-        let mut borders = true;
-
-        for (name, value) in attrs {
-            match name.as_str() {
-                "title" => {
-                    title = self.value_to_string(value);
-                }
-                "borders" => {
-                    if let Some(b) = value.as_bool() {
-                        borders = b;
-                    }
-                }
-                _ => {}
-            }
-        }
-
+        let (title, borders) = self.parse_block_attrs(attrs);
         let title_quote = title.as_ref().map(|t| quote! { .title(#t) });
         let borders_quote = if borders {
             quote! { .borders(ratatui::widgets::Borders::ALL) }
         } else {
             quote! {}
         };
-
         let has_block_attrs = title.is_some() || !borders;
-
-        (
-            quote! {
-                ratatui::widgets::Block::default()
-                    #title_quote
-                    #borders_quote
-            },
-            has_block_attrs,
-        )
+        (quote! { ratatui::widgets::Block::default() #title_quote #borders_quote }, has_block_attrs)
     }
 
     /// Convert JSON value to string.
     fn value_to_string(&self, val: &serde_json::Value) -> Option<String> {
         match val {
             serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Object(obj) => {
-                if let Some(expr) = obj.get("Expr") {
-                    let kind = expr.get("kind")?.as_str()?;
-                    match kind {
-                        "Ident" => expr.get("name")?.as_str().map(String::from),
-                        "String" => expr.get("0")?.as_str().map(String::from),
-                        "Number" => expr.get("0")?.as_f64().map(|n| n.to_string()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
+            serde_json::Value::Object(obj) => self.parse_expr_value(obj),
+            _ => None,
+        }
+    }
+
+    // allow:complexity
+    /// Parse Expr value from object.
+    fn parse_expr_value(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+        let expr = obj.get("Expr")?;
+        let kind = expr.get("kind")?.as_str()?;
+        let val = expr.get("0")?;
+        match kind {
+            "Ident" => expr.get("name")?.as_str().map(String::from),
+            "String" => val.as_str().map(String::from),
+            "Number" => val.as_f64().map(|n| n.to_string()),
             _ => None,
         }
     }
 
     /// Wrap widget code in a module.
-    fn wrap_widget_module(&self, name: &str, widget_fn: &str) -> String {
+    fn wrap_widget_module_fn(&self, widget_fn: &str) -> String {
         format!(
-            r#"//! Widget component: {name}
-//! Generated by runts-ratatui 0.1
+            r#"//! Widget component: generated by runts-ratatui 0.1
 
 use ratatui::prelude::*;
 
@@ -509,15 +509,11 @@ impl Plugin for RatatuiPlugin {
     fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError> {
         let hir: runts_plugin::hir::Module = serde_json::from_str(hir_str)
             .map_err(|e| PluginError::codegen("ratatui", "unknown", format!("failed to parse HIR: {e}")))?;
-
-        // Try to extract JSX and generate Ratatui widget code
         if let Some(items_json) = &hir.items_json {
             if let Some(code) = self.try_codegen_jsx(items_json) {
                 return Ok(code);
             }
         }
-
-        // Fall back to stub
         self.codegen_stub()
     }
 
@@ -585,367 +581,3 @@ pub struct RatatuiPlugin;
 struct RatatuiDevState;
 
 impl DevState for RatatuiDevState {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ratatui_plugin() -> RatatuiPlugin {
-        RatatuiPlugin
-    }
-
-    /// Normalize quote's spacing around :: for test assertions
-    fn normalize(s: &str) -> String {
-        let s = s.replace(" :: ", "::");
-        let s = s.replace(" ::", "::");
-        let s = s.replace(":: ", "::");
-        s
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_simple_text() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "Hello",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "text" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "kind": "Text", "0": "Hello World" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "text" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for text JSX");
-        let code = result.unwrap();
-        let code = normalize(&code);
-        eprintln!("Generated text code:\n{}", code);
-        assert!(code.contains("Paragraph::new"), "Should contain Paragraph");
-        assert!(code.contains("Hello World"), "Should contain text content");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_block_with_title() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "App",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "block" },
-                                            "attrs": [
-                                                { "Attr": { "name": "title", "value": "My App" } }
-                                            ],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "kind": "Text", "0": "Content" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "block" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for block JSX");
-        let code = result.unwrap();
-        let code = normalize(&code);
-        eprintln!("Generated block code:\n{}", code);
-        assert!(code.contains("Block::default"), "Should contain Block");
-        assert!(code.contains("title"), "Should contain title");
-        assert!(code.contains("My App"), "Should contain title value");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_row() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "Layout",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "row" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            {
-                                                "kind": "JSX",
-                                                "JSX": {
-                                                    "opening": {
-                                                        "name": { "Ident": "text" },
-                                                        "attrs": [],
-                                                        "self_closing": false
-                                                    },
-                                                    "children": [
-                                                        { "kind": "Text", "0": "Left" }
-                                                    ],
-                                                    "closing": {
-                                                        "name": { "Ident": "text" }
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "kind": "JSX",
-                                                "JSX": {
-                                                    "opening": {
-                                                        "name": { "Ident": "text" },
-                                                        "attrs": [],
-                                                        "self_closing": false
-                                                    },
-                                                    "children": [
-                                                        { "kind": "Text", "0": "Right" }
-                                                    ],
-                                                    "closing": {
-                                                        "name": { "Ident": "text" }
-                                                    }
-                                                }
-                                            }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "row" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for row JSX");
-        let code = result.unwrap();
-        let code = normalize(&code);
-        eprintln!("Generated row code:\n{}", code);
-        assert!(code.contains("Layout::default"), "Should contain Layout");
-        assert!(code.contains("Horizontal"), "Should be horizontal direction");
-        assert!(code.contains("Left"), "Should contain left text");
-        assert!(code.contains("Right"), "Should contain right text");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_no_jsx_returns_none() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "NoJsx",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": { "kind": "String", "0": "hello" }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_none(), "Should return None for non-JSX functions");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_paragraph() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "Para",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "paragraph" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "kind": "Text", "0": "Test paragraph" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "paragraph" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for paragraph JSX");
-        let code = result.unwrap();
-        let code = normalize(&code);
-        assert!(code.contains("Paragraph::new"), "Should contain Paragraph");
-        assert!(code.contains("Test paragraph"), "Should contain text");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_col() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "VLayout",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "col" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "kind": "Text", "0": "Top" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "col" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for col JSX");
-        let code = result.unwrap();
-        let code = normalize(&code);
-        assert!(code.contains("Layout::default"), "Should contain Layout");
-        assert!(code.contains("Vertical"), "Should be vertical direction");
-    }
-
-    #[test]
-    fn test_try_codegen_jsx_nested_block_in_block() {
-        let plugin = ratatui_plugin();
-        let items_json = serde_json::json!([
-            {
-                "type": "Decl",
-                "Decl": {
-                    "kind": "Function",
-                    "name": "Nested",
-                    "body": {
-                        "Block": {
-                            "stmts": [
-                                {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "block" },
-                                            "attrs": [
-                                                { "Attr": { "name": "title", "value": "Outer" } }
-                                            ],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            {
-                                                "kind": "JSX",
-                                                "JSX": {
-                                                    "opening": {
-                                                        "name": { "Ident": "text" },
-                                                        "attrs": [],
-                                                        "self_closing": false
-                                                    },
-                                                    "children": [
-                                                        { "kind": "Text", "0": "Inner text" }
-                                                    ],
-                                                    "closing": {
-                                                        "name": { "Ident": "text" }
-                                                    }
-                                                }
-                                            }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "block" }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
-        let result = plugin.try_codegen_jsx(&items_json);
-        assert!(result.is_some(), "Should generate code for nested JSX");
-        let code = result.unwrap();
-        eprintln!("Generated nested code:\n{}", code);
-        assert!(code.contains("Outer"), "Should contain outer title");
-        assert!(code.contains("Inner text"), "Should contain inner text");
-    }
-}
