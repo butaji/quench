@@ -32,7 +32,7 @@ pub fn jsx_element(
                 #( m.insert #attr_entries; )*
                 m
             },
-            events: std::collections::HashMap::new(),
+            events: std::collections::HashMap::<String, String>::new(),
             children: vec![#(#children),*],
             key: None,
         }
