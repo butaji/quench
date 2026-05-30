@@ -4,6 +4,9 @@ pub mod expr;
 pub mod jsx;
 pub mod stmt;
 
+#[cfg(test)]
+pub mod tests;
+
 use crate::transpile::hir;
 use anyhow::Result;
 use std::path::Path;

@@ -28,6 +28,18 @@ pub fn convert_jsx_element(elem: &JSXElement) -> hir::JSXExpr {
     }
 }
 
+pub fn convert_jsx_fragment(frag: &JSXFragment) -> hir::JSXExpr {
+    hir::JSXExpr {
+        opening: hir::JSXOpening {
+            name: hir::JSXName::Fragment,
+            attrs: vec![],
+            self_closing: false,
+        },
+        children: frag.children.iter().filter_map(convert_jsx_child).collect(),
+        closing: None,
+    }
+}
+
 fn convert_jsx_name(name: &JSXElementName) -> hir::JSXName {
     match name {
         JSXElementName::Identifier(id) => hir::JSXName::Ident(id.name.to_string()),
