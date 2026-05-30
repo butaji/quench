@@ -4,6 +4,8 @@
  * Static page with conditional rendering example.
  */
 
+import { PageProps, HandlerContext } from "$fresh/server.ts";
+
 interface AboutData {
   title: string;
   description: string;

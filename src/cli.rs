@@ -117,11 +117,3 @@ impl ComponentType {
         }
     }
 }
-
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
-pub enum Backend {
-    /// Compile to native Rust binary (default)
-    Rust,
-    /// Compile to Hono (JS/TS edge runtime)
-    Hono,
-}

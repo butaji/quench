@@ -86,30 +86,48 @@ impl VNode {
     pub fn to_html(&self) -> String {
         match self {
             Self::Empty => String::new(),
-            Self::Text { value } => value.clone(),
-            Self::Element {
-                tag,
-                attrs,
-                children,
-                ..
-            } => {
-                let attrs_str = attrs
-                    .iter()
-                    .map(|(k, v)| format!(r#"{}="{}""#, k, v))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let children_html = children.iter().map(|c| c.to_html()).collect::<String>();
-                if children_html.is_empty() {
-                    format!("<{} {} />", tag, attrs_str)
-                } else {
-                    format!("<{} {}>{}</{}>", tag, attrs_str, children_html, tag)
-                }
+            Self::Text { value } => escape_html(value),
+            Self::Element { tag, attrs, children, .. } => {
+                let is_void = is_void_element(tag);
+                let attrs_str = format_attrs(attrs);
+                let children_html: String = children.iter().map(|c| c.to_html()).collect::<String>();
+                render_element(tag, &attrs_str, &children_html, is_void)
             }
             Self::Component { name: _, children, .. } => {
                 children.iter().map(|c| c.to_html()).collect()
             }
             Self::Fragment { children } => children.iter().map(|c| c.to_html()).collect(),
         }
+    }
+}
+
+fn is_void_element(tag: &str) -> bool {
+    matches!(tag, "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr")
+}
+
+fn format_attrs(attrs: &HashMap<String, AttrValue>) -> String {
+    let parts: Vec<String> = attrs
+        .iter()
+        .filter_map(|(k, v)| match v {
+            AttrValue::Bool(true) => Some(k.clone()),
+            AttrValue::Bool(false) => None,
+            _ => Some(format!(r#"{}="{}""#, k, escape_html_attr(v))),
+        })
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", parts.join(" "))
+    }
+}
+
+fn render_element(tag: &str, attrs_str: &str, children_html: &str, is_void: bool) -> String {
+    if children_html.is_empty() && is_void {
+        format!("<{}{} />", tag, attrs_str)
+    } else if children_html.is_empty() {
+        format!("<{}{}></{}>", tag, attrs_str, tag)
+    } else {
+        format!("<{}{}>{}</{}>", tag, attrs_str, children_html, tag)
     }
 }
 
@@ -136,5 +154,45 @@ impl From<f64> for AttrValue {
 impl From<i32> for AttrValue {
     fn from(n: i32) -> Self {
         Self::Number(n as f64)
+    }
+}
+impl From<i64> for AttrValue {
+    fn from(n: i64) -> Self {
+        Self::Number(n as f64)
+    }
+}
+impl From<u32> for AttrValue {
+    fn from(n: u32) -> Self {
+        Self::Number(n as f64)
+    }
+}
+impl From<u64> for AttrValue {
+    fn from(n: u64) -> Self {
+        Self::Number(n as f64)
+    }
+}
+impl From<usize> for AttrValue {
+    fn from(n: usize) -> Self {
+        Self::Number(n as f64)
+    }
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+fn escape_html_attr(v: &AttrValue) -> String {
+    match v {
+        AttrValue::String(s) => s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#x27;"),
+        AttrValue::Number(n) => n.to_string(),
+        AttrValue::Bool(b) => b.to_string(),
     }
 }

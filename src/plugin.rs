@@ -13,7 +13,7 @@ pub fn get_plugin(name: &str) -> anyhow::Result<Box<dyn Plugin>> {
         "fresh" => Ok(Box::new(FreshPlugin)),
         "ratatui" => Ok(Box::new(RatatuiPlugin)),
         _ => Err(anyhow::anyhow!(
-            "Unknown plugin: {}. Available plugins: fresh, ratatui",
+            "Unknown plugin '{}'. Use --plugin <name>. Available: fresh, ratatui",
             name
         )),
     }
