@@ -7,30 +7,39 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Errors that can occur during plugin operations.
-#[derive(Debug, thiserror::Error)]
-pub enum PluginError {
-    #[error("{plugin} codegen failed for {file}: {message}")]
-    Codegen { plugin: String, file: String, message: String },
-    #[error("{plugin} dependency error: {message}")]
-    Dependency { plugin: String, message: String },
-    #[error("{plugin} dev error: {message}")]
-    Dev { plugin: String, message: String },
-    #[error("{plugin} fatal: {message}")]
-    Fatal { plugin: String, message: String },
+#[derive(Debug)]
+pub struct PluginError {
+    pub plugin: String,
+    pub file: Option<String>,
+    pub message: String,
 }
 
+impl std::fmt::Display for PluginError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.file {
+            Some(file) => write!(f, "{} codegen failed for {}: {}", self.plugin, file, self.message),
+            None => write!(f, "{} codegen failed: {}", self.plugin, self.message),
+        }
+    }
+}
+
+impl std::error::Error for PluginError {}
+
 impl PluginError {
+    pub fn new(plugin: &str, file: &str, message: &str) -> Self {
+        Self { plugin: plugin.to_string(), file: Some(file.to_string()), message: message.to_string() }
+    }
     pub fn codegen(plugin: &str, file: &str, message: impl Into<String>) -> Self {
-        Self::Codegen { plugin: plugin.to_string(), file: file.to_string(), message: message.into() }
+        Self { plugin: plugin.to_string(), file: Some(file.to_string()), message: message.into() }
     }
     pub fn dependency(plugin: &str, message: impl Into<String>) -> Self {
-        Self::Dependency { plugin: plugin.to_string(), message: message.into() }
+        Self { plugin: plugin.to_string(), file: None, message: message.into() }
     }
     pub fn dev(plugin: &str, message: impl Into<String>) -> Self {
-        Self::Dev { plugin: plugin.to_string(), message: message.into() }
+        Self { plugin: plugin.to_string(), file: None, message: message.into() }
     }
     pub fn fatal(plugin: &str, message: impl Into<String>) -> Self {
-        Self::Fatal { plugin: plugin.to_string(), message: message.into() }
+        Self { plugin: plugin.to_string(), file: None, message: message.into() }
     }
 }
 
@@ -41,6 +50,17 @@ pub struct CargoDep {
     pub version: Option<String>,
     pub path: Option<PathBuf>,
     pub features: Vec<String>,
+}
+
+impl CargoDep {
+    pub fn new(name: &str, version: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            version: Some(version.to_string()),
+            path: None,
+            features: Vec::new(),
+        }
+    }
 }
 
 /// Context passed to plugin dev commands.
@@ -101,7 +121,17 @@ pub struct RouteInfo {
     /// HTTP methods supported
     pub methods: Vec<String>,
     /// Relative file path from project root
-    pub file_path: String,
+    pub file: String,
+}
+
+impl RouteInfo {
+    pub fn new(path: &str, file: &str) -> Self {
+        Self {
+            path: path.to_string(),
+            methods: Vec::new(),
+            file: file.to_string(),
+        }
+    }
 }
 
 /// Extended HIR module type with route metadata
@@ -147,5 +177,53 @@ pub mod hir {
         fn default() -> Self {
             Self::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_error_new() {
+        let err = PluginError::new("fresh", "file.tsx", "parse failed");
+        assert_eq!(err.plugin, "fresh");
+        assert_eq!(err.file, Some("file.tsx".to_string()));
+        assert!(err.message.contains("parse failed"));
+    }
+
+    #[test]
+    fn test_plugin_error_display() {
+        let err = PluginError::new("fresh", "file.tsx", "parse failed");
+        let msg = format!("{}", err);
+        assert!(msg.contains("fresh"));
+        assert!(msg.contains("file.tsx"));
+        assert!(msg.contains("parse failed"));
+    }
+
+    #[test]
+    fn test_cargo_dep_new() {
+        let dep = CargoDep::new("serde", "1.0");
+        assert_eq!(dep.name, "serde");
+        assert_eq!(dep.version, Some("1.0".to_string()));
+    }
+
+    #[test]
+    fn test_route_info_new() {
+        let route = RouteInfo::new("/blog/:slug", "blog/[slug].tsx");
+        assert_eq!(route.path, "/blog/:slug");
+        assert_eq!(route.file, "blog/[slug].tsx");
+    }
+
+    #[test]
+    fn test_module_serialization() {
+        let module = hir::Module {
+            source_path: Some("test.tsx".to_string()),
+            route_info: Some(RouteInfo::new("/", "index.tsx")),
+            items_json: None,
+        };
+        let json = serde_json::to_string(&module).unwrap();
+        assert!(json.contains("test.tsx"));
+        assert!(json.contains("/"));
     }
 }
