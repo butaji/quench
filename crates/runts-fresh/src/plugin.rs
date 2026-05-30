@@ -208,16 +208,17 @@ async fn main() {{
 
     /// Classify route path to generate more specific stubs
     fn classify_route(path: &str) -> (&'static str, &'static str) {
-        match path {
-            "/" => ("home", "Welcome to runts-fresh"),
-            "/about" => ("about", "About Page"),
-            "/contact" => ("contact", "Contact Us"),
-            "/blog" => ("blog-list", "Blog"),
-            "/blog/" | "/blog/index" => ("blog-list", "Blog"),
-            _ if path.starts_with("/blog/") && !path.contains("[") => ("blog-post", "Blog Post"),
-            _ if path.contains("[") => ("dynamic", "Dynamic Route"),
-            _ => ("page", "Page"),
+        if path == "/" { return ("home", "Welcome to runts-fresh"); }
+        if path == "/about" { return ("about", "About Page"); }
+        if path == "/contact" { return ("contact", "Contact Us"); }
+        if path == "/blog" || path == "/blog/" || path == "/blog/index" {
+            return ("blog-list", "Blog");
         }
+        if path.starts_with("/blog/") && !path.contains('[') {
+            return ("blog-post", "Blog Post");
+        }
+        if path.contains('[') { return ("dynamic", "Dynamic Route"); }
+        ("page", "Page")
     }
 
     /// Detect TSX features from file path (crude proxy for actual HIR analysis)
