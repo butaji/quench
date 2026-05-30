@@ -218,6 +218,21 @@ fn collect_routes_code(modules: &[runts_plugin::hir::Module]) -> String {
 }
 
 fn generate_axum_main(routes_code: &str, component_name: &str) -> String {
+    let fallback_app = if component_name == "App" {
+        r#"
+/// Fallback App component (no .jsx files found)
+pub struct App;
+
+impl App {
+    pub fn render() -> String {
+        "<div>Welcome to React SSR</div>".to_string()
+    }
+}
+"#
+    } else {
+        ""
+    };
+
     format!(r#"use axum::{{
     Router,
     routing::get,
@@ -228,6 +243,8 @@ fn generate_axum_main(routes_code: &str, component_name: &str) -> String {
 }};
 use tokio::net::TcpListener;
 use std::net::SocketAddr;
+
+{fallback_app}
 
 #[tokio::main]
 async fn main() {{
