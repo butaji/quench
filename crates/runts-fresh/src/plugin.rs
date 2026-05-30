@@ -110,7 +110,7 @@ pub fn render() -> VNode {{
 
 use runts_lib::runtime::vdom::VNode;
 
-#[deriveserde::Serialize, runts_lib::runtime::vdom::VNodeProps)]
+#[derive(serde::Serialize)]
 pub struct {name}Props {{
     // Props will be injected at runtime
 }}
@@ -564,13 +564,6 @@ pub fn render() -> VNode {{
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn normalize(s: &str) -> String {
-        let s = s.replace(" :: ", "::");
-        let s = s.replace(" ::", "::");
-        let s = s.replace(":: ", "::");
-        s
-    }
 
     #[test]
     fn test_try_codegen_jsx_with_simple_div() {
