@@ -4,6 +4,8 @@
  * Dynamic route [slug] for individual posts.
  */
 
+import { PageProps, HandlerContext } from "$fresh/server.ts";
+
 interface Post {
   title: string;
   content: string;

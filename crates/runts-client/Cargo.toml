@@ -9,6 +9,3 @@ license = "MIT OR Apache-2.0"
 [lib]
 name = "runts_client"
 path = "src/lib.rs"
-
-[build-dependencies]
-rustfmt = { version = "0.4", optional = true }

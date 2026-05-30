@@ -6,14 +6,11 @@ description = "Fresh/Preact to native Rust compiler"
 authors = ["runts team"]
 license = "MIT OR Apache-2.0"
 rust-version = "1.81"
+autolib = false
 
 [[bin]]
 name = "runts"
 path = "src/main.rs"
-
-[lib]
-name = "runts_lib"
-path = "crates/runts-lib/src/lib.rs"
 
 [workspace]
 members = [
@@ -46,12 +43,8 @@ axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-gzip"] }
 tokio = { version = "1.0", features = ["full"] }
-hyper = "1.0"
-
 # Async
-futures = "0.3"
 async-stream = "0.3"
-tokio-stream = { version = "0.1", features = ["sync"] }
 
 # JavaScript runtime (QuickJS)
 rquickjs = "0.12"
@@ -63,14 +56,12 @@ walkdir = "2.5"
 # Utilities
 parking_lot = "0.12"
 indexmap = { version = "2.5", features = ["serde"] }
-lazy_static = "1.4"
 regex = "1.10"
 bytes = "1.5"
 mime = "0.3"
 mime_guess = "2.0"
-http = "1.0"
 urlencoding = "2.1"
-pathdiff = "0.2"
+tempfile = "3.8"
 
 # Parallel processing
 rayon = "1.10"
@@ -91,14 +82,8 @@ runts-fresh = { path = "crates/runts-fresh" }
 runts-ratatui = { path = "crates/runts-ratatui" }
 runts-plugin = { path = "crates/runts-plugin" }
 
-# Time
-chrono = { version = "0.4", features = ["serde"] }
-
 # Cryptographic hashing (incremental build cache)
 sha2 = "0.10"
-
-# UUID (ephemeral build dirs)
-uuid = { version = "1.0", features = ["v4"] }
 
 # OXC — battle-tested TS/TSX parser + codegen
 oxc_parser = "0.133"
@@ -112,7 +97,6 @@ oxc_syntax = "0.133"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
-tempfile = "3.8"
 
 [profile.release]
 lto = true

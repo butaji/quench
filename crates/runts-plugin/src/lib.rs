@@ -6,6 +6,34 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Errors that can occur during plugin operations.
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    #[error("{plugin} codegen failed for {file}: {message}")]
+    Codegen { plugin: String, file: String, message: String },
+    #[error("{plugin} dependency error: {message}")]
+    Dependency { plugin: String, message: String },
+    #[error("{plugin} dev error: {message}")]
+    Dev { plugin: String, message: String },
+    #[error("{plugin} fatal: {message}")]
+    Fatal { plugin: String, message: String },
+}
+
+impl PluginError {
+    pub fn codegen(plugin: &str, file: &str, message: impl Into<String>) -> Self {
+        Self::Codegen { plugin: plugin.to_string(), file: file.to_string(), message: message.into() }
+    }
+    pub fn dependency(plugin: &str, message: impl Into<String>) -> Self {
+        Self::Dependency { plugin: plugin.to_string(), message: message.into() }
+    }
+    pub fn dev(plugin: &str, message: impl Into<String>) -> Self {
+        Self::Dev { plugin: plugin.to_string(), message: message.into() }
+    }
+    pub fn fatal(plugin: &str, message: impl Into<String>) -> Self {
+        Self::Fatal { plugin: plugin.to_string(), message: message.into() }
+    }
+}
+
 /// A Rust dependency to include in generated projects.
 #[derive(Debug, Clone)]
 pub struct CargoDep {
@@ -47,22 +75,22 @@ pub trait Plugin {
     fn help_text(&self) -> &str;
 
     /// Generate Rust code for a single HIR module (as JSON string).
-    fn codegen_module(&self, hir_str: &str) -> anyhow::Result<String>;
+    fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError>;
 
     /// Cargo dependencies required by this plugin.
     fn cargo_deps(&self) -> Vec<CargoDep>;
 
     /// Generate the entry point main.rs file.
-    fn codegen_entry(&self, modules: &[hir::Module]) -> anyhow::Result<String>;
+    fn codegen_entry(&self, modules: &[hir::Module]) -> Result<String, PluginError>;
 
     /// Initialize development state.
-    fn dev_init(&self, ctx: &mut DevContext) -> anyhow::Result<Box<dyn DevState>>;
+    fn dev_init(&self, ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError>;
 
     /// Run one iteration of the development loop.
-    fn dev_run_once(&self, state: &mut dyn DevState) -> anyhow::Result<DevAction>;
+    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError>;
 
     /// Handle file reload event.
-    fn dev_reload(&self, ctx: &mut DevContext, state: &mut dyn DevState) -> anyhow::Result<()>;
+    fn dev_reload(&self, ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError>;
 }
 
 /// Route information for plugin code generation

@@ -5,7 +5,7 @@
  */
 
 interface LayoutProps {
-  children?: any;
+  children?: unknown;
 }
 
 export default function BlogLayout({ children }: LayoutProps) {

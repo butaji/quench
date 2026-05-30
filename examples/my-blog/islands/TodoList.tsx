@@ -1,4 +1,5 @@
 // islands/TodoList.tsx - Todo list island with hooks
+// Note: Hooks are parsed but not yet wired in v0.1 — static render only
 import { useState } from "preact/hooks";
 
 interface Todo {
@@ -19,7 +20,7 @@ export default function TodoList({ title = "My Todos" }: TodoListProps) {
     if (newTodo.trim().length === 0) return;
 
     const todo: Todo = {
-      id: "todo-1",
+      id: crypto.randomUUID(),
       text: newTodo.toString(),
       completed: false,
     };

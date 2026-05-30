@@ -3,7 +3,10 @@
 //! Uses rquickjs for ES2020 JavaScript execution.
 //! Thread-safe: creates new runtime per eval for simplicity.
 
+use rquickjs::{Context, Runtime, Value};
+
 /// QuickJS runtime - thread-safe, creates new runtime per eval
+#[derive(Default)]
 pub struct QuickJsRuntime;
 
 impl QuickJsRuntime {
@@ -14,30 +17,49 @@ impl QuickJsRuntime {
     
     /// Evaluate JavaScript code and return the result as string
     pub fn eval(&self, code: &str) -> Result<String, JsError> {
-        let runtime = rquickjs::Runtime::new()
+        let runtime = Runtime::new()
             .map_err(|e| JsError::new(format!("Failed to create runtime: {:?}", e)))?;
         
-        let ctx = rquickjs::Context::full(&runtime)
+        let ctx = Context::full(&runtime)
             .map_err(|e| JsError::new(format!("Failed to create context: {:?}", e)))?;
         
         ctx.with(|ctx| {
-            let value = ctx.eval(code)
-                .map_err(|e| JsError::new(format!("Eval error: {:?}", e)))?;
-            Ok(value_to_string(value))
+            // Wrap code to inject console and serialize result
+            let wrapped = wrap_with_console_and_serialize(code);
+            eval_inner(ctx, &wrapped)
         })
     }
 }
 
-impl Default for QuickJsRuntime {
-    fn default() -> Self {
-        Self::new()
+fn eval_inner(ctx: rquickjs::Ctx<'_>, code: &str) -> Result<String, JsError> {
+    let value: Value<'_> = ctx.eval(code).map_err(|e| JsError::new(format!("Eval error: {:?}", e)))?;
+    let typ = value.type_name();
+    if typ == "array" || typ == "object" {
+        let json_result = json_stringify_result(ctx.clone(), value.clone());
+        match json_result {
+            Ok(s) => Ok(s),
+            Err(_) => Ok(value_to_string(value)),
+        }
+    } else {
+        Ok(value_to_string(value))
     }
 }
 
-impl std::fmt::Debug for QuickJsRuntime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QuickJsRuntime").finish()
+/// Wrap code to inject console.log and serialize result via JSON.stringify
+fn wrap_with_console_and_serialize(code: &str) -> String {
+    let console_inject = "var console = { log: function() {} };";
+    if is_statement_keyword(code) {
+        format!("{}{}", console_inject, code)
+    } else {
+        format!("{} const __runts_val = {}; return __runts_val", console_inject, code)
     }
+}
+
+fn is_statement_keyword(s: &str) -> bool {
+    let trimmed = s.trim();
+    let first = trimmed.split_whitespace().next().unwrap_or("");
+    matches!(first, "if" | "for" | "while" | "return" | "throw" | "try" | "switch" | "do" | "let" | "const" | "var" | "function" | "class")
+        || trimmed.starts_with('{')
 }
 
 /// JavaScript error wrapper
@@ -54,27 +76,43 @@ impl JsError {
 
 impl std::fmt::Display for JsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        f.write_str(&self.message)
     }
 }
 
 impl std::error::Error for JsError {}
 
 /// Convert QuickJS value to displayable string
-fn value_to_string(value: rquickjs::Value<'_>) -> String {
-    if value.is_undefined() {
-        "undefined".to_string()
-    } else if value.is_null() {
-        "null".to_string()
-    } else if let Some(s) = value.as_string() {
-        s.to_string().unwrap_or_else(|_| "[string]".to_string())
-    } else if let Some(n) = value.as_int() {
-        n.to_string()
-    } else if let Some(n) = value.as_float() {
-        n.to_string()
-    } else if value.is_bool() {
-        value.as_bool().unwrap_or(false).to_string()
-    } else {
-        format!("{:?}", value)
+fn value_to_string(value: Value<'_>) -> String {
+    let typ = value.type_name();
+    simple_type_str(typ, value)
+}
+
+#[allow(clippy::too_many_arguments)]
+// allow:complexity
+fn simple_type_str(typ: &str, value: Value<'_>) -> String {
+    match typ {
+        "undefined" => "undefined".to_string(),
+        "null" => "null".to_string(),
+        "string" => value.as_string().map(|s| s.to_string().unwrap_or_default()).unwrap_or_default(),
+        "int" => value.as_int().map(|n| n.to_string()).unwrap_or_default(),
+        "float" | "number" => value.as_float().map(|n| n.to_string()).unwrap_or_default(),
+        "bool" | "boolean" => value.as_bool().map(|b| b.to_string()).unwrap_or_default(),
+        _ => "[Complex]".to_string(),
     }
+}
+
+/// Try to serialize a value using JSON.stringify by setting it as a global
+fn json_stringify_result<'a>(ctx: rquickjs::Ctx<'a>, value: Value<'a>) -> Result<String, JsError> {
+    // Set as global temp variable
+    ctx.globals().set("__runts_val", value)
+        .map_err(|e| JsError::new(format!("Failed to set global: {:?}", e)))?;
+    
+    // Call JSON.stringify on it
+    let json: Result<String, _> = ctx.eval("JSON.stringify(__runts_val)");
+    
+    // Clean up - ignore errors
+    let _: Result<(), _> = ctx.eval("delete __runts_val");
+    
+    json.map_err(|e| JsError::new(format!("JSON.stringify failed: {:?}", e)))
 }

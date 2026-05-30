@@ -7,6 +7,8 @@
  * - Array.map for lists
  */
 
+import { PageProps, HandlerContext } from "$fresh/server.ts";
+
 interface HomeData {
   greeting: string;
   features: string[];

@@ -18,6 +18,7 @@ pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
     }
 
     for entry in WalkDir::new(&components_dir)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {

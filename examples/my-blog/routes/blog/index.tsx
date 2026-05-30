@@ -4,6 +4,8 @@
  * Lists all blog posts.
  */
 
+import { PageProps, HandlerContext } from "$fresh/server.ts";
+
 interface Post {
   slug: string;
   title: string;

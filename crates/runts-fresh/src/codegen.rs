@@ -2,7 +2,7 @@
 //!
 //! For 0.1, generates static HTML VNode trees - no interactivity yet.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
 
 /// Transform a JSX element tag into VNode::Element
@@ -19,7 +19,7 @@ pub fn jsx_element(
         .into_iter()
         .map(|(k, v)| {
             quote! {
-                (#k.to_string(), runts_lib::runtime::vdom::AttrValue::String(#v.to_string()))
+                (#k.to_string(), runts_lib::runtime::vdom::AttrValue::from(#v))
             }
         })
         .collect();
@@ -41,8 +41,9 @@ pub fn jsx_element(
 
 /// Transform JSX text into VNode::Text
 pub fn jsx_text(text: &str) -> TokenStream {
+    let s = Literal::string(text);
     quote! {
-        runts_lib::runtime::vdom::VNode::Text { value: #text.to_string() }
+        runts_lib::runtime::vdom::VNode::Text { value: #s.to_string() }
     }
 }
 
@@ -56,7 +57,7 @@ pub fn jsx_expr(expr: TokenStream) -> TokenStream {
 /// Transform JSX fragment `<>...children...</>` into VNode::Fragment
 pub fn jsx_fragment(children: Vec<TokenStream>) -> TokenStream {
     quote! {
-        runts_lib::runtime::vdom::VNode::Fragment(vec![#(#children),*])
+        runts_lib::runtime::vdom::VNode::Fragment { children: vec![#(#children),*] }
     }
 }
 
@@ -76,12 +77,19 @@ pub fn page_component(name: &str, body: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
+    fn normalize(s: &str) -> String {
+        let s = s.replace(" :: ", "::");
+        let s = s.replace(" ::", "::");
+        let s = s.replace(":: ", "::");
+        s
+    }
+
     #[test]
     fn test_jsx_element() {
         let attrs = vec![("class".into(), quote! { "home" })];
         let children = vec![jsx_text("Hello")];
         let result = jsx_element("div", attrs, children);
-        let s = result.to_string();
+        let s = normalize(&result.to_string());
         assert!(s.contains("VNode::Element"));
         assert!(s.contains("\"div\""));
         assert!(s.contains("\"class\""));
@@ -90,7 +98,7 @@ mod tests {
     #[test]
     fn test_jsx_text() {
         let result = jsx_text("Hello World");
-        let s = result.to_string();
+        let s = normalize(&result.to_string());
         assert!(s.contains("VNode::Text"));
         assert!(s.contains("Hello World"));
     }
@@ -99,7 +107,7 @@ mod tests {
     fn test_jsx_fragment() {
         let children = vec![jsx_text("a"), jsx_text("b")];
         let result = jsx_fragment(children);
-        let s = result.to_string();
+        let s = normalize(&result.to_string());
         assert!(s.contains("VNode::Fragment"));
     }
 
@@ -107,8 +115,8 @@ mod tests {
     fn test_page_component() {
         let body = jsx_element("div", vec![], vec![]);
         let result = page_component("HomePage", body);
-        let s = result.to_string();
+        let s = normalize(&result.to_string());
         assert!(s.contains("fn HomePage"));
-        assert!(s.contains("-> VNode"));
+        assert!(s.contains("runts_lib::runtime::vdom::VNode"));
     }
 }
