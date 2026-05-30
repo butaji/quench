@@ -5,8 +5,10 @@
 use super::Type;
 
 /// Type code generator
+#[allow(dead_code)]
 pub struct TypeGen;
 
+#[allow(dead_code)]
 impl TypeGen {
     /// Generate Rust type from HIR Type
     pub fn gen_type(&self, ty: &Type) -> String {

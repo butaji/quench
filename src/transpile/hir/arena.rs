@@ -7,25 +7,27 @@
 use bumpalo::Bump;
 
 /// Arena index type - used instead of pointers for stable references
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArenaIndex(u32);
 
+#[allow(dead_code)]
 impl ArenaIndex {
     /// Create a new arena index
     pub fn new(idx: u32) -> Self {
         Self(idx)
     }
-    
+
     /// Get the raw index value
     pub fn index(&self) -> u32 {
         self.0
     }
-    
+
     /// Null index (not valid for any allocation)
     pub fn null() -> Self {
         Self(u32::MAX)
     }
-    
+
     /// Check if this is the null index
     pub fn is_null(&self) -> bool {
         self.0 == u32::MAX
@@ -33,6 +35,7 @@ impl ArenaIndex {
 }
 
 /// Arena-allocated HIR storage
+#[allow(dead_code)]
 pub struct HirArena {
     /// The bump allocator
     bump: Bump,
@@ -40,6 +43,7 @@ pub struct HirArena {
     next_index: u32,
 }
 
+#[allow(dead_code)]
 impl HirArena {
     /// Create a new arena
     pub fn new() -> Self {
@@ -93,6 +97,7 @@ impl Default for HirArena {
 }
 
 /// Trait for types that can be arena-allocated
+#[allow(dead_code)]
 pub trait ArenaAllocatable: Sized {
     /// The index type for this type
     type Index;
@@ -102,10 +107,12 @@ pub trait ArenaAllocatable: Sized {
 }
 
 /// Wrapper for arena-allocated strings
+#[allow(dead_code)]
 pub struct ArenaString {
     index: ArenaIndex,
 }
 
+#[allow(dead_code)]
 impl ArenaString {
     pub fn index(&self) -> ArenaIndex {
         self.index
@@ -122,27 +129,29 @@ impl ArenaAllocatable for String {
 }
 
 /// Session-scoped arena management
+#[allow(dead_code)]
 pub struct ArenaSession {
     arena: HirArena,
 }
 
+#[allow(dead_code)]
 impl ArenaSession {
     pub fn new() -> Self {
         Self {
             arena: HirArena::new(),
         }
     }
-    
+
     /// Get mutable access to the arena for allocations
     pub fn arena(&mut self) -> &mut HirArena {
         &mut self.arena
     }
-    
+
     /// Reset and start fresh (on file change)
     pub fn restart(&mut self) {
         self.arena.reset();
     }
-    
+
     /// Get statistics about current arena usage
     pub fn stats(&self) -> ArenaStats {
         ArenaStats {
@@ -158,6 +167,7 @@ impl Default for ArenaSession {
 }
 
 /// Arena usage statistics
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ArenaStats {
     pub allocations: u32,
