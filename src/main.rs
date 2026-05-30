@@ -7,6 +7,7 @@
 mod cli;
 mod commands;
 mod config;
+mod plugin;
 mod runtime;
 mod transpile;
 mod util;
@@ -38,12 +39,13 @@ fn execute(cli: Cli) -> Result<()> {
         cli::Commands::Eval { expr } => run_eval(&expr),
         cli::Commands::Codegen { source, expr } => run_codegen(source, expr),
         cli::Commands::Init { name } => run_init(name),
-        cli::Commands::Dev { path } => run_dev(path),
+        cli::Commands::Dev { path, plugin } => run_dev(path, &plugin),
         cli::Commands::Build {
             path,
+            plugin,
             release,
             no_compile,
-        } => run_build(path, release, no_compile),
+        } => run_build(path, &plugin, release, no_compile),
         cli::Commands::Transpile { path, output: _ } => run_transpile(path),
         cli::Commands::Add {
             component_type,
@@ -58,23 +60,39 @@ fn run_init(name: String) -> Result<()> {
     rt.block_on(commands::run_init(name, None))
 }
 
-fn run_dev(path: PathBuf) -> Result<()> {
-    info!("Starting development server...");
+fn run_dev(path: PathBuf, plugin_name: &str) -> Result<()> {
+    info!("Starting development server with plugin: {}", plugin_name);
     let config = config::Config::load_from_path(&path)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(commands::run_dev_server(&config, 8000))
+    rt.block_on(commands::run_dev_server(&config, path, plugin_name.to_string()))
 }
 
-fn run_build(path: PathBuf, release: bool, no_compile: bool) -> Result<()> {
-    info!("Building for production...");
+fn run_build(path: PathBuf, plugin_name: &str, release: bool, no_compile: bool) -> Result<()> {
+    info!("Building for production with plugin: {}", plugin_name);
     let config = config::Config::load_from_path(&path)?;
     let rt = tokio::runtime::Runtime::new()?;
-    let path_str = path.to_string_lossy().to_string();
 
     if no_compile {
+        let path_str = path.to_string_lossy().to_string();
         transpile_only(&config, &path_str, &rt)
+    } else if plugin_name != "none" {
+        // Use plugin-based ephemeral build
+        let result = rt.block_on(commands::build::run_plugin_build(&config, path, plugin_name.to_string(), release))?;
+        info_plugin_build_result(&result);
+        Ok(())
     } else {
+        let path_str = path.to_string_lossy().to_string();
         full_build(&config, &path_str, release, &rt)
+    }
+}
+
+fn info_plugin_build_result(result: &commands::build::BuildResult) {
+    info!("Build complete!");
+    if let Some(binary) = &result.binary_path {
+        info!("  Binary: {:?}", binary);
+    }
+    if let Some(size) = result.binary_path_size {
+        info!("  Size: {:.2} KB", size as f64 / 1024.0);
     }
 }
 

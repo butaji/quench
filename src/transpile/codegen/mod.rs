@@ -1,23 +1,13 @@
 //! Code generator: High-level IR → Rust source code
 
-pub mod expr;
 pub mod function;
 pub mod infer;
-pub mod jsx;
-pub mod module;
 pub mod pat;
 pub mod response;
-pub mod stmt;
-pub mod type_gen;
 pub mod variable;
 
-pub use expr::CodeGenExpr;
 pub use function::FnGen;
 pub use infer::TypeInfer;
-pub use jsx::CodeGenJsx;
-pub use module::ModuleGen;
-pub use stmt::CodeGenStmt;
-pub use type_gen::TypeGen;
 
 pub struct CodeGenerator {
     pub imports: Vec<String>,
@@ -59,24 +49,8 @@ impl CodeGenerator {
     pub fn indent_str(&self) -> String {
         "    ".repeat(self.indent)
     }
-    pub fn type_to_rust(&self, t: &crate::transpile::hir::Type) -> String {
-        TypeGen::type_to_rust(self, t)
-    }
-    pub fn expr_to_rust(&self, e: &crate::transpile::hir::Expr) -> String {
-        CodeGenExpr::expr_to_rust(self, e)
-    }
-    pub fn jsx_to_rust(&mut self, x: &crate::transpile::hir::JSXExpr) -> String {
-        let mut cg = CodeGenJsx;
-        cg.jsx_to_rust(x)
-    }
     pub fn set_generate_handlers(&mut self, v: bool) {
         self.generate_handlers = v;
-    }
-    pub fn stmt_to_rust(&mut self, s: &crate::transpile::hir::Stmt) -> anyhow::Result<String> {
-        CodeGenStmt::stmt_to_rust(self, s)
-    }
-    pub fn generate_module(&mut self, m: &crate::transpile::hir::Module) -> anyhow::Result<String> {
-        ModuleGen::generate_module(self, m)
     }
     pub fn generate_function(
         &mut self,
@@ -108,5 +82,14 @@ impl CodeGenerator {
     }
     pub fn jsx_attr_to_rust(&self, n: &str) -> String {
         n.to_string()
+    }
+    pub fn generate_module(&mut self, _module: &crate::transpile::hir::Module) -> anyhow::Result<String> {
+        todo!("generate_module moved to plugin-based TokenStream codegen")
+    }
+    pub fn type_to_rust(&self, _t: &crate::transpile::hir::Type) -> String {
+        todo!("type_to_rust moved to plugin-based TokenStream codegen")
+    }
+    pub fn expr_to_rust(&self, _e: &crate::transpile::hir::Expr) -> String {
+        todo!("expr_to_rust moved to plugin-based TokenStream codegen")
     }
 }

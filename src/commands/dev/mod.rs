@@ -1,47 +1,88 @@
-//! Development server with instant hot-reload
+//! Development server with plugin-based lifecycle hooks
 //!
-//! In development mode, runts:
-//! - Parses TS/TSX using OXC
-//! - Executes JS with QuickJS runtime
-//! - Provides instant hot-reload (<100ms)
-//! - Full parity with production rendering
+//! Core owns: file watching, outer loop, QuickJS context
+//! Plugin hooks: dev_init, dev_run_once, dev_reload
 
-pub mod handlers;
 pub mod routes;
 
-use anyhow::Result;
-use parking_lot::RwLock;
-use std::{path::PathBuf, sync::Arc};
-use tokio::sync::broadcast;
-
 use crate::config::Config;
-use crate::runtime::quickjs::QuickJsRuntime;
+use crate::plugin;
+use notify::Watcher;
+use runts_plugin::{DevAction, DevContext};
+use std::path::PathBuf;
+use anyhow::Result;
 
-/// Application state shared across requests
-#[derive(Clone)]
-pub struct AppState {
-    /// Project root
-    pub root: PathBuf,
-    /// Route table
-    pub route_table: Arc<RwLock<routes::RouteTable>>,
-    /// QuickJS runtime for JS execution
-    pub js_runtime: Arc<RwLock<QuickJsRuntime>>,
-    /// Broadcast channel for hot reload events
-    pub reload_tx: broadcast::Sender<ReloadEvent>,
-    /// File watcher (kept alive to prevent drop)
-    #[allow(dead_code)]
-    pub watcher: Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+/// Run dev server using plugin lifecycle hooks
+pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String) -> Result<()> {
+    let plugin = plugin::get_plugin(&plugin_name)?;
+    let project_root = std::env::current_dir()?.join(&path);
+    
+    let modules = scan_modules(&project_root)?;
+    let mut ctx = DevContext {
+        root: project_root.clone(),
+        modules,
+    };
+    
+    let mut state = plugin.dev_init(&mut ctx)?;
+    let (_tx, rx) = setup_file_watcher(&project_root)?;
+    
+    dev_loop(&*plugin, &project_root, &mut ctx, &mut *state, rx)
 }
 
-/// Reload event types
-#[derive(Debug, Clone)]
-pub enum ReloadEvent {
-    RouteChanged(String),
-    ModuleChanged(String),
-    Error(String),
+fn dev_loop(
+    plugin: &dyn runts_plugin::Plugin,
+    project_root: &PathBuf,
+    ctx: &mut DevContext,
+    state: &mut dyn runts_plugin::DevState,
+    rx: std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
+) -> Result<()> {
+    loop {
+        if let Ok(event) = rx.try_recv() {
+            if event.is_ok() {
+                ctx.modules = scan_modules(project_root)?;
+                plugin.dev_reload(ctx, state)?;
+            }
+        }
+        
+        match plugin.dev_run_once(state)? {
+            DevAction::Continue => {}
+            DevAction::Stop => break,
+            DevAction::Error(e) => eprintln!("Dev error: {}", e),
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(())
 }
 
-/// Run dev server
-pub async fn run_dev_server(config: &Config, port: u16) -> Result<()> {
-    handlers::run_server(config, port).await
+fn setup_file_watcher(
+    project_root: &PathBuf,
+) -> Result<(
+    std::sync::mpsc::Sender<Result<notify::Event, notify::Error>>,
+    std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
+)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx_clone = tx.clone();
+    
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = tx_clone.send(res);
+    })?;
+    
+    watcher.watch(project_root, notify::RecursiveMode::Recursive)?;
+    
+    Ok((tx, rx))
+}
+
+fn scan_modules(root: &PathBuf) -> Result<Vec<String>> {
+    let mut modules = Vec::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().map(|e| e == "tsx" || e == "ts").unwrap_or(false) {
+            modules.push(path.to_string_lossy().to_string());
+        }
+    }
+    Ok(modules)
 }

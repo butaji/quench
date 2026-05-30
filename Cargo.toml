@@ -15,6 +15,16 @@ path = "src/main.rs"
 name = "runts_lib"
 path = "crates/runts-lib/src/lib.rs"
 
+[workspace]
+members = [
+    "crates/runts-macros",
+    "crates/runts-lib",
+    "crates/runts-client",
+    "crates/runts-plugin",
+    "crates/runts-fresh",
+    "crates/runts-ratatui",
+]
+
 [dependencies]
 
 # Core
@@ -76,11 +86,19 @@ syn = { version = "2.0", features = ["full"] }
 # Runtime library (for generated code)
 runts-macros = { path = "crates/runts-macros" }
 
+# Plugins
+runts-fresh = { path = "crates/runts-fresh" }
+runts-ratatui = { path = "crates/runts-ratatui" }
+runts-plugin = { path = "crates/runts-plugin" }
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
 # Cryptographic hashing (incremental build cache)
 sha2 = "0.10"
+
+# UUID (ephemeral build dirs)
+uuid = { version = "1.0", features = ["v4"] }
 
 # OXC — battle-tested TS/TSX parser + codegen
 oxc_parser = "0.133"
@@ -95,13 +113,6 @@ oxc_syntax = "0.133"
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.8"
-
-[workspace]
-members = [
-    "crates/runts-macros",
-    "crates/runts-lib",
-    "crates/runts-client",
-]
 
 [profile.release]
 lto = true
