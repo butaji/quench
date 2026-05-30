@@ -2,6 +2,7 @@
 
 use super::hir::*;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteMethod {
     GET,
@@ -12,6 +13,7 @@ pub enum RouteMethod {
     HEAD,
     OPTIONS,
 }
+#[allow(dead_code)]
 impl RouteMethod {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
@@ -27,6 +29,7 @@ impl RouteMethod {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RouteHandler {
     pub method: RouteMethod,
@@ -35,6 +38,7 @@ pub struct RouteHandler {
     pub is_async: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RouteInfo {
     pub pattern: String,
@@ -45,6 +49,7 @@ pub struct RouteInfo {
     pub file_path: String,
 }
 
+#[allow(dead_code)]
 pub fn parse_route_path(path: &str) -> RouteInfo {
     let original = path.trim_matches('/').to_string();
     // Strip file extension for processing
@@ -78,6 +83,7 @@ pub fn parse_route_path(path: &str) -> RouteInfo {
     }
 }
 
+#[allow(dead_code)]
 pub fn generate_params_struct(params: &[String]) -> String {
     if params.is_empty() {
         "pub struct RouteParams;".to_string()
@@ -93,6 +99,7 @@ pub fn generate_params_struct(params: &[String]) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn extract_handlers(_module: &Module) -> Vec<RouteHandler> {
     vec![]
 }

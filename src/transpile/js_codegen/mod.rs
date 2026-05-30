@@ -6,6 +6,7 @@ pub mod stmt;
 
 use super::hir::*;
 
+#[allow(dead_code)]
 pub fn generate_island_js(name: &str, module: &Module) -> String {
     let mut js = String::new();
     js.push_str("// Generated island JS\n");
@@ -25,6 +26,7 @@ pub fn generate_island_js(name: &str, module: &Module) -> String {
     js
 }
 
+#[allow(dead_code)]
 fn import_spec_to_js(spec: &ImportSpecifier) -> String {
     match spec {
         ImportSpecifier::Named { name, alias } => alias
@@ -35,6 +37,7 @@ fn import_spec_to_js(spec: &ImportSpecifier) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn module_to_js(module: &Module) -> String {
     let mut js = String::new();
     for item in &module.items {

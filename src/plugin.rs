@@ -22,6 +22,7 @@ pub fn get_plugin(name: &str) -> anyhow::Result<Box<dyn Plugin>> {
 }
 
 /// List available plugin names.
+#[allow(dead_code)]
 pub fn available_plugins() -> &'static [&'static str] {
     &["fresh", "ratatui", "react"]
 }

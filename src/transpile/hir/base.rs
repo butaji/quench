@@ -34,6 +34,7 @@ pub enum ImportSpecifier {
     Namespace { name: String },
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ImportKind {
     Value,
@@ -67,6 +68,7 @@ impl Default for Ownership {
     }
 }
 
+#[allow(dead_code)]
 impl Ownership {
     /// Returns true if this ownership represents a borrow (shared or mutable)
     pub fn is_borrow(&self) -> bool {
@@ -279,6 +281,7 @@ pub enum TemplatePart {
     Type(Type),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectMember {
     pub key: String,
