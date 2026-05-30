@@ -1,9 +1,12 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// Transform <Block title="..." borders={true}>...children...</Block>
-/// into ratatui::widgets::Block + Paragraph or similar
-pub fn widget_block(title: Option<&str>, borders: bool, children: Vec<TokenStream>) -> TokenStream {
+/// Generate a block widget with title and borders, rendering children into inner area.
+/// Generates statements that:
+/// 1. Render the Block border to area
+/// 2. Calculate inner area
+/// 3. Render children into inner area
+pub fn widget_block(title: Option<&str>, borders: bool, children: TokenStream) -> TokenStream {
     let title_quote = title.map(|t| quote! { .title(#t) });
     let borders_quote = if borders {
         quote! { .borders(ratatui::widgets::Borders::ALL) }
@@ -16,20 +19,26 @@ pub fn widget_block(title: Option<&str>, borders: bool, children: Vec<TokenStrea
             let block = ratatui::widgets::Block::default()
                 #title_quote
                 #borders_quote;
-            let text = format!("{}", #(#children)*);
-            ratatui::widgets::Paragraph::new(text).block(block)
+            frame.render_widget(block, area);
+            let inner = block.inner(area);
+            #children
         }
     }
 }
 
-/// Transform <Text>Hello</Text>
+/// Generate a text/paragraph widget.
+/// Generates a render statement, not a widget expression.
 pub fn widget_text(text: &str) -> TokenStream {
     quote! {
-        ratatui::widgets::Paragraph::new(#text)
+        frame.render_widget(ratatui::widgets::Paragraph::new(#text), area);
     }
 }
 
-/// Transform <Layout direction="vertical">...children...</Layout>
+/// Generate a layout widget that splits area and renders children.
+/// Generates statements that:
+/// 1. Create layout with constraints
+/// 2. Split area into chunks
+/// 3. Render each child into its chunk
 pub fn widget_layout(direction: &str, children: Vec<TokenStream>) -> TokenStream {
     let dir = match direction {
         "vertical" => quote! { ratatui::layout::Direction::Vertical },
@@ -42,21 +51,46 @@ pub fn widget_layout(direction: &str, children: Vec<TokenStream>) -> TokenStream
         .map(|_| quote! { ratatui::layout::Constraint::Percentage(100 / #child_count as u16) })
         .collect();
 
+    // Generate render statements for each child
+    let renders: Vec<TokenStream> = children
+        .iter()
+        .map(|child| {
+            quote! {
+                #child
+            }
+        })
+        .collect();
+
     quote! {
         {
             let layout = ratatui::layout::Layout::default()
                 .direction(#dir)
                 .constraints(vec![#(#constraints),*]);
-            // Note: actual rendering would use layout.split() in the draw callback
-            // For codegen, we return the layout + children tuple
-            (layout, vec![#(#children),*])
+            let chunks = layout.split(area);
+            #(#renders)*
         }
     }
 }
 
+/// Generate panic-safe cleanup using TerminalGuard struct.
+fn tui_cleanup() -> TokenStream {
+    quote! {
+        // Panic-safe terminal cleanup via Drop
+        struct TerminalGuard;
+        impl Drop for TerminalGuard {
+            fn drop(&mut self) {
+                let _ = disable_raw_mode();
+                let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+            }
+        }
+    }
+}
+
+/// Generate terminal setup code.
 fn tui_setup() -> TokenStream {
     quote! {
-        use ratatui::prelude::*;
+        use ratatui::backend::CrosstermBackend;
+        use ratatui::Terminal;
         use crossterm::{
             event::{self, Event, KeyCode, KeyEventKind},
             execute,
@@ -92,8 +126,8 @@ fn tui_loop_body(app_body: TokenStream) -> TokenStream {
     quote! {
         loop {
             if should_quit { break; }
-            terminal.draw(|f| {
-                let area = f.size();
+            terminal.draw(|frame| {
+                let area = frame.size();
                 #app_body
             })?;
             #events
@@ -101,24 +135,18 @@ fn tui_loop_body(app_body: TokenStream) -> TokenStream {
     }
 }
 
-fn tui_cleanup() -> TokenStream {
-    quote! {
-        disable_raw_mode()?;
-        execute!(std::io::stdout(), LeaveAlternateScreen)?;
-    }
-}
-
 /// Generate main function for TUI app
 pub fn tui_main(app_body: TokenStream) -> TokenStream {
     let setup = tui_setup();
-    let body = tui_loop_body(app_body);
     let cleanup = tui_cleanup();
+    let body = tui_loop_body(app_body);
     quote! {
         fn main() -> anyhow::Result<()> {
+            #cleanup
             #setup
+            let _guard = TerminalGuard;
             let mut should_quit = false;
             #body
-            #cleanup
             Ok(())
         }
     }

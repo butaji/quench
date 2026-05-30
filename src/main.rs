@@ -2,8 +2,6 @@
 //!
 //! A CLI tool that compiles Fresh/Preact TypeScript/TSX to native Rust binaries.
 
-#![allow(dead_code)]
-
 mod cli;
 mod commands;
 mod config;
@@ -14,6 +12,7 @@ mod util;
 
 use anyhow::Result;
 use clap::Parser;
+use std::fs;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -46,7 +45,7 @@ fn execute(cli: Cli) -> Result<()> {
             release,
             no_compile,
         } => run_build(path, &plugin, release, no_compile),
-        cli::Commands::Transpile { path, output: _ } => run_transpile(path),
+        cli::Commands::Transpile { path, output } => run_transpile(path, output),
         cli::Commands::Add {
             component_type,
             name,
@@ -123,13 +122,23 @@ fn full_build(
     Ok(())
 }
 
-fn run_transpile(path: PathBuf) -> Result<()> {
+fn run_transpile(path: PathBuf, output: Option<PathBuf>) -> Result<()> {
     info!("Transpiling TypeScript to Rust...");
     let config = config::Config::load_from_path(&path)?;
     let rt = tokio::runtime::Runtime::new()?;
     let result = rt.block_on(commands::run_build(&config, path))?;
     info!("Transpilation complete!");
     info_build_summary(&result);
+    if let Some(out_path) = output {
+        for file in &result.generated_files {
+            let dest = out_path.join(&file.path);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dest, &file.content)?;
+        }
+        info!("Output written to: {:?}", out_path);
+    }
     Ok(())
 }
 
@@ -141,12 +150,13 @@ fn run_eval(expr: &str) -> Result<()> {
     }
     // Use QuickJS for evaluation (in-memory, hot reload ready)
     let js = runtime::quickjs::QuickJsRuntime::new();
-    match js.eval(trimmed) {
+    let prepared = prepare_source(trimmed);
+    match js.eval(&prepared) {
         Ok(result) => {
-            println!("{}", result);
+            print_result(&result);
             Ok(())
         }
-        Err(e) => Err(anyhow::anyhow!("JS error: {}", e)),
+        Err(e) => Err(anyhow::anyhow!("Failed to evaluate '{}': {}", expr, e)),
     }
 }
 fn prepare_source(stmt: &str) -> String {
@@ -154,7 +164,7 @@ fn prepare_source(stmt: &str) -> String {
     if is_statement_keyword(trimmed) {
         stmt.to_string()
     } else {
-        format!("const __result = {};", stmt)
+        format!("const __result = {}; __result", stmt)
     }
 }
 fn is_statement_keyword(s: &str) -> bool {

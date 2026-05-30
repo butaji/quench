@@ -15,18 +15,24 @@ use anyhow::Result;
 /// Run dev server using plugin lifecycle hooks
 pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String) -> Result<()> {
     let plugin = plugin::get_plugin(&plugin_name)?;
-    let project_root = std::env::current_dir()?.join(&path);
-    
+
+    // Resolve project root - handle both absolute and relative paths
+    let project_root = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()?.join(&path)
+    };
+
     let modules = scan_modules(&project_root)?;
     let mut ctx = DevContext {
         root: project_root.clone(),
         modules,
     };
-    
+
     let mut state = plugin.dev_init(&mut ctx)?;
-    let (_tx, rx) = setup_file_watcher(&project_root)?;
-    
-    dev_loop(&*plugin, &project_root, &mut ctx, &mut *state, rx)
+    let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;
+
+    dev_loop(&*plugin, &project_root, &mut ctx, &mut *state, tx, rx)
 }
 
 fn dev_loop(
@@ -34,6 +40,7 @@ fn dev_loop(
     project_root: &PathBuf,
     ctx: &mut DevContext,
     state: &mut dyn runts_plugin::DevState,
+    tx: std::sync::mpsc::Sender<Result<notify::Event, notify::Error>>,
     rx: std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 ) -> Result<()> {
     loop {
@@ -43,34 +50,37 @@ fn dev_loop(
                 plugin.dev_reload(ctx, state)?;
             }
         }
-        
+
         match plugin.dev_run_once(state)? {
             DevAction::Continue => {}
             DevAction::Stop => break,
             DevAction::Error(e) => eprintln!("Dev error: {}", e),
         }
-        
+
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // Explicitly drop tx to signal watcher to stop
+    drop(tx);
     Ok(())
 }
 
 fn setup_file_watcher(
     project_root: &PathBuf,
 ) -> Result<(
+    notify::RecommendedWatcher,
     std::sync::mpsc::Sender<Result<notify::Event, notify::Error>>,
     std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 )> {
     let (tx, rx) = std::sync::mpsc::channel();
     let tx_clone = tx.clone();
-    
+
     let mut watcher = notify::recommended_watcher(move |res| {
         let _ = tx_clone.send(res);
     })?;
-    
+
     watcher.watch(project_root, notify::RecursiveMode::Recursive)?;
-    
-    Ok((tx, rx))
+
+    Ok((watcher, tx, rx))
 }
 
 fn scan_modules(root: &PathBuf) -> Result<Vec<String>> {
@@ -80,8 +90,10 @@ fn scan_modules(root: &PathBuf) -> Result<Vec<String>> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if path.extension().map(|e| e == "tsx" || e == "ts").unwrap_or(false) {
-            modules.push(path.to_string_lossy().to_string());
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if ext.to_lowercase() == "tsx" || ext.to_lowercase() == "ts" {
+                modules.push(path.to_string_lossy().to_string());
+            }
         }
     }
     Ok(modules)

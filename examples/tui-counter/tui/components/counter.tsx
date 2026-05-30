@@ -1,3 +1,14 @@
+// Intrinsic elements for Ratatui compilation
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      Block: { title?: string; borders?: boolean; children?: any };
+      Layout: { direction?: "vertical" | "horizontal"; children?: any };
+      Text: { children?: string };
+    }
+  }
+}
+
 interface CounterProps {
   initial?: number;
 }

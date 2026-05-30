@@ -13,6 +13,9 @@ interface HomeData {
   runtime: string;
 }
 
+// PageProps type for Hono route components
+type PageProps<T> = { data: T };
+
 export const handler = {
   async GET(_req: Request, c: Context): Promise<Response> {
     const data: HomeData = {

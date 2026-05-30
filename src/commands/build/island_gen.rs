@@ -15,6 +15,7 @@ pub fn scan_islands(project_root: &Path) -> Vec<IslandEntry> {
     }
 
     for entry in WalkDir::new(&islands_dir)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {

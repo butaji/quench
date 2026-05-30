@@ -5,6 +5,14 @@
 //! - Static HTML is generated directly (no diffing)
 //! - Islands use fine-grained signals for updates
 //! - Client-side hydration connects signals to DOM
+//!
+//! # Deprecation Notice
+//!
+//! **This file is DEPRECATED.** The canonical vdom implementation lives at:
+//! `crates/runts-lib/src/runtime/vdom.rs`
+//!
+//! This file exists for backwards compatibility but should not be used by plugins.
+//! It may be removed in a future version.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

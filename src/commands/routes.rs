@@ -262,6 +262,7 @@ impl RouteTable {
         }
 
         for entry in walkdir::WalkDir::new(routes_dir)
+            .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
         {
