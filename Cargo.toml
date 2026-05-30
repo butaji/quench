@@ -20,6 +20,7 @@ members = [
     "crates/runts-plugin",
     "crates/runts-fresh",
     "crates/runts-ratatui",
+    "crates/runts-react",
 ]
 
 [dependencies]
@@ -80,6 +81,7 @@ runts-macros = { path = "crates/runts-macros" }
 # Plugins
 runts-fresh = { path = "crates/runts-fresh" }
 runts-ratatui = { path = "crates/runts-ratatui" }
+runts-react = { path = "crates/runts-react" }
 runts-plugin = { path = "crates/runts-plugin" }
 
 # Cryptographic hashing (incremental build cache)
