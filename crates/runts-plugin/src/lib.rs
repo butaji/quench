@@ -114,6 +114,8 @@ pub mod hir {
         pub source_path: Option<String>,
         /// Route info if this module is a route
         pub route_info: Option<super::RouteInfo>,
+        /// Raw HIR items as JSON Value (opaque to plugin trait, parsed by plugins)
+        pub items_json: Option<serde_json::Value>,
     }
 
     impl Module {
@@ -121,6 +123,7 @@ pub mod hir {
             Self {
                 source_path: None,
                 route_info: None,
+                items_json: None,
             }
         }
 
@@ -129,8 +132,13 @@ pub mod hir {
             self
         }
 
-        pub fn with_route_info(mut self, info: super::RouteInfo) -> Self {
-            self.route_info = Some(info);
+        pub fn with_route_info(mut self, info: Option<super::RouteInfo>) -> Self {
+            self.route_info = info;
+            self
+        }
+
+        pub fn with_items_json(mut self, items: Option<serde_json::Value>) -> Self {
+            self.items_json = items;
             self
         }
     }

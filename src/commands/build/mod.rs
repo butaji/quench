@@ -331,14 +331,16 @@ pub async fn run_plugin_build(
         }
         fs::write(&out_path, rust_code)?;
 
-        // Create plugin module with route info
+        // Create plugin module with route info and HIR items
         // Note: HIR data is passed to codegen_module via JSON string (line 318).
         // codegen_entry receives modules with route metadata only - this is sufficient
         // for entry point generation (route table building). Per-module code gen
         // happens in codegen_module which receives the full HIR as JSON.
-        let mut pm = PluginModule::new();
-        pm.source_path = Some(rel_path_str);
-        pm.route_info = route_info;
+        let items_json = hir_value.get("items").cloned();
+        let pm = PluginModule::new()
+            .with_source_path(rel_path_str)
+            .with_route_info(route_info.clone())
+            .with_items_json(items_json);
         plugin_modules.push(pm);
     }
 
