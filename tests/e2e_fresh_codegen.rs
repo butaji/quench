@@ -29,7 +29,7 @@ fn normalize(s: &str) -> String {
 fn test_jsx_element_codegen() {
     // Test the jsx_element function directly
     // Simulates what would be generated from: <div class="test">Hello World</div>
-    let attrs = vec![("class", quote! { "test" })];
+    let attrs = vec![("class".to_string(), quote! { "test" })];
     let children = vec![jsx_text("Hello World")];
     let element = jsx_element("div", attrs, children);
     let s = normalize(&element.to_string());
@@ -88,7 +88,7 @@ fn test_nested_element_codegen() {
     let h1_element = jsx_element("h1", vec![], vec![jsx_text("Welcome to runts!")]);
     let div_element = jsx_element(
         "div",
-        vec![("class", quote! { "home" })],
+        vec![("class".to_string(), quote! { "home" })],
         vec![h1_element],
     );
     let page = page_component("Home", div_element);
@@ -121,7 +121,7 @@ fn test_fresh_plugin_returns_string() {
 fn test_attr_value_no_literal_quotes() {
     // Verify that attr values don't contain escaped literal quotes
     // Input: quote! { "test" } should produce AttrValue::String("test") not AttrValue::String("\"test\"")
-    let attrs = vec![("class", quote! { "test" })];
+    let attrs = vec![("class".to_string(), quote! { "test" })];
     let children = vec![jsx_text("Hello")];
     let element = jsx_element("div", attrs, children);
     let s = normalize(&element.to_string());
