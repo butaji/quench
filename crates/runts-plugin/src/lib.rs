@@ -7,39 +7,54 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Errors that can occur during plugin operations.
-#[derive(Debug)]
-pub struct PluginError {
-    pub plugin: String,
-    pub file: Option<String>,
-    pub message: String,
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    #[error("{plugin} codegen failed for {file}: {message}")]
+    Codegen {
+        plugin: String,
+        file: String,
+        message: String,
+    },
+    #[error("{plugin} dependency error: {message}")]
+    Dependency { plugin: String, message: String },
+    #[error("{plugin} dev error: {message}")]
+    Dev { plugin: String, message: String },
+    #[error("{plugin} fatal: {message}")]
+    Fatal { plugin: String, message: String },
 }
-
-impl std::fmt::Display for PluginError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.file {
-            Some(file) => write!(f, "{} codegen failed for {}: {}", self.plugin, file, self.message),
-            None => write!(f, "{} codegen failed: {}", self.plugin, self.message),
-        }
-    }
-}
-
-impl std::error::Error for PluginError {}
 
 impl PluginError {
     pub fn new(plugin: &str, file: &str, message: &str) -> Self {
-        Self { plugin: plugin.to_string(), file: Some(file.to_string()), message: message.to_string() }
+        Self::Codegen {
+            plugin: plugin.to_string(),
+            file: file.to_string(),
+            message: message.to_string(),
+        }
     }
     pub fn codegen(plugin: &str, file: &str, message: impl Into<String>) -> Self {
-        Self { plugin: plugin.to_string(), file: Some(file.to_string()), message: message.into() }
+        Self::Codegen {
+            plugin: plugin.to_string(),
+            file: file.to_string(),
+            message: message.into(),
+        }
     }
     pub fn dependency(plugin: &str, message: impl Into<String>) -> Self {
-        Self { plugin: plugin.to_string(), file: None, message: message.into() }
+        Self::Dependency {
+            plugin: plugin.to_string(),
+            message: message.into(),
+        }
     }
     pub fn dev(plugin: &str, message: impl Into<String>) -> Self {
-        Self { plugin: plugin.to_string(), file: None, message: message.into() }
+        Self::Dev {
+            plugin: plugin.to_string(),
+            message: message.into(),
+        }
     }
     pub fn fatal(plugin: &str, message: impl Into<String>) -> Self {
-        Self { plugin: plugin.to_string(), file: None, message: message.into() }
+        Self::Fatal {
+            plugin: plugin.to_string(),
+            message: message.into(),
+        }
     }
 }
 
@@ -121,15 +136,15 @@ pub struct RouteInfo {
     /// HTTP methods supported
     pub methods: Vec<String>,
     /// Relative file path from project root
-    pub file: String,
+    pub file_path: String,
 }
 
 impl RouteInfo {
-    pub fn new(path: &str, file: &str) -> Self {
+    pub fn new(path: &str, file_path: &str) -> Self {
         Self {
             path: path.to_string(),
             methods: Vec::new(),
-            file: file.to_string(),
+            file_path: file_path.to_string(),
         }
     }
 }
@@ -187,9 +202,10 @@ mod tests {
     #[test]
     fn test_plugin_error_new() {
         let err = PluginError::new("fresh", "file.tsx", "parse failed");
-        assert_eq!(err.plugin, "fresh");
-        assert_eq!(err.file, Some("file.tsx".to_string()));
-        assert!(err.message.contains("parse failed"));
+        let msg = err.to_string();
+        assert!(msg.contains("fresh"));
+        assert!(msg.contains("file.tsx"));
+        assert!(msg.contains("parse failed"));
     }
 
     #[test]
@@ -212,7 +228,7 @@ mod tests {
     fn test_route_info_new() {
         let route = RouteInfo::new("/blog/:slug", "blog/[slug].tsx");
         assert_eq!(route.path, "/blog/:slug");
-        assert_eq!(route.file, "blog/[slug].tsx");
+        assert_eq!(route.file_path, "blog/[slug].tsx");
     }
 
     #[test]
