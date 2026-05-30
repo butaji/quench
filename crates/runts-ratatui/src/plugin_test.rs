@@ -1,8 +1,8 @@
 //! Tests for the Ratatui plugin.
 
-use runts_plugin::{CargoDep, Plugin};
+use runts_plugin::Plugin;
 
-use runts_ratatui::RatatuiPlugin;
+use crate::RatatuiPlugin;
 
 fn ratatui_plugin() -> RatatuiPlugin {
     RatatuiPlugin
@@ -26,9 +26,9 @@ fn test_codegen_module_returns_valid_rust() {
     let result = plugin.codegen_module(r#"{"type":"Text","props":{"text":"hi"}}"#);
     assert!(result.is_ok());
     let code = result.unwrap();
-    // Stub should compile as valid Rust
+    // Stub should compile as valid Rust (quote adds spaces around ::)
     assert!(code.contains("pub fn render"));
-    assert!(code.contains("ratatui::widgets::Paragraph"));
+    assert!(code.contains("Paragraph :: new"));
     assert!(code.contains("Hello from Ratatui!"));
 }
 
@@ -38,10 +38,10 @@ fn test_codegen_entry_generates_main() {
     let result = plugin.codegen_entry(&[]);
     assert!(result.is_ok());
     let code = result.unwrap();
-    // Entry should contain main function
-    assert!(code.contains("fn main()"));
-    assert!(code.contains("anyhow::Result"));
-    assert!(code.contains("terminal.draw"));
+    // Entry should contain main function (quote adds spaces around ::)
+    assert!(code.contains("fn main ()"));
+    assert!(code.contains("anyhow :: Result"));
+    assert!(code.contains("terminal . draw"));
 }
 
 #[test]
@@ -64,28 +64,42 @@ fn test_cargo_deps() {
 #[test]
 fn test_dev_init_returns_state() {
     let plugin = ratatui_plugin();
-    let mut ctx = runts_plugin::DevContext::default();
+    let mut ctx = runts_plugin::DevContext {
+        root: std::path::PathBuf::from("/tmp"),
+        modules: vec![],
+    };
     let result = plugin.dev_init(&mut ctx);
     assert!(result.is_ok());
-    let state = result.unwrap();
-    // State is just a marker type — check it exists
-    let _ = state;
+    let _state = result.unwrap();
 }
 
 #[test]
 fn test_dev_run_once_returns_continue() {
+    use runts_plugin::{DevAction, DevState};
+
+    struct TestDevState;
+    impl DevState for TestDevState {}
+
     let plugin = ratatui_plugin();
-    let state = runts_plugin::DevStateStub;
-    let result = plugin.dev_run_once(&state);
+    let mut state = TestDevState;
+    let result = plugin.dev_run_once(&mut state);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), runts_plugin::DevAction::Continue);
+    assert!(matches!(result.unwrap(), DevAction::Continue));
 }
 
 #[test]
 fn test_dev_reload_returns_ok() {
+    use runts_plugin::DevState;
+
+    struct TestDevState;
+    impl DevState for TestDevState {}
+
     let plugin = ratatui_plugin();
-    let mut ctx = runts_plugin::DevContext::default();
-    let state = runts_plugin::DevStateStub;
-    let result = plugin.dev_reload(&mut ctx, &state);
+    let mut ctx = runts_plugin::DevContext {
+        root: std::path::PathBuf::from("/tmp"),
+        modules: vec![],
+    };
+    let mut state = TestDevState;
+    let result = plugin.dev_reload(&mut ctx, &mut state);
     assert!(result.is_ok());
 }
