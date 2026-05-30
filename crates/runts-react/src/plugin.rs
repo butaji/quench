@@ -4,7 +4,11 @@ pub struct ReactPlugin;
 
 struct ReactDevState;
 
-impl DevState for ReactDevState {}
+impl DevState for ReactDevState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 impl Plugin for ReactPlugin {
     fn name(&self) -> &str { "react" }
@@ -39,7 +43,9 @@ impl Plugin for ReactPlugin {
 
     fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
         let routes_code = collect_routes_code(modules);
-        Ok(generate_axum_main(&routes_code))
+        let component_name = find_first_component_name(modules)
+            .unwrap_or_else(|| "App".to_string());
+        Ok(generate_axum_main(&routes_code, &component_name))
     }
 
     fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
@@ -177,6 +183,15 @@ fn extract_component_from_imports(_file_path: &str) -> String {
     "App".to_string()
 }
 
+fn find_first_component_name(modules: &[runts_plugin::hir::Module]) -> Option<String> {
+    modules
+        .iter()
+        .filter_map(|m| m.source_path.as_ref())
+        .filter(|p| p.contains("/component/") || p.ends_with(".jsx"))
+        .map(|p| extract_component_name(p))
+        .next()
+}
+
 fn collect_routes_code(modules: &[runts_plugin::hir::Module]) -> String {
     let mut routes_code = String::new();
     let mut has_routes = false;
@@ -202,7 +217,7 @@ fn collect_routes_code(modules: &[runts_plugin::hir::Module]) -> String {
     routes_code
 }
 
-fn generate_axum_main(routes_code: &str) -> String {
+fn generate_axum_main(routes_code: &str, component_name: &str) -> String {
     format!(r#"use axum::{{
     Router,
     routing::get,
@@ -227,7 +242,7 @@ async fn main() {{
 }}
 
 async fn handler() -> impl IntoResponse {{
-    let body = App::render();
+    let body = {component_name}::render();
     Html(format!(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>React SSR</title></head><body>{{body}}</body></html>",
         body = body
@@ -424,5 +439,66 @@ mod tests {
         let entry = plugin.codegen_entry(&modules).unwrap();
         assert!(entry.contains("axum"));
         assert!(entry.contains("/"));
+    }
+
+    #[test]
+    fn test_codegen_entry_with_jsx_components() {
+        let plugin = ReactPlugin;
+        let modules = vec![
+            runts_plugin::hir::Module {
+                source_path: Some("component/LazyHome.jsx".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+            runts_plugin::hir::Module {
+                source_path: Some("component/LazyPage.jsx".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+            runts_plugin::hir::Module {
+                source_path: Some("server1.js".to_string()),
+                route_info: None,
+                items_json: None,
+            }
+        ];
+        let entry = plugin.codegen_entry(&modules).unwrap();
+        // Should use LazyHome (first component) not hardcoded App
+        assert!(entry.contains("LazyHome::render()"));
+        assert!(!entry.contains("App::render()"));
+        assert!(entry.contains("axum"));
+    }
+
+    #[test]
+    fn test_find_first_component_name() {
+        let modules = vec![
+            runts_plugin::hir::Module {
+                source_path: Some("server1.js".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+            runts_plugin::hir::Module {
+                source_path: Some("component/LazyPage.jsx".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+            runts_plugin::hir::Module {
+                source_path: Some("component/LazyHome.jsx".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+        ];
+        assert_eq!(find_first_component_name(&modules), Some("LazyPage".to_string()));
+    }
+
+    #[test]
+    fn test_find_first_component_name_no_components() {
+        let modules = vec![
+            runts_plugin::hir::Module {
+                source_path: Some("server1.js".to_string()),
+                route_info: None,
+                items_json: None,
+            },
+        ];
+        assert_eq!(find_first_component_name(&modules), None);
     }
 }

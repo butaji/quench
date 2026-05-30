@@ -4,6 +4,7 @@
 //! code generation and development server support.
 
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::path::PathBuf;
 
 /// Errors that can occur during plugin operations.
@@ -86,7 +87,10 @@ pub struct DevContext {
 }
 
 /// Trait for framework-specific plugin state during development.
-pub trait DevState: Send + Sync {}
+pub trait DevState: Send + Sync {
+    /// Convert state to Any for safe downcasting.
+    fn as_any(&self) -> &dyn Any;
+}
 
 /// Action returned by dev_run_once.
 #[derive(Debug)]

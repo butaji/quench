@@ -107,4 +107,8 @@ pub struct RatatuiPlugin;
 
 struct RatatuiDevState;
 
-impl DevState for RatatuiDevState {}
+impl DevState for RatatuiDevState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
