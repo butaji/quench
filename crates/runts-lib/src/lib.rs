@@ -33,3 +33,21 @@ pub mod macros;
 pub mod runtime;
 
 pub use runtime::prelude::*;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_is_browser_constant() {
+        // IS_BROWSER is false in this crate (server-side/runtime)
+        assert!(!crate::runtime::IS_BROWSER);
+    }
+
+    #[test]
+    fn test_prelude_access() {
+        use crate::runtime::prelude::*;
+        // Just verify prelude items are accessible
+        let _node = VNode::element("div");
+        let _sig = Signal::new(42i32);
+        let _computed: Computed<i32> = crate::runtime::signals::computed(|| 0i32);
+    }
+}
