@@ -6,7 +6,7 @@ use super::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
+#[serde(tag = "kind")]
 pub enum Stmt {
     Empty,
     Block(Vec<Stmt>),

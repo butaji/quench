@@ -45,9 +45,16 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
 /// Run ownership and effect analysis on parsed module
 fn run_analysis_passes(module: &mut hir::Module) {
     for item in &mut module.items {
-        if let hir::ModuleItem::Stmt(hir::Stmt::FunctionDecl(ref mut func)) = item {
-            hir::infer_function_ownership(func);
-            hir::analyze_effects(func);
+        match item {
+            hir::ModuleItem::Stmt(hir::Stmt::FunctionDecl(ref mut func)) => {
+                hir::infer_function_ownership(func);
+                hir::analyze_effects(func);
+            }
+            hir::ModuleItem::Decl(hir::Decl::Function(ref mut func)) => {
+                hir::infer_function_ownership(func);
+                hir::analyze_effects(func);
+            }
+            _ => {}
         }
     }
 }
