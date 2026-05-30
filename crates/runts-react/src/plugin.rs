@@ -103,3 +103,64 @@ fn main() {{
         "// Generic React module\n".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_react_plugin_name() {
+        let plugin = ReactPlugin;
+        assert_eq!(plugin.name(), "react");
+    }
+
+    #[test]
+    fn test_react_plugin_help() {
+        let plugin = ReactPlugin;
+        assert!(plugin.help_text().contains("React"));
+    }
+
+    #[test]
+    fn test_codegen_component_module() {
+        let plugin = ReactPlugin;
+        let code = plugin.codegen_component_module("component/LazyHome.jsx");
+        assert!(code.contains("LazyHome"));
+    }
+
+    #[test]
+    fn test_codegen_server_module() {
+        let plugin = ReactPlugin;
+        let code = plugin.codegen_server_module("server1.js");
+        assert!(code.contains("React SSR"));
+    }
+
+    #[test]
+    fn test_codegen_module_detects_component() {
+        let plugin = ReactPlugin;
+        let hir_json = r#"{"source_path": "component/Test.jsx", "items": [], "types": {}}"#;
+        let code = plugin.codegen_module(hir_json).unwrap();
+        assert!(code.contains("Test"));
+    }
+
+    #[test]
+    fn test_codegen_module_detects_server() {
+        let plugin = ReactPlugin;
+        let hir_json = r#"{"source_path": "server.js", "items": [], "types": {}}"#;
+        let code = plugin.codegen_module(hir_json).unwrap();
+        assert!(code.contains("React SSR"));
+    }
+
+    #[test]
+    fn test_cargo_deps() {
+        let plugin = ReactPlugin;
+        let deps = plugin.cargo_deps();
+        assert!(!deps.is_empty());
+    }
+
+    #[test]
+    fn test_codegen_entry() {
+        let plugin = ReactPlugin;
+        let entry = plugin.codegen_entry(&[]).unwrap();
+        assert!(entry.contains("React SSR"));
+    }
+}

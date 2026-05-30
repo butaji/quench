@@ -1,4 +1,13 @@
 //! Ratatui plugin implementation.
+//!
+//! # v0.1
+//! `codegen_module` returns a hardcoded stub. Widget codegen infrastructure
+//! (`generate_widget_code`, etc.) is preserved but unused — HIR JSON format
+//! from TSX does not match the expected `{type, props, children}` schema.
+//!
+//! # v0.2
+//! Wire real widget codegen by traversing HIR JSON (like Fresh plugin does)
+//! or by adapting the widget functions to the actual HIR format.
 
 use runts_plugin::{
     CargoDep, DevAction, DevContext, DevState, Plugin, PluginError,
@@ -6,7 +15,10 @@ use runts_plugin::{
 
 use crate::codegen;
 
+// ─── Dead code (preserved for v0.2 widget codegen wiring) ───────────────────
+
 /// HIR widget node from JSX-like source
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct WidgetNode {
     #[serde(rename = "type")]
@@ -16,6 +28,7 @@ struct WidgetNode {
 }
 
 /// Widget properties
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct WidgetProps {
     title: Option<String>,
@@ -26,6 +39,7 @@ struct WidgetProps {
 }
 
 /// Parse HIR string and generate widget code
+#[allow(dead_code)]
 fn generate_widget_code(hir_str: &str) -> Result<proc_macro2::TokenStream, PluginError> {
     let nodes: Vec<WidgetNode> = serde_json::from_str(hir_str)
         .or_else(|_| serde_json::from_str(&format!("[{}]", hir_str)))
@@ -38,6 +52,7 @@ fn generate_widget_code(hir_str: &str) -> Result<proc_macro2::TokenStream, Plugi
     generate_widget_from_node(&nodes[0])
 }
 
+#[allow(dead_code)]
 fn generate_widget_from_node(node: &WidgetNode) -> Result<proc_macro2::TokenStream, PluginError> {
     match node.widget_type.as_str() {
         "Block" => {
@@ -63,6 +78,7 @@ fn generate_widget_from_node(node: &WidgetNode) -> Result<proc_macro2::TokenStre
     }
 }
 
+#[allow(dead_code)]
 fn generate_children_code(children: &Option<Vec<WidgetNode>>) -> Result<proc_macro2::TokenStream, PluginError> {
     match children {
         Some(ref kids) if !kids.is_empty() => {
