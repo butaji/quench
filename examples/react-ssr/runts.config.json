@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "build": {
+    "optimization": {
+      "lto": true,
+      "opt_level": "z"
+    }
+  },
+  "islands": {
+    "hydration": "lazy",
+    "serializer": "json"
+  },
+  "dev": {
+    "port": 8000,
+    "open": true,
+    "hmr": true
+  },
+  "watch": {
+    "ignored": ["**/node_modules/**", "**/target/**", "**/.git/**"]
+  }
+}

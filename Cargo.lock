@@ -1669,6 +1669,7 @@ dependencies = [
  "runts-macros",
  "runts-plugin",
  "runts-ratatui",
+ "runts-react",
  "serde",
  "serde_json",
  "sha2",
@@ -1737,6 +1738,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "runts-lib",
+ "runts-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runts-react"
+version = "0.1.0"
+dependencies = [
  "runts-plugin",
  "serde",
  "serde_json",
