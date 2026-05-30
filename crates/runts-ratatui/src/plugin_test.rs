@@ -132,7 +132,11 @@ fn test_dev_init_returns_state() {
 fn test_dev_run_once_returns_continue() {
     use runts_plugin::{DevAction, DevState};
     struct TestDevState;
-    impl DevState for TestDevState {}
+    impl DevState for TestDevState {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
     let plugin = ratatui_plugin();
     let mut state = TestDevState;
     let result = plugin.dev_run_once(&mut state);
@@ -144,7 +148,11 @@ fn test_dev_run_once_returns_continue() {
 fn test_dev_reload_returns_ok() {
     use runts_plugin::DevState;
     struct TestDevState;
-    impl DevState for TestDevState {}
+    impl DevState for TestDevState {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
     let plugin = ratatui_plugin();
     let mut ctx = runts_plugin::DevContext { root: std::path::PathBuf::from("/tmp"), modules: vec![] };
     let mut state = TestDevState;

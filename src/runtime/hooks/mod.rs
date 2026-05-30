@@ -19,11 +19,12 @@ impl<T: Clone> Ref<T> {
             inner: std::rc::Rc::new(std::cell::RefCell::new(Some(value))),
         }
     }
-    pub fn get(&self) -> T {
-        self.inner
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| panic!("Ref not initialized"))
+    pub fn get(&self) -> Option<T> {
+        self.inner.borrow().clone()
+    }
+
+    pub fn expect(&self, msg: &str) -> T {
+        self.inner.borrow().clone().expect(msg)
     }
 }
 
