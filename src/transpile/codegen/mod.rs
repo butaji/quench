@@ -1,13 +1,13 @@
 //! Code generator: High-level IR → Rust source code
 
-pub mod function;
-pub mod infer;
-pub mod pat;
-pub mod response;
-pub mod variable;
+// pub mod function;
+// pub mod infer;
+// pub mod pat;
+// pub mod response;
+// pub mod variable;
 
-pub use function::FnGen;
-pub use infer::TypeInfer;
+// pub use function::FnGen;
+// pub use infer::TypeInfer;
 
 pub struct CodeGenerator {
     pub imports: Vec<String>,
@@ -54,10 +54,10 @@ impl CodeGenerator {
     }
     pub fn generate_function(
         &mut self,
-        d: &crate::transpile::hir::FunctionDecl,
-        c: bool,
+        _d: &crate::transpile::hir::FunctionDecl,
+        _c: bool,
     ) -> anyhow::Result<String> {
-        FnGen::generate_function(self, d, c)
+        todo!("generate_function moved to plugin-based TokenStream codegen")
     }
     pub fn generate_decl(&mut self, d: &crate::transpile::hir::Decl) -> anyhow::Result<String> {
         match d {
@@ -76,9 +76,9 @@ impl CodeGenerator {
     }
     pub fn infer_expr_type(
         &self,
-        e: &crate::transpile::hir::Expr,
+        _e: &crate::transpile::hir::Expr,
     ) -> Option<crate::transpile::hir::Type> {
-        TypeInfer::infer_expr_type(self, e)
+        todo!("infer_expr_type moved to plugin-based TokenStream codegen")
     }
     pub fn jsx_attr_to_rust(&self, n: &str) -> String {
         n.to_string()

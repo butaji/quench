@@ -1,6 +1,7 @@
 //! Transpilation pipeline for TS/TSX to Rust
 
 pub mod analyzer;
+pub mod codegen;
 pub mod errors;
 pub mod hir;
 pub mod js_codegen;

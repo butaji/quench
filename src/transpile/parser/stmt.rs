@@ -240,6 +240,42 @@ pub fn convert_module_item(stmt: &Statement) -> Option<hir::ModuleItem> {
                 type_: hir::Type::Object { members: vec![] },
             })))
         }
+        Statement::ExportDefaultDeclaration(e) => {
+            match &e.declaration {
+                ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    // Convert to Decl::Function with the function's id as name
+                    let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
+                    Some(hir::ModuleItem::Decl(hir::Decl::Function(hir::FunctionDecl {
+                        name,
+                        generics: vec![],
+                        params: vec![],
+                        return_type: None,
+                        body: None,
+                        is_async: f.r#async,
+                        is_generator: f.generator,
+                        decorators: vec![],
+                        throws: false,
+                        error_type: None,
+                    })))
+                }
+                ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    Some(hir::ModuleItem::Decl(class_to_hir(c)))
+                }
+                ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
+                    Some(hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl {
+                        name: i.id.name.to_string(),
+                        generics: vec![],
+                        type_: hir::Type::Object { members: vec![] },
+                    })))
+                }
+                // All other expression variants (inherited from Expression via @inherit)
+                _ => {
+                    // For `export default <expression>`, wrap as Export
+                    // Use the expression as-is via the default export
+                    Some(hir::ModuleItem::Stmt(hir::Stmt::Empty))
+                }
+            }
+        }
         _ => Some(hir::ModuleItem::Stmt(stmt_to_hir_stmt(stmt))),
     }
 }
