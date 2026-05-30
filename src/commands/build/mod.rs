@@ -13,7 +13,6 @@ use tempfile::TempDir;
 use tracing::{error, info};
 use walkdir::WalkDir;
 
-use crate::commands::incremental::BuildCache;
 use crate::config::Config;
 use crate::plugin::get_plugin;
 use crate::transpile::hir;
@@ -194,14 +193,6 @@ fn write_manifests(
     source_gen::generate_mod_files(build_dir)
 }
 
-/// Run incremental build
-pub async fn run_incremental_build(
-    _config: &Config,
-    path: PathBuf,
-    _cache: &mut BuildCache,
-) -> Result<BuildResult> {
-    run_build(_config, path).await
-}
 
 /// Run full build including compilation
 pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Result<BuildResult> {
