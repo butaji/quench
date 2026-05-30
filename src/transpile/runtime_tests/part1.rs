@@ -3,7 +3,7 @@
 #![allow(clippy::too_many_lines)]
 #[cfg(test)]
 mod part1_tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     // ========================================================================
     // LITERAL TESTS
     // ========================================================================
