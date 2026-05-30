@@ -1,0 +1,17 @@
+[package]
+name = "runts-fresh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+runts-plugin = { path = "../runts-plugin" }
+runts-lib = { path = "../runts-lib" }
+anyhow = "1.0"
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+quote = "1.0"
+proc-macro2 = "1.0"

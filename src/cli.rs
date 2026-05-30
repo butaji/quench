@@ -26,6 +26,10 @@ pub enum Commands {
         /// Project path
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Plugin to use: fresh, ratatui
+        #[arg(short, long, help = "Plugin to use: fresh, ratatui")]
+        plugin: String,
     },
 
     /// Build for production (transpile + compile)
@@ -33,6 +37,10 @@ pub enum Commands {
         /// Project path
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Plugin to use: fresh, ratatui
+        #[arg(short, long, help = "Plugin to use: fresh, ratatui")]
+        plugin: String,
 
         /// Build in release mode (default: true)
         #[arg(short, long, default_value = "true")]
