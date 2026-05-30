@@ -1,14 +1,13 @@
 //! Fresh plugin implementation - minimal 0.1 proof-of-concept
 //!
-//! Architecture: codegen_module receives full HIR JSON but currently only uses
-//! source_path and route_info. Full JSX→VNode codegen (using codegen.rs) is
-//! planned for 0.2 when the plugin trait is extended to pass HIR to codegen_route_module.
-//!
-//! Note: codegen.rs exists at crate root (src/codegen.rs) but cannot be imported from
-//! plugin.rs due to Rust module resolution rules. Will be accessible once codegen_route_module
-//! signature is extended to receive HIR directly.
+//! Architecture: codegen_module receives full HIR JSON and traverses it to find
+//! Decl::Function items with JSX bodies. Uses codegen.rs helpers to generate
+//! VNode-based Rust code.
 
+use proc_macro2::TokenStream;
 use runts_plugin::{CargoDep, DevAction, DevContext, DevState, Plugin, PluginError, RouteInfo};
+
+use crate::codegen::{jsx_element, jsx_expr, jsx_fragment, jsx_text, page_component};
 
 pub struct FreshPlugin;
 
@@ -246,28 +245,617 @@ async fn main() {{
 
     /// Try to codegen JSX from HIR items JSON.
     /// Returns Some(code) if JSX was detected and codegen succeeded, None otherwise.
-    fn try_codegen_jsx(&self, items: &serde_json::Value, hir: &runts_plugin::hir::Module) -> Option<String> {
-        // Simple detection: check if items JSON contains JSX-related markers
-        let items_str = items.to_string();
-        if !items_str.contains("JSX") {
-            return None;
+    fn try_codegen_jsx(&self, items: &serde_json::Value, _hir: &runts_plugin::hir::Module) -> Option<String> {
+        // Parse items as array
+        let items_arr = items.as_array()?;
+
+        for item in items_arr {
+            // Find Decl::Function items
+            if item.get("type")?.as_str()? != "Decl" {
+                continue;
+            }
+            let decl = item.get("Decl")?;
+            if decl.get("kind")?.as_str()? != "Function" {
+                continue;
+            }
+
+            // Extract function name and body
+            let name = decl.get("name")?.as_str()?;
+            let body = decl.get("body")?;
+
+            // Check if body is present and contains JSX
+            if body.is_null() {
+                continue;
+            }
+            let body_str = body.to_string();
+            if !body_str.contains("\"opening\"") && !body_str.contains("JSX") {
+                continue;
+            }
+
+            // Find JSX expression in the return statement
+            if let Some(jsx_expr) = self.find_jsx_in_body(body) {
+                let jsx_code = self.generate_jsx_vnode_code(jsx_expr)?;
+                let page_fn = page_component(name, jsx_code);
+                let code = self.wrap_page_module(name, &page_fn.to_string());
+                return Some(code);
+            }
         }
 
-        let path = hir.route_info.as_ref().map(|r| r.path.as_str()).unwrap_or("/");
+        None
+    }
 
-        // For 0.1, detect JSX presence and generate improved stub
-        // Full JSX→VNode traversal codegen coming in 0.2
-        Some(format!(r#"//! Route module for {path}
+    /// Find JSX expression in function body.
+    /// Returns the JSX expression JSON if found.
+    fn find_jsx_in_body(&self, body: &serde_json::Value) -> Option<serde_json::Value> {
+        // Body structure: { "Block": { "stmts": [...] } } or direct JSX
+        if let Some(block) = body.get("Block") {
+            let stmts = block.get("stmts")?.as_array()?;
+            for stmt in stmts {
+                if let Some(jsx) = self.find_jsx_in_stmt(stmt) {
+                    return Some(jsx);
+                }
+            }
+        } else if self.is_jsx_expr(body) {
+            return Some(body.clone());
+        }
+        None
+    }
+
+    /// Find JSX in a statement.
+    // allow:complexity,too_many_lines
+    fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
+        let kind = stmt.get("kind")?.as_str()?;
+        match kind {
+            "Return" => {
+                // Direct return: return <expr>
+                let arg = stmt.get("arg")?;
+                if self.is_jsx_expr(arg) {
+                    return Some(arg.clone());
+                }
+                // Check nested expressions
+                return self.find_jsx_in_expr(arg);
+            }
+            "Expr" => {
+                // Expression statement: <expr>
+                let expr = stmt.get("expr")?;
+                if self.is_jsx_expr(expr) {
+                    return Some(expr.clone());
+                }
+                return self.find_jsx_in_expr(expr);
+            }
+            "Block" => {
+                // Block - traverse statements
+                if let Some(stmts) = stmt.get("stmts").and_then(|s| s.as_array()) {
+                    for s in stmts {
+                        if let Some(jsx) = self.find_jsx_in_stmt(s) {
+                            return Some(jsx);
+                        }
+                    }
+                }
+            }
+            "If" => {
+                // If statement - check consequent and alternate
+                if let Some(cons) = stmt.get("consequent") {
+                    if let Some(jsx) = self.find_jsx_in_stmt(cons) {
+                        return Some(jsx);
+                    }
+                }
+                if let Some(alt) = stmt.get("alternate") {
+                    return self.find_jsx_in_stmt(alt);
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Find JSX in an expression.
+    fn find_jsx_in_expr(&self, expr: &serde_json::Value) -> Option<serde_json::Value> {
+        let kind = expr.get("kind")?.as_str()?;
+        match kind {
+            "JSX" => return Some(expr.clone()),
+            "Cond" => {
+                // Ternary: test ? consequent : alternate
+                if let Some(cons) = expr.get("consequent") {
+                    if let Some(jsx) = self.find_jsx_in_expr(cons) {
+                        return Some(jsx);
+                    }
+                }
+                if let Some(alt) = expr.get("alternate") {
+                    return self.find_jsx_in_expr(alt);
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Check if JSON value is a JSX expression.
+    fn is_jsx_expr(&self, val: &serde_json::Value) -> bool {
+        val.get("opening").is_some() && val.get("children").is_some()
+    }
+
+    /// Generate VNode code from JSX expression JSON.
+    fn generate_jsx_vnode_code(&self, jsx: serde_json::Value) -> Option<TokenStream> {
+        let opening = jsx.get("opening")?;
+        let name = opening.get("name")?;
+        let tag = self.jsx_name_to_tag(name)?;
+
+        // Convert attributes
+        let attrs = self.extract_jsx_attrs(opening.get("attrs")?)?;
+
+        // Convert children
+        let children = self.extract_jsx_children(jsx.get("children")?)?;
+
+        Some(jsx_element(&tag, attrs, children))
+    }
+
+    /// Convert JSXName to tag string.
+    fn jsx_name_to_tag(&self, name: &serde_json::Value) -> Option<String> {
+        match name {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Object(obj) => {
+                if let Some(ident) = obj.get("Ident") {
+                    return ident.as_str().map(String::from);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract attributes from JSX opening element.
+    fn extract_jsx_attrs(&self, attrs: &serde_json::Value) -> Option<Vec<(String, TokenStream)>> {
+        let arr = attrs.as_array()?;
+        let mut result = Vec::new();
+        for attr in arr {
+            if let Some(obj) = attr.get("Attr") {
+                let name = obj.get("name")?.as_str()?.to_string();
+                let value = self.jsx_attr_value_to_tokenstream(obj.get("value")?)?;
+                result.push((name, value));
+            }
+            // Ignore Spread attributes for now
+        }
+        Some(result)
+    }
+
+    /// Convert JSX attribute value to TokenStream.
+    // allow:complexity
+    fn jsx_attr_value_to_tokenstream(&self, val: &serde_json::Value) -> Option<TokenStream> {
+        match val {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => {
+                let lit = proc_macro2::Literal::string(s);
+                Some(quote::quote! { #lit })
+            }
+            serde_json::Value::Object(obj) => {
+                // Expression value: { "Expr": <expr> }
+                if let Some(expr_val) = obj.get("Expr") {
+                    let kind = expr_val.get("kind")?.as_str()?;
+                    match kind {
+                        "Ident" => {
+                            let name = expr_val.get("name")?.as_str()?;
+                            Some(quote::quote! { #name })
+                        }
+                        "String" => {
+                            let s = expr_val.get("0")?.as_str()?;
+                            Some(quote::quote! { #s })
+                        }
+                        "Number" => {
+                            let n = expr_val.get("0")?.as_f64()?;
+                            Some(quote::quote! { #n })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract children from JSX element.
+    fn extract_jsx_children(&self, children: &serde_json::Value) -> Option<Vec<TokenStream>> {
+        let arr = children.as_array()?;
+        let mut result = Vec::new();
+        for child in arr {
+            if let Some(ts) = self.jsx_child_to_tokenstream(child)? {
+                result.push(ts);
+            }
+        }
+        Some(result)
+    }
+
+    /// Convert a JSX child to TokenStream.
+    // allow:complexity
+    fn jsx_child_to_tokenstream(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
+        // Text child
+        if let Some(text) = child.as_str() {
+            return Some(Some(jsx_text(text)));
+        }
+
+        // Object child
+        let kind = child.get("kind")?.as_str()?;
+        match kind {
+            "Text" => {
+                let text = child.get("0")?.as_str()?;
+                Some(Some(jsx_text(text)))
+            }
+            "JSX" => {
+                let jsx_expr = child.get("JSX")?;
+                self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some)
+            }
+            "Fragment" => {
+                // Fragment: { "Fragment": { "children": [...] } }
+                let frag_children = child.get("Fragment")?.get("children")?;
+                let children = self.extract_jsx_children(frag_children)?;
+                Some(Some(jsx_fragment(children)))
+            }
+            "Expr" => {
+                // Expression child: { "Expr": <expr> }
+                let expr_val = child.get("Expr")?;
+                if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
+                    Some(Some(ts))
+                } else {
+                    Some(None)
+                }
+            }
+            "Spread" => {
+                // Spread children - skip for v0.1
+                Some(None)
+            }
+            _ => Some(None),
+        }
+    }
+
+    /// Convert JSX expression to TokenStream.
+    // allow:complexity
+    fn jsx_expr_to_tokenstream(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let kind = expr.get("kind")?.as_str()?;
+        match kind {
+            "Ident" => {
+                let name = expr.get("name")?.as_str()?;
+                Some(Some(jsx_expr(quote::quote! { #name })))
+            }
+            "String" => {
+                let s = expr.get("0")?.as_str()?;
+                Some(Some(jsx_text(s)))
+            }
+            "Number" => {
+                let n = expr.get("0")?.as_f64()?;
+                Some(Some(jsx_expr(quote::quote! { #n })))
+            }
+            "Boolean" => {
+                let b = expr.get("0")?.as_bool()?;
+                Some(Some(jsx_expr(quote::quote! { #b })))
+            }
+            "Bin" => {
+                // Binary expression - skip for v0.1
+                Some(None)
+            }
+            "Call" => {
+                // Function call - skip for v0.1
+                Some(None)
+            }
+            _ => Some(None),
+        }
+    }
+
+    /// Wrap page component code in a module.
+    fn wrap_page_module(&self, name: &str, page_fn: &str) -> String {
+        let fn_name_lower = name.to_lowercase();
+        format!(
+            r#"//! Page component: {name}
 //! Generated by runts-fresh 0.1
-//! JSX detected in source — full codegen in v0.2
 
 use runts_lib::runtime::vdom::VNode;
 
+{page_fn}
+
 pub fn render() -> VNode {{
-    VNode::element("div")
-        .attr("class", "page")
-        .child(VNode::element("h1").child(VNode::text("Page: {}")))
-        .child(VNode::element("p").child(VNode::text("JSX detected — full rendering in v0.2")))
-}}"#, path))
+    {fn_name_lower}()
+}}
+"#
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalize(s: &str) -> String {
+        let s = s.replace(" :: ", "::");
+        let s = s.replace(" ::", "::");
+        let s = s.replace(":: ", "::");
+        s
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_with_simple_div() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "Hello",
+                    "body": {
+                        "Block": {
+                            "stmts": [
+                                {
+                                    "kind": "Return",
+                                    "arg": {
+                                        "kind": "JSX",
+                                        "opening": {
+                                            "name": { "Ident": "div" },
+                                            "attrs": [],
+                                            "self_closing": false
+                                        },
+                                        "children": [
+                                            { "kind": "Text", "0": "Hello World" }
+                                        ],
+                                        "closing": {
+                                            "name": { "Ident": "div" }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_some(), "Should generate code for JSX");
+        let code = result.unwrap();
+        eprintln!("Generated code:\n{}", code);
+
+        // Check for VNode generation
+        assert!(code.contains("VNode::Element") || code.contains("VNode"), "Should contain VNode");
+        assert!(code.contains("\"div\""), "Should contain div tag");
+        assert!(code.contains("Hello World"), "Should contain text");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_with_attributes() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "Home",
+                    "body": {
+                        "Block": {
+                            "stmts": [
+                                {
+                                    "kind": "Return",
+                                    "arg": {
+                                        "kind": "JSX",
+                                        "opening": {
+                                            "name": { "Ident": "div" },
+                                            "attrs": [
+                                                {
+                                                    "Attr": {
+                                                        "name": "class",
+                                                        "value": "home"
+                                                    }
+                                                }
+                                            ],
+                                            "self_closing": false
+                                        },
+                                        "children": [
+                                            { "kind": "Text", "0": "Welcome" }
+                                        ],
+                                        "closing": {
+                                            "name": { "Ident": "div" }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_some(), "Should generate code for JSX with attrs");
+        let code = result.unwrap();
+        eprintln!("Generated code with attrs:\n{}", code);
+
+        assert!(code.contains("\"class\""), "Should contain class attribute");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_no_jsx_returns_none() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "NoJsx",
+                    "body": {
+                        "Block": {
+                            "stmts": [
+                                {
+                                    "kind": "Return",
+                                    "arg": { "kind": "String", "0": "hello" }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_none(), "Should return None for non-JSX functions");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_nested_elements() {
+        let plugin = FreshPlugin;
+        // Simplified nested: just the inner JSX structure without the outer wrapper
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "Nested",
+                    "body": {
+                        "Block": {
+                            "stmts": [
+                                {
+                                    "kind": "Return",
+                                    "arg": {
+                                        "kind": "JSX",
+                                        "opening": {
+                                            "name": { "Ident": "div" },
+                                            "attrs": [],
+                                            "self_closing": false
+                                        },
+                                        "children": [
+                                            {
+                                                "kind": "JSX",
+                                                "JSX": {
+                                                    "opening": {
+                                                        "name": { "Ident": "span" },
+                                                        "attrs": [],
+                                                        "self_closing": false
+                                                    },
+                                                    "children": [
+                                                        { "kind": "Text", "0": "nested" }
+                                                    ],
+                                                    "closing": {
+                                                        "name": { "Ident": "span" }
+                                                    }
+                                                }
+                                            }
+                                        ],
+                                        "closing": {
+                                            "name": { "Ident": "div" }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+        eprintln!("Result: {:?}", result);
+
+        assert!(result.is_some(), "Should generate code for nested JSX");
+        let code = result.unwrap();
+        eprintln!("Generated nested code:\n{}", code);
+
+        assert!(code.contains("\"div\""), "Should contain outer div");
+        assert!(code.contains("\"span\""), "Should contain inner span");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_with_expr_child() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "WithExpr",
+                    "body": {
+                        "Block": {
+                            "stmts": [
+                                {
+                                    "kind": "Return",
+                                    "arg": {
+                                        "kind": "JSX",
+                                        "opening": {
+                                            "name": { "Ident": "div" },
+                                            "attrs": [],
+                                            "self_closing": false
+                                        },
+                                        "children": [
+                                            {
+                                                "kind": "Expr",
+                                                "Expr": {
+                                                    "kind": "Ident",
+                                                    "name": "name"
+                                                }
+                                            }
+                                        ],
+                                        "closing": {
+                                            "name": { "Ident": "div" }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_some(), "Should generate code for JSX with expression child");
+        let code = result.unwrap();
+        eprintln!("Generated expr code:\n{}", code);
+
+        assert!(code.contains("\"div\""), "Should contain div");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_no_body_returns_none() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Function",
+                    "name": "NoBody",
+                    "body": null
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_none(), "Should return None for function with null body");
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_not_function_decl_returns_none() {
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "type": "Decl",
+                "Decl": {
+                    "kind": "Variable",
+                    "name": "x",
+                    "init": { "kind": "Number", "0": 42 }
+                }
+            }
+        ]);
+
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+
+        assert!(result.is_none(), "Should return None for non-function declarations");
     }
 }

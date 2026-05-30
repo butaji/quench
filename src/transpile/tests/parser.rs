@@ -134,6 +134,9 @@ mod parser_tests {
         // Serialize to JSON
         let json = serde_json::to_string(&module).expect("Should serialize to JSON");
 
+        // Print full JSON for comparison
+        println!("\n=== Full JSON (non-JSX) ===\n{}\n===\n", serde_json::to_string_pretty(&json).unwrap());
+
         // Verify the JSON contains Decl::Function structure
         // Should be: {"kind":"Decl","Function":{"name":"Hello",...}}
         assert!(
@@ -197,5 +200,45 @@ mod parser_tests {
         assert!(func.is_some(), "Should find function declaration");
         let func = func.unwrap();
         assert_eq!(func.name, "add");
+    }
+    #[test]
+    fn test_export_default_function_with_jsx_json() {
+        let source = r#"export default function Hello() { return <div>Hello</div>; }"#;
+        let module = TsParser::new().parse_tsx(source).expect("Parsing should succeed");
+
+        // Print debug info about module structure
+        println!("\n=== Module items debug ===");
+        for (i, item) in module.items.iter().enumerate() {
+            println!("Item {}: {:?}", i, item);
+        }
+        println!("===\n");
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&module).expect("Should serialize to JSON");
+        let json_value: serde_json::Value = serde_json::from_str(&json).expect("Should parse JSON");
+        let items = json_value.get("items").expect("Should have items");
+
+        println!("\n=== HIR JSON items array ===\n{}\n===\n", serde_json::to_string_pretty(items).unwrap());
+
+        let items_str = serde_json::to_string(items).unwrap();
+        // The SERIALIZED JSON shows "kind":"Function" due to serde nested tag issue
+        // But the actual Rust struct is ModuleItem::Decl(Decl::Function(...))
+        // We verify by checking the FunctionDecl fields exist
+        let has_function_name = items_str.contains("\"name\":\"Hello\"");
+        let has_function_kind = items_str.contains("\"kind\":\"Function\"");
+        let has_stmt_empty = items_str.contains("\"kind\":\"Stmt\"") && items_str.contains("\"Empty\"");
+
+        println!("Has function name 'Hello': {}", has_function_name);
+        println!("Has function kind: {}", has_function_kind);
+        println!("Has Stmt::Empty: {}", has_stmt_empty);
+
+        // The key verification: NOT Stmt::Empty
+        if has_stmt_empty {
+            panic!("BUG: items contain Stmt::Empty: {}", items_str);
+        }
+
+        // Function should be properly parsed (even if serde serialization is weird)
+        assert!(has_function_name, "Function should have name 'Hello'");
+        assert!(has_function_kind, "Function should have kind 'Function'");
     }
 }
