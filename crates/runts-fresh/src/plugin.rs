@@ -26,7 +26,11 @@ struct FreshDevState {
     child: Arc<Mutex<Option<std::process::Child>>>,
 }
 
-impl DevState for FreshDevState {}
+impl DevState for FreshDevState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 impl FreshDevState {
     fn new(project_root: PathBuf) -> Self {
@@ -81,7 +85,7 @@ impl FreshDevState {
         let child = Command::new(&binary_path)
             .current_dir(&self.project_root)
             .spawn()
-            .map_err(|e| PluginError::dev("fresh", format!("failed to start server: {}", e)))?;
+            .map_err(|e| PluginError::new("fresh", "", &format!("failed to start server: {}", e)))?;
 
         {
             let mut spawned = self.spawned.lock().unwrap();
@@ -99,7 +103,7 @@ impl FreshDevState {
         let build_dir = self.project_root.join(".runts").join("build");
 
         if !build_dir.exists() {
-            return Err(PluginError::dev("fresh", "runts build directory not found. Run 'runts build' first."));
+            return Err(PluginError::new("fresh", "", "runts build directory not found. Run 'runts build' first."));
         }
 
         println!("Compiling...");
@@ -107,11 +111,11 @@ impl FreshDevState {
             .current_dir(&build_dir)
             .args(&["build"])
             .output()
-            .map_err(|e| PluginError::dev("fresh", format!("cargo build failed: {}", e)))?;
+            .map_err(|e| PluginError::new("fresh", "", &format!("cargo build failed: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PluginError::dev("fresh", format!("cargo build failed:\n{}", stderr)));
+            return Err(PluginError::new("fresh", "", &format!("cargo build failed:\n{}", stderr)));
         }
 
         Ok(())
@@ -165,23 +169,20 @@ impl Plugin for FreshPlugin {
         Ok(Box::new(FreshDevState::new(ctx.root.clone())))
     }
     fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        // Downcast to FreshDevState using pointer cast
-        // This is safe because we know the actual type
-        let dev_state = unsafe {
-            let ptr = state as *mut dyn DevState as *mut FreshDevState;
-            &*ptr
-        };
+        let dev_state = state
+            .as_any()
+            .downcast_ref::<FreshDevState>()
+            .ok_or_else(|| PluginError::new("fresh", "", "invalid dev state type"))?;
 
         dev_state.ensure_server_running()?;
 
         Ok(DevAction::Continue)
     }
     fn dev_reload(&self, ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError> {
-        // Recompile on file changes
-        let dev_state = unsafe {
-            let ptr = state as *mut dyn DevState as *mut FreshDevState;
-            &*ptr
-        };
+        let dev_state = state
+            .as_any()
+            .downcast_ref::<FreshDevState>()
+            .ok_or_else(|| PluginError::new("fresh", "", "invalid dev state type"))?;
 
         println!("File change detected, recompiling...");
         dev_state.compile_project()?;
@@ -330,8 +331,10 @@ async fn main() {{
 {};
     let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
     println!("Starting server on {{}}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await
+        .expect("failed to bind to port");
+    axum::serve(listener, app).await
+        .expect("server error");
 }}
 "#, imports.trim(), handlers.trim(), router_calls.trim()))
     }
