@@ -121,6 +121,10 @@ fn hash_deps<T: Hash>(deps: &[T]) -> usize {
 }
 
 /// useMemo hook
+///
+/// # TODO v0.2
+/// Currently a stub - always calls factory(), ignores deps.
+/// Implement proper memoization with deps tracking.
 pub fn use_memo<T, F, D>(factory: F, _deps: &[D]) -> T
 where
     T: Clone + 'static,
@@ -145,6 +149,10 @@ impl<F> Callback<F> {
 }
 
 /// useCallback hook
+///
+/// # TODO v0.2
+/// Currently a stub - returns callback unchanged, ignores deps.
+/// Implement proper callback memoization with deps tracking.
 pub fn use_callback<F, D>(callback: F, _deps: &[D]) -> F
 where
     F: Clone + 'static,
