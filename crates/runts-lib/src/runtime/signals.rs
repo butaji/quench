@@ -115,36 +115,40 @@ impl<T: Clone> From<T> for Signal<T> {
 
 /// Computed signal - a signal derived from other signals
 #[allow(dead_code)]
-pub struct Computed<T: Clone> {
-    value: Signal<T>,
+pub struct Computed<T> {
+    compute: Arc<dyn Fn() -> T + Send + Sync>,
+    value: Arc<RwLock<Option<T>>>,
 }
 
-impl<T: Clone> Computed<T> {
+impl<T: Clone + Send + Sync + 'static> Computed<T> {
     /// Create a new computed signal
     pub fn new<F>(f: F) -> Self
     where
-        F: FnOnce() -> T,
+        F: Fn() -> T + Send + Sync + 'static,
     {
-        let value = f();
         Self {
-            value: Signal::new(value),
+            compute: Arc::new(f),
+            value: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Get the computed value
+    /// Get the computed value - recomputes every call
     pub fn get(&self) -> T {
-        self.value.get()
+        let new_val = (self.compute)();
+        *self.value.write() = Some(new_val.clone());
+        new_val
     }
 
     /// Read access
-    pub fn read(&self) -> parking_lot::RwLockReadGuard<'_, T> {
-        self.value.read()
+    pub fn read(&self) -> T {
+        self.get()
     }
 }
 
-impl<T: Clone> Clone for Computed<T> {
+impl<T: Clone + Send + Sync + 'static> Clone for Computed<T> {
     fn clone(&self) -> Self {
         Self {
+            compute: self.compute.clone(),
             value: self.value.clone(),
         }
     }
@@ -207,9 +211,10 @@ pub fn signal<T: Clone>(initial: T) -> Signal<T> {
 }
 
 /// Create a computed signal
-pub fn computed<T: Clone, F>(f: F) -> Computed<T>
+pub fn computed<T, F>(f: F) -> Computed<T>
 where
-    F: FnOnce() -> T,
+    T: Clone + Send + Sync + 'static,
+    F: Fn() -> T + Send + Sync + 'static,
 {
     Computed::new(f)
 }
@@ -415,17 +420,16 @@ mod tests {
 
     #[test]
     fn test_computed_depends_on_signal() {
-        // Computed::new runs the factory once at creation time
-        // It does NOT auto-update when source signals change
+        // Computed::get() recomputes every call, so it reads current signal value
         let sig = Signal::new(5i32);
         let comp = Computed::new({
             let sig_clone = sig.clone();
             move || sig_clone.get() * 3
         });
         assert_eq!(comp.get(), 15);
-        // Changing sig does NOT update comp - computed is static in this impl
+        // Changing sig updates the computed value since get() recomputes
         sig.set(10);
-        assert_eq!(comp.get(), 15); // Still 15, not reactive
+        assert_eq!(comp.get(), 30); // Now 30, reactive
     }
 
     #[test]
