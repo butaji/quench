@@ -35,7 +35,7 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
         .program
         .body
         .iter()
-        .filter_map(stmt::convert_module_item)
+        .flat_map(stmt::convert_module_item)
         .collect();
     let mut module = hir::Module {
         source: String::new(),

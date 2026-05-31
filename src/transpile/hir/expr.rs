@@ -123,6 +123,7 @@ pub enum Expr {
         return_type: Option<Type>,
         is_async: bool,
     },
+    Block(Vec<Stmt>),
     Invalid,
 }
 
