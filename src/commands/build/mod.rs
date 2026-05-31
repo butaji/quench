@@ -325,11 +325,13 @@ pub async fn run_plugin_build(
         // Convert route path to file path: remove brackets, replace path separators with __
         let rel_path_stripped = rel_path.strip_prefix(Path::new("routes/")).unwrap_or(rel_path);
         let file_path: String = rel_path_stripped.components()
-            .map(|c| c.as_os_str().to_string_lossy().replace("[", "").replace("]", ""))
+            .map(|c| c.as_os_str().to_string_lossy()
+                .replace("[", "")
+                .replace("]", "")
+                .replace(".tsx", "")
+                .replace(".ts", ""))
             .collect::<Vec<_>>()
-            .join("__")
-            .replace(".tsx", "")
-            .replace(".ts", "");
+            .join("__");
         let out_path = src_dir.join(file_path).with_extension("rs");
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)?;
