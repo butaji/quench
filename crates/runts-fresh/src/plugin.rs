@@ -578,6 +578,11 @@ async fn main() {{
                 Some(quote::quote! { #lit })
             }
             serde_json::Value::Object(obj) => {
+                // Handle actual HIR format: { "String": "value" }
+                if let Some(s) = obj.get("String")?.as_str() {
+                    let lit = proc_macro2::Literal::string(s);
+                    return Some(quote::quote! { #lit });
+                }
                 // Expression value: { "Expr": <expr> }
                 if let Some(expr_val) = obj.get("Expr") {
                     let kind = expr_val.get("kind")?.as_str()?;
@@ -587,7 +592,7 @@ async fn main() {{
                             Some(quote::quote! { #name })
                         }
                         "String" => {
-                            let s = expr_val.get("0")?.as_str()?;
+                            let s = expr_val.get("String")?.as_str()?;
                             Some(quote::quote! { #s })
                         }
                         "Number" => {
@@ -609,8 +614,16 @@ async fn main() {{
         let arr = children.as_array()?;
         let mut result = Vec::new();
         for child in arr {
-            if let Some(ts) = self.jsx_child_to_tokenstream(child)? {
-                result.push(ts);
+            match self.jsx_child_to_tokenstream(child) {
+                Some(Some(ts)) => {
+                    result.push(ts);
+                }
+                Some(None) => {
+                    // Child processed but resulted in nothing (e.g., Spread)
+                }
+                None => {
+                    // Child processing returned None - skip
+                }
             }
         }
         Some(result)
@@ -624,76 +637,118 @@ async fn main() {{
             return Some(Some(jsx_text(text)));
         }
 
-        // Object child
-        let kind = child.get("kind")?.as_str()?;
-        match kind {
-            "Text" => {
-                let text = child.get("0")?.as_str()?;
-                Some(Some(jsx_text(text)))
-            }
-            "JSX" => {
-                let jsx_expr = child.get("JSX")?;
-                self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some)
-            }
-            "Fragment" => {
-                // Fragment: { "Fragment": { "children": [...] } }
-                let frag_children = child.get("Fragment")?.get("children")?;
-                let children = self.extract_jsx_children(frag_children)?;
-                Some(Some(jsx_fragment(children)))
-            }
-            "Expr" => {
-                // Expression child: { "Expr": <expr> }
-                let expr_val = child.get("Expr")?;
-                if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
-                    Some(Some(ts))
-                } else {
-                    Some(None)
-                }
-            }
-            "Spread" => {
-                // Spread children - skip for v0.1
-                Some(None)
-            }
-            _ => Some(None),
+        // Handle actual HIR format: {"Text": "..."}, {"JSX": {...}}, etc.
+        // without "kind" wrapper
+        if let Some(text) = child.get("Text").and_then(|v| v.as_str()) {
+            return Some(Some(jsx_text(text)));
         }
+        if child.get("JSX").is_some() {
+            let jsx_expr = child.get("JSX")?;
+            return self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some);
+        }
+        if child.get("Fragment").is_some() {
+            let frag_children = child.get("Fragment")?.get("children")?;
+            let children = self.extract_jsx_children(frag_children)?;
+            return Some(Some(jsx_fragment(children)));
+        }
+        if child.get("Expr").is_some() {
+            let expr_val = child.get("Expr")?;
+            if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
+                return Some(Some(ts));
+            } else {
+                return Some(None);
+            }
+        }
+        if child.get("Spread").is_some() {
+            // Spread children - skip for v0.1
+            return Some(None);
+        }
+
+        // Fallback: check for "kind" field (old format)
+        if let Some(kind) = child.get("kind").and_then(|v| v.as_str()) {
+            match kind {
+                "Text" => {
+                    let text = child.get("Text").and_then(|v| v.as_str())?;
+                    return Some(Some(jsx_text(text)));
+                }
+                "JSX" => {
+                    let jsx_expr = child.get("JSX")?;
+                    return self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some);
+                }
+                "Fragment" => {
+                    let frag_children = child.get("Fragment")?.get("children")?;
+                    let children = self.extract_jsx_children(frag_children)?;
+                    return Some(Some(jsx_fragment(children)));
+                }
+                "Expr" => {
+                    let expr_val = child.get("Expr")?;
+                    if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
+                        return Some(Some(ts));
+                    } else {
+                        return Some(None);
+                    }
+                }
+                "Spread" => {
+                    return Some(None);
+                }
+                _ => return Some(None),
+            }
+        }
+
+        Some(None)
     }
 
     /// Convert JSX expression to TokenStream.
     // allow:complexity
     fn jsx_expr_to_tokenstream(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
-        let kind = expr.get("kind")?.as_str()?;
-        match kind {
-            "Ident" => {
-                let name = expr.get("name")?.as_str()?;
-                Some(Some(jsx_expr(quote::quote! { #name })))
-            }
-            "String" => {
-                let s = expr.get("0")?.as_str()?;
-                Some(Some(jsx_text(s)))
-            }
-            "Number" => {
-                let n = expr.get("0")?.as_f64()?;
-                Some(Some(jsx_expr(quote::quote! { #n })))
-            }
-            "Boolean" => {
-                let b = expr.get("0")?.as_bool()?;
-                Some(Some(jsx_expr(quote::quote! { #b })))
-            }
-            "Bin" => {
-                // Binary expression - skip for v0.1
-                Some(None)
-            }
-            "Call" => {
-                // Function call - skip for v0.1
-                Some(None)
-            }
-            _ => Some(None),
+        // Handle actual HIR format: direct keys without "kind" wrapper
+        if let Some(name) = expr.get("Ident")?.as_str() {
+            return Some(Some(jsx_expr(quote::quote! { #name })));
         }
+        if let Some(s) = expr.get("String")?.as_str() {
+            return Some(Some(jsx_text(s)));
+        }
+        if let Some(n) = expr.get("Number")?.as_f64() {
+            return Some(Some(jsx_expr(quote::quote! { #n })));
+        }
+        if let Some(b) = expr.get("Boolean")?.as_bool() {
+            return Some(Some(jsx_expr(quote::quote! { #b })));
+        }
+
+        // Fallback: check for "kind" field (old format)
+        if let Some(kind) = expr.get("kind")?.as_str() {
+            match kind {
+                "Ident" => {
+                    let name = expr.get("name")?.as_str()?;
+                    return Some(Some(jsx_expr(quote::quote! { #name })));
+                }
+                "String" => {
+                    let s = expr.get("String")?.as_str()?;
+                    return Some(Some(jsx_text(s)));
+                }
+                "Number" => {
+                    let n = expr.get("0")?.as_f64()?;
+                    return Some(Some(jsx_expr(quote::quote! { #n })));
+                }
+                "Boolean" => {
+                    let b = expr.get("0")?.as_bool()?;
+                    return Some(Some(jsx_expr(quote::quote! { #b })));
+                }
+                "Bin" => {
+                    return Some(None);
+                }
+                "Call" => {
+                    return Some(None);
+                }
+                _ => return Some(None),
+            }
+        }
+
+        Some(None)
     }
 
     /// Wrap page component code in a module.
     fn wrap_page_module(&self, name: &str, page_fn: &str) -> String {
-        let fn_name_lower = name.to_lowercase();
         format!(
             r#"//! Page component: {name}
 //! Generated by runts-fresh 0.1
@@ -703,7 +758,7 @@ use runts_lib::runtime::vdom::VNode;
 {page_fn}
 
 pub fn render() -> VNode {{
-    {fn_name_lower}()
+    {name}()
 }}
 "#
         )
@@ -736,7 +791,7 @@ mod tests {
                                             "self_closing": false
                                         },
                                         "children": [
-                                            { "kind": "Text", "0": "Hello World" }
+                                            { "Text": "Hello World" }
                                         ],
                                         "closing": {
                                             "name": { "Ident": "div" }
@@ -792,7 +847,7 @@ mod tests {
                                             "self_closing": false
                                         },
                                         "children": [
-                                            { "kind": "Text", "0": "Welcome" }
+                                            { "Text": "Welcome" }
                                         ],
                                         "closing": {
                                             "name": { "Ident": "div" }
@@ -830,7 +885,7 @@ mod tests {
                             "stmts": [
                                 {
                                     "kind": "Return",
-                                    "arg": { "kind": "String", "0": "hello" }
+                                    "arg": { "String": "hello" }
                                 }
                             ]
                         }
@@ -877,7 +932,7 @@ mod tests {
                                                         "self_closing": false
                                                     },
                                                     "children": [
-                                                        { "kind": "Text", "0": "nested" }
+                                                        { "Text": "nested" }
                                                     ],
                                                     "closing": {
                                                         "name": { "Ident": "span" }
