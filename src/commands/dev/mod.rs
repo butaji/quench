@@ -3,6 +3,7 @@
 //! Core owns: file watching, outer loop, QuickJS context
 //! Plugin hooks: dev_init, dev_run_once, dev_reload
 
+use crate::commands::build;
 use crate::config::Config;
 use crate::plugin;
 use notify::Watcher;
@@ -27,6 +28,16 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
         modules,
     };
 
+    // Run initial full build to populate .runts/build directory AND compile
+    // This is required because FreshDevState::compile_project() expects
+    // the build directory to exist and compiles there (it runs cargo build in .runts/build)
+    tracing::info!("Running initial build...");
+    if let Err(e) = build::run_full_build(_config, project_root.clone(), false).await {
+        tracing::error!("Initial build failed: {}", e);
+        return Err(e);
+    }
+    tracing::info!("Initial build complete, starting dev server...");
+
     let mut state = plugin.dev_init(&mut ctx)?;
     let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;
 
@@ -41,11 +52,22 @@ fn dev_loop(
     tx: std::sync::mpsc::Sender<Result<notify::Event, notify::Error>>,
     rx: std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 ) -> Result<()> {
+    // Ignore events from these directories (convert to string once)
+    let ignore_patterns = [".runts", "target", "node_modules", ".git"];
+
     loop {
         if let Ok(event) = rx.try_recv() {
-            if event.is_ok() {
-                ctx.modules = scan_modules(project_root)?;
-                plugin.dev_reload(ctx, state)?;
+            if let Some(event) = event.ok() {
+                // Filter out events from build artifacts and hidden directories
+                let should_reload = event.paths.iter().any(|p| {
+                    let path_str = p.to_string_lossy();
+                    !ignore_patterns.iter().any(|pat| path_str.contains(pat))
+                });
+
+                if should_reload {
+                    ctx.modules = scan_modules(project_root)?;
+                    plugin.dev_reload(ctx, state)?;
+                }
             }
         }
 
@@ -88,6 +110,13 @@ fn scan_modules(root: &PathBuf) -> Result<Vec<String>> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+        // Skip hidden directories and build artifacts
+        if path.components().any(|c| {
+            let s = c.as_os_str().to_string_lossy();
+            s.starts_with('.') || s == "target" || s == "node_modules"
+        }) {
+            continue;
+        }
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext.to_lowercase() == "tsx" || ext.to_lowercase() == "ts" {
                 modules.push(path.to_string_lossy().to_string());

@@ -71,7 +71,9 @@ impl FreshDevState {
         }
 
         // Need to spawn
-        let binary_path = self.project_root.join("target").join("debug").join("runts-app");
+        // Binary is at .runts/build/target/debug/runts-app
+        let build_dir = self.project_root.join(".runts").join("build");
+        let binary_path = build_dir.join("target").join("debug").join("runts-app");
 
         // Compile if needed
         if !binary_path.exists() {
