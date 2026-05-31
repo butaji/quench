@@ -160,7 +160,7 @@ impl QuoteCodegen {
                 quote! { pub #name: #ty }
             })
             .collect();
-        quote! { { #(#fields),* } }
+        quote! { { #(#fields);* } }
     }
     
     fn gen_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
@@ -347,17 +347,21 @@ impl QuoteCodegen {
         }
     }
     
+    // allow: complexity
     fn cmp_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
         use super::BinaryOp as B;
-        match op {
-            B::Eq => Some(quote! { == }),
-            B::Neq => Some(quote! { != }),
-            B::Lt => Some(quote! { < }),
-            B::Lte => Some(quote! { <= }),
-            B::Gt => Some(quote! { > }),
-            B::Gte => Some(quote! { >= }),
-            _ => None,
-        }
+        let op_str = match op {
+            B::Eq => "==",
+            B::Neq => "!=",
+            B::StrictEq => "===",
+            B::StrictNeq => "!==",
+            B::Lt => "<",
+            B::Lte => "<=",
+            B::Gt => ">",
+            B::Gte => ">=",
+            _ => return None,
+        };
+        Some(quote! { #op_str })
     }
 }
 

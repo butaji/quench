@@ -348,7 +348,7 @@ pub(crate) mod jsx {
 
     /// Handle text child.
     fn jsx_text_child(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
-        let text = child.get("0")?.as_str()?;
+        let text = child.get("text")?.as_str()?;
         Some(Some(serde_json::json!({"kind": "Text", "text": text})))
     }
 
