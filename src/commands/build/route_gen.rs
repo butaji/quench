@@ -1,6 +1,6 @@
 //! Route generation
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::commands::build::RouteEntry;
@@ -46,7 +46,8 @@ fn file_to_pattern(base: &Path, file: &Path) -> Option<String> {
     for part in parts.iter() {
         let s = part.as_os_str().to_string_lossy();
         if s.starts_with('[') {
-            pattern.push_str(&s.replace('[', "{").replace(']', "}"));
+            let replaced = s.replace('[', "{").replace(']', "");
+            pattern.push_str(&replaced.replace(".tsx", "").replace(".ts", ""));
         } else if s != "index.tsx" && s != "index.ts" && s != "routes" {
             pattern.push('/');
             pattern.push_str(&s.replace(".tsx", "").replace(".ts", ""));
@@ -79,4 +80,56 @@ pub fn generate_route_table(routes: &[RouteEntry]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bracket_route_strips_extension() {
+        // [id].tsx should produce /{id}, not /{id}.tsx
+        let base = Path::new("/routes");
+        let file = base.join("[id].tsx");
+        let pattern = file_to_pattern(base, &file).unwrap();
+        assert_eq!(pattern, "/{id}");
+    }
+
+    #[test]
+    fn test_bracket_route_with_nested_path() {
+        let base = Path::new("/routes");
+        let file = base.join("posts/[id].tsx");
+        let pattern = file_to_pattern(base, &file).unwrap();
+        assert_eq!(pattern, "/posts/{id}");
+    }
+
+    #[test]
+    fn test_plain_route_still_works() {
+        let base = Path::new("/routes");
+        let file = base.join("about.tsx");
+        let pattern = file_to_pattern(base, &file).unwrap();
+        assert_eq!(pattern, "/about");
+    }
+
+    #[test]
+    fn test_index_route() {
+        let base = Path::new("/routes");
+        let file = base.join("index.tsx");
+        let pattern = file_to_pattern(base, &file).unwrap();
+        assert_eq!(pattern, "/");
+    }
+
+    #[test]
+    fn test_collision_prevention_per_component() {
+        // posts/[id].tsx and posts/id.tsx should both produce /posts/{id} pattern
+        // (the collision fix is in mod.rs for file_path generation, but we verify pattern gen)
+        let base = Path::new("/routes");
+        let file1 = base.join("posts/[id].tsx");
+        let file2 = base.join("posts/id.tsx");
+        let pattern1 = file_to_pattern(base, &file1).unwrap();
+        let pattern2 = file_to_pattern(base, &file2).unwrap();
+        // Both should produce valid patterns (extension stripped for bracket version)
+        assert_eq!(pattern1, "/posts/{id}");
+        assert_eq!(pattern2, "/posts/id");
+    }
 }
