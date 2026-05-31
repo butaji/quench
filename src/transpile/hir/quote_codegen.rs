@@ -347,21 +347,23 @@ impl QuoteCodegen {
         }
     }
     
-    // allow: complexity
     fn cmp_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
+        Self::cmp_bin_op_str(op).map(|s| quote! { #s })
+    }
+
+    fn cmp_bin_op_str(op: &super::BinaryOp) -> Option<&'static str> {
         use super::BinaryOp as B;
-        let op_str = match op {
-            B::Eq => "==",
-            B::Neq => "!=",
-            B::StrictEq => "===",
-            B::StrictNeq => "!==",
-            B::Lt => "<",
-            B::Lte => "<=",
-            B::Gt => ">",
-            B::Gte => ">=",
-            _ => return None,
-        };
-        Some(quote! { #op_str })
+        match op {
+            B::Eq => Some("=="),
+            B::Neq => Some("!="),
+            B::Lt => Some("<"),
+            B::Lte => Some("<="),
+            B::Gt => Some(">"),
+            B::Gte => Some(">="),
+            B::StrictEq => Some("==="),
+            B::StrictNeq => Some("!=="),
+            _ => None,
+        }
     }
 }
 

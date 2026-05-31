@@ -46,7 +46,8 @@ fn file_to_pattern(base: &Path, file: &Path) -> Option<String> {
     for part in parts.iter() {
         let s = part.as_os_str().to_string_lossy();
         if s.starts_with('[') {
-            let replaced = s.replace('[', "{").replace(']', "");
+            let replaced = s.replace('[', "{").replace(']', "}");
+            pattern.push('/');
             pattern.push_str(&replaced.replace(".tsx", "").replace(".ts", ""));
         } else if s != "index.tsx" && s != "index.ts" && s != "routes" {
             pattern.push('/');
