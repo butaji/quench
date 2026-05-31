@@ -157,9 +157,9 @@ fn write_generated_files(build_dir: &Path, files: &[GeneratedFile]) -> Result<()
 }
 
 /// Security: validate output path doesn't escape build directory
-fn validate_output_path(_build_dir: &Path, out_path: &Path, original: &Path) -> Result<()> {
-    // Reject absolute paths
-    if out_path.is_absolute() {
+fn validate_output_path(build_dir: &Path, out_path: &Path, original: &Path) -> Result<()> {
+    // Reject absolute paths from GeneratedFile - they could escape build_dir
+    if original.is_absolute() {
         anyhow::bail!("Absolute path rejected: {:?}", original);
     }
     // Reject any path components with ".."
@@ -167,6 +167,10 @@ fn validate_output_path(_build_dir: &Path, out_path: &Path, original: &Path) -> 
         if component == std::path::Component::ParentDir {
             anyhow::bail!("Path traversal attempt detected: {:?}", original);
         }
+    }
+    // Ensure output path is within build directory
+    if !out_path.starts_with(build_dir) {
+        anyhow::bail!("Path escapes build directory: {:?}", original);
     }
     Ok(())
 }
@@ -235,10 +239,11 @@ fn compile_project(build_dir: &Path, release: bool) -> Result<()> {
     Ok(())
 }
 
-fn find_binary(project_root: &Path, build_dir: &Path, release: bool) -> Option<PathBuf> {
+fn find_binary(_project_root: &Path, build_dir: &Path, release: bool) -> Option<PathBuf> {
     let profile = if release { "release" } else { "debug" };
-    let app_name = project_root.file_name()?.to_str()?.replace('-', "_");
-    let binary = build_dir.join("target").join(profile).join(&app_name);
+    // Binary name is "runts-app" per Cargo.toml [[bin]] section
+    let binary_name = format!("runts-app{}", std::env::consts::EXE_SUFFIX);
+    let binary = build_dir.join("target").join(profile).join(&binary_name);
     if binary.exists() {
         Some(binary)
     } else {
