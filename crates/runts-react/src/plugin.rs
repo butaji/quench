@@ -23,7 +23,7 @@ impl Plugin for ReactPlugin {
 
         let source_path = module.source_path.as_deref().unwrap_or("");
 
-        if source_path.contains("/component/") || source_path.ends_with(".jsx") {
+        if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
             Ok(self.codegen_component_module(source_path))
         } else if source_path.contains("server") || source_path.contains("main") {
             Ok(self.codegen_server_module(source_path))
@@ -77,7 +77,9 @@ impl {name} {{
     /// Render component to HTML string
     pub fn render() -> String {{
         format!(
-            "<div data-component=\"{name}\" data-source=\"{file_path}\">{{{name}}}</div>"
+            "<div data-component=\"{name}\" data-source=\"{file_path}\">{{{name}}}</div>",
+            name = name,
+            file_path = file_path
         )
     }}
 
@@ -237,9 +239,8 @@ impl App {
     Router,
     routing::get,
     response::Html,
-    extract::Path,
     http::StatusCode,
-    response::{{IntoResponse, Response}},
+    response::IntoResponse,
 }};
 use tokio::net::TcpListener;
 use std::net::SocketAddr;
@@ -284,10 +285,8 @@ use axum::{{
     response::Html,
     extract::Path,
     http::StatusCode,
-    response::{{IntoResponse, Response}},
+    response::IntoResponse,
 }};
-use tokio::net::TcpListener;
-use std::net::SocketAddr;
 
 pub fn app() -> Router {{
     Router::new()
@@ -305,7 +304,7 @@ async fn {handler_name}() -> impl IntoResponse {{
     <script src=\"/static/react-assets/client.js\"></script>
 </head>
 <body>
-{{{{body}}}}
+{{body}}
 </body>
 </html>",
         body = body
@@ -323,7 +322,7 @@ async fn {handler_name}_with_params(Path(params): Path<std::collections::HashMap
     <title>React SSR</title>
 </head>
 <body>
-{{{{body}}}}
+{{body}}
 </body>
 </html>",
         body = body
