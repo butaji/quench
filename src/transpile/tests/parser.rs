@@ -256,4 +256,208 @@ mod parser_tests {
         assert!(has_function_name, "Function should have name 'Hello'");
         assert!(has_function_kind, "Function should have kind 'Function'");
     }
+
+    // Bug 1: func_to_decl returns empty body and params
+    #[test]
+    fn test_function_has_params_and_body() {
+        let parser = TsParser::new();
+        let source = r#"function add(a: number, b: number): number { return a + b; }"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        let func = module.items.iter().find_map(|item| {
+            if let ModuleItem::Decl(Decl::Function(f)) = item {
+                Some(f)
+            } else {
+                None
+            }
+        });
+
+        assert!(func.is_some(), "Should find function declaration");
+        let func = func.unwrap();
+
+        // Bug fix: params should not be empty
+        assert!(!func.params.is_empty(), "Function should have params, got: {:?}", func.params);
+        assert_eq!(func.params.len(), 2, "Function should have 2 params");
+        assert_eq!(func.params[0].name, "a");
+        assert_eq!(func.params[1].name, "b");
+
+        // Bug fix: body should not be None
+        assert!(func.body.is_some(), "Function should have a body");
+        assert!(!func.body.as_ref().unwrap().0.is_empty(), "Function body should not be empty");
+    }
+
+    // Bug 2: Arrow function loses statements after first
+    #[test]
+    fn test_arrow_function_block_has_all_statements() {
+        let parser = TsParser::new();
+        let source = r#"const f = () => { a; b; c; };"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        // Find the arrow function
+        let arrow = module.items.iter().find_map(|item| {
+            if let ModuleItem::Decl(Decl::Variable(var)) = item {
+                if let Some(Expr::ArrowFunction { body, .. }) = &var.init {
+                    return Some((**body).clone());
+                }
+            }
+            None
+        });
+
+        assert!(arrow.is_some(), "Should find arrow function");
+        let arrow_body = arrow.unwrap();
+
+        // The body should be a Block with all statements
+        if let Expr::Block(stmts) = arrow_body {
+            assert_eq!(stmts.len(), 3, "Arrow block should have 3 statements, got: {:?}", stmts);
+        } else {
+            panic!("Arrow function body should be Block, got: {:?}", arrow_body);
+        }
+    }
+
+    // Bug 3: For loop init is always None
+    #[test]
+    fn test_for_loop_has_init() {
+        let parser = TsParser::new();
+        let source = r#"for (let i = 0; i < 10; i++) { console.log(i); }"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        // Find the for statement
+        let for_stmt = module.items.iter().find_map(|item| {
+            if let ModuleItem::Stmt(Stmt::For { init, .. }) = item {
+                Some(init.clone())
+            } else {
+                None
+            }
+        });
+
+        assert!(for_stmt.is_some(), "Should find for statement");
+        let for_init = for_stmt.unwrap();
+
+        // Bug fix: init should not be None
+        assert!(for_init.is_some(), "For loop should have init, got: {:?}", for_init);
+
+        if let Some(ForInit::Variable(kind, vars)) = &for_init {
+            assert_eq!(kind, &VariableKind::Let);
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].0, "i");
+        } else {
+            panic!("For loop init should be Variable, got: {:?}", for_init);
+        }
+    }
+
+    // Bug 4: Multiple variable declarators dropped
+    #[test]
+    fn test_multiple_declarators_all_preserved() {
+        let parser = TsParser::new();
+        let source = r#"let a = 1, b = 2, c = 3;"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        // Should have 3 separate Variable declarations
+        let var_decls: Vec<_> = module.items.iter()
+            .filter_map(|item| {
+                if let ModuleItem::Decl(Decl::Variable(v)) = item {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(var_decls.len(), 3, "Should have 3 variable declarations, got: {:?}", var_decls);
+
+        assert_eq!(var_decls[0].name, "a");
+        assert_eq!(var_decls[1].name, "b");
+        assert_eq!(var_decls[2].name, "c");
+    }
+
+    // Bug 5: VariableKind always Const
+    #[test]
+    fn test_variable_kind_properly_mapped() {
+        let parser = TsParser::new();
+
+        // Test let
+        let source = r#"let x = 1;"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+        let var = module.items.iter().find_map(|item| {
+            if let ModuleItem::Decl(Decl::Variable(v)) = item {
+                Some(v.clone())
+            } else {
+                None
+            }
+        }).unwrap();
+        assert_eq!(var.kind, VariableKind::Let, "let should map to VariableKind::Let");
+
+        // Test const
+        let source = r#"const y = 2;"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+        let var = module.items.iter().find_map(|item| {
+            if let ModuleItem::Decl(Decl::Variable(v)) = item {
+                Some(v.clone())
+            } else {
+                None
+            }
+        }).unwrap();
+        assert_eq!(var.kind, VariableKind::Const, "const should map to VariableKind::Const");
+
+        // Test var
+        let source = r#"var z = 3;"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+        let var = module.items.iter().find_map(|item| {
+            if let ModuleItem::Decl(Decl::Variable(v)) = item {
+                Some(v.clone())
+            } else {
+                None
+            }
+        }).unwrap();
+        assert_eq!(var.kind, VariableKind::Var, "var should map to VariableKind::Var");
+    }
+
+    // Bug 6: Export default expression becomes Empty
+    #[test]
+    fn test_export_default_expression_not_empty() {
+        let parser = TsParser::new();
+        let source = r#"export default 42;"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        // Should have ExportDefault with expr, not Stmt::Empty
+        let has_export_default = module.items.iter().any(|item| {
+            if let ModuleItem::Stmt(Stmt::ExportDefault { expr }) = item {
+                // expr should be Number(42)
+                if let Expr::Number(n) = expr {
+                    return *n == 42.0;
+                }
+            }
+            false
+        });
+
+        assert!(has_export_default, "export default 42 should produce Stmt::ExportDefault with Number(42), got: {:?}", module.items);
+
+        // Also check it should NOT be Empty
+        let is_empty = module.items.iter().any(|item| {
+            if let ModuleItem::Stmt(Stmt::Empty) = item {
+                return true;
+            }
+            false
+        });
+
+        assert!(!is_empty, "export default 42 should NOT produce Stmt::Empty");
+    }
+
+    #[test]
+    fn test_export_default_expression_string() {
+        let parser = TsParser::new();
+        let source = r#"export default "hello";"#;
+        let module = parser.parse_source(source).expect("Parsing should succeed");
+
+        let has_export_default = module.items.iter().any(|item| {
+            if let ModuleItem::Stmt(Stmt::ExportDefault { expr }) = item {
+                if let Expr::String(s) = expr {
+                    return s == "hello";
+                }
+            }
+            false
+        });
+
+        assert!(has_export_default, "export default 'hello' should produce Stmt::ExportDefault with String, got: {:?}", module.items);
+    }
 }

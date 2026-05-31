@@ -40,7 +40,7 @@ pub fn convert_expr(expr: &Expression) -> Option<hir::Expr> {
     }
 }
 
-fn conv_template(t: &TemplateLiteral) -> Option<hir::Expr> {
+pub fn conv_template(t: &TemplateLiteral) -> Option<hir::Expr> {
     let mut parts = vec![];
     let mut exprs = vec![];
 
@@ -54,7 +54,7 @@ fn conv_template(t: &TemplateLiteral) -> Option<hir::Expr> {
     Some(hir::Expr::Template { parts, exprs })
 }
 
-fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
+pub fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
     let members: Vec<hir::ObjectMemberExpr> = o
         .properties
         .iter()
@@ -81,7 +81,7 @@ fn conv_object(o: &ObjectExpression) -> Option<hir::Expr> {
     Some(hir::Expr::Object { members })
 }
 
-fn arr_elems(a: &ArrayExpression) -> Vec<Option<hir::Expr>> {
+pub fn arr_elems(a: &ArrayExpression) -> Vec<Option<hir::Expr>> {
     a.elements
         .iter()
         .map(|e| e.as_expression().and_then(convert_expr))
@@ -190,7 +190,7 @@ fn conv_simple_assignment_target(target: &SimpleAssignmentTarget) -> Option<hir:
     }
 }
 
-fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
+pub fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
     let params: Vec<hir::Param> = a
         .params
         .items
@@ -211,6 +211,7 @@ fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
         })
         .collect();
     let body = if a.expression {
+        // Arrow function with expression body: () => expr
         if let Some(stmt) = a.body.statements.first() {
             if let Statement::ExpressionStatement(e) = stmt {
                 convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined)
@@ -221,13 +222,122 @@ fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
             hir::Expr::Undefined
         }
     } else {
-        hir::Expr::Undefined
+        // Arrow function with block body: () => { ... }
+        // Convert all statements using inline conversion
+        let stmts: Vec<hir::Stmt> = a
+            .body
+            .statements
+            .iter()
+            .filter_map(|s| arrow_stmt_to_hir(s))
+            .collect();
+        hir::Expr::Block(stmts)
     };
     Some(hir::Expr::ArrowFunction {
         params,
         body: Box::new(body),
         is_async: a.r#async,
     })
+}
+
+/// Convert a statement for use in arrow function block bodies.
+/// Handles the common cases without requiring stmt_to_hir_stmt (avoids circular imports).
+fn arrow_stmt_to_hir(s: &Statement) -> Option<hir::Stmt> {
+    match s {
+        Statement::ExpressionStatement(e) => Some(hir::Stmt::Expr {
+            expr: convert_expr(&e.expression).unwrap_or(hir::Expr::Undefined),
+        }),
+        Statement::ReturnStatement(r) => Some(hir::Stmt::Return {
+            arg: r.argument.as_ref().and_then(|a| convert_expr(a)),
+        }),
+        Statement::VariableDeclaration(v) => {
+            // Convert to a Block with assignments (same logic as stmt_to_hir_stmt)
+            let mut stmts = vec![];
+            for decl in &v.declarations {
+                let name = match &decl.id {
+                    BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+                    _ => continue,
+                };
+                let init = decl.init.as_ref().and_then(convert_expr);
+                let assign = hir::Expr::Assign {
+                    op: hir::AssignOp::Assign,
+                    left: Box::new(hir::Expr::Ident { name: name.clone() }),
+                    right: Box::new(init.unwrap_or(hir::Expr::Undefined)),
+                };
+                stmts.push(hir::Stmt::Expr { expr: assign });
+            }
+            Some(hir::Stmt::Block(stmts))
+        }
+        Statement::BlockStatement(b) => {
+            let stmts: Vec<hir::Stmt> = b
+                .body
+                .iter()
+                .filter_map(arrow_stmt_to_hir)
+                .collect();
+            Some(hir::Stmt::Block(stmts))
+        }
+        Statement::IfStatement(stmt) => Some(hir::Stmt::If {
+            test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
+            consequent: Box::new(
+                arrow_stmt_to_hir(&stmt.consequent).unwrap_or(hir::Stmt::Empty)
+            ),
+            alternate: stmt
+                .alternate
+                .as_ref()
+                .map(|a| Box::new(arrow_stmt_to_hir(a).unwrap_or(hir::Stmt::Empty))),
+        }),
+        Statement::WhileStatement(stmt) => Some(hir::Stmt::While {
+            test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
+            body: Box::new(
+                arrow_stmt_to_hir(&stmt.body).unwrap_or(hir::Stmt::Empty)
+            ),
+        }),
+        Statement::ForStatement(stmt) => {
+            // ForStatementInit is Option<ForStatementInit> where ForStatementInit
+            // has VariableDeclaration variant plus inherited Expression variants
+            let init = match &stmt.init {
+                Some(ForStatementInit::VariableDeclaration(v)) => {
+                    let kind = match v.kind {
+                        VariableDeclarationKind::Const => hir::VariableKind::Const,
+                        VariableDeclarationKind::Let => hir::VariableKind::Let,
+                        VariableDeclarationKind::Var => hir::VariableKind::Var,
+                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => hir::VariableKind::Var,
+                    };
+                    let vars: Vec<(String, Option<hir::Expr>)> = v
+                        .declarations
+                        .iter()
+                        .filter_map(|d| {
+                            let name = match &d.id {
+                                BindingPattern::BindingIdentifier(i) => Some(i.name.to_string()),
+                                _ => None,
+                            }?;
+                            let init = d.init.as_ref().and_then(convert_expr);
+                            Some((name, init))
+                        })
+                        .collect();
+                    Some(hir::ForInit::Variable(kind, vars))
+                }
+                Some(_) => {
+                    // ForStatementInit has inherited Expression variants
+                    // Use match_variant! or similar to handle - but for simplicity,
+                    // we just convert expressions we know
+                    None // For complex cases, fall back to no init
+                }
+                None => None,
+            };
+            Some(hir::Stmt::For {
+                init,
+                test: stmt.test.as_ref().and_then(|t| convert_expr(t)),
+                update: stmt.update.as_ref().and_then(|u| convert_expr(u)),
+                body: Box::new(
+                    arrow_stmt_to_hir(&stmt.body).unwrap_or(hir::Stmt::Empty)
+                ),
+            })
+        }
+        Statement::BreakStatement(_) => Some(hir::Stmt::Break { label: None }),
+        Statement::ContinueStatement(_) => Some(hir::Stmt::Continue { label: None }),
+        Statement::EmptyStatement(_) => Some(hir::Stmt::Empty),
+        _ => None,
+    }
 }
 
 fn conv_call(c: &CallExpression) -> Option<hir::Expr> {
