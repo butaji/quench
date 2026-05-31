@@ -117,7 +117,7 @@ impl<T: Clone> From<T> for Signal<T> {
 #[allow(dead_code)]
 pub struct Computed<T> {
     compute: Arc<dyn Fn() -> T + Send + Sync>,
-    value: Arc<RwLock<Option<T>>>,
+    cache: Arc<RwLock<Option<T>>>,
 }
 
 impl<T: Clone + Send + Sync + 'static> Computed<T> {
@@ -126,16 +126,18 @@ impl<T: Clone + Send + Sync + 'static> Computed<T> {
     where
         F: Fn() -> T + Send + Sync + 'static,
     {
+        let val = f();
         Self {
             compute: Arc::new(f),
-            value: Arc::new(RwLock::new(None)),
+            cache: Arc::new(RwLock::new(Some(val))),
         }
     }
 
     /// Get the computed value - recomputes every call
     pub fn get(&self) -> T {
         let new_val = (self.compute)();
-        *self.value.write() = Some(new_val.clone());
+        let mut cache = self.cache.write();
+        *cache = Some(new_val.clone());
         new_val
     }
 
@@ -149,7 +151,7 @@ impl<T: Clone + Send + Sync + 'static> Clone for Computed<T> {
     fn clone(&self) -> Self {
         Self {
             compute: self.compute.clone(),
-            value: self.value.clone(),
+            cache: self.cache.clone(),
         }
     }
 }

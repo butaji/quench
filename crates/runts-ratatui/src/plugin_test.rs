@@ -25,7 +25,7 @@ fn jsx_text(name: &str, text: &str) -> serde_json::Value {
             "attrs": [],
             "self_closing": false
         },
-        "children": [{ "kind": "Text", "0": text }],
+        "children": [{ "kind": "Text", "text": text }],
         "closing": { "name": { "Ident": name } }
     })
 }
@@ -176,7 +176,7 @@ fn test_try_codegen_jsx_simple_text() {
 #[test]
 fn test_try_codegen_jsx_block_with_title() {
     let plugin = ratatui_plugin();
-    let block = jsx_block_with_title("My App", serde_json::json!({ "kind": "Text", "0": "Content" }));
+    let block = jsx_block_with_title("My App", serde_json::json!({ "kind": "Text", "text": "Content" }));
     let items = items_with_fn("App", block);
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
@@ -236,7 +236,7 @@ fn test_try_codegen_jsx_col() {
     let items = items_with_fn("VLayout", serde_json::json!({
         "kind": "JSX",
         "opening": { "name": { "Ident": "col" }, "attrs": [], "self_closing": false },
-        "children": [{ "kind": "Text", "0": "Top" }],
+        "children": [{ "kind": "Text", "text": "Top" }],
         "closing": { "name": { "Ident": "col" } }
     }));
     let result = plugin.try_codegen_jsx(&items);
