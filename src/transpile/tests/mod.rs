@@ -19,4 +19,7 @@ pub mod parser;
 pub mod routegen;
 
 #[cfg(test)]
+pub mod spec_data_structures;
+
+#[cfg(test)]
 pub mod spec_roundtrip;
