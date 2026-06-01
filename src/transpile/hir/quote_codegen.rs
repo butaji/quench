@@ -38,12 +38,17 @@ impl QuoteCodegen {
         let param_destructuring = self.gen_param_destructuring(&func.params);
         let body = self.gen_body_with_prefix(&func.body, param_destructuring);
 
-        let vis = quote! { pub };
-        let async_kw = if func.is_async { quote! { async } } else { quote! {} };
-
-        quote! {
-            #vis #async_kw fn #name(#params) #ret_type {
-                #body
+        if func.is_async {
+            quote! {
+                pub async fn #name(#params) #ret_type {
+                    #body
+                }
+            }
+        } else {
+            quote! {
+                pub fn #name(#params) #ret_type {
+                    #body
+                }
             }
         }
     }
@@ -750,8 +755,16 @@ impl QuoteCodegen {
         let right_token = self.gen_expr(right);
         let body_token = self.gen_block_stmt(body);
         if is_await {
+            // Extract variable name from left token for while let Some pattern
+            let var_name = if let Some(super::ForInit::Variable(_, vars)) = Some(left) {
+                vars.first().map(|(name, _)| {
+                    syn::Ident::new(name, proc_macro2::Span::call_site())
+                }).unwrap_or_else(|| syn::Ident::new("__item", proc_macro2::Span::call_site()))
+            } else {
+                syn::Ident::new("__item", proc_macro2::Span::call_site())
+            };
             quote! {
-                for await #left_token in #right_token {
+                while let Some(#var_name) = #right_token.next().await {
                     #body_token
                 }
             }
@@ -1449,6 +1462,22 @@ impl QuoteCodegen {
     }
 
     fn gen_new_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        // Special handling for new Promise() - generate tokio spawn
+        if let Expr::Ident { name } = callee {
+            if name == "Promise" {
+                // new Promise((resolve, reject) => { ... }) -> tokio::spawn with channel
+                return quote! { {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    tokio::spawn(async move {
+                        if let Err(_) = rx.await {
+                            // Promise was dropped without resolution
+                        }
+                    });
+                    tx
+                } };
+            }
+        }
+
         let callee_ts = self.gen_expr(callee);
         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
         quote! { #callee_ts(#(#args),*) }
@@ -1475,7 +1504,7 @@ impl QuoteCodegen {
         }
 
         // Generate struct fields from members
-        let fields: Vec<TokenStream> = class.members.iter()
+        let field_defs: Vec<TokenStream> = class.members.iter()
             .filter(|m| !m.is_static)
             .map(|m| {
                 let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site());
@@ -1486,6 +1515,12 @@ impl QuoteCodegen {
             })
             .collect();
 
+        // Collect field names for constructor initialization
+        let field_names: Vec<_> = class.members.iter()
+            .filter(|m| !m.is_static)
+            .map(|m| syn::Ident::new(&m.name, proc_macro2::Span::call_site()))
+            .collect();
+
         // Generate constructor and methods
         let mut constructor_tokens: Option<TokenStream> = None;
         let mut method_tokens: Vec<TokenStream> = Vec::new();
@@ -1493,39 +1528,59 @@ impl QuoteCodegen {
         for method in &class.methods {
             if method.kind == super::MethodKind::Constructor {
                 let params: Vec<_> = method.params.iter().map(|p| {
-                    let name = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
+                    let pname = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
                     let ty = p.type_.as_ref()
                         .map(|t| self.gen_type(t))
                         .unwrap_or_else(|| quote! { f64 });
-                    quote! { #name: #ty }
+                    quote! { #pname: #ty }
                 }).collect();
-                let body = self.gen_expr(&method.body);
+                // Constructor body: Point { x, y, ... }
                 constructor_tokens = Some(quote! {
                     pub fn new(#(#params),*) -> Self {
-                        Self { #body }
+                        #name { #(#field_names),* }
                     }
                 });
             } else {
                 let method_name = syn::Ident::new(&method.name, proc_macro2::Span::call_site());
-                let params: Vec<_> = method.params.iter().map(|p| {
-                    let name = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
-                    let ty = p.type_.as_ref()
-                        .map(|t| self.gen_type(t))
-                        .unwrap_or_else(|| quote! { f64 });
-                    quote! { #name: #ty }
-                }).collect();
+                // Instance methods get &self as first param
+                let params_with_self: Vec<TokenStream> = {
+                    let mut p = vec![quote! { &self }];
+                    p.extend(method.params.iter().map(|pm| {
+                        let pname = syn::Ident::new(&pm.name, proc_macro2::Span::call_site());
+                        let ty = pm.type_.as_ref()
+                            .map(|t| self.gen_type(t))
+                            .unwrap_or_else(|| quote! { f64 });
+                        quote! { #pname: #ty }
+                    }));
+                    p
+                };
                 let body = self.gen_expr(&method.body);
                 method_tokens.push(quote! {
-                    pub fn #method_name(#(#params),*) -> f64 {
+                    pub fn #method_name(#(#params_with_self),*) -> f64 {
                         #body
                     }
                 });
             }
         }
 
+        // Build struct body - join fields with semicolons
+        let struct_body: TokenStream = if field_defs.is_empty() {
+            quote! {}
+        } else {
+            let mut combined = quote! {};
+            for (i, field) in field_defs.iter().enumerate() {
+                if i > 0 {
+                    combined = quote! { #combined, #field };
+                } else {
+                    combined = quote! { #field };
+                }
+            }
+            quote! { #combined }
+        };
+
         quote! {
             struct #name {
-                #(#fields),*
+                #struct_body
             }
 
             impl #name {
@@ -1722,6 +1777,30 @@ impl QuoteCodegen {
     }
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        // Special handling for fetch() -> reqwest::get()
+        if let Expr::Ident { name } = callee {
+            if name == "fetch" {
+                let url = arguments.first()
+                    .map(|a| self.gen_expr(a))
+                    .unwrap_or_else(|| quote! { String::new() });
+                return quote! { reqwest::get(#url).await? };
+            }
+            // Special handling for setTimeout(resolve, ms) -> tokio::time::sleep
+            if name == "setTimeout" {
+                let duration = arguments.get(1)
+                    .map(|a| self.gen_expr(a))
+                    .unwrap_or_else(|| quote! { 0 });
+                return quote! { tokio::time::sleep(std::time::Duration::from_millis(#duration as u64)).await };
+            }
+            // Special handling for setInterval -> tokio::time::interval
+            if name == "setInterval" {
+                let duration = arguments.get(1)
+                    .map(|a| self.gen_expr(a))
+                    .unwrap_or_else(|| quote! { 0 });
+                return quote! { tokio::time::interval(std::time::Duration::from_millis(#duration as u64)) };
+            }
+        }
+
         // Special handling for console methods
         if let Expr::StaticMember { obj, property } = callee {
             if let Expr::Ident { name } = obj.as_ref() {
