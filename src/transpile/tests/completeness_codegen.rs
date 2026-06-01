@@ -131,6 +131,15 @@ mod completeness_tests {
             Type::Conditional { .. } => cg.gen_type(ty),
             Type::This => cg.gen_type(ty),
             Type::Template { .. } => cg.gen_type(ty),
+            Type::Partial { .. } => cg.gen_type(ty),
+            Type::Required { .. } => cg.gen_type(ty),
+            Type::Pick { .. } => cg.gen_type(ty),
+            Type::Omit { .. } => cg.gen_type(ty),
+            Type::Record { .. } => cg.gen_type(ty),
+            Type::KeyOf { .. } => cg.gen_type(ty),
+            Type::ReturnType { .. } => cg.gen_type(ty),
+            Type::Parameters { .. } => cg.gen_type(ty),
+            Type::Readonly { .. } => cg.gen_type(ty),
         }
     }
 

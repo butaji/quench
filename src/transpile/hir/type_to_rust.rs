@@ -99,6 +99,134 @@ impl TypeToRust {
                 let _ = name;
                 RustType::Value
             }
+            Type::Partial { inner } => self.convert_partial(inner),
+            Type::Required { inner } => self.convert_required(inner),
+            Type::Pick { inner, keys } => self.convert_pick(inner, keys),
+            Type::Omit { inner, keys } => self.convert_omit(inner, keys),
+            Type::Record { key, value } => {
+                let key_t = self.convert(key);
+                let value_t = self.convert(value);
+                RustType::HashMap(Box::new(key_t), Box::new(value_t))
+            }
+            Type::KeyOf { inner } => self.convert_keyof(inner),
+            Type::ReturnType { inner } => self.convert_return_type(inner),
+            Type::Parameters { inner } => self.convert_parameters(inner),
+            Type::Readonly { inner } => self.convert(inner),
+        }
+    }
+
+    fn convert_partial(&self, inner: &Type) -> RustType {
+        match inner {
+            Type::Object { members } => {
+                let partial_fields: Vec<RustStructField> = members.iter()
+                    .map(|m| RustStructField {
+                        name: m.key.clone(),
+                        ty: self.make_optional(&m.type_),
+                        optional: true,
+                    })
+                    .collect();
+                RustType::Struct(partial_fields)
+            }
+            _ => RustType::Value,
+        }
+    }
+
+    fn make_optional(&self, ty: &Type) -> RustType {
+        let inner = self.convert(ty);
+        RustType::Option(Box::new(inner))
+    }
+
+    fn convert_required(&self, inner: &Type) -> RustType {
+        match inner {
+            Type::Object { members } => {
+                let required_fields: Vec<RustStructField> = members.iter()
+                    .map(|m| RustStructField {
+                        name: m.key.clone(),
+                        ty: self.unwrap_option(&m.type_),
+                        optional: false,
+                    })
+                    .collect();
+                RustType::Struct(required_fields)
+            }
+            _ => self.convert(inner),
+        }
+    }
+
+    fn unwrap_option(&self, ty: &Type) -> RustType {
+        match ty {
+            Type::Ref { name, generics } if name == "Option" => {
+                if let Some(inner) = generics.first() {
+                    self.convert(inner)
+                } else {
+                    self.convert(ty)
+                }
+            }
+            _ => self.convert(ty),
+        }
+    }
+
+    fn convert_pick(&self, inner: &Type, keys: &[String]) -> RustType {
+        match inner {
+            Type::Object { members } => {
+                let picked_fields: Vec<RustStructField> = members.iter()
+                    .filter(|m| keys.contains(&m.key))
+                    .map(|m| self.convert_member(m))
+                    .collect();
+                if picked_fields.is_empty() {
+                    RustType::Value
+                } else {
+                    RustType::Struct(picked_fields)
+                }
+            }
+            _ => RustType::Value,
+        }
+    }
+
+    fn convert_omit(&self, inner: &Type, keys: &[String]) -> RustType {
+        match inner {
+            Type::Object { members } => {
+                let omitted_fields: Vec<RustStructField> = members.iter()
+                    .filter(|m| !keys.contains(&m.key))
+                    .map(|m| self.convert_member(m))
+                    .collect();
+                if omitted_fields.is_empty() {
+                    RustType::Value
+                } else {
+                    RustType::Struct(omitted_fields)
+                }
+            }
+            _ => RustType::Value,
+        }
+    }
+
+    fn convert_keyof(&self, inner: &Type) -> RustType {
+        match inner {
+            Type::Object { members } => {
+                let variants: Vec<RustType> = members.iter()
+                    .map(|m| RustType::StringLiteral(m.key.clone()))
+                    .collect();
+                RustType::Enum(variants)
+            }
+            _ => RustType::Value,
+        }
+    }
+
+    fn convert_return_type(&self, inner: &Type) -> RustType {
+        match inner {
+            Type::Function { params: _, ret } => self.convert(ret),
+            _ => RustType::Value,
+        }
+    }
+
+    fn convert_parameters(&self, inner: &Type) -> RustType {
+        match inner {
+            Type::Function { params, ret: _ } => {
+                let param_types: Vec<RustType> = params.iter()
+                    .map(|p| self.convert(p))
+                    .collect();
+                RustType::Tuple(param_types)
+            }
+            _ => RustType::Value,
         }
     }
 
@@ -262,6 +390,8 @@ pub enum RustType {
     BoolLiteral(bool),
     /// Integer literal type
     IntLiteral(i64),
+    /// Optional type
+    Option(Box<RustType>),
 }
 
 impl RustType {
@@ -314,6 +444,7 @@ impl RustType {
             RustType::NumberLiteral(n) => n.to_string(),
             RustType::BoolLiteral(b) => b.to_string(),
             RustType::IntLiteral(n) => format!("{}i64", n),
+            RustType::Option(inner) => format!("Option<{}>", inner.type_name()),
         }
     }
 }

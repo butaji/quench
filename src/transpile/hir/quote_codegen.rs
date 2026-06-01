@@ -191,6 +191,121 @@ impl QuoteCodegen {
                 let _ = name;
                 quote! { Value }
             }
+            T::Partial { inner } => self.gen_partial_type(inner),
+            T::Required { inner } => self.gen_required_type(inner),
+            T::Pick { inner, keys } => self.gen_pick_type(inner, keys),
+            T::Omit { inner, keys } => self.gen_omit_type(inner, keys),
+            T::Record { key, value } => {
+                let key_t = self.gen_type(key);
+                let value_t = self.gen_type(value);
+                quote! { std::collections::HashMap<#key_t, #value_t> }
+            }
+            T::KeyOf { inner } => self.gen_keyof_type(inner),
+            T::ReturnType { inner } => self.gen_return_type(inner),
+            T::Parameters { inner } => self.gen_parameters_type(inner),
+            T::Readonly { inner } => self.gen_type(inner),
+        }
+    }
+
+    fn gen_partial_type(&self, inner: &Box<Type>) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Object { members } => {
+                let fields: Vec<_> = members.iter()
+                    .map(|m| {
+                        let name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+                        let ty = self.gen_type(&m.type_);
+                        quote! { pub #name: Option<#ty> }
+                    })
+                    .collect();
+                quote! { { #(#fields);* } }
+            }
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_required_type(&self, inner: &Box<Type>) -> TokenStream {
+        self.gen_type(inner)
+    }
+
+    fn gen_pick_type(&self, inner: &Box<Type>, keys: &[String]) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Object { members } => {
+                let fields: Vec<_> = members.iter()
+                    .filter(|m| keys.contains(&m.key))
+                    .map(|m| {
+                        let name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+                        let ty = self.gen_type(&m.type_);
+                        quote! { pub #name: #ty }
+                    })
+                    .collect();
+                if fields.is_empty() {
+                    quote! { Value }
+                } else {
+                    quote! { { #(#fields);* } }
+                }
+            }
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_omit_type(&self, inner: &Box<Type>, keys: &[String]) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Object { members } => {
+                let fields: Vec<_> = members.iter()
+                    .filter(|m| !keys.contains(&m.key))
+                    .map(|m| {
+                        let name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+                        let ty = self.gen_type(&m.type_);
+                        quote! { pub #name: #ty }
+                    })
+                    .collect();
+                if fields.is_empty() {
+                    quote! { Value }
+                } else {
+                    quote! { { #(#fields);* } }
+                }
+            }
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_keyof_type(&self, inner: &Box<Type>) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Object { members } => {
+                let variants: Vec<_> = members.iter()
+                    .map(|m| {
+                        let variant = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+                        quote! { #variant }
+                    })
+                    .collect();
+                quote! { enum { #(#variants),* } }
+            }
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_return_type(&self, inner: &Box<Type>) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Function { params: _, ret } => self.gen_type(ret),
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_parameters_type(&self, inner: &Box<Type>) -> TokenStream {
+        use super::Type as T;
+        match inner.as_ref() {
+            T::Function { params, ret: _ } => {
+                let param_types: Vec<_> = params.iter()
+                    .map(|p| self.gen_type(p))
+                    .collect();
+                quote! { (#(#param_types),*) }
+            }
+            _ => quote! { Value },
         }
     }
 
