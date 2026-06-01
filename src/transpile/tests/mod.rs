@@ -19,6 +19,9 @@ pub mod parser;
 pub mod routegen;
 
 #[cfg(test)]
+pub mod spec_async_runtime;
+
+#[cfg(test)]
 pub mod spec_data_structures;
 
 #[cfg(test)]
@@ -32,9 +35,3 @@ pub mod spec_roundtrip;
 
 #[cfg(test)]
 pub mod spec_jsx;
-
-#[cfg(test)]
-pub mod spec_generators;
-
-#[cfg(test)]
-pub mod spec_template_mapped_types;
