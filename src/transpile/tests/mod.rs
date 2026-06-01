@@ -19,4 +19,4 @@ pub mod parser;
 pub mod routegen;
 
 #[cfg(test)]
-pub mod spec_control_flow;
+pub mod spec_expressions;
