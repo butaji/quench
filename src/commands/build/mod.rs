@@ -87,13 +87,13 @@ pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
     let routes = route_gen::scan_routes(&project_root)?;
     let islands = island_gen::scan_islands(&project_root);
     let components = source_gen::scan_components(&project_root);
-    let generated_files = source_gen::generate_all(&ts_files)?;
+    let gen_result = source_gen::generate_all(&ts_files)?;
 
-    write_generated_files(&build_dir, &generated_files)?;
-    write_manifests(&build_dir, &routes, &islands, &components, &ts_files, &generated_files)?;
+    write_generated_files(&build_dir, &gen_result.generated_files)?;
+    write_manifests(&build_dir, &routes, &islands, &components, &ts_files, &gen_result)?;
 
     Ok(BuildResult {
-        generated_files,
+        generated_files: gen_result.generated_files,
         routes,
         islands,
         components,
@@ -103,12 +103,22 @@ pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
 }
 
 fn resolve_project_root(path: &Path) -> anyhow::Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
     } else {
         let cwd = std::env::current_dir()
             .context("Failed to get current working directory")?;
-        Ok(cwd.join(path))
+        cwd.join(path)
+    };
+
+    // If path is a file (not a directory), use its parent as project root
+    if resolved.is_file() {
+        resolved
+            .parent()
+            .map(|p| p.to_path_buf())
+            .context("File has no parent directory")
+    } else {
+        Ok(resolved)
     }
 }
 
@@ -201,31 +211,43 @@ fn write_manifests(
     islands: &[IslandEntry],
     components: &[ComponentEntry],
     ts_files: &[PathBuf],
-    generated_files: &[GeneratedFile],
+    gen_result: &source_gen::SourceGenResult,
 ) -> Result<()> {
     // Check if this is a single-file script build
     let is_single = source_gen::is_single_file_build(ts_files, routes, islands, components);
 
-    let (source_file, rust_code) = if is_single {
-        // For single-file builds, extract the source file and code
-        let file = &ts_files[0];
-        let code = generated_files
+    if is_single {
+        // For single-file builds, generate lib.rs and main.rs from HIR
+        let source_file = &ts_files[0];
+        if let Some(ref stmts) = gen_result.single_file_stmts {
+            let lib_gen_result = source_gen::generate_lib_from_hir(stmts, source_file);
+            fs::write(build_dir.join("src/lib.rs"), lib_gen_result.lib_content)?;
+            fs::write(build_dir.join("src/main.rs"), source_gen::generate_main(Some(source_file), &lib_gen_result.exec_stmts, &lib_gen_result.fn_defs))?;
+        } else {
+            // Fallback: use the old method if no HIR statements
+            let rust_code = gen_result.generated_files
+                .iter()
+                .find(|f| f.path.to_string_lossy().contains("gen/"))
+                .map(|f| f.content.as_str());
+            fs::write(
+                build_dir.join("src/lib.rs"),
+                source_gen::generate_lib(routes, islands, components, Some(source_file.as_path()), rust_code),
+            )?;
+            fs::write(build_dir.join("src/main.rs"), source_gen::generate_main(Some(source_file.as_path()), &[], &[]))?;
+        }
+    } else {
+        // Multi-file build: standard structure
+        let rust_code = gen_result.generated_files
             .iter()
             .find(|f| f.path.to_string_lossy().contains("gen/"))
             .map(|f| f.content.as_str());
-        (Some(file.as_path()), code)
-    } else {
-        (None, None)
-    };
+        fs::write(
+            build_dir.join("src/lib.rs"),
+            source_gen::generate_lib(routes, islands, components, None, rust_code),
+        )?;
+        fs::write(build_dir.join("src/main.rs"), source_gen::generate_main(None, &[], &[]))?;
+    }
 
-    fs::write(
-        build_dir.join("src/lib.rs"),
-        source_gen::generate_lib(routes, islands, components, source_file, rust_code),
-    )?;
-    fs::write(
-        build_dir.join("src/main.rs"),
-        source_gen::generate_main(source_file),
-    )?;
     fs::write(
         build_dir.join("src/routes.rs"),
         route_gen::generate_route_table(routes),

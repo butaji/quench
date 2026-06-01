@@ -5,9 +5,10 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use anyhow::{Context, Result};
+use regex::Regex;
 
 use crate::commands::build::{ComponentEntry, GeneratedFile, IslandEntry, RouteEntry};
-use crate::transpile::hir::QuoteCodegen;
+use crate::transpile::hir::{self, QuoteCodegen, Stmt};
 use crate::transpile::parser::TsParser;
 
 /// Check if this is a single-file script build (no routes/islands/components)
@@ -64,11 +65,21 @@ pub fn scan_components(project_root: &Path) -> Vec<ComponentEntry> {
     components
 }
 
+/// Result of generating source files - includes both generated files and HIR for single-file builds
+pub struct SourceGenResult {
+    pub generated_files: Vec<GeneratedFile>,
+    /// For single-file builds: the HIR module items (statements and declarations)
+    pub single_file_stmts: Option<Vec<Stmt>>,
+}
+
 /// Generate source files from TypeScript using QuoteCodegen
-pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Error> {
+pub fn generate_all(files: &[PathBuf]) -> Result<SourceGenResult, anyhow::Error> {
     let mut generated = Vec::new();
     let parser = TsParser::new();
     let codegen = QuoteCodegen::default();
+
+    // For single-file builds, collect all HIR statements
+    let mut all_stmts: Vec<Stmt> = Vec::new();
 
     for file in files {
         let relative = file
@@ -94,23 +105,25 @@ pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Err
             }
         };
 
-        // Generate Rust using QuoteCodegen
         // Extract both Stmt items and Decl items (functions, variables) for codegen
         let stmts: Vec<_> = module.items.into_iter()
             .filter_map(|item| match item {
-                crate::transpile::hir::ModuleItem::Stmt(s) => Some(s),
-                crate::transpile::hir::ModuleItem::Decl(d) => match d {
-                    crate::transpile::hir::Decl::Function(func) => {
-                        Some(crate::transpile::hir::Stmt::FunctionDecl(func))
+                hir::ModuleItem::Stmt(s) => Some(s),
+                hir::ModuleItem::Decl(d) => match d {
+                    hir::Decl::Function(func) => {
+                        Some(hir::Stmt::FunctionDecl(func))
                     }
-                    crate::transpile::hir::Decl::Variable(var) => {
-                        Some(crate::transpile::hir::Stmt::Variable(var))
+                    hir::Decl::Variable(var) => {
+                        Some(hir::Stmt::Variable(var))
                     }
                     _ => None, // Skip type and class declarations for now
                 },
                 _ => None,
             })
             .collect();
+
+        // Collect for single-file builds
+        all_stmts.extend(stmts.clone());
 
         let tokens = codegen.gen_module(&stmts);
         let rust_code = tokens.to_string();
@@ -121,7 +134,229 @@ pub fn generate_all(files: &[PathBuf]) -> Result<Vec<GeneratedFile>, anyhow::Err
         });
     }
 
-    Ok(generated)
+    Ok(SourceGenResult {
+        generated_files: generated,
+        single_file_stmts: if all_stmts.is_empty() { None } else { Some(all_stmts) },
+    })
+}
+
+/// Result of generating lib.rs content from HIR
+pub struct LibGenResult {
+    /// Content for lib.rs (function definitions only)
+    pub lib_content: String,
+    /// Executable statements for main.rs
+    pub exec_stmts: Vec<String>,
+    /// Function definitions for main.rs (inline)
+    pub fn_defs: Vec<String>,
+}
+
+/// Generate lib.rs content directly from HIR statements (for single-file builds)
+/// This bypasses TokenStream to_string() which produces malformed code
+pub fn generate_lib_from_hir(stmts: &[Stmt], source_path: &Path) -> LibGenResult {
+    let codegen = QuoteCodegen::default();
+    let mut lib_output = String::new();
+    lib_output.push_str("//! Auto-generated library\n\n");
+    lib_output.push_str(&format!("// Generated from {}\n\n", source_path.display()));
+
+    // Collect function definitions and executable statements
+    let mut fn_defs = Vec::new();
+    let mut exec_stmts = Vec::new();
+
+    for stmt in stmts {
+        match stmt {
+            Stmt::FunctionDecl(func) => {
+                // Generate function definition directly
+                let fn_str = generate_function_string(&codegen, func);
+                fn_defs.push(fn_str);
+            }
+            Stmt::Variable(var) => {
+                // Variable declarations go in main
+                exec_stmts.push(stmt.clone());
+            }
+            _ => {
+                // Other statements (expr, return, etc.) go in main
+                exec_stmts.push(stmt.clone());
+            }
+        }
+    }
+
+    // Output function definitions at module level
+    for fn_def in &fn_defs {
+        lib_output.push_str(fn_def);
+        lib_output.push_str("\n\n");
+    }
+
+    // Generate exec statements strings for main.rs
+    let mut exec_stmt_strings = Vec::new();
+    for stmt in &exec_stmts {
+        if let Some(stmt_tokens) = codegen.gen_stmt(stmt) {
+            let stmt_str = stmt_tokens.to_string();
+            exec_stmt_strings.push(stmt_str);
+        }
+    }
+
+    LibGenResult {
+        lib_content: lib_output,
+        exec_stmts: exec_stmt_strings,
+        fn_defs,
+    }
+}
+
+/// Generate a function definition string directly from HIR
+/// This avoids TokenStream to_string() issues
+fn generate_function_string(codegen: &QuoteCodegen, func: &crate::transpile::hir::FunctionDecl) -> String {
+    use crate::transpile::hir::Type as HirType;
+    use crate::transpile::hir::Stmt;
+
+    let fn_name = &func.name;
+    let async_kw = if func.is_async { "async " } else { "" };
+
+    // Generate parameters
+    let params: Vec<String> = func.params.iter().map(|p| {
+        let name = &p.name;
+        let ty_str = p.type_.as_ref()
+            .map(|t| type_to_rust_string(t))
+            .unwrap_or_else(|| "String".to_string());
+        format!("{}: {}", name, ty_str)
+    }).collect();
+    let params_str = params.join(", ");
+
+    // Generate return type - if None, infer from return statements in body
+    let ret_type_str = func.return_type.as_ref()
+        .map(|t| type_to_rust_string(t))
+        .unwrap_or_else(|| {
+            infer_return_type_from_body(&func.body).unwrap_or_else(|| "()".to_string())
+        });
+
+    // Generate function body
+    let body_str = generate_body_string(codegen, &func.body, &ret_type_str);
+
+    format!("pub {}fn {}({}) -> {} {{\n{}}}\n", async_kw, fn_name, params_str, ret_type_str, body_str)
+}
+
+/// Infer return type from return statements in the body
+fn infer_return_type_from_body(body: &Option<crate::transpile::hir::Block>) -> Option<String> {
+    use crate::transpile::hir::Stmt;
+
+    let body = match body {
+        Some(b) => b,
+        None => return None,
+    };
+
+    // Look for return statements with expressions
+    for stmt in &body.0 {
+        if let Stmt::Return { arg: Some(expr) } = stmt {
+            // Infer type from expression
+            return Some(infer_type_from_expr(expr));
+        }
+    }
+    None
+}
+
+/// Infer Rust type from expression
+fn infer_type_from_expr(expr: &crate::transpile::hir::Expr) -> String {
+    use crate::transpile::hir::Expr as E;
+    match expr {
+        E::String(_) => "String".to_string(),
+        E::Number(_) => "f64".to_string(),
+        E::Boolean(_) => "bool".to_string(),
+        E::Null | E::Undefined => "Value".to_string(),
+        E::Bin { op, left: _, right: _ } => {
+            // For Add with string operands, result is String
+            use crate::transpile::hir::BinaryOp;
+            if matches!(op, BinaryOp::Add) {
+                "String".to_string()
+            } else {
+                "Value".to_string()
+            }
+        }
+        E::Call { .. } => "Value".to_string(), // TODO: infer from function return type
+        _ => "Value".to_string(),
+    }
+}
+
+/// Convert HIR Type to Rust string representation
+fn type_to_rust_string(ty: &crate::transpile::hir::Type) -> String {
+    use crate::transpile::hir::Type as T;
+    match ty {
+        T::String => "String".to_string(),
+        T::Number => "f64".to_string(),
+        T::Boolean => "bool".to_string(),
+        T::Void | T::Never => "()".to_string(),
+        T::Undefined | T::Null | T::Unknown | T::Any => "Value".to_string(),
+        T::BigInt => "i64".to_string(),
+        T::Array { elem } => format!("Vec<{}>", type_to_rust_string(elem)),
+        T::Ref { name, generics } => {
+            if generics.is_empty() {
+                name.clone()
+            } else {
+                let inner = generics.iter().map(type_to_rust_string).collect::<Vec<_>>().join(", ");
+                format!("{}<{}>", name, inner)
+            }
+        }
+        _ => "Value".to_string(),
+    }
+}
+
+/// Generate function body string from HIR Block
+fn generate_body_string(codegen: &QuoteCodegen, body: &Option<crate::transpile::hir::Block>, ret_type: &str) -> String {
+    use crate::transpile::hir::Stmt;
+
+    let body = match body {
+        Some(b) => b,
+        None => return "    unimplemented!();\n".to_string(),
+    };
+
+    let mut output = String::new();
+    let stmts = &body.0;
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Some(tokens) = codegen.gen_stmt(stmt) {
+            let stmt_str = tokens.to_string();
+            let is_last_stmt = i == stmts.len() - 1;
+
+            // Handle return statements: if function returns non-() but body has return,
+            // and the return type wasn't declared, we need to handle it
+            let stmt_str = if stmt_str.starts_with("return ") && is_last_stmt && ret_type != "()" {
+                // Remove "return " prefix and trailing semicolon, just output the expression
+                stmt_str["return ".len()..].trim_end_matches(';').trim().to_string()
+            } else {
+                stmt_str
+            };
+
+            // Handle multiline statements
+            for line in stmt_str.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // For the last statement, don't add semicolon if it would make it return ()
+                // Instead, just output the expression so Rust returns it implicitly
+                let line_final = if is_last_stmt && !trimmed.ends_with('{') && !trimmed.ends_with('}') {
+                    // Check if this is an expression statement (not control flow)
+                    if !trimmed.starts_with("if ") && !trimmed.starts_with("while ") &&
+                       !trimmed.starts_with("for ") && !trimmed.starts_with("loop ") &&
+                       !trimmed.starts_with("match ") && !trimmed.starts_with("return ") &&
+                       !trimmed.ends_with(',') && !trimmed.ends_with(";") {
+                        // This is an expression that should be returned
+                        trimmed.to_string()
+                    } else if trimmed.ends_with(';') {
+                        trimmed.trim_end_matches(';').trim().to_string()
+                    } else {
+                        trimmed.to_string()
+                    }
+                } else if trimmed.ends_with('}') || trimmed.ends_with('{') {
+                    trimmed.to_string()
+                } else if trimmed.ends_with(';') {
+                    trimmed.to_string()
+                } else {
+                    format!("{};", trimmed)
+                };
+                output.push_str(&format!("    {}\n", line_final));
+            }
+        }
+    }
+    output
 }
 
 /// Generate lib.rs
@@ -165,19 +400,45 @@ pub fn generate_lib(
     output
 }
 
-/// Generate main.rs
-/// For single-file builds, pass the module name to generate a simple entry point
-pub fn generate_main(source_file: Option<&Path>) -> String {
+/// Generate main.rs content
+/// For single-file builds, the exec_stmts are inlined in main()
+pub fn generate_main(source_file: Option<&Path>, exec_stmts: &[String], fn_defs: &[String]) -> String {
     let mut output = String::new();
     output.push_str("//! Auto-generated main\n\n");
 
-    if source_file.is_some() {
-        // Single-file build: call the crate's main function
-        // The transpiled code is directly in lib.rs, which has a main() function
-        output.push_str("// For single-file builds, lib.rs IS the main module\n");
-        output.push_str("use crate::main as run_main;\n\n");
+    if source_file.is_some() && !exec_stmts.is_empty() {
+        // Single-file build: inline the function definitions and executable statements in main.rs
+        // Functions are defined first, then main
+        for fn_def in fn_defs {
+            output.push_str(fn_def);
+            output.push_str("\n\n");
+        }
         output.push_str("fn main() {\n");
-        output.push_str("    run_main();\n");
+        for stmt in exec_stmts {
+            // Fix string arguments in function calls
+            let fixed_stmt = fix_string_arguments(stmt);
+            // Handle multiline statements
+            for line in fixed_stmt.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // Determine if we need to add semicolon
+                let line_final = if trimmed.ends_with('}') || trimmed.ends_with('{') {
+                    trimmed.to_string()
+                } else if trimmed.ends_with(';') {
+                    trimmed.to_string()
+                } else {
+                    format!("{};", trimmed)
+                };
+                output.push_str(&format!("    {}\n", line_final));
+            }
+        }
+        output.push_str("}\n");
+    } else if source_file.is_some() {
+        // Single-file but no exec statements - shouldn't happen but handle it
+        output.push_str("fn main() {\n");
+        output.push_str("    println!(\"No code to run\");\n");
         output.push_str("}\n");
     } else {
         // Multi-file build: default server entry point
@@ -189,6 +450,30 @@ pub fn generate_main(source_file: Option<&Path>) -> String {
     }
 
     output
+}
+
+/// Fix string arguments in function calls - add .to_string() if missing
+/// This handles cases where string literals are passed without explicit .to_string()
+fn fix_string_arguments(stmt: &str) -> String {
+    // Simple regex-like replacement for function calls with string arguments
+    // This is a heuristic fix for the codegen issue
+    let mut result = stmt.to_string();
+
+    // Find patterns like `func("string")` or `func ("string")` and add .to_string()
+    // We look for function calls followed by string arguments
+    let re_pattern = regex::Regex::new(r#"(\w+)\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+    result = re_pattern.replace_all(&result, |caps: &regex::Captures| {
+        let func_name = &caps[1];
+        let arg = &caps[2];
+        // Don't add .to_string() if already present
+        if arg.contains(".to_string()") || arg.contains('(') {
+            caps[0].to_string()
+        } else {
+            format!(r#"{}("{}".to_string())"#, func_name, arg)
+        }
+    }).to_string();
+
+    result
 }
 
 /// Generate mod files
@@ -225,6 +510,8 @@ fn parse_items(code: &str) -> (Vec<String>, Vec<String>) {
             brace_depth += 1;
         } else if ch == '}' {
             brace_depth -= 1;
+            // If we close a brace at depth 0, we might be ending a function definition
+            // The next character(s) should be checked
         } else if ch == ';' && brace_depth == 0 {
             // End of a statement
             let item = current.trim().to_string();
@@ -239,9 +526,12 @@ fn parse_items(code: &str) -> (Vec<String>, Vec<String>) {
     }
 
     // Handle any remaining content
+    // Also handle the case where a function definition ends without semicolon
+    // (brace_depth should be 0 at the end of a properly closed function)
     if !current.trim().is_empty() {
         let item = current.trim().to_string();
-        if item.starts_with("pub fn ") || item.starts_with("fn ") {
+        // Check if this is a function definition that ends with }
+        if (item.starts_with("pub fn ") || item.starts_with("fn ")) && item.ends_with('}') {
             functions.push(item);
         } else if !item.is_empty() {
             statements.push(item);

@@ -760,7 +760,8 @@ impl QuoteCodegen {
     }
     
     fn gen_string_expr(&self, s: &str) -> TokenStream {
-        quote! { #s.to_string() }
+        // String literals in Rust are &str, so we can use them directly
+        quote! { #s }
     }
 
     fn gen_number_expr(&self, n: &f64) -> TokenStream {
@@ -969,11 +970,19 @@ impl QuoteCodegen {
 
     fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
         use super::BinaryOp as B;
-        
+
         // String concatenation: use format! for string + anything
         if matches!(op, B::Add) && self.is_string_expr(left) {
+            // Handle "string" + expr - add {} to string and use expr as argument
             let lhs = self.gen_expr(left);
             let rhs = self.gen_expr(right);
+            // The string literal needs {} appended to become a format template
+            quote! { format!(concat!(#lhs, "{}"), #rhs) }
+        } else if matches!(op, B::Add) && self.is_string_expr(right) {
+            // Handle expr + "string" - use format to concatenate
+            let lhs = self.gen_expr(left);
+            let rhs = self.gen_expr(right);
+            // {} for lhs, {} for rhs - format will concatenate them
             quote! { format!("{}{}", #lhs, #rhs) }
         } else {
             let lhs = self.gen_expr(left);
@@ -982,7 +991,7 @@ impl QuoteCodegen {
             quote! { #lhs #op #rhs }
         }
     }
-    
+
     fn is_string_expr(&self, expr: &Expr) -> bool {
         matches!(expr, Expr::String(_))
     }
@@ -1020,7 +1029,15 @@ impl QuoteCodegen {
         }
 
         let callee = self.gen_expr(callee);
-        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
+        // For string arguments, add .to_string() since function params expect String
+        let args: Vec<_> = arguments.iter().map(|a| {
+            let arg = self.gen_expr(a);
+            if matches!(a, Expr::String(_)) {
+                quote! { #arg.to_string() }
+            } else {
+                arg
+            }
+        }).collect();
         quote! { #callee(#(#args),*) }
     }
 

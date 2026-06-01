@@ -38,9 +38,9 @@ pub enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Plugin to use: fresh, ratatui
+        /// Plugin to use: fresh, ratatui (optional - builds standalone binary if not specified)
         #[arg(short, long, help = "Plugin to use: fresh, ratatui")]
-        plugin: String,
+        plugin: Option<String>,
 
         /// Build in release mode (default: true)
         #[arg(short, long, default_value = "true")]
