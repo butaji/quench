@@ -172,12 +172,12 @@ impl Analyzer {
                 self.analyze_stmt(body);
             }
             Stmt::ForIn { left, right, body } => {
-                self.analyze_for_init(left);
+                self.analyze_for_init(&Some(left.clone()));
                 self.analyze_expr(right);
                 self.analyze_stmt(body);
             }
             Stmt::ForOf { left, right, body, .. } => {
-                self.analyze_for_init(left);
+                self.analyze_for_init(&Some(left.clone()));
                 self.analyze_expr(right);
                 self.analyze_stmt(body);
             }
