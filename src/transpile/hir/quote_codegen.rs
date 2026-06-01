@@ -1340,7 +1340,8 @@ mod tests {
         };
         let tokens = cg.gen_expr(&expr);
         let s = tokens.to_string();
-        assert!(s.contains("println!"), "console.log should generate println!, got: {}", s);
+        // proc_macro may add spaces: "println ! (...)" is still println!
+        assert!(s.contains("println") && s.contains("hello"), "console.log should generate println with hello, got: {}", s);
     }
 
     #[test]
