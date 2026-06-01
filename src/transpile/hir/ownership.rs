@@ -10,7 +10,7 @@
 use super::{ClassMethod, Expr, FunctionDecl, Ownership, Param, Stmt, VariableKind};
 
 /// Context for ownership analysis
-struct OwnershipAnalyzer {
+pub(crate) struct OwnershipAnalyzer {
     /// Variables that are mutably borrowed in current scope
     mut_vars: std::collections::HashSet<String>,
     /// Variables that are immutably borrowed in current scope
@@ -22,7 +22,7 @@ struct OwnershipAnalyzer {
 }
 
 impl OwnershipAnalyzer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             mut_vars: std::collections::HashSet::new(),
             borrow_vars: std::collections::HashSet::new(),
@@ -32,7 +32,7 @@ impl OwnershipAnalyzer {
     }
 
     /// Analyze a function and return ownership for each parameter
-    fn analyze_function(&mut self, func: &FunctionDecl) -> Vec<Ownership> {
+    pub(crate) fn analyze_function(&mut self, func: &FunctionDecl) -> Vec<Ownership> {
         // Reset state
         self.mut_vars.clear();
         self.borrow_vars.clear();
@@ -130,7 +130,7 @@ impl OwnershipAnalyzer {
         update: &Option<Expr>,
         body: &Box<Stmt>,
     ) {
-        self.analyze_for_init(init);
+        self.analyze_for_init(init.as_ref().map(|f| f as &super::ForInit));
         if let Some(t) = test {
             self.analyze_expr(t);
         }
@@ -180,7 +180,7 @@ impl OwnershipAnalyzer {
         }
     }
 
-    fn analyze_for_init(&mut self, init: &Option<super::ForInit>) {
+    fn analyze_for_init(&mut self, init: Option<&super::ForInit>) {
         match init {
             Some(super::ForInit::Variable(kind, vars)) => {
                 for (name, init_expr) in vars {
@@ -380,7 +380,7 @@ impl OwnershipAnalyzer {
             // obj.property - mark obj as mutably accessed
             self.mark_as_mutated(obj);
             let prop_name = self.extract_property_name(property);
-            if let Expr::Ident { name } = **obj {
+            if let Expr::Ident { name } = &**obj {
                 // Track nested mutation
                 let nested_key = format!("{}.{}", name, prop_name);
                 self.mut_vars.insert(nested_key);

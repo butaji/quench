@@ -10,7 +10,7 @@ use super::{Block, ClassMethod, Expr, FunctionDecl, Stmt, Type};
 
 /// Context for effect analysis
 #[allow(dead_code)]
-struct EffectAnalyzer {
+pub(crate) struct EffectAnalyzer {
     /// Whether the current scope can throw
     can_throw: bool,
     /// Types of errors that can be thrown
@@ -21,7 +21,7 @@ struct EffectAnalyzer {
 
 #[allow(dead_code)]
 impl EffectAnalyzer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             can_throw: false,
             error_types: Vec::new(),
@@ -30,7 +30,7 @@ impl EffectAnalyzer {
     }
 
     /// Analyze a function and set throws/error_type
-    fn analyze_function(&mut self, func: &mut FunctionDecl) {
+    pub(crate) fn analyze_function(&mut self, func: &mut FunctionDecl) {
         self.can_throw = false;
         self.error_types.clear();
 
@@ -137,16 +137,17 @@ impl EffectAnalyzer {
                 self.analyze_expr(obj);
                 self.analyze_stmt(body);
             }
+            S::Block(stmts) => self.analyze_block(stmts),
+            S::Expr { expr } => self.analyze_expr(expr),
+            S::Throw { arg } => self.analyze_throw(arg),
             S::Empty | S::FunctionDecl(_) | S::Class(_) | S::ExportNamed { .. }
             | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
         }
     }
 
-    fn analyze_throw(&mut self, arg: &Option<Expr>) {
+    fn analyze_throw(&mut self, arg: &Expr) {
         self.can_throw = true;
-        if let Some(e) = arg {
-            self.error_types.push(self.infer_type_from_expr(e));
-        }
+        self.error_types.push(self.infer_type_from_expr(arg));
     }
 
     fn analyze_block(&mut self, stmts: &[Stmt]) {
@@ -175,7 +176,7 @@ impl EffectAnalyzer {
         update: &Option<Expr>,
         body: &Box<Stmt>,
     ) {
-        self.analyze_for_init(init);
+        self.analyze_for_init(init.as_ref());
         if let Some(t) = test {
             self.analyze_expr(t);
         }
@@ -221,7 +222,7 @@ impl EffectAnalyzer {
         }
     }
 
-    fn analyze_for_init(&mut self, init: &Option<super::ForInit>) {
+    fn analyze_for_init(&mut self, init: Option<&super::ForInit>) {
         if let Some(super::ForInit::Expr(e)) = init {
             self.analyze_expr(e);
         }

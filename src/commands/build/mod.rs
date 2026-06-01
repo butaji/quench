@@ -84,7 +84,7 @@ pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
     let ts_files = find_ts_files(&project_root);
     info!("Found {} TypeScript files", ts_files.len());
 
-    let routes = route_gen::scan_routes(&project_root);
+    let routes = route_gen::scan_routes(&project_root)?;
     let islands = island_gen::scan_islands(&project_root);
     let components = source_gen::scan_components(&project_root);
     let generated_files = source_gen::generate_all(&ts_files)?;
