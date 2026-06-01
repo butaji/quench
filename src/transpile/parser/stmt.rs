@@ -435,16 +435,16 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
 }
 
 fn class_to_hir(c: &Class) -> hir::Decl {
-    let methods: Vec<hir::ClassMethod> = c
-        .body
-        .body
-        .iter()
-        .filter_map(|m| {
-            if let ClassElement::MethodDefinition(def) = m {
+    let mut members: Vec<hir::ClassMember> = Vec::new();
+    let mut methods: Vec<hir::ClassMethod> = Vec::new();
+
+    for m in &c.body.body {
+        match m {
+            ClassElement::MethodDefinition(def) => {
                 let name = match &def.key {
                     PropertyKey::StaticIdentifier(i) => i.name.to_string(),
                     PropertyKey::PrivateIdentifier(i) => format!("#{}", i.name),
-                    _ => String::new(),
+                    _ => continue, // Skip invalid method names
                 };
                 // def.value is a Function struct
                 let func = &*def.value;
@@ -499,17 +499,42 @@ fn class_to_hir(c: &Class) -> hir::Decl {
                         }
                     })
                     .collect();
-                Some(hir::ClassMethod {
+
+                // Determine method kind - constructor or regular method
+                let kind = if name == "constructor" {
+                    hir::MethodKind::Constructor
+                } else {
+                    hir::MethodKind::Method
+                };
+
+                methods.push(hir::ClassMethod {
                     name,
                     params,
                     body,
-                    kind: hir::MethodKind::Method,
-                })
-            } else {
-                None
+                    kind,
+                });
             }
-        })
-        .collect();
+            ClassElement::PropertyDefinition(prop) => {
+                let name = match &prop.key {
+                    PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                    PropertyKey::PrivateIdentifier(i) => format!("#{}", i.name),
+                    PropertyKey::StringLiteral(s) => s.value.to_string(),
+                    PropertyKey::NumericLiteral(n) => n.value.to_string(),
+                    _ => continue, // Skip invalid property names
+                };
+                // Type annotation not available easily, use None for now
+                members.push(hir::ClassMember {
+                    name,
+                    type_: None,
+                    is_static: prop.r#static,
+                    is_async: false,
+                });
+            }
+            _ => {
+                // Ignore other class elements (getters, setters, etc.)
+            }
+        }
+    }
     hir::Decl::Class(hir::ClassDecl {
         name: c
             .id
@@ -517,7 +542,7 @@ fn class_to_hir(c: &Class) -> hir::Decl {
             .map(|i| i.name.to_string())
             .unwrap_or_default(),
         extends: None,
-        members: vec![],
+        members,
         generics: vec![],
         methods,
     })
