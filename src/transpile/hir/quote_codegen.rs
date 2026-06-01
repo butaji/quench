@@ -993,23 +993,32 @@ impl QuoteCodegen {
             if let Expr::Ident { name } = obj.as_ref() {
                 if name == "console" {
                     let is_error = property == "error";
-                    let macro_name = if is_error { "eprintln!" } else { "println!" };
-                    
+
                     if property == "log" || property == "error" {
                         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-                        // If single string arg, use it directly; otherwise format all args
+                        // Use parse_quote! to properly generate macro invocation
+                        // Always use format string "{}" for single arg, multiple args for more
                         if arguments.len() == 1 {
-                            return quote! { #macro_name(#(#args),*) };
+                            // Single arg: println!("{}", arg)
+                            if is_error {
+                                return syn::parse_quote! { eprintln!("{}", #(#args),*) };
+                            } else {
+                                return syn::parse_quote! { println!("{}", #(#args),*) };
+                            }
                         } else {
                             // Multiple args: println!("{} {} ...", arg1, arg2, ...)
                             let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
-                            return quote! { #macro_name(#(#format_args),*, #(#args),*) };
+                            if is_error {
+                                return syn::parse_quote! { eprintln!(#(#format_args),*, #(#args),*) };
+                            } else {
+                                return syn::parse_quote! { println!(#(#format_args),*, #(#args),*) };
+                            }
                         }
                     }
                 }
             }
         }
-        
+
         let callee = self.gen_expr(callee);
         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
         quote! { #callee(#(#args),*) }
