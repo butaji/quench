@@ -35,3 +35,6 @@ pub mod spec_jsx;
 
 #[cfg(test)]
 pub mod spec_generators;
+
+#[cfg(test)]
+pub mod spec_template_mapped_types;
