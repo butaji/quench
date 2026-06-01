@@ -190,6 +190,16 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
         Expression::ParenthesizedExpression(_) => {
             Err(anyhow!("Unhandled expression type"))
         }
+        // TypeScript expression variants - unwrap inner expression
+        Expression::TSAsExpression(e) => convert_expr(&e.expression),
+        Expression::TSSatisfiesExpression(e) => convert_expr(&e.expression),
+        Expression::TSTypeAssertion(e) => convert_expr(&e.expression),
+        Expression::TSNonNullExpression(e) => convert_expr(&e.expression),
+        Expression::TSInstantiationExpression(e) => convert_expr(&e.expression),
+        // V8 intrinsic expressions (e.g., %GetOptimizationStatus)
+        Expression::V8IntrinsicExpression(_) => Err(anyhow!("V8 intrinsics not supported")),
+        // Private field expressions - handle via member expression path
+        Expression::PrivateFieldExpression(_) => Err(anyhow!("Private field expressions not supported")),
     }
 }
 
@@ -323,7 +333,7 @@ fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
             let right = Box::new(convert_expr(&a.right).ok()?);
             return Some(hir::Expr::Assign {
                 op: hir::AssignOp::Assign,
-                left,
+                left: left.clone(),
                 right: Box::new(hir::Expr::Logical {
                     op: hir::LogicalOp::And,
                     left,
@@ -337,7 +347,7 @@ fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
             let right = Box::new(convert_expr(&a.right).ok()?);
             return Some(hir::Expr::Assign {
                 op: hir::AssignOp::Assign,
-                left,
+                left: left.clone(),
                 right: Box::new(hir::Expr::Logical {
                     op: hir::LogicalOp::Or,
                     left,
@@ -351,7 +361,7 @@ fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
             let right = Box::new(convert_expr(&a.right).ok()?);
             return Some(hir::Expr::Assign {
                 op: hir::AssignOp::Assign,
-                left,
+                left: left.clone(),
                 right: Box::new(hir::Expr::Logical {
                     op: hir::LogicalOp::NullishCoalescing,
                     left,
@@ -489,7 +499,6 @@ pub fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
                         PropertyKey::StaticIdentifier(i) => i.name.to_string(),
                         PropertyKey::StringLiteral(s) => s.value.to_string(),
                         PropertyKey::NumericLiteral(n) => n.value.to_string(),
-                        PropertyKey::Expression(e) => return Some(hir::ObjectPatProp::Spread { arg: Box::new(convert_expr(e)?) }),
                         _ => return None,
                     };
                     let value = convert_binding_pattern(&p.value)?;
