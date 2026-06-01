@@ -6,12 +6,12 @@ use walkdir::WalkDir;
 use crate::commands::build::RouteEntry;
 
 /// Scan routes directory for route files
-pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
+pub fn scan_routes(project_root: &Path) -> Result<Vec<RouteEntry>, anyhow::Error> {
     let routes_dir = project_root.join("routes");
     let mut routes = Vec::new();
 
     if !routes_dir.exists() {
-        return routes;
+        return Ok(routes);
     }
 
     for entry in WalkDir::new(&routes_dir).into_iter().filter_map(|e| e.ok()) {
@@ -41,7 +41,7 @@ pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
     // Check for route collisions (e.g., [id].tsx and id.tsx both matching same URL)
     detect_route_collisions(&routes)?;
 
-    routes
+    Ok(routes)
 }
 
 /// Check for route path collisions and warn/error on duplicates
