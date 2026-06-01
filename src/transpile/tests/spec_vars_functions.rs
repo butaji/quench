@@ -217,7 +217,6 @@ mod spec_vars_functions_tests {
         use super::*;
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
         fn simple_object_destructure() {
             let decl = parse_first_decl("const {a, b} = obj;");
             match decl {
@@ -233,7 +232,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
+
         fn nested_object_destructure() {
             let decl = parse_first_decl("const {a: {b}} = obj;");
             match decl {
@@ -258,7 +257,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
+
         fn object_destructure_with_rest() {
             let decl = parse_first_decl("const {a, ...rest} = obj;");
             match decl {
@@ -277,7 +276,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
+
         fn object_destructure_with_default() {
             let decl = parse_first_decl("const {a = 1} = obj;");
             match decl {
@@ -302,7 +301,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
+
         fn object_destructure_rename() {
             let decl = parse_first_decl("const {a: b} = obj;");
             match decl {
@@ -320,7 +319,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support object destructuring patterns"]
+
         fn object_destructure_complex() {
             let decl = parse_first_decl("const {a: {b: c}, d = 2, ...rest} = obj;");
             match decl {
@@ -338,7 +337,7 @@ mod spec_vars_functions_tests {
         use super::*;
 
         #[test]
-        #[ignore = "Codegen does not support array destructuring patterns"]
+
         fn simple_array_destructure() {
             let decl = parse_first_decl("const [a, b] = arr;");
             match decl {
@@ -354,7 +353,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support array destructuring patterns"]
+
         fn array_destructure_with_rest() {
             let decl = parse_first_decl("const [a, ...rest] = arr;");
             match decl {
@@ -373,7 +372,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support array destructuring patterns"]
+
         fn array_destructure_with_default() {
             let decl = parse_first_decl("const [a = 1] = arr;");
             match decl {
@@ -392,7 +391,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support array destructuring patterns"]
+
         fn array_destructure_nested() {
             let decl = parse_first_decl("const [[a], b] = arr;");
             match decl {
@@ -411,7 +410,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support array destructuring patterns"]
+
         fn array_destructure_sparse() {
             let decl = parse_first_decl("const [a, , b] = arr;");
             match decl {
@@ -760,7 +759,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support pattern parameters (destructuring in function params)"]
+
         fn function_param_array_pattern() {
             let func = find_function("function f([a, b]) {}");
             assert_eq!(func.params.len(), 1);
@@ -770,7 +769,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support pattern parameters (destructuring in function params)"]
+
         fn function_param_object_pattern() {
             let func = find_function("function f({a, b}) {}");
             assert_eq!(func.params.len(), 1);
@@ -780,7 +779,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support pattern parameters (destructuring in function params)"]
+
         fn function_param_rest_array_pattern() {
             let func = find_function("function f(...[a, b]) {}");
             assert_eq!(func.params.len(), 1);
@@ -822,7 +821,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support destructuring patterns"]
+
         fn roundtrip_object_destructure() {
             let decl = parse_first_decl("const {a, b} = obj;");
             let tokens = codegen_decl(&decl);
@@ -831,7 +830,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support destructuring patterns"]
+
         fn roundtrip_array_destructure() {
             let decl = parse_first_decl("const [a, b] = arr;");
             let tokens = codegen_decl(&decl);
@@ -894,7 +893,7 @@ mod spec_vars_functions_tests {
         }
 
         #[test]
-        #[ignore = "Codegen does not support destructuring patterns"]
+
         fn destructure_function_return() {
             let source = "const {a, b} = foo();";
             let decl = parse_first_decl(source);

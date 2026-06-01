@@ -797,8 +797,9 @@ mod spec_jsx_tests {
             let jsx = assert_jsx_parses(r#"const x = <div />;"#);
             let tokens = QuoteCodegen::default().gen_expr(&Expr::JSX(jsx));
             assert!(!tokens.is_empty(), "JSX codegen should produce tokens");
-            // Current placeholder returns Value::Null - document this
-            assert!(contains_value_null(&tokens), "JSX codegen is placeholder: {}", tokens.to_string());
+            // JSX should produce VNode, not Value::Null
+            let s = tokens.to_string();
+            assert!(s.contains("VNode"), "JSX codegen should produce VNode: {}", s);
         }
 
         #[test]
