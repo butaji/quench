@@ -38,3 +38,6 @@ pub mod spec_jsx;
 
 #[cfg(test)]
 pub mod spec_classes;
+
+#[cfg(test)]
+pub mod spec_stdlib;

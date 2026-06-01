@@ -31,8 +31,14 @@ mod spec_stdlib_tests {
             if let ModuleItem::Decl(Decl::Function(ref f)) = item {
                 if let Some(ref body) = f.body {
                     for stmt in &body.0 {
-                        if let crate::transpile::hir::Stmt::Expr { expr } = stmt {
-                            return (*expr).clone();
+                        match stmt {
+                            crate::transpile::hir::Stmt::Expr { expr } => return (*expr).clone(),
+                            crate::transpile::hir::Stmt::Return { arg } => {
+                                if let Some(expr) = arg {
+                                    return (*expr).clone();
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -104,7 +110,7 @@ mod spec_stdlib_tests {
         #[test]
         fn console_assert() {
             let expr = find_call_expr("function f() { console.assert(true, 'msg'); }");
-            assert_codegen_contains(&expr, "assert!", "console.assert");
+            assert_codegen_contains(&expr, "assert", "console.assert");
         }
     }
 

@@ -1216,7 +1216,8 @@ impl QuoteCodegen {
     fn gen_static_member_expr(&self, obj: &Expr, property: &str) -> TokenStream {
         // Special handling for Number static properties
         if let Expr::Ident { name: obj_name } = obj {
-            match obj_name {
+            let obj_name_str: &str = obj_name.as_str();
+            match obj_name_str {
                 "Number" => {
                     return match property {
                         "NaN" => quote! { f64::NAN },
@@ -1736,10 +1737,10 @@ impl QuoteCodegen {
                             if arguments.len() >= 2 {
                                 let cond = args.first().expect("assert needs condition");
                                 let msg = args.get(1).expect("assert needs message");
-                                return syn::parse_quote! { assert!(#cond, "{}", #msg) };
+                                return quote! { assert!(#cond, "{}", #msg) };
                             } else if arguments.len() == 1 {
                                 let cond = args.first().expect("assert needs condition");
-                                return syn::parse_quote! { assert!(#cond) };
+                                return quote! { assert!(#cond) };
                             }
                             return quote! { () };
                         }
