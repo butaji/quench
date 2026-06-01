@@ -5,6 +5,7 @@ use crate::transpile::hir;
 use crate::transpile::parser::expr::{
     arr_elems, convert_expr, conv_arrow, conv_object, conv_template,
 };
+use crate::transpile::parser::expr::convert_binding_pattern;
 use oxc_ast::ast::*;
 
 fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
@@ -17,17 +18,25 @@ fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
     v.declarations
         .iter()
         .filter_map(|decl| {
-            let name = match &decl.id {
-                BindingPattern::BindingIdentifier(i) => i.name.to_string(),
-                _ => return None,
+            // Handle both identifier and destructuring patterns
+            let (name, pattern) = match &decl.id {
+                BindingPattern::BindingIdentifier(i) => (i.name.to_string(), None),
+                BindingPattern::ArrayPattern(a) => {
+                    let pat = convert_binding_pattern(&decl.id)?;
+                    (String::new(), Some(pat))
+                }
+                BindingPattern::ObjectPattern(o) => {
+                    let pat = convert_binding_pattern(&decl.id)?;
+                    (String::new(), Some(pat))
+                }
             };
-            let init = decl.init.as_ref().and_then(convert_expr);
+            let init = decl.init.as_ref().and_then(|e| convert_expr(e).ok());
             Some(hir::Decl::Variable(hir::VariableDecl {
                 name,
                 kind: kind.clone(),
                 type_: None,
                 init,
-                pattern: None,
+                pattern,
             }))
         })
         .collect()
@@ -49,7 +58,16 @@ fn func_to_decl(f: &Function) -> hir::Decl {
                     ownership: hir::Ownership::Owned,
                 })
             } else {
-                None
+                // Handle destructuring patterns
+                let pattern = convert_binding_pattern(&p.pattern)?;
+                Some(hir::Param {
+                    name: String::new(),
+                    type_: None,
+                    default: None,
+                    optional: p.optional,
+                    pattern: Some(pattern),
+                    ownership: hir::Ownership::Owned,
+                })
             }
         })
         .collect();
@@ -142,26 +160,144 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                                 BindingPattern::BindingIdentifier(i) => i.name.to_string(),
                                 _ => return None,
                             };
-                            let init = d.init.as_ref().and_then(convert_expr);
+                            let init = d.init.as_ref().and_then(|e| convert_expr(e).ok());
                             Some((name, init))
                         })
                         .collect();
                     Some(hir::ForInit::Variable(kind, vars))
                 }
-                // ForStatementInit inherits Expression variants but they have different names
-                // For simplicity, only handle VariableDeclaration init
-                // Other expression-based init (like `for (i = 0; ...)`) would need special handling
-                Some(_) | None => None,
+                Some(ForStatementInit::Expression(e)) => {
+                    // Handle expression-based for init (e.g., for (i = 0; ...))
+                    convert_expr(e).ok().map(|e| hir::ForInit::Expr(Box::new(e)))
+                }
+                None => None,
             };
             hir::Stmt::For {
                 init,
-                test: stmt.test.as_ref().and_then(|t| convert_expr(t)),
-                update: stmt.update.as_ref().and_then(|u| convert_expr(u)),
+                test: stmt.test.as_ref().and_then(|t| convert_expr(t).ok()),
+                update: stmt.update.as_ref().and_then(|u| convert_expr(u).ok()),
                 body: Box::new(stmt_to_hir_stmt(&stmt.body)),
             }
         }
+        Statement::ForInStatement(stmt) => {
+            let left = match &stmt.left {
+                ForStatementInit::VariableDeclaration(v) => {
+                    let kind = match v.kind {
+                        VariableDeclarationKind::Const => hir::VariableKind::Const,
+                        VariableDeclarationKind::Let => hir::VariableKind::Let,
+                        VariableDeclarationKind::Var => hir::VariableKind::Var,
+                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => hir::VariableKind::Var,
+                    };
+                    let vars: Vec<(String, Option<hir::Expr>)> = v
+                        .declarations
+                        .iter()
+                        .filter_map(|d| {
+                            let name = match &d.id {
+                                BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+                                _ => return None,
+                            };
+                            Some((name, d.init.as_ref().and_then(|e| convert_expr(e).ok())))
+                        })
+                        .collect();
+                    hir::ForInit::Variable(kind, vars)
+                }
+                ForStatementInit::Expression(e) => {
+                    if let Ok(expr) = convert_expr(e) {
+                        hir::ForInit::Expr(Box::new(expr))
+                    } else {
+                        hir::ForInit::Variable(hir::VariableKind::Let, vec![])
+                    }
+                }
+            };
+            hir::Stmt::ForIn {
+                left,
+                right: Box::new(convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined)),
+                body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+            }
+        }
+        Statement::ForOfStatement(stmt) => {
+            let left = match &stmt.left {
+                ForStatementInit::VariableDeclaration(v) => {
+                    let kind = match v.kind {
+                        VariableDeclarationKind::Const => hir::VariableKind::Const,
+                        VariableDeclarationKind::Let => hir::VariableKind::Let,
+                        VariableDeclarationKind::Var => hir::VariableKind::Var,
+                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => hir::VariableKind::Var,
+                    };
+                    let vars: Vec<(String, Option<hir::Expr>)> = v
+                        .declarations
+                        .iter()
+                        .filter_map(|d| {
+                            let name = match &d.id {
+                                BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+                                _ => return None,
+                            };
+                            Some((name, d.init.as_ref().and_then(|e| convert_expr(e).ok())))
+                        })
+                        .collect();
+                    hir::ForInit::Variable(kind, vars)
+                }
+                ForStatementInit::Expression(e) => {
+                    if let Ok(expr) = convert_expr(e) {
+                        hir::ForInit::Expr(Box::new(expr))
+                    } else {
+                        hir::ForInit::Variable(hir::VariableKind::Let, vec![])
+                    }
+                }
+            };
+            hir::Stmt::ForOf {
+                left,
+                right: Box::new(convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined)),
+                body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+                is_await: stmt.r#await,
+            }
+        }
+        Statement::DoWhileStatement(stmt) => hir::Stmt::DoWhile {
+            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+            test: Box::new(convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined)),
+        },
+        Statement::SwitchStatement(stmt) => {
+            let discriminant = Box::new(convert_expr(&stmt.discriminant).unwrap_or(hir::Expr::Undefined));
+            let cases = stmt.cases.iter().map(|c| {
+                hir::SwitchCase {
+                    test: c.test.as_ref().map(|t| convert_expr(t).unwrap_or(hir::Expr::Undefined)),
+                    consequent: c.consequent.iter().map(stmt_to_hir_stmt).collect(),
+                }
+            }).collect();
+            hir::Stmt::Switch { discriminant, cases }
+        }
+        Statement::TryStatement(stmt) => {
+            let handler = stmt.handler.as_ref().map(|h| {
+                hir::CatchClause {
+                    param: h.param.as_ref().map(|p| {
+                        match p {
+                            BindingPattern::BindingIdentifier(i) => i.name.to_string(),
+                            _ => String::new(),
+                        }
+                    }).unwrap_or_default(),
+                    body: Box::new(hir::Block(h.body.statements.iter().map(stmt_to_hir_stmt).collect())),
+                }
+            });
+            hir::Stmt::Try {
+                block: hir::Block(stmt.block.statements.iter().map(stmt_to_hir_stmt).collect()),
+                handler,
+                finalizer: stmt.finalizer.as_ref().map(|f| hir::Block(f.statements.iter().map(stmt_to_hir_stmt).collect())),
+            }
+        }
+        Statement::ThrowStatement(stmt) => hir::Stmt::Throw {
+            arg: Box::new(convert_expr(&stmt.argument).unwrap_or(hir::Expr::Undefined)),
+        },
+        Statement::WithStatement(stmt) => hir::Stmt::With {
+            obj: Box::new(convert_expr(&stmt.object).unwrap_or(hir::Expr::Undefined)),
+            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+        },
+        Statement::LabeledStatement(stmt) => hir::Stmt::Labeled {
+            label: stmt.label.name.to_string(),
+            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
+        },
+        Statement::DebuggerStatement(_) => hir::Stmt::Empty,
         Statement::ReturnStatement(r) => hir::Stmt::Return {
-            arg: r.argument.as_ref().and_then(|a| convert_expr(a)),
+            arg: r.argument.as_ref().and_then(|a| convert_expr(a).ok()),
         },
         Statement::BreakStatement(_) => hir::Stmt::Break { label: None },
         Statement::ContinueStatement(_) => hir::Stmt::Continue { label: None },
@@ -177,7 +313,7 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                     BindingPattern::BindingIdentifier(i) => i.name.to_string(),
                     _ => continue,
                 };
-                let init = decl.init.as_ref().and_then(convert_expr);
+                let init = decl.init.as_ref().and_then(|e| convert_expr(e).ok());
                 // Create: name = init
                 let assign = hir::Expr::Assign {
                     op: hir::AssignOp::Assign,
@@ -188,7 +324,54 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
             }
             hir::Stmt::Block(stmts)
         }
-        _ => hir::Stmt::Empty,
+        Statement::TSEnumDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSTypeAliasDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSExportAssignment(_) => hir::Stmt::Empty,
+        Statement::UsingDeclaration(_) => hir::Stmt::Empty,
+        Statement::ClassDeclaration(c) => hir::Stmt::Class(class_to_hir(c)),
+        Statement::FunctionDeclaration(f) => hir::Stmt::FunctionDecl(func_to_decl(f)),
+        Statement::ImportDeclaration(_) => hir::Stmt::Empty,
+        Statement::ExportNamedDeclaration(_) => hir::Stmt::Empty,
+        Statement::ExportDefaultDeclaration(_) => hir::Stmt::Empty,
+        Statement::ExportAllDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSInterfaceDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSModuleDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSImportEqualsDeclaration(_) => hir::Stmt::Empty,
+        Statement::ExpressionStatement(_) |
+        Statement::IfStatement(_) |
+        Statement::WhileStatement(_) |
+        Statement::ForStatement(_) |
+        Statement::ForInStatement(_) |
+        Statement::ForOfStatement(_) |
+        Statement::DoWhileStatement(_) |
+        Statement::SwitchStatement(_) |
+        Statement::TryStatement(_) |
+        Statement::ThrowStatement(_) |
+        Statement::WithStatement(_) |
+        Statement::LabeledStatement(_) |
+        Statement::DebuggerStatement(_) |
+        Statement::ReturnStatement(_) |
+        Statement::BreakStatement(_) |
+        Statement::ContinueStatement(_) |
+        Statement::BlockStatement(_) |
+        Statement::EmptyStatement(_) |
+        Statement::VariableDeclaration(_) |
+        Statement::TSEnumDeclaration(_) |
+        Statement::TSTypeAliasDeclaration(_) |
+        Statement::TSExportAssignment(_) |
+        Statement::UsingDeclaration(_) |
+        Statement::ClassDeclaration(_) |
+        Statement::FunctionDeclaration(_) |
+        Statement::ImportDeclaration(_) |
+        Statement::ExportNamedDeclaration(_) |
+        Statement::ExportDefaultDeclaration(_) |
+        Statement::ExportAllDeclaration(_) |
+        Statement::TSInterfaceDeclaration(_) |
+        Statement::TSModuleDeclaration(_) |
+        Statement::TSImportEqualsDeclaration(_) => {
+            // Statement types that are already handled above
+            hir::Stmt::Empty
+        }
     }
 }
 
@@ -216,7 +399,7 @@ fn class_to_hir(c: &Class) -> hir::Decl {
                             Statement::ReturnStatement(r) => r
                                 .argument
                                 .as_ref()
-                                .and_then(|a| convert_expr(a))
+                                .and_then(|a| convert_expr(a).ok())
                                 .unwrap_or(hir::Expr::Undefined),
                             _ => hir::Expr::Undefined,
                         }
@@ -241,7 +424,19 @@ fn class_to_hir(c: &Class) -> hir::Decl {
                                 ownership: hir::Ownership::Owned,
                             })
                         } else {
-                            None
+                            // Handle destructuring patterns
+                            if let Some(pattern) = convert_binding_pattern(&param.pattern) {
+                                Some(hir::Param {
+                                    name: String::new(),
+                                    type_: None,
+                                    default: None,
+                                    optional: param.optional,
+                                    pattern: Some(pattern),
+                                    ownership: hir::Ownership::Owned,
+                                })
+                            } else {
+                                None
+                            }
                         }
                     })
                     .collect();
@@ -279,12 +474,12 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
         ExportDefaultDeclarationKind::NullLiteral(_) => Some(hir::Expr::Null),
         ExportDefaultDeclarationKind::Identifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
         ExportDefaultDeclarationKind::ArrowFunctionExpression(a) => conv_arrow(a),
-        ExportDefaultDeclarationKind::TemplateLiteral(t) => conv_template(t),
-        ExportDefaultDeclarationKind::ObjectExpression(o) => conv_object(o),
+        ExportDefaultDeclarationKind::TemplateLiteral(t) => conv_template(t).ok(),
+        ExportDefaultDeclarationKind::ObjectExpression(o) => conv_object(o).ok(),
         ExportDefaultDeclarationKind::ArrayExpression(a) => Some(hir::Expr::Array { elems: arr_elems(a) }),
         ExportDefaultDeclarationKind::ClassExpression(c) => Some(hir::Expr::Class {
             id: c.id.as_ref().map(|i| i.name.to_string()),
-            super_class: c.super_class.as_ref().map(|s| Box::new(convert_expr(s).unwrap_or(hir::Expr::Undefined))),
+            super_class: c.super_class.as_ref().and_then(|s| convert_expr(s).ok()).map(Box::new),
             members: vec![],
         }),
         ExportDefaultDeclarationKind::FunctionExpression(f) => {
@@ -300,24 +495,24 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
         // delegate to the convert_expr function via Expression boxing
         ExportDefaultDeclarationKind::CallExpression(c) => {
             // Build a call expression from the parts
-            let callee = Box::new(convert_expr(&c.callee)?);
+            let callee = Box::new(convert_expr(&c.callee).ok()?);
             let args: Vec<hir::Expr> = c
                 .arguments
                 .iter()
-                .filter_map(|a| a.as_expression().and_then(convert_expr))
+                .filter_map(|a| a.as_expression().and_then(|e| convert_expr(e).ok()))
                 .collect();
             Some(hir::Expr::Call { callee, arguments: args })
         }
         ExportDefaultDeclarationKind::StaticMemberExpression(m) => {
-            let obj = Box::new(convert_expr(&m.object)?);
+            let obj = Box::new(convert_expr(&m.object).ok()?);
             Some(hir::Expr::StaticMember {
                 obj,
                 property: m.property.name.to_string(),
             })
         }
         ExportDefaultDeclarationKind::ComputedMemberExpression(m) => {
-            let obj = Box::new(convert_expr(&m.object)?);
-            let property = Box::new(convert_expr(&m.expression)?);
+            let obj = Box::new(convert_expr(&m.object).ok()?);
+            let property = Box::new(convert_expr(&m.expression).ok()?);
             Some(hir::Expr::Member {
                 obj,
                 property,
@@ -325,8 +520,8 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
             })
         }
         ExportDefaultDeclarationKind::BinaryExpression(b) => {
-            let left = Box::new(convert_expr(&b.left)?);
-            let right = Box::new(convert_expr(&b.right)?);
+            let left = Box::new(convert_expr(&b.left).ok()?);
+            let right = Box::new(convert_expr(&b.right).ok()?);
             let op = match b.operator {
                 BinaryOperator::Addition => hir::BinaryOp::Add,
                 BinaryOperator::Subtraction => hir::BinaryOp::Sub,
@@ -341,6 +536,15 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
                 BinaryOperator::StrictEquality => hir::BinaryOp::StrictEq,
                 BinaryOperator::Inequality => hir::BinaryOp::Neq,
                 BinaryOperator::StrictInequality => hir::BinaryOp::StrictNeq,
+                BinaryOperator::Exponentiation => hir::BinaryOp::Exp,
+                BinaryOperator::LeftShift => hir::BinaryOp::Shl,
+                BinaryOperator::RightShift => hir::BinaryOp::Shr,
+                BinaryOperator::UnsignedRightShift => hir::BinaryOp::UShr,
+                BinaryOperator::BitwiseAnd => hir::BinaryOp::BitAnd,
+                BinaryOperator::BitwiseXor => hir::BinaryOp::BitXor,
+                BinaryOperator::BitwiseOr => hir::BinaryOp::BitOr,
+                BinaryOperator::In => hir::BinaryOp::In,
+                BinaryOperator::Instanceof => hir::BinaryOp::Instanceof,
                 _ => return None,
             };
             Some(hir::Expr::Bin { op, left, right })
@@ -357,7 +561,7 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
             };
             Some(hir::Expr::Unary {
                 op,
-                arg: Box::new(convert_expr(&u.argument)?),
+                arg: Box::new(convert_expr(&u.argument).ok()?),
                 prefix: true,
             })
         }
@@ -381,13 +585,108 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
         }
         ExportDefaultDeclarationKind::ConditionalExpression(c) => {
             Some(hir::Expr::Cond {
-                test: Box::new(convert_expr(&c.test)?),
-                consequent: Box::new(convert_expr(&c.consequent)?),
-                alternate: Box::new(convert_expr(&c.alternate)?),
+                test: Box::new(convert_expr(&c.test).ok()?),
+                consequent: Box::new(convert_expr(&c.consequent).ok()?),
+                alternate: Box::new(convert_expr(&c.alternate).ok()?),
             })
         }
-        ExportDefaultDeclarationKind::ParenthesizedExpression(p) => convert_expr(&p.expression),
+        ExportDefaultDeclarationKind::ParenthesizedExpression(p) => convert_expr(&p.expression).ok(),
+        // Handle BigintLiteral, RegExpLiteral, etc.
+        ExportDefaultDeclarationKind::BigintLiteral(b) => Some(hir::Expr::BigInt(b.raw.parse().unwrap_or(0))),
+        ExportDefaultDeclarationKind::RegExpLiteral(r) => Some(hir::Expr::RegExp {
+            pattern: r.pattern.to_string(),
+            flags: r.flags.to_string(),
+        }),
+        // Fall-through for unhandled types
         _ => None,
+    }
+}
+
+/// Convert ExportNamedDeclaration to HIR ModuleItems.
+/// Handles: export const x = 1; export function foo() {} export { x, y }; export * from "mod";
+fn convert_export_named(e: &ExportNamedDeclaration) -> Vec<hir::ModuleItem> {
+    use oxc_ast::ast::ExportSpecifier;
+
+    // Handle re-exports: export * from "mod" or export { x, y } from "mod"
+    if let Some(source) = &e.source {
+        let source_str = source.value.to_string();
+        // export * from "mod"
+        if e.specifiers.is_empty() {
+            return vec![hir::ModuleItem::Stmt(hir::Stmt::ExportNamed {
+                specifiers: vec![hir::Export::All {
+                    source: source_str,
+                }],
+            })];
+        }
+        // export { x, y } from "mod"
+        let names: Vec<String> = e
+            .specifiers
+            .iter()
+            .map(|spec| {
+                spec.exported
+                    .as_ref()
+                    .map(|i| i.name.to_string())
+                    .unwrap_or_else(|| {
+                        // Use local name if exported is not specified
+                        spec.local.name.to_string()
+                    })
+            })
+            .collect();
+        return vec![hir::ModuleItem::Stmt(hir::Stmt::ExportNamed {
+            specifiers: vec![hir::Export::ReExport {
+                source: source_str,
+                names,
+            }],
+        })];
+    }
+
+    // Handle export declarations
+    if let Some(declaration) = &e.declaration {
+        match declaration {
+            // export const x = 1; export let y = 2;
+            oxc_ast::ast::Declaration::VariableDeclaration(v) => {
+                var_to_decl(v)
+                    .into_iter()
+                    .map(|d| hir::ModuleItem::Decl(d))
+                    .collect()
+            }
+            // export function foo() {}
+            oxc_ast::ast::Declaration::FunctionDeclaration(f) => {
+                vec![hir::ModuleItem::Decl(func_to_decl(f))]
+            }
+            // export class Foo {}
+            oxc_ast::ast::Declaration::ClassDeclaration(c) => {
+                vec![hir::ModuleItem::Decl(class_to_hir(c))]
+            }
+            // export type Foo = ...
+            oxc_ast::ast::Declaration::TSInterfaceDeclaration(i) => {
+                vec![hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl {
+                    name: i.id.name.to_string(),
+                    generics: vec![],
+                    type_: hir::Type::Object { members: vec![] },
+                }))]
+            }
+            // Handle other declaration types
+            _ => vec![],
+        }
+    } else {
+        // Handle export { x, y } without source (local exports)
+        let mut specifiers = Vec::new();
+        for spec in &e.specifiers {
+            let name = spec
+                .exported
+                .as_ref()
+                .map(|i| i.name.to_string())
+                .unwrap_or_else(|| spec.local.name.to_string());
+            specifiers.push(hir::Export::Named { name });
+        }
+        if specifiers.is_empty() {
+            vec![]
+        } else {
+            vec![hir::ModuleItem::Stmt(hir::Stmt::ExportNamed {
+                specifiers,
+            })]
+        }
     }
 }
 
@@ -494,6 +793,7 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
                 }
             }
         }
+        Statement::ExportNamedDeclaration(e) => convert_export_named(e),
         _ => vec![hir::ModuleItem::Stmt(stmt_to_hir_stmt(stmt))],
     }
 }
