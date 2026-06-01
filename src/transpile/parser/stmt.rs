@@ -39,7 +39,8 @@ fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
 }
 
 pub fn func_to_decl(f: &Function) -> hir::Decl {
-    let params: Vec<hir::Param> = f
+    // Convert regular params
+    let mut params: Vec<hir::Param> = f
         .params
         .items
         .iter()
@@ -68,6 +69,27 @@ pub fn func_to_decl(f: &Function) -> hir::Decl {
         })
         .collect();
 
+    // Handle rest parameter if present
+    if let Some(rest) = f.params.rest.as_ref() {
+        // rest is Box<FormalParameterRest> which has a `rest` field of type BindingRestElement
+        // BindingRestElement has an `argument` field of type BindingPattern
+        if let BindingPattern::BindingIdentifier(binding_id) = &rest.rest.argument {
+            params.push(hir::Param {
+                name: binding_id.name.to_string(),
+                type_: None,
+                default: None,
+                optional: false,
+                pattern: Some(hir::Pat::Rest {
+                    arg: Box::new(hir::Pat::Ident {
+                        name: binding_id.name.to_string(),
+                        type_: None,
+                    }),
+                }),
+                ownership: hir::Ownership::Owned,
+            });
+        }
+    }
+
     let body = f.body.as_ref().map(|body_box| {
         hir::Block(body_box.statements.iter().map(stmt_to_hir_stmt).collect())
     });
@@ -80,10 +102,10 @@ pub fn func_to_decl(f: &Function) -> hir::Decl {
             .unwrap_or_default(),
         generics: vec![],
         params,
-        return_type: None,
+        return_type: None, // TODO: handle return type annotations
         body,
         is_async: f.r#async,
-        is_generator: false,
+        is_generator: f.generator,
         decorators: vec![],
         throws: false,
         error_type: None,
@@ -95,9 +117,22 @@ fn import_to_hir(i: &ImportDeclaration) -> hir::ModuleItem {
         v.iter()
             .map(|s| match s {
                 oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(s) => {
+                    // Get the imported name from s.imported (the original name being imported)
+                    let imported_name = match &s.imported {
+                        ModuleExportName::IdentifierName(i) => i.name.to_string(),
+                        ModuleExportName::IdentifierReference(i) => i.name.to_string(),
+                        ModuleExportName::StringLiteral(s) => s.value.to_string(),
+                    };
+                    // Get the local name and determine if there's an alias
+                    let local_name = s.local.name.to_string();
+                    let alias = if imported_name == local_name {
+                        None
+                    } else {
+                        Some(local_name)
+                    };
                     hir::ImportSpecifier::Named {
-                        name: s.local.name.to_string(),
-                        alias: None,
+                        name: imported_name,
+                        alias,
                     }
                 }
                 oxc_ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
@@ -816,6 +851,11 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
             }
         }
         Statement::ExportNamedDeclaration(e) => convert_export_named(e),
+        Statement::ExportAllDeclaration(e) => vec![hir::ModuleItem::Stmt(hir::Stmt::ExportNamed {
+            specifiers: vec![hir::Export::All {
+                source: e.source.value.to_string(),
+            }],
+        })],
         _ => vec![hir::ModuleItem::Stmt(stmt_to_hir_stmt(stmt))],
     }
 }
