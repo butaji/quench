@@ -90,7 +90,7 @@ pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
     let generated_files = source_gen::generate_all(&ts_files)?;
 
     write_generated_files(&build_dir, &generated_files)?;
-    write_manifests(&build_dir, &routes, &islands, &components)?;
+    write_manifests(&build_dir, &routes, &islands, &components, &ts_files, &generated_files)?;
 
     Ok(BuildResult {
         generated_files,
@@ -200,12 +200,32 @@ fn write_manifests(
     routes: &[RouteEntry],
     islands: &[IslandEntry],
     components: &[ComponentEntry],
+    ts_files: &[PathBuf],
+    generated_files: &[GeneratedFile],
 ) -> Result<()> {
+    // Check if this is a single-file script build
+    let is_single = source_gen::is_single_file_build(ts_files, routes, islands, components);
+
+    let (source_file, rust_code) = if is_single {
+        // For single-file builds, extract the source file and code
+        let file = &ts_files[0];
+        let code = generated_files
+            .iter()
+            .find(|f| f.path.to_string_lossy().contains("gen/"))
+            .map(|f| f.content.as_str());
+        (Some(file.as_path()), code)
+    } else {
+        (None, None)
+    };
+
     fs::write(
         build_dir.join("src/lib.rs"),
-        source_gen::generate_lib(routes, islands, components),
+        source_gen::generate_lib(routes, islands, components, source_file, rust_code),
     )?;
-    fs::write(build_dir.join("src/main.rs"), source_gen::generate_main())?;
+    fs::write(
+        build_dir.join("src/main.rs"),
+        source_gen::generate_main(source_file),
+    )?;
     fs::write(
         build_dir.join("src/routes.rs"),
         route_gen::generate_route_table(routes),
