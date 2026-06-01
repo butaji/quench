@@ -6,6 +6,9 @@ description = "Fresh framework integration for runts"
 authors = ["runts team"]
 license = "MIT OR Apache-2.0"
 
+[lib]
+doctest = false
+
 [dependencies]
 runts-plugin = { path = "../runts-plugin" }
 runts-lib = { path = "../runts-lib" }

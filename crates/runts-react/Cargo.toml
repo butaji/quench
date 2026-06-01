@@ -6,6 +6,9 @@ description = "React SSR plugin for runts"
 authors = ["runts team"]
 license = "MIT OR Apache-2.0"
 
+[lib]
+doctest = false
+
 [dependencies]
 runts-plugin = { path = "../runts-plugin" }
 serde = { version = "1.0", features = ["derive"] }
