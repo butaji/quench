@@ -444,7 +444,7 @@ mod integration_tests {
         let mut arena = HirArena::new();
 
         // Allocate a vec
-        let vec = vec![1u32, 2, 3];
+        let vec = vec!["1".to_string(), "2".to_string(), "3".to_string()];
         let idx = arena.alloc_vec(vec);
 
         // Verify allocation happened

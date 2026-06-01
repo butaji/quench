@@ -666,7 +666,7 @@ mod completeness_parser_tests {
         // Check spread is preserved
         let has_spread = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
-                if let Some(Pat::Array { elems, .. }) = v.pattern {
+                if let Some(Pat::Array { elems, .. }) = &v.pattern {
                     elems.iter().any(|e| matches!(e, Some(Pat::Rest { .. })))
                 } else {
                     false
@@ -687,7 +687,7 @@ mod completeness_parser_tests {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
                 if let Some(Pat::Object { props, rest }) = v.pattern.as_ref() {
                     if let Some(_) = rest {
-                        return props.iter().any(|p| matches!(p, ObjectPatProp::Rest(_)));
+                        return props.iter().any(|p| matches!(p, ObjectPatProp::Rest { .. }));
                     }
                 }
                 false
@@ -706,7 +706,7 @@ mod completeness_parser_tests {
         // Check default value is preserved
         let has_default = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
-                if let Some(Pat::Array(ref elems)) = v.pattern {
+                if let Some(Pat::Array { elems, .. }) = &v.pattern {
                     elems.iter().any(|e| {
                         if let Some(Pat::Default { .. }) = e { true } else { false }
                     })
@@ -728,7 +728,7 @@ mod completeness_parser_tests {
         let has_array_param = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Function(ref f)) = item {
                 f.params.iter().any(|p| {
-                    p.pattern.as_ref().map(|pat| matches!(pat, Pat::Array(_))).unwrap_or(false)
+                    p.pattern.as_ref().map(|pat| matches!(pat, Pat::Array { .. })).unwrap_or(false)
                 })
             } else {
                 false
