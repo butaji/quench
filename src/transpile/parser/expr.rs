@@ -46,7 +46,7 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
             arg: Box::new(convert_expr(&a.argument)?),
         }),
         Expression::YieldExpression(y) => Ok(hir::Expr::Yield {
-            arg: y.argument.as_ref().and_then(|a| convert_expr(a).map(Box::new)).transpose()?,
+            arg: y.argument.as_ref().map(|a| convert_expr(a)).transpose()?.map(Box::new),
             delegate: y.delegate,
         }),
         Expression::Super(_) => Ok(hir::Expr::Super),
@@ -107,7 +107,7 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
                     let obj = Box::new(convert_expr(&m.object)?);
                     Ok(hir::Expr::Member {
                         obj,
-                        property: Box::new(hir::Expr::Ident { name: m.property.name.to_string() }),
+                        property: Box::new(hir::Expr::Ident { name: m.field.name.to_string() }),
                         computed: false,
                     })
                 }

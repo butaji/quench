@@ -306,7 +306,7 @@ pub async fn run_plugin_build(
     release: bool,
 ) -> Result<BuildResult> {
     let plugin = get_plugin(&plugin_name)?;
-    let project_root = resolve_project_root(&path);
+    let project_root = resolve_project_root(&path)?;
 
     // Create ephemeral build dir using TempDir for secure cleanup
     let temp_dir = TempDir::new()?;

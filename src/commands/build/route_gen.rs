@@ -39,13 +39,13 @@ pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
     }
 
     // Check for route collisions (e.g., [id].tsx and id.tsx both matching same URL)
-    detect_route_collisions(&routes);
+    detect_route_collisions(&routes)?;
 
     routes
 }
 
 /// Check for route path collisions and warn/error on duplicates
-fn detect_route_collisions(routes: &[RouteEntry]) {
+fn detect_route_collisions(routes: &[RouteEntry]) -> anyhow::Result<()> {
     use std::collections::HashMap;
 
     let mut pattern_seen: HashMap<&str, &Path> = HashMap::new();
@@ -60,6 +60,7 @@ fn detect_route_collisions(routes: &[RouteEntry]) {
         }
         pattern_seen.insert(&route.pattern, &route.file);
     }
+    Ok(())
 }
 
 /// Convert file path to route pattern
