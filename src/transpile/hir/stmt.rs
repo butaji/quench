@@ -2,6 +2,7 @@
 
 use super::{
     Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, ImportSpecifier,
+    VariableDecl,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +75,7 @@ pub enum Stmt {
     },
     FunctionDecl(FunctionDecl),
     Class(ClassDecl),
+    Variable(VariableDecl),
     ExportNamed {
         specifiers: Vec<Export>,
     },

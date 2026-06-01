@@ -142,7 +142,7 @@ pub struct GenericParam {
     pub default: Option<Type>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VariableDecl {
     pub name: String,
     pub kind: VariableKind,

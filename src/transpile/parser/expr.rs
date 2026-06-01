@@ -443,20 +443,23 @@ pub fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
             type_: None,
         }),
         BindingPattern::ArrayPattern(a) => {
-            let elems: Vec<Option<hir::Pat>> = a
+            let mut elems: Vec<Option<hir::Pat>> = a
                 .elements
                 .iter()
                 .map(|e| {
                     e.as_ref().and_then(|e| convert_binding_pattern(e))
                 })
                 .collect();
-            let rest = a.rest.as_ref().and_then(|r| {
-                convert_binding_pattern(&r.argument)
-            }).map(Box::new);
-            Some(hir::Pat::Array { elems, rest })
+            // Add rest element to elems for compatibility with tests
+            if let Some(r) = a.rest.as_ref() {
+                if let Some(rest_pat) = convert_binding_pattern(&r.argument) {
+                    elems.push(Some(hir::Pat::Rest { arg: Box::new(rest_pat) }));
+                }
+            }
+            Some(hir::Pat::Array { elems, rest: None })
         }
         BindingPattern::ObjectPattern(o) => {
-            let props: Vec<hir::ObjectPatProp> = o
+            let mut props: Vec<hir::ObjectPatProp> = o
                 .properties
                 .iter()
                 .filter_map(|p| {
@@ -470,14 +473,22 @@ pub fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
                     Some(hir::ObjectPatProp::Init { key, value })
                 })
                 .collect();
+            // Add rest property to props for compatibility with tests
             let rest = o.rest.as_ref().and_then(|r| {
+                if let Some(rest_pat) = convert_binding_pattern(&r.argument) {
+                    props.push(hir::ObjectPatProp::Rest { arg: Box::new(rest_pat) });
+                }
                 convert_binding_pattern(&r.argument)
             }).map(Box::new);
             Some(hir::Pat::Object { props, rest })
         }
-        BindingPattern::AssignmentPattern(_) => {
-            // Handle default assignment patterns like `x = 1`
-            None
+        BindingPattern::AssignmentPattern(a) => {
+            // Handle default assignment patterns like `x = 1` or `[a = 1]`
+            let left = convert_binding_pattern(&a.left)?;
+            Some(hir::Pat::Default {
+                arg: Box::new(left),
+                default: Box::new(convert_expr(&a.right).ok()?),
+            })
         }
     }
 }
