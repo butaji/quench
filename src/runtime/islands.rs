@@ -1,5 +1,6 @@
 //! Islands implementation
 
+use std::hash::Hasher;
 use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
@@ -88,19 +89,6 @@ impl IslandManifest {
 impl Default for IslandManifest {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[allow(dead_code)]
-impl IslandManifest {
-    pub fn new() -> Self {
-        Self {
-            islands: std::collections::HashMap::new(),
-        }
-    }
-    pub fn register(&mut self, _desc: IslandDescriptor) {}
-    pub fn get(&self, _name: &str) -> Option<&IslandManifestEntry> {
-        None
     }
 }
 
