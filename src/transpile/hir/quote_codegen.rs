@@ -401,8 +401,10 @@ impl QuoteCodegen {
             S::FunctionDecl(func) => Some(self.gen_fn(func)),
             S::Class(_) => None, // Class codegen not yet implemented
             S::Variable(var) => self.gen_var_decl(var),
-            S::ExportNamed { .. } | S::ExportDefault { .. } => None, // Export handled elsewhere
-            S::ImportNamed { .. } | S::ImportDefault { .. } => None, // Import handled elsewhere
+            S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)),
+            S::ExportDefault { expr } => Some(self.gen_export_default(expr)),
+            S::ImportNamed { source, specifiers } => Some(self.gen_import_named(source, specifiers)),
+            S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)),
         }
     }
 
@@ -421,24 +423,128 @@ impl QuoteCodegen {
         }
     }
 
-    fn gen_export_named(&self, _specifiers: &[super::Export]) -> TokenStream {
-        // Export handling not yet fully implemented
-        quote! {}
+    fn gen_export_named(&self, specifiers: &[super::Export]) -> TokenStream {
+        use super::Export as E;
+        let items: Vec<TokenStream> = specifiers.iter().map(|spec| {
+            match spec {
+                E::Named { name } => {
+                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+                    quote! { #ident }
+                }
+                E::NamedWithValue { name, value } => {
+                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+                    let val = self.gen_expr(value);
+                    quote! { #ident = #val }
+                }
+                E::ReExport { source, names } => {
+                    let mod_path = self.module_path(source);
+                    let idents: Vec<_> = names.iter()
+                        .map(|n| syn::Ident::new(n, proc_macro2::Span::call_site()))
+                        .collect();
+                    quote! { pub use #mod_path::{#(#idents),*}; }
+                }
+                E::All { source } => {
+                    let mod_path = self.module_path(source);
+                    quote! { pub use #mod_path::*; }
+                }
+                E::Default { expr } => {
+                    // export default expr - handled by gen_export_default
+                    let val = self.gen_expr(expr);
+                    quote! { #val }
+                }
+            }
+        }).collect();
+
+        if items.len() == 1 {
+            // Single specifier - could be pub use or pub const
+            let item = &items[0];
+            if matches!(specifiers[0], E::Named { .. }) {
+                // export { x } => pub use ...x;
+                quote! { pub use #item; }
+            } else {
+                quote! { #item }
+            }
+        } else {
+            // Multiple specifiers - all become pub use statements
+            let uses: Vec<TokenStream> = specifiers.iter().filter_map(|spec| {
+                match spec {
+                    E::Named { name } => {
+                        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+                        Some(quote! { pub use #ident; })
+                    }
+                    _ => None,
+                }
+            }).collect();
+            quote! { #(#uses)* }
+        }
     }
 
-    fn gen_export_default(&self, _expr: &Expr) -> TokenStream {
-        // Export handling not yet fully implemented
-        quote! {}
+    fn gen_export_default(&self, expr: &Expr) -> TokenStream {
+        let val = self.gen_expr(expr);
+        match expr {
+            Expr::Function(_) => {
+                // export default function -> fn default() { ... }
+                // The function already has its own name
+                quote! { #val }
+            }
+            Expr::ArrowFunction { .. } => {
+                // export default arrow -> fn default() { ... }
+                quote! { fn default() { #val } }
+            }
+            _ => {
+                // export default expr -> pub const default = expr;
+                quote! { pub const default = #val; }
+            }
+        }
     }
 
-    fn gen_import_named(&self, _source: &str, _specifiers: &[super::ImportSpecifier]) -> TokenStream {
-        // Import handling not yet fully implemented
-        quote! {}
+    fn gen_import_named(&self, source: &str, specifiers: &[super::ImportSpecifier]) -> TokenStream {
+        use super::ImportSpecifier as I;
+        let mod_path = self.module_path(source);
+
+        let items: Vec<TokenStream> = specifiers.iter().map(|spec| {
+            match spec {
+                I::Named { name, alias } => {
+                    let orig = syn::Ident::new(name, proc_macro2::Span::call_site());
+                    match alias {
+                        Some(a) => {
+                            let alias_ident = syn::Ident::new(a, proc_macro2::Span::call_site());
+                            quote! { #orig as #alias_ident }
+                        }
+                        None => quote! { #orig },
+                    }
+                }
+                I::Default { name } => {
+                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+                    quote! { #ident }
+                }
+                I::Namespace { name } => {
+                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+                    quote! { * as #ident }
+                }
+            }
+        }).collect();
+
+        quote! { use #mod_path::{#(#items),*}; }
     }
 
-    fn gen_import_default(&self, _source: &str, _local: &str) -> TokenStream {
-        // Import handling not yet fully implemented
-        quote! {}
+    fn gen_import_default(&self, source: &str, local: &str) -> TokenStream {
+        let mod_path = self.module_path(source);
+        let ident = syn::Ident::new(local, proc_macro2::Span::call_site());
+        quote! { use #mod_path::#ident; }
+    }
+
+    /// Convert a JS module path to a Rust module path
+    /// e.g., "react" -> "::runts::react", "./utils/helper" -> "::runts::helper"
+    fn module_path(&self, source: &str) -> syn::Path {
+        // For relative paths, extract the last component
+        let module_name = if source.starts_with('.') {
+            source.split('/').last().unwrap_or(source)
+        } else {
+            source
+        };
+
+        syn::Ident::new(module_name, proc_macro2::Span::call_site()).into()
     }
 
     fn gen_if(&self, test: &Expr, cons: &Box<Stmt>, alt: Option<&Stmt>) -> TokenStream {
