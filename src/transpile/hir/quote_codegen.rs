@@ -105,7 +105,7 @@ impl QuoteCodegen {
     }
     
     // allow:complexity,too_many_lines
-    fn gen_type(&self, ty: &Type) -> TokenStream {
+    pub(crate) fn gen_type(&self, ty: &Type) -> TokenStream {
         use super::Type as T;
         match ty {
             T::String | T::Number | T::Boolean => self.gen_prim_type(ty),
@@ -329,7 +329,7 @@ impl QuoteCodegen {
     }
     
     // allow:complexity,too_many_lines
-    fn gen_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+    pub(crate) fn gen_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
             S::Empty => Some(quote! {}),
@@ -657,43 +657,239 @@ impl QuoteCodegen {
         }
     }
     
-    fn gen_expr(&self, expr: &Expr) -> TokenStream {
-        // Dispatch to specific handlers
-        self.gen_lit_expr(expr)
-            .or_else(|| self.gen_ident_expr(expr))
-            .or_else(|| self.gen_bin_expr_opt(expr))
-            .or_else(|| self.gen_assign_expr_opt(expr))
-            .or_else(|| self.gen_update_expr_opt(expr))
-            .or_else(|| self.gen_call_expr_opt(expr))
-            .or_else(|| self.gen_member_expr_opt(expr))
-            .unwrap_or_else(|| quote! { Value::Null })
-    }
-    
-    fn gen_lit_expr(&self, expr: &Expr) -> Option<TokenStream> {
+    pub(crate) fn gen_expr(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
-            E::Number(n) => Some(quote! { #n }),
-            E::String(s) => Some(quote! { #s.to_string() }),
-            E::Boolean(b) => Some(quote! { #b }),
-            E::Null | E::Undefined => Some(quote! { Value::Null }),
-            _ => None,
+            E::String(s) => self.gen_string_expr(s),
+            E::Number(n) => self.gen_number_expr(n),
+            E::BigInt(_) => {
+                // TODO: implement BigInt codegen
+                quote! { Value::Null }
+            }
+            E::Boolean(b) => self.gen_bool_expr(*b),
+            E::Null => quote! { Value::Null },
+            E::Undefined => quote! { Value::Null },
+            E::RegExp { .. } => {
+                // TODO: implement RegExp codegen
+                quote! { Value::Null }
+            }
+            E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
+            E::Ident { name } => self.gen_ident_expr(name),
+            E::JSX(_) => {
+                // TODO: implement JSX codegen
+                quote! { Value::Null }
+            }
+            E::Bin { op, left, right } => self.gen_bin_expr(op, left, right),
+            E::Unary { op, arg, prefix } => self.gen_unary_expr(op, arg, *prefix),
+            E::Update { op, arg, prefix } => self.gen_update_expr(op, arg, *prefix),
+            E::Logical { op, left, right } => self.gen_logical_expr(op, left, right),
+            E::Cond { test, consequent, alternate } => self.gen_cond_expr(test, consequent, alternate),
+            E::Assign { op, left, right } => self.gen_assign_expr(op, left, right),
+            E::Array { elems } => self.gen_array_expr(elems),
+            E::Object { members } => self.gen_object_expr(members),
+            E::Function(func) => self.gen_fn_expr(func),
+            E::ArrowFunction { params, body, is_async } => self.gen_arrow_expr(params, body, *is_async),
+            E::Await { arg } => self.gen_await_expr(arg),
+            E::Yield { arg, delegate } => self.gen_yield_expr(arg, *delegate),
+            E::Call { callee, arguments } => self.gen_call_expr(callee, arguments),
+            E::New { callee, arguments } => self.gen_new_expr(callee, arguments),
+            E::Member { obj, property, computed } => self.gen_member_expr_full(obj, property, *computed),
+            E::Super => quote! { Value::Null },
+            E::This => quote! { Value::Null },
+            E::StaticMember { obj, property } => self.gen_static_member_expr(obj, property),
+            E::PrivateMember { .. } => {
+                // TODO: implement PrivateMember codegen
+                quote! { Value::Null }
+            }
+            E::MetaProperty { kind: _ } => {
+                // TODO: implement MetaProperty codegen
+                quote! { Value::Null }
+            }
+            E::TaggedTemplate { .. } => {
+                // TODO: implement TaggedTemplate codegen
+                quote! { Value::Null }
+            }
+            E::Seq { left, right } => self.gen_seq_expr(left, right),
+            E::Spread { arg } => self.gen_spread_expr(arg),
+            E::Class { id: _, super_class: _, members: _ } => {
+                // TODO: implement Class expression codegen
+                quote! { Value::Null }
+            }
+            E::TypeAnnot { type_ } => {
+                let _ = type_;
+                quote! { Value::Null }
+            }
+            E::ArrowWithType { .. } => {
+                // TODO: implement ArrowWithType codegen
+                quote! { Value::Null }
+            }
+            E::Block(stmts) => self.gen_block_expr(stmts),
+            E::Invalid => panic!("codegen for Invalid expression"),
         }
     }
     
-    fn gen_ident_expr(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::Ident { name } = expr { Some(self.gen_ident(name)) } else { None }
+    fn gen_string_expr(&self, s: &str) -> TokenStream {
+        quote! { #s.to_string() }
     }
-    
-    fn gen_bin_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::Bin { op, left, right } = expr { Some(self.gen_bin_expr(op, left, right)) } else { None }
+
+    fn gen_number_expr(&self, n: &f64) -> TokenStream {
+        quote! { #n }
     }
-    
-    fn gen_assign_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::Assign { op, left, right } = expr {
-            Some(self.gen_assign_expr(op, left, right))
-        } else { None }
+
+    fn gen_bool_expr(&self, b: bool) -> TokenStream {
+        quote! { #b }
     }
-    
+
+    fn gen_template_expr(&self, parts: &[super::TemplatePart], exprs: &[Expr]) -> TokenStream {
+        let _ = (parts, exprs);
+        // TODO: implement template literal codegen
+        quote! { Value::Null }
+    }
+
+    fn gen_ident_expr(&self, name: &str) -> TokenStream {
+        let id = syn::Ident::new(name, proc_macro2::Span::call_site());
+        quote! { #id }
+    }
+
+    fn gen_static_member_expr(&self, obj: &Expr, property: &str) -> TokenStream {
+        let obj = self.gen_expr(obj);
+        let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
+        quote! { #obj.#prop }
+    }
+
+    fn gen_member_expr_full(&self, obj: &Expr, property: &Expr, computed: bool) -> TokenStream {
+        let obj = self.gen_expr(obj);
+        if computed {
+            let prop = self.gen_expr(property);
+            quote! { #obj[#prop] }
+        } else {
+            let prop = self.gen_expr(property);
+            quote! { #obj.#prop }
+        }
+    }
+
+    fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, prefix: bool) -> TokenStream {
+        let _ = (op, arg, prefix);
+        // TODO: implement Unary codegen
+        quote! { Value::Null }
+    }
+
+    fn gen_logical_expr(&self, op: &super::LogicalOp, left: &Expr, right: &Expr) -> TokenStream {
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
+        let op_str = match op {
+            super::LogicalOp::And => "&&",
+            super::LogicalOp::Or => "||",
+            super::LogicalOp::NullishCoalescing => "??",
+        };
+        quote! { #lhs #op_str #rhs }
+    }
+
+    fn gen_cond_expr(&self, test: &Expr, consequent: &Expr, alternate: &Expr) -> TokenStream {
+        let test = self.gen_expr(test);
+        let cons = self.gen_expr(consequent);
+        let alt = self.gen_expr(alternate);
+        quote! { if #test { #cons } else { #alt } }
+    }
+
+    fn gen_array_expr(&self, elems: &[Option<Expr>]) -> TokenStream {
+        let items: Vec<_> = elems.iter()
+            .map(|e| e.as_ref().map(|e| self.gen_expr(e)).unwrap_or_else(|| quote! { Value::Null }))
+            .collect();
+        quote! { vec![#(#items),*] }
+    }
+
+    fn gen_object_expr(&self, members: &[super::ObjectMemberExpr]) -> TokenStream {
+        let _ = members;
+        // TODO: implement Object expression codegen
+        quote! { Value::Null }
+    }
+
+    fn gen_fn_expr(&self, func: &super::FunctionDecl) -> TokenStream {
+        self.gen_fn(func)
+    }
+
+    fn gen_arrow_expr(&self, params: &[super::Param], body: &Expr, is_async: bool) -> TokenStream {
+        let params_ts = self.gen_params(params);
+        let body_ts = self.gen_expr(body);
+        if is_async {
+            quote! { async move |#params_ts| -> Value { #body_ts } }
+        } else {
+            quote! { move |#params_ts| -> Value { #body_ts } }
+        }
+    }
+
+    fn gen_await_expr(&self, arg: &Expr) -> TokenStream {
+        let arg_ts = self.gen_expr(arg);
+        quote! { #arg_ts.await }
+    }
+
+    fn gen_yield_expr(&self, arg: &Option<Box<Expr>>, delegate: bool) -> TokenStream {
+        if delegate {
+            if let Some(a) = arg {
+                let a_ts = self.gen_expr(a);
+                quote! { yield* #a_ts }
+            } else {
+                quote! { Value::Null }
+            }
+        } else {
+            if let Some(a) = arg {
+                let a_ts = self.gen_expr(a);
+                quote! { yield #a_ts }
+            } else {
+                quote! { Value::Null }
+            }
+        }
+    }
+
+    fn gen_new_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        let callee_ts = self.gen_expr(callee);
+        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
+        quote! { #callee_ts(#(#args),*) }
+    }
+
+    fn gen_seq_expr(&self, left: &Expr, right: &Expr) -> TokenStream {
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
+        quote! { { #lhs; #rhs } }
+    }
+
+    fn gen_spread_expr(&self, arg: &Expr) -> TokenStream {
+        let arg_ts = self.gen_expr(arg);
+        quote! { {#arg_ts} }
+    }
+
+    fn gen_block_expr(&self, stmts: &[super::Stmt]) -> TokenStream {
+        let inner: Vec<_> = stmts.iter()
+            .filter_map(|s| self.gen_stmt(s))
+            .collect();
+        quote! { { #(#inner)* } }
+    }
+
+    fn gen_update_expr(&self, op: &super::UpdateOp, arg: &Expr, prefix: bool) -> TokenStream {
+        use super::UpdateOp as U;
+        let val = self.gen_expr(arg);
+        match op {
+            U::PlusPlus if prefix => quote! { { let __v: f64 = #val + 1.0; #val = __v; __v } },
+            U::PlusPlus => quote! { { let __v = #val; #val += 1.0; __v } },
+            U::MinusMinus if prefix => quote! { { let __v: f64 = #val - 1.0; #val = __v; __v } },
+            U::MinusMinus => quote! { { let __v = #val; #val -= 1.0; __v } },
+        }
+    }
+
+    fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
+        let op = self.bin_op(op);
+        quote! { #lhs #op #rhs }
+    }
+
+    fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        let callee = self.gen_expr(callee);
+        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
+        quote! { #callee(#(#args),*) }
+    }
+
     fn gen_assign_expr(&self, op: &super::AssignOp, left: &Expr, right: &Expr) -> TokenStream {
         use super::AssignOp as A;
         let lhs = self.gen_expr(left);
@@ -707,93 +903,36 @@ impl QuoteCodegen {
             _ => quote! { { let __v = #rhs; #lhs = __v; __v } },
         }
     }
-    
-    fn gen_update_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::Update { op, arg, prefix } = expr {
-            Some(self.gen_update_expr(op, arg, *prefix))
-        } else { None }
-    }
-    
-    fn gen_update_expr(&self, op: &super::UpdateOp, arg: &Expr, prefix: bool) -> TokenStream {
-        use super::UpdateOp as U;
-        let val = self.gen_expr(arg);
-        match op {
-            U::PlusPlus if prefix => quote! { { let __v: f64 = #val + 1.0; #val = __v; __v } },
-            U::PlusPlus => quote! { { let __v = #val; #val += 1.0; __v } },
-            U::MinusMinus if prefix => quote! { { let __v: f64 = #val - 1.0; #val = __v; __v } },
-            U::MinusMinus => quote! { { let __v = #val; #val -= 1.0; __v } },
-        }
-    }
-    
-    fn gen_call_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::Call { callee, arguments } = expr { Some(self.gen_call_expr(callee, arguments)) } else { None }
-    }
-    
-    fn gen_member_expr_opt(&self, expr: &Expr) -> Option<TokenStream> {
-        if let super::Expr::StaticMember { obj, property } = expr { Some(self.gen_member_expr(obj, property)) } else { None }
-    }
-    
-    fn gen_nullish(&self) -> TokenStream { quote! { Value::Null } }
-    
-    fn gen_number(&self, n: &f64) -> TokenStream { quote! { #n } }
-    fn gen_string(&self, s: &str) -> TokenStream { quote! { #s.to_string() } }
-    fn gen_bool(&self, b: bool) -> TokenStream { quote! { #b } }
-    
-    fn gen_ident(&self, name: &str) -> TokenStream {
-        let id = syn::Ident::new(name, proc_macro2::Span::call_site());
-        quote! { #id }
-    }
-    
-    fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
-        let lhs = self.gen_expr(left);
-        let rhs = self.gen_expr(right);
-        let op = self.bin_op(op);
-        quote! { #lhs #op #rhs }
-    }
-    
-    fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
-        let callee = self.gen_expr(callee);
-        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-        quote! { #callee(#(#args),*) }
-    }
-    
-    fn gen_member_expr(&self, obj: &Expr, property: &str) -> TokenStream {
-        let obj = self.gen_expr(obj);
-        let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
-        quote! { #obj.#prop }
-    }
-    
-    fn bin_op(&self, op: &super::BinaryOp) -> TokenStream {
-        self.arith_bin_op(op).or_else(|| self.cmp_bin_op(op)).unwrap_or_else(|| quote! { == })
-    }
-    
-    fn arith_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
-        use super::BinaryOp as B;
-        match op {
-            B::Add => Some(quote! { + }),
-            B::Sub => Some(quote! { - }),
-            B::Mul => Some(quote! { * }),
-            B::Div => Some(quote! { / }),
-            _ => None,
-        }
-    }
-    
-    fn cmp_bin_op(&self, op: &super::BinaryOp) -> Option<TokenStream> {
-        Self::cmp_bin_op_str(op).map(|s| quote! { #s })
-    }
 
-    fn cmp_bin_op_str(op: &super::BinaryOp) -> Option<&'static str> {
+    fn bin_op(&self, op: &super::BinaryOp) -> TokenStream {
         use super::BinaryOp as B;
         match op {
-            B::Eq => Some("=="),
-            B::Neq => Some("!="),
-            B::Lt => Some("<"),
-            B::Lte => Some("<="),
-            B::Gt => Some(">"),
-            B::Gte => Some(">="),
-            B::StrictEq => Some("==="),
-            B::StrictNeq => Some("!=="),
-            _ => None,
+            B::Add => quote! { + },
+            B::Sub => quote! { - },
+            B::Mul => quote! { * },
+            B::Div => quote! { / },
+            B::Mod => quote! { % },
+            B::Exp => quote! { powf() },
+            B::DivStrict => quote! { / },
+            B::BitXor => quote! { ^ },
+            B::BitAnd => quote! { & },
+            B::BitOr => quote! { | },
+            B::Shl => quote! { << },
+            B::Shr => quote! { >> },
+            B::UShr => quote! { >>> },
+            B::Eq => quote! { == },
+            B::StrictEq => quote! { === },
+            B::Neq => quote! { != },
+            B::StrictNeq => quote! { !== },
+            B::Lt => quote! { < },
+            B::Lte => quote! { <= },
+            B::Gt => quote! { > },
+            B::Gte => quote! { >= },
+            B::Instanceof => quote! { instanceof },
+            B::In => quote! { in },
+            B::LogicalAnd => quote! { && },
+            B::LogicalOr => quote! { || },
+            B::NullishCoalescing => quote! { ?? },
         }
     }
 }
