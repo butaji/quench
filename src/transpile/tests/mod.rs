@@ -29,3 +29,6 @@ pub mod spec_vars_functions;
 
 #[cfg(test)]
 pub mod spec_roundtrip;
+
+#[cfg(test)]
+pub mod spec_jsx;

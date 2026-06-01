@@ -8,7 +8,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::{Expr, FunctionDecl, Ownership, Stmt, Type, VariableDecl, VariableKind};
+use super::{Expr, FunctionDecl, ObjectPatProp, Ownership, Pat, Stmt, Type, VariableDecl, VariableKind};
 
 /// Quote-based code generator
 #[allow(dead_code)]
@@ -511,7 +511,7 @@ impl QuoteCodegen {
                 let init = var.init.as_ref()?;
                 let expr = self.gen_expr(init);
                 let keyword = match var.kind {
-                    VariableKind::Var => quote! { var },
+                    VariableKind::Var => quote! { let mut },
                     VariableKind::Let => quote! { let },
                     VariableKind::Const => quote! { let },
                 };
@@ -526,11 +526,119 @@ impl QuoteCodegen {
         let init = var.init.as_ref()?;
         let expr = self.gen_expr(init);
         let keyword = match var.kind {
-            VariableKind::Var => quote! { var },
+            VariableKind::Var => quote! { let mut },
             VariableKind::Let => quote! { let },
             VariableKind::Const => quote! { let },
         };
         Some(quote! { #keyword #id = #expr; })
+    }
+
+
+    /// Generate variable declarations from a pattern
+    /// Returns a list of "name = value" expressions
+    fn gen_pat(&self, pat: &Pat, source: &TokenStream) -> Vec<TokenStream> {
+        match pat {
+            Pat::Ident { name, .. } => {
+                let id = syn::Ident::new(name, proc_macro2::Span::call_site());
+                vec![quote! { #id = #source }]
+            }
+            Pat::Object { props, rest } => {
+                self.gen_object_pat(props, rest, source)
+            }
+            Pat::Array { elems, rest } => {
+                self.gen_array_pat(elems, rest, source)
+            }
+            Pat::Rest { arg: _ } => {
+                // Rest pattern: ...rest means clone the source
+                vec![quote! { rest = #source.clone() }]
+            }
+            Pat::Default { arg, default } => {
+                // Default value: use unwrap_or with the default expression
+                let default_expr = self.gen_expr(default);
+                let inner_decls = self.gen_pat(arg, source);
+                inner_decls
+                    .into_iter()
+                    .map(|decl| {
+                        quote! { #decl.unwrap_or(#default_expr) }
+                    })
+                    .collect()
+            }
+            Pat::Assign { left, right } => {
+                // a = b pattern: assign right to left
+                let right_expr = self.gen_expr(right);
+                self.gen_pat(left, &right_expr)
+            }
+        }
+    }
+
+    /// Generate variable declarations from object destructuring pattern
+    fn gen_object_pat(
+        &self,
+        props: &[ObjectPatProp],
+        rest: &Option<Box<Pat>>,
+        source: &TokenStream,
+    ) -> Vec<TokenStream> {
+        let mut decls = Vec::new();
+
+        for prop in props {
+            match prop {
+                ObjectPatProp::Init { key, value } => {
+                    let field = syn::Ident::new(key, proc_macro2::Span::call_site());
+                    let field_access = quote! { #source.#field };
+                    let inner_decls = self.gen_pat(value, &field_access);
+                    decls.extend(inner_decls);
+                }
+                ObjectPatProp::Rest { arg } => {
+                    let inner_decls = self.gen_pat(arg, &quote! { #source.clone() });
+                    decls.extend(inner_decls);
+                }
+                ObjectPatProp::Spread { arg } => {
+                    let inner_decls = self.gen_pat(arg, source);
+                    decls.extend(inner_decls);
+                }
+                ObjectPatProp::Method { .. } => {
+                    // Skip method definitions in patterns
+                }
+            }
+        }
+
+        // Handle rest at object level
+        if let Some(rest_pat) = rest {
+            let inner_decls = self.gen_pat(rest_pat, &quote! { #source.clone() });
+            decls.extend(inner_decls);
+        }
+
+        decls
+    }
+
+    /// Generate variable declarations from array destructuring pattern
+    fn gen_array_pat(
+        &self,
+        elems: &[Option<Pat>],
+        rest: &Option<Box<Pat>>,
+        source: &TokenStream,
+    ) -> Vec<TokenStream> {
+        let mut decls = Vec::new();
+
+        for (i, elem) in elems.iter().enumerate() {
+            let index = syn::Index::from(i);
+            let index_access = quote! { #source.#index };
+
+            if let Some(pat) = elem {
+                let inner_decls = self.gen_pat(pat, &index_access);
+                decls.extend(inner_decls);
+            }
+        }
+
+        // Handle rest
+        if let Some(rest_pat) = rest {
+            let len = elems.len();
+            let rest_access = quote! { #source[#len..].to_vec() };
+            let inner_decls = self.gen_pat(rest_pat, &rest_access);
+            decls.extend(inner_decls);
+        }
+
+        decls
     }
 
     fn gen_while(&self, test: &Expr, body: &Box<Stmt>) -> TokenStream {
@@ -706,7 +814,11 @@ impl QuoteCodegen {
             }
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
-            E::JSX(jsx) => self.gen_jsx_expr(jsx),
+            E::JSX(_) => {
+                // JSX codegen is handled by runts_fresh crate
+                // TODO: implement proper JSX codegen in quote_codegen
+                quote! { Value::Null }
+            }
             E::Bin { op, left, right } => self.gen_bin_expr(op, left, right),
             E::Unary { op, arg, prefix } => self.gen_unary_expr(op, arg, *prefix),
             E::Update { op, arg, prefix } => self.gen_update_expr(op, arg, *prefix),
@@ -823,16 +935,51 @@ impl QuoteCodegen {
     }
 
     fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, prefix: bool) -> TokenStream {
-        let arg_ts = self.gen_expr(arg);
         use super::UnaryOp as U;
         match op {
-            U::Plus => quote! { #arg_ts },
-            U::Minus => quote! { -#arg_ts },
-            U::Not => quote! { !#arg_ts },
-            U::BitNot => quote! { !#arg_ts },
-            U::Typeof => quote! { std::any::type_name_of_val(&#arg_ts) },
+            U::Plus => {
+                let arg_ts = self.gen_expr(arg);
+                quote! { #arg_ts }
+            }
+            U::Minus => {
+                let arg_ts = self.gen_expr(arg);
+                quote! { -#arg_ts }
+            }
+            U::Not => {
+                let arg_ts = self.gen_expr(arg);
+                quote! { !#arg_ts }
+            }
+            U::BitNot => {
+                let arg_ts = self.gen_expr(arg);
+                quote! { !#arg_ts }
+            }
+            U::Typeof => {
+                let arg_ts = self.gen_expr(arg);
+                // Generate a runtime typeof match expression
+                quote! {
+                    {
+                        // typeof check
+                        match &#arg_ts {
+                            Value::String(_) => "string",
+                            Value::Number(_) => "number",
+                            Value::Boolean(_) => "boolean",
+                            Value::Null => "object",
+                            Value::Undefined => "undefined",
+                            Value::BigInt(_) => "bigint",
+                            Value::Function(_) => "function",
+                            Value::Object(_) | Value::Array(_) | Value::RegExp(_, _) => "object",
+                            _ => "unknown",
+                        }
+                    }
+                }
+            }
             U::Void => quote! { () },
-            U::Delete => quote! { () },
+            U::Delete => quote! {
+                {
+                    // delete operator not supported
+                    false
+                }
+            },
         }
     }
 
@@ -954,6 +1101,125 @@ impl QuoteCodegen {
         quote! { { #(#inner)* } }
     }
 
+    fn gen_jsx_expr(&self, jsx: &super::JSXExpr) -> TokenStream {
+        use super::{JSXName, JSXChild, JSXAttr, JSXAttrValue};
+
+        if matches!(jsx.opening.name, JSXName::Fragment) {
+            let children = self.gen_jsx_children(&jsx.children);
+            return quote! { VNode::fragment(vec![#(#children),*]) };
+        }
+
+        let name_str = match &jsx.opening.name {
+            JSXName::Ident(s) => s.clone(),
+            JSXName::Member { object, property } => format!("{}.{}", object, property),
+            JSXName::Namespaced { ns, name } => format!("{}:{}", ns, name),
+            JSXName::Dynamic(expr) => {
+                let expr_tokens = self.gen_expr(expr);
+                return quote! { VNode::element(#expr_tokens) };
+            }
+            JSXName::Fragment => {
+                let children = self.gen_jsx_children(&jsx.children);
+                return quote! { VNode::fragment(vec![#(#children),*]) };
+            }
+        };
+
+        let is_component = !name_str.is_empty() && name_str.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+
+        if is_component {
+            self.gen_jsx_component(&name_str, &jsx.opening.attrs, &jsx.children)
+        } else {
+            self.gen_jsx_element(&name_str, &jsx.opening.attrs, &jsx.children, jsx.opening.self_closing)
+        }
+    }
+
+    fn gen_jsx_element(&self, tag: &str, attrs: &[super::JSXAttr], children: &[super::JSXChild], _self_closing: bool) -> TokenStream {
+        use super::JSXAttrValue;
+        let mut attr_calls: Vec<TokenStream> = Vec::new();
+        for attr in attrs {
+            match attr {
+                super::JSXAttr::Attr { name, value } => {
+                    let key = name.to_string();
+                    match value {
+                        Some(JSXAttrValue::String(s)) => attr_calls.push(quote! { .attr(#key, #s) }),
+                        Some(JSXAttrValue::Expr(expr)) => {
+                            let val = self.gen_expr(expr);
+                            attr_calls.push(quote! { .attr(#key, #val) });
+                        }
+                        Some(JSXAttrValue::Empty) | None => attr_calls.push(quote! { .attr(#key, true) }),
+                    }
+                }
+                super::JSXAttr::Spread { expr } => {
+                    let expr_tokens = self.gen_expr(expr);
+                    attr_calls.push(quote! { /* spread: #expr_tokens */ });
+                }
+            }
+        }
+        let child_nodes: Vec<TokenStream> = self.gen_jsx_children(children);
+        let mut result = quote! { VNode::element(#tag) };
+        for attr_call in attr_calls { result = quote! { #result #attr_call }; }
+        for child in child_nodes { result = quote! { #result .child(#child) }; }
+        result
+    }
+
+    fn gen_jsx_component(&self, name: &str, attrs: &[super::JSXAttr], children: &[super::JSXChild]) -> TokenStream {
+        use super::JSXAttrValue;
+        let mut props_fields: Vec<TokenStream> = Vec::new();
+        for attr in attrs {
+            match attr {
+                super::JSXAttr::Attr { name: prop_name, value } => {
+                    let key = syn::Ident::new(prop_name, proc_macro2::Span::call_site());
+                    match value {
+                        Some(JSXAttrValue::String(s)) => props_fields.push(quote! { #key: #s.to_string() }),
+                        Some(JSXAttrValue::Expr(expr)) => {
+                            let val = self.gen_expr(expr);
+                            props_fields.push(quote! { #key: #val });
+                        }
+                        Some(JSXAttrValue::Empty) | None => props_fields.push(quote! { #key: true }),
+                    }
+                }
+                super::JSXAttr::Spread { expr } => {
+                    let expr_tokens = self.gen_expr(expr);
+                    props_fields.push(quote! { /* spread: #expr_tokens */ });
+                }
+            }
+        }
+        let child_nodes: Vec<TokenStream> = self.gen_jsx_children(children);
+        let component_name = syn::Ident::new(name, proc_macro2::Span::call_site());
+        let props_name = syn::Ident::new(&format!("{}Props", name), proc_macro2::Span::call_site());
+        if props_fields.is_empty() && child_nodes.is_empty() {
+            quote! { #component_name::render(#props_name {}) }
+        } else if props_fields.is_empty() {
+            quote! { #component_name::render(#props_name { children: VNode::fragment(vec![#(#child_nodes),*]) }) }
+        } else if child_nodes.is_empty() {
+            quote! { #component_name::render(#props_name { #(#props_fields),* }) }
+        } else {
+            quote! { #component_name::render(#props_name { #(#props_fields),*, children: VNode::fragment(vec![#(#child_nodes),*]) }) }
+        }
+    }
+
+    fn gen_jsx_children(&self, children: &[super::JSXChild]) -> Vec<TokenStream> {
+        use super::JSXChild;
+        children.iter().filter_map(|child| {
+            match child {
+                JSXChild::Text(s) => Some(quote! { VNode::text(#s) }),
+                JSXChild::Expr(expr) => {
+                    let expr_tokens = self.gen_expr(expr);
+                    Some(expr_tokens)
+                }
+                JSXChild::JSX(jsx) => Some(self.gen_jsx_expr(jsx)),
+                JSXChild::Fragment { children: frag_children } => {
+                    let inner = self.gen_jsx_children(frag_children);
+                    Some(quote! { VNode::fragment(vec![#(#inner),*]) })
+                }
+                JSXChild::Spread { expr } => {
+                    let expr_tokens = self.gen_expr(expr);
+                    Some(quote! { /* spread: #expr_tokens */ })
+                }
+            }
+        }).collect()
+    }
+
+
     fn gen_update_expr(&self, op: &super::UpdateOp, arg: &Expr, prefix: bool) -> TokenStream {
         use super::UpdateOp as U;
         let val = self.gen_expr(arg);
@@ -967,6 +1233,25 @@ impl QuoteCodegen {
 
     fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
         use super::BinaryOp as B;
+
+        // Handle instanceof: generate a placeholder
+        if matches!(op, B::Instanceof) {
+            let lhs = self.gen_expr(left);
+            let rhs = self.gen_expr(right);
+            return quote! {
+                {
+                    // instanceof check: #lhs instanceof #rhs
+                    false  // TODO: implement proper instanceof
+                }
+            };
+        }
+
+        // Handle in: generate contains_key call
+        if matches!(op, B::In) {
+            let lhs = self.gen_expr(left);
+            let rhs = self.gen_expr(right);
+            return quote! { #rhs.contains_key(&#lhs) };
+        }
 
         // String concatenation: use format! for string + anything
         if matches!(op, B::Add) && self.is_string_expr(left) {
