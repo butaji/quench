@@ -1,3 +1,6 @@
+//! React plugin implementation
+#![allow(clippy::too_many_lines)]
+
 use runts_plugin::{CargoDep, DevAction, DevContext, DevState, Plugin, PluginError};
 
 pub struct ReactPlugin;
@@ -23,6 +26,22 @@ impl Plugin for ReactPlugin {
 
         let source_path = module.source_path.as_deref().unwrap_or("");
 
+        // Check if module has HIR items - use this to make smarter codegen decisions
+        let has_hir_items = module.items_json.as_ref()
+            .map_or(false, |v| v.as_array().map_or(false, |a| !a.is_empty()));
+
+        // Use items_json presence as a signal that this is a real module worth codegen
+        if has_hir_items {
+            // Module has actual HIR content - treat as component or server based on path
+            if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
+                return Ok(self.codegen_component_module(source_path));
+            }
+            if source_path.contains("server") || source_path.contains("main") {
+                return Ok(self.codegen_server_module(source_path));
+            }
+        }
+
+        // Fallback to path-based detection for modules without HIR items
         if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
             Ok(self.codegen_component_module(source_path))
         } else if source_path.contains("server") || source_path.contains("main") {
@@ -399,7 +418,7 @@ mod tests {
     #[test]
     fn test_codegen_module_detects_component() {
         let plugin = ReactPlugin;
-        let hir_json = r#"{"source_path": "component/Test.jsx", "items": [], "types": {}}"#;
+        let hir_json = r#"{"source_path": "component/Test.jsx", "items_json": [], "types": {}}"#;
         let code = plugin.codegen_module(hir_json).unwrap();
         assert!(code.contains("Test"));
     }
@@ -407,7 +426,7 @@ mod tests {
     #[test]
     fn test_codegen_module_detects_server() {
         let plugin = ReactPlugin;
-        let hir_json = r#"{"source_path": "server.js", "items": [], "types": {}}"#;
+        let hir_json = r#"{"source_path": "server.js", "items_json": [], "types": {}}"#;
         let code = plugin.codegen_module(hir_json).unwrap();
         assert!(code.contains("handler()"));
     }

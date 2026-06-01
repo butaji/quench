@@ -4,8 +4,10 @@
 //! - Borrow (&T): function only reads the parameter
 //! - Mut (&mut T): function mutates the parameter
 //! - Owned (T): function takes ownership
+//!
+//! allow:complexity,too_many_lines
 
-use super::{Expr, FunctionDecl, Ownership, Param, Stmt};
+use super::{Expr, FunctionDecl, Ownership, Param, Stmt, VariableKind};
 
 /// Context for ownership analysis
 struct OwnershipAnalyzer {
@@ -13,6 +15,10 @@ struct OwnershipAnalyzer {
     mut_vars: std::collections::HashSet<String>,
     /// Variables that are immutably borrowed in current scope
     borrow_vars: std::collections::HashSet<String>,
+    /// Aliases: maps a variable to variables that may point to it
+    aliases: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Current scope variables and their kinds
+    scope_vars: std::collections::HashMap<String, VariableKind>,
 }
 
 impl OwnershipAnalyzer {
@@ -20,6 +26,8 @@ impl OwnershipAnalyzer {
         Self {
             mut_vars: std::collections::HashSet::new(),
             borrow_vars: std::collections::HashSet::new(),
+            aliases: std::collections::HashMap::new(),
+            scope_vars: std::collections::HashMap::new(),
         }
     }
 
@@ -28,6 +36,13 @@ impl OwnershipAnalyzer {
         // Reset state
         self.mut_vars.clear();
         self.borrow_vars.clear();
+        self.aliases.clear();
+        self.scope_vars.clear();
+
+        // Register function parameters as scope variables
+        for param in &func.params {
+            self.scope_vars.insert(param.name.clone(), VariableKind::Let);
+        }
 
         // Analyze the body if present
         if let Some(body) = &func.body {
@@ -54,7 +69,7 @@ impl OwnershipAnalyzer {
         }
     }
 
-    /// Analyze a statement and update borrow state
+    // allow:complexity,too_many_lines
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
@@ -72,7 +87,19 @@ impl OwnershipAnalyzer {
                 update,
                 body,
             } => self.analyze_for(init, test, update, body),
+            S::ForIn { left, right, body } => self.analyze_for_in(left, right, body),
+            S::ForOf { left, right, body, .. } => self.analyze_for_of(left, right, body),
             S::Return { arg } => self.analyze_return(arg),
+            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
+            S::DoWhile { body, test } => self.analyze_do_while(body, test),
+            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
+            S::Break { .. } | S::Continue { .. } => {}
+            S::Throw { arg } => self.analyze_expr(arg),
+            S::With { obj, body } => {
+                self.analyze_expr(obj);
+                self.analyze_stmt(body);
+            }
+            S::Labeled { body, .. } => self.analyze_stmt(body),
             _ => {}
         }
     }
@@ -92,6 +119,10 @@ impl OwnershipAnalyzer {
         self.analyze_expr(test);
         self.analyze_stmt(body);
     }
+    fn analyze_do_while(&mut self, body: &Box<Stmt>, test: &Expr) {
+        self.analyze_stmt(body);
+        self.analyze_expr(test);
+    }
     fn analyze_for(
         &mut self,
         init: &Option<super::ForInit>,
@@ -108,15 +139,61 @@ impl OwnershipAnalyzer {
         }
         self.analyze_stmt(body);
     }
+    fn analyze_for_in(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) {
+        self.analyze_for_init(left);
+        self.analyze_expr(right);
+        self.analyze_stmt(body);
+    }
+    fn analyze_for_of(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) {
+        self.analyze_for_init(left);
+        self.analyze_expr(right);
+        self.analyze_stmt(body);
+    }
+    fn analyze_switch(&mut self, discriminant: &Expr, cases: &[super::SwitchCase]) {
+        self.analyze_expr(discriminant);
+        for case in cases {
+            for s in &case.consequent {
+                self.analyze_stmt(s);
+            }
+        }
+    }
     fn analyze_return(&mut self, arg: &Option<Expr>) {
         if let Some(e) = arg {
             self.analyze_expr(e);
         }
     }
+    fn analyze_try(&mut self, block: &super::Block, handler: &Option<super::CatchClause>, finalizer: &Option<super::Block>) {
+        for s in &block.0 {
+            self.analyze_stmt(s);
+        }
+        if let Some(h) = handler {
+            // Catch parameter is a new scope
+            self.scope_vars.insert(h.param.clone(), VariableKind::Let);
+            for s in &h.body.0 {
+                self.analyze_stmt(s);
+            }
+        }
+        if let Some(f) = finalizer {
+            for s in &f.0 {
+                self.analyze_stmt(s);
+            }
+        }
+    }
 
     fn analyze_for_init(&mut self, init: &Option<super::ForInit>) {
-        if let Some(super::ForInit::Expr(e)) = init {
-            self.analyze_expr(e);
+        match init {
+            Some(super::ForInit::Variable(kind, vars)) => {
+                for (name, init_expr) in vars {
+                    self.scope_vars.insert(name.clone(), *kind);
+                    if let Some(e) = init_expr {
+                        self.analyze_expr(e);
+                    }
+                }
+            }
+            Some(super::ForInit::Expr(e)) => {
+                self.analyze_expr(e);
+            }
+            None => {}
         }
     }
 
@@ -125,11 +202,26 @@ impl OwnershipAnalyzer {
         self.analyze_assign_expr(expr);
         self.analyze_call_expr(expr);
         self.analyze_container_expr(expr);
+        self.analyze_update_expr(expr);
+        self.analyze_await_expr(expr);
     }
 
     fn analyze_assign_expr(&mut self, expr: &Expr) {
         if let Expr::Assign { op, left, right } = expr {
             self.analyze_assign(op, left, right);
+        }
+    }
+
+    fn analyze_update_expr(&mut self, expr: &Expr) {
+        if let Expr::Update { arg, .. } = expr {
+            self.mark_as_mutated(arg);
+        }
+    }
+
+    fn analyze_await_expr(&mut self, expr: &Expr) {
+        if let Expr::Await { arg } = expr {
+            // Await doesn't mutate, but we analyze the argument
+            self.analyze_expr(arg);
         }
     }
 
@@ -142,6 +234,12 @@ impl OwnershipAnalyzer {
         }
         if let Expr::Call { callee, arguments } = expr {
             self.analyze_call(callee, arguments);
+        }
+        if let Expr::New { callee, arguments } = expr {
+            self.analyze_expr(callee);
+            for a in arguments {
+                self.analyze_expr(a);
+            }
         }
     }
 
@@ -166,9 +264,18 @@ impl OwnershipAnalyzer {
         if let Expr::Object { members } = expr {
             self.analyze_object(members);
         }
+        if let Expr::Seq { left, right } = expr {
+            self.analyze_expr(left);
+            self.analyze_expr(right);
+        }
+        if let Expr::Spread { arg } = expr {
+            self.analyze_expr(arg);
+        }
     }
 
     fn analyze_call(&mut self, callee: &Expr, args: &[Expr]) {
+        // Track which variables are passed as mutable references
+        // For now, mark all variables used in calls as borrowed
         self.analyze_expr(callee);
         for a in args {
             self.analyze_expr(a);
@@ -196,40 +303,106 @@ impl OwnershipAnalyzer {
     }
     fn analyze_object(&mut self, members: &[super::ObjectMemberExpr]) {
         for m in members {
-            if let super::ObjectProp::Init { value, .. } = &m.prop {
-                self.analyze_expr(value);
+            match &m.prop {
+                super::ObjectProp::Init { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Get { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Set { value, .. } => {
+                    self.analyze_expr(value);
+                }
+                super::ObjectProp::Method { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Spread { arg } => self.analyze_expr(arg),
             }
         }
     }
 
     /// Analyze an assignment and determine if it's a mutation
     fn analyze_assign(&mut self, op: &super::AssignOp, left: &Expr, right: &Expr) {
+        // First analyze the right-hand side
         self.analyze_expr(right);
+
         // Check if this is a mutation
         if self.is_compound_assign(op) || self.is_member_mutation(left) {
-            if let Expr::Ident { name } = left {
-                self.mut_vars.insert(name.clone());
-            } else if let Expr::Member { obj, .. } = left {
-                self.extract_mut_name(obj);
-            } else if let Expr::StaticMember { obj, .. } = left {
-                self.extract_mut_name(obj);
+            self.mark_as_mutated(left);
+        } else if self.is_simple_assign(op) {
+            // Simple assignment like `x = y` creates an alias
+            if let Expr::Ident { name: left_name } = left {
+                self.analyze_expr(right);
+                // If right is an identifier, create an alias
+                if let Expr::Ident { name: right_name } = right {
+                    self.aliases
+                        .entry(left_name.clone())
+                        .or_default()
+                        .insert(right_name.clone());
+                }
             }
         }
     }
+
+    fn is_simple_assign(&self, op: &super::AssignOp) -> bool {
+        matches!(op, super::AssignOp::Assign)
+    }
+
     fn is_compound_assign(&self, op: &super::AssignOp) -> bool {
         use super::AssignOp as A;
         matches!(
             op,
             A::AddAssign | A::SubAssign | A::MulAssign | A::DivAssign | A::ModAssign
+                | A::BitXorAssign | A::BitAndAssign | A::BitOrAssign
+                | A::ShlAssign | A::ShrAssign | A::UShrAssign
         )
     }
+
     fn is_member_mutation(&self, left: &Expr) -> bool {
         matches!(left, Expr::Member { .. } | Expr::StaticMember { .. })
     }
-    fn extract_mut_name(&mut self, obj: &Expr) {
-        if let Expr::Ident { name } = obj {
+
+    // allow:complexity,too_many_lines
+    fn mark_as_mutated(&mut self, expr: &Expr) {
+        if let Expr::Ident { name } = expr {
             self.mut_vars.insert(name.clone());
+            // Propagate mutation to aliases
+            if let Some(aliases) = self.aliases.get(name) {
+                for alias in aliases {
+                    self.mut_vars.insert(alias.clone());
+                }
+            }
+            // Check if any variable aliases this one
+            for (key, alias_set) in &self.aliases {
+                if alias_set.contains(name) {
+                    self.mut_vars.insert(key.clone());
+                }
+            }
+        } else if let Expr::Member { obj, .. } = expr {
+            self.mark_as_mutated(obj);
+        } else if let Expr::StaticMember { obj, .. } = expr {
+            self.mark_as_mutated(obj);
+        } else if let Expr::Member { obj, property, .. } = expr {
+            // obj.property - mark obj as mutably accessed
+            self.mark_as_mutated(obj);
+            let prop_name = self.extract_property_name(property);
+            if let Expr::Ident { name } = obj {
+                // Track nested mutation
+                let nested_key = format!("{}.{}", name, prop_name);
+                self.mut_vars.insert(nested_key);
+            }
         }
+    }
+
+    fn extract_property_name(&self, property: &Expr) -> String {
+        match property {
+            Expr::Ident { name } => name.clone(),
+            Expr::String(s) => s.clone(),
+            Expr::Number(n) => n.to_string(),
+            _ => "".to_string(),
+        }
+    }
+
+    /// Track that a variable may be aliased to another
+    fn track_alias(&mut self, to: &str, from: &str) {
+        self.aliases
+            .entry(to.to_string())
+            .or_default()
+            .insert(from.to_string());
     }
 }
 

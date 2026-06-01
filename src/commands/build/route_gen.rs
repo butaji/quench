@@ -1,6 +1,6 @@
 //! Route generation
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::commands::build::RouteEntry;
@@ -17,6 +17,13 @@ pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
     for entry in WalkDir::new(&routes_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
+            // Skip underscore-prefixed files (middleware, layouts, etc.)
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('_') {
+                    continue;
+                }
+            }
+
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext == "tsx" || ext == "ts" {
                 if let Some(pattern) = file_to_pattern(&routes_dir, path) {
@@ -31,7 +38,28 @@ pub fn scan_routes(project_root: &Path) -> Vec<RouteEntry> {
         }
     }
 
+    // Check for route collisions (e.g., [id].tsx and id.tsx both matching same URL)
+    detect_route_collisions(&routes);
+
     routes
+}
+
+/// Check for route path collisions and warn/error on duplicates
+fn detect_route_collisions(routes: &[RouteEntry]) {
+    use std::collections::HashMap;
+
+    let mut pattern_seen: HashMap<&str, &Path> = HashMap::new();
+    for route in routes {
+        if let Some(existing) = pattern_seen.get(route.pattern.as_str()) {
+            anyhow::bail!(
+                "Route collision: '{}' is defined by both {:?} and {:?}",
+                route.pattern,
+                existing,
+                route.file
+            );
+        }
+        pattern_seen.insert(&route.pattern, &route.file);
+    }
 }
 
 /// Convert file path to route pattern

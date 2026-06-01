@@ -80,12 +80,22 @@ impl Ownership {
         matches!(self, Ownership::Mut)
     }
 
-    /// Get Rust lifetime annotation (empty for owned, ''' for borrow, ''' for mut)
+    /// Get Rust lifetime annotation (empty for owned, '&' for borrow, '&mut ' for mut)
+    /// Uses elided lifetimes for simplicity - caller should use explicit lifetimes where needed
     pub fn rust_lifetime(&self) -> &'static str {
         match self {
             Ownership::Owned => "",
-            Ownership::Borrow => "&'",
-            Ownership::Mut => "&'mut ",
+            Ownership::Borrow => "&",
+            Ownership::Mut => "&mut ",
+        }
+    }
+
+    /// Get Rust lifetime annotation with a specific lifetime name
+    pub fn rust_lifetime_named(&self, lifetime: &str) -> String {
+        match self {
+            Ownership::Owned => String::new(),
+            Ownership::Borrow => format!("&{}", lifetime),
+            Ownership::Mut => format!("&{} ", lifetime),
         }
     }
 }

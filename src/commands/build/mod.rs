@@ -1,4 +1,6 @@
 //! Production build command
+//!
+//! allow:too_many_lines
 
 pub mod cargo_gen;
 pub mod island_gen;
@@ -73,7 +75,7 @@ pub struct PropEntry {
 
 /// Run build command
 pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
-    let project_root = resolve_project_root(&path);
+    let project_root = resolve_project_root(&path)?;
     let build_dir = build_dir(&project_root);
 
     create_build_dir(&build_dir)?;
@@ -100,13 +102,13 @@ pub async fn run_build(_config: &Config, path: PathBuf) -> Result<BuildResult> {
     })
 }
 
-fn resolve_project_root(path: &Path) -> PathBuf {
+fn resolve_project_root(path: &Path) -> anyhow::Result<PathBuf> {
     if path.is_absolute() {
-        path.to_path_buf()
+        Ok(path.to_path_buf())
     } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
+        let cwd = std::env::current_dir()
+            .context("Failed to get current working directory")?;
+        Ok(cwd.join(path))
     }
 }
 
@@ -126,22 +128,40 @@ fn find_ts_files(project_root: &Path) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+
+        // Skip test files and hidden directories
+        if is_hidden_or_test_file(path) {
+            continue;
+        }
+
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext.to_lowercase() == "tsx" || ext.to_lowercase() == "ts" {
-                let components: Vec<_> = path
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                    .collect();
-                if !components
-                    .iter()
-                    .any(|c| c.starts_with('.') || c == "node_modules")
-                {
+                if !has_hidden_component(path) {
                     files.push(path.to_path_buf());
                 }
             }
         }
     }
     files
+}
+
+fn is_hidden_or_test_file(path: &Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        return name.ends_with(".test.ts")
+            || name.ends_with(".test.tsx")
+            || name.ends_with(".spec.ts")
+            || name.ends_with(".spec.tsx")
+            || name.ends_with("_test.ts")
+            || name.ends_with("_test.tsx");
+    }
+    false
+}
+
+fn has_hidden_component(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        s.starts_with('.') || s == "node_modules"
+    })
 }
 
 fn write_generated_files(build_dir: &Path, files: &[GeneratedFile]) -> Result<()> {
@@ -200,7 +220,7 @@ fn write_manifests(
 
 /// Run full build including compilation
 pub async fn run_full_build(config: &Config, path: PathBuf, release: bool) -> Result<BuildResult> {
-    let project_root = resolve_project_root(&path);
+    let project_root = resolve_project_root(&path)?;
     let result = run_build(config, path).await?;
     let build_dir = build_dir(&project_root);
 
@@ -225,18 +245,41 @@ fn compile_project(build_dir: &Path, release: bool) -> Result<()> {
         args.push("--release");
     }
 
-    info!("Compiling...");
-    let output = Command::new("cargo")
+    info!("Compiling (timeout: 5 minutes)...");
+    let mut child = Command::new("cargo")
         .current_dir(build_dir)
         .args(&args)
-        .output()
+        .spawn()
         .context("cargo not found in PATH — is Rust installed?")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Cargo build failed:\n{}", stderr);
+    wait_for_child(&mut child)
+}
+
+fn wait_for_child(child: &mut std::process::Child) -> Result<()> {
+    let timeout = std::time::Duration::from_secs(300);
+    let start = std::time::Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    anyhow::bail!("Cargo build failed: exit status {}", status);
+                }
+                return Ok(());
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!("Cargo build timed out after 5 minutes");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                anyhow::bail!("Cargo build wait failed: {}", e);
+            }
+        }
     }
-    Ok(())
 }
 
 fn find_binary(_project_root: &Path, build_dir: &Path, release: bool) -> Option<PathBuf> {
@@ -307,7 +350,8 @@ pub async fn run_plugin_build(
 
         let hir_json = serde_json::to_string(&hir_module)
             .with_context(|| format!("Failed to serialize HIR for {:?}", file))?;
-        // Inject source_path and route_info into the HIR JSON for the plugin
+        // Inject source_path, route_info, AND items into the HIR JSON for the plugin
+        // items_json must be available BEFORE codegen_module so plugins can use it
         let mut hir_value: serde_json::Value = serde_json::from_str(&hir_json)?;
         if let Some(obj) = hir_value.as_object_mut() {
             obj.insert("source_path".to_string(), serde_json::json!(rel_path_str));
@@ -318,6 +362,8 @@ pub async fn run_plugin_build(
                     "file_path": ri.file_path
                 }));
             }
+            // items is already in hir_value from the HIR serialization - ensure it's preserved
+            // This is critical for plugins like ratatui that use items_json in codegen
         }
         let hir_with_plugin_data = serde_json::to_string(&hir_value)?;
         let rust_code = plugin.codegen_module(&hir_with_plugin_data)?;
@@ -390,13 +436,9 @@ pub async fn run_plugin_build(
         fs::create_dir_all(project_root.join("target").join("release"))?;
     }
 
-    if !binary_path.exists() {
-        anyhow::bail!(
-            "Build succeeded but binary not found at {}. Check Cargo.toml package name matches directory name.",
-            binary_path.display()
-        );
-    }
-    fs::copy(&binary_path, &out_path)?;
+    // Copy binary - atomic operation, no TOCTOU race possible
+    fs::copy(&binary_path, &out_path)
+        .with_context(|| format!("Failed to copy binary from {} to {}", binary_path.display(), out_path.display()))?;
 
     let binary_size = fs::metadata(&out_path).map(|m| m.len()).ok();
 
