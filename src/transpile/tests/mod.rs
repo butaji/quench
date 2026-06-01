@@ -22,4 +22,7 @@ pub mod routegen;
 pub mod spec_data_structures;
 
 #[cfg(test)]
+pub mod spec_modules;
+
+#[cfg(test)]
 pub mod spec_roundtrip;
