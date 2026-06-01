@@ -4,8 +4,8 @@
 use crate::transpile::hir;
 use crate::transpile::parser::expr::{
     arr_elems, convert_expr, conv_arrow, conv_object, conv_template,
+    conv_assignment_target, convert_binding_pattern,
 };
-use crate::transpile::parser::expr::convert_binding_pattern;
 use oxc_ast::ast::*;
 
 fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
@@ -42,7 +42,7 @@ fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
         .collect()
 }
 
-fn func_to_decl(f: &Function) -> hir::Decl {
+pub fn func_to_decl(f: &Function) -> hir::Decl {
     let params: Vec<hir::Param> = f
         .params
         .items
@@ -166,11 +166,14 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                         .collect();
                     Some(hir::ForInit::Variable(kind, vars))
                 }
-                Some(ForStatementInit::Expression(e)) => {
+                _ => {
                     // Handle expression-based for init (e.g., for (i = 0; ...))
-                    convert_expr(e).ok().map(|e| hir::ForInit::Expr(Box::new(e)))
+                    stmt.init.as_ref().and_then(|i| {
+                        i.as_expression().and_then(|e| {
+                            convert_expr(e).ok().map(|e| hir::ForInit::Expr(Box::new(e)))
+                        })
+                    })
                 }
-                None => None,
             };
             hir::Stmt::For {
                 init,
@@ -181,7 +184,7 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         }
         Statement::ForInStatement(stmt) => {
             let left = match &stmt.left {
-                ForStatementInit::VariableDeclaration(v) => {
+                ForStatementLeft::VariableDeclaration(v) => {
                     let kind = match v.kind {
                         VariableDeclarationKind::Const => hir::VariableKind::Const,
                         VariableDeclarationKind::Let => hir::VariableKind::Let,
@@ -201,23 +204,41 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                         .collect();
                     hir::ForInit::Variable(kind, vars)
                 }
-                ForStatementInit::Expression(e) => {
-                    if let Ok(expr) = convert_expr(e) {
-                        hir::ForInit::Expr(Box::new(expr))
-                    } else {
-                        hir::ForInit::Variable(hir::VariableKind::Let, vec![])
+                _ => {
+                    // Handle expression-based for init (e.g., for (x.y in obj))
+                    // ForStatementLeft can be AssignmentTargetIdentifier or MemberExpressions
+                    match &stmt.left {
+                        ForStatementLeft::AssignmentTargetIdentifier(id) => {
+                            hir::ForInit::Expr(Box::new(hir::Expr::Ident { name: id.name.to_string() }))
+                        }
+                        ForStatementLeft::ComputedMemberExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::ComputedMemberExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        ForStatementLeft::StaticMemberExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::StaticMemberExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        ForStatementLeft::PrivateFieldExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::PrivateFieldExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        _ => hir::ForInit::Variable(hir::VariableKind::Let, vec![]),
                     }
                 }
             };
             hir::Stmt::ForIn {
                 left,
-                right: Box::new(convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined)),
+                right: convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined),
                 body: Box::new(stmt_to_hir_stmt(&stmt.body)),
             }
         }
         Statement::ForOfStatement(stmt) => {
             let left = match &stmt.left {
-                ForStatementInit::VariableDeclaration(v) => {
+                ForStatementLeft::VariableDeclaration(v) => {
                     let kind = match v.kind {
                         VariableDeclarationKind::Const => hir::VariableKind::Const,
                         VariableDeclarationKind::Let => hir::VariableKind::Let,
@@ -237,27 +258,44 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                         .collect();
                     hir::ForInit::Variable(kind, vars)
                 }
-                ForStatementInit::Expression(e) => {
-                    if let Ok(expr) = convert_expr(e) {
-                        hir::ForInit::Expr(Box::new(expr))
-                    } else {
-                        hir::ForInit::Variable(hir::VariableKind::Let, vec![])
+                _ => {
+                    // Handle expression-based for init (e.g., for (x.y of arr))
+                    match &stmt.left {
+                        ForStatementLeft::AssignmentTargetIdentifier(id) => {
+                            hir::ForInit::Expr(Box::new(hir::Expr::Ident { name: id.name.to_string() }))
+                        }
+                        ForStatementLeft::ComputedMemberExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::ComputedMemberExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        ForStatementLeft::StaticMemberExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::StaticMemberExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        ForStatementLeft::PrivateFieldExpression(m) => {
+                            conv_assignment_target(&AssignmentTarget::PrivateFieldExpression(
+                                Box::new(m.clone())
+                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                        }
+                        _ => hir::ForInit::Variable(hir::VariableKind::Let, vec![]),
                     }
                 }
             };
             hir::Stmt::ForOf {
                 left,
-                right: Box::new(convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined)),
+                right: convert_expr(&stmt.right).unwrap_or(hir::Expr::Undefined),
                 body: Box::new(stmt_to_hir_stmt(&stmt.body)),
                 is_await: stmt.r#await,
             }
         }
         Statement::DoWhileStatement(stmt) => hir::Stmt::DoWhile {
             body: Box::new(stmt_to_hir_stmt(&stmt.body)),
-            test: Box::new(convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined)),
+            test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),
         },
         Statement::SwitchStatement(stmt) => {
-            let discriminant = Box::new(convert_expr(&stmt.discriminant).unwrap_or(hir::Expr::Undefined));
+            let discriminant = convert_expr(&stmt.discriminant).unwrap_or(hir::Expr::Undefined);
             let cases = stmt.cases.iter().map(|c| {
                 hir::SwitchCase {
                     test: c.test.as_ref().map(|t| convert_expr(t).unwrap_or(hir::Expr::Undefined)),
@@ -270,25 +308,25 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
             let handler = stmt.handler.as_ref().map(|h| {
                 hir::CatchClause {
                     param: h.param.as_ref().map(|p| {
-                        match p {
+                        match &p.pattern {
                             BindingPattern::BindingIdentifier(i) => i.name.to_string(),
                             _ => String::new(),
                         }
                     }).unwrap_or_default(),
-                    body: Box::new(hir::Block(h.body.statements.iter().map(stmt_to_hir_stmt).collect())),
+                    body: Box::new(hir::Block(h.body.body.iter().map(stmt_to_hir_stmt).collect())),
                 }
             });
             hir::Stmt::Try {
-                block: hir::Block(stmt.block.statements.iter().map(stmt_to_hir_stmt).collect()),
+                block: hir::Block(stmt.block.body.iter().map(stmt_to_hir_stmt).collect()),
                 handler,
-                finalizer: stmt.finalizer.as_ref().map(|f| hir::Block(f.statements.iter().map(stmt_to_hir_stmt).collect())),
+                finalizer: stmt.finalizer.as_ref().map(|f| hir::Block(f.body.iter().map(stmt_to_hir_stmt).collect())),
             }
         }
         Statement::ThrowStatement(stmt) => hir::Stmt::Throw {
-            arg: Box::new(convert_expr(&stmt.argument).unwrap_or(hir::Expr::Undefined)),
+            arg: convert_expr(&stmt.argument).unwrap_or(hir::Expr::Undefined),
         },
         Statement::WithStatement(stmt) => hir::Stmt::With {
-            obj: Box::new(convert_expr(&stmt.object).unwrap_or(hir::Expr::Undefined)),
+            obj: convert_expr(&stmt.object).unwrap_or(hir::Expr::Undefined),
             body: Box::new(stmt_to_hir_stmt(&stmt.body)),
         },
         Statement::LabeledStatement(stmt) => hir::Stmt::Labeled {
@@ -327,9 +365,20 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::TSEnumDeclaration(_) => hir::Stmt::Empty,
         Statement::TSTypeAliasDeclaration(_) => hir::Stmt::Empty,
         Statement::TSExportAssignment(_) => hir::Stmt::Empty,
-        Statement::UsingDeclaration(_) => hir::Stmt::Empty,
-        Statement::ClassDeclaration(c) => hir::Stmt::Class(class_to_hir(c)),
-        Statement::FunctionDeclaration(f) => hir::Stmt::FunctionDecl(func_to_decl(f)),
+        Statement::ClassDeclaration(c) => {
+            if let hir::Decl::Class(class_decl) = class_to_hir(c) {
+                hir::Stmt::Class(class_decl)
+            } else {
+                hir::Stmt::Empty
+            }
+        }
+        Statement::FunctionDeclaration(f) => {
+            if let hir::Decl::Function(func_decl) = func_to_decl(f) {
+                hir::Stmt::FunctionDecl(func_decl)
+            } else {
+                hir::Stmt::Empty
+            }
+        }
         Statement::ImportDeclaration(_) => hir::Stmt::Empty,
         Statement::ExportNamedDeclaration(_) => hir::Stmt::Empty,
         Statement::ExportDefaultDeclaration(_) => hir::Stmt::Empty,
@@ -536,13 +585,13 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
                 BinaryOperator::StrictEquality => hir::BinaryOp::StrictEq,
                 BinaryOperator::Inequality => hir::BinaryOp::Neq,
                 BinaryOperator::StrictInequality => hir::BinaryOp::StrictNeq,
-                BinaryOperator::Exponentiation => hir::BinaryOp::Exp,
-                BinaryOperator::LeftShift => hir::BinaryOp::Shl,
-                BinaryOperator::RightShift => hir::BinaryOp::Shr,
-                BinaryOperator::UnsignedRightShift => hir::BinaryOp::UShr,
+                BinaryOperator::Exponential => hir::BinaryOp::Exp,
+                BinaryOperator::ShiftLeft => hir::BinaryOp::Shl,
+                BinaryOperator::ShiftRight => hir::BinaryOp::Shr,
+                BinaryOperator::ShiftRightZeroFill => hir::BinaryOp::UShr,
                 BinaryOperator::BitwiseAnd => hir::BinaryOp::BitAnd,
-                BinaryOperator::BitwiseXor => hir::BinaryOp::BitXor,
-                BinaryOperator::BitwiseOr => hir::BinaryOp::BitOr,
+                BinaryOperator::BitwiseXOR => hir::BinaryOp::BitXor,
+                BinaryOperator::BitwiseOR => hir::BinaryOp::BitOr,
                 BinaryOperator::In => hir::BinaryOp::In,
                 BinaryOperator::Instanceof => hir::BinaryOp::Instanceof,
                 _ => return None,
@@ -591,11 +640,11 @@ fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<hi
             })
         }
         ExportDefaultDeclarationKind::ParenthesizedExpression(p) => convert_expr(&p.expression).ok(),
-        // Handle BigintLiteral, RegExpLiteral, etc.
-        ExportDefaultDeclarationKind::BigintLiteral(b) => Some(hir::Expr::BigInt(b.raw.parse().unwrap_or(0))),
+        // Handle BigIntLiteral, RegExpLiteral, etc.
+        ExportDefaultDeclarationKind::BigIntLiteral(b) => Some(hir::Expr::BigInt(b.raw.as_ref().map(|s| s.to_string()).unwrap_or_else(|| b.value.to_string()).parse().unwrap_or(0))),
         ExportDefaultDeclarationKind::RegExpLiteral(r) => Some(hir::Expr::RegExp {
-            pattern: r.pattern.to_string(),
-            flags: r.flags.to_string(),
+            pattern: r.regex.pattern.text.to_string(),
+            flags: r.regex.flags.to_string(),
         }),
         // Fall-through for unhandled types
         _ => None,

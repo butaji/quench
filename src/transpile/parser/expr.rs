@@ -14,10 +14,10 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
         Expression::Identifier(id) => Ok(hir::Expr::Ident {
             name: id.name.to_string(),
         }),
-        Expression::BigintLiteral(b) => Ok(hir::Expr::BigInt(b.raw.parse().unwrap_or(0))),
+        Expression::BigIntLiteral(b) => Ok(hir::Expr::BigInt(b.raw.as_ref().map(|s| s.to_string()).unwrap_or_else(|| b.value.to_string()).parse().unwrap_or(0))),
         Expression::RegExpLiteral(r) => Ok(hir::Expr::RegExp {
-            pattern: r.pattern.to_string(),
-            flags: r.flags.to_string(),
+            pattern: r.regex.pattern.text.to_string(),
+            flags: r.regex.flags.to_string(),
         }),
         Expression::ArrayExpression(a) => Ok(hir::Expr::Array {
             elems: arr_elems(&a),
@@ -28,14 +28,14 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
         Expression::LogicalExpression(l) => conv_log(l),
         Expression::ConditionalExpression(c) => conv_cond(c),
         Expression::AssignmentExpression(a) => conv_assign(a),
-        Expression::ArrowFunctionExpression(a) => conv_arrow(a).ok_or_else(|| anyhow!("Unsupported arrow function"))?,
-        Expression::CallExpression(c) => conv_call(c).ok_or_else(|| anyhow!("Unsupported call expression"))?,
-        Expression::NewExpression(n) => conv_new(n).ok_or_else(|| anyhow!("Unsupported new expression"))?,
-        Expression::UpdateExpression(u) => conv_update(u).ok_or_else(|| anyhow!("Unsupported update expression"))?,
-        Expression::UnaryExpression(u) => conv_unary(u).ok_or_else(|| anyhow!("Unsupported unary expression"))?,
+        Expression::ArrowFunctionExpression(a) => conv_arrow(a).ok_or_else(|| anyhow!("Unsupported arrow function")),
+        Expression::CallExpression(c) => conv_call(c).ok_or_else(|| anyhow!("Unsupported call expression")),
+        Expression::NewExpression(n) => conv_new(n).ok_or_else(|| anyhow!("Unsupported new expression")),
+        Expression::UpdateExpression(u) => conv_update(u).ok_or_else(|| anyhow!("Unsupported update expression")),
+        Expression::UnaryExpression(u) => conv_unary(u).ok_or_else(|| anyhow!("Unsupported unary expression")),
         Expression::ParenthesizedExpression(p) => convert_expr(&p.expression),
-        Expression::ComputedMemberExpression(m) => conv_computed_member(m).ok_or_else(|| anyhow!("Unsupported computed member"))?,
-        Expression::StaticMemberExpression(m) => conv_static_member(m).ok_or_else(|| anyhow!("Unsupported static member"))?,
+        Expression::ComputedMemberExpression(m) => conv_computed_member(m).ok_or_else(|| anyhow!("Unsupported computed member")),
+        Expression::StaticMemberExpression(m) => conv_static_member(m).ok_or_else(|| anyhow!("Unsupported static member")),
         Expression::JSXElement(elem) => Ok(hir::Expr::JSX(
             crate::transpile::parser::jsx::convert_jsx_element(elem)
         )),
@@ -46,66 +46,64 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
             arg: Box::new(convert_expr(&a.argument)?),
         }),
         Expression::YieldExpression(y) => Ok(hir::Expr::Yield {
-            arg: y.argument.as_ref().map(|a| Box::new(convert_expr(a))).transpose()?,
+            arg: y.argument.as_ref().and_then(|a| convert_expr(a).map(Box::new)).transpose()?,
             delegate: y.delegate,
         }),
-        Expression::Super => Ok(hir::Expr::Super),
+        Expression::Super(_) => Ok(hir::Expr::Super),
         Expression::ThisExpression(_) => Ok(hir::Expr::This),
         Expression::MetaProperty(m) => {
-            let kind = match m.kind {
-                MetaPropertyKind::NewTarget => hir::MetaPropKind::NewTarget,
-                MetaPropertyKind::ImportMeta => hir::MetaPropKind::ImportMeta,
+            let kind = if m.meta.name == "new" {
+                hir::MetaPropKind::NewTarget
+            } else if m.meta.name == "import" {
+                hir::MetaPropKind::ImportMeta
+            } else {
+                return Err(anyhow!("Unknown meta property"));
             };
             Ok(hir::Expr::MetaProperty { kind })
         }
         Expression::ImportExpression(i) => {
             // Handle import('module')
-            let source = i.source.value.to_string();
+            // The source is an Expression - for static imports it's a StringLiteral
+            let source = match &i.source {
+                Expression::StringLiteral(s) => s.value.to_string(),
+                _ => String::new(), // Dynamic imports or other cases
+            };
             Ok(hir::Expr::Call {
                 callee: Box::new(hir::Expr::Ident { name: "__import".to_string() }),
                 arguments: vec![hir::Expr::String(source)],
             })
         }
-        Expression::OptionalCallExpression(c) => {
-            // Treat optional call as regular call
-            let callee = Box::new(convert_expr(&c.callee)?);
-            let args: Vec<hir::Expr> = c
-                .arguments
-                .iter()
-                .filter_map(|a| a.as_expression().and_then(|e| convert_expr(e).ok()))
-                .collect();
-            Ok(hir::Expr::Call { callee, arguments: args })
-        }
-        Expression::OptionalMemberExpression(m) => {
-            let obj = Box::new(convert_expr(&m.object)?);
-            if m.optional {
-                // Optional member access - treat as computed member with optional semantics
-                Ok(hir::Expr::Member {
-                    obj,
-                    property: Box::new(hir::Expr::Ident { name: m.property.name.to_string() }),
-                    computed: false,
-                })
-            } else {
-                conv_static_member(&oxc_ast::ast::StaticMemberExpression {
-                    object: m.object.clone(),
-                    property: m.property.clone(),
-                    ..Default::default()
-                }).ok_or_else(|| anyhow!("Unsupported optional member expression"))
-            }
-        }
         Expression::ChainExpression(c) => {
-            // Chain expressions include OptionalCallExpression and OptionalMemberExpression
+            // Chain expressions - handle call and member expressions with optional flag
             match &c.expression {
-                ChainElement::OptionalCallExpression(c) => {
-                    let callee = Box::new(convert_expr(&c.callee)?);
-                    let args: Vec<hir::Expr> = c
+                ChainElement::CallExpression(call) => {
+                    let callee = Box::new(convert_expr(&call.callee)?);
+                    let args: Vec<hir::Expr> = call
                         .arguments
                         .iter()
                         .filter_map(|a| a.as_expression().and_then(|e| convert_expr(e).ok()))
                         .collect();
                     Ok(hir::Expr::Call { callee, arguments: args })
                 }
-                ChainElement::OptionalMemberExpression(m) => {
+                ChainElement::ComputedMemberExpression(m) => {
+                    let obj = Box::new(convert_expr(&m.object)?);
+                    let property = Box::new(convert_expr(&m.expression)?);
+                    Ok(hir::Expr::Member {
+                        obj,
+                        property,
+                        computed: true,
+                    })
+                }
+                ChainElement::StaticMemberExpression(m) => {
+                    let obj = Box::new(convert_expr(&m.object)?);
+                    Ok(hir::Expr::Member {
+                        obj,
+                        property: Box::new(hir::Expr::Ident { name: m.property.name.to_string() }),
+                        computed: false,
+                    })
+                }
+                ChainElement::PrivateFieldExpression(m) => {
+                    // Handle private field access
                     let obj = Box::new(convert_expr(&m.object)?);
                     Ok(hir::Expr::Member {
                         obj,
@@ -118,11 +116,12 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
         }
         Expression::TaggedTemplateExpression(t) => {
             let tag = Box::new(convert_expr(&t.tag)?);
-            let template = Box::new(convert_expr(&t.quasi)?);
+            let template = Box::new(conv_template(&t.quasi)?);
             Ok(hir::Expr::TaggedTemplate { tag, template })
         }
         Expression::PrivateInExpression(p) => {
-            let left = Box::new(convert_expr(&p.left)?);
+            // p.left is PrivateIdentifier, convert to Ident
+            let left = Box::new(hir::Expr::Ident { name: p.left.name.to_string() });
             let right = Box::new(convert_expr(&p.right)?);
             Ok(hir::Expr::Bin {
                 op: hir::BinaryOp::In,
@@ -131,22 +130,15 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
             })
         }
         Expression::SequenceExpression(s) => {
-            let left = Box::new(convert_expr(&s.left)?);
-            let right = Box::new(convert_expr(&s.right)?);
-            Ok(hir::Expr::Seq { left, right })
-        }
-        Expression::AssignmentTargetExpression(a) => {
-            // Use the assignment target conversion
-            conv_assignment_target(&oxc_ast::ast::AssignmentTarget::from(a.clone()))
-                .ok_or_else(|| anyhow!("Unsupported assignment target"))
-        }
-        Expression::StaticAssignmentTargetExpression(a) => {
-            conv_assignment_target(&oxc_ast::ast::AssignmentTarget::from(a.clone()))
-                .ok_or_else(|| anyhow!("Unsupported static assignment target"))
-        }
-        Expression::MemberAssignmentTargetExpression(a) => {
-            conv_assignment_target(&oxc_ast::ast::AssignmentTarget::from(a.clone()))
-                .ok_or_else(|| anyhow!("Unsupported member assignment target"))
+            // SequenceExpression has expressions: Vec<Expression>
+            // Convert to sequential pairs
+            let mut iter = s.expressions.iter();
+            let first = iter.next().and_then(|e| convert_expr(e).ok()).unwrap_or(hir::Expr::Undefined);
+            let result = iter.fold(first, |acc, expr| {
+                let right = convert_expr(expr).unwrap_or(hir::Expr::Undefined);
+                hir::Expr::Seq { left: Box::new(acc), right: Box::new(right) }
+            });
+            Ok(result)
         }
         Expression::ClassExpression(c) => Ok(hir::Expr::Class {
             id: c.id.as_ref().map(|i| i.name.to_string()),
@@ -181,27 +173,22 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
         Expression::StringLiteral(_) |
         Expression::NullLiteral(_) |
         Expression::Identifier(_) |
-        Expression::BigintLiteral(_) |
+        Expression::BigIntLiteral(_) |
         Expression::RegExpLiteral(_) |
         Expression::AwaitExpression(_) |
         Expression::YieldExpression(_) |
-        Expression::Super |
+        Expression::Super(_) |
         Expression::ThisExpression(_) |
         Expression::MetaProperty(_) |
         Expression::ImportExpression(_) |
-        Expression::OptionalCallExpression(_) |
-        Expression::OptionalMemberExpression(_) |
         Expression::ChainExpression(_) |
         Expression::TaggedTemplateExpression(_) |
         Expression::PrivateInExpression(_) |
         Expression::SequenceExpression(_) |
-        Expression::AssignmentTargetExpression(_) |
-        Expression::StaticAssignmentTargetExpression(_) |
-        Expression::MemberAssignmentTargetExpression(_) |
         Expression::ClassExpression(_) |
         Expression::FunctionExpression(_) |
         Expression::ParenthesizedExpression(_) => {
-            Err(anyhow!("Unhandled expression type: {:?}", expr.get_variant()))
+            Err(anyhow!("Unhandled expression type"))
         }
     }
 }
@@ -230,9 +217,9 @@ pub fn conv_object(o: &ObjectExpression) -> Result<hir::Expr, anyhow::Error> {
                     PropertyKey::StaticIdentifier(i) => hir::PropKey::Str(i.name.to_string()),
                     PropertyKey::StringLiteral(s) => hir::PropKey::Str(s.value.to_string()),
                     PropertyKey::NumericLiteral(n) => hir::PropKey::Num(n.value),
-                    PropertyKey::Computed(c) => hir::PropKey::Computed {
-                        expr: convert_expr(&c.expression).ok()?,
-                    },
+                    // Computed properties would be handled via PropertyKey::Identifier or other Expression variants
+                    // For now, skip computed properties that aren't simple identifiers
+                    _ if p.computed => return None,
                     _ => return None,
                 };
                 let value = convert_expr(&p.value).ok()?;
@@ -249,10 +236,6 @@ pub fn conv_object(o: &ObjectExpression) -> Result<hir::Expr, anyhow::Error> {
                 Some(hir::ObjectMemberExpr {
                     prop: hir::ObjectProp::Spread { arg },
                 })
-            }
-            ObjectPropertyKind::ObjectMethod(_) => {
-                // Method properties in objects - we could support these but for now skip
-                None
             }
         })
         .collect();
@@ -283,13 +266,13 @@ fn conv_bin(b: &BinaryExpression) -> Option<hir::Expr> {
         BinaryOperator::StrictEquality => hir::BinaryOp::StrictEq,
         BinaryOperator::Inequality => hir::BinaryOp::Neq,
         BinaryOperator::StrictInequality => hir::BinaryOp::StrictNeq,
-        BinaryOperator::Exponentiation => hir::BinaryOp::Exp,
-        BinaryOperator::LeftShift => hir::BinaryOp::Shl,
-        BinaryOperator::RightShift => hir::BinaryOp::Shr,
-        BinaryOperator::UnsignedRightShift => hir::BinaryOp::UShr,
+        BinaryOperator::Exponential => hir::BinaryOp::Exp,
+        BinaryOperator::ShiftLeft => hir::BinaryOp::Shl,
+        BinaryOperator::ShiftRight => hir::BinaryOp::Shr,
+        BinaryOperator::ShiftRightZeroFill => hir::BinaryOp::UShr,
         BinaryOperator::BitwiseAnd => hir::BinaryOp::BitAnd,
-        BinaryOperator::BitwiseXor => hir::BinaryOp::BitXor,
-        BinaryOperator::BitwiseOr => hir::BinaryOp::BitOr,
+        BinaryOperator::BitwiseXOR => hir::BinaryOp::BitXor,
+        BinaryOperator::BitwiseOR => hir::BinaryOp::BitOr,
         BinaryOperator::In => hir::BinaryOp::In,
         BinaryOperator::Instanceof => hir::BinaryOp::Instanceof,
         _ => return None,
@@ -362,7 +345,7 @@ fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
                 }),
             });
         }
-        OxcAssignOp::LogicalOr | OxcAssignOp::NullishCoalescing => {
+        OxcAssignOp::LogicalOr | OxcAssignOp::LogicalNullish => {
             // x ??= y means x = x ?? y
             let left = Box::new(conv_assignment_target(&a.left)?);
             let right = Box::new(convert_expr(&a.right).ok()?);
@@ -385,7 +368,7 @@ fn conv_assign(a: &AssignmentExpression) -> Option<hir::Expr> {
     })
 }
 
-fn conv_assignment_target(target: &AssignmentTarget) -> Option<hir::Expr> {
+pub fn conv_assignment_target(target: &AssignmentTarget) -> Option<hir::Expr> {
     use AssignmentTarget as At;
     match target {
         At::AssignmentTargetIdentifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
@@ -478,7 +461,7 @@ pub fn conv_arrow(a: &ArrowFunctionExpression) -> Option<hir::Expr> {
 }
 
 /// Convert a binding pattern to a Pat for destructuring
-fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
+pub fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
     match pattern {
         BindingPattern::BindingIdentifier(i) => Some(hir::Pat::Ident {
             name: i.name.to_string(),
@@ -489,18 +472,11 @@ fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
                 .elements
                 .iter()
                 .map(|e| {
-                    e.as_ref().and_then(|e| match e {
-                        BindingElement::BindingIdentifier(i) => Some(hir::Pat::Ident {
-                            name: i.name.to_string(),
-                            type_: None,
-                        }),
-                        BindingElement::BindingPattern(b) => convert_binding_pattern(b),
-                        BindingElement::AssignmentTarget(_) => None,
-                    })
+                    e.as_ref().and_then(|e| convert_binding_pattern(e))
                 })
                 .collect();
             let rest = a.rest.as_ref().and_then(|r| {
-                convert_binding_pattern(&r.pattern)
+                convert_binding_pattern(&r.argument)
             }).map(Box::new);
             Some(hir::Pat::Array { elems, rest })
         }
@@ -509,35 +485,25 @@ fn convert_binding_pattern(pattern: &BindingPattern) -> Option<hir::Pat> {
                 .properties
                 .iter()
                 .filter_map(|p| {
-                    match p {
-                        ObjectPatternProperty::Property(p) => {
-                            let key = match &p.key {
-                                PropertyKey::StaticIdentifier(i) => i.name.to_string(),
-                                PropertyKey::StringLiteral(s) => s.value.to_string(),
-                                PropertyKey::NumericLiteral(n) => n.value.to_string(),
-                                _ => return None,
-                            };
-                            let value = match &p.value {
-                                BindingElement::BindingIdentifier(i) => hir::Pat::Ident {
-                                    name: i.name.to_string(),
-                                    type_: None,
-                                },
-                                BindingElement::BindingPattern(b) => convert_binding_pattern(b)?,
-                                BindingElement::AssignmentTarget(_) => return None,
-                            };
-                            Some(hir::ObjectPatProp::Init { key, value })
-                        }
-                        ObjectPatternProperty::RestElement(r) => {
-                            let arg = convert_binding_pattern(&r.pattern)?;
-                            Some(hir::ObjectPatProp::Rest { arg: Box::new(arg) })
-                        }
-                    }
+                    let key = match &p.key {
+                        PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                        PropertyKey::StringLiteral(s) => s.value.to_string(),
+                        PropertyKey::NumericLiteral(n) => n.value.to_string(),
+                        PropertyKey::Expression(e) => return Some(hir::ObjectPatProp::Spread { arg: Box::new(convert_expr(e)?) }),
+                        _ => return None,
+                    };
+                    let value = convert_binding_pattern(&p.value)?;
+                    Some(hir::ObjectPatProp::Init { key, value })
                 })
                 .collect();
             let rest = o.rest.as_ref().and_then(|r| {
-                convert_binding_pattern(&r.pattern)
+                convert_binding_pattern(&r.argument)
             }).map(Box::new);
             Some(hir::Pat::Object { props, rest })
+        }
+        BindingPattern::AssignmentPattern(_) => {
+            // Handle default assignment patterns like `x = 1`
+            None
         }
     }
 }
@@ -619,13 +585,15 @@ fn arrow_stmt_to_hir(s: &Statement) -> Option<hir::Stmt> {
                         .collect();
                     Some(hir::ForInit::Variable(kind, vars))
                 }
-                Some(ForStatementInit::Expression(e)) => {
+                _ => {
                     // Handle expression-based for init (e.g., for (i = 0; ...))
-                    convert_expr(e)
-                        .ok()
-                        .map(|e| hir::ForInit::Expr(Box::new(e)))
+                    // Use as_expression() to get the expression if it is one
+                    stmt.init.as_ref().and_then(|i| {
+                        i.as_expression().and_then(|e| {
+                            convert_expr(e).ok().map(|e| hir::ForInit::Expr(Box::new(e)))
+                        })
+                    })
                 }
-                None => None,
             };
             Some(hir::Stmt::For {
                 init,
