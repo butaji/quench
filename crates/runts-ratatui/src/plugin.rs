@@ -107,15 +107,9 @@ impl Plugin for RatatuiPlugin {
         Ok(Box::new(RatatuiDevState))
     }
 
-    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        let _dev_state = state
-            .as_any()
-            .downcast_ref::<RatatuiDevState>()
-            .ok_or_else(|| PluginError::new("ratatui", "", "invalid dev state type"))?;
-
-        // For TUI apps, dev_run_once should run the TUI event loop.
-        // Return Stop when the TUI exits (user presses 'q').
-        // This gives clear behavior: TUI runs until quit, then dev server stops.
+    fn dev_run_once(&self, _state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+        // For TUI apps, dev_run_once returns Stop since the TUI takes over the event loop.
+        // This tells the dev server to stop calling this method and let the TUI run.
         Ok(DevAction::Stop)
     }
 

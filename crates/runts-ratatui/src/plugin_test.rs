@@ -91,7 +91,8 @@ fn test_codegen_module_returns_valid_rust() {
     let code = result.unwrap();
     assert!(code.contains("pub fn render"));
     assert!(code.contains("Paragraph :: new"));
-    assert!(code.contains("Hello from Ratatui!"));
+    // Fallback now includes source trace
+    assert!(code.contains("source:"));
 }
 
 #[test]
@@ -129,7 +130,7 @@ fn test_dev_init_returns_state() {
 }
 
 #[test]
-fn test_dev_run_once_returns_continue() {
+fn test_dev_run_once_returns_stop() {
     use runts_plugin::{DevAction, DevState};
     struct TestDevState;
     impl DevState for TestDevState {
@@ -141,7 +142,8 @@ fn test_dev_run_once_returns_continue() {
     let mut state = TestDevState;
     let result = plugin.dev_run_once(&mut state);
     assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), DevAction::Continue));
+    // TUI dev_run_once returns Stop since TUI takes over the event loop
+    assert!(matches!(result.unwrap(), DevAction::Stop));
 }
 
 #[test]

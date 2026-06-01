@@ -100,6 +100,10 @@ impl FreshDevState {
     }
 
     fn compile_project(&self) -> Result<(), PluginError> {
+        self.compile_project_with_modules(0)
+    }
+
+    fn compile_project_with_modules(&self, module_count: usize) -> Result<(), PluginError> {
         // Use cargo to compile the project
         // For dev mode, we compile from .runts/build directory
         let build_dir = self.project_root.join(".runts").join("build");
@@ -108,7 +112,11 @@ impl FreshDevState {
             return Err(PluginError::new("fresh", "", "runts build directory not found. Run 'runts build' first."));
         }
 
-        println!("Compiling...");
+        if module_count > 0 {
+            println!("Compiling {} modules...", module_count);
+        } else {
+            println!("Compiling...");
+        }
         let output = Command::new("cargo")
             .current_dir(&build_dir)
             .args(&["build"])
@@ -186,8 +194,8 @@ impl Plugin for FreshPlugin {
             .downcast_ref::<FreshDevState>()
             .ok_or_else(|| PluginError::new("fresh", "", "invalid dev state type"))?;
 
-        println!("File change detected, recompiling...");
-        dev_state.compile_project()?;
+        println!("File change detected, recompiling {} modules...", ctx.modules.len());
+        dev_state.compile_project_with_modules(ctx.modules.len())?;
 
         // Kill old server
         {
