@@ -33,14 +33,51 @@ impl QuoteCodegen {
         let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
         let params = self.gen_params(&func.params);
         let ret_type = self.gen_ret_type(&func.return_type, func.throws, &func.error_type);
-        let body = self.gen_body(&func.body);
-        
+
+        // Generate destructuring for pattern params at start of body
+        let param_destructuring = self.gen_param_destructuring(&func.params);
+        let body = self.gen_body_with_prefix(&func.body, param_destructuring);
+
         let vis = quote! { pub };
         let async_kw = if func.is_async { quote! { async } } else { quote! {} };
-        
+
         quote! {
             #vis #async_kw fn #name(#params) #ret_type {
                 #body
+            }
+        }
+    }
+
+    /// Generate destructuring statements for params with patterns
+    fn gen_param_destructuring(&self, params: &[super::Param]) -> Vec<TokenStream> {
+        let mut decls = Vec::new();
+        for param in params {
+            if let Some(ref pattern) = param.pattern {
+                let param_name = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+                let source = quote! { #param_name };
+                let inner_decls = self.gen_pat(pattern, &source);
+                for decl in inner_decls {
+                    decls.push(quote! { let #decl; });
+                }
+            }
+        }
+        decls
+    }
+
+    /// Generate function body with additional statements at the start
+    fn gen_body_with_prefix(&self, body: &Option<super::Block>, prefix: Vec<TokenStream>) -> TokenStream {
+        match body {
+            Some(b) => {
+                let mut stmts: Vec<TokenStream> = prefix;
+                stmts.extend(b.0.iter().filter_map(|s| self.gen_stmt(s)));
+                quote! { #(#stmts)* }
+            }
+            None => {
+                if prefix.is_empty() {
+                    quote! { unimplemented!(); }
+                } else {
+                    quote! { #(#prefix)* }
+                }
             }
         }
     }
@@ -55,9 +92,14 @@ impl QuoteCodegen {
     }
     
     fn gen_param(&self, param: &super::Param) -> TokenStream {
-        let name = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+        // When param has a pattern, use a placeholder name
+        let name = if param.name.is_empty() {
+            syn::Ident::new("__param", proc_macro2::Span::call_site())
+        } else {
+            syn::Ident::new(&param.name, proc_macro2::Span::call_site())
+        };
         let ty = self.gen_param_type(param);
-        
+
         quote! { #name: #ty }
     }
     
@@ -375,6 +417,26 @@ impl QuoteCodegen {
         }
     }
 
+    fn gen_export_named(&self, _specifiers: &[super::Export]) -> TokenStream {
+        // Export handling not yet fully implemented
+        quote! {}
+    }
+
+    fn gen_export_default(&self, _expr: &Expr) -> TokenStream {
+        // Export handling not yet fully implemented
+        quote! {}
+    }
+
+    fn gen_import_named(&self, _source: &str, _specifiers: &[super::ImportSpecifier]) -> TokenStream {
+        // Import handling not yet fully implemented
+        quote! {}
+    }
+
+    fn gen_import_default(&self, _source: &str, _local: &str) -> TokenStream {
+        // Import handling not yet fully implemented
+        quote! {}
+    }
+
     fn gen_if(&self, test: &Expr, cons: &Box<Stmt>, alt: Option<&Stmt>) -> TokenStream {
         let test = self.gen_expr(test);
         let cons = self.gen_block_stmt(cons);
@@ -489,7 +551,7 @@ impl QuoteCodegen {
                     })
                     .collect();
                 let keyword = match kind {
-                    super::VariableKind::Var => quote! { var },
+                    super::VariableKind::Var => quote! { let mut },
                     super::VariableKind::Let => quote! { let },
                     super::VariableKind::Const => quote! { let },
                 };
@@ -503,34 +565,41 @@ impl QuoteCodegen {
     }
 
     fn gen_var_decl(&self, var: &VariableDecl) -> Option<TokenStream> {
-        // Handle simple identifier patterns
-        if let Some(ref pattern) = var.pattern {
-            // For now, only handle simple ident patterns
-            if let super::Pat::Ident { name, .. } = pattern {
-                let id = syn::Ident::new(name, proc_macro2::Span::call_site());
-                let init = var.init.as_ref()?;
-                let expr = self.gen_expr(init);
-                let keyword = match var.kind {
-                    VariableKind::Var => quote! { let mut },
-                    VariableKind::Let => quote! { let },
-                    VariableKind::Const => quote! { let },
-                };
-                return Some(quote! { #keyword #id = #expr; });
-            }
-            // TODO: Handle other pattern types
-            return None;
-        }
-
-        // Simple variable without pattern
-        let id = syn::Ident::new(&var.name, proc_macro2::Span::call_site());
         let init = var.init.as_ref()?;
-        let expr = self.gen_expr(init);
-        let keyword = match var.kind {
-            VariableKind::Var => quote! { let mut },
-            VariableKind::Let => quote! { let },
-            VariableKind::Const => quote! { let },
-        };
-        Some(quote! { #keyword #id = #expr; })
+        let init_expr = self.gen_expr(init);
+
+        // Handle patterns
+        if let Some(ref pattern) = var.pattern {
+            let decls = self.gen_pat(pattern, &init_expr);
+            if decls.is_empty() {
+                return None;
+            }
+            let keyword = match var.kind {
+                VariableKind::Var => quote! { let mut },
+                VariableKind::Let => quote! { let },
+                VariableKind::Const => quote! { let },
+            };
+            // Wrap in block if multiple declarations
+            if decls.len() == 1 {
+                let decl = &decls[0];
+                Some(quote! { #keyword #decl; })
+            } else {
+                let stmts: Vec<TokenStream> = decls
+                    .into_iter()
+                    .map(|d| quote! { #keyword #d; })
+                    .collect();
+                Some(quote! { #(#stmts)* })
+            }
+        } else {
+            // Simple variable without pattern
+            let id = syn::Ident::new(&var.name, proc_macro2::Span::call_site());
+            let keyword = match var.kind {
+                VariableKind::Var => quote! { let mut },
+                VariableKind::Let => quote! { let },
+                VariableKind::Const => quote! { let },
+            };
+            Some(quote! { #keyword #id = #init_expr; })
+        }
     }
 
 
