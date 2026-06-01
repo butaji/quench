@@ -321,6 +321,20 @@ pub enum Type {
     Readonly {
         inner: Box<Type>,
     },
+    /// Tuple type with optional named elements
+    /// e.g., [x: number, y: number]
+    Tuple {
+        elements: Vec<TupleElement>,
+    },
+}
+
+/// A single element in a tuple type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TupleElement {
+    /// Optional name of the element (e.g., `x` in `[x: number]`)
+    pub name: Option<String>,
+    /// The type of this element
+    pub type_: Type,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
