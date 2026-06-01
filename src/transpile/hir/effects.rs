@@ -64,7 +64,8 @@ impl EffectAnalyzer {
 
     /// Analyze a statement for effects
     fn analyze_stmt(&mut self, stmt: &Stmt) {
-        self.analyze_throw_stmt(stmt);
+        // Note: analyze_control_flow handles Throw statements,
+        // so we don't call analyze_throw_stmt separately
         self.analyze_expr_stmt(stmt);
         self.analyze_block_stmt(stmt);
         self.analyze_control_flow(stmt);

@@ -627,10 +627,11 @@ impl QuoteCodegen {
     }
 
     fn gen_labeled(&self, label: &str, body: &Box<Stmt>) -> TokenStream {
-        let label_id = syn::Ident::new(label, proc_macro2::Span::call_site());
         let body_token = self.gen_block_stmt(body);
+        // Rust labels are lifetimes like 'loop:
+        let lifetime = syn::Lifetime::new(&format!("'{}", label), proc_macro2::Span::call_site());
         quote! {
-            #label_id: #body_token
+            #lifetime: #body_token
         }
     }
 
@@ -662,16 +663,14 @@ impl QuoteCodegen {
         match expr {
             E::String(s) => self.gen_string_expr(s),
             E::Number(n) => self.gen_number_expr(n),
-            E::BigInt(_) => {
-                // TODO: implement BigInt codegen
-                quote! { Value::Null }
+            E::BigInt(n) => {
+                quote! { Value::BigInt(#n) }
             }
             E::Boolean(b) => self.gen_bool_expr(*b),
             E::Null => quote! { Value::Null },
             E::Undefined => quote! { Value::Null },
-            E::RegExp { .. } => {
-                // TODO: implement RegExp codegen
-                quote! { Value::Null }
+            E::RegExp { pattern, flags } => {
+                quote! { Value::RegExp(#pattern, #flags) }
             }
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
@@ -694,8 +693,8 @@ impl QuoteCodegen {
             E::Call { callee, arguments } => self.gen_call_expr(callee, arguments),
             E::New { callee, arguments } => self.gen_new_expr(callee, arguments),
             E::Member { obj, property, computed } => self.gen_member_expr_full(obj, property, *computed),
-            E::Super => quote! { Value::Null },
-            E::This => quote! { Value::Null },
+            E::Super => quote! { super },
+            E::This => quote! { self },
             E::StaticMember { obj, property } => self.gen_static_member_expr(obj, property),
             E::PrivateMember { .. } => {
                 // TODO: implement PrivateMember codegen
@@ -741,9 +740,34 @@ impl QuoteCodegen {
     }
 
     fn gen_template_expr(&self, parts: &[super::TemplatePart], exprs: &[Expr]) -> TokenStream {
-        let _ = (parts, exprs);
-        // TODO: implement template literal codegen
-        quote! { Value::Null }
+        let mut result = TokenStream::new();
+        let mut expr_idx = 0;
+        
+        for part in parts {
+            match part {
+                super::TemplatePart::String(s) => {
+                    let s = s.to_string();
+                    result.extend(quote! { #s.to_string() });
+                }
+                super::TemplatePart::Type(_) => {
+                    // This shouldn't happen in expression context, but handle it
+                    result.extend(quote! { String::new() });
+                }
+            }
+            
+            if expr_idx < exprs.len() {
+                let expr = &exprs[expr_idx];
+                let expr_ts = self.gen_expr(expr);
+                result.extend(quote! { + &#expr_ts.to_string() });
+                expr_idx += 1;
+            }
+        }
+        
+        if result.is_empty() {
+            quote! { String::new() }
+        } else {
+            result
+        }
     }
 
     fn gen_ident_expr(&self, name: &str) -> TokenStream {
@@ -769,9 +793,17 @@ impl QuoteCodegen {
     }
 
     fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, prefix: bool) -> TokenStream {
-        let _ = (op, arg, prefix);
-        // TODO: implement Unary codegen
-        quote! { Value::Null }
+        let arg_ts = self.gen_expr(arg);
+        use super::UnaryOp as U;
+        match op {
+            U::Plus => quote! { #arg_ts },
+            U::Minus => quote! { -#arg_ts },
+            U::Not => quote! { !#arg_ts },
+            U::BitNot => quote! { !#arg_ts },
+            U::Typeof => quote! { std::any::type_name_of_val(&#arg_ts) },
+            U::Void => quote! { () },
+            U::Delete => quote! { () },
+        }
     }
 
     fn gen_logical_expr(&self, op: &super::LogicalOp, left: &Expr, right: &Expr) -> TokenStream {
@@ -800,9 +832,35 @@ impl QuoteCodegen {
     }
 
     fn gen_object_expr(&self, members: &[super::ObjectMemberExpr]) -> TokenStream {
-        let _ = members;
-        // TODO: implement Object expression codegen
-        quote! { Value::Null }
+        let entries: Vec<TokenStream> = members.iter().filter_map(|m| {
+            match &m.prop {
+                super::ObjectProp::Init { key, value, computed: _ } => {
+                    let key_ts = match key {
+                        super::PropKey::Str(s) => {
+                            let s = s.to_string();
+                            quote! { #s.to_string() }
+                        }
+                        super::PropKey::Num(n) => {
+                            let n_s = n.to_string();
+                            quote! { #n_s.to_string() }
+                        }
+                        super::PropKey::Computed { expr } => {
+                            let expr_ts = self.gen_expr(expr);
+                            quote! { format!("{}", #expr_ts) }
+                        }
+                    };
+                    let value_ts = self.gen_expr(value);
+                    Some(quote! { (#key_ts, #value_ts) })
+                }
+                _ => None, // Get, Set, Method, Spread not yet supported
+            }
+        }).collect();
+        
+        if entries.is_empty() {
+            quote! { std::collections::HashMap::new() }
+        } else {
+            quote! { std::collections::HashMap::from([#(#entries),*]) }
+        }
     }
 
     fn gen_fn_expr(&self, func: &super::FunctionDecl) -> TokenStream {

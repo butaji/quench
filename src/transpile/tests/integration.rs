@@ -449,7 +449,8 @@ mod integration_tests {
 
         // Verify allocation happened
         assert!(!idx.is_null(), "Should return valid index");
-        assert_eq!(arena.allocation_count(), 1, "Should have 1 allocation");
+        // alloc_vec stores the vec index (1) plus each element via alloc() (3)
+        assert_eq!(arena.allocation_count(), 4, "Should have 4 allocations (1 vec + 3 elements)");
     }
 
     #[test]
