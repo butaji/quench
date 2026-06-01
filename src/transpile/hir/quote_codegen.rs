@@ -109,7 +109,7 @@ impl QuoteCodegen {
         use super::Type as T;
         match ty {
             T::String | T::Number | T::Boolean => self.gen_prim_type(ty),
-            T::Void | T::Never | T::Unknown | T::Any | T::BigInt => self.gen_meta_type(ty),
+            T::Void | T::Never | T::Undefined | T::Null | T::Unknown | T::Any | T::BigInt => self.gen_meta_type(ty),
             T::Array { elem } => self.gen_array_type(elem),
             T::Ref { name, generics } => self.gen_ref_type(name, generics),
             T::Object { members } => self.gen_object_type(members),
@@ -293,7 +293,7 @@ impl QuoteCodegen {
         use super::Type as T;
         match ty {
             T::Void | T::Never => quote! { () },
-            T::Unknown | T::Any => quote! { Value },
+            T::Undefined | T::Null | T::Unknown | T::Any => quote! { Value },
             T::BigInt => quote! { i64 },
             _ => quote! { Value },
         }
@@ -441,7 +441,7 @@ impl QuoteCodegen {
     }
 
     fn gen_for_in(&self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) -> TokenStream {
-        let left_token = self.gen_for_init(left);
+        let left_token = self.gen_for_init(&Some(left));
         let right_token = self.gen_expr(right);
         let body_token = self.gen_block_stmt(body);
         quote! {
@@ -452,7 +452,7 @@ impl QuoteCodegen {
     }
 
     fn gen_for_of(&self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>, is_await: bool) -> TokenStream {
-        let left_token = self.gen_for_init(left);
+        let left_token = self.gen_for_init(&Some(left));
         let right_token = self.gen_expr(right);
         let body_token = self.gen_block_stmt(body);
         if is_await {
