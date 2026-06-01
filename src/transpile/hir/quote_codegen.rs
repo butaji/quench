@@ -1222,7 +1222,8 @@ mod tests {
         let tokens = cg.gen_stmt(&stmt);
         assert!(tokens.is_some());
         let s = tokens.unwrap().to_string();
-        assert!(s.contains("loop:"));
+        // Rust labels are lifetimes like 'loop : (with spaces around punctuation in token stream)
+        assert!(s.contains("'loop"), "Expected string to contain 'loop, got: {:?}", s);
     }
 
     #[test]
