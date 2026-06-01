@@ -141,8 +141,9 @@ impl EffectAnalyzer {
             S::Block(stmts) => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             S::Throw { arg } => self.analyze_throw(arg),
-            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::ExportNamed { .. }
-            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
+            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_)
+            | S::ExportNamed { .. } | S::ExportDefault { .. } | S::ImportNamed { .. }
+            | S::ImportDefault { .. } => {}
         }
     }
 

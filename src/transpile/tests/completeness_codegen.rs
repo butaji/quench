@@ -93,6 +93,7 @@ mod completeness_tests {
             Stmt::Try { .. } => cg.gen_stmt(stmt),
             Stmt::FunctionDecl(_) => cg.gen_stmt(stmt),
             Stmt::Class(_) => cg.gen_stmt(stmt),
+            Stmt::Variable(_) => cg.gen_stmt(stmt),
             Stmt::ExportNamed { .. } => cg.gen_stmt(stmt),
             Stmt::ExportDefault { .. } => cg.gen_stmt(stmt),
             Stmt::ImportNamed { .. } => cg.gen_stmt(stmt),
