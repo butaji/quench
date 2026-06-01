@@ -30,8 +30,9 @@ impl<T: Clone + Send + Sync + 'static> UseStateResult<T> {
         let setter = Arc::new(move |new_val: T| {
             *storage_clone.write().unwrap() = new_val;
         }) as Arc<dyn Fn(T) + Send + Sync>;
+        let value = storage.read().unwrap().clone();
         UseStateResult {
-            value: storage.read().unwrap().clone(),
+            value,
             set_value: setter,
         }
     }

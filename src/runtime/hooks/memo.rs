@@ -79,8 +79,9 @@ where
         *state_clone.write().unwrap() = new_state;
     }) as Box<dyn Fn(A) + Send + Sync>;
 
+    let state_value = state.read().unwrap().clone();
     ReducerResult {
-        state: state.read().unwrap().clone(),
+        state: state_value,
         dispatch,
     }
 }
