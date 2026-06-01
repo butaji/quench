@@ -1,7 +1,12 @@
 //! QuickJS-based JavaScript runtime for dev with hot reload
-//! 
+//!
 //! Uses rquickjs for ES2020 JavaScript execution.
-//! Thread-safe: creates new runtime per eval for simplicity.
+//!
+//! # Thread Safety
+//!
+//! This runtime is NOT thread-safe. Each `eval()` call creates a fresh runtime
+//! to avoid cross-contamination. For multi-threaded use, wrap with a mutex
+//! or use separate QuickJsRuntime instances per thread.
 
 use rquickjs::{Context, Runtime, Value};
 
@@ -32,7 +37,23 @@ impl QuickJsRuntime {
 }
 
 fn eval_inner(ctx: rquickjs::Ctx<'_>, code: &str) -> Result<String, JsError> {
-    let value: Value<'_> = ctx.eval(code).map_err(|e| JsError::new(format!("Eval error: {:?}", e)))?;
+    // Catch JS exceptions by checking for errors after eval
+    let value: Value<'_> = match ctx.eval(code) {
+        Ok(v) => v,
+        Err(e) => {
+            // Extract error message from exception
+            let msg = if let Some(msg) = e.as_js_value() {
+                ctx.with(|ctx| {
+                    let msg_str: Result<String, _> = ctx.json_stringify(ctx.globals().get("message").ok().unwrap_or_default());
+                    msg_str.unwrap_or_else(|_| format!("{:?}", e))
+                })
+            } else {
+                format!("{:?}", e)
+            };
+            return Err(JsError::new(format!("JS Error: {}", msg)));
+        }
+    };
+
     let typ = value.type_name();
     if typ == "array" || typ == "object" {
         let json_result = json_stringify_result(ctx.clone(), value.clone());
@@ -47,7 +68,29 @@ fn eval_inner(ctx: rquickjs::Ctx<'_>, code: &str) -> Result<String, JsError> {
 
 /// Wrap code to inject console.log and serialize result via JSON.stringify
 fn wrap_with_console_and_serialize(code: &str) -> String {
-    let console_inject = "var console = { log: function() {} };";
+    // Route console.log to stderr via a custom handler
+    let console_inject = r#"
+var console = {
+    log: function() {
+        var args = Array.prototype.slice.call(arguments);
+        try {
+            __runts_stderr__("LOG: " + args.map(function(a) { return String(a); }).join(" "));
+        } catch(e) {}
+    },
+    error: function() {
+        var args = Array.prototype.slice.call(arguments);
+        try {
+            __runts_stderr__("ERROR: " + args.map(function(a) { return String(a); }).join(" "));
+        } catch(e) {}
+    },
+    warn: function() {
+        var args = Array.prototype.slice.call(arguments);
+        try {
+            __runts_stderr__("WARN: " + args.map(function(a) { return String(a); }).join(" "));
+        } catch(e) {}
+    }
+};
+"#;
     if is_statement_keyword(code) {
         format!("{}{}", console_inject, code)
     } else {
@@ -107,12 +150,15 @@ fn json_stringify_result<'a>(ctx: rquickjs::Ctx<'a>, value: Value<'a>) -> Result
     // Set as global temp variable
     ctx.globals().set("__runts_val", value)
         .map_err(|e| JsError::new(format!("Failed to set global: {:?}", e)))?;
-    
-    // Call JSON.stringify on it
-    let json: Result<String, _> = ctx.eval("JSON.stringify(__runts_val)");
-    
-    // Clean up - ignore errors
-    let _: Result<(), _> = ctx.eval("delete __runts_val");
-    
+
+    // Call JSON.stringify on it - use try/finally to ensure cleanup
+    let json: Result<String, _> = ctx.eval(
+        r#"try {
+            JSON.stringify(__runts_val)
+        } finally {
+            delete __runts_val;
+        }"#
+    );
+
     json.map_err(|e| JsError::new(format!("JSON.stringify failed: {:?}", e)))
 }
