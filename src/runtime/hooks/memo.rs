@@ -2,6 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::sync::RwLock;
 
 /// Compute hash of dependencies for memo comparison
 fn hash_deps<D: Hash>(deps: &[D]) -> u64 {
@@ -15,8 +16,8 @@ fn hash_deps<D: Hash>(deps: &[D]) -> u64 {
 /// Memoized value with dependency tracking
 #[allow(dead_code)]
 pub struct Memoized<T> {
-    value: std::sync::Arc<std::RwLock<Option<T>>>,
-    deps_hash: std::sync::Arc<std::RwLock<u64>>,
+    value: std::sync::Arc<RwLock<Option<T>>>,
+    deps_hash: std::sync::Arc<RwLock<u64>>,
 }
 
 impl<T: Clone> Memoized<T> {

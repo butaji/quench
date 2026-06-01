@@ -24,6 +24,7 @@ pub use effects::*;
 pub use ownership::*;
 pub use stmt::{ForInit, SwitchCase};
 pub use quote_codegen::QuoteCodegen;
+pub use expr::ObjectProp;
 
 /// Inference mode for type/ownership analysis
 #[allow(dead_code)]
