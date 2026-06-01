@@ -335,10 +335,7 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::ThrowStatement(stmt) => hir::Stmt::Throw {
             arg: convert_expr(&stmt.argument).unwrap_or(hir::Expr::Undefined),
         },
-        Statement::WithStatement(stmt) => hir::Stmt::With {
-            obj: convert_expr(&stmt.object).unwrap_or(hir::Expr::Undefined),
-            body: Box::new(stmt_to_hir_stmt(&stmt.body)),
-        },
+        Statement::WithStatement(_) => hir::Stmt::Empty, // with statement not supported
         Statement::LabeledStatement(stmt) => hir::Stmt::Labeled {
             label: stmt.label.name.to_string(),
             body: Box::new(stmt_to_hir_stmt(&stmt.body)),
@@ -398,42 +395,7 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::TSInterfaceDeclaration(_) => hir::Stmt::Empty,
         Statement::TSModuleDeclaration(_) => hir::Stmt::Empty,
         Statement::TSImportEqualsDeclaration(_) => hir::Stmt::Empty,
-        Statement::ExpressionStatement(_) |
-        Statement::IfStatement(_) |
-        Statement::WhileStatement(_) |
-        Statement::ForStatement(_) |
-        Statement::ForInStatement(_) |
-        Statement::ForOfStatement(_) |
-        Statement::DoWhileStatement(_) |
-        Statement::SwitchStatement(_) |
-        Statement::TryStatement(_) |
-        Statement::ThrowStatement(_) |
-        Statement::WithStatement(_) |
-        Statement::LabeledStatement(_) |
-        Statement::DebuggerStatement(_) |
-        Statement::ReturnStatement(_) |
-        Statement::BreakStatement(_) |
-        Statement::ContinueStatement(_) |
-        Statement::BlockStatement(_) |
-        Statement::EmptyStatement(_) |
-        Statement::VariableDeclaration(_) |
-        Statement::TSEnumDeclaration(_) |
-        Statement::TSTypeAliasDeclaration(_) |
-        Statement::TSExportAssignment(_) |
-        Statement::TSGlobalDeclaration(_) |
-        Statement::TSNamespaceExportDeclaration(_) |
-        Statement::ClassDeclaration(_) |
-        Statement::FunctionDeclaration(_) |
-        Statement::ImportDeclaration(_) |
-        Statement::ExportNamedDeclaration(_) |
-        Statement::ExportDefaultDeclaration(_) |
-        Statement::ExportAllDeclaration(_) |
-        Statement::TSInterfaceDeclaration(_) |
-        Statement::TSModuleDeclaration(_) |
-        Statement::TSImportEqualsDeclaration(_) => {
-            // Statement types that are already handled above
-            hir::Stmt::Empty
-        }
+
     }
 }
 
