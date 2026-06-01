@@ -69,12 +69,17 @@ impl HirArena {
     }
     
     /// Allocate a Vec and return its index
-    pub fn alloc_vec<T>(&mut self, vec: Vec<T>) -> ArenaIndex 
-    where T: ArenaAllocatable {
+    pub fn alloc_vec<T>(&mut self, vec: Vec<T>) -> ArenaIndex
+    where
+        T: ArenaAllocatable,
+    {
         let idx = ArenaIndex(self.next_index);
         self.next_index += 1;
-        // Note: Vec's internal storage is heap allocated, but we track it
-        let _ = vec; // In real impl, would store in bump
+        // Allocate each element on the bump allocator and store them
+        // The vec backing is heap-allocated but elements live on bump arena
+        for item in vec {
+            self.alloc(item);
+        }
         idx
     }
     

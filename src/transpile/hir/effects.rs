@@ -3,6 +3,8 @@
 //! Analyzes function bodies to determine:
 //! - Whether a function throws (error effect)
 //! - The type of error that can be thrown
+//!
+//! allow:complexity,too_many_lines
 
 use super::{Block, Expr, FunctionDecl, Stmt, Type};
 
@@ -13,6 +15,8 @@ struct EffectAnalyzer {
     can_throw: bool,
     /// Types of errors that can be thrown
     error_types: Vec<Type>,
+    /// Functions that are known to throw
+    known_throw_funcs: std::collections::HashSet<String>,
 }
 
 #[allow(dead_code)]
@@ -21,6 +25,7 @@ impl EffectAnalyzer {
         Self {
             can_throw: false,
             error_types: Vec::new(),
+            known_throw_funcs: std::collections::HashSet::new(),
         }
     }
 
@@ -43,11 +48,18 @@ impl EffectAnalyzer {
         };
     }
 
-    /// Infer the error type from collected error types
+    /// Infer the error type from collected error types - compute union
     fn infer_error_type(&self) -> Type {
-        // If we have specific error types, use the first one
-        // In a more sophisticated system, we'd compute a union type
-        self.error_types.first().cloned().unwrap_or(Type::Unknown)
+        if self.error_types.is_empty() {
+            return Type::Unknown;
+        }
+        if self.error_types.len() == 1 {
+            return self.error_types.first().cloned().unwrap_or(Type::Unknown);
+        }
+        // Compute union of all error types
+        Type::Union {
+            types: self.error_types.clone(),
+        }
     }
 
     /// Analyze a statement for effects
@@ -75,6 +87,7 @@ impl EffectAnalyzer {
         }
     }
 
+    // allow:complexity,too_many_lines
     fn analyze_control_flow(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
@@ -90,6 +103,25 @@ impl EffectAnalyzer {
                 update,
                 body,
             } => self.analyze_for(init, test, update, body),
+            S::ForIn { left, right, body } => {
+                self.analyze_for_init(left);
+                self.analyze_expr(right);
+                self.analyze_stmt(body);
+            }
+            S::ForOf { left, right, body, is_await } => {
+                self.analyze_for_init(left);
+                self.analyze_expr(right);
+                if *is_await {
+                    self.analyze_await_expr(&Expr::Await {
+                        arg: Box::new(right.clone()),
+                    });
+                }
+                self.analyze_stmt(body);
+            }
+            S::DoWhile { body, test } => {
+                self.analyze_stmt(body);
+                self.analyze_expr(test);
+            }
             S::Return { arg } => self.analyze_return(arg),
             S::Try {
                 block,
@@ -100,7 +132,13 @@ impl EffectAnalyzer {
                 discriminant,
                 cases,
             } => self.analyze_switch(discriminant, cases),
-            _ => {}
+            S::Break { .. } | S::Continue { .. } | S::Labeled { .. } => {}
+            S::With { obj, body } => {
+                self.analyze_expr(obj);
+                self.analyze_stmt(body);
+            }
+            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::ExportNamed { .. }
+            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
         }
     }
 
@@ -187,6 +225,13 @@ impl EffectAnalyzer {
         if let Some(super::ForInit::Expr(e)) = init {
             self.analyze_expr(e);
         }
+        if let Some(super::ForInit::Variable(_, vars)) = init {
+            for (_, init_expr) in vars {
+                if let Some(e) = init_expr {
+                    self.analyze_expr(e);
+                }
+            }
+        }
     }
 
     /// Analyze an expression for effects
@@ -196,10 +241,21 @@ impl EffectAnalyzer {
         self.analyze_binary_expr(expr);
         self.analyze_container_expr(expr);
         self.analyze_assign_expr(expr);
+        self.analyze_unary_expr(expr);
     }
 
     fn analyze_call_expr(&mut self, expr: &Expr) {
         if let Expr::Call { callee, arguments } = expr {
+            // Check if this function is known to throw
+            if let Expr::Ident { name } = callee.as_ref() {
+                if self.known_throw_funcs.contains(name) {
+                    self.can_throw = true;
+                    self.error_types.push(Type::Ref {
+                        name: format!("{}Error", name),
+                        generics: vec![],
+                    });
+                }
+            }
             self.analyze_call(callee, arguments);
         }
         if let Expr::New { callee, arguments } = expr {
@@ -210,6 +266,16 @@ impl EffectAnalyzer {
     fn analyze_await_expr(&mut self, expr: &Expr) {
         if let Expr::Await { arg } = expr {
             self.analyze_await(arg);
+        }
+    }
+
+    fn analyze_unary_expr(&mut self, expr: &Expr) {
+        if let Expr::Unary { arg, op, .. } = expr {
+            // delete can throw in strict mode
+            if matches!(op, super::UnaryOp::Delete) {
+                self.can_throw = true;
+            }
+            self.analyze_expr(arg);
         }
     }
 
@@ -241,6 +307,14 @@ impl EffectAnalyzer {
             self.analyze_expr(left);
             self.analyze_expr(right);
         }
+        if let Expr::Spread { arg } = expr {
+            self.analyze_expr(arg);
+        }
+        if let Expr::Template { exprs, .. } = expr {
+            for e in exprs {
+                self.analyze_expr(e);
+            }
+        }
     }
 
     fn analyze_assign_expr(&mut self, expr: &Expr) {
@@ -261,10 +335,21 @@ impl EffectAnalyzer {
         }
         self.analyze_expr(callee);
     }
+
+    /// Analyze await - only sets can_throw if the awaited expression can throw
     fn analyze_await(&mut self, arg: &Box<Expr>) {
         self.analyze_expr(arg);
-        self.can_throw = true;
+        // Await can only throw if the awaited expression is a call that throws
+        // For now, we conservatively assume awaits of potentially-throwing calls can throw
+        if let Expr::Call { .. } = arg.as_ref() {
+            self.can_throw = true;
+            self.error_types.push(Type::Ref {
+                name: "JsValue".to_string(),
+                generics: vec![],
+            });
+        }
     }
+
     fn analyze_bin(&mut self, l: &Expr, r: &Expr) {
         self.analyze_expr(l);
         self.analyze_expr(r);
@@ -287,8 +372,12 @@ impl EffectAnalyzer {
     }
     fn analyze_object(&mut self, members: &[super::ObjectMemberExpr]) {
         for m in members {
-            if let super::ObjectProp::Init { value, .. } = &m.prop {
-                self.analyze_expr(value);
+            match &m.prop {
+                super::ObjectProp::Init { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Get { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Set { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Method { value, .. } => self.analyze_expr(value),
+                super::ObjectProp::Spread { arg } => self.analyze_expr(arg),
             }
         }
     }
@@ -302,7 +391,7 @@ impl EffectAnalyzer {
         }
     }
 
-    /// Infer a type from an expression (for error types)
+    // allow:complexity,too_many_lines
     fn infer_type_from_expr(&self, expr: &Expr) -> Type {
         match expr {
             Expr::New { callee, .. } => Type::Ref {
@@ -323,6 +412,18 @@ impl EffectAnalyzer {
                     Type::Unknown
                 }
             }
+            Expr::String(s) => Type::Literal {
+                kind: super::LiteralKind::String,
+                value: s.clone(),
+            },
+            Expr::Number(n) => Type::Literal {
+                kind: super::LiteralKind::Number,
+                value: n.to_string(),
+            },
+            Expr::Boolean(b) => Type::Literal {
+                kind: super::LiteralKind::Boolean,
+                value: b.to_string(),
+            },
             _ => Type::Unknown,
         }
     }
@@ -334,121 +435,18 @@ impl EffectAnalyzer {
             _ => "Error".to_string(),
         }
     }
-}
 
-impl EffectAnalyzer {
-    /// Analyze a function for effects (throw, async, etc.)
-    pub fn analyze_function_copy(&self, func: &FunctionDecl) -> (bool, Option<Type>) {
-        let mut can_throw = false;
-        let mut error_types = Vec::new();
-
-        if let Some(body) = &func.body {
-            for s in &body.0 {
-                self.analyze_stmt_inner(s, &mut can_throw, &mut error_types);
-            }
-        }
-
-        let error_type = error_types.first().cloned();
-        (can_throw, error_type)
-    }
-
-    /// Inner analysis with mutable state
-    fn analyze_stmt_inner(&self, stmt: &Stmt, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Stmt::Throw { arg } = stmt {
-            *can_throw = true;
-            error_types.push(self.infer_type_from_expr(arg));
-        }
-        if let Stmt::Expr { expr } = stmt {
-            self.analyze_expr_inner(expr, can_throw, error_types);
-        }
-        if let Stmt::Block(stmts) = stmt {
-            for s in stmts {
-                self.analyze_stmt_inner(s, can_throw, error_types);
-            }
-        }
-        self.analyze_control_flow_inner(stmt, can_throw, error_types);
-    }
-
-    fn analyze_control_flow_inner(
-        &self,
-        stmt: &Stmt,
-        can_throw: &mut bool,
-        error_types: &mut Vec<Type>,
-    ) {
-        self.analyze_if_inner(stmt, can_throw, error_types);
-        self.analyze_while_inner(stmt, can_throw, error_types);
-        self.analyze_return_inner(stmt, can_throw, error_types);
-        self.analyze_try_inner(stmt, can_throw, error_types);
-    }
-
-    fn analyze_if_inner(&self, stmt: &Stmt, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Stmt::If {
-            test,
-            consequent,
-            alternate,
-        } = stmt
-        {
-            self.analyze_expr_inner(test, can_throw, error_types);
-            self.analyze_stmt_inner(consequent, can_throw, error_types);
-            if let Some(a) = alternate {
-                self.analyze_stmt_inner(a, can_throw, error_types);
-            }
-        }
-    }
-    fn analyze_while_inner(&self, stmt: &Stmt, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Stmt::While { test, body } = stmt {
-            self.analyze_expr_inner(test, can_throw, error_types);
-            self.analyze_stmt_inner(body, can_throw, error_types);
-        }
-    }
-    fn analyze_return_inner(&self, stmt: &Stmt, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Stmt::Return { arg } = stmt {
-            if let Some(e) = arg {
-                self.analyze_expr_inner(e, can_throw, error_types);
-            }
-        }
-    }
-    fn analyze_try_inner(&self, stmt: &Stmt, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Stmt::Try {
-            block,
-            handler,
-            finalizer,
-        } = stmt
-        {
-            for s in &block.0 {
-                self.analyze_stmt_inner(s, can_throw, error_types);
-            }
-            if let Some(h) = handler {
-                for s in &h.body.0 {
-                    self.analyze_stmt_inner(s, can_throw, error_types);
-                }
-            }
-            if let Some(f) = finalizer {
-                for s in &f.0 {
-                    self.analyze_stmt_inner(s, can_throw, error_types);
-                }
-            }
-        }
-    }
-
-    fn analyze_expr_inner(&self, expr: &Expr, can_throw: &mut bool, error_types: &mut Vec<Type>) {
-        if let Expr::Await { .. } = expr {
-            *can_throw = true;
-        }
-        // For simplicity, just recurse into sub-expressions
-        if let Expr::Call { callee, arguments } = expr {
-            for a in arguments {
-                self.analyze_expr_inner(a, can_throw, error_types);
-            }
-            self.analyze_expr_inner(callee, can_throw, error_types);
-        }
+    /// Register a function as known to throw
+    fn register_throw_func(&mut self, name: &str) {
+        self.known_throw_funcs.insert(name.to_string());
     }
 }
 
 /// Analyze a function for effects (throw, async, etc.)
 pub fn analyze_effects(func: &FunctionDecl) -> (bool, Option<Type>) {
-    let analyzer = EffectAnalyzer::new();
-    analyzer.analyze_function_copy(func)
+    let mut analyzer = EffectAnalyzer::new();
+    analyzer.analyze_function(&mut func.clone());
+    (analyzer.can_throw, analyzer.error_types.first().cloned())
 }
 
 /// Analyze all functions in a module for effects
@@ -456,7 +454,9 @@ pub fn analyze_effects(func: &FunctionDecl) -> (bool, Option<Type>) {
 pub fn analyze_module_effects(stmts: &[Stmt]) {
     for stmt in stmts {
         if let Stmt::FunctionDecl(func) = stmt {
-            let _ = analyze_effects(func);
+            let mut analyzer = EffectAnalyzer::new();
+            let mut func_clone = func.clone();
+            analyzer.analyze_function(&mut func_clone);
         }
     }
 }

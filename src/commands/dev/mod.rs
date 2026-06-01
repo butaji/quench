@@ -32,7 +32,9 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
     // This is required because FreshDevState::compile_project() expects
     // the build directory to exist and compiles there (it runs cargo build in .runts/build)
     tracing::info!("Running initial build...");
-    if let Err(e) = build::run_full_build(_config, project_root.clone(), false).await {
+    if let Err(e) = build::run_full_build(_config, project_root.clone(), false).await
+        .context("Initial build failed")
+    {
         tracing::error!("Initial build failed: {}", e);
         return Err(e);
     }
@@ -52,22 +54,34 @@ fn dev_loop(
     tx: std::sync::mpsc::Sender<Result<notify::Event, notify::Error>>,
     rx: std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 ) -> Result<()> {
-    // Ignore events from these directories (convert to string once)
-    let ignore_patterns = [".runts", "target", "node_modules", ".git"];
+    // Ignore events from these directories (use component matching, not substring)
+    let ignore_dirs = [".runts", "target", "node_modules", ".git"];
 
     loop {
-        if let Ok(event) = rx.try_recv() {
-            if let Some(event) = event.ok() {
+        // Use recv_timeout to avoid busy-waiting - block up to 100ms for file events
+        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(Ok(event)) => {
                 // Filter out events from build artifacts and hidden directories
                 let should_reload = event.paths.iter().any(|p| {
-                    let path_str = p.to_string_lossy();
-                    !ignore_patterns.iter().any(|pat| path_str.contains(pat))
+                    !p.components().any(|c| {
+                        let s = c.as_os_str().to_string_lossy();
+                        ignore_dirs.iter().any(|dir| s == *dir)
+                    })
                 });
 
                 if should_reload {
                     ctx.modules = scan_modules(project_root)?;
                     plugin.dev_reload(ctx, state)?;
                 }
+            }
+            Ok(Err(e)) => {
+                eprintln!("File watcher error: {}", e);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // No event, just poll the plugin
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                break;
             }
         }
 
@@ -76,8 +90,6 @@ fn dev_loop(
             DevAction::Stop => break,
             DevAction::Error(e) => eprintln!("Dev error: {}", e),
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     // Explicitly drop tx to signal watcher to stop
     drop(tx);
@@ -110,7 +122,7 @@ fn scan_modules(root: &PathBuf) -> Result<Vec<String>> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        // Skip hidden directories and build artifacts
+        // Skip hidden directories and build artifacts (use path component matching)
         if path.components().any(|c| {
             let s = c.as_os_str().to_string_lossy();
             s.starts_with('.') || s == "target" || s == "node_modules"

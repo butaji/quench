@@ -113,6 +113,18 @@ pub trait Plugin {
     /// Help text describing the plugin.
     fn help_text(&self) -> &str;
 
+    /// Plugin version string (e.g., "0.1.0").
+    /// Default implementation returns "0.1.0".
+    fn version(&self) -> &str {
+        "0.1.0"
+    }
+
+    /// Plugin capabilities bitfield.
+    /// Default implementation returns no capabilities (basic codegen only).
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::EMPTY
+    }
+
     /// Generate Rust code for a single HIR module (as JSON string).
     fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError>;
 
@@ -123,13 +135,50 @@ pub trait Plugin {
     fn codegen_entry(&self, modules: &[hir::Module]) -> Result<String, PluginError>;
 
     /// Initialize development state.
-    fn dev_init(&self, ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError>;
+    /// Default implementation returns a no-op dev state.
+    fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
+        Ok(Box::new(DefaultDevState))
+    }
 
     /// Run one iteration of the development loop.
-    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError>;
+    /// Default implementation returns Continue (no-op).
+    fn dev_run_once(&self, _state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+        Ok(DevAction::Continue)
+    }
 
     /// Handle file reload event.
-    fn dev_reload(&self, ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError>;
+    /// Default implementation does nothing.
+    fn dev_reload(&self, _ctx: &mut DevContext, _state: &mut dyn DevState) -> Result<(), PluginError> {
+        Ok(())
+    }
+}
+
+/// Plugin capability flags for discovery and feature detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginCapabilities(u32);
+
+impl PluginCapabilities {
+    pub const EMPTY: Self = Self(0);
+    pub const CODEGEN: Self = Self(1 << 0);
+    pub const DEV_SERVER: Self = Self(1 << 1);
+    pub const HOT_RELOAD: Self = Self(1 << 2);
+    pub const TUI: Self = Self(1 << 3);
+    pub const REACT: Self = Self(1 << 4);
+    pub const FRESH: Self = Self(1 << 5);
+    pub const RATATUI: Self = Self(1 << 6);
+
+    pub fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+}
+
+/// Default no-op dev state for plugins that don't need persistent state.
+pub struct DefaultDevState;
+
+impl DevState for DefaultDevState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Route information for plugin code generation

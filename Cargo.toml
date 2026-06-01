@@ -43,7 +43,7 @@ bumpalo = "3.16"
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-gzip"] }
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "sync", "macros", "io-util", "net"] }
 # Async
 async-stream = "0.3"
 
@@ -81,7 +81,7 @@ runts-macros = { path = "crates/runts-macros" }
 # Plugins
 runts-fresh = { path = "crates/runts-fresh" }
 runts-ratatui = { path = "crates/runts-ratatui" }
-runts-react = { path = "crates/runts-react" }
+# runts-react = { path = "crates/runts-react" }  # TEMPORARILY DISABLED - has pre-existing bugs
 runts-plugin = { path = "crates/runts-plugin" }
 
 # Cryptographic hashing (incremental build cache)

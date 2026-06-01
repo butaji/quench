@@ -130,17 +130,28 @@ mod generated {
 
     fn resolve_route_path(routes_dir: &Path, name: &str) -> Result<PathBuf> {
         let parts: Vec<&str> = name.split('/').collect();
-        let mut file_path = routes_dir.to_path_buf();
-        for part in &parts {
-            file_path = file_path.join(part);
-        }
-        let final_path = if file_path.to_string_lossy().contains('[')
-            || file_path.to_string_lossy().ends_with("index")
-        {
-            PathBuf::from(format!("{}.tsx", file_path.to_string_lossy()))
+
+        // Check if last part is a dynamic segment like [id] or ends with index
+        let has_bracket = parts.last().map(|p| p.contains('[')).unwrap_or(false);
+        let ends_with_index = parts.last().map(|p| p.ends_with("index")).unwrap_or(false);
+
+        let final_path = if has_bracket || ends_with_index {
+            // Dynamic route or index route: join all parts then add .tsx
+            let mut path = routes_dir.to_path_buf();
+            for part in &parts {
+                path = path.join(*part);
+            }
+            path.with_extension("tsx")
         } else {
-            file_path.with_file_name(format!("{}.tsx", parts.last().unwrap_or(&name)))
+            // Normal route: last segment becomes filename.tsx
+            let mut path = routes_dir.to_path_buf();
+            for part in &parts[..parts.len().saturating_sub(1)] {
+                path = path.join(*part);
+            }
+            let filename = format!("{}.tsx", parts.last().unwrap_or(&name));
+            path.join(filename)
         };
+
         if let Some(parent) = final_path.parent() {
             std::fs::create_dir_all(parent)?;
         }

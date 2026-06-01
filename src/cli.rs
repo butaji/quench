@@ -107,6 +107,7 @@ pub enum ComponentType {
 }
 
 impl ComponentType {
+    /// Returns the kebab-case identifier matching clap's ValueEnum
     #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {

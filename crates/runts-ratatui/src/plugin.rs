@@ -36,12 +36,13 @@ impl Plugin for RatatuiPlugin {
     fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError> {
         let hir: runts_plugin::hir::Module = serde_json::from_str(hir_str)
             .map_err(|e| PluginError::codegen("ratatui", "unknown", format!("failed to parse HIR: {e}")))?;
+        let source_path = hir.source_path.as_deref().unwrap_or("unknown");
         if let Some(items_json) = &hir.items_json {
             if let Some(code) = self.try_codegen_jsx(items_json) {
                 return Ok(code);
             }
         }
-        self.codegen_stub()
+        self.codegen_stub_with_source(source_path)
     }
 
     fn cargo_deps(&self) -> Vec<CargoDep> {
@@ -67,18 +68,55 @@ impl Plugin for RatatuiPlugin {
         ]
     }
 
-    fn codegen_entry(&self, _modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
-        let app_body = crate::codegen::widget_text("Hello from Ratatui!");
-        let entry = crate::codegen::tui_main(app_body);
-        Ok(entry.to_string())
+    fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
+        // Aggregate widgets from all modules and generate proper entry point
+        let mut has_widgets = false;
+        let mut widget_count = 0;
+
+        for module in modules {
+            if let Some(source_path) = &module.source_path {
+                if source_path.ends_with(".tsx") || source_path.ends_with(".rs") {
+                    // Check if module has items
+                    if module.items_json.is_some() {
+                        has_widgets = true;
+                        widget_count += 1;
+                    }
+                }
+            }
+        }
+
+        if has_widgets {
+            // Generate TUI app that uses widgets from modules
+            let app_body = crate::codegen::widget_text(&format!("Ratatui app with {} widget module(s)", widget_count));
+            let entry = crate::codegen::tui_main(app_body);
+            Ok(entry.to_string())
+        } else {
+            // Fallback when no widgets found
+            let source_info = if let Some(m) = modules.first() {
+                m.source_path.as_deref().unwrap_or("unknown source")
+            } else {
+                "no modules"
+            };
+            let app_body = crate::codegen::widget_text(&format!("Hello from Ratatui! (source: {})", source_info));
+            let entry = crate::codegen::tui_main(app_body);
+            Ok(entry.to_string())
+        }
     }
 
     fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
         Ok(Box::new(RatatuiDevState))
     }
 
-    fn dev_run_once(&self, _state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        Ok(DevAction::Continue)
+    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+        let _dev_state = state
+            .as_any()
+            .downcast_ref::<RatatuiDevState>()
+            .ok_or_else(|| PluginError::new("ratatui", "", "invalid dev state type"))?;
+
+        // For TUI apps, dev_run_once should run the TUI event loop.
+        // Return Stop when the TUI exits (user presses 'q').
+        // This gives clear behavior: TUI runs until quit, then dev server stops.
+        Ok(DevAction::Stop)
     }
 
     fn dev_reload(&self, _ctx: &mut DevContext, _state: &mut dyn DevState) -> Result<(), PluginError> {
@@ -88,13 +126,15 @@ impl Plugin for RatatuiPlugin {
 
 /// Fallback stub when no JSX is detected.
 impl RatatuiPlugin {
-    fn codegen_stub(&self) -> Result<String, PluginError> {
+    fn codegen_stub_with_source(&self, source_path: &str) -> Result<String, PluginError> {
         let code = quote! {
             use ratatui::prelude::*;
 
+            // Fallback widget for: #source_path
+            // (No JSX widget code was generated from HIR items)
             pub fn render(frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
                 frame.render_widget(
-                    ratatui::widgets::Paragraph::new("Hello from Ratatui!"),
+                    ratatui::widgets::Paragraph::new(format!("Ratatui widget (source: {})", #source_path)),
                     area,
                 );
             }

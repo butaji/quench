@@ -161,8 +161,12 @@ impl Config {
         // Try runts.config.ts (TypeScript - would need parsing)
         let ts_config = path.join("runts.config.ts");
         if ts_config.exists() {
-            // For now, return a fallback - TS config requires separate parsing
-            // In a full implementation, we'd parse the TS file
+            // TS config found but not parsed - emit warning
+            tracing::warn!(
+                "Found {} but TypeScript config parsing is not yet implemented. \
+                 Please use runts.config.json or runts.config.yaml instead.",
+                ts_config.display()
+            );
             return Ok(json_config);
         }
 
