@@ -282,6 +282,45 @@ pub enum Type {
         parts: Vec<TemplatePart>,
         values: Vec<Type>,
     },
+    /// Partial<T> - makes all fields optional
+    Partial {
+        inner: Box<Type>,
+    },
+    /// Required<T> - removes optional marker
+    Required {
+        inner: Box<Type>,
+    },
+    /// Pick<T, K> - extracts specified keys
+    Pick {
+        inner: Box<Type>,
+        keys: Vec<String>,
+    },
+    /// Omit<T, K> - removes specified keys
+    Omit {
+        inner: Box<Type>,
+        keys: Vec<String>,
+    },
+    /// Record<K, V> - creates object type with keys K and values V
+    Record {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
+    /// keyof T - creates union of field names
+    KeyOf {
+        inner: Box<Type>,
+    },
+    /// ReturnType<T> - extracts return type of function
+    ReturnType {
+        inner: Box<Type>,
+    },
+    /// Parameters<T> - extracts parameter types as tuple
+    Parameters {
+        inner: Box<Type>,
+    },
+    /// Readonly<T> - makes all fields readonly
+    Readonly {
+        inner: Box<Type>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
