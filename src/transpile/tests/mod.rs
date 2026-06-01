@@ -17,3 +17,6 @@ pub mod parser;
 
 #[cfg(test)]
 pub mod routegen;
+
+#[cfg(test)]
+pub mod spec_vars_functions;
