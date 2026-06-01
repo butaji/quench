@@ -112,6 +112,12 @@ impl TypeToRust {
             Type::ReturnType { inner } => self.convert_return_type(inner),
             Type::Parameters { inner } => self.convert_parameters(inner),
             Type::Readonly { inner } => self.convert(inner),
+            Type::Tuple { elements } => {
+                let types: Vec<_> = elements.iter()
+                    .map(|e| self.convert(&e.type_))
+                    .collect();
+                RustType::Tuple(types)
+            }
         }
     }
 

@@ -204,6 +204,12 @@ impl QuoteCodegen {
             T::ReturnType { inner } => self.gen_return_type(inner),
             T::Parameters { inner } => self.gen_parameters_type(inner),
             T::Readonly { inner } => self.gen_type(inner),
+            T::Tuple { elements } => {
+                let types: Vec<_> = elements.iter()
+                    .map(|e| self.gen_type(&e.type_))
+                    .collect();
+                quote! { (#(#types),*) }
+            }
         }
     }
 

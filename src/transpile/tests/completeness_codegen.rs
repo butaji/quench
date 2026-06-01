@@ -140,6 +140,7 @@ mod completeness_tests {
             Type::ReturnType { .. } => cg.gen_type(ty),
             Type::Parameters { .. } => cg.gen_type(ty),
             Type::Readonly { .. } => cg.gen_type(ty),
+            Type::Tuple { .. } => cg.gen_type(ty),
         }
     }
 
