@@ -51,8 +51,19 @@ fn convert_jsx_name(name: &JSXElementName) -> hir::JSXName {
         },
         JSXElementName::MemberExpression(m) => {
             // Handle <Foo.Bar> - member expression like React.Foo
+            let object_name = match &m.object {
+                JSXMemberExpressionObject::IdentifierReference(id) => id.name.to_string(),
+                JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
+                JSXMemberExpressionObject::MemberExpression(inner) => {
+                    // Recursively handle nested member expressions
+                    match &inner.object {
+                        JSXMemberExpressionObject::IdentifierReference(id) => id.name.to_string(),
+                        _ => String::new(),
+                    }
+                }
+            };
             hir::JSXName::Member {
-                object: m.object.name.to_string(),
+                object: object_name,
                 property: m.property.name.to_string(),
             }
         }
@@ -95,12 +106,12 @@ fn convert_jsx_attr_value(value: &JSXAttributeValue) -> Option<hir::JSXAttrValue
             convert_jsx_expression(&e.expression).map(|e| hir::JSXAttrValue::Expr(e))
         }
         JSXAttributeValue::StringLiteral(s) => Some(hir::JSXAttrValue::String(s.value.to_string())),
-        JSXAttributeValue::Spread(s) => {
-            // Handle {...props} in attribute value
-            let arg = convert_expr(&s.argument).ok()?;
-            Some(hir::JSXAttrValue::Expr(hir::Expr::Spread { arg: Box::new(arg) }))
+        JSXAttributeValue::Element(e) => {
+            // Handle JSX element as attribute value
+            Some(hir::JSXAttrValue::Expr(hir::Expr::JSX(convert_jsx_element(e))))
         }
-        JSXAttributeValue::EmptyExpression(_) => Some(hir::JSXAttrValue::Empty),
+        JSXAttributeValue::Fragment(_) => None, // Fragments can't be attribute values
+        _ => None,
     }
 }
 
@@ -117,7 +128,7 @@ pub fn convert_jsx_expression(expr: &JSXExpression) -> Option<hir::Expr> {
         JSXExpression::NullLiteral(_) => Some(hir::Expr::Null),
         JSXExpression::ThisExpression(_) => Some(hir::Expr::This),
         JSXExpression::Super(_) => Some(hir::Expr::Super),
-        JSXExpression::BigintLiteral(b) => Some(hir::Expr::BigInt(b.raw.parse().unwrap_or(0))),
+        JSXExpression::BigIntLiteral(b) => Some(hir::Expr::BigInt(b.raw.as_ref().map(|s| s.to_string()).unwrap_or_else(|| b.value.to_string()).parse().unwrap_or(0))),
         _ => expr.as_expression().and_then(|e| convert_expr(e).ok()),
     }
 }
@@ -140,7 +151,7 @@ pub fn convert_jsx_child(child: &JSXChild) -> Option<hir::JSXChild> {
         })),
         JSXChild::Spread(s) => {
             // Handle {...children} spread children
-            let arg = convert_expr(&s.argument).ok()?;
+            let arg = convert_expr(&s.expression).ok()?;
             Some(hir::JSXChild::Spread { expr: arg })
         }
     }
