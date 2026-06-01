@@ -11,3 +11,4 @@ syn = { version = "2.0", features = ["full", "parsing"] }
 
 [lib]
 proc-macro = true
+doctest = false
