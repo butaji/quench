@@ -21,11 +21,7 @@ fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
             // Handle both identifier and destructuring patterns
             let (name, pattern) = match &decl.id {
                 BindingPattern::BindingIdentifier(i) => (i.name.to_string(), None),
-                BindingPattern::ArrayPattern(a) => {
-                    let pat = convert_binding_pattern(&decl.id)?;
-                    (String::new(), Some(pat))
-                }
-                BindingPattern::ObjectPattern(o) => {
+                BindingPattern::ArrayPattern(_) | BindingPattern::ObjectPattern(_) | BindingPattern::AssignmentPattern(_) => {
                     let pat = convert_binding_pattern(&decl.id)?;
                     (String::new(), Some(pat))
                 }
@@ -408,7 +404,6 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::TSEnumDeclaration(_) |
         Statement::TSTypeAliasDeclaration(_) |
         Statement::TSExportAssignment(_) |
-        Statement::UsingDeclaration(_) |
         Statement::ClassDeclaration(_) |
         Statement::FunctionDeclaration(_) |
         Statement::ImportDeclaration(_) |
