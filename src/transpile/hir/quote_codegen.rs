@@ -8,7 +8,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::{Expr, FunctionDecl, Ownership, Stmt, Type};
+use super::{Expr, FunctionDecl, Ownership, Stmt, Type, VariableDecl, VariableKind};
 
 /// Quote-based code generator
 #[allow(dead_code)]
@@ -354,6 +354,7 @@ impl QuoteCodegen {
             S::With { obj, body } => Some(self.gen_with(obj, body)),
             S::FunctionDecl(func) => Some(self.gen_fn(func)),
             S::Class(_) => None, // Class codegen not yet implemented
+            S::Variable(var) => self.gen_var_decl(var),
             S::ExportNamed { .. } | S::ExportDefault { .. } => None, // Export handled elsewhere
             S::ImportNamed { .. } | S::ImportDefault { .. } => None, // Import handled elsewhere
         }
@@ -499,6 +500,37 @@ impl QuoteCodegen {
             }
             None => quote! {},
         }
+    }
+
+    fn gen_var_decl(&self, var: &VariableDecl) -> Option<TokenStream> {
+        // Handle simple identifier patterns
+        if let Some(ref pattern) = var.pattern {
+            // For now, only handle simple ident patterns
+            if let super::Pat::Ident { name, .. } = pattern {
+                let id = syn::Ident::new(name, proc_macro2::Span::call_site());
+                let init = var.init.as_ref()?;
+                let expr = self.gen_expr(init);
+                let keyword = match var.kind {
+                    VariableKind::Var => quote! { var },
+                    VariableKind::Let => quote! { let },
+                    VariableKind::Const => quote! { let },
+                };
+                return Some(quote! { #keyword #id = #expr; });
+            }
+            // TODO: Handle other pattern types
+            return None;
+        }
+
+        // Simple variable without pattern
+        let id = syn::Ident::new(&var.name, proc_macro2::Span::call_site());
+        let init = var.init.as_ref()?;
+        let expr = self.gen_expr(init);
+        let keyword = match var.kind {
+            VariableKind::Var => quote! { var },
+            VariableKind::Let => quote! { let },
+            VariableKind::Const => quote! { let },
+        };
+        Some(quote! { #keyword #id = #expr; })
     }
 
     fn gen_while(&self, test: &Expr, body: &Box<Stmt>) -> TokenStream {

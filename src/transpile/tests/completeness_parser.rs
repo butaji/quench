@@ -28,7 +28,7 @@ mod completeness_parser_tests {
                     error_type: None,
                 })
             }
-            ModuleItem::Decl(Decl::Variable(_)) => Stmt::Empty,
+            ModuleItem::Decl(Decl::Variable(v)) => Stmt::Variable(v.clone()),
             ModuleItem::Decl(Decl::Class(_)) => Stmt::Class(ClassDecl {
                 name: String::new(),
                 extends: None,
@@ -47,10 +47,18 @@ mod completeness_parser_tests {
         let parser = TsParser::new();
         let result = parser.parse_source(source).expect("parse failed");
         for item in &result.items {
-            if let ModuleItem::Decl(Decl::Variable(v)) = item {
-                if let Some(expr) = &v.init {
-                    return (*expr).clone();
+            match item {
+                ModuleItem::Decl(Decl::Variable(v)) => {
+                    if let Some(expr) = &v.init {
+                        return (*expr).clone();
+                    }
                 }
+                ModuleItem::Stmt(Stmt::Variable(v)) => {
+                    if let Some(expr) = &v.init {
+                        return (*expr).clone();
+                    }
+                }
+                _ => {}
             }
         }
         Expr::Invalid
