@@ -1,4 +1,6 @@
 //! JSX conversion
+//!
+//! allow:too_many_lines,complexity
 
 use crate::transpile::hir;
 use crate::transpile::parser::expr::convert_expr;
@@ -43,14 +45,22 @@ pub fn convert_jsx_fragment(frag: &JSXFragment) -> hir::JSXExpr {
 fn convert_jsx_name(name: &JSXElementName) -> hir::JSXName {
     match name {
         JSXElementName::Identifier(id) => hir::JSXName::Ident(id.name.to_string()),
-        JSXElementName::NamespacedName(ns) => hir::JSXName::Ident(format!(
-            "{}:{}",
-            ns.namespace.name.to_string(),
-            ns.name.name.to_string()
-        )),
-        JSXElementName::MemberExpression(_) => hir::JSXName::Ident("member".to_string()),
+        JSXElementName::NamespacedName(ns) => hir::JSXName::Namespaced {
+            ns: ns.namespace.name.to_string(),
+            name: ns.name.name.to_string(),
+        },
+        JSXElementName::MemberExpression(m) => {
+            // Handle <Foo.Bar> - member expression like React.Foo
+            hir::JSXName::Member {
+                object: m.object.name.to_string(),
+                property: m.property.name.to_string(),
+            }
+        }
         JSXElementName::IdentifierReference(id) => hir::JSXName::Ident(id.name.to_string()),
-        JSXElementName::ThisExpression(_) => hir::JSXName::Ident("this".to_string()),
+        JSXElementName::ThisExpression(_) => {
+            // Handle <this.Foo> - 'this' in JSX
+            hir::JSXName::Dynamic(Box::new(hir::Expr::This))
+        }
     }
 }
 
@@ -71,7 +81,11 @@ fn convert_jsx_attr(attr: &JSXAttributeItem) -> Option<hir::JSXAttr> {
                 value,
             })
         }
-        _ => None,
+        JSXAttributeItem::SpreadAttribute(s) => {
+            // Handle {...props}
+            let arg = convert_expr(&s.argument).ok()?;
+            Some(hir::JSXAttr::Spread { expr: arg })
+        }
     }
 }
 
@@ -81,10 +95,16 @@ fn convert_jsx_attr_value(value: &JSXAttributeValue) -> Option<hir::JSXAttrValue
             convert_jsx_expression(&e.expression).map(|e| hir::JSXAttrValue::Expr(e))
         }
         JSXAttributeValue::StringLiteral(s) => Some(hir::JSXAttrValue::String(s.value.to_string())),
-        _ => None,
+        JSXAttributeValue::Spread(s) => {
+            // Handle {...props} in attribute value
+            let arg = convert_expr(&s.argument).ok()?;
+            Some(hir::JSXAttrValue::Expr(hir::Expr::Spread { arg: Box::new(arg) }))
+        }
+        JSXAttributeValue::EmptyExpression(_) => Some(hir::JSXAttrValue::Empty),
     }
 }
 
+// allow:complexity
 pub fn convert_jsx_expression(expr: &JSXExpression) -> Option<hir::Expr> {
     match expr {
         JSXExpression::EmptyExpression(_) => Some(hir::Expr::Null),
@@ -95,7 +115,10 @@ pub fn convert_jsx_expression(expr: &JSXExpression) -> Option<hir::Expr> {
         JSXExpression::StringLiteral(s) => Some(hir::Expr::String(s.value.to_string())),
         JSXExpression::BooleanLiteral(b) => Some(hir::Expr::Boolean(b.value)),
         JSXExpression::NullLiteral(_) => Some(hir::Expr::Null),
-        _ => expr.as_expression().and_then(convert_expr),
+        JSXExpression::ThisExpression(_) => Some(hir::Expr::This),
+        JSXExpression::Super(_) => Some(hir::Expr::Super),
+        JSXExpression::BigintLiteral(b) => Some(hir::Expr::BigInt(b.raw.parse().unwrap_or(0))),
+        _ => expr.as_expression().and_then(|e| convert_expr(e).ok()),
     }
 }
 
@@ -115,6 +138,10 @@ pub fn convert_jsx_child(child: &JSXChild) -> Option<hir::JSXChild> {
             children: frag.children.iter().filter_map(convert_jsx_child).collect(),
             closing: None,
         })),
-        _ => None,
+        JSXChild::Spread(s) => {
+            // Handle {...children} spread children
+            let arg = convert_expr(&s.argument).ok()?;
+            Some(hir::JSXChild::Spread { expr: arg })
+        }
     }
 }
