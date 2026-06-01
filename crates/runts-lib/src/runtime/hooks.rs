@@ -112,7 +112,7 @@ impl<T: Clone> Memo<T> {
 
 /// Compute hash of dependencies
 #[allow(dead_code)]
-fn hash_deps<T: Hash>(deps: &[T]) -> usize {
+fn hash_deps<D: Hash>(deps: &[D]) -> usize {
     let mut hasher = DefaultHasher::new();
     for dep in deps {
         dep.hash(&mut hasher);
@@ -120,18 +120,83 @@ fn hash_deps<T: Hash>(deps: &[T]) -> usize {
     hasher.finish() as usize
 }
 
-/// useMemo hook
+/// Thread-local memo storage for SSR hook memoization
+thread_local! {
+    static MEMO_STORAGE: RwLock<Vec<(usize, Option<usize>, Option<Box<dyn std::any::Any + Send + Sync>>)>> = RwLock::new(Vec::new());
+}
+
+/// useMemo hook - SSR implementation
 ///
-/// # TODO v0.2
-/// Currently a stub - always calls factory(), ignores deps.
-/// Implement proper memoization with deps tracking.
-pub fn use_memo<T, F, D>(factory: F, _deps: &[D]) -> T
+/// In SSR context, we store memoized values in thread-local storage.
+/// Each call with same deps returns cached value.
+pub fn use_memo<T, F, D>(factory: F, deps: &[D]) -> T
 where
-    T: Clone + 'static,
+    T: Clone + Send + Sync + 'static,
     F: FnOnce() -> T,
     D: Hash + 'static,
 {
-    factory()
+    let deps_hash = hash_deps(deps);
+    let hook_index = get_hook_index();
+
+    MEMO_STORAGE.with(|storage| {
+        let mut memos = storage.write();
+        let memos_len = memos.len();
+
+        if hook_index < memos_len {
+            let (_, stored_hash, stored_value) = &memos[hook_index];
+            if let Some(h) = stored_hash {
+                if *h == deps_hash {
+                    // Deps match, return cached value
+                    if let Some(v) = stored_value {
+                        if let Some(cached) = v.downcast_ref::<T>() {
+                            return (*cached).clone();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deps changed or not cached - call factory
+        let new_value = factory();
+        let boxed_value: Box<dyn std::any::Any + Send + Sync> = Box::new(new_value.clone());
+
+        if hook_index < memos_len {
+            memos[hook_index] = (hook_index, Some(deps_hash), Some(boxed_value));
+        } else {
+            memos.push((hook_index, Some(deps_hash), Some(boxed_value)));
+        }
+
+        new_value
+    })
+}
+
+/// Get and increment the current hook index
+fn get_hook_index() -> usize {
+    thread_local! {
+        static HOOK_INDEX: RwLock<usize> = RwLock::new(0);
+    }
+    HOOK_INDEX.with(|idx| *idx.read())
+}
+
+/// Reset hook index for new component render
+pub fn reset_hook_index() {
+    MEMO_STORAGE.with(|storage| storage.write().clear());
+    thread_local! {
+        static HOOK_INDEX: RwLock<usize> = RwLock::new(0);
+    }
+    HOOK_INDEX.with(|idx| {
+        *idx.write() = 0;
+    });
+}
+
+/// Increment hook index after each hook call
+pub fn next_hook_index() {
+    thread_local! {
+        static HOOK_INDEX: RwLock<usize> = RwLock::new(0);
+    }
+    HOOK_INDEX.with(|idx| {
+        *idx.write() += 1;
+    });
 }
 
 /// Callback memoization wrapper
@@ -270,7 +335,8 @@ pub fn use_id() -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Use SeqCst for uniqueness guarantee across threads
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("rts-{:x}", id)
 }
 
