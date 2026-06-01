@@ -153,43 +153,8 @@ pub fn convert_expr(expr: &Expression) -> Result<hir::Expr, anyhow::Error> {
                 Err(anyhow!("Failed to convert function expression"))
             }
         }
-        Expression::ConditionalExpression(_) |
-        Expression::ArrowFunctionExpression(_) |
-        Expression::CallExpression(_) |
-        Expression::NewExpression(_) |
-        Expression::UpdateExpression(_) |
-        Expression::UnaryExpression(_) |
-        Expression::BinaryExpression(_) |
-        Expression::AssignmentExpression(_) |
-        Expression::ComputedMemberExpression(_) |
-        Expression::StaticMemberExpression(_) |
-        Expression::JSXElement(_) |
-        Expression::JSXFragment(_) |
-        Expression::ArrayExpression(_) |
-        Expression::ObjectExpression(_) |
-        Expression::TemplateLiteral(_) |
-        Expression::BooleanLiteral(_) |
-        Expression::NumericLiteral(_) |
-        Expression::StringLiteral(_) |
-        Expression::NullLiteral(_) |
-        Expression::Identifier(_) |
-        Expression::BigIntLiteral(_) |
-        Expression::RegExpLiteral(_) |
-        Expression::AwaitExpression(_) |
-        Expression::YieldExpression(_) |
-        Expression::Super(_) |
-        Expression::ThisExpression(_) |
-        Expression::MetaProperty(_) |
-        Expression::ImportExpression(_) |
-        Expression::ChainExpression(_) |
-        Expression::TaggedTemplateExpression(_) |
-        Expression::PrivateInExpression(_) |
-        Expression::SequenceExpression(_) |
-        Expression::ClassExpression(_) |
-        Expression::FunctionExpression(_) |
-        Expression::ParenthesizedExpression(_) => {
-            Err(anyhow!("Unhandled expression type"))
-        }
+                // TypeScript expression variants - handled above
+
         // TypeScript expression variants - unwrap inner expression
         Expression::TSAsExpression(e) => convert_expr(&e.expression),
         Expression::TSSatisfiesExpression(e) => convert_expr(&e.expression),
@@ -616,7 +581,32 @@ fn arrow_stmt_to_hir(s: &Statement) -> Option<hir::Stmt> {
         Statement::BreakStatement(_) => Some(hir::Stmt::Break { label: None }),
         Statement::ContinueStatement(_) => Some(hir::Stmt::Continue { label: None }),
         Statement::EmptyStatement(_) => Some(hir::Stmt::Empty),
-        _ => None,
+        // Statements not supported in arrow function bodies or intentionally skipped:
+        Statement::WithStatement(_) => None,
+        Statement::DoWhileStatement(_) => None,
+        Statement::SwitchStatement(_) => None,
+        Statement::TryStatement(_) => None,
+        Statement::ThrowStatement(_) => None,
+        Statement::LabeledStatement(_) => None,
+        Statement::ForInStatement(_) => None,
+        Statement::ForOfStatement(_) => None,
+        Statement::DebuggerStatement(_) => None,
+        Statement::ClassDeclaration(_) => None,
+        Statement::FunctionDeclaration(_) => None,
+        Statement::ImportDeclaration(_) => None,
+        Statement::ExportNamedDeclaration(_) => None,
+        Statement::ExportDefaultDeclaration(_) => None,
+        Statement::ExportAllDeclaration(_) => None,
+        Statement::TSEnumDeclaration(_) => None,
+        Statement::TSTypeAliasDeclaration(_) => None,
+        Statement::TSExportAssignment(_) => None,
+        Statement::TSGlobalDeclaration(_) => None,
+        Statement::TSNamespaceExportDeclaration(_) => None,
+        Statement::TSInterfaceDeclaration(_) => None,
+        Statement::TSModuleDeclaration(_) => None,
+        Statement::TSImportEqualsDeclaration(_) => None,
+        
+        // NOTE: No catch-all - new Statement variants will cause compile error.
     }
 }
 
