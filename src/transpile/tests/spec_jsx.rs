@@ -799,6 +799,7 @@ mod spec_jsx_tests {
             assert!(!tokens.is_empty(), "JSX codegen should produce tokens");
             // JSX should produce VNode, not Value::Null
             let s = tokens.to_string();
+            eprintln!("DEBUG: codegen output: {}", s);
             assert!(s.contains("VNode"), "JSX codegen should produce VNode: {}", s);
         }
 

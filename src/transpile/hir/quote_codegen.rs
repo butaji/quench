@@ -53,7 +53,11 @@ impl QuoteCodegen {
         let mut decls = Vec::new();
         for param in params {
             if let Some(ref pattern) = param.pattern {
-                let param_name = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+                let param_name = if param.name.is_empty() {
+                    syn::Ident::new("__param", proc_macro2::Span::call_site())
+                } else {
+                    syn::Ident::new(&param.name, proc_macro2::Span::call_site())
+                };
                 let source = quote! { #param_name };
                 let inner_decls = self.gen_pat(pattern, &source);
                 for decl in inner_decls {
@@ -883,11 +887,7 @@ impl QuoteCodegen {
             }
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
-            E::JSX(_) => {
-                // JSX codegen is handled by runts_fresh crate
-                // TODO: implement proper JSX codegen in quote_codegen
-                quote! { Value::Null }
-            }
+            E::JSX(jsx) => self.gen_jsx_expr(jsx),
             E::Bin { op, left, right } => self.gen_bin_expr(op, left, right),
             E::Unary { op, arg, prefix } => self.gen_unary_expr(op, arg, *prefix),
             E::Update { op, arg, prefix } => self.gen_update_expr(op, arg, *prefix),
@@ -1253,16 +1253,18 @@ impl QuoteCodegen {
             }
         }
         let child_nodes: Vec<TokenStream> = self.gen_jsx_children(children);
-        let component_name = syn::Ident::new(name, proc_macro2::Span::call_site());
-        let props_name = syn::Ident::new(&format!("{}Props", name), proc_macro2::Span::call_site());
+        // For member expressions like "React.Foo", we can't use syn::Ident
+        // Instead, use the string directly in the quote
+        let component_name_str = name.to_string();
+        let props_name_str = format!("{}Props", name);
         if props_fields.is_empty() && child_nodes.is_empty() {
-            quote! { #component_name::render(#props_name {}) }
+            quote! { #component_name_str::render(#props_name_str {}) }
         } else if props_fields.is_empty() {
-            quote! { #component_name::render(#props_name { children: VNode::fragment(vec![#(#child_nodes),*]) }) }
+            quote! { #component_name_str::render(#props_name_str { children: VNode::fragment(vec![#(#child_nodes),*]) }) }
         } else if child_nodes.is_empty() {
-            quote! { #component_name::render(#props_name { #(#props_fields),* }) }
+            quote! { #component_name_str::render(#props_name_str { #(#props_fields),* }) }
         } else {
-            quote! { #component_name::render(#props_name { #(#props_fields),*, children: VNode::fragment(vec![#(#child_nodes),*]) }) }
+            quote! { #component_name_str::render(#props_name_str { #(#props_fields),*, children: VNode::fragment(vec![#(#child_nodes),*]) }) }
         }
     }
 
