@@ -706,10 +706,7 @@ impl QuoteCodegen {
             }
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
-            E::JSX(_) => {
-                // TODO: implement JSX codegen
-                quote! { Value::Null }
-            }
+            E::JSX(jsx) => self.gen_jsx_expr(jsx),
             E::Bin { op, left, right } => self.gen_bin_expr(op, left, right),
             E::Unary { op, arg, prefix } => self.gen_unary_expr(op, arg, *prefix),
             E::Update { op, arg, prefix } => self.gen_update_expr(op, arg, *prefix),
@@ -1356,5 +1353,190 @@ mod tests {
         let s = tokens.to_string();
         // quote may add spaces: "format ! (...)" is still format!
         assert!(s.contains("format"), "string concat should use format!, got: {}", s);
+    }
+
+    #[test]
+    fn test_gen_import_named() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ImportNamed {
+            source: "react".into(),
+            specifiers: vec![
+                ImportSpecifier::Named { name: "useState".into(), alias: None },
+                ImportSpecifier::Named { name: "Component".into(), alias: Some("Comp".into()) },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("use"), "import should produce use statement");
+        assert!(s.contains("react"), "import should contain module name");
+        assert!(s.contains("useState"), "import should contain imported name");
+        assert!(s.contains("as"), "import with alias should contain 'as'");
+    }
+
+    #[test]
+    fn test_gen_import_default() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ImportDefault {
+            source: "react".into(),
+            local: "React".into(),
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("use"), "import should produce use statement");
+        assert!(s.contains("react"), "import should contain module name");
+        assert!(s.contains("React"), "import should contain local name");
+    }
+
+    #[test]
+    fn test_gen_import_namespace() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ImportNamed {
+            source: "lodash".into(),
+            specifiers: vec![
+                ImportSpecifier::Namespace { name: "_".into() },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("use"), "import should produce use statement");
+        assert!(s.contains("lodash"), "import should contain module name");
+        assert!(s.contains("*"), "namespace import should contain *");
+    }
+
+    #[test]
+    fn test_gen_export_named() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportNamed {
+            specifiers: vec![
+                Export::Named { name: "x".into() },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("pub"), "export named should produce pub");
+        assert!(s.contains("x"), "export named should contain name");
+    }
+
+    #[test]
+    fn test_gen_export_reexport() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportNamed {
+            specifiers: vec![
+                Export::ReExport { source: "mod".into(), names: vec!["a".into(), "b".into()] },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("pub use"), "re-export should produce pub use");
+        assert!(s.contains("mod"), "re-export should contain module name");
+        assert!(s.contains("a"), "re-export should contain names");
+    }
+
+    #[test]
+    fn test_gen_export_all() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportNamed {
+            specifiers: vec![
+                Export::All { source: "mod".into() },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("pub use"), "export all should produce pub use");
+        assert!(s.contains("mod"), "export all should contain module name");
+        assert!(s.contains("*"), "export all should contain *");
+    }
+
+    #[test]
+    fn test_gen_export_default_expr() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportDefault {
+            expr: Expr::Number(42.0),
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("pub const"), "export default number should produce pub const");
+        assert!(s.contains("default"), "export default should contain 'default'");
+    }
+
+    #[test]
+    fn test_gen_export_default_function() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportDefault {
+            expr: Expr::Function(FunctionDecl {
+                name: "myFunc".into(),
+                generics: vec![],
+                params: vec![],
+                return_type: None,
+                body: Some(Block(vec![])),
+                is_async: false,
+                is_generator: false,
+                decorators: vec![],
+                throws: false,
+                error_type: None,
+            }),
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("fn myFunc"), "export default function should produce fn with name");
+    }
+
+    #[test]
+    fn test_gen_export_default_arrow() {
+        let cg = QuoteCodegen::default();
+        let stmt = Stmt::ExportDefault {
+            expr: Expr::ArrowFunction {
+                params: vec![Param {
+                    name: "x".into(),
+                    type_: Some(Type::Number),
+                    default: None,
+                    optional: false,
+                    pattern: None,
+                    ownership: Ownership::Owned,
+                }],
+                body: Box::new(Expr::Number(42.0)),
+                is_async: false,
+            },
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        assert!(s.contains("fn default"), "export default arrow should produce fn default");
+    }
+
+    #[test]
+    fn test_gen_module_path_simplification() {
+        let cg = QuoteCodegen::default();
+        // Test with a path like "./utils/helper"
+        let stmt = Stmt::ImportNamed {
+            source: "./utils/helper".into(),
+            specifiers: vec![
+                ImportSpecifier::Named { name: "foo".into(), alias: None },
+            ],
+        };
+
+        let tokens = cg.gen_stmt(&stmt);
+        assert!(tokens.is_some());
+        let s = tokens.unwrap().to_string();
+        // Should use last path component "helper", not full path
+        assert!(s.contains("helper"), "module path should be simplified to last component");
+        assert!(!s.contains("./utils/helper"), "full path should not appear");
     }
 }
