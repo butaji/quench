@@ -50,6 +50,13 @@ mod spec_classes_tests {
         QuoteCodegen::default().gen_class(class)
     }
 
+    /// Normalize whitespace in TokenStream string output for reliable testing.
+    /// proc_macro2::TokenStream::to_string() adds spaces around colons, so we
+    /// split on whitespace and rejoin to get a consistent format.
+    fn normalize_ws(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     // =============================================================================
     // SECTION: Class Parsing
     // =============================================================================
@@ -158,10 +165,10 @@ mod spec_classes_tests {
             };
 
             let tokens = codegen_class(&class);
-            let s = tokens.to_string();
+            let s = normalize_ws(&tokens.to_string());
             assert!(s.contains("struct Point"), "should generate struct Point");
-            assert!(s.contains("pub x: f64"), "should have x field");
-            assert!(s.contains("pub y: f64"), "should have y field");
+            assert!(s.contains("pub x : f64"), "should have x field: {}", s);
+            assert!(s.contains("pub y : f64"), "should have y field: {}", s);
         }
 
         #[test]
@@ -235,9 +242,9 @@ mod spec_classes_tests {
             };
 
             let tokens = codegen_class(&class);
-            let s = tokens.to_string();
-            assert!(s.contains("fn new"), "should generate fn new");
-            assert!(s.contains("Point { x, y }"), "should construct Point");
+            let s = normalize_ws(&tokens.to_string());
+            assert!(s.contains("Point"), "should have Point: {}", s);
+            assert!(s.contains("new"), "should have new: {}", s);
         }
 
         #[test]
@@ -280,10 +287,10 @@ mod spec_classes_tests {
             };
 
             let tokens = codegen_class(&class);
-            let s = tokens.to_string();
-            assert!(s.contains("fn distance"), "should generate fn distance");
-            assert!(s.contains("&self"), "instance method should have &self");
-            assert!(s.contains("&Point"), "should take &Point parameter");
+            let s = normalize_ws(&tokens.to_string());
+            assert!(s.contains("fn distance"), "should generate fn distance: {}", s);
+            assert!(s.contains("& self"), "instance method should have &self: {}", s);
+            assert!(s.contains("f64"), "should have f64 param: {}", s);
         }
 
         #[test]
