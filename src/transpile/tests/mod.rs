@@ -25,4 +25,7 @@ pub mod spec_data_structures;
 pub mod spec_modules;
 
 #[cfg(test)]
+pub mod spec_vars_functions;
+
+#[cfg(test)]
 pub mod spec_roundtrip;
