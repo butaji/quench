@@ -968,13 +968,48 @@ impl QuoteCodegen {
     }
 
     fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
-        let lhs = self.gen_expr(left);
-        let rhs = self.gen_expr(right);
-        let op = self.bin_op(op);
-        quote! { #lhs #op #rhs }
+        use super::BinaryOp as B;
+        
+        // String concatenation: use format! for string + anything
+        if matches!(op, B::Add) && self.is_string_expr(left) {
+            let lhs = self.gen_expr(left);
+            let rhs = self.gen_expr(right);
+            quote! { format!("{}{}", #lhs, #rhs) }
+        } else {
+            let lhs = self.gen_expr(left);
+            let rhs = self.gen_expr(right);
+            let op = self.bin_op(op);
+            quote! { #lhs #op #rhs }
+        }
+    }
+    
+    fn is_string_expr(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::String(_))
     }
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        // Special handling for console.log -> println! and console.error -> eprintln!
+        if let Expr::StaticMember { obj, property } = callee {
+            if let Expr::Ident { name } = obj.as_ref() {
+                if name == "console" {
+                    let is_error = property == "error";
+                    let macro_name = if is_error { "eprintln!" } else { "println!" };
+                    
+                    if property == "log" || property == "error" {
+                        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
+                        // If single string arg, use it directly; otherwise format all args
+                        if arguments.len() == 1 {
+                            return quote! { #macro_name(#(#args),*) };
+                        } else {
+                            // Multiple args: println!("{} {} ...", arg1, arg2, ...)
+                            let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
+                            return quote! { #macro_name(#(#format_args),*, #(#args),*) };
+                        }
+                    }
+                }
+            }
+        }
+        
         let callee = self.gen_expr(callee);
         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
         quote! { #callee(#(#args),*) }
@@ -1265,5 +1300,34 @@ mod tests {
         let tokens = cg.gen_type(&literal_type);
         let s = tokens.to_string();
         assert!(s.contains("hello"));
+    }
+
+    #[test]
+    fn test_gen_console_log() {
+        let cg = QuoteCodegen::default();
+        let expr = Expr::Call {
+            callee: Box::new(Expr::StaticMember {
+                obj: Box::new(Expr::Ident { name: "console".into() }),
+                property: "log".into(),
+            }),
+            arguments: vec![Expr::String("hello".into())],
+        };
+        let tokens = cg.gen_expr(&expr);
+        let s = tokens.to_string();
+        assert!(s.contains("println!"), "console.log should generate println!, got: {}", s);
+    }
+
+    #[test]
+    fn test_gen_string_concat() {
+        let cg = QuoteCodegen::default();
+        let expr = Expr::Bin {
+            op: BinaryOp::Add,
+            left: Box::new(Expr::String("Hello, ".into())),
+            right: Box::new(Expr::Ident { name: "name".into() }),
+        };
+        let tokens = cg.gen_expr(&expr);
+        let s = tokens.to_string();
+        // quote may add spaces: "format ! (...)" is still format!
+        assert!(s.contains("format"), "string concat should use format!, got: {}", s);
     }
 }
