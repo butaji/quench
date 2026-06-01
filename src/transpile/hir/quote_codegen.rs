@@ -1214,12 +1214,86 @@ impl QuoteCodegen {
     }
 
     fn gen_static_member_expr(&self, obj: &Expr, property: &str) -> TokenStream {
+        // Special handling for Number static properties
+        if let Expr::Ident { name: obj_name } = obj {
+            match obj_name {
+                "Number" => {
+                    return match property {
+                        "NaN" => quote! { f64::NAN },
+                        "POSITIVE_INFINITY" | "Infinity" => quote! { f64::INFINITY },
+                        "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
+                        "MAX_VALUE" => quote! { f64::MAX },
+                        "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
+                        _ => {
+                            let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
+                            quote! { #obj_name.#prop }
+                        }
+                    };
+                }
+                "Math" => {
+                    return match property {
+                        "PI" => quote! { std::f64::consts::PI },
+                        "E" => quote! { std::f64::consts::E },
+                        "SQRT2" => quote! { std::f64::consts::SQRT2 },
+                        "SQRT1_2" => quote! { std::f64::consts::FRAC_1_SQRT_2 },
+                        "LN2" => quote! { std::f64::consts::LN_2 },
+                        "LN10" => quote! { std::f64::consts::LN_10 },
+                        "LOG2E" => quote! { std::f64::consts::LOG2_E },
+                        "LOG10E" => quote! { std::f64::consts::LOG10_E },
+                        _ => {
+                            let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
+                            quote! { #obj_name.#prop }
+                        }
+                    };
+                }
+                _ => {}
+            }
+        }
+
         let obj = self.gen_expr(obj);
         let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
         quote! { #obj.#prop }
     }
 
     fn gen_member_expr_full(&self, obj: &Expr, property: &Expr, computed: bool) -> TokenStream {
+        // Special handling for Number static properties
+        if let Expr::Ident { name: obj_name } = obj {
+            if obj_name == "Number" {
+                if let Expr::Ident { name: prop_name } = property {
+                    return match prop_name.as_str() {
+                        "NaN" => quote! { f64::NAN },
+                        "POSITIVE_INFINITY" | "Infinity" => quote! { f64::INFINITY },
+                        "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
+                        "MAX_VALUE" => quote! { f64::MAX },
+                        "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
+                        _ => {
+                            let prop = self.gen_expr(property);
+                            quote! { #obj_name.#prop }
+                        }
+                    };
+                }
+            }
+            // Special handling for Math static properties
+            if obj_name == "Math" {
+                if let Expr::Ident { name: prop_name } = property {
+                    return match prop_name.as_str() {
+                        "PI" => quote! { std::f64::consts::PI },
+                        "E" => quote! { std::f64::consts::E },
+                        "SQRT2" => quote! { std::f64::consts::SQRT2 },
+                        "SQRT1_2" => quote! { std::f64::consts::FRAC_1_SQRT_2 },
+                        "LN2" => quote! { std::f64::consts::LN_2 },
+                        "LN10" => quote! { std::f64::consts::LN_10 },
+                        "LOG2E" => quote! { std::f64::consts::LOG2_E },
+                        "LOG10E" => quote! { std::f64::consts::LOG10_E },
+                        _ => {
+                            let prop = self.gen_expr(property);
+                            quote! { #obj_name.#prop }
+                        }
+                    };
+                }
+            }
+        }
+
         let obj = self.gen_expr(obj);
         if computed {
             let prop = self.gen_expr(property);
@@ -1388,6 +1462,76 @@ impl QuoteCodegen {
     fn gen_spread_expr(&self, arg: &Expr) -> TokenStream {
         let arg_ts = self.gen_expr(arg);
         quote! { {#arg_ts} }
+    }
+
+    /// Generate a class as a Rust struct + impl block
+    pub fn gen_class(&self, class: &super::ClassDecl) -> TokenStream {
+        let name = syn::Ident::new(&class.name, proc_macro2::Span::call_site());
+
+        // Panic if class has inheritance
+        if class.extends.is_some() {
+            panic!("class inheritance (extends) is not supported");
+        }
+
+        // Generate struct fields from members
+        let fields: Vec<TokenStream> = class.members.iter()
+            .filter(|m| !m.is_static)
+            .map(|m| {
+                let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site());
+                let ty = m.type_.as_ref()
+                    .map(|t| self.gen_type(t))
+                    .unwrap_or_else(|| quote! { f64 });
+                quote! { pub #field_name: #ty }
+            })
+            .collect();
+
+        // Generate constructor and methods
+        let mut constructor_tokens: Option<TokenStream> = None;
+        let mut method_tokens: Vec<TokenStream> = Vec::new();
+
+        for method in &class.methods {
+            if method.kind == super::MethodKind::Constructor {
+                let params: Vec<_> = method.params.iter().map(|p| {
+                    let name = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
+                    let ty = p.type_.as_ref()
+                        .map(|t| self.gen_type(t))
+                        .unwrap_or_else(|| quote! { f64 });
+                    quote! { #name: #ty }
+                }).collect();
+                let body = self.gen_expr(&method.body);
+                constructor_tokens = Some(quote! {
+                    pub fn new(#(#params),*) -> Self {
+                        Self { #body }
+                    }
+                });
+            } else {
+                let method_name = syn::Ident::new(&method.name, proc_macro2::Span::call_site());
+                let params: Vec<_> = method.params.iter().map(|p| {
+                    let name = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
+                    let ty = p.type_.as_ref()
+                        .map(|t| self.gen_type(t))
+                        .unwrap_or_else(|| quote! { f64 });
+                    quote! { #name: #ty }
+                }).collect();
+                let body = self.gen_expr(&method.body);
+                method_tokens.push(quote! {
+                    pub fn #method_name(#(#params),*) -> f64 {
+                        #body
+                    }
+                });
+            }
+        }
+
+        quote! {
+            struct #name {
+                #(#fields),*
+            }
+
+            impl #name {
+                #constructor_tokens
+                #(#method_tokens)*
+            }
+        }
     }
 
     fn gen_block_expr(&self, stmts: &[super::Stmt]) -> TokenStream {
@@ -1577,25 +1721,37 @@ impl QuoteCodegen {
     }
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
-        // Special handling for console.log -> println! and console.error -> eprintln!
+        // Special handling for console methods
         if let Expr::StaticMember { obj, property } = callee {
             if let Expr::Ident { name } = obj.as_ref() {
                 if name == "console" {
-                    let is_error = property == "error";
+                    let is_error = property == "error" || property == "warn";
+                    let use_print = property == "log" || property == "error" || property == "info" || property == "table" || property == "warn";
 
-                    if property == "log" || property == "error" {
+                    if use_print || property == "assert" {
                         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-                        // Use parse_quote! to properly generate macro invocation
-                        // Always use format string "{}" for single arg, multiple args for more
+
+                        if property == "assert" {
+                            // console.assert(condition, msg) -> assert!(condition, "{}", msg)
+                            if arguments.len() >= 2 {
+                                let cond = args.first().expect("assert needs condition");
+                                let msg = args.get(1).expect("assert needs message");
+                                return syn::parse_quote! { assert!(#cond, "{}", #msg) };
+                            } else if arguments.len() == 1 {
+                                let cond = args.first().expect("assert needs condition");
+                                return syn::parse_quote! { assert!(#cond) };
+                            }
+                            return quote! { () };
+                        }
+
+                        // println!/eprintln! for log, info, table, warn, error
                         if arguments.len() == 1 {
-                            // Single arg: println!("{}", arg)
                             if is_error {
                                 return syn::parse_quote! { eprintln!("{}", #(#args),*) };
                             } else {
                                 return syn::parse_quote! { println!("{}", #(#args),*) };
                             }
                         } else {
-                            // Multiple args: println!("{} {} ...", arg1, arg2, ...)
                             let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
                             if is_error {
                                 return syn::parse_quote! { eprintln!(#(#format_args),*, #(#args),*) };
