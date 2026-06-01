@@ -35,3 +35,6 @@ pub mod spec_roundtrip;
 
 #[cfg(test)]
 pub mod spec_jsx;
+
+#[cfg(test)]
+pub mod spec_classes;
