@@ -9,16 +9,16 @@
 //! - Arena-first memory: all allocations via bumpalo arena
 //! - Semantic ownership: HIR owns the semantics, not runtime strings
 
-mod arena;
+pub(crate) mod arena;
 mod base;
-mod effects;
+pub(crate) mod effects;
 mod expr;
-mod ownership;
+pub(crate) mod ownership;
 mod pat;
 mod quote_codegen;
 mod stmt;
 mod type_gen;
-mod type_to_rust;
+pub(crate) mod type_to_rust;
 
 pub use base::*;
 pub use effects::*;
@@ -27,6 +27,8 @@ pub use stmt::{ForInit, SwitchCase};
 pub use quote_codegen::QuoteCodegen;
 pub use expr::ObjectProp;
 pub use pat::ObjectPatProp;
+pub use arena::{ArenaAllocatable, HirArena};
+pub use type_to_rust::{OutputKind, TypeToRust};
 
 /// Inference mode for type/ownership analysis
 #[allow(dead_code)]

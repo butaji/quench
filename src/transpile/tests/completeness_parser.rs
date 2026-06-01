@@ -473,7 +473,7 @@ mod completeness_parser_tests {
                 if let Some(ref body) = f.body {
                     body.0.iter().any(|s| {
                         if let Stmt::Expr { expr } = s {
-                            matches!(expr.as_ref(), Expr::Await { .. })
+                            matches!(expr, Expr::Await { .. })
                         } else {
                             false
                         }
@@ -577,7 +577,7 @@ mod completeness_parser_tests {
                 if let Some(ref body) = f.body {
                     body.0.iter().any(|s| {
                         if let Stmt::Expr { expr } = s {
-                            if let Expr::MetaProperty { kind: MetaPropKind::NewTarget } = expr.as_ref() {
+                            if let Expr::MetaProperty { kind: MetaPropKind::NewTarget } = expr {
                                 return true;
                             }
                         }
@@ -635,7 +635,7 @@ mod completeness_parser_tests {
         let result = parser.parse_source(source).expect("parse failed");
         let has_array_pat = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
-                v.pattern.as_ref().map(|p| matches!(p, Pat::Array(_))).unwrap_or(false)
+                v.pattern.as_ref().map(|p| matches!(p, Pat::Array { .. })).unwrap_or(false)
             } else {
                 false
             }
@@ -650,7 +650,7 @@ mod completeness_parser_tests {
         let result = parser.parse_source(source).expect("parse failed");
         let has_obj_pat = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
-                v.pattern.as_ref().map(|p| matches!(p, Pat::Object(_))).unwrap_or(false)
+                v.pattern.as_ref().map(|p| matches!(p, Pat::Object { .. })).unwrap_or(false)
             } else {
                 false
             }
@@ -666,8 +666,8 @@ mod completeness_parser_tests {
         // Check spread is preserved
         let has_spread = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
-                if let Some(Pat::Array(ref elems)) = v.pattern {
-                    elems.iter().any(|e| matches!(e, Some(Pat::Rest(_))))
+                if let Some(Pat::Array { elems, .. }) = v.pattern {
+                    elems.iter().any(|e| matches!(e, Some(Pat::Rest { .. })))
                 } else {
                     false
                 }
