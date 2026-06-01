@@ -44,7 +44,7 @@ fn execute(cli: Cli) -> Result<()> {
             plugin,
             release,
             no_compile,
-        } => run_build(path, &plugin, release, no_compile),
+        } => run_build(path, plugin, release, no_compile),
         cli::Commands::Transpile { path, output } => run_transpile(path, output),
         cli::Commands::Add {
             component_type,
@@ -66,7 +66,8 @@ fn run_dev(path: PathBuf, plugin_name: &str) -> Result<()> {
     rt.block_on(commands::run_dev_server(&config, path, plugin_name.to_string()))
 }
 
-fn run_build(path: PathBuf, plugin_name: &str, release: bool, no_compile: bool) -> Result<()> {
+fn run_build(path: PathBuf, plugin: Option<String>, release: bool, no_compile: bool) -> Result<()> {
+    let plugin_name = plugin.as_deref().unwrap_or("none");
     info!("Building for production with plugin: {}", plugin_name);
     let config = config::Config::load_from_path(&path)?;
     let rt = tokio::runtime::Runtime::new()?;
