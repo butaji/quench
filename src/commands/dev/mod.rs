@@ -9,7 +9,7 @@ use crate::plugin;
 use notify::Watcher;
 use runts_plugin::{DevAction, DevContext};
 use std::path::PathBuf;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Run dev server using plugin lifecycle hooks
 pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String) -> Result<()> {

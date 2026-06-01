@@ -28,11 +28,9 @@ impl QuickJsRuntime {
         let ctx = Context::full(&runtime)
             .map_err(|e| JsError::new(format!("Failed to create context: {:?}", e)))?;
         
-        ctx.with(|ctx| {
-            // Wrap code to inject console and serialize result
-            let wrapped = wrap_with_console_and_serialize(code);
-            eval_inner(ctx, &wrapped)
-        })
+        // Wrap code to inject console and serialize result
+        let wrapped = wrap_with_console_and_serialize(code);
+        eval_inner(ctx, &wrapped)
     }
 }
 
@@ -42,14 +40,7 @@ fn eval_inner(ctx: rquickjs::Ctx<'_>, code: &str) -> Result<String, JsError> {
         Ok(v) => v,
         Err(e) => {
             // Extract error message from exception
-            let msg = if let Some(msg) = e.as_js_value() {
-                ctx.with(|ctx| {
-                    let msg_str: Result<String, _> = ctx.json_stringify(ctx.globals().get("message").ok().unwrap_or_default());
-                    msg_str.unwrap_or_else(|_| format!("{:?}", e))
-                })
-            } else {
-                format!("{:?}", e)
-            };
+            let msg = e.to_string().unwrap_or_else(|_| format!("{:?}", e));
             return Err(JsError::new(format!("JS Error: {}", msg)));
         }
     };

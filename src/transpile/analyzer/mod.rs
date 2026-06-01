@@ -3,7 +3,7 @@
 //! allow:complexity,too_many_lines
 
 use super::hir::*;
-use super::hir::ForInit;
+use super::hir::{ForInit, ObjectProp};
 use std::collections::{HashMap, HashSet};
 
 #[allow(dead_code)]
@@ -312,7 +312,7 @@ impl Analyzer {
             }
             Expr::Object { members } => {
                 for m in members {
-                    if let super::ObjectProp::Init { value, .. } = &m.prop {
+                    if let ObjectProp::Init { value, .. } = &m.prop {
                         self.analyze_expr(value);
                     }
                 }
@@ -402,7 +402,7 @@ impl Analyzer {
     }
 
     // allow:complexity,too_many_lines
-    fn validate_type_compatibility(&mut self, ty: &Type, _context: &str) {
+    fn validate_type_compatibility(&mut self, ty: &Type, context: &str) {
         match ty {
             Type::Ref { name, generics } => {
                 // Check if referenced type exists
