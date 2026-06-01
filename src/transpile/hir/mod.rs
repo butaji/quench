@@ -18,6 +18,7 @@ mod pat;
 mod quote_codegen;
 mod stmt;
 mod type_gen;
+mod type_to_rust;
 
 pub use base::*;
 pub use effects::*;
@@ -25,6 +26,7 @@ pub use ownership::*;
 pub use stmt::{ForInit, SwitchCase};
 pub use quote_codegen::QuoteCodegen;
 pub use expr::ObjectProp;
+pub use pat::ObjectPatProp;
 
 /// Inference mode for type/ownership analysis
 #[allow(dead_code)]
