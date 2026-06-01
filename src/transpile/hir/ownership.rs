@@ -140,12 +140,12 @@ impl OwnershipAnalyzer {
         self.analyze_stmt(body);
     }
     fn analyze_for_in(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) {
-        self.analyze_for_init(&Some(left));
+        self.analyze_for_init(Some(left));
         self.analyze_expr(right);
         self.analyze_stmt(body);
     }
     fn analyze_for_of(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) {
-        self.analyze_for_init(&Some(left));
+        self.analyze_for_init(Some(left));
         self.analyze_expr(right);
         self.analyze_stmt(body);
     }
@@ -380,7 +380,7 @@ impl OwnershipAnalyzer {
             // obj.property - mark obj as mutably accessed
             self.mark_as_mutated(obj);
             let prop_name = self.extract_property_name(property);
-            if let Expr::Ident { name } = *obj {
+            if let Expr::Ident { name } = **obj {
                 // Track nested mutation
                 let nested_key = format!("{}.{}", name, prop_name);
                 self.mut_vars.insert(nested_key);

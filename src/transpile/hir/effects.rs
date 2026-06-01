@@ -104,12 +104,12 @@ impl EffectAnalyzer {
                 body,
             } => self.analyze_for(init, test, update, body),
             S::ForIn { left, right, body } => {
-                self.analyze_for_init(left);
+                self.analyze_for_init(Some(left));
                 self.analyze_expr(right);
                 self.analyze_stmt(body);
             }
             S::ForOf { left, right, body, is_await } => {
-                self.analyze_for_init(left);
+                self.analyze_for_init(Some(left));
                 self.analyze_expr(right);
                 if *is_await {
                     self.analyze_await_expr(&Expr::Await {
