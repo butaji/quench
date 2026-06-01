@@ -441,7 +441,7 @@ impl QuoteCodegen {
     }
 
     fn gen_for_in(&self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) -> TokenStream {
-        let left_token = self.gen_for_init(&Some(left));
+        let left_token = self.gen_for_init(&Some(left.clone()));
         let right_token = self.gen_expr(right);
         let body_token = self.gen_block_stmt(body);
         quote! {
@@ -452,7 +452,7 @@ impl QuoteCodegen {
     }
 
     fn gen_for_of(&self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>, is_await: bool) -> TokenStream {
-        let left_token = self.gen_for_init(&Some(left));
+        let left_token = self.gen_for_init(&Some(left.clone()));
         let right_token = self.gen_expr(right);
         let body_token = self.gen_block_stmt(body);
         if is_await {

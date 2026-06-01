@@ -206,7 +206,7 @@ impl TypeToRust {
             }
             if i < values.len() {
                 let val_t = self.convert(&values[i]);
-                if !matches!(val_t, RustType::String) {
+                if !matches!(val_t, RustType::StringLiteral(_)) {
                     has_dynamic = true;
                 }
             }
