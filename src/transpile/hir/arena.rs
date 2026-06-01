@@ -128,7 +128,9 @@ impl ArenaAllocatable for String {
     type Index = ArenaIndex;
     
     fn alloc_on(self, arena: &mut HirArena, index: ArenaIndex) -> Self::Index {
-        arena.alloc_string(&self);
+        // Don't call alloc_string (it would double-count next_index)
+        // Just use the bump allocator directly
+        arena.bump.alloc_str(&self);
         index
     }
 }
