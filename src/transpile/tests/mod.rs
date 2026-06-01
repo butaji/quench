@@ -19,4 +19,7 @@ pub mod parser;
 pub mod routegen;
 
 #[cfg(test)]
-pub mod spec_expressions;
+pub mod spec_types;
+
+#[cfg(test)]
+pub mod spec_jsx;
