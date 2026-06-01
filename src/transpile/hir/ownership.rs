@@ -7,7 +7,7 @@
 //!
 //! allow:complexity,too_many_lines
 
-use super::{Expr, FunctionDecl, Ownership, Param, Stmt, VariableKind};
+use super::{ClassMethod, Expr, FunctionDecl, Ownership, Param, Stmt, VariableKind};
 
 /// Context for ownership analysis
 struct OwnershipAnalyzer {
@@ -413,6 +413,17 @@ pub fn infer_function_ownership(func: &mut FunctionDecl) {
 
     for (param, ownership) in func.params.iter_mut().zip(ownerships.into_iter()) {
         param.ownership = ownership;
+    }
+}
+
+/// Infer ownership annotations for a class method
+/// For now, we conservatively assume all parameters are Owned
+/// since analyzing arbitrary expressions is complex
+#[allow(dead_code)]
+pub fn infer_method_ownership(method: &mut ClassMethod) {
+    // For now, conservatively assume all params are Owned
+    for param in &mut method.params {
+        param.ownership = Ownership::Owned;
     }
 }
 

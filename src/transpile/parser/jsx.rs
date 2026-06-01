@@ -111,7 +111,6 @@ fn convert_jsx_attr_value(value: &JSXAttributeValue) -> Option<hir::JSXAttrValue
             Some(hir::JSXAttrValue::Expr(hir::Expr::JSX(convert_jsx_element(e))))
         }
         JSXAttributeValue::Fragment(_) => None, // Fragments can't be attribute values
-        _ => None,
     }
 }
 

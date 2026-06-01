@@ -25,7 +25,8 @@ impl QuickJsRuntime {
         let runtime = Runtime::new()
             .map_err(|e| JsError::new(format!("Failed to create runtime: {:?}", e)))?;
         
-        let ctx = Context::full(&runtime)
+        let ctx = Context::builder()
+            .build(&runtime)
             .map_err(|e| JsError::new(format!("Failed to create context: {:?}", e)))?;
         
         // Wrap code to inject console and serialize result
@@ -34,27 +35,30 @@ impl QuickJsRuntime {
     }
 }
 
-fn eval_inner(ctx: rquickjs::Ctx<'_>, code: &str) -> Result<String, JsError> {
-    // Catch JS exceptions by checking for errors after eval
-    let value: Value<'_> = match ctx.eval(code) {
-        Ok(v) => v,
-        Err(e) => {
-            // Extract error message from exception
-            let msg = e.to_string().unwrap_or_else(|_| format!("{:?}", e));
-            return Err(JsError::new(format!("JS Error: {}", msg)));
-        }
-    };
+fn eval_inner(ctx: rquickjs::Context, code: &str) -> Result<String, JsError> {
+    // Use scope to get a Ctx for evaluation
+    ctx.with(|ctx| {
+        // Catch JS exceptions by checking for errors after eval
+        let value: Value<'_> = match ctx.eval(code) {
+            Ok(v) => v,
+            Err(e) => {
+                // Extract error message from exception
+                let msg = e.to_string();
+                return Err(JsError::new(format!("JS Error: {}", msg)));
+            }
+        };
 
-    let typ = value.type_name();
-    if typ == "array" || typ == "object" {
-        let json_result = json_stringify_result(ctx.clone(), value.clone());
-        match json_result {
-            Ok(s) => Ok(s),
-            Err(_) => Ok(value_to_string(value)),
+        let typ = value.type_name();
+        if typ == "array" || typ == "object" {
+            let json_result = json_stringify_result(ctx.clone(), value.clone());
+            match json_result {
+                Ok(s) => Ok(s),
+                Err(_) => Ok(value_to_string(value)),
+            }
+        } else {
+            Ok(value_to_string(value))
         }
-    } else {
-        Ok(value_to_string(value))
-    }
+    })
 }
 
 /// Wrap code to inject console.log and serialize result via JSON.stringify

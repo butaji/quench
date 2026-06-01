@@ -6,7 +6,7 @@
 //!
 //! allow:complexity,too_many_lines
 
-use super::{Block, Expr, FunctionDecl, Stmt, Type};
+use super::{Block, ClassMethod, Expr, FunctionDecl, Stmt, Type};
 
 /// Context for effect analysis
 #[allow(dead_code)]
@@ -447,6 +447,14 @@ pub fn analyze_effects(func: &FunctionDecl) -> (bool, Option<Type>) {
     let mut analyzer = EffectAnalyzer::new();
     analyzer.analyze_function(&mut func.clone());
     (analyzer.can_throw, analyzer.error_types.first().cloned())
+}
+
+/// Analyze a class method for effects
+/// For now, we conservatively assume methods don't throw
+#[allow(dead_code)]
+pub fn analyze_method_effects(method: &ClassMethod) -> (bool, Option<Type>) {
+    // For now, conservatively assume no effects
+    (false, None)
 }
 
 /// Analyze all functions in a module for effects

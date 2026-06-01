@@ -208,19 +208,26 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                             hir::ForInit::Expr(Box::new(hir::Expr::Ident { name: id.name.to_string() }))
                         }
                         ForStatementLeft::ComputedMemberExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::ComputedMemberExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            // Directly convert the member expression to HIR
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            let property = Box::new(convert_expr(&m.expression).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member { obj, property, computed: true }))
                         }
                         ForStatementLeft::StaticMemberExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::StaticMemberExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member {
+                                obj,
+                                property: Box::new(hir::Expr::Ident { name: m.property.name.to_string() }),
+                                computed: false,
+                            }))
                         }
                         ForStatementLeft::PrivateFieldExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::PrivateFieldExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member {
+                                obj,
+                                property: Box::new(hir::Expr::Ident { name: m.field.name.to_string() }),
+                                computed: false,
+                            }))
                         }
                         _ => hir::ForInit::Variable(hir::VariableKind::Let, vec![]),
                     }
@@ -261,19 +268,26 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                             hir::ForInit::Expr(Box::new(hir::Expr::Ident { name: id.name.to_string() }))
                         }
                         ForStatementLeft::ComputedMemberExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::ComputedMemberExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            // Directly convert the member expression to HIR
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            let property = Box::new(convert_expr(&m.expression).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member { obj, property, computed: true }))
                         }
                         ForStatementLeft::StaticMemberExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::StaticMemberExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member {
+                                obj,
+                                property: Box::new(hir::Expr::Ident { name: m.property.name.to_string() }),
+                                computed: false,
+                            }))
                         }
                         ForStatementLeft::PrivateFieldExpression(m) => {
-                            conv_assignment_target(&AssignmentTarget::PrivateFieldExpression(
-                                Box::new(m.clone())
-                            )).unwrap_or(hir::ForInit::Variable(hir::VariableKind::Let, vec![]))
+                            let obj = Box::new(convert_expr(&m.object).unwrap_or(hir::Expr::Undefined));
+                            hir::ForInit::Expr(Box::new(hir::Expr::Member {
+                                obj,
+                                property: Box::new(hir::Expr::Ident { name: m.field.name.to_string() }),
+                                computed: false,
+                            }))
                         }
                         _ => hir::ForInit::Variable(hir::VariableKind::Let, vec![]),
                     }
@@ -361,6 +375,8 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::TSEnumDeclaration(_) => hir::Stmt::Empty,
         Statement::TSTypeAliasDeclaration(_) => hir::Stmt::Empty,
         Statement::TSExportAssignment(_) => hir::Stmt::Empty,
+        Statement::TSGlobalDeclaration(_) => hir::Stmt::Empty,
+        Statement::TSNamespaceExportDeclaration(_) => hir::Stmt::Empty,
         Statement::ClassDeclaration(c) => {
             if let hir::Decl::Class(class_decl) = class_to_hir(c) {
                 hir::Stmt::Class(class_decl)
@@ -404,6 +420,8 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         Statement::TSEnumDeclaration(_) |
         Statement::TSTypeAliasDeclaration(_) |
         Statement::TSExportAssignment(_) |
+        Statement::TSGlobalDeclaration(_) |
+        Statement::TSNamespaceExportDeclaration(_) |
         Statement::ClassDeclaration(_) |
         Statement::FunctionDeclaration(_) |
         Statement::ImportDeclaration(_) |
@@ -667,13 +685,11 @@ fn convert_export_named(e: &ExportNamedDeclaration) -> Vec<hir::ModuleItem> {
             .specifiers
             .iter()
             .map(|spec| {
-                spec.exported
-                    .as_ref()
-                    .map(|i| i.name.to_string())
-                    .unwrap_or_else(|| {
-                        // Use local name if exported is not specified
-                        spec.local.name.to_string()
-                    })
+                match &spec.exported {
+                    ModuleExportName::IdentifierName(i) => i.name.to_string(),
+                    ModuleExportName::IdentifierReference(i) => i.name.to_string(),
+                    ModuleExportName::StringLiteral(s) => s.value.to_string(),
+                }
             })
             .collect();
         return vec![hir::ModuleItem::Stmt(hir::Stmt::ExportNamed {
@@ -717,11 +733,11 @@ fn convert_export_named(e: &ExportNamedDeclaration) -> Vec<hir::ModuleItem> {
         // Handle export { x, y } without source (local exports)
         let mut specifiers = Vec::new();
         for spec in &e.specifiers {
-            let name = spec
-                .exported
-                .as_ref()
-                .map(|i| i.name.to_string())
-                .unwrap_or_else(|| spec.local.name.to_string());
+            let name = match &spec.exported {
+                ModuleExportName::IdentifierName(i) => i.name.to_string(),
+                ModuleExportName::IdentifierReference(i) => i.name.to_string(),
+                ModuleExportName::StringLiteral(s) => s.value.to_string(),
+            };
             specifiers.push(hir::Export::Named { name });
         }
         if specifiers.is_empty() {
