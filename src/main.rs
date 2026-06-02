@@ -179,17 +179,21 @@ fn print_result(result: &str) {
 fn run_codegen(source: Option<String>, expr: Option<String>) -> Result<()> {
     use transpile::hir::QuoteCodegen;
     use transpile::hir::Stmt;
-    
+
     let input = expr.or(source).unwrap_or_default();
     if input.is_empty() {
         println!("// No input provided");
         return Ok(());
     }
-    
-    // Parse TypeScript to HIR
+
+    // Parse TypeScript to HIR. The parser must know whether JSX is allowed:
+    // .tsx files contain JSX, .ts files do not. We detect from the file
+    // extension when --source was used with a file path; for --expr or for
+    // stdin input, default to non-JSX (caller can re-run with --source if
+    // they need JSX).
     let parser = transpile::TsParser::new();
-    let module = parser.parse_source(&input)?;
-    
+    let module = detect_and_parse(&parser, &input)?;
+
     // Extract statements from module items
     let stmts: Vec<Stmt> = module.items.into_iter().filter_map(|item| {
         match item {
@@ -197,15 +201,46 @@ fn run_codegen(source: Option<String>, expr: Option<String>) -> Result<()> {
             _ => None,
         }
     }).collect();
-    
+
     // Generate Rust using QuoteCodegen (in-memory, no files)
     let cg = QuoteCodegen::default();
     let tokens = cg.gen_module(&stmts);
-    
+
     // Output the generated Rust code
     println!("{}", tokens);
-    
+
     Ok(())
+}
+
+/// Parse `input` as TypeScript, picking JSX mode based on a `.tsx`/`.ts`/`.jsx`
+/// file extension. `input` is the literal value passed via `--expr`, or the
+/// file contents read by `--source`. For the file-contents case the extension
+/// is recoverable from the first newline-delimited token (we check the
+/// raw arg from the option, not the read contents — see `cli::Commands::Codegen`).
+fn detect_and_parse(
+    parser: &transpile::TsParser,
+    input: &str,
+) -> Result<transpile::hir::Module> {
+    use std::path::Path;
+    let path = Path::new(input);
+    // Only treat `input` as a path if it looks like one (no newlines, has
+    // an extension, exists or could plausibly be a file). For inline expr
+    // input the parse below will try parse_source, which is the right
+    // behavior for non-JSX TS.
+    if input.lines().count() == 1
+        && path.extension().is_some()
+        && (input.ends_with(".tsx") || input.ends_with(".jsx") || input.ends_with(".ts"))
+    {
+        // Read the file and parse with the right mode.
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read source file '{}': {}", input, e))?;
+        if input.ends_with(".tsx") || input.ends_with(".jsx") {
+            return parser.parse_tsx(&contents).map_err(Into::into);
+        }
+        return parser.parse_source(&contents).map_err(Into::into);
+    }
+    // Inline expression / snippet: no JSX support by default.
+    parser.parse_source(input).map_err(Into::into)
 }
 
 fn run_add(
