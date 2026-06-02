@@ -847,7 +847,6 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
         Statement::ExportDefaultDeclaration(e) => {
             match &e.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                    eprintln!("PARSE_DEBUG ExportDefaultDeclaration FunctionDeclaration: id={:?}", f.id.as_ref().map(|i| i.name.as_str()));
                     // Convert the function to a Decl using the same path as
                     // a regular `function foo() {}` declaration. Previously
                     // this branch built a Decl::Function with empty
@@ -856,7 +855,6 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
                     // then panicked on the empty `f.id` name and produced
                     // a `pub fn  () -> () { unimplemented!() }` stub.
                     let decl = func_to_decl(f);
-                    eprintln!("PARSE_DEBUG -> returning Decl({:?})", decl);
                     vec![hir::ModuleItem::Decl(decl)]
                 }
                 ExportDefaultDeclarationKind::ClassDeclaration(c) => {
