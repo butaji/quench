@@ -64,6 +64,46 @@ fn http_get(addr: std::net::SocketAddr, path: &str) -> (u16, String) {
     (status, body)
 }
 
+/// Issue a minimal HTTP/1.0 GET and return (status, headers, body).
+/// The headers vec contains `(name, value)` pairs in
+/// insertion order, with the header name lowercased.
+fn http_get_with_headers(
+    addr: std::net::SocketAddr,
+    path: &str,
+) -> (u16, Vec<(String, String)>, String) {
+    let mut stream =
+        TcpStream::connect_timeout(&addr, Duration::from_secs(5)).expect("TCP connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set_read_timeout");
+    let req = format!(
+        "GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nUser-Agent: e2e_my_blog_server\r\n\r\n"
+    );
+    use std::io::Write;
+    stream.write_all(req.as_bytes()).expect("write_all");
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).expect("read_to_end");
+    let raw = String::from_utf8_lossy(&buf).to_string();
+    let mut parts = raw.splitn(2, "\r\n\r\n");
+    let head = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("").to_string();
+    let mut status = 0;
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (i, line) in head.lines().enumerate() {
+        if i == 0 {
+            // HTTP/1.x STATUS REASON
+            status = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|s| s.parse::<u16>().ok())
+                .unwrap_or(0);
+        } else if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_lowercase(), value.trim().to_string()));
+        }
+    }
+    (status, headers, body)
+}
+
 /// Wait for the server to start accepting connections, up to
 /// `timeout`. We poll the TCP port: any successful connect means
 /// the listener is up.
@@ -214,7 +254,7 @@ fn my_blog_about_route_includes_route_html() {
     assert_eq!(status, 200);
     // The about page should at least render the structural
     // shell (h1, h2, p, ul, nav) that the source defines.
-    for marker in &[
+    for marker in [
         "<div class=\"about-page\">",
         "<h1>",
         "<h2>Features</h2>",
@@ -224,6 +264,36 @@ fn my_blog_about_route_includes_route_html() {
             body.contains(marker),
             "about page body should contain {marker:?}, got first 250 bytes: {}",
             &body[..body.len().min(250)]
+        );
+    }
+}
+
+/// The my-blog `routes/_middleware.ts` adds an
+/// `X-Response-Time` header to every response. This test boots
+/// the server, hits a couple of routes, and asserts the header
+/// is present (a non-empty value containing `ms`).
+#[test]
+#[ignore]
+fn my_blog_middleware_adds_x_response_time_header() {
+    let Some(server) = boot_my_blog() else {
+        return;
+    };
+    let addr = server.addr();
+    for path in ["/", "/about", "/blog", "/blog/introducing-runts"] {
+        let (status, headers, _body) = http_get_with_headers(addr, path);
+        assert_eq!(status, 200, "GET {path} expected 200, got {status}");
+        let header = headers
+            .iter()
+            .find(|(k, _)| k == "x-response-time")
+            .map(|(_, v)| v.clone());
+        let value = header.unwrap_or_else(|| {
+            panic!(
+                "GET {path} response missing X-Response-Time header; got: {headers:?}"
+            )
+        });
+        assert!(
+            value.ends_with("ms"),
+            "X-Response-Time for {path} should end in 'ms', got {value:?}"
         );
     }
 }
