@@ -805,20 +805,14 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
         Statement::ExportDefaultDeclaration(e) => {
             match &e.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                    // Convert to Decl::Function with the function's id as name
-                    let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
-                    vec![hir::ModuleItem::Decl(hir::Decl::Function(hir::FunctionDecl {
-                        name,
-                        generics: vec![],
-                        params: vec![],
-                        return_type: None,
-                        body: None,
-                        is_async: f.r#async,
-                        is_generator: f.generator,
-                        decorators: vec![],
-                        throws: false,
-                        error_type: None,
-                    }))]
+                    // Convert the function to a Decl using the same path as
+                    // a regular `function foo() {}` declaration. Previously
+                    // this branch built a Decl::Function with empty
+                    // `params` and `body: None`, throwing away the function's
+                    // actual parameters and JSX body. Downstream codegen
+                    // then panicked on the empty `f.id` name and produced
+                    // a `pub fn  () -> () { unimplemented!() }` stub.
+                    vec![hir::ModuleItem::Decl(func_to_decl(f))]
                 }
                 ExportDefaultDeclarationKind::ClassDeclaration(c) => {
                     vec![hir::ModuleItem::Decl(class_to_hir(c))]
