@@ -37,7 +37,10 @@ matches the source files.
 
 ```
 cargo test --workspace --no-fail-fast
-→ 907 passed, 0 failed, 32 ignored
+→ 931 passed, 0 failed, 33 ignored
+
+cargo test --test e2e_my_blog_server -- --include-ignored
+→ 3 passed, 0 failed, 0 ignored (the my-blog HTTP server e2e)
 ```
 
 The 32 ignored tests are pre-existing parser gaps (return type annotations,
@@ -170,8 +173,44 @@ the main remaining gap.
   Handlers are instead inline-rendered as `<hashmap>` literals by the
   codegen, but the generated HashMap syntax (e.g. `pub` keywords
   inside a HashMap literal) is invalid Rust.
+
+  **Status: implemented** (commit `98fde72`). `extract_handlers`
+  now recognises two shapes:
+  1. `export const handler = { GET(req, ctx) {...}, POST(...) {...} }`
+     (Fresh-style method-shorthand object).
+  2. `export const handler = (req, ctx) => ...` (arrow-function).
+  Tests: 9 unit tests in `transpile::routegen::tests`.
 - `src/transpile/middlewaregen.rs` — 25 lines, returns empty. No
   middleware extraction.
+
+  **Status: implemented** (commit `98fde72`). `extract_middleware`
+  distinguishes `_middleware.ts` (global middleware) from inline
+  `handler` exports. Tests: 6 unit tests in
+  `transpile::middlewaregen::tests`.
+- The runts-fresh plugin's per-method route generation
+  (`extract_handler_methods`): the `runts-fresh` plugin
+  was reading HIR items JSON to discover HTTP methods
+  declared in `export const handler = { ... }` but only matched
+  `ObjectProp::Method` and missed the real oxc shape
+  (`ObjectProp::Init { key: Str("GET"), value: Function { ... } }`
+  for `async GET(req, ctx) {...}`). Fixed in commit
+  `17a727e`; the function now also walks `prop.Init.value` and
+  filters by `value.Function` presence. New unit test
+  `test_extract_handler_methods_picks_init_with_function`
+  pins this behaviour. As a result, the runts-fresh
+  plugin's `generate_route_code` now emits one
+  `axum::routing::get(...)` / `.post(...)` / etc. per
+  declared method, instead of falling back to a single GET
+  for every route.
+- `tests/e2e_my_blog_server.rs` — real HTTP e2e (3 tests,
+  all `#[ignore]`d by default to avoid CI port-8000
+  conflicts). The driver invokes `runts build
+  examples/my-blog --plugin fresh`, spawns the resulting
+  `runts-app` on port 8000, and does raw HTTP/1.0 GETs
+  against all four routes asserting HTTP 200 + correct
+  class names + non-empty body. `cargo test -- --ignored`
+  on this target exercises the full pipeline. Verified:
+  3/3 passing (commit `03a4776`).
 - `crates/runts-macros/src/html.rs` — 8 lines, returns
   `VNode::empty()`. The proc-macro is a stub.
 - `src/transpile/parallel.rs` — claimed complete in the original
