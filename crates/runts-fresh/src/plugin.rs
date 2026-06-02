@@ -461,10 +461,67 @@ pub fn render() -> VNode {{
             let safe_name = self.module_name_from_path(&route.file_path);
             let axum_path = self.to_axum_path(&route.path);
             imports.push_str(&format!("mod {};\n", safe_name));
-            handlers.push_str(&format!(
-                "async fn {}_handler() -> axum::response::Html<String> {{ let v = {}::render(); axum::response::Html(v.to_html()) }}\n",
-                safe_name, safe_name
-            ));
+
+            // Detect dynamic segments in the axum path (`:name`)
+            // and emit a matching `Path` extractor. The
+            // generated signature uses axum's `Path<T>`
+            // extractor pattern: `Path(slug): Path<String>` for
+            // a single param, `Path((a, b)): Path<(String,
+            // String)>` for two, etc. We always import
+            // `axum::extract::Path` in main.rs.
+            //
+            // The current per-page `render()` stub takes no
+            // arguments, so we accept the param and let-bind
+            // it as `_slug` etc. to keep the existing call site
+            // compiling. A future change that threads params
+            // into the per-page render can switch to
+            // `render(slug)` and remove the let.
+            let dynamic_params: Vec<String> = axum_path
+                .split('/')
+                .filter_map(|seg| seg.strip_prefix(':').map(|s| s.to_string()))
+                .collect();
+            if !dynamic_params.is_empty() {
+                imports.push_str("use axum::extract::Path;\n");
+            }
+            // Build the handler argument. We use the
+            // `axum::extract::Path<T>` extractor with a
+            // destructuring pattern that binds the segments
+            // to local names matching the route. We only
+            // support up to one param here; multi-param
+            // routes would need `Path((a, b))` for tuple
+            // extraction. For now, if more than one param
+            // is present, fall back to no extractor (axum
+            // will match the route by path but the handler
+            // body won't see the params).
+            let handler_sig = match dynamic_params.len() {
+                0 => format!(
+                    "async fn {safe_name}_handler() -> axum::response::Html<String> {{ let v = {safe_name}::render(); axum::response::Html(v.to_html()) }}\n"
+                ),
+                1 => {
+                    let p = &dynamic_params[0];
+                    format!(
+                        "async fn {safe_name}_handler(Path({p}): Path<String>) -> axum::response::Html<String> {{ let _{p} = {p}; let v = {safe_name}::render(); axum::response::Html(v.to_html()) }}\n"
+                    )
+                }
+                _ => {
+                    // Tuple destructuring. axum will parse
+                    // the path as a tuple. The destructure
+                    // pattern needs an extra pair of parens
+                    // (e.g. `Path((a, b))`) because `Path(a, b)`
+                    // would be two extractor arguments, not
+                    // a tuple extractor.
+                    let names = dynamic_params.join(", ");
+                    let types = (0..dynamic_params.len())
+                        .map(|_| "String".to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let bind = format!("(({names}))");
+                    format!(
+                        "async fn {safe_name}_handler(Path{bind}: Path<({types})>) -> axum::response::Html<String> {{ let ({names}) = ({names}); let v = {safe_name}::render(); axum::response::Html(v.to_html()) }}\n"
+                    )
+                }
+            };
+            handlers.push_str(&handler_sig);
 
             // If the source file declared per-method handlers,
             // emit one axum route per method. Otherwise fall back
@@ -1608,6 +1665,82 @@ mod tests {
         // stripping the extension), so the function name should
         // still be `_middleware`.
         assert!(code.contains("pub async fn _middleware("));
+    }
+
+    #[test]
+    fn test_dynamic_route_emits_path_extractor_for_single_param() {
+        // Build a synthetic module set with one route at
+        // `/blog/:slug`. The plugin should emit a handler
+        // whose signature uses axum's `Path(slug): Path<String>`
+        // extractor and add a `use axum::extract::Path;` to
+        // the generated main.rs.
+        use runts_plugin::RouteInfo;
+        let route = RouteInfo {
+            path: "/blog/:slug".to_string(),
+            methods: vec!["GET".to_string()],
+            file_path: "blog/[slug].tsx".to_string(),
+        };
+        let module = runts_plugin::hir::Module::new();
+        let plugin = FreshPlugin;
+        let (imports, handlers, router_calls) =
+            plugin.generate_route_code(&[&route], &[module]);
+        assert!(
+            handlers.contains("Path(slug): Path<String>"),
+            "handler should use Path(slug): Path<String>, got: {handlers}"
+        );
+        assert!(
+            imports.contains("use axum::extract::Path;"),
+            "imports should include `use axum::extract::Path;`, got: {imports}"
+        );
+        assert!(
+            router_calls.contains(".route(\"/blog/:slug\""),
+            "router_calls should contain `/blog/:slug` route, got: {router_calls}"
+        );
+    }
+
+    #[test]
+    fn test_dynamic_route_no_extractor_for_static_path() {
+        // A static path (`/about`) should NOT generate a Path
+        // extractor — the handler takes no arguments and
+        // there's no `use axum::extract::Path;` import.
+        use runts_plugin::RouteInfo;
+        let route = RouteInfo {
+            path: "/about".to_string(),
+            methods: vec!["GET".to_string()],
+            file_path: "about.tsx".to_string(),
+        };
+        let module = runts_plugin::hir::Module::new();
+        let plugin = FreshPlugin;
+        let (imports, handlers, _router_calls) =
+            plugin.generate_route_code(&[&route], &[module]);
+        assert!(
+            !imports.contains("use axum::extract::Path;"),
+            "static path should not import axum::extract::Path, got: {imports}"
+        );
+        assert!(
+            !handlers.contains("Path("),
+            "static-path handler should not have a Path extractor, got: {handlers}"
+        );
+    }
+
+    #[test]
+    fn test_dynamic_route_emits_tuple_extractor_for_multiple_params() {
+        // A route with two dynamic segments should emit a
+        // tuple `Path((a, b)): Path<(String, String)>`.
+        use runts_plugin::RouteInfo;
+        let route = RouteInfo {
+            path: "/u/:user/:post".to_string(),
+            methods: vec!["GET".to_string()],
+            file_path: "u/[user]/[post].tsx".to_string(),
+        };
+        let module = runts_plugin::hir::Module::new();
+        let plugin = FreshPlugin;
+        let (_imports, handlers, _router_calls) =
+            plugin.generate_route_code(&[&route], &[module]);
+        assert!(
+            handlers.contains("Path((user, post)): Path<(String, String)>"),
+            "two-param handler should use tuple Path extractor, got: {handlers}"
+        );
     }
 
     #[test]
