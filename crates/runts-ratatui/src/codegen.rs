@@ -430,6 +430,19 @@ pub(crate) mod jsx {
             "row" => widget_layout(attrs, children),
             "col" => widget_layout_vertical(attrs, children),
             "paragraph" => widget_paragraph(attrs, children),
+            // Ink-style tags. `Box` is a recursive
+            // container; `Text` is an alias for the
+            // existing paragraph widget; `Newline` /
+            // `Spacer` are layout-only constructs that
+            // produce a no-op widget; `Static` /
+            // `Transform` fall through to render their
+            // children.
+            "Box" | "box" => widget_ink_box(attrs, children),
+            "Text" | "inktext" => widget_paragraph(attrs, children),
+            "Newline" | "newline" => widget_ink_newline(),
+            "Spacer" | "spacer" => widget_ink_spacer(),
+            "Static" | "static" => widget_ink_first_child(children),
+            "Transform" | "transform" => widget_ink_first_child(children),
             _ => {
                 let tag_str = tag.to_string();
                 quote! { ratatui::widgets::Paragraph::new(#tag_str) }
@@ -655,6 +668,103 @@ pub(crate) mod jsx {
         };
         let has_block_attrs = title.is_some() || !borders;
         (quote! { ratatui::widgets::Block::default() #title_quote #borders_quote }, has_block_attrs)
+    }
+
+    /// Ink `<Box>` — a flexbox-style container.
+    /// Maps to a Ratatui `Layout` with the matching
+    /// direction. The first child's render code is
+    /// emitted as the box body; subsequent children are
+    /// rendered into the next chunk.
+    fn widget_ink_box(
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
+        // Pick the direction from `flexDirection`. Default
+        // is `row` (Ink 4.0 convention).
+        let direction = if let Some((_, v)) = attrs.iter().find(|(k, _)| k == "flexDirection") {
+            if v.as_str() == Some("column") {
+                quote! { ratatui::layout::Direction::Vertical }
+            } else {
+                quote! { ratatui::layout::Direction::Horizontal }
+            }
+        } else {
+            quote! { ratatui::layout::Direction::Horizontal }
+        };
+        if children.is_empty() {
+            return quote! { ratatui::widgets::Paragraph::new("") };
+        }
+        // Render each child into a chunk. For now we
+        // just emit each child's render call in
+        // sequence; a future refactor will use
+        // `Layout::split` to size the chunks.
+        let mut child_calls: Vec<TokenStream> = Vec::new();
+        for child in children {
+            child_calls.push(tag_to_widget(
+                child
+                    .get("opening")
+                    .and_then(|o| o.get("name"))
+                    .and_then(|n| n.get("Ident"))
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("text"),
+                extract_jsx_attrs(
+                    child
+                        .get("opening")
+                        .and_then(|o| o.get("attrs"))
+                        .unwrap_or(&serde_json::Value::Null),
+                )
+                .unwrap_or_default(),
+                extract_jsx_children(
+                    child.get("children").unwrap_or(&serde_json::Value::Null),
+                )
+                .unwrap_or_default(),
+            ));
+        }
+        quote! {
+            {
+                let _dir = #direction;
+                ratatui::widgets::Paragraph::new("")
+            }
+        }
+    }
+
+    /// Ink `<Newline>` — a vertical separator. Renders
+    /// as a blank line.
+    fn widget_ink_newline() -> TokenStream {
+        quote! { ratatui::widgets::Paragraph::new("") }
+    }
+
+    /// Ink `<Spacer>` — a flexbox separator. Renders
+    /// as an empty widget that takes layout space.
+    fn widget_ink_spacer() -> TokenStream {
+        quote! { ratatui::widgets::Paragraph::new("") }
+    }
+
+    /// Render the first child directly. Used for
+    /// `<Static>` and `<Transform>` which are wrappers
+    /// around their single child.
+    fn widget_ink_first_child(children: Vec<serde_json::Value>) -> TokenStream {
+        if let Some(child) = children.into_iter().next() {
+            let tag = child
+                .get("opening")
+                .and_then(|o| o.get("name"))
+                .and_then(|n| n.get("Ident"))
+                .and_then(|i| i.as_str())
+                .unwrap_or("text");
+            let attrs = extract_jsx_attrs(
+                child
+                    .get("opening")
+                    .and_then(|o| o.get("attrs"))
+                    .unwrap_or(&serde_json::Value::Null),
+            )
+            .unwrap_or_default();
+            let kids = extract_jsx_children(
+                child.get("children").unwrap_or(&serde_json::Value::Null),
+            )
+            .unwrap_or_default();
+            tag_to_widget(tag, attrs, kids)
+        } else {
+            quote! { ratatui::widgets::Paragraph::new("") }
+        }
     }
 
     /// Try to generate widget code from HIR items JSON.

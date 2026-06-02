@@ -302,12 +302,14 @@ fn walk(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, d
             // A Spacer is layout-only; no widget.
         }
         VNodeContent::Static(s) => {
+            // Children of a Static start at depth+1.
             walk_children(s.children.as_slice(), layout, frame, area, depth + 1);
         }
         VNodeContent::Transform(t) => {
             walk_transform(t, layout, frame, area, depth);
         }
         VNodeContent::Fragment(fs) => {
+            // Children of a Fragment start at depth+1.
             walk_children(fs.as_slice(), layout, frame, area, depth + 1);
         }
     }
@@ -330,6 +332,7 @@ fn walk_box(b: &InkBox, layout: &Layout, frame: &mut ratatui::Frame, area: Rect,
         let block = build_block(b);
         let inner = block.inner(area);
         frame.render_widget(block, area);
+        // Children start at depth+1 (this box is at `depth`).
         walk_children(b.children.as_slice(), layout, frame, inner, depth + 1);
     } else {
         walk_children(b.children.as_slice(), layout, frame, area, depth + 1);
@@ -359,30 +362,48 @@ fn walk_children(
     layout: &Layout,
     frame: &mut ratatui::Frame,
     area: Rect,
-    depth: usize,
+    // The VNode pre-order index of the FIRST child
+    // (i.e. children[0]'s depth). Subsequent
+    // children sit at +1, +2, etc.
+    first_child_depth: usize,
 ) {
-    // For now, stack children top-to-bottom in the
-    // given area. Taffy has already computed the exact
-    // per-child rect; a future refactor will look up
-    // each child's layout by VNode id and pass that
-    // exact rect to `walk`. For the v0.1 implementation
-    // we keep the simpler stack-the-rows approach which
-    // is good enough for the my-blog-style layouts.
-    let n = children.len() as u16;
-    if n == 0 {
-        return;
-    }
-    let per = area.height / n;
-    let rem = area.height % n;
+    // Each child VNode corresponds to one entry in
+    // `layout.rects` at the same depth-first index.
+    // That entry gives us the Taffy-computed (x, y,
+    // width, height) for the child. Reading it
+    // positions children correctly under flexbox
+    // padding, margin, gap, and direction.
     for (i, child) in children.iter().enumerate() {
-        let extra = if (i as u16) < rem { 1 } else { 0 };
-        let child_area = Rect {
-            x: area.x,
-            y: area.y + (i as u16) * per,
-            width: area.width,
-            height: per + extra,
-        };
-        walk(child, layout, frame, child_area, depth + 1);
+        let child_depth = first_child_depth + i;
+        let child_area = rect_at(&layout.rects, child_depth, area);
+        walk(child, layout, frame, child_area, child_depth);
+    }
+}
+
+/// Look up a Taffy-computed rect by depth-first
+/// pre-order index. Falls back to the parent area if
+/// the index is out of bounds (which happens for
+/// trees that weren't built via `TaffyTree::from_vnode`).
+fn rect_at(
+    rects: &[(u16, u16, u16, u16)],
+    depth: usize,
+    fallback: Rect,
+) -> Rect {
+    if let Some(&(x, y, w, h)) = rects.get(depth) {
+        if w == 0 && h == 0 {
+            // Taffy sometimes reports zero-sized rects
+            // for empty leaves. Fall back to the parent
+            // so the child has somewhere to draw.
+            return fallback;
+        }
+        Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    } else {
+        fallback
     }
 }
 
@@ -584,9 +605,21 @@ pub struct Layout {
     /// The Taffy tree. Held by reference; the lifetime
     /// is tied to the `TaffyTree` that produced it.
     pub taffy: taffy::TaffyTree,
-    /// Per-VNode-index rect. We use a flat index space
-    /// (`0..n`) since the renderer walks the tree
-    /// depth-first.
+    /// Per-VNode-index rect. Indexed by **VNode
+    /// pre-order DFS position**, not Taffy node
+    /// position. The renderer walks the VNode tree in
+    /// the same DFS order, so index N in `walk`'s
+    /// `depth` counter lines up with index N here.
+    /// We use the VNode order (not the Taffy order)
+    /// because Taffy's pre-order traversal interleaves
+    /// leaf styles for `Text` / `Newline` / `Spacer`
+    /// with the `Box` they belong to — but the
+    /// renderer wants to look up the rect for a Box
+    /// that wraps a `Text` child at the same index as
+    /// the VNode, not the leaf. The mapping from
+    /// VNode-index to Taffy rect is established by
+    /// `from_vnode` which pushes a rect for every
+    /// visited VNode.
     pub rects: Vec<(u16, u16, u16, u16)>,
 }
 
@@ -609,6 +642,12 @@ impl Layout {
 pub struct TaffyTree {
     /// The root node.
     pub root: taffy::NodeId,
+    /// Mapping from VNode pre-order index to the
+    /// Taffy node id that the VNode corresponds to.
+    /// Index N is the Taffy node for the Nth VNode
+    /// visited during `from_vnode`. Built by
+    /// `build_node`; consumed by `collect_rects`.
+    taffy_index: Vec<taffy::NodeId>,
 }
 
 impl TaffyTree {
@@ -616,50 +655,131 @@ impl TaffyTree {
     /// is a `TaffyTree` whose root is the top-level node
     /// in the input.
     pub fn from_vnode(root: &VNode, layout: &mut Layout) -> Self {
-        let mut rects: Vec<(u16, u16, u16, u16)> = Vec::new();
-        let root_id = build_node(root, &mut layout.taffy, &mut rects);
-        layout.rects = rects;
-        Self { root: root_id }
+        // `taffy_index` is parallel to the VNode
+        // pre-order: index N here is the Taffy node
+        // id for the Nth VNode visited by `build_node`.
+        let mut taffy_index: Vec<taffy::NodeId> = Vec::new();
+        let root_id = build_node(root, &mut layout.taffy, &mut taffy_index);
+        // Pre-allocate one placeholder rect per VNode.
+        // The values are filled in by `compute` /
+        // `collect_rects`. The vec length matches
+        // `taffy_index` and the VNode pre-order count.
+        layout.rects = vec![(0, 0, 0, 0); taffy_index.len()];
+        Self {
+            root: root_id,
+            taffy_index,
+        }
     }
 
     /// Compute the layout with the given viewport size.
     pub fn compute(&self, layout: &mut Layout, viewport: Size<AvailableSpace>) {
+        // The root node, by default, has no size
+        // constraint. Taffy would give it 0×0 in that
+        // case and every descendant would collapse.
+        // We patch the root's style to fill the
+        // viewport exactly (using the actual pixel
+        // size when the viewport is definite) so the
+        // layout propagates a definite size down to
+        // the children.
+        let root_w = match viewport.width {
+            AvailableSpace::Definite(v) => taffy::Dimension::length(v),
+            _ => taffy::Dimension::percent(1.0),
+        };
+        let root_h = match viewport.height {
+            AvailableSpace::Definite(v) => taffy::Dimension::length(v),
+            _ => taffy::Dimension::percent(1.0),
+        };
+        if let Ok(root_style) = layout.taffy.style(self.root) {
+            let mut new_style = root_style.clone();
+            new_style.size = taffy::Size {
+                width: root_w,
+                height: root_h,
+            };
+            let _ = layout.taffy.set_style(self.root, new_style);
+        }
         layout
             .taffy
             .compute_layout(self.root, viewport)
             .expect("taffy layout");
-        collect_rects(&layout.taffy, self.root, 0, &mut layout.rects);
+        // Reset rects to zero before populating, in
+        // case the layout produces fewer positions
+        // than VNodes (it shouldn't, but be defensive).
+        for r in &mut layout.rects {
+            *r = (0, 0, 0, 0);
+        }
+        collect_rects(&layout.taffy, &self.taffy_index, &mut layout.rects);
     }
 }
 
-fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, rects: &mut Vec<(u16, u16, u16, u16)>) -> taffy::NodeId {
+/// Walk every Taffy node and copy its computed rect
+/// into the corresponding VNode-indexed slot in
+/// `rects`. The `taffy_index` vec tells us, for each
+/// VNode pre-order position, which Taffy node to look
+/// up.
+fn collect_rects(
+    taffy: &taffy::TaffyTree,
+    taffy_index: &[taffy::NodeId],
+    rects: &mut Vec<(u16, u16, u16, u16)>,
+) {
+    for (i, &nid) in taffy_index.iter().enumerate() {
+        if let Ok(layout) = taffy.layout(nid) {
+            let x = layout.location.x;
+            let y = layout.location.y;
+            let w = layout.size.width;
+            let h = layout.size.height;
+            // Saturate to u16.
+            let x = x.max(0.0).min(u16::MAX as f32) as u16;
+            let y = y.max(0.0).min(u16::MAX as f32) as u16;
+            let w = w.max(0.0).min(u16::MAX as f32) as u16;
+            let h = h.max(0.0).min(u16::MAX as f32) as u16;
+            if let Some(slot) = rects.get_mut(i) {
+                *slot = (x, y, w, h);
+            }
+        }
+    }
+}
+
+fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<taffy::NodeId>) -> taffy::NodeId {
+    // Helper: record a Taffy node id at the next
+    // VNode pre-order position. Every visited VNode
+    // must call this exactly once so `taffy_index`
+    // stays parallel to the VNode traversal.
+    let record = |id: taffy::NodeId, idx: &mut Vec<taffy::NodeId>| idx.push(id);
     match &node.0 {
         VNodeContent::Box(b) => {
             let style = style_for_box(b);
             let id = taffy.new_leaf(style).expect("taffy: new leaf for box");
+            record(id, taffy_index);
             for child in &b.children {
-                let cid = build_node(child, taffy, rects);
+                let cid = build_node(child, taffy, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add child");
             }
             id
         }
         VNodeContent::Text(_) => {
             let style = style_for_text();
-            taffy.new_leaf(style).expect("taffy: new leaf for text")
+            let id = taffy.new_leaf(style).expect("taffy: new leaf for text");
+            record(id, taffy_index);
+            id
         }
         VNodeContent::Newline(_) => {
             let style = taffy::Style::default();
-            taffy.new_leaf(style).expect("taffy: new leaf for newline")
+            let id = taffy.new_leaf(style).expect("taffy: new leaf for newline");
+            record(id, taffy_index);
+            id
         }
         VNodeContent::Spacer(_) => {
             let style = style_for_spacer(1.0);
-            taffy.new_leaf(style).expect("taffy: new leaf for spacer")
+            let id = taffy.new_leaf(style).expect("taffy: new leaf for spacer");
+            record(id, taffy_index);
+            id
         }
         VNodeContent::Static(s) => {
             let style = taffy::Style::default();
             let id = taffy.new_leaf(style).expect("taffy: new leaf for static");
+            record(id, taffy_index);
             for child in &s.children {
-                let cid = build_node(child, taffy, rects);
+                let cid = build_node(child, taffy, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add static child");
             }
             id
@@ -676,7 +796,8 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, rects: &mut Vec<(u16, 
             let id = taffy
                 .new_leaf(style)
                 .expect("taffy: new leaf for transform");
-            let cid = build_node(&t.child, taffy, rects);
+            record(id, taffy_index);
+            let cid = build_node(&t.child, taffy, taffy_index);
             taffy
                 .add_child(id, cid)
                 .expect("taffy: add transform child");
@@ -685,33 +806,13 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, rects: &mut Vec<(u16, 
         VNodeContent::Fragment(fs) => {
             let style = taffy::Style::default();
             let id = taffy.new_leaf(style).expect("taffy: new leaf for fragment");
+            record(id, taffy_index);
             for child in fs {
-                let cid = build_node(child, taffy, rects);
+                let cid = build_node(child, taffy, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add fragment child");
             }
             id
         }
-    }
-}
-
-fn collect_rects(
-    taffy: &taffy::TaffyTree,
-    node: taffy::NodeId,
-    _depth: usize,
-    rects: &mut Vec<(u16, u16, u16, u16)>,
-) {
-    let layout = taffy.layout(node).expect("taffy: layout");
-    let x = layout.location.x as i32;
-    let y = layout.location.y as i32;
-    let w = layout.size.width as u32;
-    let h = layout.size.height as u32;
-    let x = x.max(0).min(u16::MAX as i32) as u16;
-    let y = y.max(0).min(u16::MAX as i32) as u16;
-    let w = w.min(u16::MAX as u32) as u16;
-    let h = h.min(u16::MAX as u32) as u16;
-    rects.push((x, y, w, h));
-    for child in taffy.children(node).expect("taffy: children") {
-        collect_rects(taffy, child, _depth + 1, rects);
     }
 }
 
@@ -870,5 +971,47 @@ mod tests {
         assert!(parse_hex_color("ff00aa").is_none()); // no #
         assert!(parse_hex_color("#ff00a").is_none()); // too short
         assert!(parse_hex_color("#zzzzzz").is_none()); // not hex
+    }
+
+    /// Nested boxes: a column Box with one child Box
+    /// that itself contains two Text children. With
+    /// the Taffy-rect-aware walker, the inner Box gets
+    /// a non-zero rect and the Texts land inside it.
+    #[test]
+    fn render_nested_boxes_via_taffy_layout() {
+        let inner = InkBox::column()
+            .child(Text::new("inner-a"))
+            .child(Text::new("inner-b"));
+        let root: VNode = InkBox::column().child(inner).into();
+        let s = render_to_string(root, RenderOptions::new()).unwrap();
+        assert!(s.contains("inner-a"), "missing 'inner-a' in: {s:?}");
+        assert!(s.contains("inner-b"), "missing 'inner-b' in: {s:?}");
+    }
+
+    /// A `<Box flexDirection="row">` should lay its
+    /// two text children side-by-side on a single
+    /// line. With the Taffy-rect-aware walker the
+    /// second child's `x` is non-zero.
+    #[test]
+    fn render_row_uses_horizontal_taffy_layout() {
+        let root: VNode = InkBox::row()
+            .child(Text::new("L"))
+            .child(Text::new("R"))
+            .into();
+        let s = render_to_string(root, RenderOptions::new()).unwrap();
+        // The output should contain "L" and "R" on
+        // the same line (no newline between them).
+        // The joiner trims trailing whitespace so the
+        // line looks like "L  R" with whatever gap
+        // taffy left between flex items.
+        assert!(s.contains('L'), "missing 'L' in: {s:?}");
+        assert!(s.contains('R'), "missing 'R' in: {s:?}");
+        // The single line containing both characters
+        // is the first non-empty line.
+        let first_line = s.lines().find(|l| !l.is_empty()).unwrap();
+        assert!(
+            first_line.contains('L') && first_line.contains('R'),
+            "L and R should be on the same line, got: {first_line:?}"
+        );
     }
 }

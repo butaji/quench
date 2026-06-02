@@ -278,3 +278,61 @@ fn test_tui_main_codegen() {
     assert!(code.contains("fn main"));
     assert!(code.contains("terminal"));
 }
+
+/// A `<Box flexDirection="column">` with two `<Text>`
+/// children should produce a paragraph widget. The
+/// direction is captured in the emitted code.
+#[test]
+fn test_ink_box_with_column_direction_codegens_paragraph() {
+    let plugin = ratatui_plugin();
+    // Bare Box with no children — just verify the
+    // dispatch reaches the Ink helper. The recursive
+    // child layout is not yet wired, so we don't assert
+    // on the child render output.
+    let inner = serde_json::json!({
+        "kind": "JSX",
+        "opening": {
+            "name": { "Ident": "Box" },
+            "attrs": [
+                { "Attr": {
+                    "name": "flexDirection",
+                    "value": "column"
+                }}
+            ],
+            "self_closing": true
+        },
+        "children": [],
+        "closing": null
+    });
+    let items = items_with_fn("App", inner);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some(), "no widget code for Ink Box");
+    let code = result.unwrap();
+    assert!(code.contains("pub fn render"));
+    // The Box maps to a paragraph (placeholder for the
+    // recursive layout work).
+    assert!(code.contains("Paragraph"));
+}
+
+/// A bare `<Newline>` (or `<Spacer>`) should produce a
+/// non-empty paragraph widget so the layout engine has
+/// something to render.
+#[test]
+fn test_ink_newline_codegens_empty_paragraph() {
+    let plugin = ratatui_plugin();
+    let inner = serde_json::json!({
+        "kind": "JSX",
+        "opening": {
+            "name": { "Ident": "Newline" },
+            "attrs": [],
+            "self_closing": true
+        },
+        "children": [],
+        "closing": null
+    });
+    let items = items_with_fn("App", inner);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some());
+    let code = result.unwrap();
+    assert!(code.contains("Paragraph"));
+}
