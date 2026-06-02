@@ -437,15 +437,26 @@ async fn main() {{
                 item.clone()
             };
 
-            // Skip imports (no "kind" key, or "kind" not a function decl).
-            let kind = decl_value.get("kind")?.as_str()?;
-            if kind != "Function" {
-                continue;
-            }
+            // Skip imports (no "Decl" key).
+            let decl_value = match item.get("Decl") {
+                Some(d) => d.clone(),
+                None => continue,
+            };
+
+            // Skip non-function declarations. With the externally tagged
+            // Decl, the variant name is a top-level key in decl_value:
+            //   {"Function": {"name": "About", "body": ...}}
+            //   {"Variable": {"name": "handler", "kind": "Const", ...}}
+            //   {"Type": {"name": "AboutData", ...}}
+            // We only want Function.
+            let func_value = match decl_value.get("Function") {
+                Some(f) => f.clone(),
+                None => continue,
+            };
 
             // Extract function name and body
-            let name = decl_value.get("name")?.as_str()?;
-            let body = decl_value.get("body")?;
+            let name = func_value.get("name")?.as_str()?;
+            let body = func_value.get("body")?;
 
             // Check if body is present and contains JSX
             if body.is_null() {
@@ -470,18 +481,23 @@ async fn main() {{
     /// Find JSX expression in function body.
     /// Returns the JSX expression JSON if found.
     fn find_jsx_in_body(&self, body: &serde_json::Value) -> Option<serde_json::Value> {
-        // Body structure varies by HIR encoding:
-        //   - Externally tagged: {"stmts": [...]}      (current, after the
-        //     newtype-variant fix removed the `#[serde(tag = "kind")]` from
-        //     the outer `Stmt` enum, so `Option<Block>` serializes as the
-        //     inner Block's fields directly).
-        //   - Internally tagged (older): {"Block": {"stmts": [...]}}
-        //   - Bare: just the JSX value itself
-        // Try them in order.
+        // Body structure varies by HIR encoding. With the externally
+        // tagged `Block` (after the newtype-variant fix), `Option<Block>`
+        // serializes as the inner `Vec<Stmt>` directly, so `body` is
+        // either:
+        //   - a bare array of stmts: `[ ... ]`     (current shape)
+        //   - a `Block` object: `{"stmts": [...]}` (after Block becomes
+        //     a struct variant, with `stmts` field)
+        //   - an internally tagged wrapper: `{"Block": {"stmts": [...]}}`
+        //   - a bare JSX expression
         let stmts_opt: Option<&Vec<serde_json::Value>> = body
-            .get("stmts")
-            .and_then(|v| v.as_array())
-            .or_else(|| body.get("Block").and_then(|b| b.get("stmts")).and_then(|v| v.as_array()));
+            .as_array()
+            .or_else(|| body.get("stmts").and_then(|v| v.as_array()))
+            .or_else(|| {
+                body.get("Block")
+                    .and_then(|b| b.get("stmts"))
+                    .and_then(|v| v.as_array())
+            });
 
         if let Some(stmts) = stmts_opt {
             for stmt in stmts {
@@ -496,30 +512,42 @@ async fn main() {{
     }
 
     /// Find JSX in a statement.
+    /// Accepts both the externally-tagged shape
+    /// `{"Return": {"arg": ...}}` and the older internally-tagged
+    /// shape `{"kind": "Return", "arg": ...}`.
     // allow:complexity,too_many_lines
     fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
-        let kind = stmt.get("kind")?.as_str()?;
-        match kind {
+        // For internally-tagged enums (the Stmt enum uses
+        // `#[serde(tag = "kind")]`), "kind" is the discriminator and
+        // there are also other fields alongside it. For
+        // externally-tagged enums (the JSX/Cond enums), the variant
+        // name is the top-level key. Check "kind" first, then fall
+        // back to the first key.
+        let obj = stmt.as_object()?;
+        let (variant, inner) = if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
+            (kind.to_string(), stmt.clone())
+        } else {
+            let (k, v) = obj.iter().next()?;
+            (k.clone(), v.clone())
+        };
+
+        match variant.as_str() {
             "Return" => {
-                // Direct return: return <expr>
-                let arg = stmt.get("arg")?;
+                let arg = inner.get("arg")?;
                 if self.is_jsx_expr(arg) {
                     return Some(arg.clone());
                 }
-                // Check nested expressions
                 return self.find_jsx_in_expr(arg);
             }
             "Expr" => {
-                // Expression statement: <expr>
-                let expr = stmt.get("expr")?;
+                let expr = inner.get("expr")?;
                 if self.is_jsx_expr(expr) {
                     return Some(expr.clone());
                 }
                 return self.find_jsx_in_expr(expr);
             }
             "Block" => {
-                // Block - traverse statements
-                if let Some(stmts) = stmt.get("stmts").and_then(|s| s.as_array()) {
+                if let Some(stmts) = inner.get("stmts").and_then(|s| s.as_array()) {
                     for s in stmts {
                         if let Some(jsx) = self.find_jsx_in_stmt(s) {
                             return Some(jsx);
@@ -528,13 +556,12 @@ async fn main() {{
                 }
             }
             "If" => {
-                // If statement - check consequent and alternate
-                if let Some(cons) = stmt.get("consequent") {
+                if let Some(cons) = inner.get("consequent") {
                     if let Some(jsx) = self.find_jsx_in_stmt(cons) {
                         return Some(jsx);
                     }
                 }
-                if let Some(alt) = stmt.get("alternate") {
+                if let Some(alt) = inner.get("alternate") {
                     return self.find_jsx_in_stmt(alt);
                 }
             }
@@ -543,25 +570,46 @@ async fn main() {{
         None
     }
 
-    /// Find JSX in an expression.
+    /// Find JSX in an expression. Accepts both the externally-tagged
+    /// shape `{"JSX": {...}}` / `{"Cond": {...}}` and the older
+    /// internally-tagged shape `{"kind": "JSX", ...}`.
     fn find_jsx_in_expr(&self, expr: &serde_json::Value) -> Option<serde_json::Value> {
-        let kind = expr.get("kind")?.as_str()?;
-        match kind {
-            "JSX" => return Some(expr.clone()),
-            "Cond" => {
-                // Ternary: test ? consequent : alternate
-                if let Some(cons) = expr.get("consequent") {
-                    if let Some(jsx) = self.find_jsx_in_expr(cons) {
-                        return Some(jsx);
-                    }
+        // Detect variant: externally tagged uses the variant name as the
+        // top-level key; internally tagged uses "kind" + the value at
+        // the same level.
+        let obj = expr.as_object()?;
+        let (variant, inner) = if obj.contains_key("kind") {
+            let kind = obj.get("kind")?.as_str()?.to_string();
+            (kind, expr.clone())
+        } else {
+            let (k, v) = obj.iter().next()?;
+            (k.clone(), v.clone())
+        };
+
+        match variant.as_str() {
+            "JSX" => {
+                // For externally-tagged, the JSX fields are on `inner`.
+                // For internally-tagged, the fields are on `expr`.
+                if self.is_jsx_expr(&inner) {
+                    return Some(inner.clone());
                 }
-                if let Some(alt) = expr.get("alternate") {
+                if self.is_jsx_expr(expr) {
+                    return Some(expr.clone());
+                }
+                None
+            }
+            "Cond" => {
+                let consequent = inner.get("consequent")?;
+                if let Some(jsx) = self.find_jsx_in_expr(consequent) {
+                    return Some(jsx);
+                }
+                if let Some(alt) = inner.get("alternate") {
                     return self.find_jsx_in_expr(alt);
                 }
+                None
             }
-            _ => {}
+            _ => None,
         }
-        None
     }
 
     /// Check if JSON value is a JSX expression.
@@ -817,29 +865,32 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_simple_div() {
         let plugin = FreshPlugin;
+        // Externally tagged shape: ModuleItem is `{"Decl": <Decl>}`,
+        // Decl is `{"Function": <FunctionDecl>}` (no inner "kind"),
+        // Block is `{"stmts": [...]}`, JSX is `{"JSX": {...}}`.
         let items_json = serde_json::json!([
             {
-                "type": "Decl",
                 "Decl": {
-                    "kind": "Function",
-                    "name": "Hello",
-                    "body": {
-                        "Block": {
+                    "Function": {
+                        "name": "Hello",
+                        "body": {
                             "stmts": [
                                 {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "div" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "Text": "Hello World" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "div" }
+                                    "Return": {
+                                        "arg": {
+                                            "JSX": {
+                                                "opening": {
+                                                    "name": { "Ident": "div" },
+                                                    "attrs": [],
+                                                    "self_closing": false
+                                                },
+                                                "children": [
+                                                    { "Text": "Hello World" }
+                                                ],
+                                                "closing": {
+                                                    "name": { "Ident": "div" }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -868,34 +919,34 @@ mod tests {
         let plugin = FreshPlugin;
         let items_json = serde_json::json!([
             {
-                "type": "Decl",
                 "Decl": {
-                    "kind": "Function",
-                    "name": "Home",
-                    "body": {
-                        "Block": {
+                    "Function": {
+                        "name": "Home",
+                        "body": {
                             "stmts": [
                                 {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "div" },
-                                            "attrs": [
-                                                {
-                                                    "Attr": {
-                                                        "name": "class",
-                                                        "value": "home"
-                                                    }
+                                    "Return": {
+                                        "arg": {
+                                            "JSX": {
+                                                "opening": {
+                                                    "name": { "Ident": "div" },
+                                                    "attrs": [
+                                                        {
+                                                            "Attr": {
+                                                                "name": "class",
+                                                                "value": "home"
+                                                            }
+                                                        }
+                                                    ],
+                                                    "self_closing": false
+                                                },
+                                                "children": [
+                                                    { "Text": "Welcome" }
+                                                ],
+                                                "closing": {
+                                                    "name": { "Ident": "div" }
                                                 }
-                                            ],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "Text": "Welcome" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "div" }
+                                            }
                                         }
                                     }
                                 }
@@ -946,47 +997,46 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn test_try_codegen_jsx_nested_elements() {
         let plugin = FreshPlugin;
-        // Simplified nested: just the inner JSX structure without the outer wrapper
         let items_json = serde_json::json!([
             {
-                "type": "Decl",
                 "Decl": {
-                    "kind": "Function",
-                    "name": "Nested",
-                    "body": {
-                        "Block": {
+                    "Function": {
+                        "name": "Outer",
+                        "body": {
                             "stmts": [
                                 {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "div" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            {
-                                                "kind": "JSX",
-                                                "JSX": {
-                                                    "opening": {
-                                                        "name": { "Ident": "span" },
-                                                        "attrs": [],
-                                                        "self_closing": false
-                                                    },
-                                                    "children": [
-                                                        { "Text": "nested" }
-                                                    ],
-                                                    "closing": {
-                                                        "name": { "Ident": "span" }
+                                    "Return": {
+                                        "arg": {
+                                            "JSX": {
+                                                "opening": {
+                                                    "name": { "Ident": "div" },
+                                                    "attrs": [],
+                                                    "self_closing": false
+                                                },
+                                                "children": [
+                                                    {
+                                                        "JSX": {
+                                                            "opening": {
+                                                                "name": { "Ident": "span" },
+                                                                "attrs": [],
+                                                                "self_closing": false
+                                                            },
+                                                            "children": [
+                                                                { "Text": "nested" }
+                                                            ],
+                                                            "closing": {
+                                                                "name": { "Ident": "span" }
+                                                            }
+                                                        }
                                                     }
+                                                ],
+                                                "closing": {
+                                                    "name": { "Ident": "div" }
                                                 }
                                             }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "div" }
                                         }
                                     }
                                 }
@@ -1014,33 +1064,33 @@ mod tests {
         let plugin = FreshPlugin;
         let items_json = serde_json::json!([
             {
-                "type": "Decl",
                 "Decl": {
-                    "kind": "Function",
-                    "name": "WithExpr",
-                    "body": {
-                        "Block": {
+                    "Function": {
+                        "name": "WithExpr",
+                        "body": {
                             "stmts": [
                                 {
-                                    "kind": "Return",
-                                    "arg": {
-                                        "kind": "JSX",
-                                        "opening": {
-                                            "name": { "Ident": "div" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            {
-                                                "kind": "Expr",
-                                                "Expr": {
-                                                    "kind": "Ident",
-                                                    "name": "name"
+                                    "Return": {
+                                        "arg": {
+                                            "JSX": {
+                                                "opening": {
+                                                    "name": { "Ident": "div" },
+                                                    "attrs": [],
+                                                    "self_closing": false
+                                                },
+                                                "children": [
+                                                    {
+                                                        "Expr": {
+                                                            "expr": {
+                                                                "Ident": { "name": "name" }
+                                                            }
+                                                        }
+                                                    }
+                                                ],
+                                                "closing": {
+                                                    "name": { "Ident": "div" }
                                                 }
                                             }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "div" }
                                         }
                                     }
                                 }
@@ -1112,6 +1162,60 @@ mod tests {
         let state = plugin.dev_init(&mut ctx);
         assert!(state.is_ok(), "Should initialize dev state");
         let _ = state.unwrap();
+    }
+
+    #[test]
+    fn test_try_codegen_jsx_with_internally_tagged_stmt() {
+        // This is the actual HIR JSON shape that comes through the
+        // plugin pipeline: ModuleItem is `{"Decl": <Decl>}`, Decl is
+        // `{"Function": <FunctionDecl>}`, but FunctionDecl's body
+        // is `Option<Block>` where Block is a newtype variant
+        // `Block(Vec<Stmt>)` that serializes as the bare array. And
+        // Stmt uses `#[serde(tag = "kind")]` so it serializes as
+        // `{"kind": "Return", "arg": ...}`.
+        let plugin = FreshPlugin;
+        let items_json = serde_json::json!([
+            {
+                "Decl": {
+                    "Function": {
+                        "name": "Counter",
+                        "body": [
+                            {
+                                "kind": "Return",
+                                "arg": {
+                                    "JSX": {
+                                        "opening": {
+                                            "name": { "Ident": "div" },
+                                            "attrs": [],
+                                            "self_closing": false
+                                        },
+                                        "children": [
+                                            { "Text": "Count: 0" }
+                                        ],
+                                        "closing": {
+                                            "name": { "Ident": "div" }
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]);
+        let hir = runts_plugin::hir::Module::new();
+        let result = plugin.try_codegen_jsx(&items_json, &hir);
+        assert!(
+            result.is_some(),
+            "Should generate code for JSX inside a Stmt::Return (the actual HIR shape)"
+        );
+        let code = result.unwrap();
+        assert!(code.contains("VNode"), "Should contain VNode");
+        assert!(code.contains("div"), "Should contain div tag");
+        assert!(
+            code.contains("render"),
+            "Wrapped module should expose a render function"
+        );
     }
 
     #[test]
