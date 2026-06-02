@@ -38,7 +38,6 @@ impl QuickJsRuntime {
 
         // Wrap code to inject console and serialize result
         let wrapped = wrap_with_console_and_serialize(code);
-        eprintln!("DEBUG wrapped = {:?}", wrapped);
 
         // Register the __runts_stderr__ host function used by the console shim
         // injected by `wrap_with_console_and_serialize`. Without this binding

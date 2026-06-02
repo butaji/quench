@@ -149,10 +149,16 @@ fn run_eval(expr: &str) -> Result<()> {
         println!("undefined");
         return Ok(());
     }
-    // Use QuickJS for evaluation (in-memory, hot reload ready)
+    // QuickJsRuntime::eval handles its own console-shim wrapping
+    // (expression-form vs. statement-form detection) and host-fn
+    // registration for __runts_stderr__. We pass the raw user code
+    // directly; a previous `prepare_source` layer added a redundant
+    // `const __result = X; __result` wrap that interacted badly with
+    // the QuickJS-side shim and made multi-statement input return
+    // `undefined` (the value of the var-decl) instead of the last
+    // expression.
     let js = runtime::quickjs::QuickJsRuntime::new();
-    let prepared = prepare_source(trimmed);
-    match js.eval(&prepared) {
+    match js.eval(trimmed) {
         Ok(result) => {
             print_result(&result);
             Ok(())
@@ -160,33 +166,7 @@ fn run_eval(expr: &str) -> Result<()> {
         Err(e) => Err(anyhow::anyhow!("Failed to evaluate '{}': {}", expr, e)),
     }
 }
-fn prepare_source(stmt: &str) -> String {
-    let trimmed = stmt.trim();
-    if is_statement_keyword(trimmed) {
-        stmt.to_string()
-    } else {
-        format!("const __result = {}; __result", stmt)
-    }
-}
-fn is_statement_keyword(s: &str) -> bool {
-    let kws = [
-        "if ",
-        "for ",
-        "while ",
-        "return ",
-        "throw ",
-        "try ",
-        "switch ",
-        "do ",
-        "let ",
-        "const ",
-        "var ",
-        "function ",
-        "class ",
-        "{",
-    ];
-    kws.iter().any(|k| s.starts_with(k))
-}
+
 fn print_result(result: &str) {
     if result.is_empty() {
         println!("undefined");
