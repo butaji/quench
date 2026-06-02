@@ -297,7 +297,7 @@ pub fn render() -> VNode {{
 
     fn generate_main_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
         let routes = self.collect_routes(modules);
-        let (imports, handlers, router_calls) = self.generate_route_code(&routes);
+        let (imports, handlers, router_calls) = self.generate_route_code(&routes, modules);
         self.format_main_rs(&imports, &handlers, &router_calls)
     }
 
@@ -307,10 +307,25 @@ pub fn render() -> VNode {{
         routes
     }
 
-    fn generate_route_code(&self, routes: &[&RouteInfo]) -> (String, String, String) {
+    fn generate_route_code(
+        &self,
+        routes: &[&RouteInfo],
+        modules: &[runts_plugin::hir::Module],
+    ) -> (String, String, String) {
         let mut imports = String::new();
         let mut handlers = String::new();
         let mut router_calls = String::new();
+
+        // Map `source_path` (e.g. "routes/about.tsx") to the
+        // module. The plugin uses the full source path as the key
+        // because that's what the build pipeline writes. The
+        // route's `file_path` may have the `routes/` prefix
+        // stripped, so we also do a fuzzy match as a fallback.
+        let module_by_path: std::collections::HashMap<String, &runts_plugin::hir::Module> =
+            modules
+                .iter()
+                .filter_map(|m| m.source_path.clone().map(|p| (p, m)))
+                .collect();
 
         for route in routes {
             let safe_name = self.module_name_from_path(&route.file_path);
@@ -320,14 +335,63 @@ pub fn render() -> VNode {{
                 "async fn {}_handler() -> axum::response::Html<String> {{ let v = {}::render(); axum::response::Html(v.to_html()) }}\n",
                 safe_name, safe_name
             ));
-            router_calls.push_str(&format!("        .route(\"{}\", axum::routing::get({}_handler))\n", axum_path, safe_name));
+
+            // If the source file declared per-method handlers,
+            // emit one axum route per method. Otherwise fall back
+            // to a single GET that renders the page.
+            let route_file = route.file_path.as_str();
+            let route_methods: Vec<String> = module_by_path
+                .get(route_file)
+                .copied()
+                .or_else(|| {
+                    module_by_path
+                        .values()
+                        .find(|m| {
+                            m.source_path
+                                .as_deref()
+                                .map(|p| p.contains(route_file) || route_file.contains(p))
+                                .unwrap_or(false)
+                        })
+                        .copied()
+                })
+                .and_then(|m| m.items_json.as_ref())
+                .map(Self::extract_handler_methods)
+                .unwrap_or_default();
+
+            if route_methods.is_empty() {
+                router_calls.push_str(&format!(
+                    "        .route(\"{}\", axum::routing::get({}_handler))\n",
+                    axum_path, safe_name
+                ));
+            } else {
+                for method in &route_methods {
+                    let axum_name = match method.as_str() {
+                        "GET" => "get",
+                        "POST" => "post",
+                        "PUT" => "put",
+                        "DELETE" => "delete",
+                        "PATCH" => "patch",
+                        "HEAD" => "head",
+                        "OPTIONS" => "options",
+                        _ => "get",
+                    };
+                    router_calls.push_str(&format!(
+                        "        .route(\"{}\", axum::routing::{}({}_handler))\n",
+                        axum_path, axum_name, safe_name
+                    ));
+                }
+            }
         }
 
         (imports, handlers, router_calls)
     }
 
-    fn format_main_rs(&self, imports: &str, handlers: &str, router_calls: &str) -> Result<String, PluginError> {
-        // If no routes, add a fallback root handler so Router::new() has valid syntax
+    fn format_main_rs(
+        &self,
+        imports: &str,
+        handlers: &str,
+        router_calls: &str,
+    ) -> Result<String, PluginError> {
         let router_body = if router_calls.trim().is_empty() {
             r#"        .route("/", axum::routing::get(|| async { "Hello from runts-fresh! Run 'runts build --plugin fresh' with TSX routes." }))
 "#.to_string()
@@ -369,6 +433,105 @@ async fn main() {{
     fn to_axum_path(&self, path: &str) -> String {
         let p = path.replace("[", ":").replace("]", "");
         if p.starts_with('/') { p } else { format!("/{}", p) }
+    }
+
+    /// Walk the HIR items JSON for a module and return the HTTP
+    /// method names declared in its `export const handler = { ... }`
+    /// object. The plugin sees the HIR as opaque JSON and parses
+    /// only what it needs (the property keys).
+    ///
+    /// Two serialisations are accepted:
+    /// - `ObjectProp::Method { key, value: Function }` — the
+    ///   method-shorthand case (`{ GET(req) { ... } }`).
+    /// - `ObjectProp::Init { key, value: Function }` — the
+    ///   explicit-property case (`{ GET: async (req) => ... }` or
+    ///   `{ async GET(req) { ... }` after oxc's HIR pass).
+    ///
+    /// Both shapes have `key: PropKey::Str("GET")` and a function
+    /// value, so we treat them uniformly here.
+    fn extract_handler_methods(items: &serde_json::Value) -> Vec<String> {
+        let mut out = Vec::new();
+        let arr = match items.as_array() {
+            Some(a) => a,
+            None => return out,
+        };
+        for item in arr {
+            // Externally tagged: ModuleItem is `{"Decl": <Decl>}`.
+            // Decl is `{"Variable": <VariableDecl>}`.
+            let decl = match item.get("Decl") {
+                Some(d) => d,
+                None => continue,
+            };
+            let variable = match decl.get("Variable") {
+                Some(v) => v,
+                None => continue,
+            };
+            let name = match variable.get("name").and_then(|n| n.as_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            if name != "handler" {
+                continue;
+            }
+            let init = match variable.get("init") {
+                Some(i) => i,
+                None => continue,
+            };
+            // Externally tagged Expr: `{"Object": { "members": [...] }}`.
+            let obj = match init.get("Object") {
+                Some(o) => o,
+                None => continue,
+            };
+            let members = match obj.get("members").and_then(|m| m.as_array()) {
+                Some(m) => m,
+                None => continue,
+            };
+            for m in members {
+                // Each member: `{"prop": <ObjectProp>}`. ObjectProp is
+                // an externally-tagged enum: `{"Init": {...}}` or
+                // `{"Method": {...}}`. Both have a `key` field.
+                let prop = match m.get("prop") {
+                    Some(p) => p,
+                    None => continue,
+                };
+                // Look for the function value under either
+                // `Method.value` or `Init.value`. We only care
+                // about properties whose value is a `Function`
+                // expression — that's how we know it's a handler
+                // (vs. a config object whose values are objects or
+                // strings).
+                let value = prop
+                    .get("Method")
+                    .and_then(|m| m.get("value"))
+                    .or_else(|| prop.get("Init").and_then(|i| i.get("value")));
+                if value.is_none() {
+                    continue;
+                }
+                let value = value.unwrap();
+                if value.get("Function").is_none() {
+                    // Property value is not a function (e.g. a
+                    // string config like `description: "..."`).
+                    continue;
+                }
+                let key = match prop.get("Method").and_then(|m| m.get("key")).or_else(|| {
+                    prop.get("Init").and_then(|i| i.get("key"))
+                }) {
+                    Some(k) => k,
+                    None => continue,
+                };
+                // PropKey: `{"Str": <String>}` for string keys.
+                if let Some(s) = key.get("Str").and_then(|s| s.as_str()) {
+                    let upper = s.to_uppercase();
+                    if matches!(
+                        upper.as_str(),
+                        "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS"
+                    ) {
+                        out.push(upper);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Classify route path to generate more specific stubs
@@ -1162,6 +1325,134 @@ mod tests {
         let state = plugin.dev_init(&mut ctx);
         assert!(state.is_ok(), "Should initialize dev state");
         let _ = state.unwrap();
+    }
+
+    #[test]
+    fn test_extract_handler_methods_picks_verbs() {
+        let items = serde_json::json!([
+            {
+                "Decl": {
+                    "Variable": {
+                        "name": "handler",
+                        "init": {
+                            "Object": {
+                                "members": [
+                                    {"prop": {"Method": {"key": {"Str": "GET"}, "value": {"Function": {}}}}},
+                                    {"prop": {"Method": {"key": {"Str": "POST"}, "value": {"Function": {}}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let methods = FreshPlugin::extract_handler_methods(&items);
+        assert_eq!(methods, vec!["GET".to_string(), "POST".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_handler_methods_ignores_non_verbs() {
+        let items = serde_json::json!([
+            {
+                "Decl": {
+                    "Variable": {
+                        "name": "handler",
+                        "init": {
+                            "Object": {
+                                "members": [
+                                    {"prop": {"Method": {"key": {"Str": "config"}, "value": {"Function": {}}}}},
+                                    {"prop": {"Init": {"key": {"Str": "data"}, "value": {"String": "x"}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let methods = FreshPlugin::extract_handler_methods(&items);
+        assert!(methods.is_empty(), "non-HTTP keys should be ignored, got {:?}", methods);
+    }
+
+    #[test]
+    fn test_extract_handler_methods_picks_init_with_function() {
+        // Real HIR shape from `export const handler = {
+        //   async GET(req: Request, ctx: HandlerContext): Promise<Response> {...}
+        // }` — oxc serialises this method-shorthand as
+        // `ObjectProp::Init` with a `Function` value, NOT as
+        // `ObjectProp::Method`. This test pins down that
+        // behaviour so the next refactor doesn't regress it.
+        let items = serde_json::json!([
+            {
+                "Decl": {
+                    "Variable": {
+                        "name": "handler",
+                        "init": {
+                            "Object": {
+                                "members": [
+                                    {"prop": {"Init": {
+                                        "computed": false,
+                                        "key": {"Str": "GET"},
+                                        "value": {"Function": {
+                                            "is_async": true,
+                                            "body": [],
+                                            "params": []
+                                        }}
+                                    }}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let methods = FreshPlugin::extract_handler_methods(&items);
+        assert_eq!(methods, vec!["GET".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_handler_methods_lowercases_and_filters() {
+        // Mixed-case key. We uppercase, then check the allowlist.
+        let items = serde_json::json!([
+            {
+                "Decl": {
+                    "Variable": {
+                        "name": "handler",
+                        "init": {
+                            "Object": {
+                                "members": [
+                                    {"prop": {"Method": {"key": {"Str": "delete"}, "value": {"Function": {}}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let methods = FreshPlugin::extract_handler_methods(&items);
+        assert_eq!(methods, vec!["DELETE".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_handler_methods_skips_non_handler() {
+        // Variable named "config", not "handler".
+        let items = serde_json::json!([
+            {
+                "Decl": {
+                    "Variable": {
+                        "name": "config",
+                        "init": {
+                            "Object": {
+                                "members": [
+                                    {"prop": {"Method": {"key": {"Str": "GET"}, "value": {"Function": {}}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let methods = FreshPlugin::extract_handler_methods(&items);
+        assert!(methods.is_empty());
     }
 
     #[test]
