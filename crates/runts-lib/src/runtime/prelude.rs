@@ -12,4 +12,4 @@ pub use super::server::{Handler, HandlerContext, PageProps, Request, Response};
 pub use super::vdom::VNode;
 
 // Macros re-exported from runts-macros
-pub use crate::macros::{component, html};
+pub use crate::macros::component;
