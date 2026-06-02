@@ -37,10 +37,11 @@ matches the source files.
 
 ```
 cargo test --workspace --no-fail-fast
-→ 931 passed, 0 failed, 33 ignored
+→ 937 passed, 0 failed, 35 ignored
 
 cargo test --test e2e_my_blog_server -- --include-ignored
-→ 3 passed, 0 failed, 0 ignored (the my-blog HTTP server e2e)
+→ 5 passed, 0 failed, 0 ignored (5 ignored by default; opt in
+  with --include-ignored)
 ```
 
 The 32 ignored tests are pre-existing parser gaps (return type annotations,
@@ -202,6 +203,30 @@ the main remaining gap.
   `axum::routing::get(...)` / `.post(...)` / etc. per
   declared method, instead of falling back to a single GET
   for every route.
+- **Middleware wiring through axum's `from_fn` layer**:
+  `routes/_middleware.ts` (and `_middleware.tsx`) files
+  anywhere under `routes/` are now codegen'd as
+  `axum::extract::Request` / `axum::middleware::Next` /
+  `axum::response::Response` async functions and wired into
+  the router via `.layer(axum::middleware::from_fn(...))`.
+  The body is currently a passthrough that adds an
+  `X-Response-Time` header (the Fresh demo middleware uses
+  the same pattern). Wired in commit `f39841f` and verified
+  end-to-end by `my_blog_middleware_adds_x_response_time_header`
+  e2e test.
+- **Dynamic route params `[slug]`**: the codegen in
+  `generate_route_code` inspects each route's path and emits
+  a matching `axum::extract::Path<T>` extractor on the
+  per-route handler: 0 params -> no extractor; 1 param ->
+  `Path(slug): Path<String>`; 2+ params ->
+  `Path((a, b)): Path<(String, String)>`. The handler
+  continues to call the per-page `render()` stub (with no
+  arguments), so the codegen also let-binds the param as
+  `_slug` to keep the call site compiling. Wired in
+  commit `3e67d05` and verified end-to-end by
+  `my_blog_dynamic_route_matches_arbitrary_slugs` e2e
+  test.
+
 - `tests/e2e_my_blog_server.rs` — real HTTP e2e (3 tests,
   all `#[ignore]`d by default to avoid CI port-8000
   conflicts). The driver invokes `runts build
