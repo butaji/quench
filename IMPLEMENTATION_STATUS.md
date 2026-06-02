@@ -4,6 +4,35 @@ This document was originally a self-assessment that materially overstated
 what existed. Numbers and file paths below are verified against the current
 source tree.
 
+## End-to-end demo: working HTTP server with real per-route components
+
+The pipeline `tsx -> HIR -> Rust -> compiled binary -> running HTTP
+server with the per-route component's real JSX` is now functional for
+`examples/my-blog`. Verified by booting the built binary and curling it:
+
+```
+$ ./target/debug/runts build examples/my-blog --plugin fresh
+... Build complete! Binary: .../examples/my-blog/target/release/runts-app
+
+$ ./target/release/runts-app &
+$ curl -s -o /tmp/c.html -w "%{http_code}\n" http://localhost:8000/
+200
+$ curl -s -o /tmp/c.html http://localhost:8000/about
+<div class="about-page">
+      <h1></h1>
+      <p></p>
+      <h2>Features</h2>
+      ...
+```
+
+All four route files (`routes/index.tsx`, `routes/about.tsx`,
+`routes/blog/index.tsx`, `routes/blog/[slug].tsx`) embed their
+real per-component JSX, not the runts-fresh placeholder text. The
+`<h1></h1>`, `<ul></ul>`, etc. empty content is from the dynamic
+data expressions (`data.greeting`, `data.posts`, etc.) that have
+no runtime data source — the *component structure* is real and
+matches the source files.
+
 ## Test baseline (verified 2026-06-02)
 
 ```
