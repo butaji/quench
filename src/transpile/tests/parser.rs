@@ -137,23 +137,30 @@ mod parser_tests {
         // Print full JSON for comparison
         println!("\n=== Full JSON (non-JSX) ===\n{}\n===\n", serde_json::to_string_pretty(&json).unwrap());
 
-        // Verify the JSON contains Decl::Function structure
-        // Should be: {"kind":"Decl","Function":{"name":"Hello",...}}
+        // Verify the JSON contains Decl::Function structure. With
+        // externally tagged serialization, this is `{"Decl": {"Function": ...}}`
+        // (not the old `{"kind":"Decl", ...}` which was the broken
+        // internally-tagged-with-newtype-variant shape).
         assert!(
-            json.contains("\"kind\":\"Decl\""),
-            "JSON should contain '{{\"kind\":\"Decl\"}}' but got: {}",
+            json.contains("\"Decl\""),
+            "JSON should contain '{{\"Decl\":' but got: {}",
             json
         );
         assert!(
             json.contains("\"Function\""),
-            "JSON should contain '{{\"Function\"}}' but got: {}",
+            "JSON should contain '{{\"Function\":' but got: {}",
+            json
+        );
+        assert!(
+            json.contains("\"name\":\"Hello\""),
+            "JSON should contain '{{\"name\":\"Hello\"}}' but got: {}",
             json
         );
 
         // Verify the JSON does NOT contain Stmt::Empty
         // This would indicate the bug where export default becomes Empty
         assert!(
-            !json.contains("\"kind\":\"Stmt\"") || !json.contains("\"Empty\""),
+            !json.contains("\"Empty\""),
             "JSON should NOT contain Stmt::Empty, but got: {}",
             json
         );
@@ -236,25 +243,19 @@ mod parser_tests {
         println!("\n=== HIR JSON items array ===\n{}\n===\n", serde_json::to_string_pretty(items).unwrap());
 
         let items_str = serde_json::to_string(items).unwrap();
-        // The SERIALIZED JSON shows "kind":"Function" due to serde nested tag issue
-        // But the actual Rust struct is ModuleItem::Decl(Decl::Function(...))
-        // We verify by checking the FunctionDecl fields exist
+        // With externally-tagged serialization, the Function decl is
+        // wrapped as `{"Decl": {"Function": {...}}}`. We check for
+        // the Function variant key + the function name, and verify
+        // it isn't the old broken Stmt::Empty shape.
         let has_function_name = items_str.contains("\"name\":\"Hello\"");
-        let has_function_kind = items_str.contains("\"kind\":\"Function\"");
-        let has_stmt_empty = items_str.contains("\"kind\":\"Stmt\"") && items_str.contains("\"Empty\"");
-
-        println!("Has function name 'Hello': {}", has_function_name);
-        println!("Has function kind: {}", has_function_kind);
-        println!("Has Stmt::Empty: {}", has_stmt_empty);
-
-        // The key verification: NOT Stmt::Empty
-        if has_stmt_empty {
-            panic!("BUG: items contain Stmt::Empty: {}", items_str);
-        }
-
-        // Function should be properly parsed (even if serde serialization is weird)
+        let has_function_variant = items_str.contains("\"Function\"");
+        let has_decl_wrapper = items_str.contains("\"Decl\"");
+        let has_stmt_empty =
+            items_str.contains("\"kind\":\"Stmt\"") && items_str.contains("\"Empty\"");
+        assert!(!has_stmt_empty, "BUG: items contain Stmt::Empty: {}", items_str);
         assert!(has_function_name, "Function should have name 'Hello'");
-        assert!(has_function_kind, "Function should have kind 'Function'");
+        assert!(has_decl_wrapper, "Items should contain Decl wrapper");
+        assert!(has_function_variant, "Decl should contain Function variant");
     }
 
     // Bug 1: func_to_decl returns empty body and params

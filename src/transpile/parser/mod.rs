@@ -33,14 +33,26 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
             .collect();
         anyhow::bail!("Parse errors:\n{}", error_messages.join("\n"));
     }
-    eprintln!("PARSE_DEBUG parse_source: oxc returned {} body statements", ret.program.body.len());
+    eprintln!(
+        "PARSE_DEBUG source_type={:?}, source bytes={}, source lines={}",
+        source_type,
+        source.len(),
+        source.matches('\n').count()
+    );
+    eprintln!(
+        "PARSE_DEBUG oxc returned {} body statements",
+        ret.program.body.len()
+    );
     let items: Vec<_> = ret
         .program
         .body
         .iter()
         .flat_map(stmt::convert_module_item)
         .collect();
-    eprintln!("PARSE_DEBUG parse_source: built module with {} items", items.len());
+    eprintln!(
+        "PARSE_DEBUG built module with {} items",
+        items.len()
+    );
     let mut module = hir::Module {
         source: String::new(),
         items,

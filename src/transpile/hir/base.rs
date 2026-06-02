@@ -10,8 +10,18 @@ pub struct Module {
     pub types: HashMap<String, TypeDef>,
 }
 
+/// Top-level items in a module: imports, exports, declarations, and
+/// statements. Default external tagging produces unambiguous JSON like
+/// `{"Decl": {"Function": ...}}` or `{"Stmt": {"Return": ...}}`.
+///
+/// Note: this used to be `#[serde(tag = "kind")]`, but the newtype
+/// variant in an internally-tagged enum is broken — the inner type's
+/// own `kind` tag (e.g. `FunctionDecl.kind = "Function"`,
+/// `Stmt::Return.kind = "Return"`) collides with the outer tag, so
+/// the outer variant name was being silently dropped. The current
+/// shape (default external tagging) serializes every layer
+/// explicitly and round-trips correctly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
 pub enum ModuleItem {
     Import(Import),
     Export(Export),
@@ -100,8 +110,13 @@ impl Ownership {
     }
 }
 
+/// `Decl` is serialized with default external tagging for the same
+/// reason as `ModuleItem` above: the newtype variant in an
+/// internally-tagged enum collides with the inner type's own `kind`
+/// tag (e.g. `VariableDecl.kind`, `FunctionDecl`'s sibling tags).
+/// Externally tagged form is `{"Function": {...}}` or
+/// `{"Variable": {...}}` — unambiguous and round-trippable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
 pub enum Decl {
     Function(FunctionDecl),
     Variable(VariableDecl),
