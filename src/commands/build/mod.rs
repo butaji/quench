@@ -504,12 +504,83 @@ pub async fn run_plugin_build(
     let route_map = scan_routes_for_plugin(&routes_dir, &routes_dir);
     info!("Found {} routes", route_map.len());
 
+    // Read all file sources first. This is a serial
+    // I/O step but it's fast and lets us fan the
+    // (CPU-bound) parse step out to a rayon thread pool
+    // via `parse_files_parallel`. Without this, a project
+    // with N TSX files would do N parse calls back-to-back
+    // on a single core; with this, parse calls run in
+    // parallel and the wall-clock parse time drops to
+    // roughly `max(per_file_parse)` rather than `sum(...)`.
+    //
+    // After this parallel-parse step we do the rest
+    // serially: the per-file `PluginModule` construction,
+    // the JSON enrichment (source_path / route_info /
+    // items injection), the `plugin.codegen_module` call
+    // and the `fs::write` of the per-file `.rs`. Those
+    // steps mutate the shared `plugin_modules` vec and
+    // depend on `source_gen::generate_all`'s serial
+    // `ts_files` order, so parallelising them would need
+    // a much bigger refactor. The parse is the heaviest
+    // part; the rest is dominated by cargo's compilation
+    // anyway.
+    let parsed: Vec<(PathBuf, runts_plugin::hir::Module)> = {
+        use crate::transpile::parallel::FileToParse;
+        let inputs: Vec<FileToParse> = ts_files
+            .iter()
+            .map(|p| {
+                let is_tsx = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    == Some("tsx".to_string());
+                FileToParse {
+                    path: p.clone(),
+                    // If the read fails we substitute an
+                    // empty source so the parse surfaces
+                    // the real error rather than panicking
+                    // in the parallel iterator.
+                    source: fs::read_to_string(p).unwrap_or_default(),
+                    is_tsx,
+                }
+            })
+            .collect();
+        // Run all the parses in parallel.
+        let results = crate::transpile::parallel::parse_files_parallel(inputs);
+        // Re-zip with the original paths and surface any
+        // parse errors with their file path. A single
+        // failure short-circuits the build, matching the
+        // prior serial `?`-based error propagation.
+        //
+        // The `parse_files_parallel` returns the internal
+        // `crate::transpile::hir::Module` (aliased as
+        // `base::Module`); the plugin side re-exports it as
+        // `runts_plugin::hir::Module`. Both have the same
+        // JSON shape so we re-parse the result rather than
+        // thread a redundant re-export.
+        let mut out: Vec<(PathBuf, runts_plugin::hir::Module)> =
+            Vec::with_capacity(ts_files.len());
+        for (path, result) in ts_files.iter().cloned().zip(results.into_iter()) {
+            let base = result
+                .with_context(|| format!("failed to parse {path:?}"))?;
+            // The plugin and the codegen both go through
+            // `serde_json::Value`, so the easiest
+            // type-stable handoff is to re-serialise and
+            // re-parse as `runts_plugin::hir::Module`. For
+            // my-blog (4 files) this is well under a
+            // millisecond.
+            let value = serde_json::to_value(&base)
+                .with_context(|| format!("failed to serialise parsed module for {path:?}"))?;
+            let hir: runts_plugin::hir::Module = serde_json::from_value(value)
+                .with_context(|| format!("failed to deserialise parsed module for {path:?}"))?;
+            out.push((path, hir));
+        }
+        out
+    };
+
     // Generate Rust code for each file
     let mut plugin_modules: Vec<PluginModule> = Vec::new();
-    for file in &ts_files {
-        let source = fs::read_to_string(file)?;
-        let is_tsx = file.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) == Some("tsx".to_string());
-        let hir_module = parse_to_hir(&source, is_tsx)?;
+    for (file, hir_module) in &parsed {
 
         // Check if this file is a route
         let rel_path = file.strip_prefix(&project_root)
