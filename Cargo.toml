@@ -23,6 +23,12 @@ members = [
     "crates/runts-ratatui",
     "crates/runts-react",
 ]
+# `examples/*` are independent Cargo projects. Each has
+# its own `Cargo.toml` with `path = "../../crates/..."`
+# deps; they shouldn't be part of the main workspace.
+exclude = [
+    "examples/ink-counter",
+]
 
 [dependencies]
 
