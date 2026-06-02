@@ -426,11 +426,11 @@ impl QuoteCodegen {
         let mut tokens = TokenStream::new();
         for (i, part) in parts.iter().enumerate() {
             match part {
-                super::TemplatePart::String(s) => {
+                super::TemplatePart::String { value: s } => {
                     let s = s.to_string();
                     tokens.extend(quote! { #s });
                 }
-                super::TemplatePart::Type(t) => {
+                super::TemplatePart::Type { value: t } => {
                     tokens.extend(self.gen_type(t));
                 }
             }
@@ -521,7 +521,7 @@ impl QuoteCodegen {
             S::Continue { label } => Some(self.gen_continue(label)),
             S::Throw { arg } => Some(self.gen_throw(arg)),
             S::Try { block, handler, finalizer } => Some(self.gen_try(block, handler, finalizer)),
-            S::Block(stmts) => Some(self.gen_block(stmts)),
+            S::Block { stmts } => Some(self.gen_block(stmts)),
             S::Labeled { label, body } => Some(self.gen_labeled(label, body)),
             S::With { obj, body } => Some(self.gen_with(obj, body)),
             S::FunctionDecl(func) => Some(self.gen_fn(func)),
@@ -1101,7 +1101,7 @@ impl QuoteCodegen {
 
     fn gen_block_stmt(&self, stmt: &Stmt) -> TokenStream {
         match stmt {
-            Stmt::Block(stmts) => {
+            Stmt::Block { stmts } => {
                 let inner: Vec<_> = stmts.iter()
                     .filter_map(|s| self.gen_stmt(s))
                     .collect();
@@ -1196,11 +1196,11 @@ impl QuoteCodegen {
         
         for part in parts {
             match part {
-                super::TemplatePart::String(s) => {
+                super::TemplatePart::String { value: s } => {
                     let s = s.to_string();
                     result.extend(quote! { #s.to_string() });
                 }
-                super::TemplatePart::Type(_) => {
+                super::TemplatePart::Type { value: _ } => {
                     // This shouldn't happen in expression context, but handle it
                     result.extend(quote! { String::new() });
                 }
@@ -1962,7 +1962,7 @@ mod tests {
                 arg: Box::new(Expr::Ident { name: "i".into() }),
                 prefix: true,
             }),
-            body: Box::new(Stmt::Block(vec![])),
+            body: Box::new(Stmt::Block { stmts: vec![] }),
         };
 
         let tokens = cg.gen_stmt(&stmt);
@@ -1978,7 +1978,7 @@ mod tests {
         let cg = QuoteCodegen::default();
         let stmt = Stmt::While {
             test: Expr::Boolean(true),
-            body: Box::new(Stmt::Block(vec![])),
+            body: Box::new(Stmt::Block { stmts: vec![] }),
         };
 
         let tokens = cg.gen_stmt(&stmt);
@@ -1991,7 +1991,7 @@ mod tests {
     fn test_gen_do_while_loop() {
         let cg = QuoteCodegen::default();
         let stmt = Stmt::DoWhile {
-            body: Box::new(Stmt::Block(vec![])),
+            body: Box::new(Stmt::Block { stmts: vec![] }),
             test: Expr::Boolean(true),
         };
 

@@ -160,7 +160,7 @@ impl TypeParser {
         let mut values = Vec::new();
 
         for quasi in &t.quasis {
-            parts.push(TemplatePart::String(quasi.value.raw.to_string()));
+            parts.push(TemplatePart::String { value: quasi.value.raw.to_string()) };
         }
 
         for type_ in &t.types {
