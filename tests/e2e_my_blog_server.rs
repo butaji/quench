@@ -297,3 +297,30 @@ fn my_blog_middleware_adds_x_response_time_header() {
         );
     }
 }
+
+/// `routes/blog/[slug].tsx` defines a dynamic route at
+/// `/blog/:slug`. The handler's signature should be
+/// `Path(slug): Path<String>`, which means the route matches
+/// for any URL under `/blog/...`. This test boots the server
+/// and verifies that three different slugs each return HTTP 200
+/// (with the per-page render body), and that a non-matching
+/// path (e.g. `/articles/...`) still 404s.
+#[test]
+#[ignore]
+fn my_blog_dynamic_route_matches_arbitrary_slugs() {
+    let Some(server) = boot_my_blog() else {
+        return;
+    };
+    let addr = server.addr();
+    for slug in ["introducing-runts", "anything-goes-here", "x"] {
+        let path = format!("/blog/{slug}");
+        let (status, _body) = http_get(addr, &path);
+        assert_eq!(status, 200, "GET {path} expected 200, got {status}");
+    }
+    // Sanity: a path that doesn't match any route should 404.
+    let (status, _body) = http_get(addr, "/articles/something");
+    assert_eq!(
+        status, 404,
+        "GET /articles/something expected 404, got {status}"
+    );
+}
