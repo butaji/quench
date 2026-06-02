@@ -144,6 +144,23 @@ fn find_ts_files(project_root: &Path) -> Vec<PathBuf> {
             continue;
         }
 
+        // Skip well-known non-source directories that may exist under a
+        // project root. This is critical: when the user runs
+        // `runts transpile examples/my-blog`, the project_root ends up
+        // being the runie-tsx repo root, which contains `crates/`,
+        // `target/`, `.runts/`, `examples/` (other examples), `tests/`,
+        // etc. Without this filter, the walker would try to parse the
+        // entire workspace, including Cargo.toml, .rs files renamed to
+        // .ts, and TypeScript fixtures that exist for other purposes.
+        //
+        // We only look at path components that are *descendants* of
+        // project_root — otherwise the root itself would match if its
+        // own name (or any ancestor like `examples` when the user passes
+        // `examples/my-blog`) happened to be in the excluded list.
+        if is_excluded_subpath(project_root, path) {
+            continue;
+        }
+
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext.to_lowercase() == "tsx" || ext.to_lowercase() == "ts" {
                 if !has_hidden_component(path) {
@@ -153,6 +170,122 @@ fn find_ts_files(project_root: &Path) -> Vec<PathBuf> {
         }
     }
     files
+}
+
+/// Return true if any path component of `path` that is *strictly below*
+/// `project_root` matches the excluded list. The `project_root` itself
+/// and any of its ancestors (e.g. when the user passes
+/// `examples/my-blog` and `examples` happens to be in the list) are NOT
+/// considered for exclusion.
+fn is_excluded_subpath(project_root: &Path, path: &Path) -> bool {
+    let root_comps = project_root.components().count();
+    path.components().enumerate().any(|(i, c)| {
+        // Skip the leading components that are part of project_root.
+        if i < root_comps {
+            return false;
+        }
+        let s = c.as_os_str().to_string_lossy();
+        if s == "." || s == ".." {
+            return false;
+        }
+        is_excluded_name(&s)
+    })
+}
+
+/// Directories that should never be walked as project source. This is
+/// conservative — when in doubt, skip the directory. The user is
+/// expected to put their `routes/`, `islands/`, and `components/` at
+/// the project root or under a non-excluded subdir.
+fn is_excluded_dir(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        if s == "." || s == ".." {
+            return false;
+        }
+        is_excluded_name(&s)
+    })
+}
+
+/// Single-component name check used by the project-root-aware
+/// `is_excluded_subpath` and the legacy `is_excluded_dir` (which is
+/// kept for direct callers; `find_ts_files` uses `is_excluded_subpath`
+/// instead).
+fn is_excluded_name(name: &str) -> bool {
+    const EXCLUDED: &[&str] = &[
+        // build / target dirs
+        "target",
+        ".runts",
+        "node_modules",
+        // runie-tsx internal layout that is NEVER the user's project
+        // (when the user is testing on examples/my-blog, the walker
+        // starts at examples/my-blog and never enters these).
+        "crates",
+        ".git",
+        "docs",
+        "dist",
+        // common framework / tooling output
+        ".next",
+        ".turbo",
+        ".svelte-kit",
+        "build",
+        "out",
+        // runie-tsx test fixtures
+        "test-fixtures",
+        "test-project",
+    ];
+    EXCLUDED.iter().any(|ex| *ex == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn is_excluded_name_basic() {
+        assert!(is_excluded_name("target"));
+        assert!(is_excluded_name(".runts"));
+        assert!(is_excluded_name("node_modules"));
+        assert!(is_excluded_name("crates"));
+        assert!(!is_excluded_name("routes"));
+        assert!(!is_excluded_name("islands"));
+        assert!(!is_excluded_name("components"));
+        assert!(!is_excluded_name("src"));
+    }
+
+    #[test]
+    fn is_excluded_subpath_skips_project_root_components() {
+        // The user passes `examples/my-blog`; the walker should NOT
+        // exclude the project root itself just because `examples` is
+        // (was) in the excluded list. The bug we're guarding against
+        // was: an earlier version of this function treated the root
+        // as part of the path under inspection, so the user's project
+        // got skipped because one of its ancestors was in EXCLUDED.
+        let root = PathBuf::from("/home/user/project/examples/my-blog");
+        let file = PathBuf::from("/home/user/project/examples/my-blog/routes/index.tsx");
+        assert!(!is_excluded_subpath(&root, &file));
+
+        // But a subdir like `.runts/build/` *should* be excluded.
+        let dot_runs = PathBuf::from("/home/user/project/examples/my-blog/.runts/build");
+        assert!(is_excluded_subpath(&root, &dot_runs));
+
+        // `target` deep under a user project should be excluded too.
+        let target = PathBuf::from("/home/user/project/examples/my-blog/target/x.ts");
+        assert!(is_excluded_subpath(&root, &target));
+    }
+
+    #[test]
+    fn is_excluded_subpath_handles_dot_and_dotdot() {
+        // The current working dir (.) and parent (..) components must
+        // never be flagged as excluded, even though they start with a
+        // dot in the sense of "is_excluded_name('.')" matching some
+        // EXCLUDED entry.
+        let root = PathBuf::from("/home/user/project");
+        let dot = PathBuf::from("/home/user/project/.");
+        let dotdot = PathBuf::from("/home/user/project/..");
+        assert!(!is_excluded_subpath(&root, &dot));
+        assert!(!is_excluded_subpath(&root, &dotdot));
+    }
 }
 
 fn is_hidden_or_test_file(path: &Path) -> bool {
