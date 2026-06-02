@@ -197,7 +197,35 @@ pub fn conv_object(o: &ObjectExpression) -> Result<hir::Expr, anyhow::Error> {
                     _ if p.computed => return None,
                     _ => return None,
                 };
-                let value = convert_expr(&p.value).ok()?;
+                // For method shorthand like `async GET(req, ctx) { ... }`,
+                // p.value is a FunctionExpression with `f.id = None`, so
+                // func_to_decl produces a FunctionDecl with an empty name.
+                // That later panics the codegen on `Ident::new("")`. Use
+                // the key as the function name so the codegen has
+                // something to emit.
+                let value = match &p.value {
+                    Expression::FunctionExpression(f) if f.id.is_none() => {
+                        let method_name = match &p.key {
+                            PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                            PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            PropertyKey::NumericLiteral(n) => n.value.to_string(),
+                            _ => return None,
+                        };
+                        let mut decl =
+                            crate::transpile::parser::stmt::func_to_decl(f);
+                        if let hir::Decl::Function(ref mut func_decl) = decl {
+                            if func_decl.name.is_empty() {
+                                func_decl.name = method_name;
+                            }
+                        }
+                        if let hir::Decl::Function(func_decl) = decl {
+                            hir::Expr::Function(func_decl)
+                        } else {
+                            return None;
+                        }
+                    }
+                    other => convert_expr(other).ok()?,
+                };
                 Some(hir::ObjectMemberExpr {
                     prop: hir::ObjectProp::Init {
                         key,
