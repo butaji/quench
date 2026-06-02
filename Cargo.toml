@@ -19,6 +19,7 @@ members = [
     "crates/runts-client",
     "crates/runts-plugin",
     "crates/runts-fresh",
+    "crates/runts-ink",
     "crates/runts-ratatui",
     "crates/runts-react",
 ]

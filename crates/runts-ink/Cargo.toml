@@ -1,0 +1,43 @@
+[package]
+name = "runts-ink"
+version = "0.1.0"
+edition = "2021"
+description = "Ink-compatible components for runts + ratatui"
+authors = ["runts team"]
+license = "MIT OR Apache-2.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+# We re-export runts-plugin so the Ink `render` function can be
+# used from a project that doesn't have runts as a workspace
+# member — the Ink crate is the only dep the user needs to
+# import.
+runts-plugin = { path = "../runts-plugin" }
+runts-lib = { path = "../runts-lib" }
+ratatui = { version = "0.26", features = ["crossterm"] }
+crossterm = "0.27"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Taffy is the CSS flexbox/grid layout engine that powers
+# real Ink-style layouts. Yoga (the JS Yoga that Ink uses
+# under the hood) is not available in Rust, so we use
+# Taffy which has the same flexbox semantics.
+taffy = "=0.11.0-experimental-cache-fix.3"
+unicode-width = "0.1"
+# rquickjs hosts the JS reconciler (React + Ink). The
+# reconciler is responsible for converting the user's
+# `<Box>`, `<Text>` etc. JSX into a tree of "tree ops"
+# that the Rust side applies to Taffy.
+rquickjs = { version = "0.12", features = ["bindgen", "parallel"] }
+# Tokio drives the event loop and the useAnimation
+# interval. We use the multi-threaded runtime so the
+# render loop and the input poll can run concurrently.
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "time", "sync", "io-util"] }
+
+[dev-dependencies]
+# `tests/` are the Ink integration tests. We re-use the
+# workspace's test patterns.
+pretty_assertions = "1.4"
