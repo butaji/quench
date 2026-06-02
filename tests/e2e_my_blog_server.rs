@@ -324,3 +324,41 @@ fn my_blog_dynamic_route_matches_arbitrary_slugs() {
         "GET /articles/something expected 404, got {status}"
     );
 }
+
+/// The slug that reaches a dynamic-route handler should
+/// actually appear in the response body. Two codegen
+/// paths both surface the slug:
+///
+///   * The JSX-codegen path wraps the inner JSX in a
+///     `<div data-route-param="<slug>">` so the value is
+///     visible as an HTML attribute.
+///   * The stub-codegen path (used for routes where
+///     `try_codegen_jsx` returns None) renders a
+///     `<p>route-param: <code>slug</code></p>` block.
+///
+/// We assert on the JSX-codegen marker (the attribute) since
+/// that is what my-blog currently exercises. If the stub
+/// path becomes the dominant codegen in the future, this
+/// test can be extended to look for the `<p>`/`<code>`
+/// markers too.
+#[test]
+#[ignore]
+fn my_blog_dynamic_route_includes_slug_in_body() {
+    let Some(server) = boot_my_blog() else {
+        return;
+    };
+    let addr = server.addr();
+    for slug in ["introducing-runts", "anything-here", "x"] {
+        let path = format!("/blog/{slug}");
+        let (status, body) = http_get(addr, &path);
+        assert_eq!(status, 200, "GET {path} expected 200, got {status}");
+        // The render emits a `data-route-param="<slug>"`
+        // attribute on the wrapping div. This is the
+        // JSX-codegen path's marker.
+        assert!(
+            body.contains(&format!("data-route-param=\"{slug}\"")),
+            "GET {path} body should contain data-route-param=\"{slug}\", got first 300 bytes: {}",
+            &body[..body.len().min(300)]
+        );
+    }
+}
