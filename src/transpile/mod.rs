@@ -5,6 +5,7 @@ pub mod errors;
 pub mod hir;
 pub mod js_codegen;
 pub mod middlewaregen;
+pub mod parallel;
 pub mod parser;
 pub mod routegen;
 
