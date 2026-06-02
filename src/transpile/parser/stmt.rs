@@ -810,12 +810,7 @@ fn stmt_kind_name(stmt: &Statement) -> &'static str {
     }
 }
 
-pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
-    eprintln!(
-        "PARSE_DEBUG convert_module_item called for stmt: {}",
-        stmt_kind_name(stmt)
-    );
-    // Handle class expression (oxc parses class declarations as VariableDeclaration with ClassExpression init)
+pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {    // Handle class expression (oxc parses class declarations as VariableDeclaration with ClassExpression init)
     if let Statement::VariableDeclaration(v) = stmt {
         if let Some(decl) = v.declarations.first() {
             if let BindingPattern::BindingIdentifier(_id) = &decl.id {
