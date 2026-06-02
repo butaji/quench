@@ -74,7 +74,7 @@ impl OwnershipAnalyzer {
         use Stmt as S;
         match stmt {
             S::Expr { expr } => self.analyze_expr(expr),
-            S::Block(stmts) => self.analyze_block(stmts),
+            S::Block { stmts } => self.analyze_block(stmts),
             S::If {
                 test,
                 consequent,

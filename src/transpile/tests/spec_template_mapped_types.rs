@@ -16,8 +16,8 @@ mod template_mapped_type_tests {
         // Verify Type::Template exists and has correct structure
         let ty = Type::Template {
             parts: vec![
-                TemplatePart::String("hello_".to_string()),
-                TemplatePart::String("_world".to_string()),
+                TemplatePart::String { value: "hello_".to_string() },
+                TemplatePart::String { value: "_world".to_string() },
             ],
             values: vec![],
         };
@@ -34,7 +34,7 @@ mod template_mapped_type_tests {
         // Template type with type placeholders
         let ty = Type::Template {
             parts: vec![
-                TemplatePart::String("on".to_string()),
+                TemplatePart::String { value: "on".to_string() },
             ],
             values: vec![Type::String],
         };
@@ -51,7 +51,7 @@ mod template_mapped_type_tests {
         // Template type with all static parts resolves to StringLiteral
         let ty = Type::Template {
             parts: vec![
-                TemplatePart::String("on".to_string()),
+                TemplatePart::String { value: "on".to_string() },
             ],
             values: vec![],
         };
@@ -65,8 +65,8 @@ mod template_mapped_type_tests {
         // Template type with dynamic parts erases to Value
         let ty = Type::Template {
             parts: vec![
-                TemplatePart::String("on".to_string()),
-                TemplatePart::Type(Type::String), // dynamic
+                TemplatePart::String { value: "on".to_string() },
+                TemplatePart::Type { value: Type::String }, // dynamic
             ],
             values: vec![Type::String],
         };
@@ -78,11 +78,11 @@ mod template_mapped_type_tests {
     #[test]
     fn test_template_type_equality() {
         let ty1 = Type::Template {
-            parts: vec![TemplatePart::String("a".to_string())],
+            parts: vec![TemplatePart::String { value: "a".to_string() }],
             values: vec![],
         };
         let ty2 = Type::Template {
-            parts: vec![TemplatePart::String("a".to_string())],
+            parts: vec![TemplatePart::String { value: "a".to_string() }],
             values: vec![],
         };
         assert_eq!(ty1, ty2);
@@ -137,8 +137,8 @@ mod template_mapped_type_tests {
 
     #[test]
     fn test_template_part_type_variant() {
-        let part = TemplatePart::Type(Type::Number);
-        if let TemplatePart::Type(t) = &part {
+        let part = TemplatePart::Type { value: Type::Number };
+        if let TemplatePart::Type { value: t } = &part {
             assert!(matches!(t, Type::Number));
         } else {
             panic!("Expected TemplatePart::Type");
@@ -147,8 +147,8 @@ mod template_mapped_type_tests {
 
     #[test]
     fn test_template_part_string_variant() {
-        let part = TemplatePart::String("hello".to_string());
-        if let TemplatePart::String(s) = &part {
+        let part = TemplatePart::String { value: "hello".to_string() };
+        if let TemplatePart::String { value: s } = &part {
             assert_eq!(s, "hello");
         } else {
             panic!("Expected TemplatePart::String");
@@ -195,7 +195,7 @@ mod template_mapped_type_tests {
     #[test]
     fn test_type_name_for_template_static() {
         let ty = Type::Template {
-            parts: vec![TemplatePart::String("onClick".to_string())],
+            parts: vec![TemplatePart::String { value: "onClick".to_string() }],
             values: vec![],
         };
         let converter = TypeToRust::new(OutputKind::String);
@@ -208,7 +208,7 @@ mod template_mapped_type_tests {
     #[test]
     fn test_type_name_for_template_dynamic() {
         let ty = Type::Template {
-            parts: vec![TemplatePart::String("on".to_string())],
+            parts: vec![TemplatePart::String { value: "on".to_string() }],
             values: vec![Type::String],
         };
         let converter = TypeToRust::new(OutputKind::String);

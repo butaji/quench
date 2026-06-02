@@ -173,7 +173,7 @@ pub fn conv_template(t: &TemplateLiteral) -> Result<hir::Expr, anyhow::Error> {
     let mut exprs = vec![];
 
     for quasi in &t.quasis {
-        parts.push(hir::TemplatePart::String(quasi.value.raw.to_string()));
+        parts.push(hir::TemplatePart::String { value: quasi.value.raw.to_string() });
     }
     for expr in &t.expressions {
         exprs.push(convert_expr(expr)?);
@@ -547,7 +547,7 @@ fn arrow_stmt_to_hir(s: &Statement) -> Option<hir::Stmt> {
                 };
                 stmts.push(hir::Stmt::Expr { expr: assign });
             }
-            Some(hir::Stmt::Block(stmts))
+            Some(hir::Stmt::Block { stmts })
         }
         Statement::BlockStatement(b) => {
             let stmts: Vec<hir::Stmt> = b
@@ -555,7 +555,7 @@ fn arrow_stmt_to_hir(s: &Statement) -> Option<hir::Stmt> {
                 .iter()
                 .filter_map(arrow_stmt_to_hir)
                 .collect();
-            Some(hir::Stmt::Block(stmts))
+            Some(hir::Stmt::Block { stmts })
         }
         Statement::IfStatement(stmt) => Some(hir::Stmt::If {
             test: convert_expr(&stmt.test).unwrap_or(hir::Expr::Undefined),

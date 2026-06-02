@@ -25,7 +25,7 @@ mod tests {
             if let ModuleItem::Decl(Decl::Function(ref f)) = item {
                 if let Some(ref body) = f.body {
                     for stmt in &body.0 {
-                        if let Stmt::Block(stmts) = stmt {
+                        if let Stmt::Block { stmts } = stmt {
                             for inner in stmts {
                                 if let Stmt::Expr { expr } = inner {
                                     return (*expr).clone();

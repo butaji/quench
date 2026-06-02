@@ -108,7 +108,7 @@ mod spec_control_flow_tests {
         match stmt {
             Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 let body_stmt = body.as_ref();
-                if let Stmt::Block(stmts) = body_stmt {
+                if let Stmt::Block { stmts } = body_stmt {
                     stmts.iter().any(|s| match target {
                         "break" => matches!(s, Stmt::Break { .. }),
                         "continue" => matches!(s, Stmt::Continue { .. }),

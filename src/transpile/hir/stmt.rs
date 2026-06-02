@@ -10,7 +10,14 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind")]
 pub enum Stmt {
     Empty,
-    Block(Vec<Stmt>),
+    /// A block of statements. Uses a struct-variant form rather than
+    /// a newtype tuple so that serde's internally-tagged enum
+    /// representation works (newtype variants like
+    /// `Block(Vec<Stmt>)` are not supported in stable Rust's
+    /// `#[serde(tag = "...")]` mode — they produce the error
+    /// "cannot serialize tagged newtype variant ... containing a
+    /// sequence" on every round-trip through JSON).
+    Block { stmts: Vec<Stmt> },
     Expr {
         expr: Expr,
     },

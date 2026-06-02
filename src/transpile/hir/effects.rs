@@ -83,7 +83,7 @@ impl EffectAnalyzer {
         }
     }
     fn analyze_block_stmt(&mut self, stmt: &Stmt) {
-        if let Stmt::Block(stmts) = stmt {
+        if let Stmt::Block { stmts } = stmt {
             self.analyze_block(stmts);
         }
     }
@@ -138,7 +138,7 @@ impl EffectAnalyzer {
                 self.analyze_expr(obj);
                 self.analyze_stmt(body);
             }
-            S::Block(stmts) => self.analyze_block(stmts),
+            S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             S::Throw { arg } => self.analyze_throw(arg),
             S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_)

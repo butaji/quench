@@ -338,10 +338,17 @@ pub struct TupleElement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
 pub enum TemplatePart {
-    String(String),
-    Type(Type),
+    /// A literal string segment of a template literal (e.g. the "Hello " in
+    /// `\`Hello ${name}!\``). Uses a struct-variant form rather than a newtype
+    /// tuple so that serde's internally-tagged enum representation works
+    /// (newtype variants like `String(String)` are not supported in stable
+    /// Rust's `#[serde(tag = "...")]` mode — they raise "cannot serialize
+    /// tagged newtype variant TemplatePart::String containing a string").
+    String { value: String },
+    /// A Type-carrying template segment (rare in practice; used for embedded
+    /// type assertions inside template literals).
+    Type { value: Type },
 }
 
 #[allow(dead_code)]

@@ -75,7 +75,7 @@ mod completeness_tests {
         let cg = QuoteCodegen::default();
         match stmt {
             Stmt::Empty => cg.gen_stmt(stmt),
-            Stmt::Block(_) => cg.gen_stmt(stmt),
+            Stmt::Block { .. } => cg.gen_stmt(stmt),
             Stmt::Expr { .. } => cg.gen_stmt(stmt),
             Stmt::If { .. } => cg.gen_stmt(stmt),
             Stmt::While { .. } => cg.gen_stmt(stmt),
@@ -243,7 +243,7 @@ mod completeness_tests {
     #[test]
     fn test_expr_template_no_null_fallback() {
         let expr = Expr::Template {
-            parts: vec![TemplatePart::String("hello".into())],
+            parts: vec![TemplatePart::String { value: "hello".into() }],
             exprs: vec![],
         };
         let tokens = QuoteCodegen::default().gen_expr(&expr);
@@ -540,7 +540,7 @@ mod completeness_tests {
 
     #[test]
     fn test_stmt_block_returns_some() {
-        let stmt = Stmt::Block(vec![]);
+        let stmt = Stmt::Block { stmts: vec![] };
         let result = QuoteCodegen::default().gen_stmt(&stmt);
         assert!(result.is_some(), "Block stmt should return Some");
     }
@@ -921,7 +921,7 @@ mod completeness_tests {
     #[test]
     fn test_type_template_codegen() {
         let ty = Type::Template {
-            parts: vec![TemplatePart::String("hello".into())],
+            parts: vec![TemplatePart::String { value: "hello".into() }],
             values: vec![],
         };
         let tokens = QuoteCodegen::default().gen_type(&ty);

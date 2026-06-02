@@ -320,8 +320,8 @@ mod integration_tests {
         let converter = TypeToRust::new(OutputKind::String);
         let template_type = Type::Template {
             parts: vec![
-                TemplatePart::String("Hello, ".into()),
-                TemplatePart::Type(Type::String),
+                TemplatePart::String { value: "Hello, ".into() },
+                TemplatePart::Type { value: Type::String },
             ],
             values: vec![Type::String],
         };
@@ -390,7 +390,7 @@ mod integration_tests {
                         arg: Box::new(Expr::Ident { name: "i".into() }),
                         prefix: true,
                     }),
-                    body: Box::new(Stmt::Block(vec![])),
+                    body: Box::new(Stmt::Block { stmts: vec![] }),
                 }
             ])),
             is_async: false,

@@ -183,7 +183,7 @@ fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
             }
             analyze_stmt_passes(body);
         }
-        hir::Stmt::Block(stmts) => {
+        hir::Stmt::Block { stmts } => {
             for s in stmts {
                 analyze_stmt_passes(s);
             }

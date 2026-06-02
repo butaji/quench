@@ -227,7 +227,7 @@ impl Analyzer {
                     }
                 }
             }
-            Stmt::Block(stmts) => {
+            Stmt::Block { stmts } => {
                 for s in stmts {
                     self.analyze_stmt(s);
                 }
