@@ -772,7 +772,49 @@ fn convert_export_named(e: &ExportNamedDeclaration) -> Vec<hir::ModuleItem> {
     }
 }
 
+/// Human-readable name of the statement variant, for debug logging.
+#[allow(dead_code)]
+fn stmt_kind_name(stmt: &Statement) -> &'static str {
+    match stmt {
+        Statement::BlockStatement(_) => "BlockStatement",
+        Statement::BreakStatement(_) => "BreakStatement",
+        Statement::ContinueStatement(_) => "ContinueStatement",
+        Statement::DebuggerStatement(_) => "DebuggerStatement",
+        Statement::DoWhileStatement(_) => "DoWhileStatement",
+        Statement::EmptyStatement(_) => "EmptyStatement",
+        Statement::ExpressionStatement(_) => "ExpressionStatement",
+        Statement::ForInStatement(_) => "ForInStatement",
+        Statement::ForOfStatement(_) => "ForOfStatement",
+        Statement::ForStatement(_) => "ForStatement",
+        Statement::IfStatement(_) => "IfStatement",
+        Statement::LabeledStatement(_) => "LabeledStatement",
+        Statement::ReturnStatement(_) => "ReturnStatement",
+        Statement::SwitchStatement(_) => "SwitchStatement",
+        Statement::ThrowStatement(_) => "ThrowStatement",
+        Statement::TryStatement(_) => "TryStatement",
+        Statement::WhileStatement(_) => "WhileStatement",
+        Statement::WithStatement(_) => "WithStatement",
+        Statement::VariableDeclaration(_) => "VariableDeclaration",
+        Statement::FunctionDeclaration(_) => "FunctionDeclaration",
+        Statement::ClassDeclaration(_) => "ClassDeclaration",
+        Statement::ImportDeclaration(_) => "ImportDeclaration",
+        Statement::ExportNamedDeclaration(_) => "ExportNamedDeclaration",
+        Statement::ExportDefaultDeclaration(_) => "ExportDefaultDeclaration",
+        Statement::ExportAllDeclaration(_) => "ExportAllDeclaration",
+        Statement::TSInterfaceDeclaration(_) => "TSInterfaceDeclaration",
+        Statement::TSEnumDeclaration(_) => "TSEnumDeclaration",
+        Statement::TSTypeAliasDeclaration(_) => "TSTypeAliasDeclaration",
+        Statement::TSModuleDeclaration(_) => "TSModuleDeclaration",
+        Statement::TSImportEqualsDeclaration(_) => "TSImportEqualsDeclaration",
+        _ => "Other",
+    }
+}
+
 pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
+    eprintln!(
+        "PARSE_DEBUG convert_module_item called for stmt: {}",
+        stmt_kind_name(stmt)
+    );
     // Handle class expression (oxc parses class declarations as VariableDeclaration with ClassExpression init)
     if let Statement::VariableDeclaration(v) = stmt {
         if let Some(decl) = v.declarations.first() {
@@ -805,6 +847,7 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
         Statement::ExportDefaultDeclaration(e) => {
             match &e.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    eprintln!("PARSE_DEBUG ExportDefaultDeclaration FunctionDeclaration: id={:?}", f.id.as_ref().map(|i| i.name.as_str()));
                     // Convert the function to a Decl using the same path as
                     // a regular `function foo() {}` declaration. Previously
                     // this branch built a Decl::Function with empty
@@ -812,7 +855,9 @@ pub fn convert_module_item(stmt: &Statement) -> Vec<hir::ModuleItem> {
                     // actual parameters and JSX body. Downstream codegen
                     // then panicked on the empty `f.id` name and produced
                     // a `pub fn  () -> () { unimplemented!() }` stub.
-                    vec![hir::ModuleItem::Decl(func_to_decl(f))]
+                    let decl = func_to_decl(f);
+                    eprintln!("PARSE_DEBUG -> returning Decl({:?})", decl);
+                    vec![hir::ModuleItem::Decl(decl)]
                 }
                 ExportDefaultDeclarationKind::ClassDeclaration(c) => {
                     vec![hir::ModuleItem::Decl(class_to_hir(c))]

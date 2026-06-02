@@ -402,23 +402,50 @@ async fn main() {{
 
     /// Try to codegen JSX from HIR items JSON.
     /// Returns Some(code) if JSX was detected and codegen succeeded, None otherwise.
-    fn try_codegen_jsx(&self, items: &serde_json::Value, _hir: &runts_plugin::hir::Module) -> Option<String> {
+    fn try_codegen_jsx(
+        &self,
+        items: &serde_json::Value,
+        _hir: &runts_plugin::hir::Module,
+    ) -> Option<String> {
         // Parse items as array
         let items_arr = items.as_array()?;
 
         for item in items_arr {
-            // Find Decl::Function items
-            if item.get("type")?.as_str()? != "Decl" {
-                continue;
-            }
-            let decl = item.get("Decl")?;
-            if decl.get("kind")?.as_str()? != "Function" {
+            // ModuleItem's variants are newtype-tuple. With
+            // `#[serde(tag = "kind")]`, serde doesn't support that combination
+            // and instead silently serializes the *inner* struct's fields at
+            // the top level. So a `ModuleItem::Decl(Decl::Function(f))` shows
+            // up as the FunctionDecl's own fields (e.g. `{"kind": "Function",
+            // "name": "...", ...}`), not as `{"Decl": {...}}`.
+            //
+            // A `ModuleItem::Import(i)` shows up as the Import struct's fields
+            // (no `kind` tag because Import has no `kind` field). A
+            // `ModuleItem::Stmt(s)` shows up as the Stmt variant's fields.
+            //
+            // We accept any of these shapes:
+            //   - externally tagged Decl: `{"Decl": {"kind": "Function", ...}}`
+            //   - flattened: `{"kind": "Function", "name": "...", ...}` or
+            //     `{"name": "handler", "kind": "Const", ...}` (Decl::Variable)
+            //   - Stmt-shaped: `{"kind": "Type", ...}`, `{"kind": "Expr", ...}`
+            //
+            // To find a function declaration, look at the value of the
+            // "kind" key — if it's "Function", it's a Decl::Function (no
+            // matter whether we're inside a `Decl` wrapper or not).
+            let decl_value = if let Some(d) = item.get("Decl") {
+                d.clone()
+            } else {
+                item.clone()
+            };
+
+            // Skip imports (no "kind" key, or "kind" not a function decl).
+            let kind = decl_value.get("kind")?.as_str()?;
+            if kind != "Function" {
                 continue;
             }
 
             // Extract function name and body
-            let name = decl.get("name")?.as_str()?;
-            let body = decl.get("body")?;
+            let name = decl_value.get("name")?.as_str()?;
+            let body = decl_value.get("body")?;
 
             // Check if body is present and contains JSX
             if body.is_null() {
@@ -437,16 +464,26 @@ async fn main() {{
                 return Some(code);
             }
         }
-
         None
     }
 
     /// Find JSX expression in function body.
     /// Returns the JSX expression JSON if found.
     fn find_jsx_in_body(&self, body: &serde_json::Value) -> Option<serde_json::Value> {
-        // Body structure: { "Block": { "stmts": [...] } } or direct JSX
-        if let Some(block) = body.get("Block") {
-            let stmts = block.get("stmts")?.as_array()?;
+        // Body structure varies by HIR encoding:
+        //   - Externally tagged: {"stmts": [...]}      (current, after the
+        //     newtype-variant fix removed the `#[serde(tag = "kind")]` from
+        //     the outer `Stmt` enum, so `Option<Block>` serializes as the
+        //     inner Block's fields directly).
+        //   - Internally tagged (older): {"Block": {"stmts": [...]}}
+        //   - Bare: just the JSX value itself
+        // Try them in order.
+        let stmts_opt: Option<&Vec<serde_json::Value>> = body
+            .get("stmts")
+            .and_then(|v| v.as_array())
+            .or_else(|| body.get("Block").and_then(|b| b.get("stmts")).and_then(|v| v.as_array()));
+
+        if let Some(stmts) = stmts_opt {
             for stmt in stmts {
                 if let Some(jsx) = self.find_jsx_in_stmt(stmt) {
                     return Some(jsx);
