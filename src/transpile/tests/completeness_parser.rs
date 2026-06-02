@@ -530,7 +530,7 @@ mod completeness_parser_tests {
                 if let Some(ref body) = f.body {
                     // Function body is Block([Block([...])]) - look inside nested blocks
                     body.0.iter().any(|s| {
-                        if let Stmt::Block(stmts) = s {
+                        if let Stmt::Block { stmts } = s {
                             stmts.iter().any(|inner| {
                                 if let Stmt::Expr { expr } = inner {
                                     // Look for Assign expression with Await on the right side
@@ -656,7 +656,7 @@ mod completeness_parser_tests {
                 if let Some(ref body) = f.body {
                     // Function body is Block([Block([...])])
                     body.0.iter().any(|s| {
-                        if let Stmt::Block(stmts) = s {
+                        if let Stmt::Block { stmts } = s {
                             stmts.iter().any(|inner| {
                                 if let Stmt::Expr { expr } = inner {
                                     if let Expr::Assign { right, .. } = expr {

@@ -381,9 +381,9 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
         },
         Statement::BreakStatement(_) => hir::Stmt::Break { label: None },
         Statement::ContinueStatement(_) => hir::Stmt::Continue { label: None },
-        Statement::BlockStatement(b) => {
-            hir::Stmt::Block(b.body.iter().map(stmt_to_hir_stmt).collect())
-        }
+        Statement::BlockStatement(b) => hir::Stmt::Block {
+            stmts: b.body.iter().map(stmt_to_hir_stmt).collect(),
+        },
         Statement::EmptyStatement(_) => hir::Stmt::Empty,
         Statement::VariableDeclaration(v) => {
             // Convert to a Block with assignments
@@ -402,7 +402,7 @@ fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
                 };
                 stmts.push(hir::Stmt::Expr { expr: assign });
             }
-            hir::Stmt::Block(stmts)
+            hir::Stmt::Block { stmts }
         }
         Statement::TSEnumDeclaration(_) => hir::Stmt::Empty,
         Statement::TSTypeAliasDeclaration(_) => hir::Stmt::Empty,

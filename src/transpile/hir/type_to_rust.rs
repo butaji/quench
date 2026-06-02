@@ -335,8 +335,8 @@ impl TypeToRust {
 
         for (i, part) in parts.iter().enumerate() {
             match part {
-                crate::transpile::hir::TemplatePart::String(s) => result.push_str(s),
-                crate::transpile::hir::TemplatePart::Type(_) => has_dynamic = true,
+                crate::transpile::hir::TemplatePart::String { value: s } => result.push_str(s),
+                crate::transpile::hir::TemplatePart::Type { value: _ } => has_dynamic = true,
             }
             if i < values.len() {
                 let val_t = self.convert(&values[i]);
