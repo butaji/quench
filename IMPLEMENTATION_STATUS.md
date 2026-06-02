@@ -37,10 +37,10 @@ matches the source files.
 
 ```
 cargo test --workspace --no-fail-fast
-→ 937 passed, 0 failed, 35 ignored
+→ 943 passed, 0 failed, 36 ignored
 
 cargo test --test e2e_my_blog_server -- --include-ignored
-→ 5 passed, 0 failed, 0 ignored (5 ignored by default; opt in
+→ 6 passed, 0 failed, 0 ignored (6 ignored by default; opt in
   with --include-ignored)
 ```
 
@@ -219,13 +219,20 @@ the main remaining gap.
   a matching `axum::extract::Path<T>` extractor on the
   per-route handler: 0 params -> no extractor; 1 param ->
   `Path(slug): Path<String>`; 2+ params ->
-  `Path((a, b)): Path<(String, String)>`. The handler
-  continues to call the per-page `render()` stub (with no
-  arguments), so the codegen also let-binds the param as
-  `_slug` to keep the call site compiling. Wired in
-  commit `3e67d05` and verified end-to-end by
-  `my_blog_dynamic_route_matches_arbitrary_slugs` e2e
-  test.
+  `Path((a, b)): Path<(String, String)>`. The param is
+  threaded into the per-page `render` function so the slug
+  actually appears in the response body. Wired in commits
+  `3e67d05` (Path extractor) and `dbec387` (param through
+  to render) and verified end-to-end by
+  `my_blog_dynamic_route_matches_arbitrary_slugs` and
+  `my_blog_dynamic_route_includes_slug_in_body` e2e tests.
+- **Parallel transpile**: the per-file `parse_to_hir` call
+  in `src/commands/build/mod.rs` has been replaced with
+  a rayon-parallel `parse_files_parallel` from
+  `src/transpile/parallel.rs`. For projects with 4-5 files
+  (my-blog) the wall-clock difference is sub-second, but
+  the lever is now in place for larger projects. Wired in
+  commit `30dacdf`.
 
 - `tests/e2e_my_blog_server.rs` — real HTTP e2e (3 tests,
   all `#[ignore]`d by default to avoid CI port-8000
