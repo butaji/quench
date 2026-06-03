@@ -127,7 +127,7 @@ fn vnode_to_js<'js>(ctx: &Ctx<'js>, node: &VNode) -> JsResult<Value<'js>> {
             };
             props.set("borderStyle", style)?;
             if let Some(p) = b.padding_left {
-                props.set("paddingX", p)?;
+                props.set("paddingX", p as i32)?;
             }
             if let Some(p) = b.padding_top {
                 props.set("paddingY", p)?;
@@ -216,8 +216,16 @@ fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
         if let Ok(p) = props.get::<_, Value>("paddingY") {
             b = b.padding_y(to_u16(&p));
         }
+        // Only apply `padding` if the value is
+        // a real number. `props.get("padding")`
+        // returns Ok(Undefined) when the key is
+        // absent, which would otherwise reset all
+        // four padding fields to 0 and clobber
+        // the paddingX/paddingY we just set.
         if let Ok(p) = props.get::<_, Value>("padding") {
-            b = b.padding(to_u16(&p));
+            if p.as_int().is_some() || p.as_float().is_some() {
+                b = b.padding(to_u16(&p));
+            }
         }
         for i in 0..children.len() {
             if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) {
@@ -340,15 +348,46 @@ fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
             if let Ok(p) = props.get::<_, Value>("paddingY") {
                 b = b.padding_y(to_u16(&p));
             }
+            // Only apply `padding` if the value is
+            // a real number. `props.get("padding")`
+            // returns Ok(Undefined) when the key is
+            // absent, which would otherwise reset all
+            // four padding fields to 0 and clobber
+            // the paddingX/paddingY we just set.
             if let Ok(p) = props.get::<_, Value>("padding") {
-                b = b.padding(to_u16(&p));
+                if p.as_int().is_some() || p.as_float().is_some() {
+                    b = b.padding(to_u16(&p));
+                }
             }
             if let Ok(children_v) = props.get::<_, Value>("children") {
-                if let Some(children) = children_v.as_object() {
-                    let len = children.len();
+                // Accept both arrays and objects.
+                // Real Ink passes arrays; the
+                // `vnode_to_js` round-trip stores
+                // children as an object.
+                let child_count: Option<usize> = children_v
+                    .as_array()
+                    .map(|a| a.len())
+                    .or_else(|| {
+                        children_v.as_object().map(|o| o.len())
+                    });
+                if let Some(len) = child_count {
                     for i in 0..len {
-                        if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) {
-                            if let Ok(c) = vnode_from_js(&ctx, &child) {
+                        let key = i.to_string();
+                        let child_val = if let Some(arr) =
+                            children_v.as_array()
+                        {
+                            arr.get(i)
+                        } else if let Some(obj) =
+                            children_v.as_object()
+                        {
+                            obj.get::<_, Value>(key.as_str())
+                        } else {
+                            continue;
+                        };
+                        if let Ok(child) = child_val {
+                            if let Ok(c) =
+                                vnode_from_js(&ctx, &child)
+                            {
                                 b = b.child(c);
                             }
                         }
