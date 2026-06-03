@@ -117,6 +117,41 @@ fn test_codegen_entry_generates_main() {
 }
 
 #[test]
+fn test_codegen_flex_grow_envelope_unwrap() {
+    // `<Box flexGrow={1}>` should emit
+    // `.flex_grow(1f64)` even though the HIR
+    // serializes the brace-expression numeric
+    // value as `{"Expr": {"Number": 1.0}}`.
+    let plugin = ratatui_plugin();
+    let box_jsx = serde_json::json!({
+        "kind": "JSX",
+        "opening": {
+            "name": { "Ident": "Box" },
+            "attrs": [
+                {
+                    "Attr": {
+                        "name": "flexGrow",
+                        "value": {
+                            "Expr": {
+                                "Number": 1.0
+                            }
+                        }
+                    }
+                }
+            ],
+            "self_closing": false
+        },
+        "children": []
+    });
+    let items = items_with_fn("FlexGrowTest", box_jsx);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some(), "codegen returned None");
+    let code = normalize(&result.unwrap());
+    assert!(
+        code.contains("flex_grow"),
+        "missing flex_grow in: {code}"
+    );
+}
 fn test_cargo_deps() {
     let plugin = ratatui_plugin();
     let deps = plugin.cargo_deps();
