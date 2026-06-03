@@ -648,7 +648,12 @@ pub async fn run_plugin_build(
         // codegen_entry receives modules with route metadata only - this is sufficient
         // for entry point generation (route table building). Per-module code gen
         // happens in codegen_module which receives the full HIR as JSON.
-        let items_json = hir_value.get("items").cloned();
+        // The HIR is serialized with the `items_json` key
+        // (alias for `items` in runts_plugin::hir::Module).
+        let items_json = hir_value
+            .get("items_json")
+            .or_else(|| hir_value.get("items"))
+            .cloned();
         let pm = PluginModule::new()
             .with_source_path(rel_path_str)
             .with_route_info(route_info.clone())

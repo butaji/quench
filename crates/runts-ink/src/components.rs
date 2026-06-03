@@ -615,6 +615,14 @@ impl Text {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Newline;
 
+impl Newline {
+    /// Constructor for symmetry with the other
+    /// components. Codegen emits `Newline::new()`.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Spacer
 // ---------------------------------------------------------------------------
