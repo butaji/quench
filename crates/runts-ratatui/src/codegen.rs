@@ -1010,13 +1010,13 @@ pub(crate) mod jsx {
     /// Ink `<Newline>` — a vertical separator. Emits
     /// `runts_ink::Newline::new().into()`.
     fn widget_ink_newline() -> TokenStream {
-        quote! { runts_ink::Newline::new().into() }
+        quote! { { let __n: runts_ink::VNode = runts_ink::Newline::new().into(); __n } }
     }
 
     /// Ink `<Spacer>` — a flexbox separator. Emits
     /// `runts_ink::Spacer::new().into()`.
     fn widget_ink_spacer() -> TokenStream {
-        quote! { runts_ink::Spacer::new().into() }
+        quote! { { let __s: runts_ink::VNode = runts_ink::Spacer::new().into(); __s } }
     }
 
     /// Convert a JSX child (already a normalized
