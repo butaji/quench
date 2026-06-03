@@ -1,11 +1,11 @@
 // Input example — pure Ink source that shows
 // a prompt with a label and current value.
-// Exercises the `<Text>` with multiple lines
-// and the `wrap` prop on Box.
+// Exercises the `bold`, `underline`, and
+// `dimColor` props on Text.
 //
-// Renders a labelled, wrapped text block with
-// a "User input: <text>" prompt and a helper
-// line.
+// Renders a round-bordered box with a
+// "User input" title, a value line, and a
+// footer hint.
 //
 // All three environments must produce the
 // same look:
@@ -15,11 +15,11 @@
 
 import { Box, Text } from 'ink';
 
-export default function Input({ value = 'Type something here' }) {
+export default function Input() {
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={2} paddingY={1}>
       <Text bold underline>User input</Text>
-      <Text>{value}</Text>
+      <Text>Type something here</Text>
       <Text dimColor>Press Enter to submit, q to quit.</Text>
     </Box>
   );
