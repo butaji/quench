@@ -1,13 +1,13 @@
 //! Tests for the Ratatui plugin.
 
 use runts_plugin::Plugin;
+use serde_json::json;
 
 use crate::{codegen, RatatuiPlugin};
 
 fn ratatui_plugin() -> RatatuiPlugin {
     RatatuiPlugin
 }
-
 /// Normalize quote's spacing around :: for test assertions
 fn normalize(s: &str) -> String {
     let s = s.replace(" :: ", "::");
@@ -233,6 +233,117 @@ fn test_try_codegen_jsx_row() {
     assert!(code.contains("Left"), "{}", code);
     assert!(code.contains("Right"), "{}", code);
 }
+
+#[test]
+// allow:too_many_lines
+fn test_try_codegen_jsx_borderstyle_round() {
+    // The HIR emits `borderStyle` as
+    // `{String: "round"}` (parser envelope). The
+    // codegen must extract "round" and emit
+    // `BorderStyle::Round`, not the default Single.
+    let plugin = ratatui_plugin();
+    let items = json!([
+        {
+            "Decl": {
+                "Function": {
+                    "name": "App",
+                    "generics": [],
+                    "params": [],
+                    "return_type": null,
+                    "body": [{
+                        "kind": "Return",
+                        "arg": {
+                            "JSX": {
+                                "opening": {
+                                    "name": {"Ident": "Box"},
+                                    "attrs": [
+                                        {"Attr": {
+                                            "name": "borderStyle",
+                                            "value": {"String": "round"}
+                                        }}
+                                    ],
+                                    "self_closing": false,
+                                },
+                                "closing": {"name": {"Ident": "Box"}},
+                                "children": [
+                                    {"kind": "Text", "text": "hi"}
+                                ],
+                            }
+                        }
+                    }]
+                }
+            }
+        }
+    ]);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some());
+    let code = normalize(&result.unwrap());
+    assert!(
+        code.contains("BorderStyle::Round"),
+        "expected Round in: {code}",
+        code = code
+    );
+}
+
+#[test]
+// allow:too_many_lines
+fn test_try_codegen_jsx_paddingx_expr() {
+    // The HIR emits `paddingX={2}` as
+    // `{Expr: {Number: 2.0}}`. The codegen must
+    // extract the number and emit `.padding_x(2)`.
+    let plugin = ratatui_plugin();
+    let items = json!([
+        {
+            "Decl": {
+                "Function": {
+                    "name": "App",
+                    "generics": [],
+                    "params": [],
+                    "return_type": null,
+                    "body": [{
+                        "kind": "Return",
+                        "arg": {
+                            "JSX": {
+                                "opening": {
+                                    "name": {"Ident": "Box"},
+                                    "attrs": [
+                                        {"Attr": {
+                                            "name": "paddingX",
+                                            "value": {"Expr": {"Number": 2.0}}
+                                        }},
+                                        {"Attr": {
+                                            "name": "paddingY",
+                                            "value": {"Expr": {"Number": 1.0}}
+                                        }}
+                                    ],
+                                    "self_closing": false,
+                                },
+                                "closing": {"name": {"Ident": "Box"}},
+                                "children": [
+                                    {"kind": "Text", "text": "hi"}
+                                ],
+                            }
+                        }
+                    }]
+                }
+            }
+        }
+    ]);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some());
+    let code = normalize(&result.unwrap());
+    assert!(
+        code.contains("padding_x"),
+        "expected padding_x(2) in: {code}",
+        code = code
+    );
+    assert!(
+        code.contains("padding_y"),
+        "expected padding_y(1) in: {code}",
+        code = code
+    );
+}
+
 
 #[test]
 fn test_try_codegen_jsx_no_jsx_returns_none() {
