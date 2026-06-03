@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 /// Run dev server using plugin lifecycle hooks
+// allow:complexity
+// allow:too_many_lines
 pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String) -> Result<()> {
     let plugin = plugin::get_plugin(&plugin_name)?;
 
@@ -23,6 +25,10 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
     };
 
     let modules = scan_modules(&project_root)?;
+    // Skip the initial cargo build for the Ink dev
+    // path — the rquickjs+bridge path doesn't
+    // need a Rust compile.
+    let has_tsx = modules.iter().any(|m| m.ends_with(".tsx"));
     let mut ctx = DevContext {
         root: project_root.clone(),
         modules,
@@ -30,15 +36,24 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
 
     // Run initial full build to populate .runts/build directory AND compile
     // This is required because FreshDevState::compile_project() expects
-    // the build directory to exist and compiles there (it runs cargo build in .runts/build)
-    tracing::info!("Running initial build...");
-    if let Err(e) = build::run_full_build(_config, project_root.clone(), false).await
-        .context("Initial build failed")
-    {
-        tracing::error!("Initial build failed: {}", e);
-        return Err(e);
+    // the build directory to exist and compiles there (it runs cargo build in .runts/build).
+    // Skip for the ratatui plugin when an Ink source
+    // is present — the Ink dev path runs the .tsx
+    // through rquickjs+bridge (no cargo compile).
+    let skip_initial_build = plugin_name == "ratatui" && has_tsx;
+    if !skip_initial_build {
+        tracing::info!("Running initial build...");
+        if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
+            .await
+            .context("Initial build failed")
+        {
+            tracing::error!("Initial build failed: {}", e);
+            return Err(e);
+        }
+        tracing::info!("Initial build complete, starting dev server...");
+    } else {
+        tracing::info!("Ink dev path: skipping cargo build, using rquickjs+bridge");
     }
-    tracing::info!("Initial build complete, starting dev server...");
 
     let mut state = plugin.dev_init(&mut ctx)?;
     let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;

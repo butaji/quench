@@ -90,6 +90,10 @@ pub struct DevContext {
 pub trait DevState: Send + Sync {
     /// Convert state to Any for safe downcasting.
     fn as_any(&self) -> &dyn Any;
+    /// Convert state to Any for safe downcasting
+    /// (mutable). Needed by `dev_reload` to mark
+    /// state as dirty.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// Action returned by dev_run_once.
@@ -177,6 +181,9 @@ pub struct DefaultDevState;
 
 impl DevState for DefaultDevState {
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
