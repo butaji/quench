@@ -68,6 +68,13 @@ pub enum Commands {
         expr: String,
     },
 
+    /// Dump the HIR JSON for a single .tsx file.
+    /// Used for debugging the JSX codegen.
+    InspectHir {
+        /// Source file
+        path: PathBuf,
+    },
+
     /// Generate Rust code from TypeScript using QuoteCodegen (in-memory)
     Codegen {
         /// Source file or expression
