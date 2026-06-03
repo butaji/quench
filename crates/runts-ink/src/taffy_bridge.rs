@@ -73,7 +73,14 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
     s.size = taffy::Size {
         width: match b.width {
             Some(w) => taffy::Dimension::length(w as f32),
-            None => taffy::Dimension::AUTO,
+            // Default: a Box with no explicit
+            // `width` fills the parent's
+            // available width. This matches real
+            // Ink where the outermost Box in a
+            // component fills the terminal width
+            // by default. Use `width={"auto"}` (or
+            // a concrete number) to opt out.
+            None => taffy::Dimension::percent(1.0),
         },
         height: match b.height {
             Some(h) => taffy::Dimension::length(h as f32),
@@ -95,6 +102,24 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
         top: length_from(b.padding_top),
         bottom: length_from(b.padding_bottom),
     };
+    // Taffy needs the border thickness to compute
+    // the box's content area correctly. The
+    // Ratatui `Block` widget draws 1-cell-thick
+    // borders for any active `borders.{top,...}`
+    // flag. Mirror that here so Taffy offsets
+    // child content by the border width and adds
+    // border thickness to the auto-sized box.
+    let border_w = if b.borders.left || b.borders.right { 1.0 } else { 0.0 };
+    let border_h = if b.borders.top || b.borders.bottom { 1.0 } else { 0.0 };
+    let border_w_r = if b.borders.right { 1.0 } else { 0.0 };
+    let border_h_b = if b.borders.bottom { 1.0 } else { 0.0 };
+    s.border = taffy::Rect {
+        left: taffy::LengthPercentage::length(if b.borders.left { 1.0 } else { 0.0 }),
+        right: taffy::LengthPercentage::length(if b.borders.right { 1.0 } else { 0.0 }),
+        top: taffy::LengthPercentage::length(if b.borders.top { 1.0 } else { 0.0 }),
+        bottom: taffy::LengthPercentage::length(if b.borders.bottom { 1.0 } else { 0.0 }),
+    };
+    let _ = (border_w, border_h, border_w_r, border_h_b);
     s.margin = taffy::Rect {
         left: length_auto_from(b.margin_left),
         right: length_auto_from(b.margin_right),

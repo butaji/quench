@@ -780,20 +780,22 @@ impl TaffyTree {
         // content (Ink's shrink-to-fit semantics).
         let text_lookup: std::collections::HashMap<taffy::NodeId, String> =
             layout.text_by_node.clone();
-        // Ask Taffy for the intrinsic content
-        // size. We pass `MaxContent` for both
-        // axes instead of the real viewport. This
-        // makes auto-sized Boxes (Ink's default)
-        // collapse to their content's intrinsic
-        // size rather than expanding to fill the
-        // available viewport. The viewport is
-        // still passed via the available_space
-        // arg of the measure function for
-        // clamping purposes; we override it here
-        // to MaxContent so the root is intrinsic.
+        // Pass the actual viewport as
+        // `Definite` so a root Box with
+        // `width: percent(1.0)` fills it. The
+        // measure function still returns the
+        // text's intrinsic size; the parent Box
+        // only uses that when the Box itself is
+        // `width: auto` (shrink-to-fit).
         let intrinsic_viewport = Size::<AvailableSpace> {
-            width: AvailableSpace::MaxContent,
-            height: AvailableSpace::MaxContent,
+            width: match viewport.width {
+                AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
+                _ => AvailableSpace::MaxContent,
+            },
+            height: match viewport.height {
+                AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
+                _ => AvailableSpace::MaxContent,
+            },
         };
         layout
             .taffy
@@ -843,9 +845,6 @@ impl TaffyTree {
             *r = (0, 0, 0, 0);
         }
         collect_rects(&layout.taffy, &self.taffy_index, &mut layout.rects);
-        for (i, &(x, y, w, h)) in layout.rects.iter().enumerate() {
-            eprintln!("DBG rect[{i}] = ({x},{y}) {w}x{h}");
-        }
     }
 }
 
