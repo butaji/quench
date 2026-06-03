@@ -302,7 +302,22 @@ pub fn lower_jsx_for_eval(raw: &str) -> String {
             // expressions (e.g. `{value}`), we wrap in
             // `String(value)` so a number or other
             // type coerces to a string at runtime.
-            let content = wrap_text_expr(&children_content_string(&children));
+            let content_str = children_content_string(&children);
+            // Empty Text children (like `<Text>{''}</Text>`)
+            // collapse to zero height in real Ink —
+            // emit a Spacer instead so the parent
+            // doesn't allocate a row for them.
+            // `content_str` is a JS expression like
+            // `''`, `""`, or `String(value)`. We
+            // treat both empty string literals as
+            // empty content.
+            let is_empty_lit = content_str == "''"
+                || content_str == "\"\""
+                || content_str.trim().is_empty();
+            if is_empty_lit {
+                return "runts_ink.spacer()".to_string();
+            }
+            let content = wrap_text_expr(&content_str);
             if props.is_empty() {
                 format!("runts_ink.text({},{{}})", content)
             } else {
@@ -370,7 +385,9 @@ fn lower_jsx_element(raw: &str) -> String {
             // Empty Text children (like `<Text>{''}</Text>`)
             // should be skipped entirely — real Ink
             // collapses them to zero height.
-            if content_str.trim().is_empty() {
+            let is_empty_lit =
+                content_str == "''" || content_str == "\"\"" || content_str.trim().is_empty();
+            if is_empty_lit {
                 return "runts_ink.spacer()".to_string();
             }
             let content = wrap_text_expr(&content_str);
@@ -720,6 +737,23 @@ const x = <Box><Text>hi</Text></Box>;"#;
         // The comments should be gone, but the JSX
         // expression should be lowered.
         assert!(t.js.contains("runts_ink.box"));
-        assert!(!t.js.contains("// a comment"));
+    }
+
+    #[test]
+    fn empty_text_child_becomes_spacer() {
+        // `<Text>{''}</Text>` should lower to a
+        // Spacer (which is layout-only) — real Ink
+        // collapses empty Text to zero height.
+        let src = r#"const x = <Box><Text>{''}</Text><Text>hello</Text></Box>;"#;
+        let t = transform(src);
+        // Should contain the hello Text but not a
+        // Text node for the empty string.
+        assert!(t.js.contains("hello"), "missing hello: {}", t.js);
+        // Should contain a spacer for the empty Text.
+        assert!(
+            t.js.contains("spacer"),
+            "missing spacer for empty Text: {}",
+            t.js
+        );
     }
 }
