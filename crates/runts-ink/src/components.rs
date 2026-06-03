@@ -327,6 +327,12 @@ impl Box {
         self
     }
 
+    /// Set the flex-grow factor.
+    pub fn flex_grow(mut self, grow: f32) -> Self {
+        self.flex_grow = grow;
+        self
+    }
+
     /// Set the justify-content (main-axis
     /// alignment) of the children.
     pub fn justify_content(

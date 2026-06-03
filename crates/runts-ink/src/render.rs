@@ -1009,7 +1009,19 @@ fn build_node(
             id
         }
         VNodeContent::Newline(_) => {
-            let style = taffy::Style::default();
+            // A Newline is a single-row separator
+            // in a column flex container. We give
+            // it a fixed height of 1 (one terminal
+            // row) so it actually takes up space —
+            // `Dimension::AUTO` would collapse to
+            // zero height because the measure
+            // function has no text to measure.
+            let mut style = taffy::Style::default();
+            style.display = taffy::Display::Block;
+            style.size = taffy::Size {
+                width: taffy::Dimension::AUTO,
+                height: taffy::Dimension::length(1.0),
+            };
             let id = taffy.new_leaf(style).expect("taffy: new leaf for newline");
             record(id, taffy_index);
             id
