@@ -860,8 +860,15 @@ pub(crate) mod jsx {
                 builder = quote! { #builder #call };
             }
         }
-        // Append each child as a `.child(expr)` call.
+        // Append each non-whitespace child as a
+        // `.child(expr)` call. JSX whitespace
+        // (newlines and indentation between
+        // elements) is dropped here to match
+        // real Ink's behavior.
         for child in &children {
+            if is_jsx_whitespace(child) {
+                continue;
+            }
             let child_expr = child_to_vnode(child);
             builder = quote! { #builder.child(#child_expr) };
         }
@@ -1012,6 +1019,28 @@ pub(crate) mod jsx {
     /// `TokenStream` expression that produces a
     /// `runts_ink::VNode`.
     fn child_to_vnode(child: &serde_json::Value) -> TokenStream {
+        // Whitespace-only text between JSX elements
+        // (e.g. newlines and indent between
+        // `<Box>` and `<Text>...</Text>`) is
+        // ignored by real Ink. Detect it in any
+        // shape: single-key `{Text: "..."}` or
+        // normalized `{kind: "Text", text: "..."}`,
+        // and skip it.
+        if let Some(s) = child
+            .get("Text")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                if child.get("kind").and_then(|k| k.as_str()) == Some("Text") {
+                    child.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
+        {
+            if s.chars().all(|c| c.is_whitespace()) {
+                return quote! { runts_ink::Spacer::new() };
+            }
+        }
         // Short-circuit: a normalized `{kind: "Text",
         // text: "..."}` child (from
         // `extract_jsx_children`) is a bare Text,
@@ -1203,16 +1232,86 @@ pub(crate) mod jsx {
     /// Map a `borderStyle` JSON value to a
     /// `runts_ink::BorderStyle` token.
     fn border_style_token(value: &serde_json::Value) -> TokenStream {
+        // Try as plain string first.
         if let Some(s) = value.as_str() {
-            return match s {
-                "round" => quote! { runts_ink::BorderStyle::Round },
-                "double" => quote! { runts_ink::BorderStyle::Double },
-                "bold" => quote! { runts_ink::BorderStyle::Bold },
-                "classic" => quote! { runts_ink::BorderStyle::Classic },
-                _ => quote! { runts_ink::BorderStyle::Single },
-            };
+            return border_style_for_str(s);
         }
-        quote! { runts_ink::BorderStyle::Single }
+        // Parser shape: single-key wrappers.
+        if let Some(s) = value.get("String").and_then(|v| v.as_str()) {
+            return border_style_for_str(s);
+        }
+        if let Some(expr) = value.get("Expr") {
+            if let Some(s) = expr.get("String").and_then(|v| v.as_str()) {
+                return border_style_for_str(s);
+            }
+        }
+        border_style_for_str("single")
+    }
+
+    /// Map a `borderStyle` string to a token.
+    fn border_style_for_str(s: &str) -> TokenStream {
+        match s {
+            "round" => quote! { runts_ink::BorderStyle::Round },
+            "double" => quote! { runts_ink::BorderStyle::Double },
+            "bold" => quote! { runts_ink::BorderStyle::Bold },
+            "classic" => quote! { runts_ink::BorderStyle::Classic },
+            "singleDouble" | "single-double" => {
+                quote! { runts_ink::BorderStyle::SingleDouble }
+            }
+            "doubleSingle" | "double-single" => {
+                quote! { runts_ink::BorderStyle::DoubleSingle }
+            }
+            "classicAlt" | "classic-alt" => {
+                quote! { runts_ink::BorderStyle::ClassicAlt }
+            }
+            _ => quote! { runts_ink::BorderStyle::Single },
+        }
+    }
+
+    /// Is this a JSX child that is just
+    /// whitespace (a newline + indent between
+    /// sibling elements)? Real Ink ignores
+    /// these; we should too.
+    fn is_jsx_whitespace(child: &serde_json::Value) -> bool {
+        let s = child
+            .get("Text")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                if child.get("kind").and_then(|k| k.as_str()) == Some("Text") {
+                    child.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            });
+        match s {
+            Some(s) => !s.is_empty() && s.chars().all(|c| c.is_whitespace()),
+            None => false,
+        }
+    }
+
+    /// Extract a numeric padding value from any
+    /// HIR value shape (plain number, Expr
+    /// wrapper, parser shape).
+    fn parse_padding_value(value: &serde_json::Value) -> Option<u16> {
+        if let Some(n) = value.as_u64() {
+            return Some(n as u16);
+        }
+        if let Some(n) = value.as_f64() {
+            return Some(n as u16);
+        }
+        // Parser shape: `{Expr: {Number: 2.0}}` or
+        // `{Number: 2.0}` directly.
+        if let Some(n) = value
+            .get("Expr")
+            .and_then(|e| e.get("Number"))
+            .and_then(|n| n.as_f64())
+        {
+            return Some(n as u16);
+        }
+        if let Some(n) = value.get("Number").and_then(|n| n.as_f64()) {
+            return Some(n as u16);
+        }
+        None
     }
 
     /// Map a `color` JSON value to a
@@ -1293,19 +1392,19 @@ pub(crate) mod jsx {
     ) -> Option<TokenStream> {
         match name {
             "padding" => {
-                let n = value.as_u64()?;
+                let n = parse_padding_value(value)?;
                 Some(quote! { .padding(#n) })
             }
             "paddingX" | "paddingx" => {
-                let n = value.as_u64()?;
+                let n = parse_padding_value(value)?;
                 Some(quote! { .padding_x(#n) })
             }
             "paddingY" | "paddingy" => {
-                let n = value.as_u64()?;
+                let n = parse_padding_value(value)?;
                 Some(quote! { .padding_y(#n) })
             }
             "paddingTop" | "paddingtop" => {
-                let n = value.as_u64()?;
+                let n = parse_padding_value(value)?;
                 Some(quote! { .padding_top(#n) })
             }
             "paddingBottom" | "paddingbottom" => {
