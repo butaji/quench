@@ -1525,6 +1525,7 @@ pub(crate) mod jsx {
                 // envelope shape that the HIR
                 // uses for brace-expression
                 // numeric attrs.
+                eprintln!("DBG flexGrow codegen: value = {value:?}");
                 let n = value
                     .as_f64()
                     .or_else(|| {
@@ -1533,8 +1534,8 @@ pub(crate) mod jsx {
                             .and_then(|e| e.get("Number"))
                             .and_then(|n| n.as_f64())
                     })
-                    .or_else(|| value.get("Number").and_then(|n| n.as_f64()))
-                    ?;
+                    .or_else(|| value.get("Number").and_then(|n| n.as_f64()))?;
+                eprintln!("DBG flexGrow codegen: n = {n}");
                 Some(quote! { .flex_grow(#n) })
             }
             "flexShrink" | "flexshrink" => {
