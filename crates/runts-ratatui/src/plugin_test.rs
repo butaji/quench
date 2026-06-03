@@ -57,12 +57,17 @@ fn jsx_row(children: Vec<serde_json::Value>) -> serde_json::Value {
 }
 
 fn fn_decl(name: &str, body: serde_json::Value) -> serde_json::Value {
+    // Use the real HIR shape: items are
+    // `{Decl: {Function: {name, body: [...]}}}`.
+    // The body is a flat array of statements,
+    // not `{Block: {stmts: [...]}}` (that was a
+    // hand-rolled fixture shape, not the parser).
     serde_json::json!({
-        "type": "Decl",
         "Decl": {
-            "kind": "Function",
-            "name": name,
-            "body": { "Block": { "stmts": [{ "kind": "Return", "arg": body }] } }
+            "Function": {
+                "name": name,
+                "body": [{ "kind": "Return", "arg": body }]
+            }
         }
     })
 }
@@ -86,13 +91,18 @@ fn test_ratatui_plugin_help() {
 #[test]
 fn test_codegen_module_returns_valid_rust() {
     let plugin = ratatui_plugin();
+    // Opaque JSON that's not a valid HIR (wrong
+    // shape) — exercises the codegen-stub fallback
+    // path. The fallback emits a `Hello from
+    // Ratatui!` placeholder wrapped in the runts
+    // Ink codegen module wrapper.
     let result = plugin.codegen_module(r#"{"type":"Text","props":{"text":"hi"}}"#);
     assert!(result.is_ok());
     let code = result.unwrap();
-    assert!(code.contains("pub fn render"));
-    assert!(code.contains("Paragraph :: new"));
-    // Fallback now includes source trace
-    assert!(code.contains("source:"));
+    assert!(code.contains("fn main"));
+    assert!(code.contains("runts_ink"));
+    // Fallback still includes the source trace.
+    assert!(code.contains("source:") || code.contains("unknown"));
 }
 
 #[test]
@@ -171,8 +181,14 @@ fn test_try_codegen_jsx_simple_text() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
-    assert!(code.contains("Paragraph::new"), "{}", code);
+    // New codegen emits a runts-ink `Text::new(...)`
+    // builder call, not a Ratatui Paragraph. Both
+    // paths wrap in a `fn main()` that uses
+    // `runts_ink::render_to_string`.
+    assert!(code.contains("Text::new"), "{}", code);
     assert!(code.contains("Hello World"), "{}", code);
+    assert!(code.contains("fn main"), "{}", code);
+    assert!(code.contains("runts_ink::render_to_string"), "{}", code);
 }
 
 #[test]
@@ -183,9 +199,12 @@ fn test_try_codegen_jsx_block_with_title() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
-    assert!(code.contains("Block::default"), "{}", code);
-    assert!(code.contains("title"), "{}", code);
+    // `<block title="...">` lowers to a runts-ink
+    // `Box::new().border_style(...)` chain. The
+    // title becomes the first Text child.
+    assert!(code.contains("Box::new"), "{}", code);
     assert!(code.contains("My App"), "{}", code);
+    assert!(code.contains("Content"), "{}", code);
 }
 
 #[test]
@@ -200,8 +219,10 @@ fn test_try_codegen_jsx_row() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
-    assert!(code.contains("Layout::default"), "{}", code);
-    assert!(code.contains("Horizontal"), "{}", code);
+    // `<row>` lowers to a runts-ink `Box::new().flex_direction(row)`
+    // with multiple `.child(...)` calls.
+    assert!(code.contains("Box::new"), "{}", code);
+    assert!(code.contains("flex_direction"), "{}", code);
     assert!(code.contains("Left"), "{}", code);
     assert!(code.contains("Right"), "{}", code);
 }
@@ -228,7 +249,9 @@ fn test_try_codegen_jsx_paragraph() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
-    assert!(code.contains("Paragraph::new"), "{}", code);
+    // `<paragraph>` is a Text in the new codegen,
+    // lowered to `Text::new("...")`.
+    assert!(code.contains("Text::new"), "{}", code);
     assert!(code.contains("Test paragraph"), "{}", code);
 }
 
@@ -244,8 +267,10 @@ fn test_try_codegen_jsx_col() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
-    assert!(code.contains("Layout::default"), "{}", code);
-    assert!(code.contains("Vertical"), "{}", code);
+    // `<col>` lowers to `Box::new().flex_direction(col)`.
+    assert!(code.contains("Box::new"), "{}", code);
+    assert!(code.contains("flex_direction"), "{}", code);
+    assert!(code.contains("Top"), "{}", code);
 }
 
 #[test]
@@ -257,6 +282,9 @@ fn test_try_codegen_jsx_nested_block_in_block() {
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
     let code = normalize(&result.unwrap());
+    // Nested Box has multiple `child` calls.
+    assert!(code.contains("Box::new"), "{}", code);
+    assert!(code.contains("child"), "{}", code);
     assert!(code.contains("Outer"), "{}", code);
     assert!(code.contains("Inner text"), "{}", code);
 }
@@ -307,11 +335,14 @@ fn test_ink_box_with_column_direction_codegens_paragraph() {
     let items = items_with_fn("App", inner);
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some(), "no widget code for Ink Box");
-    let code = result.unwrap();
-    assert!(code.contains("pub fn render"));
-    // The Box maps to a paragraph (placeholder for the
-    // recursive layout work).
-    assert!(code.contains("Paragraph"));
+    let code = normalize(&result.unwrap());
+    // The new codegen emits a `fn main` that uses
+    // `runts_ink::Box::new()` etc. The Box should
+    // be lowered to a real `runts_ink::Box` builder
+    // call (not a `ratatui::Paragraph` placeholder).
+    assert!(code.contains("fn main"));
+    assert!(code.contains("runts_ink::Box::new"));
+    assert!(code.contains("FlexDirection::Column"));
 }
 
 /// A bare `<Newline>` (or `<Spacer>`) should produce a
@@ -333,6 +364,9 @@ fn test_ink_newline_codegens_empty_paragraph() {
     let items = items_with_fn("App", inner);
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some());
-    let code = result.unwrap();
-    assert!(code.contains("Paragraph"));
+    let code = normalize(&result.unwrap());
+    // `<Newline>` should lower to a
+    // `runts_ink::Newline::new().into()` VNode
+    // expression, not a Ratatui Paragraph stub.
+    assert!(code.contains("runts_ink::Newline::new"));
 }
