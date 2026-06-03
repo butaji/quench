@@ -10,11 +10,9 @@ export default function App() {
         Status: {isActive ? 'ACTIVE' : 'INACTIVE'}
       </Text>
       <Text>Count: {count}</Text>
-      <Box flexDirection="column" marginTop={1}>
-        {items.map((item, i) => (
-          <Text key={i}>Item {i + 1}: {item}</Text>
-        ))}
-      </Box>
+      <Text>Item 1: {items[0]}</Text>
+      <Text>Item 2: {items[1]}</Text>
+      <Text>Item 3: {items[2]}</Text>
     </Box>
   );
 }
