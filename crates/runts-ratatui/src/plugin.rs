@@ -123,19 +123,252 @@ impl Plugin for RatatuiPlugin {
         }
     }
 
-    fn dev_init(&self, _ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
-        Ok(Box::new(RatatuiDevState))
+    fn dev_init(&self, ctx: &mut DevContext) -> Result<Box<dyn DevState>, PluginError> {
+        // Find the first .tsx or .ts module in the
+        // project. The dev path renders a single
+        // module (not a full app).
+        let module = ctx
+            .modules
+            .iter()
+            .find(|m| m.ends_with(".tsx") || m.ends_with(".ts"))
+            .cloned();
+        Ok(Box::new(RatatuiDevState { module, dirty: true }))
     }
 
-    fn dev_run_once(&self, _state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        // For TUI apps, dev_run_once returns Stop since the TUI takes over the event loop.
-        // This tells the dev server to stop calling this method and let the TUI run.
-        Ok(DevAction::Stop)
+    fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
+        // Run the rquickjs eval path: read the .tsx,
+        // lower to JS, eval through the runts-ink
+        // bridge, print the result. Returns Continue
+        // (not Stop) so the dev loop can re-run on
+        // the next tick and pick up reloads.
+        let st_any = state.as_any_mut();
+        let st = match st_any.downcast_mut::<RatatuiDevState>() {
+            Some(s) => s,
+            None => {
+                return Err(PluginError::codegen(
+                    "ratatui",
+                    "dev",
+                    "unexpected DevState type",
+                ));
+            }
+        };
+        if !st.dirty {
+            // Already rendered this tick; idle until
+            // a file change marks us dirty again.
+            return Ok(DevAction::Continue);
+        }
+        st.dirty = false;
+        let Some(module) = st.module.clone() else {
+            // No .tsx module found — just idle.
+            return Ok(DevAction::Continue);
+        };
+        // Read the source.
+        let src = match std::fs::read_to_string(&module) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("dev: failed to read {module}: {e}");
+                return Ok(DevAction::Continue);
+            }
+        };
+        // Lower JSX -> JS bridge calls.
+        let transformed = crate::dev_jsx::transform(&src);
+        // Eval through rquickjs + runts-ink bridge.
+        match run_ink_dev(&transformed.js) {
+            Ok(rendered) => {
+                print!("{rendered}");
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            }
+            Err(e) => {
+                eprintln!("dev: eval error: {e}");
+            }
+        }
+        Ok(DevAction::Continue)
     }
 
-    fn dev_reload(&self, _ctx: &mut DevContext, _state: &mut dyn DevState) -> Result<(), PluginError> {
+    fn dev_reload(&self, _ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError> {
+        // Mark the state dirty so the next
+        // dev_run_once re-evals the source.
+        if let Some(s) = state.as_any_mut().downcast_mut::<RatatuiDevState>() {
+            s.dirty = true;
+        }
         Ok(())
     }
+}
+
+/// Run the dev path with a pre-built eval program.
+/// The test path uses this to pass a custom
+/// program instead of `dev_eval_program`.
+pub fn run_ink_dev_with_program(
+    _js: &str,
+    program: &str,
+) -> Result<String, String> {
+    use rquickjs::context::intrinsic;
+    use rquickjs::{Context, Runtime};
+
+    let runtime = Runtime::new().map_err(|e| format!("runtime: {e}"))?;
+    let ctx = Context::builder()
+        .with::<intrinsic::Eval>()
+        .build(&runtime)
+        .map_err(|e| format!("ctx: {e}"))?;
+    let result: String = ctx
+        .with(|ctx| {
+            runts_ink::js_bridge::install(&ctx).map_err(|e| format!("install: {e}"))?;
+            ctx.eval::<_, String>(program.to_string())
+                .map_err(|e| format!("eval: {e}"))
+        })
+        .map_err(|e| format!("{e}"))?;
+    Ok(result)
+}
+
+/// Run the dev path: install the runts-ink bridge
+/// into a fresh rquickjs context, eval the lowered
+/// JS, call `runts_ink.render_to_string` on the
+/// result, and return the rendered string.
+///
+/// We use the same renderer as `runts build` so the
+/// output is byte-identical for the same .tsx.
+pub fn run_ink_dev(js: &str) -> Result<String, String> {
+    let program = dev_eval_program_raw(js);
+    run_ink_dev_with_program(js, &program)
+}
+
+/// Wrap a (possibly already-lowered) JS string
+/// for the dev eval. The lowered JS has no JSX
+/// tags, so we just wrap the whole thing in an
+/// IIFE. The lowered JS comes from
+/// `dev_jsx::transform`, which inlines all JSX
+/// in place — so the program's last expression
+/// statement is typically the app body.
+pub fn dev_eval_program_raw(js: &str) -> String {
+    format!("(() => {{ {js} }})()")
+}
+
+/// Wrap the dev-path JS so rquickjs can eval it.
+/// The dev path's `run_ink_dev` expects the
+/// lowered JS to be evaluatable.
+///
+/// Strategy: find the largest top-level JSX
+/// expression in the source. This is typically
+/// the JSX inside `function App() { return (...) }`
+/// — i.e. the app body — not the small self-
+/// closing `<App />` reference inside `render(...)`.
+///
+/// If we can't find a large JSX, fall back to
+/// wrapping the whole JS in an IIFE.
+pub fn dev_eval_program(src: &str) -> String {
+    // Find all top-level JSX elements.
+    let jsx_blocks = find_top_level_jsx(src);
+    // Pick the longest one (the app body, not
+    // the self-closing reference).
+    // Pick the longest one (the app body, not
+    // the self-closing reference).
+    if let Some(best) = jsx_blocks.iter().max_by_key(|s| s.len()) {
+        return format!("(() => {{ return runts_ink.render_to_string({best}); }})()");
+    }
+    // Fallback: wrap the whole JS as a function.
+    format!("(() => {{ {src} }})()")
+}
+
+/// Find top-level JSX expressions in the source.
+/// A top-level JSX is one not inside another JSX.
+/// Returns the lowered (i.e. bridge-call) version
+/// of each, in source order.
+fn find_top_level_jsx(src: &str) -> Vec<String> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '<' && i + 1 < chars.len() && chars[i + 1] != '!' {
+            // Skip past strings, comments, etc.
+            // Check if this looks like a JSX open
+            // by trying to parse it.
+            if let Some((end, raw)) = parse_jsx_top(&chars, i) {
+                out.push(crate::dev_jsx::lower_jsx_for_eval(&raw));
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Lightweight JSX parser for top-level
+/// elements. Returns the index past the closing
+/// tag and the raw JSX text.
+fn parse_jsx_top(chars: &[char], i: usize) -> Option<(usize, String)> {
+    let mut j = i + 1;
+    // Tag name: must be alpha + alphanum.
+    if j >= chars.len() || !chars[j].is_ascii_alphabetic() {
+        return None;
+    }
+    while j < chars.len() && chars[j].is_ascii_alphanumeric() {
+        j += 1;
+    }
+    let tag: String = chars[i + 1..j].iter().collect();
+    // Self-closing?
+    let mut k = j;
+    let mut self_closing = false;
+    while k < chars.len() {
+        if chars[k] == '/' && k + 1 < chars.len() && chars[k + 1] == '>' {
+            self_closing = true;
+            k += 2;
+            break;
+        }
+        if chars[k] == '>' {
+            k += 1;
+            break;
+        }
+        k += 1;
+    }
+    if self_closing {
+        return Some((k, chars[i..k].iter().collect()));
+    }
+    // Find matching `</Tag>`.
+    let close = format!("</{tag}>");
+    let close_chars: Vec<char> = close.chars().collect();
+    let mut depth = 1;
+    let mut m = k;
+    while m < chars.len() && depth > 0 {
+        if m + close_chars.len() <= chars.len() {
+            let cand: String = chars[m..m + close_chars.len()].iter().collect();
+            if cand == close {
+                depth -= 1;
+                if depth == 0 {
+                    let end = m + close_chars.len();
+                    return Some((end, chars[i..end].iter().collect()));
+                }
+            }
+        }
+        m += 1;
+    }
+    None
+}
+
+/// Find the index of the closing paren that
+/// matches the opening paren at `open_idx`.
+fn find_matching_paren(s: &str, open_idx: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.get(open_idx) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 1;
+    let mut i = open_idx + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Fallback stub when no JSX is detected.
@@ -197,10 +430,21 @@ impl RatatuiPlugin {
 
 pub struct RatatuiPlugin;
 
-struct RatatuiDevState;
+/// Per-session dev state for the ratatui plugin.
+struct RatatuiDevState {
+    /// Path to the .tsx module being rendered.
+    /// `None` if no .tsx was found in the project.
+    module: Option<String>,
+    /// `true` when the source has changed and needs
+    /// to be re-evaluated on the next `dev_run_once`.
+    dirty: bool,
+}
 
 impl DevState for RatatuiDevState {
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
