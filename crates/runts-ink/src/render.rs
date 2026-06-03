@@ -852,7 +852,10 @@ impl TaffyTree {
 /// into the corresponding VNode-indexed slot in
 /// `rects`. The `taffy_index` vec tells us, for each
 /// VNode pre-order position, which Taffy node to look
-/// up.
+/// up. Rect positions are converted to absolute
+/// (buffer) coordinates by walking up the parent
+/// chain — Taffy's `Layout::location` is relative to
+/// the parent, not the root.
 fn collect_rects(
     taffy: &taffy::TaffyTree,
     taffy_index: &[taffy::NodeId],
@@ -860,13 +863,23 @@ fn collect_rects(
 ) {
     for (i, &nid) in taffy_index.iter().enumerate() {
         if let Ok(layout) = taffy.layout(nid) {
-            let x = layout.location.x;
-            let y = layout.location.y;
+            // Walk up the parent chain to compute
+            // the absolute position.
+            let mut abs_x = layout.location.x;
+            let mut abs_y = layout.location.y;
+            let mut cur = nid;
+            while let Some(parent) = taffy.parent(cur) {
+                if let Ok(pl) = taffy.layout(parent) {
+                    abs_x += pl.location.x;
+                    abs_y += pl.location.y;
+                }
+                cur = parent;
+            }
             let w = layout.size.width;
             let h = layout.size.height;
             // Saturate to u16.
-            let x = x.max(0.0).min(u16::MAX as f32) as u16;
-            let y = y.max(0.0).min(u16::MAX as f32) as u16;
+            let x = abs_x.max(0.0).min(u16::MAX as f32) as u16;
+            let y = abs_y.max(0.0).min(u16::MAX as f32) as u16;
             let w = w.max(0.0).min(u16::MAX as f32) as u16;
             let h = h.max(0.0).min(u16::MAX as f32) as u16;
             if let Some(slot) = rects.get_mut(i) {
