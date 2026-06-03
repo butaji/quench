@@ -1,0 +1,1 @@
+use ratatui :: prelude :: * ; pub fn render (frame : & mut ratatui :: Frame < '_ > , area : ratatui :: layout :: Rect) { frame . render_widget (ratatui :: widgets :: Paragraph :: new (format ! ("Ratatui widget (source: {})" , "todo.tsx")) , area ,) ; }

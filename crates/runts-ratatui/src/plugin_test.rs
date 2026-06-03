@@ -140,20 +140,21 @@ fn test_dev_init_returns_state() {
 }
 
 #[test]
-fn test_dev_run_once_returns_stop() {
+fn test_dev_run_once_returns_continue() {
     use runts_plugin::{DevAction, DevState};
-    struct TestDevState;
-    impl DevState for TestDevState {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-    }
     let plugin = ratatui_plugin();
-    let mut state = TestDevState;
-    let result = plugin.dev_run_once(&mut state);
+    // Set up a real DevState via dev_init.
+    let mut ctx = runts_plugin::DevContext {
+        root: std::path::PathBuf::from("/tmp"),
+        modules: vec![],
+    };
+    let mut state = plugin.dev_init(&mut ctx).unwrap();
+    let result = plugin.dev_run_once(&mut *state);
     assert!(result.is_ok());
-    // TUI dev_run_once returns Stop since TUI takes over the event loop
-    assert!(matches!(result.unwrap(), DevAction::Stop));
+    // TUI dev_run_once returns Continue (not
+    // Stop) when run in the rquickjs+bridge dev
+    // path; it idles between file changes.
+    assert!(matches!(result.unwrap(), DevAction::Continue));
 }
 
 #[test]
@@ -164,9 +165,15 @@ fn test_dev_reload_returns_ok() {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
     let plugin = ratatui_plugin();
-    let mut ctx = runts_plugin::DevContext { root: std::path::PathBuf::from("/tmp"), modules: vec![] };
+    let mut ctx = runts_plugin::DevContext {
+        root: std::path::PathBuf::from("/tmp"),
+        modules: vec![],
+    };
     let mut state = TestDevState;
     let result = plugin.dev_reload(&mut ctx, &mut state);
     assert!(result.is_ok());
@@ -369,4 +376,30 @@ fn test_ink_newline_codegens_empty_paragraph() {
     // `runts_ink::Newline::new().into()` VNode
     // expression, not a Ratatui Paragraph stub.
     assert!(code.contains("runts_ink::Newline::new"));
+}
+
+#[test]
+fn run_ink_dev_bordered_example() {
+    // The dev path: read the .tsx, lower to JS,
+    // eval through rquickjs+bridge, render to
+    // string. End-to-end test using the real
+    // bordered example source.
+    let src = include_str!("../../../examples/ink-bordered/tui/app.tsx");
+    let transformed = crate::dev_jsx::transform(src);
+    // dev_eval_program works on the ORIGINAL
+    // source (it parses JSX tags). The
+    // transformed JS has no JSX tags, so we
+    // pass the source itself.
+    let program = crate::plugin::dev_eval_program(src);
+    let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
+    assert!(result.is_ok(), "dev path failed: {:?}", result);
+    let s = result.unwrap();
+    assert!(s.contains("Bordered Example"), "missing title: {s}");
+    assert!(
+        s.contains('╭')
+            || s.contains('╯')
+            || s.contains('╮')
+            || s.contains('│'),
+        "missing border: {s}"
+    );
 }
