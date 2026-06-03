@@ -336,6 +336,22 @@ impl Box {
         self
     }
 
+    /// Set padding on the X axis (left and right)
+    /// at once. Mirrors the Ink `paddingX` shorthand.
+    pub fn padding_x(mut self, p: u16) -> Self {
+        self.padding_left = Some(p);
+        self.padding_right = Some(p);
+        self
+    }
+
+    /// Set padding on the Y axis (top and bottom)
+    /// at once. Mirrors the Ink `paddingY` shorthand.
+    pub fn padding_y(mut self, p: u16) -> Self {
+        self.padding_top = Some(p);
+        self.padding_bottom = Some(p);
+        self
+    }
+
     /// Set margin on all four sides at once.
     pub fn margin(mut self, m: u16) -> Self {
         self.margin_top = Some(m);
@@ -716,6 +732,33 @@ mod tests {
         assert_eq!(b.padding_right, Some(2));
         assert_eq!(b.padding_bottom, Some(2));
         assert_eq!(b.padding_left, Some(2));
+    }
+
+    #[test]
+    fn box_padding_x_y_shorthands() {
+        // paddingX sets left and right but leaves
+        // top/bottom alone.
+        let b = Box::column().padding_x(3);
+        assert_eq!(b.padding_left, Some(3));
+        assert_eq!(b.padding_right, Some(3));
+        assert_eq!(b.padding_top, None);
+        assert_eq!(b.padding_bottom, None);
+        // paddingY sets top and bottom but leaves
+        // left/right alone.
+        let b = Box::column().padding_y(1);
+        assert_eq!(b.padding_top, Some(1));
+        assert_eq!(b.padding_bottom, Some(1));
+        assert_eq!(b.padding_left, None);
+        assert_eq!(b.padding_right, None);
+        // Combined: paddingX + paddingY is equivalent
+        // to padding for a 4-side box, but a user
+        // can also use padding_x and padding_y
+        // independently.
+        let b = Box::column().padding_x(2).padding_y(1);
+        assert_eq!(b.padding_left, Some(2));
+        assert_eq!(b.padding_right, Some(2));
+        assert_eq!(b.padding_top, Some(1));
+        assert_eq!(b.padding_bottom, Some(1));
     }
 
     #[test]

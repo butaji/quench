@@ -7,15 +7,20 @@ use runts_ratatui::RatatuiPlugin;
 
 /// Get a plugin by name.
 ///
-/// # Errors
-/// Returns an error if the plugin name is not recognized.
+/// `ink` is an alias for `ratatui` so users can write
+/// `runts dev --ink examples/foo.tsx` instead of
+/// `runts dev --plugin ratatui examples/foo.tsx`.
+/// The Ink examples are pure `.tsx` that compile to
+/// the `runts-ink` runtime via the ratatui plugin's
+/// JSX dispatch; the alias just makes the
+/// user-facing CLI shorter for that common case.
 pub fn get_plugin(name: &str) -> anyhow::Result<Box<dyn Plugin>> {
     match name {
         "fresh" => Ok(Box::new(FreshPlugin)),
-        "ratatui" => Ok(Box::new(RatatuiPlugin)),
+        "ratatui" | "ink" => Ok(Box::new(RatatuiPlugin)),
         // "react" => Ok(Box::new(ReactPlugin)), // DISABLED: pre-existing bugs blocking build
         _ => Err(anyhow::anyhow!(
-            "Unknown plugin '{}'. Use --plugin <name>. Available: fresh, ratatui",
+            "Unknown plugin '{}'. Use --plugin <name>. Available: fresh, ratatui, ink",
             name
         )),
     }
@@ -24,5 +29,5 @@ pub fn get_plugin(name: &str) -> anyhow::Result<Box<dyn Plugin>> {
 /// List available plugin names.
 #[allow(dead_code)]
 pub fn available_plugins() -> &'static [&'static str] {
-    &["fresh", "ratatui"]
+    &["fresh", "ratatui", "ink"]
 }
