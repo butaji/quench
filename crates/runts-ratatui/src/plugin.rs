@@ -172,8 +172,16 @@ impl Plugin for RatatuiPlugin {
         };
         // Lower JSX -> JS bridge calls.
         let transformed = crate::dev_jsx::transform(&src);
+        // Build the eval program from the
+        // ORIGINAL source so we pick the
+        // largest JSX (the app body) and not
+        // the small self-closing `<App />`
+        // reference. The eval program embeds
+        // the lowered JS so the runtime sees
+        // `runts_ink.box(...)` calls.
+        let program = dev_eval_program_with_lowered(&src, &transformed.js);
         // Eval through rquickjs + runts-ink bridge.
-        match run_ink_dev(&transformed.js) {
+        match run_ink_dev_with_program(&transformed.js, &program) {
             Ok(rendered) => {
                 print!("{rendered}");
                 use std::io::Write;
@@ -229,19 +237,34 @@ pub fn run_ink_dev_with_program(
 /// We use the same renderer as `runts build` so the
 /// output is byte-identical for the same .tsx.
 pub fn run_ink_dev(js: &str) -> Result<String, String> {
-    let program = dev_eval_program_raw(js);
+    let program = format!("(() => {{ {js} }})()");
     run_ink_dev_with_program(js, &program)
 }
 
-/// Wrap a (possibly already-lowered) JS string
-/// for the dev eval. The lowered JS has no JSX
-/// tags, so we just wrap the whole thing in an
-/// IIFE. The lowered JS comes from
-/// `dev_jsx::transform`, which inlines all JSX
-/// in place — so the program's last expression
-/// statement is typically the app body.
-pub fn dev_eval_program_raw(js: &str) -> String {
-    format!("(() => {{ {js} }})()")
+/// Build a rquickjs eval program that picks the
+/// largest top-level JSX from the source, lowers
+/// it via `dev_jsx::lower_jsx_for_eval`, and
+/// embeds the lowered form in the rquickjs
+/// program. The runtime sees
+/// `runts_ink.box(...)` / `runts_ink.text(...)`
+/// calls.
+pub fn dev_eval_program_with_lowered(
+    src: &str,
+    _lowered_js: &str,
+) -> String {
+    // Find all top-level JSX elements in the
+    // original source (lowered_js has no JSX).
+    let jsx_blocks = find_top_level_jsx(src);
+    // Pick the longest one (the app body, not
+    // the self-closing reference).
+    if let Some((_end, raw)) = jsx_blocks.iter().max_by_key(|(_, s)| s.len()) {
+        let lowered = crate::dev_jsx::lower_jsx_for_eval(raw);
+        return format!(
+            "(() => {{ return runts_ink.render_to_string({lowered}); }})()"
+        );
+    }
+    // Fallback: wrap the lowered JS as an IIFE.
+    format!("(() => {{ {_lowered_js} }})()")
 }
 
 /// Wrap the dev-path JS so rquickjs can eval it.
@@ -252,29 +275,17 @@ pub fn dev_eval_program_raw(js: &str) -> String {
 /// expression in the source. This is typically
 /// the JSX inside `function App() { return (...) }`
 /// — i.e. the app body — not the small self-
-/// closing `<App />` reference inside `render(...)`.
-///
-/// If we can't find a large JSX, fall back to
-/// wrapping the whole JS in an IIFE.
-pub fn dev_eval_program(src: &str) -> String {
-    // Find all top-level JSX elements.
-    let jsx_blocks = find_top_level_jsx(src);
-    // Pick the longest one (the app body, not
-    // the self-closing reference).
-    // Pick the longest one (the app body, not
-    // the self-closing reference).
-    if let Some(best) = jsx_blocks.iter().max_by_key(|s| s.len()) {
-        return format!("(() => {{ return runts_ink.render_to_string({best}); }})()");
-    }
-    // Fallback: wrap the whole JS as a function.
-    format!("(() => {{ {src} }})()")
-}
-
-/// Find top-level JSX expressions in the source.
+/// Build a rquickjs eval program that picks the
+/// largest top-level JSX from the source, lowers
+/// it via `dev_jsx::lower_jsx_for_eval`, and
+/// embeds the lowered form in the rquickjs
+/// program. The runtime sees
+/// `runts_ink.box(...)` / `runts_ink.text(...)`
 /// A top-level JSX is one not inside another JSX.
-/// Returns the lowered (i.e. bridge-call) version
-/// of each, in source order.
-fn find_top_level_jsx(src: &str) -> Vec<String> {
+/// Returns `(end_index, raw_jsx_text)` pairs in
+/// source order. The end index is the byte
+/// position after the closing tag.
+fn find_top_level_jsx(src: &str) -> Vec<(usize, String)> {
     let chars: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -284,7 +295,7 @@ fn find_top_level_jsx(src: &str) -> Vec<String> {
             // Check if this looks like a JSX open
             // by trying to parse it.
             if let Some((end, raw)) = parse_jsx_top(&chars, i) {
-                out.push(crate::dev_jsx::lower_jsx_for_eval(&raw));
+                out.push((end, raw));
                 i = end;
                 continue;
             }
