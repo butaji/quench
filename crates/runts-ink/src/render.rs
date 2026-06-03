@@ -161,6 +161,37 @@ impl Instance {
         self.inner.lock().unwrap().last_size
     }
 
+    /// Re-render the current root. The user calls this
+    /// from their main loop after mutating state.
+    /// The `RootFn` is invoked to get a fresh
+    /// `VNode`, Taffy recomputes the layout, and the
+    /// new tree is drawn to the terminal.
+    pub fn redraw(&mut self, root: &mut RootFn) -> Result<()> {
+        let size = self.inner.lock().unwrap().last_size;
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: size.columns,
+            height: size.rows,
+        };
+        let tree = root(Props::new());
+        let mut layout = Layout::new();
+        let taffy = TaffyTree::from_vnode(&tree, &mut layout);
+        taffy.compute(
+            &mut layout,
+            Size {
+                width: AvailableSpace::Definite(area.width as f32),
+                height: AvailableSpace::Definite(area.height as f32),
+            },
+        );
+        self.inner.lock().unwrap().last_root = Some(tree.clone());
+        if let Some(term) = self.terminal.as_mut() {
+            term.draw(|frame| render_tree(&tree, &layout, frame, area))
+                .context("redraw")?;
+        }
+        Ok(())
+    }
+
     /// Tear down the TUI. Idempotent.
     pub fn unmount(&mut self) -> Result<()> {
         self.inner.lock().unwrap().running = false;
@@ -183,10 +214,15 @@ impl Drop for Instance {
 /// current `Props`.
 ///
 /// In Ink, the user passes a JSX element directly. In
-/// Rust, the cleanest equivalent is a
-/// `std::boxed::Box<dyn FnMut>` that the compiled JS
-/// driver can call to drive React's reconciler.
-pub type RootFn = std::boxed::Box<dyn FnMut(Props) -> VNode + Send>;
+/// Rust, the cleanest equivalent is a `fn(Props) -> VNode`
+/// (or closure with the same signature). The render
+/// pipeline doesn't need to move this closure across
+/// threads (the v0.1 renderer is single-threaded), so
+/// the trait bound is `FnMut(Props) -> VNode` without
+/// `Send`. If a future revision spawns the render
+/// loop on a worker thread, this alias is the place
+/// to add the `Send` bound back.
+pub type RootFn = std::boxed::Box<dyn FnMut(Props) -> VNode>;
 
 /// Mount a root component and return an `Instance`.
 ///
@@ -199,8 +235,13 @@ pub type RootFn = std::boxed::Box<dyn FnMut(Props) -> VNode + Send>;
 /// the generated binary calls `render` itself, then
 /// drops the `Instance` to keep the terminal open until
 /// the user quits.
+///
+/// The caller passes `&mut root` rather than `root` so
+/// they can call `instance.redraw(&mut root)` later to
+/// re-render after mutating state. The renderer never
+/// retains its own copy of the closure.
 pub fn render(
-    mut root: RootFn,
+    root: &mut RootFn,
     initial_props: Props,
     options: RenderOptions,
 ) -> Result<Instance> {
