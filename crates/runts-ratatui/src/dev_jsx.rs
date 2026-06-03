@@ -298,8 +298,11 @@ pub fn lower_jsx_for_eval(raw: &str) -> String {
         "Text" | "text" | "inktext" => {
             // Text content: the first text child becomes
             // the string content; or join all text/expr
-            // children. We concatenate.
-            let content = children_content_string(&children);
+            // children. We concatenate. For brace
+            // expressions (e.g. `{value}`), we wrap in
+            // `String(value)` so a number or other
+            // type coerces to a string at runtime.
+            let content = wrap_text_expr(&children_content_string(&children));
             if props.is_empty() {
                 format!("runts_ink.text({},{{}})", content)
             } else {
@@ -310,6 +313,31 @@ pub fn lower_jsx_for_eval(raw: &str) -> String {
         "Spacer" | "spacer" => "runts_ink.spacer()".to_string(),
         _ => format!("runts_ink.box({{{}}})", format_props(&props)),
     }
+}
+
+/// Wrap a `Text` content string so any
+/// non-string-literal children are coerced
+/// to strings at runtime via `String(...)`.
+/// If the content is already a quoted string
+/// or a `String(...)` expression, leave it
+/// alone.
+fn wrap_text_expr(content: &str) -> String {
+    // If it's a quoted string literal, leave
+    // it alone.
+    if content.starts_with('"') && content.ends_with('"') {
+        return content.to_string();
+    }
+    // If it's a `+`-concatenation, wrap each
+    // non-literal side.
+    if content.contains(" + ") {
+        return content
+            .split(" + ")
+            .map(|p| wrap_text_expr(p))
+            .collect::<Vec<_>>()
+            .join(" + ");
+    }
+    // Else wrap with String() coercion.
+    format!("String({})", content)
 }
 
 fn lower_jsx_element(raw: &str) -> String {
@@ -335,8 +363,10 @@ fn lower_jsx_element(raw: &str) -> String {
         "Text" | "text" | "inktext" => {
             // Text content: the first text child becomes
             // the string content; or join all text/expr
-            // children. We concatenate.
-            let content = children_content_string(&children);
+            // children. We concatenate. Brace
+            // expressions are wrapped in `String(...)`
+            // so non-string types coerce at runtime.
+            let content = wrap_text_expr(&children_content_string(&children));
             if props.is_empty() {
                 format!("runts_ink.text({},{{}})", content)
             } else {
@@ -632,6 +662,20 @@ mod tests {
         let t = transform(src);
         assert!(t.js.contains("bold: true") || t.js.contains("bold:"));
         assert!(t.js.contains("color: \"cyan\""));
+    }
+
+    #[test]
+    fn text_with_brace_expr() {
+        // `<Text>{value}</Text>` should lower to
+        // `runts_ink.text(String(value),{})`
+        // so the runtime coerces non-strings.
+        let src = r#"<Text>{value}</Text>"#;
+        let t = transform(src);
+        assert!(
+            t.js.contains("String(value)"),
+            "missing String() wrap: {t_js}",
+            t_js = t.js
+        );
     }
 
     #[test]
