@@ -366,7 +366,14 @@ fn lower_jsx_element(raw: &str) -> String {
             // children. We concatenate. Brace
             // expressions are wrapped in `String(...)`
             // so non-string types coerce at runtime.
-            let content = wrap_text_expr(&children_content_string(&children));
+            let content_str = children_content_string(&children);
+            // Empty Text children (like `<Text>{''}</Text>`)
+            // should be skipped entirely — real Ink
+            // collapses them to zero height.
+            if content_str.trim().is_empty() {
+                return "runts_ink.spacer()".to_string();
+            }
+            let content = wrap_text_expr(&content_str);
             if props.is_empty() {
                 format!("runts_ink.text({},{{}})", content)
             } else {
