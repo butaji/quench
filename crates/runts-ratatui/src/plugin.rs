@@ -259,9 +259,7 @@ pub fn dev_eval_program_with_lowered(
     // the self-closing reference).
     if let Some((_end, raw)) = jsx_blocks.iter().max_by_key(|(_, s)| s.len()) {
         let lowered = crate::dev_jsx::lower_jsx_for_eval(raw);
-        return format!(
-            "(() => {{ return runts_ink.render_to_string({lowered}); }})()"
-        );
+        return format!("(() => {{ return runts_ink.render_to_string({lowered}); }})()");
     }
     // Fallback: wrap the lowered JS as an IIFE.
     format!("(() => {{ {_lowered_js} }})()")
