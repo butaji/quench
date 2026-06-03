@@ -173,9 +173,13 @@ pub(crate) mod jsx {
     // ============================================================================
 
     /// Find JSX in a function body.
+    /// The parser emits the body as a flat array of
+    /// statements (`[stmt0, stmt1, ...]`). The
+    /// previous version expected `body.Block.stmts`,
+    /// which is the shape of a manually-constructed
+    /// fixture, not the parser output.
     pub(crate) fn find_jsx_in_body(body: &serde_json::Value) -> Option<serde_json::Value> {
-        if let Some(block) = body.get("Block") {
-            let stmts = block.get("stmts")?.as_array()?;
+        if let Some(stmts) = body.as_array() {
             return find_jsx_in_stmts(stmts);
         }
         if is_jsx_expr(body) {
@@ -207,21 +211,29 @@ pub(crate) mod jsx {
     }
 
     /// Find JSX in return statement.
+    /// The parser emits the return value as
+    /// `{arg: {JSX: {opening, children, ...}}}`.
+    /// We unwrap the single-key `{JSX: ...}` to
+    /// reach the actual JSX object.
     fn find_jsx_in_return(stmt: &serde_json::Value) -> Option<serde_json::Value> {
         let arg = stmt.get("arg")?;
-        if is_jsx_expr(arg) {
-            return Some(arg.clone());
+        let unwrapped = unwrap_jsx(arg);
+        if is_jsx_expr(&unwrapped) {
+            return Some(unwrapped);
         }
-        find_jsx_in_expr(arg)
+        find_jsx_in_expr(&unwrapped)
     }
 
     /// Find JSX in expression statement.
+    /// Same shape as Return: the expression is
+    /// wrapped in `{JSX: ...}` by the parser.
     fn find_jsx_in_expr_stmt(stmt: &serde_json::Value) -> Option<serde_json::Value> {
         let expr = stmt.get("expr")?;
-        if is_jsx_expr(expr) {
-            return Some(expr.clone());
+        let unwrapped = unwrap_jsx(expr);
+        if is_jsx_expr(&unwrapped) {
+            return Some(unwrapped);
         }
-        find_jsx_in_expr(expr)
+        find_jsx_in_expr(&unwrapped)
     }
 
     /// Find JSX in block statement.
@@ -267,8 +279,29 @@ pub(crate) mod jsx {
     }
 
     /// Check if JSON value is a JSX expression.
+    /// Accepts both shapes:
+    ///   - `{opening: {...}, children: [...]}`
+    ///     (fixture / direct JSX)
+    ///   - `{"JSX": {opening, children, ...}}`
+    ///     (parser single-key wrapper)
     fn is_jsx_expr(val: &serde_json::Value) -> bool {
-        val.get("opening").is_some() && val.get("children").is_some()
+        if val.get("opening").is_some() && val.get("children").is_some() {
+            return true;
+        }
+        if let Some(inner) = val.get("JSX") {
+            return inner.get("opening").is_some() && inner.get("children").is_some();
+        }
+        false
+    }
+
+    /// Extract the JSX expression object out of a
+    /// single-key `{JSX: ...}` wrapper if present.
+    fn unwrap_jsx(val: &serde_json::Value) -> serde_json::Value {
+        if val.get("JSX").is_some() && val.get("opening").is_none() {
+            val.get("JSX").cloned().unwrap_or_else(|| val.clone())
+        } else {
+            val.clone()
+        }
     }
 
     // ============================================================================
@@ -322,50 +355,101 @@ pub(crate) mod jsx {
     // ============================================================================
     // Child value conversion
     // ============================================================================
-
     /// Convert a JSX child to JSON value.
-    pub(crate) fn jsx_child_to_value(
+    /// The parser emits children as single-key
+    /// objects: `{Text: "..."}`, `{JSX: {...}}`,
+    /// `{Fragment: {children: [...]}}`, or
+    /// `{kind: "Expr", expr: ...}`. Check the
+    /// single-key shape first (that's the common
+    /// case), then fall back to the `kind`
+    /// discriminator for expression children.
+    fn jsx_child_to_value(
         child: &serde_json::Value,
     ) -> Option<Option<serde_json::Value>> {
         if child.as_str().is_some() {
             return jsx_string_child(child.as_str().unwrap());
         }
-        let kind = child.get("kind")?.as_str()?;
-        match kind {
-            "Text" => jsx_text_child(child),
-            "JSX" => jsx_jsx_child(child),
-            "Fragment" => jsx_fragment_child(child),
-            "Expr" => Some(Some(child.clone())),
-            "Spread" => Some(None),
-            _ => Some(None),
+        // Single-key shapes first (most common).
+        if let Some(text) = child.get("Text").and_then(|t| t.as_str()) {
+            return jsx_text_value(text);
         }
+        if child.get("JSX").is_some() || child.get("jsx").is_some() {
+            return jsx_jsx_value(child);
+        }
+        if child.get("Fragment").is_some() {
+            return jsx_fragment_value(child);
+        }
+        // Then the `kind` discriminator for
+        // expression children. `Text` here means
+        // the fixture shape `{kind: "Text", text:
+        // "..."}`. `Expr` and `Spread` are runtime
+        // shapes.
+        if let Some(kind) = child.get("kind").and_then(|k| k.as_str()) {
+            return match kind {
+                "Text" => {
+                    let text = child
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    Some(Some(serde_json::json!({
+                        "kind": "Text",
+                        "text": text,
+                    })))
+                }
+                "Expr" => Some(Some(child.clone())),
+                "Spread" => Some(None),
+                _ => Some(None),
+            };
+        }
+        Some(None)
     }
 
-    /// Handle string child.
+    /// Wrap a raw string child in the codegen's
+    /// `{"kind": "Text", "text": "..."}` shape.
+    /// This is the only Text case left here; the
+    /// single-key `{"Text": "..."}` case is handled
+    /// by `jsx_text_value` below.
     fn jsx_string_child(text: &str) -> Option<Option<serde_json::Value>> {
-        Some(Some(serde_json::json!({"kind": "Text", "text": text})))
+        Some(Some(serde_json::json!({
+            "kind": "Text",
+            "text": text,
+        })))
     }
 
-    /// Handle text child.
-    fn jsx_text_child(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
-        let text = child.get("text")?.as_str()?;
-        Some(Some(serde_json::json!({"kind": "Text", "text": text})))
+    /// Wrap a text string in the codegen's
+    /// `{"kind": "Text", "text": "..."}` shape.
+    fn jsx_text_value(text: &str) -> Option<Option<serde_json::Value>> {
+        Some(Some(serde_json::json!({
+            "kind": "Text",
+            "text": text,
+        })))
     }
 
-    /// Handle JSX child.
-    fn jsx_jsx_child(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
-        let jsx_expr = child.get("JSX")?.clone();
-        Some(Some(serde_json::json!({"kind": "JSX", "jsx": jsx_expr})))
+    /// Pull the JSX object out of `{JSX: ...}`.
+    /// The parser emits single-key `{JSX: ...}`
+    /// and we sometimes see the normalized
+    /// `{jsx: ...}` from earlier passes — accept
+    /// both.
+    fn jsx_jsx_value(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
+        let jsx_expr = child
+            .get("JSX")
+            .or_else(|| child.get("jsx"))?
+            .clone();
+        Some(Some(serde_json::json!({
+            "kind": "JSX",
+            "jsx": jsx_expr,
+        })))
     }
 
-    /// Handle fragment child.
-    fn jsx_fragment_child(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
+    /// Fragment: recurse on its children.
+    fn jsx_fragment_value(child: &serde_json::Value) -> Option<Option<serde_json::Value>> {
         let frag_children = child.get("Fragment")?.get("children")?;
         let children = extract_jsx_children(frag_children)?;
-        Some(Some(serde_json::json!({"kind": "Fragment", "children": children})))
+        Some(Some(serde_json::json!({
+            "kind": "Fragment",
+            "children": children,
+        })))
     }
-
-    /// Convert JSON value to string.
     pub(crate) fn value_to_string(val: &serde_json::Value) -> Option<String> {
         match val {
             serde_json::Value::String(s) => Some(s.clone()),
@@ -374,19 +458,74 @@ pub(crate) mod jsx {
         }
     }
 
-    /// Parse Expr value from object.
+    /// Parse a value object into a Rust-source
+    /// string. Handles the HIR's single-key shapes:
+    ///   `{"String": "foo"}` → `"foo"`
+    ///   `{"Number": 1.5}`  → `"1.5"`
+    ///   `{"Ident": {"name": "x"}}` → `"x"`
+    ///   `{"Bool": true}` → `"true"`
+    ///   `{kind: "Expr", expr: {...}}` → recurses.
     pub(crate) fn parse_expr_value(
         obj: &serde_json::Map<String, serde_json::Value>,
     ) -> Option<String> {
-        let expr = obj.get("Expr")?;
-        let kind = expr.get("kind")?.as_str()?;
-        let val = expr.get("0")?;
-        match kind {
-            "Ident" => expr.get("name")?.as_str().map(String::from),
-            "String" => val.as_str().map(String::from),
-            "Number" => val.as_f64().map(|n| n.to_string()),
-            _ => None,
+        // Expression-child wrapper.
+        if let Some(expr) = obj.get("Expr") {
+            return parse_expr_inner(expr);
         }
+        parse_expr_inner_map(obj)
+    }
+
+    /// Inner parser for a single expression object.
+    fn parse_expr_inner(obj: &serde_json::Value) -> Option<String> {
+        parse_expr_inner_value(obj)
+    }
+
+    /// Same as `parse_expr_inner` but takes a Value
+    /// (auto-extracts the map). Used when the caller
+    /// has a `Value` not a `Map`.
+    fn parse_expr_inner_value(obj: &serde_json::Value) -> Option<String> {
+        let map = obj.as_object()?;
+        parse_expr_inner_map(map)
+    }
+
+    /// Core parser, takes the map directly.
+    fn parse_expr_inner_map(
+        map: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<String> {
+        let map = map;
+        // Tuple-struct-like `{"kind": "X", "0": value}`.
+        if let (Some(kind), Some(val)) = (map.get("kind"), map.get("0")) {
+            return match kind.as_str()? {
+                "String" => val.as_str().map(String::from),
+                "Number" => val.as_f64().map(|n| n.to_string()),
+                "Bool" => val.as_bool().map(|b| b.to_string()),
+                "Ident" => val
+                    .as_object()
+                    .and_then(|o| o.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(String::from),
+                _ => None,
+            };
+        }
+        // Single-key wrappers.
+        if let Some(s) = map.get("String").and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) {
+            return Some(n.to_string());
+        }
+        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) {
+            return Some(b.to_string());
+        }
+        if let Some(name) = map
+            .get("Ident")
+            .and_then(|v| v.as_object())
+            .and_then(|o| o.get("name"))
+            .and_then(|n| n.as_str())
+        {
+            return Some(name.to_string());
+        }
+        None
     }
 
     // ============================================================================
@@ -394,28 +533,29 @@ pub(crate) mod jsx {
     // ============================================================================
 
     /// Extract JSX from a HIR declaration item.
+    /// The real HIR uses single-key objects: items
+    /// are `{Import: ...}`, `{Decl: {Function: ...}}`,
+    /// `{Stmt: ...}`. The previous version looked for
+    /// `"type": "Decl"` + `"kind": "Function"`, which
+    /// was the shape of a hand-rolled test fixture,
+    /// not the parser output.
     pub(crate) fn extract_jsx_from_function(item: &serde_json::Value) -> Option<serde_json::Value> {
-        if item.get("type")?.as_str()? != "Decl" {
-            return None;
-        }
         let decl = item.get("Decl")?;
-        if decl.get("kind")?.as_str()? != "Function" {
-            return None;
-        }
-        let body = decl.get("body")?;
-        if body.is_null() {
-            return None;
-        }
+        let func = decl.get("Function")?;
+        let body = func.get("body")?;
         find_jsx_in_body(body)
     }
 
     /// Generate widget code from JSX expression.
+    /// Uses the Ink codegen path (real
+    /// `runts_ink::*` builder calls), not the
+    /// Ratatui-stub path.
     pub(crate) fn generate_widget_for_jsx(jsx: serde_json::Value) -> Option<TokenStream> {
         let opening = jsx.get("opening")?;
         let name = jsx_name_to_string(opening.get("name")?)?;
         let attrs = extract_jsx_attrs(opening.get("attrs")?)?;
         let children = extract_jsx_children(jsx.get("children")?)?;
-        Some(tag_to_widget(&name, attrs, children))
+        Some(tag_to_ink(&name, attrs, children))
     }
 
     /// Map JSX tag to Ratatui widget code.
@@ -615,7 +755,7 @@ pub(crate) mod jsx {
     /// Render text child.
     fn render_text_child(child: &serde_json::Value) -> Result<TokenStream, ()> {
         let text = child.get("text").and_then(|t| t.as_str()).unwrap_or("");
-        Ok(quote! { frame.render_widget(ratatui::widgets::Paragraph::new(#text), inner); })
+        Ok(quote! { runts_ink::Text::new(#text) })
     }
 
     /// Render JSX child.
@@ -639,13 +779,25 @@ pub(crate) mod jsx {
     }
 
     /// Extract text content from children.
+    /// The HIR emits text children as either the
+    /// fixture shape `{kind: "Text", text: "..."}`
+    /// or the parser shape `{"Text": "..."}`. We
+    /// accept both.
     fn extract_text_content(children: &[serde_json::Value]) -> Option<String> {
         let mut text = String::new();
         for child in children {
-            let kind = child.get("kind")?.as_str()?;
-            if kind == "Text" {
-                let t = child.get("text")?.as_str()?;
-                text.push_str(t);
+            // Fixture shape (test data).
+            if let Some(s) = child
+                .get("text")
+                .and_then(|v| v.as_str())
+                .filter(|_| child.get("kind").and_then(|k| k.as_str()) == Some("Text"))
+            {
+                text.push_str(s);
+                continue;
+            }
+            // Parser shape: single-key `{"Text": "..."}`.
+            if let Some(s) = child.get("Text").and_then(|v| v.as_str()) {
+                text.push_str(s);
             }
         }
         if text.is_empty() {
@@ -671,126 +823,638 @@ pub(crate) mod jsx {
     }
 
     /// Ink `<Box>` — a flexbox-style container.
-    /// Maps to a Ratatui `Layout` with the matching
-    /// direction. The first child's render code is
-    /// emitted as the box body; subsequent children are
-    /// rendered into the next chunk.
+    /// Emits a `runts_ink::Box` builder chain that
+    /// returns a `runts_ink::VNode` (via `.into()`).
+    /// The runtime uses Taffy for layout and Ratatui
+    /// for drawing, so this is the same renderer Ink
+    /// uses under the hood.
     fn widget_ink_box(
         attrs: Vec<(String, serde_json::Value)>,
         children: Vec<serde_json::Value>,
     ) -> TokenStream {
-        // Pick the direction from `flexDirection`. Default
-        // is `row` (Ink 4.0 convention).
-        let direction = if let Some((_, v)) = attrs.iter().find(|(k, _)| k == "flexDirection") {
-            if v.as_str() == Some("column") {
-                quote! { ratatui::layout::Direction::Vertical }
-            } else {
-                quote! { ratatui::layout::Direction::Horizontal }
-            }
+        // Pick the starting builder from
+        // `flexDirection` so that `row` (Ink's
+        // default) doesn't trigger the codegen
+        // warning for an unused `flex_direction`
+        // call. We still emit `.flex_direction(...)`
+        // if the prop is explicit so user intent is
+        // preserved.
+        let has_direction = attrs
+            .iter()
+            .any(|(k, _)| k == "flexDirection");
+        let mut builder: TokenStream = if let Some((_, v)) =
+            attrs.iter().find(|(k, _)| k == "flexDirection")
+        {
+            let dir_tok = flex_direction_token(v);
+            quote! { runts_ink::Box::new().flex_direction(#dir_tok) }
         } else {
-            quote! { ratatui::layout::Direction::Horizontal }
+            quote! { runts_ink::Box::new() }
         };
-        if children.is_empty() {
-            return quote! { ratatui::widgets::Paragraph::new("") };
+        let _ = has_direction;
+        // Apply remaining Box props.
+        for (name, value) in &attrs {
+            if name == "flexDirection" {
+                continue;
+            }
+            if let Some(call) = box_prop_call(name, value) {
+                builder = quote! { #builder #call };
+            }
         }
-        // Render each child into a chunk. For now we
-        // just emit each child's render call in
-        // sequence; a future refactor will use
-        // `Layout::split` to size the chunks.
-        let mut child_calls: Vec<TokenStream> = Vec::new();
-        for child in children {
-            child_calls.push(tag_to_widget(
-                child
-                    .get("opening")
-                    .and_then(|o| o.get("name"))
-                    .and_then(|n| n.get("Ident"))
-                    .and_then(|i| i.as_str())
-                    .unwrap_or("text"),
-                extract_jsx_attrs(
-                    child
-                        .get("opening")
-                        .and_then(|o| o.get("attrs"))
-                        .unwrap_or(&serde_json::Value::Null),
-                )
-                .unwrap_or_default(),
-                extract_jsx_children(
-                    child.get("children").unwrap_or(&serde_json::Value::Null),
-                )
-                .unwrap_or_default(),
+        // Append each child as a `.child(expr)` call.
+        for child in &children {
+            let child_expr = child_to_vnode(child);
+            builder = quote! { #builder.child(#child_expr) };
+        }
+        // Box auto-converts to VNode via `From`.
+        quote! { #builder.into() }
+    }
+
+    /// Ink `<block title="...">` — a bordered Box
+    /// with a title. The title becomes the first
+    /// Text child of the Box; the other children
+    /// follow. The Box gets a default
+    /// `border_style(classic)` so the title and
+    /// children have a visible border.
+    fn widget_ink_block(
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
+        // Convert the legacy `<block>` attrs
+        // (`title`, `borders`) to Box-style attrs
+        // (`borderStyle`, default `classic`).
+        let mut box_attrs: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut title: Option<String> = None;
+        let mut has_border_attr = false;
+        for (k, v) in &attrs {
+            match k.as_str() {
+                "title" => {
+                    title = v.as_str().map(|s| s.to_string());
+                }
+                "borders" => {
+                    if v.as_bool() == Some(false) {
+                        // No border — skip borderStyle.
+                    } else {
+                        has_border_attr = true;
+                    }
+                }
+                _ => {
+                    box_attrs.push((k.clone(), v.clone()));
+                }
+            }
+        }
+        if !has_border_attr {
+            box_attrs.push((
+                "borderStyle".to_string(),
+                serde_json::Value::String("classic".to_string()),
             ));
         }
-        quote! {
-            {
-                let _dir = #direction;
-                ratatui::widgets::Paragraph::new("")
+        // Prepend a Text child for the title so it
+        // appears as the top row of the bordered box.
+        let mut final_children: Vec<serde_json::Value> = Vec::new();
+        if let Some(t) = title {
+            final_children.push(serde_json::json!({
+                "kind": "Text",
+                "text": t,
+            }));
+        }
+        final_children.extend(children);
+        widget_ink_box(box_attrs, final_children)
+    }
+
+    /// Ink `<Text>` — a styled string.
+    /// Emits a `runts_ink::Text` builder chain that
+    /// returns a `runts_ink::VNode`.
+    fn widget_ink_text_call(
+        attrs: Vec<(String, serde_json::Value)>,
+        content: String,
+    ) -> TokenStream {
+        let mut builder = quote! { runts_ink::Text::new(#content) };
+        for (name, value) in &attrs {
+            match name.as_str() {
+                "bold" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.bold() };
+                    }
+                }
+                "italic" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.italic() };
+                    }
+                }
+                "underline" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.underline() };
+                    }
+                }
+                "strikethrough" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.strikethrough() };
+                    }
+                }
+                "dimColor" | "dimcolor" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.dim() };
+                    }
+                }
+                "inverse" => {
+                    if truthy(value) {
+                        builder = quote! { #builder.inverse() };
+                    }
+                }
+                "color" => {
+                    if let Some(color_tok) = color_token(value) {
+                        builder = quote! { #builder.color(#color_tok) };
+                    }
+                }
+                "backgroundColor" | "backgroundcolor" => {
+                    if let Some(color_tok) = color_token(value) {
+                        builder = quote! { #builder.background_color(#color_tok) };
+                    }
+                }
+                "wrap" => {
+                    let wrap_tok = wrap_mode_token(value);
+                    builder = quote! { #builder.wrap(#wrap_tok) };
+                }
+                _ => {
+                    // Unknown prop — silently ignore so
+                    // the v0.1 codegen stays forward-
+                    // compatible with new props.
+                }
+            }
+        }
+        // No trailing `.into()`: `Box::child` takes
+        // `impl Into<VNode>`, so the bare `Text`
+        // expression chains cleanly through
+        // `.child().child().into()` without the
+        // type-inference ambiguity that `.into()`
+        // on intermediate values causes.
+        quote! { #builder }
+    }
+
+    /// Ink `<Newline>` — a vertical separator. Emits
+    /// `runts_ink::Newline::new().into()`.
+    fn widget_ink_newline() -> TokenStream {
+        quote! { runts_ink::Newline::new().into() }
+    }
+
+    /// Ink `<Spacer>` — a flexbox separator. Emits
+    /// `runts_ink::Spacer::new().into()`.
+    fn widget_ink_spacer() -> TokenStream {
+        quote! { runts_ink::Spacer::new().into() }
+    }
+
+    /// Convert a JSX child (already a normalized
+    /// JSX object — opening, attrs, children) to a
+    /// `TokenStream` expression that produces a
+    /// `runts_ink::VNode`.
+    fn child_to_vnode(child: &serde_json::Value) -> TokenStream {
+        // Short-circuit: a normalized `{kind: "Text",
+        // text: "..."}` child (from
+        // `extract_jsx_children`) is a bare Text,
+        // not a JSX element. Build it directly.
+        if let Some(kind) = child.get("kind").and_then(|k| k.as_str()) {
+            // Distinguish: a bare Text wrapper
+            // (`{kind: "Text", text: "..."}`) from a
+            // real JSX element that also happens to
+            // have a `kind` field (`{kind: "JSX",
+            // opening: {...}, children: [...]}`).
+            match kind {
+                "Text"
+                    if child.get("text").is_some()
+                        && child.get("opening").is_none() =>
+                {
+                    let text = child.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    // No `.into()` here: `Box::child`
+                    // takes `impl Into<VNode>`, and
+                    // emitting the bare expression lets
+                    // Rust infer the type (otherwise
+                    // chained `.child().child()` fails
+                    // with E0283).
+                    return quote! { runts_ink::Text::new(#text) };
+                }
+                "JSX" if child.get("jsx").is_some() && child.get("opening").is_none() => {
+                    // `{kind: "JSX", jsx: {...}}` —
+                    // wrapped JSX, recurse.
+                    if let Some(inner) = child.get("jsx") {
+                        return child_to_vnode(inner);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let opening = child.get("opening");
+        let tag = opening
+            .and_then(|o| o.get("name"))
+            .and_then(|n| n.get("Ident"))
+            .and_then(|i| i.as_str())
+            .unwrap_or("text");
+        let attrs = opening
+            .and_then(|o| o.get("attrs"))
+            .map(|a| extract_jsx_attrs(a).unwrap_or_default())
+            .unwrap_or_default();
+        let kids = extract_jsx_children(
+            child.get("children").unwrap_or(&serde_json::Value::Null),
+        )
+        .unwrap_or_default();
+        tag_to_ink(tag, attrs, kids)
+    }
+
+    /// Map an Ink tag to a `runts_ink::VNode` expr.
+    /// This is the Ink-specific dispatcher; the
+    /// legacy `tag_to_widget` still exists for the
+    /// Ratatui-stub path. The legacy tags
+    /// (`text`, `block`, `row`, `col`,
+    /// `paragraph`) are intentionally NOT mapped
+    /// here — they go through `tag_to_widget` so
+    /// the legacy examples still build.
+    fn tag_to_ink(
+        tag: &str,
+        attrs: Vec<(String, serde_json::Value)>,
+        children: Vec<serde_json::Value>,
+    ) -> TokenStream {
+        match tag {
+            "Box" | "box" => widget_ink_box(attrs, children),
+            "block" => {
+                // `<block title="...">` lowers to a
+                // bordered Box with the title as the
+                // first Text child.
+                widget_ink_block(attrs, children)
+            }
+            "paragraph" | "Text" | "text" | "inktext" => {
+                // `<paragraph>foo</paragraph>`,
+                // `<Text>foo</Text>`, and
+                // `<text>foo</text>` are all just a
+                // Text.
+                let text = collect_text_from_children(&children);
+                widget_ink_text_call(attrs, text)
+            }
+            "row" | "col" => {
+                // `<row>` / `<col>` are flex-direction
+                // hints on a Box.
+                let mut box_attrs = attrs;
+                let dir = if tag == "row" {
+                    "row"
+                } else {
+                    "column"
+                };
+                box_attrs.push((
+                    "flexDirection".to_string(),
+                    serde_json::Value::String(dir.to_string()),
+                ));
+                widget_ink_box(box_attrs, children)
+            }
+            "Newline" => widget_ink_newline(),
+            "Spacer" => widget_ink_spacer(),
+            "Static" | "Transform" => widget_ink_first_child(children),
+            _ => {
+                // Unknown intrinsic — fall back to a
+                // Text with the tag name. This matches
+                // the previous placeholder behaviour.
+                let label = tag.to_string();
+                widget_ink_text_call(Vec::new(), label)
             }
         }
     }
 
-    /// Ink `<Newline>` — a vertical separator. Renders
-    /// as a blank line.
-    fn widget_ink_newline() -> TokenStream {
-        quote! { ratatui::widgets::Paragraph::new("") }
+    /// Flatten JSX children to a single text string
+    /// (whitespace-separated). Used by `<Text>` to
+    /// extract its content. For the bordered
+    /// example, all `<Text>` children are either
+    /// text strings or `{''}` empty expressions,
+    /// so this produces the right concatenation.
+    fn collect_text_from_children(children: &[serde_json::Value]) -> String {
+        let mut out = String::new();
+        for raw in children {
+            // Children at this layer are the
+            // normalized shape (see
+            // `extract_jsx_children`): each is
+            // `{kind: "Text", text: "..."}` or
+            // `{kind: "JSX", jsx: {...}}`.
+            if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(text);
+            } else if let Some(jsx) = raw.get("jsx") {
+                // Recurse into a nested JSX element
+                // to get its text content.
+                let nested = extract_jsx_children(
+                    jsx.get("children").unwrap_or(&serde_json::Value::Null),
+                )
+                .unwrap_or_default();
+                let inner = collect_text_from_children(&nested);
+                if !inner.is_empty() {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(&inner);
+                }
+            }
+            // Expression children and Fragments are
+            // skipped — `<Text>{count}</Text>` would
+            // need an interpolation pipeline that
+            // we don't have yet (useState-equivalent
+            // comes with the rquickjs dev path).
+        }
+        out
     }
 
-    /// Ink `<Spacer>` — a flexbox separator. Renders
-    /// as an empty widget that takes layout space.
-    fn widget_ink_spacer() -> TokenStream {
-        quote! { ratatui::widgets::Paragraph::new("") }
+    /// Map a `flexDirection` JSON value to a
+    /// `runts_ink::FlexDirection` token. Returns
+    /// Map a string to a FlexDirection variant.
+    /// Accepts both raw strings (fixture) and
+    /// `{String: "..."}` / `{Expr: {String: "..."}}`
+    /// (parser).
+    fn flex_direction_token(value: &serde_json::Value) -> TokenStream {
+        // Try as plain string first.
+        if let Some(s) = value.as_str() {
+            return flex_dir_for_str(s);
+        }
+        // Parser shape: single-key wrappers.
+        if let Some(s) = value.get("String").and_then(|v| v.as_str()) {
+            return flex_dir_for_str(s);
+        }
+        if let Some(expr) = value.get("Expr") {
+            if let Some(s) = expr.get("String").and_then(|v| v.as_str()) {
+                return flex_dir_for_str(s);
+            }
+        }
+        flex_dir_for_str("")
     }
 
+    /// Map a flex-direction string to a token.
+    fn flex_dir_for_str(s: &str) -> TokenStream {
+        match s {
+            "column" => quote! { runts_ink::FlexDirection::Column },
+            "row-reverse" | "rowReverse" => {
+                quote! { runts_ink::FlexDirection::RowReverse }
+            }
+            "column-reverse" | "columnReverse" => {
+                quote! { runts_ink::FlexDirection::ColumnReverse }
+            }
+            _ => quote! { runts_ink::FlexDirection::Row },
+        }
+    }
+
+    /// Map a `borderStyle` JSON value to a
+    /// `runts_ink::BorderStyle` token.
+    fn border_style_token(value: &serde_json::Value) -> TokenStream {
+        if let Some(s) = value.as_str() {
+            return match s {
+                "round" => quote! { runts_ink::BorderStyle::Round },
+                "double" => quote! { runts_ink::BorderStyle::Double },
+                "bold" => quote! { runts_ink::BorderStyle::Bold },
+                "classic" => quote! { runts_ink::BorderStyle::Classic },
+                _ => quote! { runts_ink::BorderStyle::Single },
+            };
+        }
+        quote! { runts_ink::BorderStyle::Single }
+    }
+
+    /// Map a `color` JSON value to a
+    /// `runts_ink::Color` token.
+    fn color_token(value: &serde_json::Value) -> Option<TokenStream> {
+        let name = value.as_str()?;
+        let tok = match name.to_ascii_lowercase().as_str() {
+            "default" => quote! { runts_ink::Color::Default },
+            "black" => quote! { runts_ink::Color::Black },
+            "red" => quote! { runts_ink::Color::Red },
+            "green" => quote! { runts_ink::Color::Green },
+            "yellow" => quote! { runts_ink::Color::Yellow },
+            "blue" => quote! { runts_ink::Color::Blue },
+            "magenta" => quote! { runts_ink::Color::Magenta },
+            "cyan" => quote! { runts_ink::Color::Cyan },
+            "white" => quote! { runts_ink::Color::White },
+            "gray" | "grey" => quote! { runts_ink::Color::Gray },
+            "blackbright" => quote! { runts_ink::Color::BrightBlack },
+            "redbright" => quote! { runts_ink::Color::BrightRed },
+            "greenbright" => quote! { runts_ink::Color::BrightGreen },
+            "yellowbright" => quote! { runts_ink::Color::BrightYellow },
+            "bluebright" => quote! { runts_ink::Color::BrightBlue },
+            "magentabright" => quote! { runts_ink::Color::BrightMagenta },
+            "cyanbright" => quote! { runts_ink::Color::BrightCyan },
+            "whitebright" => quote! { runts_ink::Color::BrightWhite },
+            _ => return None,
+        };
+        Some(tok)
+    }
+
+    /// Map a `wrap` JSON value to a
+    /// `runts_ink::Wrap` token.
+    fn wrap_mode_token(value: &serde_json::Value) -> TokenStream {
+        if let Some(s) = value.as_str() {
+            return match s {
+                "wrap" => quote! { runts_ink::Wrap::Wrap },
+                "truncate-end" | "truncateEnd" | "end" => {
+                    quote! { runts_ink::Wrap::TruncateEnd }
+                }
+                "truncate-middle" | "truncateMiddle" | "middle" => {
+                    quote! { runts_ink::Wrap::TruncateMiddle }
+                }
+                _ => quote! { runts_ink::Wrap::NoWrap },
+            };
+        }
+        quote! { runts_ink::Wrap::NoWrap }
+    }
+
+    /// Convert a non-string JSON value to a string
+    /// literal. Used for numeric prop values like
+    /// `paddingX={2}`.
+    fn json_value_to_string(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Is this JSON value truthy? Booleans follow
+    /// JS semantics; everything else is treated as
+    /// truthy so a missing attr value still
+    /// enables the flag.
+    fn truthy(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::Null => false,
+            _ => true,
+        }
+    }
+
+    /// Map a Box prop name + value to a builder
+    /// call. Returns None for unrecognised props.
+    fn box_prop_call(
+        name: &str,
+        value: &serde_json::Value,
+    ) -> Option<TokenStream> {
+        match name {
+            "padding" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding(#n) })
+            }
+            "paddingX" | "paddingx" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_x(#n) })
+            }
+            "paddingY" | "paddingy" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_y(#n) })
+            }
+            "paddingTop" | "paddingtop" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_top(#n) })
+            }
+            "paddingBottom" | "paddingbottom" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_bottom(#n) })
+            }
+            "paddingLeft" | "paddingleft" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_left(#n) })
+            }
+            "paddingRight" | "paddingright" => {
+                let n = value.as_u64()?;
+                Some(quote! { .padding_right(#n) })
+            }
+            "margin" => {
+                let n = value.as_u64()?;
+                Some(quote! { .margin(#n) })
+            }
+            "width" | "height" => {
+                let n = value.as_u64()?;
+                let m = quote::format_ident!("{}", name);
+                Some(quote! { .#m(#n) })
+            }
+            "flexGrow" | "flexgrow" => {
+                let n = value.as_f64()?;
+                Some(quote! { .flex_grow(#n) })
+            }
+            "flexShrink" | "flexshrink" => {
+                let n = value.as_f64()?;
+                Some(quote! { .flex_shrink(#n) })
+            }
+            "gap" => {
+                let n = value.as_u64()?;
+                Some(quote! { .gap(#n) })
+            }
+            "rowGap" | "rowgap" => {
+                let n = value.as_u64()?;
+                Some(quote! { .row_gap(#n) })
+            }
+            "columnGap" | "columngap" => {
+                let n = value.as_u64()?;
+                Some(quote! { .column_gap(#n) })
+            }
+            "alignItems" | "alignitems" => {
+                let s = value.as_str()?;
+                let tok = match s {
+                    "flex-start" | "flexStart" | "start" => {
+                        quote! { runts_ink::AlignItems::FlexStart }
+                    }
+                    "center" => quote! { runts_ink::AlignItems::Center },
+                    "flex-end" | "flexEnd" | "end" => {
+                        quote! { runts_ink::AlignItems::FlexEnd }
+                    }
+                    "stretch" => quote! { runts_ink::AlignItems::Stretch },
+                    _ => return None,
+                };
+                Some(quote! { .align_items(#tok) })
+            }
+            "justifyContent" | "justifycontent" => {
+                let s = value.as_str()?;
+                let tok = match s {
+                    "flex-start" | "flexStart" | "start" => {
+                        quote! { runts_ink::JustifyContent::FlexStart }
+                    }
+                    "center" => quote! { runts_ink::JustifyContent::Center },
+                    "flex-end" | "flexEnd" | "end" => {
+                        quote! { runts_ink::JustifyContent::FlexEnd }
+                    }
+                    "space-between" | "spaceBetween" => {
+                        quote! { runts_ink::JustifyContent::SpaceBetween }
+                    }
+                    "space-around" | "spaceAround" => {
+                        quote! { runts_ink::JustifyContent::SpaceAround }
+                    }
+                    _ => return None,
+                };
+                Some(quote! { .justify_content(#tok) })
+            }
+            "borderStyle" | "borderstyle" => {
+                let tok = border_style_token(value);
+                Some(quote! { .border_style(#tok) })
+            }
+            "borderColor" | "bordercolor" => {
+                let color = color_token(value)?;
+                Some(quote! { .border_color(#color) })
+            }
+            "backgroundColor" | "backgroundcolor" => {
+                let color = color_token(value)?;
+                Some(quote! { .background_color(#color) })
+            }
+            _ => {
+                let _ = json_value_to_string(value);
+                None
+            }
+        }
+    }
     /// Render the first child directly. Used for
     /// `<Static>` and `<Transform>` which are wrappers
     /// around their single child.
     fn widget_ink_first_child(children: Vec<serde_json::Value>) -> TokenStream {
         if let Some(child) = children.into_iter().next() {
-            let tag = child
-                .get("opening")
-                .and_then(|o| o.get("name"))
-                .and_then(|n| n.get("Ident"))
-                .and_then(|i| i.as_str())
-                .unwrap_or("text");
-            let attrs = extract_jsx_attrs(
-                child
-                    .get("opening")
-                    .and_then(|o| o.get("attrs"))
-                    .unwrap_or(&serde_json::Value::Null),
-            )
-            .unwrap_or_default();
-            let kids = extract_jsx_children(
-                child.get("children").unwrap_or(&serde_json::Value::Null),
-            )
-            .unwrap_or_default();
-            tag_to_widget(tag, attrs, kids)
+            child_to_vnode(&child)
         } else {
-            quote! { ratatui::widgets::Paragraph::new("") }
+            // Empty `<Static>` / `<Transform>` becomes
+            // an empty Text — the renderer just draws
+            // a blank line, which matches Ink.
+            quote! { runts_ink::Text::new(String::new()).into() }
         }
     }
 
     /// Try to generate widget code from HIR items JSON.
     /// Returns Some(code) if JSX was detected, None otherwise.
+    /// The returned code is a complete Rust file
+    /// with `fn main()` that uses
+    /// `runts_ink::render_to_string` to produce the
+    /// first-frame output of the JSX tree, then
+    /// writes the result to stdout.
     pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
         let items_arr = items.as_array()?;
         for item in items_arr {
             if let Some(jsx_expr) = extract_jsx_from_function(item) {
                 let widget_code = generate_widget_for_jsx(jsx_expr)?;
-                let code = wrap_widget_module_fn(&widget_code.to_string());
+                let code = wrap_ink_main(&widget_code.to_string());
                 return Some(code);
             }
         }
         None
     }
 
-    /// Wrap widget code in a module.
-    fn wrap_widget_module_fn(widget_fn: &str) -> String {
+    /// Wrap a VNode expression in a `fn main()` that
+    /// builds the tree, calls `render_to_string` to
+    /// get the first-frame grid, and writes it to
+    /// stdout. This matches actual Ink's behaviour
+    /// for a non-interactive app: write the rendered
+    /// grid to the terminal.
+    fn wrap_ink_main(vnode_expr: &str) -> String {
         format!(
-            r#"//! Widget component: generated by runts-ratatui 0.1
+            r#"//! Ink app entry: generated by runts-ratatui 0.1
+//
+// The VNode expression below was codegen'd from the
+// JSX in the user's .tsx file. The same expression
+// would be the root of a React tree in actual Ink.
 
-use ratatui::prelude::*;
+use runts_ink;
 
-pub fn render(frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {{
-    let widget = {widget_fn};
-    frame.render_widget(widget, area);
+fn main() -> anyhow::Result<()> {{
+    let root: runts_ink::VNode = {vnode_expr};
+    let rendered = runts_ink::render_to_string(
+        root,
+        runts_ink::RenderOptions::default(),
+    )?;
+    print!("{{}}", rendered);
+    Ok(())
 }}
 "#
         )
