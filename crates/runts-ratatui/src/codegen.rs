@@ -1521,11 +1521,32 @@ pub(crate) mod jsx {
                 Some(quote! { .#m(#n) })
             }
             "flexGrow" | "flexgrow" => {
-                let n = value.as_f64()?;
+                // Unwrap `{"Expr": {"Number": 1.0}}`
+                // envelope shape that the HIR
+                // uses for brace-expression
+                // numeric attrs.
+                let n = value
+                    .as_f64()
+                    .or_else(|| {
+                        value
+                            .get("Expr")
+                            .and_then(|e| e.get("Number"))
+                            .and_then(|n| n.as_f64())
+                    })
+                    .or_else(|| value.get("Number").and_then(|n| n.as_f64()))
+                    ?;
                 Some(quote! { .flex_grow(#n) })
             }
             "flexShrink" | "flexshrink" => {
-                let n = value.as_f64()?;
+                let n = value
+                    .as_f64()
+                    .or_else(|| {
+                        value
+                            .get("Expr")
+                            .and_then(|e| e.get("Number"))
+                            .and_then(|n| n.as_f64())
+                    })
+                    .or_else(|| value.get("Number").and_then(|n| n.as_f64()))?;
                 Some(quote! { .flex_shrink(#n) })
             }
             "gap" => {

@@ -264,6 +264,13 @@ fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
                 }
             }
         }
+        if let Ok(grow_v) = props.get::<_, Value>("flexGrow") {
+            if let Some(n) = grow_v.as_int() {
+                b = b.flex_grow(n as f32);
+            } else if let Some(n) = grow_v.as_float() {
+                b = b.flex_grow(n as f32);
+            }
+        }
         if let Ok(style_v) = props.get::<_, Value>("borderStyle") {
             if let Some(s) = style_v.as_string() {
                 if let Ok(s) = s.to_string() {
