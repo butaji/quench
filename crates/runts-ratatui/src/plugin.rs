@@ -258,11 +258,69 @@ pub fn dev_eval_program_with_lowered(
     // Pick the longest one (the app body, not
     // the self-closing reference).
     if let Some((_end, raw)) = jsx_blocks.iter().max_by_key(|(_, s)| s.len()) {
+        // Also extract any `const` / `let` variable
+        // declarations from the function body so
+        // the eval program can reference them.
+        // We look for declarations that appear
+        // BEFORE the JSX in the source.
+        let var_decls = extract_var_decls_before(src, *_end);
         let lowered = crate::dev_jsx::lower_jsx_for_eval(raw);
-        return format!("(() => {{ return runts_ink.render_to_string({lowered}); }})()");
+        return format!(
+            "(() => {{ {var_decls} return runts_ink.render_to_string({lowered}); }})()"
+        );
     }
     // Fallback: wrap the lowered JS as an IIFE.
     format!("(() => {{ {_lowered_js} }})()")
+}
+/// Extract `const NAME = ...;` and `let NAME = ...;`
+/// declarations that appear in the source before
+/// the given byte position. Used to make function-
+/// scoped variables available to the dev-path
+/// eval program.
+fn extract_var_decls_before(src: &str, before: usize) -> String {
+    let prefix = &src[..before.min(src.len())];
+    let mut out = String::new();
+    // Iterate by char to avoid panicking on
+    // multi-byte UTF-8 boundaries.
+    let chars: Vec<char> = prefix.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        // Look for `const` or `let` followed by
+        // an identifier and `=`.
+        let remaining: String = chars[i..].iter().collect();
+        if remaining.starts_with("const ") || remaining.starts_with("let ") {
+            // Find the end of the statement (semicolon
+            // or end of line).
+            let start = i;
+            let mut j = i + 5; // skip "const " or "let "
+            let mut depth = 0;
+            while j < chars.len() {
+                let c = chars[j];
+                if c == '{' || c == '(' || c == '[' {
+                    depth += 1;
+                } else if c == '}' || c == ')' || c == ']' {
+                    depth -= 1;
+                } else if depth == 0 && c == ';' {
+                    j += 1;
+                    break;
+                } else if depth == 0 && c == '\n' {
+                    break;
+                }
+                j += 1;
+            }
+            let stmt: String = chars[start..j].iter().collect();
+            // Only include simple declarations:
+            // const NAME = VALUE;
+            if stmt.contains('=') && !stmt.contains("=>") {
+                out.push_str(&stmt);
+                out.push('\n');
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Wrap the dev-path JS so rquickjs can eval it.
