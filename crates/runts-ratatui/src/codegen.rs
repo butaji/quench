@@ -865,8 +865,12 @@ pub(crate) mod jsx {
             let child_expr = child_to_vnode(child);
             builder = quote! { #builder.child(#child_expr) };
         }
-        // Box auto-converts to VNode via `From`.
-        quote! { #builder.into() }
+        // Return the Box, NOT `.into()`. The
+        // parent caller wraps `.child(impl
+        // Into<VNode>)` so a bare Box auto-
+        // converts. Adding `.into()` here makes
+        // nested Box children fail E0283.
+        builder
     }
 
     /// Ink `<block title="...">` — a bordered Box
@@ -1448,7 +1452,11 @@ pub(crate) mod jsx {
 use runts_ink;
 
 fn main() -> anyhow::Result<()> {{
-    let root: runts_ink::VNode = {vnode_expr};
+    // The codegen'd vnode_expr is a builder
+    // chain (e.g. `runts_ink::Box::new()...`)
+    // which produces a Box or Text value.
+    // We `.into()` it to convert to VNode.
+    let root: runts_ink::VNode = ({vnode_expr}).into();
     let rendered = runts_ink::render_to_string(
         root,
         runts_ink::RenderOptions::default(),
