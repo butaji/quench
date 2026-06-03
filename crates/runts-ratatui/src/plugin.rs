@@ -334,10 +334,15 @@ fn parse_jsx_top(chars: &[char], i: usize) -> Option<(usize, String)> {
     if self_closing {
         return Some((k, chars[i..k].iter().collect()));
     }
-    // Find matching `</Tag>`.
+    // Find matching `</Tag>`. Track nested
+    // opens of the same tag so we skip past
+    // inner `</Tag>` closes that belong to a
+    // nested element, not this one.
+    let open = format!("<{tag}");
     let close = format!("</{tag}>");
+    let open_chars: Vec<char> = open.chars().collect();
     let close_chars: Vec<char> = close.chars().collect();
-    let mut depth = 1;
+    let mut depth: usize = 1;
     let mut m = k;
     while m < chars.len() && depth > 0 {
         if m + close_chars.len() <= chars.len() {
@@ -347,6 +352,28 @@ fn parse_jsx_top(chars: &[char], i: usize) -> Option<(usize, String)> {
                 if depth == 0 {
                     let end = m + close_chars.len();
                     return Some((end, chars[i..end].iter().collect()));
+                }
+                m += close_chars.len();
+                continue;
+            }
+        }
+        if m + open_chars.len() <= chars.len() {
+            let cand: String = chars[m..m + open_chars.len()].iter().collect();
+            if cand == open {
+                // Only count a real open if the
+                // next non-space char is a space,
+                // `>`, or `/` (attrs, close, or
+                // self-close) — otherwise the
+                // substring is part of a longer
+                // identifier like `<Boxer`.
+                let next_pos = m + open_chars.len();
+                if next_pos < chars.len() {
+                    let nc = chars[next_pos];
+                    if nc == ' ' || nc == '>' || nc == '/' || nc == '\t' || nc == '\n' {
+                        depth += 1;
+                        m += open_chars.len();
+                        continue;
+                    }
                 }
             }
         }

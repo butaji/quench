@@ -28,6 +28,7 @@
 //! per build. For v0.1 the simplicity wins.
 
 use crate::{
+    components::{AlignItems, JustifyContent},
     render_to_string, BorderStyle, Box as InkBox, Color, FlexDirection, Newline, RenderOptions,
     Spacer, Text as InkText, VNode, VNodeContent,
 };
@@ -61,6 +62,32 @@ fn parse_border_style(s: &str) -> BorderStyle {
         // "none" maps to Single for v0.1; the renderer
         // can be extended with a `border` setter later.
         _ => BorderStyle::Single,
+    }
+}
+
+/// Parse a `justifyContent` string into a
+/// `JustifyContent`.
+fn parse_justify(s: &str) -> JustifyContent {
+    match s {
+        "flex-start" | "FlexStart" => JustifyContent::FlexStart,
+        "flex-end" | "FlexEnd" => JustifyContent::FlexEnd,
+        "center" | "Center" => JustifyContent::Center,
+        "space-between" | "SpaceBetween" => JustifyContent::SpaceBetween,
+        "space-around" | "SpaceAround" => JustifyContent::SpaceAround,
+        _ => JustifyContent::FlexStart,
+    }
+}
+
+/// Parse an `alignItems` string into an
+/// `AlignItems`.
+fn parse_align_items(s: &str) -> AlignItems {
+    match s {
+        "flex-start" | "FlexStart" => AlignItems::FlexStart,
+        "flex-end" | "FlexEnd" => AlignItems::FlexEnd,
+        "center" | "Center" => AlignItems::Center,
+        "stretch" | "Stretch" => AlignItems::Stretch,
+        "baseline" | "Baseline" => AlignItems::Baseline,
+        _ => AlignItems::FlexStart,
     }
 }
 
@@ -118,19 +145,53 @@ fn vnode_to_js<'js>(ctx: &Ctx<'js>, node: &VNode) -> JsResult<Value<'js>> {
                 FlexDirection::ColumnReverse => "column-reverse",
             };
             props.set("flexDirection", dir)?;
-            let style = match b.border_style {
-                BorderStyle::Single => "single",
-                BorderStyle::Double => "double",
-                BorderStyle::Round => "round",
-                BorderStyle::Bold => "bold",
-                BorderStyle::Classic => "classic",
+            // Serialise justify/align so the
+            // round-trip preserves them. Only
+            // emit when non-default to keep the
+            // JS payload small.
+            let justify = match b.justify_content {
+                JustifyContent::FlexStart => "flex-start",
+                JustifyContent::FlexEnd => "flex-end",
+                JustifyContent::Center => "center",
+                JustifyContent::SpaceBetween => "space-between",
+                JustifyContent::SpaceAround => "space-around",
+                JustifyContent::SpaceEvenly => "space-evenly",
             };
-            props.set("borderStyle", style)?;
+            props.set("justifyContent", justify)?;
+            let align = match b.align_items {
+                AlignItems::FlexStart => "flex-start",
+                AlignItems::FlexEnd => "flex-end",
+                AlignItems::Center => "center",
+                AlignItems::Stretch => "stretch",
+                AlignItems::Baseline => "baseline",
+            };
+            props.set("alignItems", align)?;
+            // Only serialise the borderStyle if
+            // the Box actually has borders
+            // enabled. A Box with no explicit
+            // border (default) should round-trip
+            // as a borderless Box, not a Box
+            // that suddenly grows Single borders
+            // because the default is Single.
+            if b.borders.top
+                || b.borders.right
+                || b.borders.bottom
+                || b.borders.left
+            {
+                let style = match b.border_style {
+                    BorderStyle::Single => "single",
+                    BorderStyle::Double => "double",
+                    BorderStyle::Round => "round",
+                    BorderStyle::Bold => "bold",
+                    BorderStyle::Classic => "classic",
+                };
+                props.set("borderStyle", style)?;
+            }
             if let Some(p) = b.padding_left {
                 props.set("paddingX", p as i32)?;
             }
             if let Some(p) = b.padding_top {
-                props.set("paddingY", p)?;
+                props.set("paddingY", p as i32)?;
             }
             let children = Object::new(ctx.clone())?;
             for (i, c) in b.children.iter().enumerate() {
@@ -207,6 +268,20 @@ fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
             if let Some(s) = style_v.as_string() {
                 if let Ok(s) = s.to_string() {
                     b = b.border_style(parse_border_style(&s));
+                }
+            }
+        }
+        if let Ok(p) = props.get::<_, Value>("justifyContent") {
+            if let Some(s) = p.as_string() {
+                if let Ok(s) = s.to_string() {
+                    b = b.justify_content(parse_justify(&s));
+                }
+            }
+        }
+        if let Ok(p) = props.get::<_, Value>("alignItems") {
+            if let Some(s) = p.as_string() {
+                if let Ok(s) = s.to_string() {
+                    b = b.align_items(parse_align_items(&s));
                 }
             }
         }
@@ -340,6 +415,20 @@ fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
                         message: Some(format!("{e:?}")),
                     })?;
                     b = b.border_style(parse_border_style(&s));
+                }
+            }
+            if let Ok(p) = props.get::<_, Value>("justifyContent") {
+                if let Some(s) = p.as_string() {
+                    if let Ok(s) = s.to_string() {
+                        b = b.justify_content(parse_justify(&s));
+                    }
+                }
+            }
+            if let Ok(p) = props.get::<_, Value>("alignItems") {
+                if let Some(s) = p.as_string() {
+                    if let Ok(s) = s.to_string() {
+                        b = b.align_items(parse_align_items(&s));
+                    }
                 }
             }
             if let Ok(p) = props.get::<_, Value>("paddingX") {

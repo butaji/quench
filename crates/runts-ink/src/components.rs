@@ -327,6 +327,23 @@ impl Box {
         self
     }
 
+    /// Set the justify-content (main-axis
+    /// alignment) of the children.
+    pub fn justify_content(
+        mut self,
+        j: JustifyContent,
+    ) -> Self {
+        self.justify_content = j;
+        self
+    }
+
+    /// Set the align-items (cross-axis
+    /// alignment) of the children.
+    pub fn align_items(mut self, a: AlignItems) -> Self {
+        self.align_items = a;
+        self
+    }
+
     /// Set padding on all four sides at once.
     pub fn padding(mut self, p: u16) -> Self {
         self.padding_top = Some(p);
