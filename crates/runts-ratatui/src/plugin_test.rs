@@ -110,7 +110,7 @@ fn test_codegen_entry_generates_main() {
 fn test_cargo_deps() {
     let plugin = ratatui_plugin();
     let deps = plugin.cargo_deps();
-    assert_eq!(deps.len(), 3);
+    assert_eq!(deps.len(), 4);
     let ratatui = deps.iter().find(|d| d.name == "ratatui").expect("ratatui dep");
     assert_eq!(ratatui.version, Some("0.26".to_string()));
     assert!(ratatui.features.contains(&"crossterm".to_string()));

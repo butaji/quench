@@ -483,9 +483,22 @@ pub async fn run_plugin_build(
     let plugin = get_plugin(&plugin_name)?;
     let project_root = resolve_project_root(&path)?;
 
-    // Create ephemeral build dir using TempDir for secure cleanup
-    let temp_dir = TempDir::new()?;
-    let build_dir = temp_dir.path().to_path_buf();
+    // Create ephemeral build dir using TempDir for secure cleanup.
+    // When RUNTS_KEEP_BUILD=1 is set, the build dir is materialized
+    // at `<project_root>/.runts/build` instead so the generated
+    // source can be inspected (useful for verifying that the
+    // JSX-to-Rust codegen produced the right calls).
+    let (build_dir, _temp_guard) = if std::env::var_os("RUNTS_KEEP_BUILD").is_some() {
+        let persistent = project_root.join(".runts").join("build");
+        if persistent.exists() {
+            fs::remove_dir_all(&persistent).ok();
+        }
+        fs::create_dir_all(&persistent).context("create persistent build dir")?;
+        (persistent, None)
+    } else {
+        let temp = TempDir::new()?;
+        (temp.path().to_path_buf(), Some(temp))
+    };
 
     // Create src/ directory
     let src_dir = build_dir.join("src");
@@ -708,6 +721,14 @@ fn generate_cargo_toml(plugin: &dyn runts_plugin::Plugin, project_root: &Path) -
 name = "runts-app"
 version = "0.1.0"
 edition = "2021"
+
+# This is an auto-generated crate produced by the
+# runts build pipeline. The empty `[workspace]`
+# table keeps cargo from promoting it to a member
+# of the parent repo's workspace when the build dir
+# happens to live inside the repo (e.g. when
+# RUNTS_KEEP_BUILD=1 is set for source inspection).
+[workspace]
 
 [dependencies]
 {}

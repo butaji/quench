@@ -65,6 +65,27 @@ impl Plugin for RatatuiPlugin {
                 path: None,
                 features: vec![],
             },
+            // The Ink-style JSX tags (`<Box>`,
+            // `<Text>`, `<Newline>`, `<Spacer>`,
+            // `<Static>`, `<Transform>`) compile to
+            // calls into the `runts-ink` crate. The
+            // generated binary `use`s these symbols,
+            // so the dependency must be in the
+            // generated `Cargo.toml`. The path is
+            // resolved by searching relative to the
+            // `runts` binary (which lives in the
+            // workspace's `target/` dir) and falling
+            // back to the current working directory.
+            // This keeps the dep working whether the
+            // build dir is a temp dir under
+            // `/var/folders/...` or a persistent
+            // `.runts/build` inside the workspace.
+            CargoDep {
+                name: "runts-ink".to_string(),
+                version: None,
+                path: Some(find_runts_ink_path()),
+                features: vec![],
+            },
         ]
     }
 
@@ -145,4 +166,42 @@ impl DevState for RatatuiDevState {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Locate the `runts-ink` crate on disk. Searches
+/// relative to the running `runts` binary (so it
+/// works for `target/debug/runts` and
+/// `target/release/runts`), then relative to the
+/// current working directory. Returns an absolute,
+/// canonicalized path. Used by `cargo_deps` to add
+/// `runts-ink` as a path dep in the generated
+/// `Cargo.toml`.
+fn find_runts_ink_path() -> std::path::PathBuf {
+    let rel = "crates/runts-ink";
+    // 1. Walk up from the `runts` exe dir.
+    if let Ok(exe) = std::env::current_exe() {
+        for dir in exe.ancestors() {
+            let candidate = dir.join(rel);
+            if candidate.join("Cargo.toml").exists() {
+                eprintln!("find_runts_ink_path: hit {} (from exe ancestor)", candidate.display());
+                return candidate.canonicalize().unwrap_or(candidate);
+            }
+        }
+        eprintln!("find_runts_ink_path: no hit from exe ancestors of {}", exe.display());
+    }
+    // 2. Walk up from the current working directory.
+    if let Ok(cwd) = std::env::current_dir() {
+        for dir in cwd.ancestors() {
+            let candidate = dir.join(rel);
+            if candidate.join("Cargo.toml").exists() {
+                eprintln!("find_runts_ink_path: hit {} (from cwd ancestor)", candidate.display());
+                return candidate.canonicalize().unwrap_or(candidate);
+            }
+        }
+        eprintln!("find_runts_ink_path: no hit from cwd ancestors of {}", cwd.display());
+    }
+    // 3. Last resort: leave it as a relative path
+    // and let cargo fail with a helpful message.
+    eprintln!("find_runts_ink_path: FALLBACK to relative path");
+    std::path::PathBuf::from(rel)
 }
