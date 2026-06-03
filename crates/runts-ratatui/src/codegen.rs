@@ -860,13 +860,18 @@ pub(crate) mod jsx {
                 builder = quote! { #builder #call };
             }
         }
-        // Append each non-whitespace child as a
-        // `.child(expr)` call. JSX whitespace
-        // (newlines and indentation between
-        // elements) is dropped here to match
-        // real Ink's behavior.
+        // Append each non-whitespace, non-empty
+        // child as a `.child(expr)` call. JSX
+        // whitespace (newlines and indentation
+        // between elements) is dropped here to
+        // match real Ink's behavior. Empty
+        // `<Text>{''}</Text>` is also dropped
+        // because Ink collapses an empty Text
+        // child to zero height.
         for child in &children {
-            if is_jsx_whitespace(child) {
+            if is_jsx_whitespace(child)
+                || is_empty_text_jsx(child)
+            {
                 continue;
             }
             let child_expr = child_to_vnode(child);
@@ -1227,6 +1232,87 @@ pub(crate) mod jsx {
             }
             _ => quote! { runts_ink::FlexDirection::Row },
         }
+    }
+
+    /// Is this a `<Text>{''}</Text>` (empty
+    /// string) child, as a JSX element with an
+    /// expression child containing an empty
+    /// string? Real Ink collapses an empty Text
+    /// to zero height; we drop it from the
+    /// generated builder chain to match.
+    fn is_empty_text_jsx(child: &serde_json::Value) -> bool {
+        // Must be a JSX element with tag "Text"
+        // and no text of its own. Check
+        // `opening.name.Ident == "Text"`.
+        let jsx = child.get("jsx");
+        let Some(jsx) = jsx else {
+            return false;
+        };
+        let opening = jsx.get("opening");
+        let Some(opening) = opening else {
+            return false;
+        };
+        let name = opening.get("name");
+        let Some(name) = name else {
+            return false;
+        };
+        let ident = name.get("Ident");
+        let Some(ident) = ident else {
+            return false;
+        };
+        if ident.as_str() != Some("Text") {
+            return false;
+        }
+        // Children should be a single
+        // `{Expr: {String: ""}}` expression.
+        let children = jsx
+            .get("children")
+            .and_then(|c| c.as_array())
+            .map(|a| a.as_slice())
+            .unwrap_or(&[]);
+        if children.len() != 1 {
+            return false;
+        }
+        // The child may be wrapped in
+        // `{Expr: {String: ""}}` or
+        // `{kind: "Expr", value: ...}`.
+        let c = &children[0];
+        if let Some(s) = c
+            .get("Expr")
+            .and_then(|e| e.get("String"))
+            .and_then(|s| s.as_str())
+        {
+            return s.is_empty();
+        }
+        // Alt shape: `{kind: "Expr", value: {String: ""}}`
+        if c.get("kind").and_then(|k| k.as_str()) == Some("Expr") {
+            if let Some(s) = c
+                .get("value")
+                .and_then(|v| v.get("String"))
+                .and_then(|s| s.as_str())
+            {
+                return s.is_empty();
+            }
+        }
+        false
+    }
+
+    /// Is this a `<Text>{''}</Text>` (empty
+    /// string) child? Real Ink collapses an empty
+    /// Text to zero height; we drop it from the
+    /// generated builder chain to match.
+    fn is_empty_text(child: &serde_json::Value) -> bool {
+        let s = child
+            .get("Text")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                if child.get("kind").and_then(|k| k.as_str()) == Some("Text") {
+                    child.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            });
+        matches!(s, Some(s) if s.is_empty())
     }
 
     /// Map a `borderStyle` JSON value to a
