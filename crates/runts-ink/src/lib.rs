@@ -56,6 +56,7 @@
 
 mod components;
 mod events;
+pub mod js_bridge;
 mod props;
 mod render;
 mod style;
