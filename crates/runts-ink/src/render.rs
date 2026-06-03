@@ -329,7 +329,30 @@ pub fn render(
 /// in the Taffy `Layout` to get its computed rectangle,
 /// and draws the corresponding Ratatui widget.
 pub fn render_tree(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect) {
-    walk(node, layout, frame, area, 0);
+    // Intersect the root's actual computed rect
+    // with the given area. Taffy computes the
+    // root's intrinsic size; for a content-sized
+    // root this is much smaller than the buffer
+    // (e.g. 44x8 vs 80x24), and we don't want to
+    // draw the border across the whole buffer.
+    let root_rect = rect_at(&layout.rects, 0, area);
+    let clipped = intersect_rect(area, root_rect);
+    walk(node, layout, frame, clipped, 0);
+}
+
+/// Intersect two `Rect`s. Returns the smaller
+/// of the two on each axis; if one rect is
+/// empty (0 width/height) the result is empty.
+fn intersect_rect(a: Rect, b: Rect) -> Rect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let right = a.x.saturating_add(a.width).min(b.x.saturating_add(b.width));
+    let bottom = a.y.saturating_add(a.height).min(b.y.saturating_add(b.height));
+    if right <= x || bottom <= y {
+        Rect { x, y, width: 0, height: 0 }
+    } else {
+        Rect { x, y, width: right - x, height: bottom - y }
+    }
 }
 
 fn walk(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, depth: usize) {
@@ -662,6 +685,14 @@ pub struct Layout {
     /// `from_vnode` which pushes a rect for every
     /// visited VNode.
     pub rects: Vec<(u16, u16, u16, u16)>,
+    /// Per-Taffy-NodeId text content for `<Text>`
+    /// leaves. Used by the measure function in
+    /// `compute()` so Taffy can compute intrinsic
+    /// text size (and therefore propagate
+    /// shrink-to-fit sizes to auto-sized
+    /// parent Boxes).
+    pub text_by_node:
+        std::collections::HashMap<taffy::NodeId, String>,
 }
 
 impl Layout {
@@ -670,6 +701,7 @@ impl Layout {
         Self {
             taffy: taffy::TaffyTree::new(),
             rects: Vec::new(),
+            text_by_node: std::collections::HashMap::new(),
         }
     }
 }
@@ -700,16 +732,23 @@ impl TaffyTree {
         // pre-order: index N here is the Taffy node
         // id for the Nth VNode visited by `build_node`.
         let mut taffy_index: Vec<taffy::NodeId> = Vec::new();
-        let root_id = build_node(root, &mut layout.taffy, &mut taffy_index);
+        let TaffyTree { root, taffy_index } = {
+            let taffy = &mut layout.taffy;
+            let text_by_node = &mut layout.text_by_node;
+            let root_id = build_node(
+                root,
+                taffy,
+                text_by_node,
+                &mut taffy_index,
+            );
+            TaffyTree { root: root_id, taffy_index }
+        };
         // Pre-allocate one placeholder rect per VNode.
         // The values are filled in by `compute` /
         // `collect_rects`. The vec length matches
         // `taffy_index` and the VNode pre-order count.
         layout.rects = vec![(0, 0, 0, 0); taffy_index.len()];
-        Self {
-            root: root_id,
-            taffy_index,
-        }
+        TaffyTree { root, taffy_index }
     }
 
     /// Compute the layout with the given viewport size.
@@ -721,26 +760,81 @@ impl TaffyTree {
         // viewport exactly (using the actual pixel
         // size when the viewport is definite) so the
         // layout propagates a definite size down to
-        // the children.
-        let root_w = match viewport.width {
-            AvailableSpace::Definite(v) => taffy::Dimension::length(v),
-            _ => taffy::Dimension::percent(1.0),
+        // Ink semantics: the root Box is auto-sized
+        // (shrink-to-fit its content). We do NOT
+        // patch the root to fill the viewport —
+        // the user controls the root size via
+        // their JSX. If they want a full-screen
+        // app, they write `<Box width={cols}
+        // height={rows}>...</Box>`. This matches
+        // real Ink where the root component's
+        // size is whatever the JSX says, not the
+        // viewport.
+        // Use compute_layout_with_measure so Taffy
+        // can ask for the intrinsic size of `<Text>`
+        // leaves. The measure function reads
+        // `layout.text_by_node` and returns the
+        // string's char count as the width, 1 row
+        // as the height. This lets auto-sized
+        // parent Boxes shrink to fit their text
+        // content (Ink's shrink-to-fit semantics).
+        let text_lookup: std::collections::HashMap<taffy::NodeId, String> =
+            layout.text_by_node.clone();
+        // Ask Taffy for the intrinsic content
+        // size. We pass `MaxContent` for both
+        // axes instead of the real viewport. This
+        // makes auto-sized Boxes (Ink's default)
+        // collapse to their content's intrinsic
+        // size rather than expanding to fill the
+        // available viewport. The viewport is
+        // still passed via the available_space
+        // arg of the measure function for
+        // clamping purposes; we override it here
+        // to MaxContent so the root is intrinsic.
+        let intrinsic_viewport = Size::<AvailableSpace> {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
         };
-        let root_h = match viewport.height {
-            AvailableSpace::Definite(v) => taffy::Dimension::length(v),
-            _ => taffy::Dimension::percent(1.0),
-        };
-        if let Ok(root_style) = layout.taffy.style(self.root) {
-            let mut new_style = root_style.clone();
-            new_style.size = taffy::Size {
-                width: root_w,
-                height: root_h,
-            };
-            let _ = layout.taffy.set_style(self.root, new_style);
-        }
         layout
             .taffy
-            .compute_layout(self.root, viewport)
+            .compute_layout_with_measure(
+                self.root,
+                intrinsic_viewport,
+                move |known_dimensions,
+                      available_space,
+                      node_id,
+                      _node_context,
+                      _style| {
+                    if let Some(text) = text_lookup.get(&node_id) {
+                        // Use known_dimensions when given;
+                        // otherwise measure from the text.
+                        let w = known_dimensions
+                            .width
+                            .unwrap_or_else(|| text.chars().count() as f32);
+                        let h = known_dimensions
+                            .height
+                            .unwrap_or(1.0);
+                        // Clamp to available space.
+                        let aw = match available_space.width {
+                            AvailableSpace::Definite(v) => w.min(v),
+                            _ => w,
+                        };
+                        let ah = match available_space.height {
+                            AvailableSpace::Definite(v) => h.min(v),
+                            _ => h,
+                        };
+                        taffy::Size {
+                            width: aw,
+                            height: ah,
+                        }
+                    } else {
+                        // Non-text leaf (e.g. Newline,
+                        // Spacer). Taffy uses this size
+                        // for leaves that aren't measured.
+                        taffy::Size::ZERO
+                    }
+                },
+            )
             .expect("taffy layout");
         // Reset rects to zero before populating, in
         // case the layout produces fewer positions
@@ -749,6 +843,9 @@ impl TaffyTree {
             *r = (0, 0, 0, 0);
         }
         collect_rects(&layout.taffy, &self.taffy_index, &mut layout.rects);
+        for (i, &(x, y, w, h)) in layout.rects.iter().enumerate() {
+            eprintln!("DBG rect[{i}] = ({x},{y}) {w}x{h}");
+        }
     }
 }
 
@@ -780,7 +877,12 @@ fn collect_rects(
     }
 }
 
-fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<taffy::NodeId>) -> taffy::NodeId {
+fn build_node(
+    node: &VNode,
+    taffy: &mut taffy::TaffyTree,
+    text_by_node: &mut std::collections::HashMap<taffy::NodeId, String>,
+    taffy_index: &mut Vec<taffy::NodeId>,
+) -> taffy::NodeId {
     // Helper: record a Taffy node id at the next
     // VNode pre-order position. Every visited VNode
     // must call this exactly once so `taffy_index`
@@ -792,15 +894,16 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<
             let id = taffy.new_leaf(style).expect("taffy: new leaf for box");
             record(id, taffy_index);
             for child in &b.children {
-                let cid = build_node(child, taffy, taffy_index);
+                let cid = build_node(child, taffy, text_by_node, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add child");
             }
             id
         }
-        VNodeContent::Text(_) => {
+        VNodeContent::Text(t) => {
             let style = style_for_text();
             let id = taffy.new_leaf(style).expect("taffy: new leaf for text");
             record(id, taffy_index);
+            text_by_node.insert(id, t.content.clone());
             id
         }
         VNodeContent::Newline(_) => {
@@ -820,7 +923,7 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<
             let id = taffy.new_leaf(style).expect("taffy: new leaf for static");
             record(id, taffy_index);
             for child in &s.children {
-                let cid = build_node(child, taffy, taffy_index);
+                let cid = build_node(child, taffy, text_by_node, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add static child");
             }
             id
@@ -838,7 +941,7 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<
                 .new_leaf(style)
                 .expect("taffy: new leaf for transform");
             record(id, taffy_index);
-            let cid = build_node(&t.child, taffy, taffy_index);
+            let cid = build_node(&t.child, taffy, text_by_node, taffy_index);
             taffy
                 .add_child(id, cid)
                 .expect("taffy: add transform child");
@@ -849,7 +952,7 @@ fn build_node(node: &VNode, taffy: &mut taffy::TaffyTree, taffy_index: &mut Vec<
             let id = taffy.new_leaf(style).expect("taffy: new leaf for fragment");
             record(id, taffy_index);
             for child in fs {
-                let cid = build_node(child, taffy, taffy_index);
+                let cid = build_node(child, taffy, text_by_node, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add fragment child");
             }
             id

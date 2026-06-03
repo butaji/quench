@@ -56,26 +56,28 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
     // dependency the size default avoids). Users
     // who want fixed-size boxes can set
     // `flex_grow: 0` explicitly.
-    s.flex_grow = if b.flex_grow == 0.0 { 1.0 } else { b.flex_grow };
+    s.flex_grow = b.flex_grow;
     s.flex_shrink = b.flex_shrink;
     s.flex_basis = taffy::Dimension::percent(b.flex_basis_pct);
 
-    // Default to 100% on both axes when the user
-    // doesn't specify a width/height. Without this
-    // an auto-sized Box in a tree of auto-sized
-    // Boxes would collapse to 0×0 (circular
-    // dependency). The `compute` step also patches
-    // the root to fill the viewport exactly, so
-    // "100% of parent" propagates a definite size
-    // down through every Box.
+    // Ink semantics: Boxes are auto-sized by
+    // default (shrink-to-fit content). The
+    // viewport is provided as a MaxContent-sized
+    // parent so each Box collapses to its
+    // content's intrinsic size. Setting
+    // `Dimension::AUTO` here lets each Box size
+    // to its content; since the root is the only
+    // direct child of the viewport and it is
+    // auto-sized, the root will be the size of
+    // its largest content line.
     s.size = taffy::Size {
         width: match b.width {
             Some(w) => taffy::Dimension::length(w as f32),
-            None => taffy::Dimension::percent(1.0),
+            None => taffy::Dimension::AUTO,
         },
         height: match b.height {
             Some(h) => taffy::Dimension::length(h as f32),
-            None => taffy::Dimension::percent(1.0),
+            None => taffy::Dimension::AUTO,
         },
     };
     s.min_size = taffy::Size {
@@ -126,30 +128,22 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
 
 /// Build a Taffy `Style` for a `<Text>` leaf node.
 ///
-/// A `<Text>` is a flex item. We give it a definite
-/// size on BOTH axes so Taffy doesn't collapse it
-/// to 0 (which happens when an `auto`-sized child
-/// is the leaf of a tree whose ancestor's size is
-/// also `auto`).
+/// A `<Text>` is sized to its intrinsic content
+/// (the string length × 1 row). We use
+/// `Dimension::AUTO` on both axes so Taffy can
+/// measure the text's intrinsic size and
+/// propagate that to the parent Box's auto-
+/// sizing.
 ///
-/// - `width: 100%` makes the text fill the parent's
-///   cross axis (the `auto` alternative is
-///   unreliable in Taffy 0.11).
-/// - `height: 100%` makes the text fill the
-///   parent's main axis too, so a single text in a
-///   row flex parent gets the parent's full height.
-///
-/// The parent Box defaults to `width: 100%,
-/// height: 100%` in `style_for_box`, so a tree of
-/// Boxes + Texts has a definite size all the way
-/// down. The `compute` step additionally patches
-/// the root to fill the viewport exactly.
+/// Setting `percent(1.0)` here would make a
+/// `<Text>` stretch to fill the parent, which
+/// contradicts Ink's shrink-to-fit semantics.
 pub fn style_for_text() -> taffy::Style {
     let mut s = taffy::Style::default();
     s.display = taffy::Display::Block;
     s.size = taffy::Size {
-        width: taffy::Dimension::percent(1.0),
-        height: taffy::Dimension::percent(1.0),
+        width: taffy::Dimension::AUTO,
+        height: taffy::Dimension::AUTO,
     };
     s
 }
