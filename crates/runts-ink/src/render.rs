@@ -45,8 +45,8 @@ use ratatui::layout::Rect;
 use taffy::prelude::*;
 
 use crate::components::{
-    Box as InkBox, Color, FlexDirection, Newline, Spacer, Static as StaticComponent, Text,
-    Transform,
+    Box as InkBox, Color, FlexDirection, JustifyContent, Newline, Spacer,
+    Static as StaticComponent, Text, Transform,
 };
 use crate::events::{InputEvent, ResizeEvent, WindowSize};
 use crate::props::Props;
@@ -367,14 +367,30 @@ fn walk(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, d
         }
         VNodeContent::Static(s) => {
             // Children of a Static start at depth+1.
-            walk_children(s.children.as_slice(), layout, frame, area, depth + 1);
+            walk_children(
+                s.children.as_slice(),
+                layout,
+                frame,
+                area,
+                depth + 1,
+                FlexDirection::Row,
+                JustifyContent::FlexStart,
+            );
         }
         VNodeContent::Transform(t) => {
             walk_transform(t, layout, frame, area, depth);
         }
         VNodeContent::Fragment(fs) => {
             // Children of a Fragment start at depth+1.
-            walk_children(fs.as_slice(), layout, frame, area, depth + 1);
+            walk_children(
+                fs.as_slice(),
+                layout,
+                frame,
+                area,
+                depth + 1,
+                FlexDirection::Row,
+                JustifyContent::FlexStart,
+            );
         }
     }
     // `layout` and `depth` are unused by the v0.1
@@ -397,9 +413,25 @@ fn walk_box(b: &InkBox, layout: &Layout, frame: &mut ratatui::Frame, area: Rect,
         let inner = block.inner(area);
         frame.render_widget(block, area);
         // Children start at depth+1 (this box is at `depth`).
-        walk_children(b.children.as_slice(), layout, frame, inner, depth + 1);
+        walk_children(
+            b.children.as_slice(),
+            layout,
+            frame,
+            inner,
+            depth + 1,
+            b.flex_direction,
+            b.justify_content,
+        );
     } else {
-        walk_children(b.children.as_slice(), layout, frame, area, depth + 1);
+        walk_children(
+            b.children.as_slice(),
+            layout,
+            frame,
+            area,
+            depth + 1,
+            b.flex_direction,
+            b.justify_content,
+        );
     }
 }
 
@@ -430,6 +462,14 @@ fn walk_children(
     // (i.e. children[0]'s depth). Subsequent
     // children sit at +1, +2, etc.
     first_child_depth: usize,
+    // Parent box's flex direction and
+    // justify-content — used to manually align
+    // children when Taffy 0.11's auto-size
+    // containers don't apply justify-content
+    // (a known Taffy limitation for auto-sized
+    // flex containers).
+    parent_flex_dir: FlexDirection,
+    parent_justify: JustifyContent,
 ) {
     // Each child VNode corresponds to one entry in
     // `layout.rects` at the same depth-first index.
@@ -439,8 +479,58 @@ fn walk_children(
     // padding, margin, gap, and direction.
     for (i, child) in children.iter().enumerate() {
         let child_depth = first_child_depth + i;
-        let child_area = rect_at(&layout.rects, child_depth, area);
+        let mut child_area = rect_at(&layout.rects, child_depth, area);
+        // Taffy 0.11 doesn't apply `justify-content`
+        // for auto-sized flex containers — children
+        // always end up at the left/top edge. We
+        // re-apply the alignment here for the
+        // flex-end and center cases on the main
+        // axis.
+        if parent_flex_dir == FlexDirection::Row
+            && (parent_justify == JustifyContent::FlexEnd
+                || parent_justify == JustifyContent::Center)
+        {
+            // Measure the child's intrinsic width
+            // (sum of text widths for Text children,
+            // or the Taffy-computed width for Boxes).
+            let intrinsic_w = measure_intrinsic_width(child);
+            if parent_justify == JustifyContent::FlexEnd {
+                let offset = (area.width as i32 - intrinsic_w as i32).max(0) as u16;
+                child_area.x = area.x + offset;
+            } else {
+                let offset =
+                    ((area.width as i32 - intrinsic_w as i32) / 2).max(0) as u16;
+                child_area.x = area.x + offset;
+            }
+        }
         walk(child, layout, frame, child_area, child_depth);
+    }
+}
+
+/// Measure the intrinsic width of a child VNode:
+/// - A `Text` returns its string length
+///   (terminal cell width).
+/// - A `Box` recurses into its first leaf.
+/// - Anything else returns 0.
+fn measure_intrinsic_width(node: &VNode) -> u16 {
+    match &node.0 {
+        VNodeContent::Text(t) => t.content.chars().count() as u16,
+        VNodeContent::Box(b) => {
+            if b.children.is_empty() {
+                0
+            } else {
+                let mut total = 0u16;
+                for (i, c) in b.children.iter().enumerate() {
+                    if i > 0 {
+                        total = total.saturating_add(1);
+                    }
+                    total = total
+                        .saturating_add(measure_intrinsic_width(c));
+                }
+                total
+            }
+        }
+        _ => 0,
     }
 }
 
