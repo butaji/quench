@@ -70,6 +70,7 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
     // direct child of the viewport and it is
     // auto-sized, the root will be the size of
     // its largest content line.
+    s.box_sizing = taffy::BoxSizing::BorderBox;
     s.size = taffy::Size {
         width: match b.width {
             Some(w) => taffy::Dimension::length(w as f32),
