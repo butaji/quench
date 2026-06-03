@@ -39,6 +39,7 @@ fn execute(cli: Cli) -> Result<()> {
         cli::Commands::Codegen { source, expr } => run_codegen(source, expr),
         cli::Commands::Init { name } => run_init(name),
         cli::Commands::Dev { path, plugin } => run_dev(path, &plugin),
+        cli::Commands::InspectHir { path } => run_inspect_hir(path),
         cli::Commands::Build {
             path,
             plugin,
@@ -153,7 +154,7 @@ fn run_eval(expr: &str) -> Result<()> {
     // (expression-form vs. statement-form detection) and host-fn
     // registration for __runts_stderr__. We pass the raw user code
     // directly; a previous `prepare_source` layer added a redundant
-    // `const __result = X; __result` wrap that interacted badly with
+    // `const __runts_val = X; __runts_val` wrap that interacted badly with
     // the QuickJS-side shim and made multi-statement input return
     // `undefined` (the value of the var-decl) instead of the last
     // expression.
@@ -165,6 +166,23 @@ fn run_eval(expr: &str) -> Result<()> {
         }
         Err(e) => Err(anyhow::anyhow!("Failed to evaluate '{}': {}", expr, e)),
     }
+}
+
+/// Parse a single .tsx/.ts file and dump the HIR as
+/// pretty-printed JSON. Used by the JSX codegen work
+/// to verify what the parser emits — we used to
+/// discover the JSON shape only by reading the
+/// parser source.
+fn run_inspect_hir(path: PathBuf) -> Result<()> {
+    let source = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("read error for {}: {e}", path.display()))?;
+    let is_tsx = path.extension().is_some_and(|e| e == "tsx" || e == "ts");
+    let module = transpile::parser::parse_source(&source, is_tsx)
+        .map_err(|e| anyhow::anyhow!("parse error: {e}"))?;
+    let json = serde_json::to_string_pretty(&module)
+        .map_err(|e| anyhow::anyhow!("serialize error: {e}"))?;
+    println!("{json}");
+    Ok(())
 }
 
 fn print_result(result: &str) {
