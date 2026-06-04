@@ -1534,7 +1534,10 @@ pub(crate) mod jsx {
                             .and_then(|n| n.as_f64())
                     })
                     .or_else(|| value.get("Number").and_then(|n| n.as_f64()))?;
-                Some(quote! { .flex_grow(#n) })
+                // Cast to f32 — `Box::flex_grow` takes
+                // f32, not f64.
+                let n32 = n as f32;
+                Some(quote! { .flex_grow(#n32) })
             }
             "flexShrink" | "flexshrink" => {
                 let n = value
@@ -1546,7 +1549,8 @@ pub(crate) mod jsx {
                             .and_then(|n| n.as_f64())
                     })
                     .or_else(|| value.get("Number").and_then(|n| n.as_f64()))?;
-                Some(quote! { .flex_shrink(#n) })
+                let n32 = n as f32;
+                Some(quote! { .flex_shrink(#n32) })
             }
             "gap" => {
                 let n = value.as_u64()?;
