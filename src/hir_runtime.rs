@@ -424,14 +424,16 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
         }
         "borderStyle" => {
             if let Value::String(s) = val {
-                b.border_style = match s.as_str() {
+                // Use the builder method so it
+                // also sets borders = Borders::ALL.
+                let bs = match s.as_str() {
                     "single" => BorderStyle::Single,
                     "double" => BorderStyle::Double,
                     "round" => BorderStyle::Round,
                     "bold" => BorderStyle::Bold,
-                    "classic" => BorderStyle::Classic,
-                    _ => return,
+                    _ => BorderStyle::Single,
                 };
+                *b = std::mem::take(b).border_style(bs);
             }
         }
         _ => {}
