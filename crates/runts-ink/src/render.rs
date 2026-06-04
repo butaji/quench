@@ -458,134 +458,19 @@ fn walk_children(
     layout: &Layout,
     frame: &mut ratatui::Frame,
     area: Rect,
-    // Pre-order index of the FIRST child
-    // (i.e. children[0]'s depth). Subsequent
-    // children sit at +1, +2, etc.
     first_child_depth: usize,
-    // Parent box's flex direction and
-    // justify-content — used to manually align
-    // children when Taffy 0.11's auto-size
-    // containers don't apply justify-content
-    // (a known Taffy limitation for auto-sized
-    // flex containers).
-    parent_flex_dir: FlexDirection,
-    parent_justify: JustifyContent,
+    _parent_flex_dir: FlexDirection,
+    _parent_justify: JustifyContent,
 ) {
-    // Each child VNode corresponds to one entry in
-    // `layout.rects` at the same depth-first index.
-    // That entry gives us the Taffy-computed (x, y,
-    // width, height) for the child. Reading it
-    // positions children correctly under flexbox
-    // padding, margin, gap, and direction.
-    //
-    // Taffy 0.11 doesn't apply
-    // `justify-content: flex-end` for auto-sized
-    // flex containers — children always end up
-    // at the left/top edge. We re-apply the
-    // alignment here for the flex-end and center
-    // cases on the main axis.
-    //
-    // Taffy 0.11 also doesn't apply `flex_grow`
-    // to auto-sized flex containers. We manually
-    // expand children with `flex_grow > 0` to
-    // fill the remaining main-axis space. For
-    // each grow child we expand its main-axis
-    // size and shift all subsequent siblings by
-    // the expansion amount (so a Spacer pushes
-    // the following text to the right edge).
-    // The vertical (y) position is left alone —
-    // grow only affects the main axis.
-    let main_axis_total = if parent_flex_dir == FlexDirection::Row {
-        area.width
-    } else {
-        area.height
-    };
-    let mut used: i32 = 0;
-    let mut grow_total: f32 = 0.0;
-    for child in children {
-        let fg = child_flex_grow(child);
-        if fg > 0.0 {
-            grow_total += fg;
-        } else {
-            used += measure_intrinsic_main_axis(child, parent_flex_dir)
-                as i32;
-        }
-    }
-    let remaining = (main_axis_total as i32 - used).max(0) as u16;
-    let grow_unit = if grow_total > 0.0 && remaining > 0 {
-        (remaining as f32 / grow_total) as u16
-    } else {
-        0
-    };
-    // Accumulated shift on the main axis from
-    // earlier `flex_grow` children. When a
-    // `flex_grow` child is expanded beyond its
-    // Taffy-computed size, we accumulate the
-    // difference and apply it to all subsequent
-    // siblings so they get pushed to the right
-    // (row) or down (column).
+    // The custom flexbox engine in `crate::flex_layout`
+    // computes correct rects for every VNode. We just
+    // look them up in pre-order and render. No manual
+    // corrections needed — the layout engine already
+    // handles justify-content, flex_grow, cross-axis
+    // alignment, etc.
     for (i, child) in children.iter().enumerate() {
-        // Compute the correct pre-order index for
-        // this child. `first_child_depth + i` is
-        // wrong when previous siblings have their
-        // own children (the pre-order index skips
-        // ahead by the subtree size). Walk the
-        // VNode tree to find the real index.
         let child_depth = compute_preorder_index(children, i, first_child_depth);
-        let mut child_area = rect_at(&layout.rects, child_depth, area);
-        // Taffy 0.11 doesn't apply `justify-content`
-        // for auto-sized flex containers — children
-        // always end up at the left/top edge. We
-        // re-apply the alignment here for the
-        // flex-end and center cases on the main
-        // axis.
-        if parent_flex_dir == FlexDirection::Row
-            && (parent_justify == JustifyContent::FlexEnd
-                || parent_justify == JustifyContent::Center)
-        {
-            // Measure the child's intrinsic width
-            // (sum of text widths for Text children,
-            // or the Taffy-computed width for Boxes).
-            let intrinsic_w = measure_intrinsic_width(child);
-            if parent_justify == JustifyContent::FlexEnd {
-                let offset = (area.width as i32 - intrinsic_w as i32).max(0) as u16;
-                child_area.x = area.x + offset;
-            } else {
-                let offset =
-                    ((area.width as i32 - intrinsic_w as i32) / 2).max(0) as u16;
-                child_area.x = area.x + offset;
-            }
-        }
-        // Taffy 0.11 centers children with a
-        // definite cross-axis size when the
-        // parent has `align-items: stretch`
-        // (the default). Real Ink positions
-        // them at the start of the cross axis.
-        // Override the cross-axis position here
-        // for Boxes with explicit `width`/`height`.
-        // Also override the main-axis size to
-        // match the explicit `width`/`height`
-        // when Taffy computed 0×0 (because the
-        // content has no intrinsic size and the
-        // Box has `flex_grow: 0` or the content
-        // is empty).
-        if parent_flex_dir == FlexDirection::Column {
-            if let VNodeContent::Box(b) = &child.0 {
-                if b.width.is_some() || b.height.is_some() {
-                    child_area.x = area.x;
-                    if let Some(w) = b.width {
-                        if child_area.width == 0 || child_area.width > w {
-                            child_area.width = w;
-                        }
-                    }
-                    if let Some(h) = b.height {
-                        if child_area.height == 0 || child_area.height > h {
-                            child_area.height = h;
-                        }
-                    }
-                }
-            }
-        }
+        let child_area = rect_at(&layout.rects, child_depth, area);
         walk(child, layout, frame, child_area, child_depth);
     }
 }
@@ -965,6 +850,10 @@ pub struct Layout {
     /// intrinsic size).
     pub box_size_by_node:
         std::collections::HashMap<taffy::NodeId, (Option<u16>, Option<u16>)>,
+    /// The root VNode, stored so `TaffyTree::compute`
+    /// can re-walk it with the viewport size. The
+    /// custom flexbox engine needs the viewport.
+    pub root_vnode: Option<VNode>,
 }
 
 impl Layout {
@@ -975,6 +864,7 @@ impl Layout {
             rects: Vec::new(),
             text_by_node: std::collections::HashMap::new(),
             box_size_by_node: std::collections::HashMap::new(),
+            root_vnode: None,
         }
     }
 }
@@ -985,316 +875,60 @@ impl Layout {
 /// per-node rects. The renderer walks the VNode tree
 /// and, for each node, looks up its computed rect by
 /// index in `Layout::rects`.
+/// The Yoga/flexbox tree built from a VNode tree.
+///
+/// This is a thin wrapper around `flex_layout::compute`.
+/// It exists for API compatibility with the old
+/// Taffy-based implementation.
 pub struct TaffyTree {
-    /// The root node.
-    pub root: taffy::NodeId,
-    /// Mapping from VNode pre-order index to the
-    /// Taffy node id that the VNode corresponds to.
-    /// Index N is the Taffy node for the Nth VNode
-    /// visited during `from_vnode`. Built by
-    /// `build_node`; consumed by `collect_rects`.
-    taffy_index: Vec<taffy::NodeId>,
+    /// Unused — kept for API compatibility.
+    pub root: (),
+    /// Unused — kept for API compatibility.
+    taffy_index: Vec<()>,
 }
 
 impl TaffyTree {
-    /// Build a Taffy tree from a VNode tree. The result
-    /// is a `TaffyTree` whose root is the top-level node
-    /// in the input.
+    /// Build a layout tree from a VNode tree. The
+    /// result is a `TaffyTree` (now a stub) whose
+    /// only job is to populate `layout.rects` via
+    /// the custom flexbox engine.
     pub fn from_vnode(root: &VNode, layout: &mut Layout) -> Self {
-        // `taffy_index` is parallel to the VNode
-        // pre-order: index N here is the Taffy node
-        // id for the Nth VNode visited by `build_node`.
-        let mut taffy_index: Vec<taffy::NodeId> = Vec::new();
-        let TaffyTree { root, taffy_index } = {
-            let taffy = &mut layout.taffy;
-            let text_by_node = &mut layout.text_by_node;
-            let box_size_by_node = &mut layout.box_size_by_node;
-            let root_id = build_node(
-                root,
-                taffy,
-                text_by_node,
-                box_size_by_node,
-                &mut taffy_index,
-            );
-            TaffyTree { root: root_id, taffy_index }
-        };
+        // Stash the root VNode for `compute` to
+        // re-walk with the viewport size.
+        layout.root_vnode = Some(root.clone());
         // Pre-allocate one placeholder rect per VNode.
-        // The values are filled in by `compute` /
-        // `collect_rects`. The vec length matches
-        // `taffy_index` and the VNode pre-order count.
-        layout.rects = vec![(0, 0, 0, 0); taffy_index.len()];
-        TaffyTree { root, taffy_index }
+        // The values are filled in by `compute`.
+        let node_count = count_vnodes(root);
+        layout.rects = vec![(0, 0, 0, 0); node_count];
+        Self {
+            root: (),
+            taffy_index: Vec::new(),
+        }
     }
 
-    /// Compute the layout with the given viewport size.
-    pub fn compute(&self, layout: &mut Layout, viewport: Size<AvailableSpace>) {
-        // The root node, by default, has no size
-        // constraint. Taffy would give it 0×0 in that
-        // case and every descendant would collapse.
-        // We patch the root's style to fill the
-        // viewport exactly (using the actual pixel
-        // size when the viewport is definite) so the
-        // layout propagates a definite size down to
-        // Ink semantics: the root Box is auto-sized
-        // (shrink-to-fit its content). We do NOT
-        // patch the root to fill the viewport —
-        // the user controls the root size via
-        // their JSX. If they want a full-screen
-        // app, they write `<Box width={cols}
-        // height={rows}>...</Box>`. This matches
-        // real Ink where the root component's
-        // size is whatever the JSX says, not the
-        // viewport.
-        // Use compute_layout_with_measure so Taffy
-        // can ask for the intrinsic size of `<Text>`
-        // leaves. The measure function reads
-        // `layout.text_by_node` and returns the
-        // string's char count as the width, 1 row
-        // as the height. This lets auto-sized
-        // parent Boxes shrink to fit their text
-        // content (Ink's shrink-to-fit semantics).
-        let text_lookup: std::collections::HashMap<taffy::NodeId, String> =
-            layout.text_by_node.clone();
-        let box_size_lookup: std::collections::HashMap<
-            taffy::NodeId,
-            (Option<u16>, Option<u16>),
-        > = layout.box_size_by_node.clone();
-        // Pass the actual viewport as
-        // `Definite` so a root Box with
-        // `width: percent(1.0)` fills it. The
-        // measure function still returns the
-        // text's intrinsic size; the parent Box
-        // only uses that when the Box itself is
-        // `width: auto` (shrink-to-fit).
-        let intrinsic_viewport = Size::<AvailableSpace> {
-            width: match viewport.width {
-                AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
-                _ => AvailableSpace::MaxContent,
-            },
-            height: match viewport.height {
-                AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
-                _ => AvailableSpace::MaxContent,
-            },
+    /// Compute the layout with the given viewport.
+    /// Uses the custom flexbox engine in
+    /// `crate::flex_layout`.
+    pub fn compute(
+        &self,
+        layout: &mut Layout,
+        viewport: Size<AvailableSpace>,
+    ) {
+        let w = match viewport.width {
+            AvailableSpace::Definite(v) => v,
+            _ => 80.0,
         };
-        layout
-            .taffy
-            .compute_layout_with_measure(
-                self.root,
-                intrinsic_viewport,
-                move |known_dimensions,
-                      available_space,
-                      node_id,
-                      _node_context,
-                      _style| {
-                    if let Some(text) = text_lookup.get(&node_id) {
-                        let w = known_dimensions
-                            .width
-                            .unwrap_or_else(|| text.chars().count() as f32);
-                        let h = known_dimensions.height.unwrap_or(1.0);
-                        let aw = match available_space.width {
-                            AvailableSpace::Definite(v) => w.min(v),
-                            _ => w,
-                        };
-                        let ah = match available_space.height {
-                            AvailableSpace::Definite(v) => h.min(v),
-                            _ => h,
-                        };
-                        taffy::Size {
-                            width: aw,
-                            height: ah,
-                        }
-                    } else if let Some(&(bw, bh)) = box_size_lookup.get(&node_id) {
-                        // Box node. If it has explicit
-                        // width/height, use those.
-                        // Otherwise, use the known
-                        // dimensions (available space)
-                        // so Taffy positions the Box
-                        // correctly within its parent.
-                        let w = bw
-                            .map(|v| v as f32)
-                            .or_else(|| known_dimensions.width)
-                            .unwrap_or(0.0);
-                        let h = bh
-                            .map(|v| v as f32)
-                            .or_else(|| known_dimensions.height)
-                            .unwrap_or(0.0);
-                        let aw = match available_space.width {
-                            AvailableSpace::Definite(v) => w.min(v),
-                            _ => w,
-                        };
-                        let ah = match available_space.height {
-                            AvailableSpace::Definite(v) => h.min(v),
-                            _ => h,
-                        };
-                        taffy::Size {
-                            width: aw,
-                            height: ah,
-                        }
-                    } else {
-                        taffy::Size::ZERO
-                    }
-                },
-            )
-            .expect("taffy layout");
-        // Reset rects to zero before populating, in
-        // case the layout produces fewer positions
-        // than VNodes (it shouldn't, but be defensive).
-        for r in &mut layout.rects {
-            *r = (0, 0, 0, 0);
-        }
-        collect_rects(&layout.taffy, &self.taffy_index, &mut layout.rects);
-    }
-}
-
-/// Walk every Taffy node and copy its computed rect
-/// into the corresponding VNode-indexed slot in
-/// `rects`. The `taffy_index` vec tells us, for each
-/// VNode pre-order position, which Taffy node to look
-/// up. Rect positions are converted to absolute
-/// (buffer) coordinates by walking up the parent
-/// chain — Taffy's `Layout::location` is relative to
-/// the parent, not the root.
-fn collect_rects(
-    taffy: &taffy::TaffyTree,
-    taffy_index: &[taffy::NodeId],
-    rects: &mut Vec<(u16, u16, u16, u16)>,
-) {
-    for (i, &nid) in taffy_index.iter().enumerate() {
-        if let Ok(layout) = taffy.layout(nid) {
-            // Walk up the parent chain to compute
-            // the absolute position.
-            let mut abs_x = layout.location.x;
-            let mut abs_y = layout.location.y;
-            let mut cur = nid;
-            while let Some(parent) = taffy.parent(cur) {
-                if let Ok(pl) = taffy.layout(parent) {
-                    abs_x += pl.location.x;
-                    abs_y += pl.location.y;
-                }
-                cur = parent;
-            }
-            let w = layout.size.width;
-            let h = layout.size.height;
-            // Saturate to u16.
-            let x = abs_x.max(0.0).min(u16::MAX as f32) as u16;
-            let y = abs_y.max(0.0).min(u16::MAX as f32) as u16;
-            let w = w.max(0.0).min(u16::MAX as f32) as u16;
-            let h = h.max(0.0).min(u16::MAX as f32) as u16;
-            if let Some(slot) = rects.get_mut(i) {
-                *slot = (x, y, w, h);
-            }
-        }
-    }
-}
-
-fn build_node(
-    node: &VNode,
-    taffy: &mut taffy::TaffyTree,
-    text_by_node: &mut std::collections::HashMap<taffy::NodeId, String>,
-    box_size_by_node: &mut std::collections::HashMap<
-        taffy::NodeId,
-        (Option<u16>, Option<u16>),
-    >,
-    taffy_index: &mut Vec<taffy::NodeId>,
-) -> taffy::NodeId {
-    // Helper: record a Taffy node id at the next
-    // VNode pre-order position. Every visited VNode
-    // must call this exactly once so `taffy_index`
-    // stays parallel to the VNode traversal.
-    let record = |id: taffy::NodeId, idx: &mut Vec<taffy::NodeId>| idx.push(id);
-    match &node.0 {
-        VNodeContent::Box(b) => {
-            let style = style_for_box(b);
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for box");
-            record(id, taffy_index);
-            // Record this Box so the measure
-            // function can identify it. Even Boxes
-            // without explicit width/height need to
-            // be measured (they'd otherwise return
-            // 0×0, causing Taffy to position them
-            // at the end of the parent).
-            box_size_by_node.insert(id, (b.width, b.height));
-            for child in &b.children {
-                let cid = build_node(
-                    child,
-                    taffy,
-                    text_by_node,
-                    box_size_by_node,
-                    taffy_index,
-                );
-                taffy.add_child(id, cid).expect("taffy: add child");
-            }
-            id
-        }
-        VNodeContent::Text(t) => {
-            let style = style_for_text();
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for text");
-            record(id, taffy_index);
-            text_by_node.insert(id, t.content.clone());
-            id
-        }
-        VNodeContent::Newline(_) => {
-            // A Newline is a single-row separator
-            // in a column flex container. We give
-            // it a fixed height of 1 (one terminal
-            // row) so it actually takes up space —
-            // `Dimension::AUTO` would collapse to
-            // zero height because the measure
-            // function has no text to measure.
-            let mut style = taffy::Style::default();
-            style.display = taffy::Display::Block;
-            style.size = taffy::Size {
-                width: taffy::Dimension::AUTO,
-                height: taffy::Dimension::length(1.0),
-            };
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for newline");
-            record(id, taffy_index);
-            id
-        }
-        VNodeContent::Spacer(_) => {
-            let style = style_for_spacer(1.0);
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for spacer");
-            record(id, taffy_index);
-            id
-        }
-        VNodeContent::Static(s) => {
-            let style = taffy::Style::default();
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for static");
-            record(id, taffy_index);
-            for child in &s.children {
-                let cid = build_node(child, taffy, text_by_node, box_size_by_node, taffy_index);
-                taffy.add_child(id, cid).expect("taffy: add static child");
-            }
-            id
-        }
-        VNodeContent::Transform(t) => {
-            let mut style = taffy::Style::default();
-            style.position = taffy::Position::Absolute;
-            style.inset = taffy::Rect {
-                left: taffy::LengthPercentageAuto::length(t.x as f32),
-                right: taffy::LengthPercentageAuto::AUTO,
-                top: taffy::LengthPercentageAuto::length(t.y as f32),
-                bottom: taffy::LengthPercentageAuto::AUTO,
-            };
-            let id = taffy
-                .new_leaf(style)
-                .expect("taffy: new leaf for transform");
-            record(id, taffy_index);
-            let cid = build_node(&t.child, taffy, text_by_node, box_size_by_node, taffy_index);
-            taffy
-                .add_child(id, cid)
-                .expect("taffy: add transform child");
-            id
-        }
-        VNodeContent::Fragment(fs) => {
-            let style = taffy::Style::default();
-            let id = taffy.new_leaf(style).expect("taffy: new leaf for fragment");
-            record(id, taffy_index);
-            for child in fs {
-                let cid = build_node(child, taffy, text_by_node, box_size_by_node, taffy_index);
-                taffy.add_child(id, cid).expect("taffy: add fragment child");
-            }
-            id
+        let h = match viewport.height {
+            AvailableSpace::Definite(v) => v,
+            _ => 24.0,
+        };
+        // Recompute the layout. `from_vnode` doesn't
+        // know the viewport size, so `compute` is
+        // the right place. But `from_vnode` is
+        // called first and the root is stored in
+        // `layout.root_vnode` (we add this field).
+        if let Some(root) = layout.root_vnode.as_ref() {
+            layout.rects = crate::flex_layout::compute(root, w as u16, h as u16).rects;
         }
     }
 }
@@ -1497,4 +1131,28 @@ mod tests {
             "L and R should be on the same line, got: {first_line:?}"
         );
     }
+}
+/// Count the total number of VNodes in a tree
+/// (DFS pre-order). Used to pre-allocate
+/// `layout.rects`.
+fn count_vnodes(node: &VNode) -> usize {
+    use crate::vnode::VNodeContent;
+    let mut count = 1;
+    match &node.0 {
+        VNodeContent::Box(b) => {
+            for child in &b.children {
+                count += count_vnodes(child);
+            }
+        }
+        VNodeContent::Transform(t) => {
+            count += count_vnodes(&t.child);
+        }
+        VNodeContent::Fragment(fs) => {
+            for child in fs {
+                count += count_vnodes(child);
+            }
+        }
+        _ => {}
+    }
+    count
 }
