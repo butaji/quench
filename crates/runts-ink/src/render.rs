@@ -484,6 +484,46 @@ fn walk_children(
     // at the left/top edge. We re-apply the
     // alignment here for the flex-end and center
     // cases on the main axis.
+    //
+    // Taffy 0.11 also doesn't apply `flex_grow`
+    // to auto-sized flex containers. We manually
+    // expand children with `flex_grow > 0` to
+    // fill the remaining main-axis space. For
+    // each grow child we expand its main-axis
+    // size and shift all subsequent siblings by
+    // the expansion amount (so a Spacer pushes
+    // the following text to the right edge).
+    // The vertical (y) position is left alone —
+    // grow only affects the main axis.
+    let main_axis_total = if parent_flex_dir == FlexDirection::Row {
+        area.width
+    } else {
+        area.height
+    };
+    let mut used: i32 = 0;
+    let mut grow_total: f32 = 0.0;
+    for child in children {
+        let fg = child_flex_grow(child);
+        if fg > 0.0 {
+            grow_total += fg;
+        } else {
+            used += measure_intrinsic_main_axis(child, parent_flex_dir)
+                as i32;
+        }
+    }
+    let remaining = (main_axis_total as i32 - used).max(0) as u16;
+    let grow_unit = if grow_total > 0.0 && remaining > 0 {
+        (remaining as f32 / grow_total) as u16
+    } else {
+        0
+    };
+    // Accumulated shift on the main axis from
+    // earlier `flex_grow` children. When a
+    // `flex_grow` child is expanded beyond its
+    // Taffy-computed size, we accumulate the
+    // difference and apply it to all subsequent
+    // siblings so they get pushed to the right
+    // (row) or down (column).
     for (i, child) in children.iter().enumerate() {
         // Compute the correct pre-order index for
         // this child. `first_child_depth + i` is
@@ -517,6 +557,41 @@ fn walk_children(
             }
         }
         walk(child, layout, frame, child_area, child_depth);
+    }
+}
+
+/// Read the `flex_grow` value from a child
+/// VNode. Returns 0.0 for children without a
+/// grow factor. Spacers always have
+/// `flex_grow: 1.0` (they fill remaining space).
+fn child_flex_grow(node: &VNode) -> f32 {
+    match &node.0 {
+        VNodeContent::Spacer(_) => 1.0,
+        VNodeContent::Box(b) => b.flex_grow,
+        _ => 0.0,
+    }
+}
+
+/// Measure the intrinsic size of a child along
+/// the given main axis. For row flex this is
+/// width (in terminal cells); for column flex
+/// this is height (in rows). Returns 0 for
+/// `flex_grow > 0` children (they're accounted
+/// for separately).
+fn measure_intrinsic_main_axis(
+    node: &VNode,
+    dir: FlexDirection,
+) -> u16 {
+    if child_flex_grow(node) > 0.0 {
+        return 0;
+    }
+    match dir {
+        FlexDirection::Row | FlexDirection::RowReverse => {
+            measure_intrinsic_width(node)
+        }
+        FlexDirection::Column | FlexDirection::ColumnReverse => {
+            measure_intrinsic_height(node)
+        }
     }
 }
 
