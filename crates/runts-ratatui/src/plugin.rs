@@ -159,14 +159,24 @@ impl Plugin for RatatuiPlugin {
             return Ok(DevAction::Continue);
         }
         st.dirty = false;
-        let Some(module) = st.module.clone() else {
+        let Some(module_path) = st.module.clone() else {
             return Ok(DevAction::Continue);
+        };
+        // Read the TSX source from the file path
+        // stored in st.module. The ctx.modules list
+        // contains paths, not contents.
+        let source = match std::fs::read_to_string(&module_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("HIR render: read {module_path} failed: {e}");
+                return Ok(DevAction::Continue);
+            }
         };
         // Write module source to a temp file and
         // invoke `runts hir-render` to render it
         // through the HIR runtime.
         let tmp = std::env::temp_dir().join("runts-hir-render.tsx");
-        let _ = std::fs::write(&tmp, module.as_bytes());
+        let _ = std::fs::write(&tmp, source.as_bytes());
         let runts_bin =
             std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("runts"));
         match std::process::Command::new(&runts_bin)
