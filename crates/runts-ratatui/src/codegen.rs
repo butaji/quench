@@ -1515,10 +1515,36 @@ pub(crate) mod jsx {
                 let n = value.as_u64()?;
                 Some(quote! { .margin(#n) })
             }
-            "width" | "height" => {
-                let n = value.as_u64()?;
-                let m = quote::format_ident!("{}", name);
-                Some(quote! { .#m(#n) })
+            "width" | "height" | "minWidth" | "minwidth" | "maxWidth" | "maxwidth" | "minHeight" | "minheight" | "maxHeight" | "maxheight" => {
+                // Unwrap `{"Expr": {"Number": N}}` envelope
+                let n = value
+                    .as_u64()
+                    .map(|n| n as f64)
+                    .or_else(|| {
+                        value
+                            .get("Expr")
+                            .and_then(|e| e.get("Number"))
+                            .and_then(|n| n.as_f64())
+                    })
+                    .or_else(|| value.get("Number").and_then(|n| n.as_f64()))
+                    .or_else(|| value.as_f64())?;
+                let n_u16 = n as u16;
+                let m = if name == "width" {
+                    quote::format_ident!("width")
+                } else if name == "height" {
+                    quote::format_ident!("height")
+                } else if name == "minWidth" || name == "minwidth" {
+                    quote::format_ident!("min_width")
+                } else if name == "minHeight" || name == "minheight" {
+                    quote::format_ident!("min_height")
+                } else if name == "maxWidth" || name == "maxwidth" {
+                    quote::format_ident!("max_width")
+                } else if name == "maxHeight" || name == "maxheight" {
+                    quote::format_ident!("max_height")
+                } else {
+                    unreachable!()
+                };
+                Some(quote! { .#m(#n_u16) })
             }
             "flexGrow" | "flexgrow" => {
                 // Unwrap `{"Expr": {"Number": 1.0}}`
