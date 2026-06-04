@@ -341,8 +341,7 @@ fn extract_var_decls_before(src: &str, before: usize) -> String {
 fn find_top_level_jsx(src: &str) -> Vec<(usize, String)> {
     let chars: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
+    let mut i = 0;    while i < chars.len() {
         if chars[i] == '<' && i + 1 < chars.len() && chars[i + 1] != '!' {
             // Skip past strings, comments, etc.
             // Check if this looks like a JSX open

@@ -537,6 +537,7 @@ fn run_ink_dev_bordered_example() {
     // transformed JS has no JSX tags, so we
     // pass the source itself.
     let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
+    eprintln!("=== PROGRAM ===\n{program}\n=== END ===");
     let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
     assert!(result.is_ok(), "dev path failed: {:?}", result);
     let s = result.unwrap();
