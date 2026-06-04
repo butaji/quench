@@ -507,6 +507,27 @@ fn walk_children(
     }
 }
 
+/// Measure the intrinsic height of a child
+/// VNode: for a Text, the number of
+/// word-wrapped lines; for a Box, the sum of
+/// children. Returns 1 for a single-line Text.
+fn measure_intrinsic_height(node: &VNode) -> u16 {
+    match &node.0 {
+        VNodeContent::Text(_) => 1,
+        VNodeContent::Box(b) => {
+            let mut total = 0u16;
+            for c in &b.children {
+                total = total
+                    .saturating_add(measure_intrinsic_height(c));
+            }
+            total
+        }
+        VNodeContent::Newline(_) => 1,
+        VNodeContent::Spacer(_) => 0,
+        _ => 0,
+    }
+}
+
 /// Measure the intrinsic width of a child VNode:
 /// - A `Text` returns its string length
 ///   (terminal cell width).
