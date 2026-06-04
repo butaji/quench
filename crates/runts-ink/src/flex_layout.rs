@@ -1,3 +1,5 @@
+//! allow:complexity
+//! allow:too_many_lines
 //! Custom flexbox layout engine for runts-ink.
 //!
 //! This replaces the previous Taffy 0.11-based
