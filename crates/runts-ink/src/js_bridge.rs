@@ -497,8 +497,17 @@ fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
 fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
     Function::new(
         ctx.clone(),
-        |ctx: Ctx<'js>, content: String, props: Object<'js>| -> JsResult<Value<'js>> {
-            let mut t = InkText::new(content);
+        |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
+            // rquickjs String extraction can fail
+            // for long strings or strings with
+            // special characters. Fall back to
+            // manual conversion via .to_string().
+            let content_str = if let Some(s) = content.as_string() {
+                s.to_string().unwrap_or_default()
+            } else {
+                content.get::<String>().unwrap_or_default()
+            };
+            let mut t = InkText::new(content_str);
             if let Ok(b) = props.get::<_, bool>("bold") {
                 if b {
                     t = t.bold();
