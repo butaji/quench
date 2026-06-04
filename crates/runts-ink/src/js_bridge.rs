@@ -495,9 +495,12 @@ fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
 
 /// Build `runts_ink.text(content, props) -> VNode object`.
 fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
-    Function::new(
-        ctx.clone(),
-        |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
+Function::new(
+    ctx.clone(),
+    |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
+        eprintln!("make_text_fn called, content type: {}", content.type_name());
+        eprintln!("  as_string: {:?}", content.as_string().map(|s| s.to_string()));
+        eprintln!("  as_array: {:?}", content.as_array().map(|a| a.len()));
             // WORKAROUND: rquickjs truncates strings
             // and arrays passed from JS to Rust.
             // The JS side wraps text in JSON.stringify
@@ -603,6 +606,61 @@ mod tests {
             assert!(ns.get::<_, Function>("newline").is_ok());
             assert!(ns.get::<_, Function>("spacer").is_ok());
             assert!(ns.get::<_, Function>("render_to_string").is_ok());
+        });
+    }
+
+    #[test]
+    fn quickjs_string_passthrough() {
+        // Direct test: does rquickjs pass a long
+        // string from JS to Rust correctly?
+        let ctx = fresh_ctx();
+        let result = ctx.with(|ctx| {
+            let globals = ctx.globals();
+            let test_str = "Bordered Example";
+            globals.set("testStr", test_str).unwrap();
+            // Read it back
+            let back: String = globals.get("testStr").unwrap();
+            back
+        });
+        assert_eq!(result, "Bordered Example",
+            "rquickjs string passthrough failed: got {result:?}");
+    }
+
+    #[test]
+    fn quickjs_long_string_literal() {
+        // Test: does rquickjs pass a 15-char string
+        // from JS to Rust correctly?
+        // We use a simple function that just returns
+        // the string it receives.
+        let ctx = fresh_ctx();
+        ctx.with(|ctx| {
+            let f = rquickjs::Function::new(
+                ctx.clone(),
+                |s: String| -> String { s },
+            )
+            .unwrap();
+            let result: String = f
+                .call(("Bordered Example",))
+                .unwrap();
+            eprintln!("Long string result: {result:?}");
+            assert_eq!(result, "Bordered Example",
+                "rquickjs truncated long string: got {result:?}");
+        });
+    }
+
+    #[test]
+    fn quickjs_short_string_literal() {
+        // Test: does rquickjs pass a 2-char string?
+        let ctx = fresh_ctx();
+        ctx.with(|ctx| {
+            let f = rquickjs::Function::new(
+                ctx.clone(),
+                |s: String| -> String { s },
+            )
+            .unwrap();
+            let result: String = f.call(("hi",)).unwrap();
+            eprintln!("Short string result: {result:?}");
+            assert_eq!(result, "hi");
         });
     }
 
