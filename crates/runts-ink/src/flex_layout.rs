@@ -101,9 +101,13 @@ fn layout_node(
             let bw = b.width.unwrap_or(w);
             let bh = b.height.unwrap_or(h);
 
-            // Account for borders.
+            // Account for borders. border_h is the
+            // total horizontal border width (left +
+            // right), each side is 1 char.
             let border_h: u16 = if b.borders.left || b.borders.right { 2 } else { 0 };
             let border_v: u16 = if b.borders.top || b.borders.bottom { 2 } else { 0 };
+            let border_l: u16 = if b.borders.left { 1 } else { 0 };
+            let border_t: u16 = if b.borders.top { 1 } else { 0 };
 
             // Inner area after borders and padding.
             let pad_l = b.padding_left.unwrap_or(0);
@@ -121,13 +125,17 @@ fn layout_node(
                 .saturating_sub(pad_b);
 
             rects.push((x, y, bw, bh));
-            layout_children(b, x + border_h + pad_l, y + border_v + pad_t, inner_w, inner_h, rects);
+            layout_children(
+                b,
+                x + border_l + pad_l,
+                y + border_t + pad_t,
+                inner_w,
+                inner_h,
+                rects,
+            );
         }
         VNodeContent::Text(_) | VNodeContent::Newline(_) | VNodeContent::Spacer(_) => {
             // Leaf nodes: take the full available area.
-            // Text intrinsic sizing is handled by the
-            // render walker (it clips the text to the
-            // rect).
             rects.push((x, y, w, h));
         }
         VNodeContent::Static(s) => {
