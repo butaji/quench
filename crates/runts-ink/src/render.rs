@@ -1104,12 +1104,20 @@ impl TaffyTree {
                             height: ah,
                         }
                     } else if let Some(&(bw, bh)) = box_size_lookup.get(&node_id) {
-                        let w = bw.map(|v| v as f32).unwrap_or_else(|| {
-                            known_dimensions.width.unwrap_or(0.0)
-                        });
-                        let h = bh.map(|v| v as f32).unwrap_or_else(|| {
-                            known_dimensions.height.unwrap_or(0.0)
-                        });
+                        // Box node. If it has explicit
+                        // width/height, use those.
+                        // Otherwise, use the known
+                        // dimensions (available space)
+                        // so Taffy positions the Box
+                        // correctly within its parent.
+                        let w = bw
+                            .map(|v| v as f32)
+                            .or_else(|| known_dimensions.width)
+                            .unwrap_or(0.0);
+                        let h = bh
+                            .map(|v| v as f32)
+                            .or_else(|| known_dimensions.height)
+                            .unwrap_or(0.0);
                         let aw = match available_space.width {
                             AvailableSpace::Definite(v) => w.min(v),
                             _ => w,
@@ -1199,13 +1207,13 @@ fn build_node(
             let style = style_for_box(b);
             let id = taffy.new_leaf(style).expect("taffy: new leaf for box");
             record(id, taffy_index);
-            // Record explicit width/height so the
-            // measure function can return the
-            // correct size for Boxes with definite
-            // cross-axis sizes.
-            if b.width.is_some() || b.height.is_some() {
-                box_size_by_node.insert(id, (b.width, b.height));
-            }
+            // Record this Box so the measure
+            // function can identify it. Even Boxes
+            // without explicit width/height need to
+            // be measured (they'd otherwise return
+            // 0×0, causing Taffy to position them
+            // at the end of the parent).
+            box_size_by_node.insert(id, (b.width, b.height));
             for child in &b.children {
                 let cid = build_node(
                     child,
