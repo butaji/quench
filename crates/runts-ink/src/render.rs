@@ -956,6 +956,15 @@ pub struct Layout {
     /// parent Boxes).
     pub text_by_node:
         std::collections::HashMap<taffy::NodeId, String>,
+    /// Explicit width/height for Box nodes that
+    /// have `width` or `height` props set. The
+    /// measure function uses this to return the
+    /// correct size for Boxes with definite
+    /// cross-axis sizes (Taffy would otherwise
+    /// return 0×0 because non-text leaves have no
+    /// intrinsic size).
+    pub box_size_by_node:
+        std::collections::HashMap<taffy::NodeId, (Option<u16>, Option<u16>)>,
 }
 
 impl Layout {
@@ -965,6 +974,7 @@ impl Layout {
             taffy: taffy::TaffyTree::new(),
             rects: Vec::new(),
             text_by_node: std::collections::HashMap::new(),
+            box_size_by_node: std::collections::HashMap::new(),
         }
     }
 }
@@ -998,10 +1008,12 @@ impl TaffyTree {
         let TaffyTree { root, taffy_index } = {
             let taffy = &mut layout.taffy;
             let text_by_node = &mut layout.text_by_node;
+            let box_size_by_node = &mut layout.box_size_by_node;
             let root_id = build_node(
                 root,
                 taffy,
                 text_by_node,
+                box_size_by_node,
                 &mut taffy_index,
             );
             TaffyTree { root: root_id, taffy_index }
@@ -1043,6 +1055,10 @@ impl TaffyTree {
         // content (Ink's shrink-to-fit semantics).
         let text_lookup: std::collections::HashMap<taffy::NodeId, String> =
             layout.text_by_node.clone();
+        let box_size_lookup: std::collections::HashMap<
+            taffy::NodeId,
+            (Option<u16>, Option<u16>),
+        > = layout.box_size_by_node.clone();
         // Pass the actual viewport as
         // `Definite` so a root Box with
         // `width: percent(1.0)` fills it. The
@@ -1071,15 +1087,29 @@ impl TaffyTree {
                       _node_context,
                       _style| {
                     if let Some(text) = text_lookup.get(&node_id) {
-                        // Use known_dimensions when given;
-                        // otherwise measure from the text.
                         let w = known_dimensions
                             .width
                             .unwrap_or_else(|| text.chars().count() as f32);
-                        let h = known_dimensions
-                            .height
-                            .unwrap_or(1.0);
-                        // Clamp to available space.
+                        let h = known_dimensions.height.unwrap_or(1.0);
+                        let aw = match available_space.width {
+                            AvailableSpace::Definite(v) => w.min(v),
+                            _ => w,
+                        };
+                        let ah = match available_space.height {
+                            AvailableSpace::Definite(v) => h.min(v),
+                            _ => h,
+                        };
+                        taffy::Size {
+                            width: aw,
+                            height: ah,
+                        }
+                    } else if let Some(&(bw, bh)) = box_size_lookup.get(&node_id) {
+                        let w = bw.map(|v| v as f32).unwrap_or_else(|| {
+                            known_dimensions.width.unwrap_or(0.0)
+                        });
+                        let h = bh.map(|v| v as f32).unwrap_or_else(|| {
+                            known_dimensions.height.unwrap_or(0.0)
+                        });
                         let aw = match available_space.width {
                             AvailableSpace::Definite(v) => w.min(v),
                             _ => w,
@@ -1093,9 +1123,6 @@ impl TaffyTree {
                             height: ah,
                         }
                     } else {
-                        // Non-text leaf (e.g. Newline,
-                        // Spacer). Taffy uses this size
-                        // for leaves that aren't measured.
                         taffy::Size::ZERO
                     }
                 },
@@ -1156,6 +1183,10 @@ fn build_node(
     node: &VNode,
     taffy: &mut taffy::TaffyTree,
     text_by_node: &mut std::collections::HashMap<taffy::NodeId, String>,
+    box_size_by_node: &mut std::collections::HashMap<
+        taffy::NodeId,
+        (Option<u16>, Option<u16>),
+    >,
     taffy_index: &mut Vec<taffy::NodeId>,
 ) -> taffy::NodeId {
     // Helper: record a Taffy node id at the next
@@ -1168,8 +1199,21 @@ fn build_node(
             let style = style_for_box(b);
             let id = taffy.new_leaf(style).expect("taffy: new leaf for box");
             record(id, taffy_index);
+            // Record explicit width/height so the
+            // measure function can return the
+            // correct size for Boxes with definite
+            // cross-axis sizes.
+            if b.width.is_some() || b.height.is_some() {
+                box_size_by_node.insert(id, (b.width, b.height));
+            }
             for child in &b.children {
-                let cid = build_node(child, taffy, text_by_node, taffy_index);
+                let cid = build_node(
+                    child,
+                    taffy,
+                    text_by_node,
+                    box_size_by_node,
+                    taffy_index,
+                );
                 taffy.add_child(id, cid).expect("taffy: add child");
             }
             id
@@ -1210,7 +1254,7 @@ fn build_node(
             let id = taffy.new_leaf(style).expect("taffy: new leaf for static");
             record(id, taffy_index);
             for child in &s.children {
-                let cid = build_node(child, taffy, text_by_node, taffy_index);
+                let cid = build_node(child, taffy, text_by_node, box_size_by_node, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add static child");
             }
             id
@@ -1228,7 +1272,7 @@ fn build_node(
                 .new_leaf(style)
                 .expect("taffy: new leaf for transform");
             record(id, taffy_index);
-            let cid = build_node(&t.child, taffy, text_by_node, taffy_index);
+            let cid = build_node(&t.child, taffy, text_by_node, box_size_by_node, taffy_index);
             taffy
                 .add_child(id, cid)
                 .expect("taffy: add transform child");
@@ -1239,7 +1283,7 @@ fn build_node(
             let id = taffy.new_leaf(style).expect("taffy: new leaf for fragment");
             record(id, taffy_index);
             for child in fs {
-                let cid = build_node(child, taffy, text_by_node, taffy_index);
+                let cid = build_node(child, taffy, text_by_node, box_size_by_node, taffy_index);
                 taffy.add_child(id, cid).expect("taffy: add fragment child");
             }
             id

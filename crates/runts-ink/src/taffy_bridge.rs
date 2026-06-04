@@ -132,15 +132,7 @@ pub fn style_for_box(b: &InkBox) -> taffy::Style {
         height: length_from(b.row_gap),
     };
 
-    // Default to `align_items: FlexStart` to match
-    // real Ink's behavior (children are positioned
-    // at the start of the cross axis, not
-    // stretched). Users who want stretch behavior
-    // can set `alignItems="stretch"` explicitly.
-    s.align_items = Some(match b.align_items {
-        crate::components::AlignItems::Stretch => taffy::AlignItems::FlexStart,
-        other => align_items_from(other),
-    });
+    s.align_items = Some(align_items_from(b.align_items));
     // If a Box has an explicit `width` or
     // `height`, override `align_self` to FlexStart
     // so the fixed-size child is positioned at
