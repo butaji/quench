@@ -23,11 +23,32 @@ pub fn convert_jsx_element(elem: &JSXElement) -> hir::JSXExpr {
 
     hir::JSXExpr {
         opening,
-        children: elem.children.iter().filter_map(convert_jsx_child).collect(),
+        children: coalesce_text_children(
+            elem.children.iter().filter_map(convert_jsx_child).collect(),
+        ),
         closing: elem.closing_element.as_ref().map(|c| hir::JSXClosing {
             name: convert_jsx_name(&c.name),
         }),
     }
+}
+
+/// Coalesce adjacent `JSXChild::Text` nodes into a single
+/// Text node. The oxc parser tokenizes JSX text into
+/// separate Text children for each whitespace-separated
+/// word (e.g. "Centered Title" becomes ["Centered", "Title"]).
+/// This function joins them back into a single string.
+fn coalesce_text_children(children: Vec<hir::JSXChild>) -> Vec<hir::JSXChild> {
+    let mut out: Vec<hir::JSXChild> = Vec::new();
+    for child in children {
+        match (&mut out.last_mut(), &child) {
+            (Some(hir::JSXChild::Text(acc)), hir::JSXChild::Text(s)) => {
+                acc.push(' ');
+                acc.push_str(s);
+            }
+            _ => out.push(child),
+        }
+    }
+    out
 }
 
 pub fn convert_jsx_fragment(frag: &JSXFragment) -> hir::JSXExpr {

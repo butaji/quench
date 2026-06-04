@@ -1,5 +1,5 @@
-//! allow:complexity
-//! allow:too_many_lines
+// allow:complexity
+// allow:too_many_lines
 //! HIR runtime — interprets HIR (High-level IR) directly
 //! to produce VNode trees.
 //!
@@ -7,21 +7,13 @@
 //! the rquickjs JS-eval path (which has a string truncation
 //! bug) with a pure-Rust interpreter that walks the HIR
 //! AST.
-//!
-//! Supports the HIR subset used by Ink examples:
-//! - Function declarations
-//! - Return statements
-//! - JSX elements (Box, Text, Newline, Spacer)
-//! - String, number, boolean literals
-//! - Object literals (for props)
-//! - Array literals (for children)
-//! - Template literals
 
 #![allow(clippy::all)]
 
 use crate::transpile::hir;
-use runts_ink::components::{
+use runts_ink::{
     BorderStyle, Box as InkBox, Color, Newline, Spacer, Text as InkText, VNode,
+    VNodeContent,
 };
 
 /// The runtime error type.
@@ -53,6 +45,20 @@ impl Value {
             Value::VNode(v) => Ok(v),
             Value::String(s) => Ok(VNode::from(InkText::new(s))),
             Value::Null | Value::Undefined => Ok(VNode::from(Spacer::new())),
+            _ => Ok(VNode::from(Spacer::new())),
+        }
+    }
+}
+
+// Allow VNode::from(Value) by treating the Value
+// as a VNode when it already is one.
+impl From<Value> for VNode {
+    fn from(val: Value) -> Self {
+        match val {
+            Value::VNode(v) => v,
+            Value::String(s) => VNode::from(InkText::new(s)),
+            Value::Null | Value::Undefined => VNode::from(Spacer::new()),
+            _ => VNode::from(Spacer::new()),
         }
     }
 }
@@ -63,6 +69,7 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    /// Build an interpreter from a parsed HIR module.
     pub fn new(module: &hir::Module) -> Self {
         let mut default_export = None;
         for item in &module.items {
@@ -75,6 +82,7 @@ impl Interpreter {
         Self { default_export }
     }
 
+    /// Run the default export and return the VNode.
     pub fn run(&self) -> Result<VNode, RuntimeError> {
         let func = self
             .default_export
@@ -89,25 +97,30 @@ impl Interpreter {
         func: &hir::FunctionDecl,
     ) -> Result<Value, RuntimeError> {
         let mut last_val = Value::Undefined;
-        for stmt in &func.body.stmts {
-            if let Some(val) = self.eval_stmt(stmt)? {
-                last_val = val;
+        if let Some(block) = &func.body {
+            for stmt in &block.0 {
+                if let Some(val) = self.eval_stmt(stmt)? {
+                    last_val = val;
+                }
             }
         }
         Ok(last_val)
     }
 
-    fn eval_stmt(&self, stmt: &hir::Stmt) -> Result<Option<Value>, RuntimeError> {
+    fn eval_stmt(
+        &self,
+        stmt: &hir::Stmt,
+    ) -> Result<Option<Value>, RuntimeError> {
         use hir::Stmt;
         match stmt {
-            Stmt::Return(expr) => {
-                let val = match expr {
+            Stmt::Return { arg } => {
+                let val = match arg {
                     Some(e) => self.eval_expr(e)?,
                     None => Value::Undefined,
                 };
                 Ok(Some(val))
             }
-            Stmt::Expr(expr) => {
+            Stmt::Expr { expr } => {
                 self.eval_expr(expr)?;
                 Ok(None)
             }
@@ -124,19 +137,22 @@ impl Interpreter {
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
             Expr::JSX(jsx) => self.eval_jsx(jsx),
-            Expr::Array(elems) => {
+            Expr::Array { elems } => {
                 let mut vals = Vec::new();
                 for e in elems {
-                    vals.push(self.eval_expr(e)?);
+                    if let Some(e) = e {
+                        vals.push(self.eval_expr(e)?);
+                    }
                 }
-                // Return first element as a convenience.
                 Ok(vals.into_iter().next().unwrap_or(Value::Undefined))
             }
-            Expr::Object(_) => Ok(Value::Undefined),
+            Expr::Object { .. } => Ok(Value::Undefined),
             Expr::Template { parts, exprs } => {
                 let mut s = String::new();
                 for (i, part) in parts.iter().enumerate() {
-                    s.push_str(part);
+                    if let hir::TemplatePart::String { value } = part {
+                        s.push_str(value);
+                    }
                     if let Some(e) = exprs.get(i) {
                         let val = self.eval_expr(e)?;
                         s.push_str(&value_to_string(&val));
@@ -149,24 +165,19 @@ impl Interpreter {
     }
 
     fn eval_jsx(&self, jsx: &hir::JSXExpr) -> Result<Value, RuntimeError> {
-        use hir::JSXName;
         let tag_name = match &jsx.opening.name {
-            JSXName::Ident(n) => n.clone(),
+            hir::JSXName::Ident(n) => n.clone(),
             _ => return Err(RuntimeError("unsupported JSX name".into())),
         };
         let mut props: Vec<(String, Value)> = Vec::new();
         for attr in &jsx.opening.attrs {
             if let hir::JSXAttr::Attr { name, value } = attr {
-                let key = match name {
-                    hir::JSXName::Ident(n) => n.clone(),
-                    _ => continue,
-                };
                 let val = match value {
                     Some(hir::JSXAttrValue::String(s)) => Value::String(s.clone()),
                     Some(hir::JSXAttrValue::Expr(e)) => self.eval_expr(e)?,
-                    None => Value::Boolean(true),
+                    _ => Value::Boolean(true),
                 };
-                props.push((key, val));
+                props.push((name.clone(), val));
             }
         }
         let children = self.eval_jsx_children(&jsx.children)?;
@@ -192,11 +203,15 @@ impl Interpreter {
                         text_content.push_str(&vnode_to_string(&v));
                     }
                 }
-                t = t.content(text_content);
+                t.content = text_content;
                 Ok(Value::VNode(VNode::from(t)))
             }
-            "Newline" | "newline" => Ok(Value::VNode(VNode::from(Newline::new()))),
-            "Spacer" | "spacer" => Ok(Value::VNode(VNode::from(Spacer::new()))),
+            "Newline" | "newline" => {
+                Ok(Value::VNode(VNode::from(Newline::new())))
+            }
+            "Spacer" | "spacer" => {
+                Ok(Value::VNode(VNode::from(Spacer::new())))
+            }
             _ => Err(RuntimeError(format!("unknown JSX tag: {tag_name}"))),
         }
     }
@@ -247,7 +262,6 @@ fn value_to_string(val: &Value) -> String {
 }
 
 fn vnode_to_string(v: &VNode) -> String {
-    use runts_ink::components::VNodeContent;
     match &v.0 {
         VNodeContent::Text(t) => t.content.clone(),
         VNodeContent::Newline(_) => "\n".to_string(),
@@ -256,9 +270,7 @@ fn vnode_to_string(v: &VNode) -> String {
 }
 
 fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
-    use runts_ink::components::{
-        AlignItems, FlexDirection, JustifyContent,
-    };
+    use runts_ink::{AlignItems, FlexDirection, JustifyContent};
     match key {
         "flexDirection" => {
             if let Value::String(s) = val {
@@ -317,24 +329,99 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
                 b.padding_bottom = Some(p);
             }
         }
-        "paddingTop" => { if let Value::Number(n) = val { b.padding_top = Some(*n as u16); } }
-        "paddingBottom" => { if let Value::Number(n) = val { b.padding_bottom = Some(*n as u16); } }
-        "paddingLeft" => { if let Value::Number(n) = val { b.padding_left = Some(*n as u16); } }
-        "paddingRight" => { if let Value::Number(n) = val { b.padding_right = Some(*n as u16); } }
-        "margin" => { if let Value::Number(n) = val { b.margin = *n as u16; } }
-        "marginX" => { if let Value::Number(n) = val { b.margin_x = *n as u16; } }
-        "marginY" => { if let Value::Number(n) = val { b.margin_y = *n as u16; } }
-        "marginTop" => { if let Value::Number(n) = val { b.margin_top = *n as u16; } }
-        "marginBottom" => { if let Value::Number(n) = val { b.margin_bottom = *n as u16; } }
-        "marginLeft" => { if let Value::Number(n) = val { b.margin_left = *n as u16; } }
-        "marginRight" => { if let Value::Number(n) = val { b.margin_right = *n as u16; } }
-        "width" => { if let Value::Number(n) = val { b.width = Some(*n as u16); } }
-        "height" => { if let Value::Number(n) = val { b.height = Some(*n as u16); } }
-        "flexGrow" => { if let Value::Number(n) = val { b.flex_grow = *n as f32; } }
-        "flexShrink" => { if let Value::Number(n) = val { b.flex_shrink = *n as f32; } }
-        "gap" => { if let Value::Number(n) = val { b.gap = *n as u16; } }
-        "rowGap" => { if let Value::Number(n) = val { b.row_gap = Some(*n as u16); } }
-        "columnGap" => { if let Value::Number(n) = val { b.column_gap = Some(*n as u16); } }
+        "paddingTop" => {
+            if let Value::Number(n) = val {
+                b.padding_top = Some(*n as u16);
+            }
+        }
+        "paddingBottom" => {
+            if let Value::Number(n) = val {
+                b.padding_bottom = Some(*n as u16);
+            }
+        }
+        "paddingLeft" => {
+            if let Value::Number(n) = val {
+                b.padding_left = Some(*n as u16);
+            }
+        }
+        "paddingRight" => {
+            if let Value::Number(n) = val {
+                b.padding_right = Some(*n as u16);
+            }
+        }
+        "margin" => {
+            if let Value::Number(n) = val {
+                let m = *n as u16;
+                b.margin_top = Some(m);
+                b.margin_bottom = Some(m);
+                b.margin_left = Some(m);
+                b.margin_right = Some(m);
+            }
+        }
+        "marginX" => {
+            if let Value::Number(n) = val {
+                let m = *n as u16;
+                b.margin_left = Some(m);
+                b.margin_right = Some(m);
+            }
+        }
+        "marginY" => {
+            if let Value::Number(n) = val {
+                let m = *n as u16;
+                b.margin_top = Some(m);
+                b.margin_bottom = Some(m);
+            }
+        }
+        "marginTop" => {
+            if let Value::Number(n) = val {
+                b.margin_top = Some(*n as u16);
+            }
+        }
+        "marginBottom" => {
+            if let Value::Number(n) = val {
+                b.margin_bottom = Some(*n as u16);
+            }
+        }
+        "marginLeft" => {
+            if let Value::Number(n) = val {
+                b.margin_left = Some(*n as u16);
+            }
+        }
+        "marginRight" => {
+            if let Value::Number(n) = val {
+                b.margin_right = Some(*n as u16);
+            }
+        }
+        "width" => {
+            if let Value::Number(n) = val {
+                b.width = Some(*n as u16);
+            }
+        }
+        "height" => {
+            if let Value::Number(n) = val {
+                b.height = Some(*n as u16);
+            }
+        }
+        "flexGrow" => {
+            if let Value::Number(n) = val {
+                b.flex_grow = *n as f32;
+            }
+        }
+        "flexShrink" => {
+            if let Value::Number(n) = val {
+                b.flex_shrink = *n as f32;
+            }
+        }
+        "rowGap" => {
+            if let Value::Number(n) = val {
+                b.row_gap = Some(*n as u16);
+            }
+        }
+        "columnGap" => {
+            if let Value::Number(n) = val {
+                b.column_gap = Some(*n as u16);
+            }
+        }
         "borderStyle" => {
             if let Value::String(s) = val {
                 b.border_style = match s.as_str() {
@@ -363,18 +450,41 @@ fn apply_text_prop(t: &mut InkText, key: &str, val: &Value) {
                 t.background_color = parse_color(s);
             }
         }
-        "bold" => { if matches!(val, Value::Boolean(true)) { t.bold = true; } }
-        "italic" => { if matches!(val, Value::Boolean(true)) { t.italic = true; } }
-        "underline" => { if matches!(val, Value::Boolean(true)) { t.underline = true; } }
-        "strikethrough" => { if matches!(val, Value::Boolean(true)) { t.strikethrough = true; } }
-        "inverse" => { if matches!(val, Value::Boolean(true)) { t.inverse = true; } }
-        "dimColor" => { if matches!(val, Value::Boolean(true)) { t.dim_color = true; } }
+        "bold" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.bold = true;
+            }
+        }
+        "italic" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.italic = true;
+            }
+        }
+        "underline" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.underline = true;
+            }
+        }
+        "strikethrough" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.strikethrough = true;
+            }
+        }
+        "inverse" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.inverse = true;
+            }
+        }
+        "dimColor" => {
+            if matches!(val, Value::Boolean(true)) {
+                t.dim_color = true;
+            }
+        }
         _ => {}
     }
 }
 
 fn parse_color(s: &str) -> Color {
-    use runts_ink::components::Color;
     match s {
         "black" => Color::Black,
         "red" => Color::Red,
@@ -386,5 +496,73 @@ fn parse_color(s: &str) -> Color {
         "white" => Color::White,
         "gray" | "grey" => Color::Gray,
         _ => Color::Default,
+    }
+}
+
+/// Public entry point: parse TSX source, interpret
+/// the HIR, and render to a string.
+///
+/// This is the HIR runtime — the dev path's
+/// replacement for the rquickjs JS-eval approach.
+pub fn render_tsx(
+    source: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<String, RuntimeError> {
+    let module = crate::transpile::parser::parse_source(source, true)
+        .map_err(|e| RuntimeError(format!("parse error: {e:?}")))?;
+    let interp = Interpreter::new(&module);
+    let vnode = interp.run()?;
+    runts_ink::render_to_string(vnode, runts_ink::RenderOptions::new())
+        .map_err(|e| RuntimeError(format!("render error: {e:?}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_text() {
+        let src = r#"
+export default function App() {
+  #[test]
+  fn test_ink_aligned() {
+      let src = std::fs::read_to_string("examples/ink-aligned/tui/app.tsx").unwrap();
+      let result = render_tsx(&src, 80, 24);
+      eprintln!("RESULT: {result:?}");
+      match result {
+          Ok(output) => eprintln!("OUTPUT: {output}"),
+          Err(e) => eprintln!("ERROR: {e:?}"),
+      }
+  }
+    #[test]
+    fn test_box_with_text() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box flexDirection="column" borderStyle="round" paddingX={2}>
+      <Text>Title</Text>
+      <Text>Body</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_aligned() {
+        let src = std::fs::read_to_string(
+            "examples/ink-aligned/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(
+            output.contains("Centered"),
+            "output missing Centered: {output}"
+        );
     }
 }
