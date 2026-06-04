@@ -260,6 +260,13 @@ fn layout_children(
         } else {
             (x, y + offset as u16, cc, cs)
         };
+        // Clip child rect to parent bounds to
+        // prevent out-of-bounds positions when
+        // content overflows the viewport.
+        let cx = cx.min(x + w);
+        let cy = cy.min(y + h);
+        let cw = cw.min(x + w - cx);
+        let ch = ch.min(y + h - cy);
 
         // Recurse into child.
         layout_node(child, cx, cy, cw, ch, rects);
