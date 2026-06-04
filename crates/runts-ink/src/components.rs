@@ -650,7 +650,7 @@ impl Newline {
 // Spacer
 // ---------------------------------------------------------------------------
 
-/// Ink's `<Spacer>` — a flexbox separator that fills the
+/// A flexbox separator that fills the
 /// remaining main-axis space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Spacer;
