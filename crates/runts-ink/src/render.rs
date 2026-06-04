@@ -458,7 +458,7 @@ fn walk_children(
     layout: &Layout,
     frame: &mut ratatui::Frame,
     area: Rect,
-    // The VNode pre-order index of the FIRST child
+    // Pre-order index of the FIRST child
     // (i.e. children[0]'s depth). Subsequent
     // children sit at +1, +2, etc.
     first_child_depth: usize,
@@ -478,7 +478,13 @@ fn walk_children(
     // positions children correctly under flexbox
     // padding, margin, gap, and direction.
     for (i, child) in children.iter().enumerate() {
-        let child_depth = first_child_depth + i;
+        // Compute the correct pre-order index for
+        // this child. `first_child_depth + i` is
+        // wrong when previous siblings have their
+        // own children (the pre-order index skips
+        // ahead by the subtree size). Walk the
+        // VNode tree to find the real index.
+        let child_depth = compute_preorder_index(children, i, first_child_depth);
         let mut child_area = rect_at(&layout.rects, child_depth, area);
         // Taffy 0.11 doesn't apply `justify-content`
         // for auto-sized flex containers — children
@@ -504,6 +510,40 @@ fn walk_children(
             }
         }
         walk(child, layout, frame, child_area, child_depth);
+    }
+}
+
+/// Compute the pre-order index of the i-th
+/// child in `children`, where the first child
+/// is at `first_child_depth`. The pre-order
+/// index accounts for the subtree sizes of
+/// previous siblings.
+fn compute_preorder_index(
+    children: &[VNode],
+    i: usize,
+    first_child_depth: usize,
+) -> usize {
+    let mut depth = first_child_depth;
+    for (j, child) in children.iter().enumerate() {
+        if j == i {
+            return depth;
+        }
+        depth += subtree_size(child);
+    }
+    depth
+}
+
+/// Count the number of VNodes in a subtree
+/// (including the root). Used to compute
+/// pre-order indices for children of a parent
+/// that have their own children.
+fn subtree_size(node: &VNode) -> usize {
+    1 + match &node.0 {
+        VNodeContent::Box(b) => b.children.iter().map(subtree_size).sum(),
+        VNodeContent::Static(s) => s.children.iter().map(subtree_size).sum(),
+        VNodeContent::Fragment(fs) => fs.iter().map(subtree_size).sum(),
+        VNodeContent::Transform(t) => subtree_size(&t.child),
+        _ => 0,
     }
 }
 
