@@ -170,9 +170,155 @@ pub fn convert_jsx_child(child: &JSXChild) -> Option<hir::JSXChild> {
             closing: None,
         })),
         JSXChild::Spread(s) => {
-            // Handle {...children} spread children
             let arg = convert_expr(&s.expression).ok()?;
             Some(hir::JSXChild::Spread { expr: arg })
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transpile::hir;
+
+    #[test]
+    fn coalesce_empty() {
+        let input: Vec<hir::JSXChild> = vec![];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 0);
+    }
+
+    #[test]
+    fn coalesce_single_text() {
+        let input = vec![hir::JSXChild::Text("hello".into())];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0], hir::JSXChild::Text(s) if s == "hello"));
+    }
+
+    #[test]
+    fn coalesce_two_adjacent_texts() {
+        // oxc splits "hello world" into ["hello", "world"]
+        let input = vec![
+            hir::JSXChild::Text("hello".into()),
+            hir::JSXChild::Text("world".into()),
+        ];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0], hir::JSXChild::Text(s) if s == "hello world"));
+    }
+
+    #[test]
+    fn coalesce_three_adjacent_texts() {
+        // "Centered Title" → ["Centered", "Title"]
+        let input = vec![
+            hir::JSXChild::Text("Centered".into()),
+            hir::JSXChild::Text("Title".into()),
+        ];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0], hir::JSXChild::Text(s) if s == "Centered Title"));
+    }
+
+    #[test]
+    fn coalesce_mixed_children() {
+        // Text + JSX + Text should NOT coalesce
+        // the two Text nodes (they're not adjacent)
+        let input = vec![
+            hir::JSXChild::Text("before".into()),
+            hir::JSXChild::JSX(hir::JSXExpr {
+                opening: hir::JSXOpening {
+                    name: hir::JSXName::Ident("br".into()),
+                    attrs: vec![],
+                    self_closing: true,
+                },
+                closing: None,
+                children: vec![],
+            }),
+            hir::JSXChild::Text("after".into()),
+        ];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn coalesce_many_adjacent() {
+        // "a b c d" → ["a", "b", "c", "d"]
+        let input = vec![
+            hir::JSXChild::Text("a".into()),
+            hir::JSXChild::Text("b".into()),
+            hir::JSXChild::Text("c".into()),
+            hir::JSXChild::Text("d".into()),
+        ];
+        let out = coalesce_text_children(input);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0], hir::JSXChild::Text(s) if s == "a b c d"));
+    }
+
+    #[test]
+    fn parse_simple_text_preserves_content() {
+        // End-to-end: parse "<Text>Hello, World!</Text>"
+        // and verify the HIR has the full text.
+        let src = r#"
+export default function App() {
+  return <Text>Hello, World!</Text>;
+}
+"#;
+        let module = crate::transpile::parser::parse_source(src, true).unwrap();
+        // Find the return statement's JSX
+        for item in &module.items {
+            if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
+                if let Some(block) = &f.body {
+                    for stmt in &block.0 {
+                        if let hir::Stmt::Return { arg: Some(hir::Expr::JSX(jsx)) } = stmt {
+                            assert_eq!(jsx.children.len(), 1);
+                            match &jsx.children[0] {
+                                hir::JSXChild::Text(s) => {
+                                    assert_eq!(s, "Hello, World!",
+                                        "expected full text, got: {s:?}");
+                                }
+                                other => panic!("expected Text, got {other:?}"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parse_multipart_text_coalesces() {
+        // End-to-end: parse "<Text>Centered Title</Text>"
+        // and verify the HIR has the full text after
+        // coalescing. This is the exact case that
+        // was producing "C" before the fix.
+        let src = r#"
+export default function App() {
+  return <Text>Centered Title</Text>;
+}
+"#;
+        let module = crate::transpile::parser::parse_source(src, true).unwrap();
+        for item in &module.items {
+            if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
+                if let Some(block) = &f.body {
+                    for stmt in &block.0 {
+                        if let hir::Stmt::Return { arg: Some(hir::Expr::JSX(jsx)) } = stmt {
+                            // After coalesce, should be 1 child
+                            assert_eq!(jsx.children.len(), 1,
+                                "expected 1 child after coalesce, got {}: {:?}",
+                                jsx.children.len(), jsx.children);
+                            match &jsx.children[0] {
+                                hir::JSXChild::Text(s) => {
+                                    assert_eq!(s, "Centered Title",
+                                        "expected 'Centered Title', got: {s:?}");
+                                }
+                                other => panic!("expected Text, got {other:?}"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

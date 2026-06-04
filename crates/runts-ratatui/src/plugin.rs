@@ -136,12 +136,14 @@ impl Plugin for RatatuiPlugin {
     }
 
     fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        // The dev path uses the BUILD path's codegen
-        // + cargo build + run binary. We dropped
-        // rquickjs because the JS-eval path has a
-        // fundamental string truncation bug.
-        // The build path produces a Rust binary in
-        // .runts/build/ that we run and capture stdout.
+        // The dev path uses the HIR runtime — a
+        // pure-Rust interpreter that walks the HIR
+        // AST. No rquickjs, no cargo build, no Rust
+        // files on disk. Fast hot-reload.
+        //
+        // We spawn the runts binary with `hir-render`
+        // which parses the TSX, interprets the HIR,
+        // and renders to stdout.
         let st_any = state.as_any_mut();
         let st = match st_any.downcast_mut::<RatatuiDevState>() {
             Some(s) => s,
@@ -160,43 +162,32 @@ impl Plugin for RatatuiPlugin {
         let Some(module) = st.module.clone() else {
             return Ok(DevAction::Continue);
         };
-        // Rebuild via cargo and run the binary.
-        // The binary is at .runts/build/target/debug/<name>
-        // or .runts/build/target/release/<name> depending
-        // on profile. We try debug first (faster).
-        let build_dir = std::path::Path::new(".runts/build");
-        let binary = build_dir.join("target/debug/app");
-        // Run cargo build in the build dir.
-        let build_status = std::process::Command::new("cargo")
-            .arg("build")
-            .current_dir(build_dir)
-            .status();
-        match build_status {
-            Ok(s) if s.success() => {
-                // Run the binary and capture stdout.
-                match std::process::Command::new(&binary).output() {
-                    Ok(out) => {
-                        use std::io::Write;
-                        let _ = std::io::stdout().write_all(&out.stdout);
-                        let _ = std::io::stdout().flush();
-                        if !out.stderr.is_empty() {
-                            eprint!("{}", String::from_utf8_lossy(&out.stderr));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("dev: failed to run binary: {e}");
-                    }
+        // Write module source to a temp file and
+        // invoke `runts hir-render` to render it
+        // through the HIR runtime.
+        let tmp = std::env::temp_dir().join("runts-hir-render.tsx");
+        let _ = std::fs::write(&tmp, module.as_bytes());
+        let runts_bin =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("runts"));
+        match std::process::Command::new(&runts_bin)
+            .arg("hir-render")
+            .arg(&tmp)
+            .output()
+        {
+            Ok(out) => {
+                use std::io::Write;
+                let _ = std::io::stdout().write_all(&out.stdout);
+                let _ = std::io::stdout().flush();
+                if !out.stderr.is_empty() {
+                    eprint!("{}", String::from_utf8_lossy(&out.stderr));
                 }
-            }
-            Ok(s) => {
-                eprintln!("dev: cargo build failed with status {s}");
+                Ok(DevAction::Continue)
             }
             Err(e) => {
-                eprintln!("dev: cargo build failed to start: {e}");
+                eprintln!("hir-render failed: {e}");
+                Ok(DevAction::Continue)
             }
         }
-        let _ = module; // unused, we use the build dir directly
-        Ok(DevAction::Continue)
     }
 
     fn dev_reload(&self, _ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError> {

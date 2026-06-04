@@ -21,6 +21,13 @@ pub enum Commands {
         name: String,
     },
 
+    /// Render TSX through the HIR runtime (internal,
+    /// used by runts dev plugin).
+    HirRender {
+        /// Path to .tsx file
+        path: PathBuf,
+    },
+
     /// Start development server with hot reload
     Dev {
         /// Project path

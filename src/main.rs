@@ -34,11 +34,13 @@ fn init_logging() {
         .try_init();
 }
 
+// allow:complexity
 fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         cli::Commands::Eval { expr } => run_eval(&expr),
         cli::Commands::Codegen { source, expr } => run_codegen(source, expr),
         cli::Commands::Init { name } => run_init(name),
+        cli::Commands::HirRender { path } => run_hir_render(path),
         cli::Commands::Dev { path, plugin } => run_dev(path, &plugin),
         cli::Commands::InspectHir { path } => run_inspect_hir(path),
         cli::Commands::Build {
@@ -59,6 +61,14 @@ fn execute(cli: Cli) -> Result<()> {
 fn run_init(name: String) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(commands::run_init(name, None))
+}
+
+fn run_hir_render(path: PathBuf) -> Result<()> {
+    let source = std::fs::read_to_string(&path)?;
+    let output = hir_runtime::render_tsx(&source, 80, 24)
+        .map_err(|e| anyhow::anyhow!("HIR render error: {e:?}"))?;
+    print!("{output}");
+    Ok(())
 }
 
 fn run_dev(path: PathBuf, plugin_name: &str) -> Result<()> {

@@ -37,19 +37,21 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
     // Run initial full build to populate .runts/build directory AND compile
     // This is required because FreshDevState::compile_project() expects
     // the build directory to exist and compiles there (it runs cargo build in .runts/build).
-    // The Ink dev path also uses the build path's
-    // codegen + cargo build, NOT rquickjs. The
-    // rquickjs bridge has a fundamental string
-    // truncation bug that makes the JS-eval path
-    // unusable. Using the build path eliminates
-    // the bug entirely.
+    // The Ink dev path uses the HIR runtime — a
+    // pure-Rust interpreter that walks the HIR AST.
+    // No rquickjs, no cargo build for the dev path.
+    // We still run the initial build to set up
+    // .runts/build/ for the compile path, but the
+    // dev path itself uses hir-render.
     tracing::info!("Running initial build...");
-    if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
-        .await
-        .context("Initial build failed")
-    {
-        tracing::error!("Initial build failed: {}", e);
-        return Err(e);
+    if has_tsx && plugin_name == "fresh" {
+        if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
+            .await
+            .context("Initial build failed")
+        {
+            tracing::error!("Initial build failed: {}", e);
+            return Err(e);
+        }
     }
     tracing::info!("Initial build complete, starting dev server...");
 
