@@ -293,13 +293,16 @@ fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16) -> (u
             let cs = b.height.unwrap_or(cross_size);
             (ms.min(main_size), cs.min(cross_size), grow)
         }
-        VNodeContent::Text(_) | VNodeContent::Newline(_) => {
-            // Text/Newline: intrinsic main size is
-            // 1 (one row of text). The walker
-            // measures the actual width for row
-            // flex. For column flex, 1 row is the
-            // intrinsic height.
-            (1, 1, 0.0)
+        VNodeContent::Text(t) => {
+            // Text: intrinsic main size is the
+            // character count of the content.
+            // The walker measures the actual width
+            // for row flex.
+            (t.content.chars().count() as u16, 1, 0.0)
+        }
+        VNodeContent::Newline(_) => {
+            // Newline: intrinsic main size is 0.
+            (0, 1, 0.0)
         }
         VNodeContent::Spacer(_) => {
             (0, cross_size, 1.0) // Spacer: flex-grow
