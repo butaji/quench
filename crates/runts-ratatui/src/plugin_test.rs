@@ -537,16 +537,53 @@ fn run_ink_dev_bordered_example() {
     // transformed JS has no JSX tags, so we
     // pass the source itself.
     let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
-    eprintln!("=== PROGRAM ===\n{program}\n=== END ===");
     let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
     assert!(result.is_ok(), "dev path failed: {:?}", result);
     let s = result.unwrap();
     assert!(s.contains("Bordered Example"), "missing title: {s}");
     assert!(
-        s.contains('╭')
-            || s.contains('╯')
-            || s.contains('╮')
-            || s.contains('│'),
+        s.contains('╭') || s.contains('╯') || s.contains('╮') || s.contains('│'),
         "missing border: {s}"
     );
+}
+
+#[test]
+fn hir_render_bordered_example() {
+    // ATOMIC TEST: HIR runtime renders the
+    // bordered example through the full pipeline.
+    let src = include_str!("../../../examples/ink-bordered/tui/app.tsx");
+    // Write to temp file and invoke runts hir-render
+    let tmp = std::env::temp_dir().join("hir-render-test.tsx");
+    std::fs::write(&tmp, src).unwrap();
+    let runts_bin = std::env::current_exe().unwrap();
+    let out = std::process::Command::new(&runts_bin)
+        .arg("hir-render")
+        .arg(&tmp)
+        .output()
+        .expect("failed to invoke runts hir-render");
+    assert!(out.status.success(), "hir-render failed: {}",
+        String::from_utf8_lossy(&out.stderr));
+    let output = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(output.contains("Bordered Example"),
+        "hir-render output missing title: {output:?}");
+}
+
+#[test]
+fn hir_render_aligned_example() {
+    // ATOMIC TEST: HIR runtime renders the
+    // aligned example correctly.
+    let src = include_str!("../../../examples/ink-aligned/tui/app.tsx");
+    let tmp = std::env::temp_dir().join("hir-render-aligned.tsx");
+    std::fs::write(&tmp, src).unwrap();
+    let runts_bin = std::env::current_exe().unwrap();
+    let out = std::process::Command::new(&runts_bin)
+        .arg("hir-render")
+        .arg(&tmp)
+        .output()
+        .expect("failed to invoke runts hir-render");
+    assert!(out.status.success(), "hir-render failed: {}",
+        String::from_utf8_lossy(&out.stderr));
+    let output = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(output.contains("Centered"),
+        "hir-render output missing 'Centered': {output:?}");
 }
