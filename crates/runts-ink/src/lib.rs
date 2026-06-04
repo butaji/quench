@@ -56,6 +56,7 @@
 
 mod components;
 mod events;
+mod flex_layout;
 pub mod js_bridge;
 mod props;
 mod render;
