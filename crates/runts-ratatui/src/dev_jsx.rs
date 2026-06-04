@@ -337,10 +337,15 @@ pub fn lower_jsx_for_eval(raw: &str) -> String {
 /// or a `String(...)` expression, leave it
 /// alone.
 fn wrap_text_expr(content: &str) -> String {
-    // If it's a quoted string literal, leave
-    // it alone.
+    // WORKAROUND: rquickjs truncates strings AND
+    // arrays passed from JS to Rust. To avoid
+    // the bug, we wrap string literals in a
+    // JSON.stringify call. The Rust side strips
+    // the JSON quotes to recover the original.
     if content.starts_with('"') && content.ends_with('"') {
-        return content.to_string();
+        // String literal: wrap in JSON.stringify.
+        // The Rust side parses the JSON string.
+        return format!("JSON.stringify({})", content);
     }
     // If it's a `+`-concatenation, wrap each
     // non-literal side.
@@ -385,8 +390,10 @@ fn lower_jsx_element(raw: &str) -> String {
             // Empty Text children (like `<Text>{''}</Text>`)
             // should be skipped entirely — real Ink
             // collapses them to zero height.
-            let is_empty_lit =
-                content_str == "''" || content_str == "\"\"" || content_str.trim().is_empty();
+            let is_empty_lit = content_str == "''"
+                || content_str == "\"\""
+                || content_str == "[]"
+                || content_str.trim().is_empty();
             if is_empty_lit {
                 return "runts_ink.spacer()".to_string();
             }

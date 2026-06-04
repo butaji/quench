@@ -498,12 +498,20 @@ fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
     Function::new(
         ctx.clone(),
         |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
-            // rquickjs String extraction can fail
-            // for long strings or strings with
-            // special characters. Fall back to
-            // manual conversion via .to_string().
+            // WORKAROUND: rquickjs truncates strings
+            // and arrays passed from JS to Rust.
+            // The JS side wraps text in JSON.stringify
+            // which produces a quoted JSON string.
+            // We strip the quotes to recover the
+            // original text.
             let content_str = if let Some(s) = content.as_string() {
-                s.to_string().unwrap_or_default()
+                let raw = s.to_string().unwrap_or_default();
+                // Strip JSON quotes if present.
+                if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+                    raw[1..raw.len() - 1].to_string()
+                } else {
+                    raw
+                }
             } else {
                 content.get::<String>().unwrap_or_default()
             };
