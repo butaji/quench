@@ -477,6 +477,13 @@ fn walk_children(
     // width, height) for the child. Reading it
     // positions children correctly under flexbox
     // padding, margin, gap, and direction.
+    //
+    // Taffy 0.11 doesn't apply
+    // `justify-content: flex-end` for auto-sized
+    // flex containers — children always end up
+    // at the left/top edge. We re-apply the
+    // alignment here for the flex-end and center
+    // cases on the main axis.
     for (i, child) in children.iter().enumerate() {
         // Compute the correct pre-order index for
         // this child. `first_child_depth + i` is
