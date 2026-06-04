@@ -21,17 +21,11 @@ crossterm = "0.27"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# Yoga is the CSS flexbox/grid layout engine that
-# powers real Ink (Ink uses the JS Yoga via
-# yoga-layout npm package). We use the Rust
-# `yoga` crate (https://github.com/bschwind/yoga-rs)
-# which compiles Yoga from C source via bindgen,
-# giving us exact parity with Ink's layout.
-# Taffy was tried but had fundamental flexbox
-# differences (flex_grow on auto-sized containers,
-# justify-content space-*, etc.) that made 100%
-# pixel parity impossible.
-yoga = "0.5"
+# Taffy is the CSS flexbox/grid layout engine that powers
+# real Ink-style layouts. Yoga (the JS Yoga that Ink uses
+# under the hood) is not available in Rust, so we use
+# Taffy which has the same flexbox semantics.
+taffy = "=0.11.0-experimental-cache-fix.3"
 unicode-width = "0.1"
 # rquickjs hosts the JS reconciler (React + Ink). The
 # reconciler is responsible for converting the user's
