@@ -124,8 +124,6 @@ fn to_u16(v: &Value<'_>) -> u16 {
 }
 
 /// Convert a VNode to a JS object using rquickjs. The
-/// shape mirrors `serde_json::Value::Object`:
-///
 /// - `VNode::Box(b)` -> `{Box: {props, children: []}}`
 /// - `VNode::Text(t)` -> `{Text: {content, props}}`
 /// - `VNode::Newline` -> `{Newline: {}}`
@@ -501,14 +499,20 @@ fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
         ctx.clone(),
         |ctx: Ctx<'js>, content: String, props: Object<'js>| -> JsResult<Value<'js>> {
             let mut t = InkText::new(content);
-            if props.get::<_, bool>("bold").unwrap_or(false) {
-                t = t.bold();
+            if let Ok(b) = props.get::<_, bool>("bold") {
+                if b {
+                    t = t.bold();
+                }
             }
-            if props.get::<_, bool>("italic").unwrap_or(false) {
-                t = t.italic();
+            if let Ok(b) = props.get::<_, bool>("italic") {
+                if b {
+                    t = t.italic();
+                }
             }
-            if props.get::<_, bool>("underline").unwrap_or(false) {
-                t = t.underline();
+            if let Ok(b) = props.get::<_, bool>("underline") {
+                if b {
+                    t = t.underline();
+                }
             }
             if let Ok(c) = props.get::<_, String>("color") {
                 if !c.is_empty() {
