@@ -217,6 +217,7 @@ pub fn run_ink_dev_with_program(
     let runtime = Runtime::new().map_err(|e| format!("runtime: {e}"))?;
     let ctx = Context::builder()
         .with::<intrinsic::Eval>()
+        .with::<intrinsic::Json>()
         .build(&runtime)
         .map_err(|e| format!("ctx: {e}"))?;
     let result: String = ctx
