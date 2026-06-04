@@ -136,11 +136,12 @@ impl Plugin for RatatuiPlugin {
     }
 
     fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        // Run the rquickjs eval path: read the .tsx,
-        // lower to JS, eval through the runts-ink
-        // bridge, print the result. Returns Continue
-        // (not Stop) so the dev loop can re-run on
-        // the next tick and pick up reloads.
+        // The dev path uses the BUILD path's codegen
+        // + cargo build + run binary. We dropped
+        // rquickjs because the JS-eval path has a
+        // fundamental string truncation bug.
+        // The build path produces a Rust binary in
+        // .runts/build/ that we run and capture stdout.
         let st_any = state.as_any_mut();
         let st = match st_any.downcast_mut::<RatatuiDevState>() {
             Some(s) => s,
@@ -153,44 +154,48 @@ impl Plugin for RatatuiPlugin {
             }
         };
         if !st.dirty {
-            // Already rendered this tick; idle until
-            // a file change marks us dirty again.
             return Ok(DevAction::Continue);
         }
         st.dirty = false;
         let Some(module) = st.module.clone() else {
-            // No .tsx module found — just idle.
             return Ok(DevAction::Continue);
         };
-        // Read the source.
-        let src = match std::fs::read_to_string(&module) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("dev: failed to read {module}: {e}");
-                return Ok(DevAction::Continue);
+        // Rebuild via cargo and run the binary.
+        // The binary is at .runts/build/target/debug/<name>
+        // or .runts/build/target/release/<name> depending
+        // on profile. We try debug first (faster).
+        let build_dir = std::path::Path::new(".runts/build");
+        let binary = build_dir.join("target/debug/app");
+        // Run cargo build in the build dir.
+        let build_status = std::process::Command::new("cargo")
+            .arg("build")
+            .current_dir(build_dir)
+            .status();
+        match build_status {
+            Ok(s) if s.success() => {
+                // Run the binary and capture stdout.
+                match std::process::Command::new(&binary).output() {
+                    Ok(out) => {
+                        use std::io::Write;
+                        let _ = std::io::stdout().write_all(&out.stdout);
+                        let _ = std::io::stdout().flush();
+                        if !out.stderr.is_empty() {
+                            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("dev: failed to run binary: {e}");
+                    }
+                }
             }
-        };
-        // Lower JSX -> JS bridge calls.
-        let transformed = crate::dev_jsx::transform(&src);
-        // Build the eval program from the
-        // ORIGINAL source so we pick the
-        // largest JSX (the app body) and not
-        // the small self-closing `<App />`
-        // reference. The eval program embeds
-        // the lowered JS so the runtime sees
-        // `runts_ink.box(...)` calls.
-        let program = dev_eval_program_with_lowered(&src, &transformed.js);
-        // Eval through rquickjs + runts-ink bridge.
-        match run_ink_dev_with_program(&transformed.js, &program) {
-            Ok(rendered) => {
-                print!("{rendered}");
-                use std::io::Write;
-                let _ = std::io::stdout().flush();
+            Ok(s) => {
+                eprintln!("dev: cargo build failed with status {s}");
             }
             Err(e) => {
-                eprintln!("dev: eval error: {e}");
+                eprintln!("dev: cargo build failed to start: {e}");
             }
         }
+        let _ = module; // unused, we use the build dir directly
         Ok(DevAction::Continue)
     }
 
