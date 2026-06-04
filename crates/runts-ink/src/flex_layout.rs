@@ -254,11 +254,14 @@ fn layout_children(
         };
         let _ = cross_offset;
 
-        // Compute child rect.
+        // Compute child rect. For column flex,
+        // children span the full width (cross
+        // axis). For row flex, they get their
+        // measured main size.
         let (cx, cy, cw, ch) = if is_row {
             (x + offset as u16, y, cs, cc)
         } else {
-            (x, y + offset as u16, cc, cs)
+            (x, y + offset as u16, w, cs)
         };
         // Clip child rect to parent bounds to
         // prevent out-of-bounds positions when
@@ -325,5 +328,100 @@ fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16) -> (u
                 (0, 0, 0.0)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{Box as InkBox, Text as InkText};
+    use crate::{VNode, VNodeContent};
+
+    #[test]
+    fn text_intrinsic_main_size_empty() {
+        let t = InkText::new("");
+        let v = VNode::from(t);
+        let (main, _, _) = compute_child_main_size(&v, 80, 24);
+        assert_eq!(main, 0, "empty Text should have 0 main size");
+    }
+
+    #[test]
+    fn text_intrinsic_main_size_single_char() {
+        let t = InkText::new("A");
+        let v = VNode::from(t);
+        let (main, _, _) = compute_child_main_size(&v, 80, 24);
+        assert_eq!(main, 1, "single char Text should have 1 main size");
+    }
+
+    #[test]
+    fn text_intrinsic_main_size_matches_content() {
+        // ATOMIC TEST: A Text node with "Bordered Example"
+        // (16 chars including space) should have
+        // intrinsic main size = 16.
+        let t = InkText::new("Bordered Example");
+        let v = VNode::from(t);
+        let (main, _cross, _grow) = compute_child_main_size(&v, 80, 24);
+        assert_eq!(
+            main, 16,
+            "Text intrinsic main size should be 16 chars, got {main}"
+        );
+    }
+
+    #[test]
+    fn layout_gives_text_full_width() {
+        // ATOMIC TEST: Layout a Text node directly
+        // and verify it gets the full available width.
+        let t = InkText::new("Bordered Example");
+        let v = VNode::from(t);
+        let layout = compute(&v, 80, 24);
+        // The Text node is the root. It should get
+        // the full 80-char width.
+        assert!(
+            !layout.rects.is_empty(),
+            "layout should produce at least one rect"
+        );
+        let (_x, _y, w, _h) = layout.rects[0];
+        assert_eq!(
+            w, 80,
+            "Text root should get full 80 width, got {w}"
+        );
+    }
+
+    #[test]
+    fn layout_text_in_box_gets_inner_width() {
+        // ATOMIC TEST: A Text inside a Box should
+        // get the box's inner width (after padding).
+        let t = InkText::new("Bordered Example");
+        let b = InkBox::new()
+            .flex_direction(crate::components::FlexDirection::Column)
+            .width(30)
+            .child(VNode::from(t));
+        let v = VNode::from(b);
+        let layout = compute(&v, 80, 24);
+        // First rect is the Box, second is the Text.
+        assert!(layout.rects.len() >= 2);
+        let (_, _, bw, _) = layout.rects[0];
+        let (_, _, tw, _) = layout.rects[1];
+        assert_eq!(bw, 30, "Box should be 30 wide");
+        assert_eq!(
+            tw, 30,
+            "Text inside Box should get Box width (30), got {tw}"
+        );
+    }
+
+    #[test]
+    fn text_renders_full_content() {
+        // ATOMIC TEST: Render a Text node and verify
+        // the full content appears in the output.
+        let t = InkText::new("Bordered Example");
+        let v = VNode::from(t);
+        let result =
+            crate::render_to_string(v, crate::RenderOptions::new());
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(
+            output.contains("Bordered Example"),
+            "output missing 'Bordered Example': {output:?}"
+        );
     }
 }
