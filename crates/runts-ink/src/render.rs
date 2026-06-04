@@ -556,6 +556,36 @@ fn walk_children(
                 child_area.x = area.x + offset;
             }
         }
+        // Taffy 0.11 centers children with a
+        // definite cross-axis size when the
+        // parent has `align-items: stretch`
+        // (the default). Real Ink positions
+        // them at the start of the cross axis.
+        // Override the cross-axis position here
+        // for Boxes with explicit `width`/`height`.
+        // Also override the main-axis size to
+        // match the explicit `width`/`height`
+        // when Taffy computed 0×0 (because the
+        // content has no intrinsic size and the
+        // Box has `flex_grow: 0` or the content
+        // is empty).
+        if parent_flex_dir == FlexDirection::Column {
+            if let VNodeContent::Box(b) = &child.0 {
+                if b.width.is_some() || b.height.is_some() {
+                    child_area.x = area.x;
+                    if let Some(w) = b.width {
+                        if child_area.width == 0 || child_area.width > w {
+                            child_area.width = w;
+                        }
+                    }
+                    if let Some(h) = b.height {
+                        if child_area.height == 0 || child_area.height > h {
+                            child_area.height = h;
+                        }
+                    }
+                }
+            }
+        }
         walk(child, layout, frame, child_area, child_depth);
     }
 }

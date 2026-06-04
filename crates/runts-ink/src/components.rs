@@ -396,6 +396,30 @@ impl Box {
         self
     }
 
+    /// Set the minimum width.
+    pub fn min_width(mut self, w: u16) -> Self {
+        self.min_width = Some(w);
+        self
+    }
+
+    /// Set the minimum height.
+    pub fn min_height(mut self, h: u16) -> Self {
+        self.min_height = Some(h);
+        self
+    }
+
+    /// Set the maximum width.
+    pub fn max_width(mut self, w: u16) -> Self {
+        self.max_width = Some(w);
+        self
+    }
+
+    /// Set the maximum height.
+    pub fn max_height(mut self, h: u16) -> Self {
+        self.max_height = Some(h);
+        self
+    }
+
     /// Set the border style and a default "all sides"
     /// configuration.
     pub fn border_style(mut self, s: BorderStyle) -> Self {
