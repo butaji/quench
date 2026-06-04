@@ -37,23 +37,21 @@ pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String
     // Run initial full build to populate .runts/build directory AND compile
     // This is required because FreshDevState::compile_project() expects
     // the build directory to exist and compiles there (it runs cargo build in .runts/build).
-    // Skip for the ratatui plugin when an Ink source
-    // is present — the Ink dev path runs the .tsx
-    // through rquickjs+bridge (no cargo compile).
-    let skip_initial_build = plugin_name == "ratatui" && has_tsx;
-    if !skip_initial_build {
-        tracing::info!("Running initial build...");
-        if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
-            .await
-            .context("Initial build failed")
-        {
-            tracing::error!("Initial build failed: {}", e);
-            return Err(e);
-        }
-        tracing::info!("Initial build complete, starting dev server...");
-    } else {
-        tracing::info!("Ink dev path: skipping cargo build, using rquickjs+bridge");
+    // The Ink dev path also uses the build path's
+    // codegen + cargo build, NOT rquickjs. The
+    // rquickjs bridge has a fundamental string
+    // truncation bug that makes the JS-eval path
+    // unusable. Using the build path eliminates
+    // the bug entirely.
+    tracing::info!("Running initial build...");
+    if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
+        .await
+        .context("Initial build failed")
+    {
+        tracing::error!("Initial build failed: {}", e);
+        return Err(e);
     }
+    tracing::info!("Initial build complete, starting dev server...");
 
     let mut state = plugin.dev_init(&mut ctx)?;
     let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;

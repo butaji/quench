@@ -5,6 +5,7 @@
 mod cli;
 mod commands;
 mod config;
+mod hir_runtime;
 mod plugin;
 mod runtime;
 mod transpile;

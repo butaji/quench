@@ -33,6 +33,7 @@ exclude = [
 [dependencies]
 
 # Core
+runts-ink = { path = "crates/runts-ink" }
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"

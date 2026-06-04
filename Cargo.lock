@@ -1898,6 +1898,7 @@ dependencies = [
  "regex",
  "rquickjs",
  "runts-fresh",
+ "runts-ink",
  "runts-macros",
  "runts-plugin",
  "runts-ratatui",
