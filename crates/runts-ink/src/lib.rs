@@ -60,8 +60,7 @@ pub mod js_bridge;
 mod props;
 mod render;
 mod style;
-mod yoga_bridge;
-mod yoga_render;
+mod taffy_bridge;
 mod vnode;
 
 pub use components::{
