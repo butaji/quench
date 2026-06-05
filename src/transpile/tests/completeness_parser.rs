@@ -1,6 +1,5 @@
 //! Parser completeness tests — verifies all statement/expression types are handled.
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod completeness_parser_tests {

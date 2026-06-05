@@ -1,20 +1,25 @@
 // useApp hook example — demonstrates useApp for global app state.
-// NOTE: useApp and useInput hooks are not yet supported in runts HIR runtime.
-// Shows static values for parity testing.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
-import React from 'react';
-import { Box, Text } from 'ink';
+import React, { useState } from 'react';
+import { Box, Text, useApp, useInput } from 'ink';
 
 export default function UseAppExample() {
-  // NOTE: For runts HIR runtime, useApp/useInput are not supported.
-  // For parity testing, we show static count state.
-  const count = 0;
-  const canExit = true;
+  const [count, setCount] = useState(0);
+  const app = useApp();
+  const canExit = !!app?.exit;
+
+  useInput((input, key) => {
+    if (key.upArrow) setCount(c => c + 1);
+    if (key.downArrow) setCount(c => c - 1);
+    if (input === 'q' || input === 'Q') app?.exit?.();
+  });
+
+  const bar = ' '.repeat(Math.max(0, Math.min(count, 20))) + (count > 0 ? '●' : '');
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -25,12 +30,8 @@ export default function UseAppExample() {
       <Text></Text>
       <Text bold>Count: {count}</Text>
       <Box justifyContent="center">
-        <Text
-          backgroundColor="green"
-          color="black"
-          dimColor={count === 0}
-        >
-          {' '.repeat(Math.min(count, 20))}{count > 0 ? '●' : ''}
+        <Text backgroundColor="green" color="black" dimColor={count === 0}>
+          {bar}
         </Text>
       </Box>
       <Text></Text>

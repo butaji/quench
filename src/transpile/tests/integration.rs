@@ -1,6 +1,5 @@
 //! Integration tests
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod integration_tests {

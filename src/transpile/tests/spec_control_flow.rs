@@ -2,7 +2,6 @@
 //!
 //! Covers: conditional, switch, loops, jump statements, exception handling
 //!
-//! allow:too_many_lines,complexity,nested_externals
 
 #[cfg(test)]
 mod spec_control_flow_tests {

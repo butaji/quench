@@ -1,6 +1,5 @@
 //! Production build command
 //!
-//! allow:too_many_lines
 
 pub mod cargo_gen;
 pub mod island_gen;

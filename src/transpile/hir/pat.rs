@@ -1,6 +1,5 @@
 //! Pattern types
 //!
-//! allow:complexity,too_many_lines
 
 use super::Expr;
 use serde::{Deserialize, Serialize};
@@ -58,7 +57,6 @@ impl Pat {
         }
     }
 
-    // allow:complexity,too_many_lines
     pub fn binding_names(&self) -> Vec<String> {
         match self {
             Pat::Ident { name, .. } => vec![name.clone()],

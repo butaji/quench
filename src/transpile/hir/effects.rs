@@ -4,7 +4,6 @@
 //! - Whether a function throws (error effect)
 //! - The type of error that can be thrown
 //!
-//! allow:complexity,too_many_lines
 
 use super::{Block, ClassMethod, Expr, FunctionDecl, Stmt, Type};
 
@@ -88,7 +87,6 @@ impl EffectAnalyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn analyze_control_flow(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
@@ -394,7 +392,6 @@ impl EffectAnalyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn infer_type_from_expr(&self, expr: &Expr) -> Type {
         match expr {
             Expr::New { callee, .. } => Type::Ref {

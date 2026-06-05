@@ -1,5 +1,3 @@
-// allow:complexity
-// allow:too_many_lines
 //! HIR runtime — interprets HIR (High-level IR) directly
 //! to produce VNode trees.
 //!
@@ -97,6 +95,9 @@ impl From<Value> for VNode {
 enum HookSlot {
     State { value: Value },
     Effect { last_deps: Vec<Value>, body: Value },
+    Memo { last_deps: Vec<Value>, value: Value },
+    Callback { last_deps: Vec<Value>, func: Value },
+    Context { value: Value },
 }
 
 /// The HIR interpreter.
@@ -108,6 +109,12 @@ pub struct Interpreter {
     hook_slots: Vec<HookSlot>,
     /// Index of the next hook call during the current render.
     hook_idx: usize,
+    /// Context registry for createContext/useContext (keyed by context id).
+    contexts: std::collections::HashMap<String, Value>,
+    /// Monotonically increasing counter for context ids.
+    next_ctx_id: usize,
+    /// Top-level variable declarations to evaluate before running.
+    top_level_vars: Vec<hir::VariableDecl>,
 }
 
 impl Interpreter {
@@ -115,22 +122,29 @@ impl Interpreter {
     pub fn new(module: &hir::Module) -> Self {
         let mut default_export = None;
         let mut scope = std::collections::HashMap::new();
+        let mut top_level_vars = Vec::new();
         
         for item in &module.items {
-            if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
-                // Store all functions in scope
-                let param_names: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
-                let body = if let Some(block) = &f.body {
-                    Box::new(hir::Expr::Block(block.0.clone()))
-                } else {
-                    Box::new(hir::Expr::Undefined)
-                };
-                scope.insert(f.name.clone(), Value::Function { params: param_names, body });
-                
-                // Set default export (prefer "App")
-                if f.name == "App" || default_export.is_none() {
-                    default_export = Some(f.clone());
+            match item {
+                hir::ModuleItem::Decl(hir::Decl::Function(f)) => {
+                    let param_names: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
+                    let body = if let Some(block) = &f.body {
+                        Box::new(hir::Expr::Block(block.0.clone()))
+                    } else {
+                        Box::new(hir::Expr::Undefined)
+                    };
+                    scope.insert(f.name.clone(), Value::Function { params: param_names, body });
+                    if f.name == "App" || default_export.is_none() {
+                        default_export = Some(f.clone());
+                    }
                 }
+                hir::ModuleItem::Decl(hir::Decl::Variable(var)) => {
+                    top_level_vars.push(var.clone());
+                }
+                hir::ModuleItem::Stmt(hir::Stmt::Variable(var)) => {
+                    top_level_vars.push(var.clone());
+                }
+                _ => {}
             }
         }
         
@@ -139,17 +153,36 @@ impl Interpreter {
             scope,
             hook_slots: Vec::new(),
             hook_idx: 0,
+            contexts: std::collections::HashMap::new(),
+            next_ctx_id: 0,
+            top_level_vars,
         }
     }
 
     /// Run the default export and return the VNode.
     pub fn run(&mut self) -> Result<VNode, RuntimeError> {
+        self.eval_top_level()?;
         let func = self
             .default_export
             .clone()
             .ok_or_else(|| RuntimeError("no default export found".into()))?;
         let val = self.eval_function_body(&func)?;
         val.as_vnode()
+    }
+
+    fn eval_top_level(&mut self) -> Result<(), RuntimeError> {
+        for var in &self.top_level_vars.clone() {
+            let init_val = match &var.init {
+                Some(e) => self.eval_expr(e)?,
+                None => Value::Undefined,
+            };
+            if let Some(pat) = &var.pattern {
+                self.bind_pattern(pat, init_val)?;
+            } else {
+                self.scope.insert(var.name.clone(), init_val);
+            }
+        }
+        Ok(())
     }
 
     fn eval_function_body(
@@ -166,6 +199,24 @@ impl Interpreter {
             }
         }
         Ok(last_val)
+    }
+
+    fn resolve_hook_value(&self, val: Value) -> Value {
+        match val {
+            Value::HookState { idx } => {
+                if let Some(slot) = self.hook_slots.get(idx) {
+                    match slot {
+                        HookSlot::State { value, .. } => value.clone(),
+                        HookSlot::Memo { value, .. } => value.clone(),
+                        HookSlot::Context { value, .. } => value.clone(),
+                        _ => val,
+                    }
+                } else {
+                    Value::Undefined
+                }
+            }
+            other => other,
+        }
     }
 
     fn eval_stmt(
@@ -228,61 +279,57 @@ impl Interpreter {
             Expr::Member { obj, property, computed } => {
                 let obj_val = self.eval_expr(obj)?;
                 if *computed {
-                    // Array index access: items[0]
                     if let Value::Array(arr) = &obj_val {
                         if let Expr::Number(idx) = property.as_ref() {
                             let i = *idx as usize;
                             if i < arr.len() {
-                                return Ok(arr[i].clone());
+                                return Ok(self.resolve_hook_value(arr[i].clone()));
                             }
                         }
                     }
                     Ok(Value::Undefined)
                 } else {
-                    // Property access: obj.property
                     if let Expr::Ident { name: prop_name } = property.as_ref() {
-                        // Handle array properties
                         if let Value::Array(arr) = &obj_val {
                             match prop_name.as_str() {
                                 "length" => return Ok(Value::Number(arr.len() as f64)),
                                 _ => {}
                             }
                         }
-                        // Handle object properties
                         if let Value::Object(map) = &obj_val {
                             if let Some(val) = map.get(prop_name) {
-                                return Ok(val.clone());
+                                return Ok(self.resolve_hook_value(val.clone()));
                             }
+                        }
+                        if let Value::String(s) = &obj_val {
+                            return self.call_string_method(s.clone(), prop_name, &[]);
                         }
                     }
                     Ok(Value::Undefined)
                 }
             }
             Expr::StaticMember { obj, property } => {
-                // Property/method access: obj.property
                 let obj_val = self.eval_expr(obj)?;
-                // Handle array properties
                 if let Value::Array(arr) = &obj_val {
                     match property.as_str() {
                         "length" => return Ok(Value::Number(arr.len() as f64)),
                         _ => {}
                     }
                 }
-                // Handle object properties
                 if let Value::Object(map) = &obj_val {
                     if let Some(val) = map.get(property) {
-                        return Ok(val.clone());
+                        return Ok(self.resolve_hook_value(val.clone()));
                     }
                 }
-                // For unknown properties, return undefined
+                if let Value::String(s) = &obj_val {
+                    return self.call_string_method(s.clone(), property, &[]);
+                }
                 Ok(Value::Undefined)
             }
             Expr::Ident { name } => {
-                // Look up the variable in scope first.
                 if let Some(val) = self.scope.get(name) {
-                    Ok(val.clone())
+                    Ok(self.resolve_hook_value(val.clone()))
                 } else {
-                    // Fall back to literal values.
                     match name.as_str() {
                         "true" => Ok(Value::Boolean(true)),
                         "false" => Ok(Value::Boolean(false)),
@@ -508,18 +555,25 @@ impl Interpreter {
                 }
             }
             Expr::Call { callee, arguments } => {
-                // Hook calls are identified by the callee name so that
-                // we can persist state across renders.
                 if let Expr::Ident { name } = callee.as_ref() {
                     match name.as_str() {
                         "useState" => return self.call_use_state(arguments),
                         "useEffect" => return self.call_use_effect(arguments),
+                        "useCallback" => return self.call_use_callback(arguments),
+                        "useMemo" => return self.call_use_memo(arguments),
+                        "useContext" => return self.call_use_context(arguments),
+                        "createContext" => return self.call_create_context(arguments),
+                        "useInput" => return self.call_use_input(arguments),
+                        "useApp" => return self.call_use_app(arguments),
+                        "useStdin" => return self.call_use_stdin(arguments),
+                        "useStdout" => return self.call_use_stdout(arguments),
+                        "useStderr" => return self.call_use_stderr(arguments),
+                        "useWindowSize" => return self.call_use_window_size(arguments),
+                        "useFocus" => return self.call_use_focus(arguments),
                         _ => {}
                     }
                 }
 
-                // Handle method calls on arrays: items.map(...)
-                // Support both Member (computed) and StaticMember patterns
                 match callee.as_ref() {
                     Expr::Member { obj, property, computed: false } => {
                         let obj_val = self.eval_expr(obj)?;
@@ -527,12 +581,18 @@ impl Interpreter {
                             if let Value::Array(arr) = obj_val {
                                 return self.call_array_method(arr.clone(), method_name, arguments);
                             }
+                            if let Value::String(s) = obj_val {
+                                return self.call_string_method(s, method_name, arguments);
+                            }
                         }
                     }
                     Expr::StaticMember { obj, property } => {
                         let obj_val = self.eval_expr(obj)?;
                         if let Value::Array(arr) = obj_val {
                             return self.call_array_method(arr.clone(), property, arguments);
+                        }
+                        if let Value::String(s) = obj_val {
+                            return self.call_string_method(s, property, arguments);
                         }
                     }
                     _ => {}
@@ -750,6 +810,9 @@ impl Interpreter {
                                 scope: callback_scope,
                                 hook_slots: self.hook_slots.clone(),
                                 hook_idx: 0,
+                                contexts: self.contexts.clone(),
+                                next_ctx_id: self.next_ctx_id,
+                                top_level_vars: vec![],
                             };
                             
                             // Evaluate the callback body
@@ -968,6 +1031,329 @@ impl Interpreter {
             }
         }
         Ok(Value::Undefined)
+    }
+
+    fn call_use_callback(
+        &mut self,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        let func = arguments
+            .first()
+            .map(|a| self.eval_expr(a))
+            .transpose()?
+            .unwrap_or(Value::Undefined);
+        let deps = if let Some(expr) = arguments.get(1) {
+            if let Ok(Value::Array(arr)) = self.eval_expr(expr) {
+                arr
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+        let idx = self.hook_idx;
+        self.hook_idx += 1;
+        if idx >= self.hook_slots.len() {
+            self.hook_slots.push(HookSlot::Callback {
+                last_deps: deps.clone(),
+                func: func.clone(),
+            });
+        } else if let Some(HookSlot::Callback { last_deps, func }) = self.hook_slots.get_mut(idx) {
+            if *last_deps != deps {
+                *last_deps = deps.clone();
+                *func = func.clone();
+            }
+        }
+        // Resolve to actual function value if stored in hook slot
+        if let Some(HookSlot::Callback { func: stored, .. }) = self.hook_slots.get(idx) {
+            Ok(stored.clone())
+        } else {
+            Ok(func)
+        }
+    }
+
+    fn call_use_memo(
+        &mut self,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        let factory = arguments
+            .first()
+            .map(|a| self.eval_expr(a))
+            .transpose()?
+            .unwrap_or(Value::Undefined);
+        let deps = if let Some(expr) = arguments.get(1) {
+            if let Ok(Value::Array(arr)) = self.eval_expr(expr) {
+                arr
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+        let idx = self.hook_idx;
+        self.hook_idx += 1;
+        if idx >= self.hook_slots.len() {
+            let value = if let Value::Function { params, body } = &factory {
+                self.call_function(params, body, &[])?
+            } else {
+                factory.clone()
+            };
+            self.hook_slots.push(HookSlot::Memo {
+                last_deps: deps.clone(),
+                value,
+            });
+        } else if let Some(HookSlot::Memo { last_deps, .. }) = self.hook_slots.get_mut(idx) {
+            if *last_deps != deps {
+                *last_deps = deps.clone();
+                let factory_clone = factory.clone();
+                let new_val = if let Value::Function { params, body } = &factory_clone {
+                    self.call_function(params, body, &[])?
+                } else {
+                    factory_clone
+                };
+                if let Some(HookSlot::Memo { value, .. }) = self.hook_slots.get_mut(idx) {
+                    *value = new_val;
+                }
+            }
+        }
+        if let Some(HookSlot::Memo { value, .. }) = self.hook_slots.get(idx) {
+            Ok(value.clone())
+        } else {
+            Ok(factory)
+        }
+    }
+
+    fn call_create_context(
+        &mut self,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        let default_value = arguments
+            .first()
+            .map(|a| self.eval_expr(a))
+            .transpose()?
+            .unwrap_or(Value::Undefined);
+        let id = format!("ctx_{}", self.next_ctx_id);
+        self.next_ctx_id += 1;
+        let ctx_obj = Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("__context_id".to_string(), Value::String(id.clone()));
+            m.insert("_currentValue".to_string(), default_value.clone());
+            m
+        });
+        self.contexts.insert(id.clone(), default_value);
+        Ok(ctx_obj)
+    }
+
+    fn call_use_context(
+        &mut self,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        let ctx_val = arguments
+            .first()
+            .map(|a| self.eval_expr(a))
+            .transpose()?
+            .unwrap_or(Value::Undefined);
+        let ctx_id = match &ctx_val {
+            Value::Object(map) => {
+                if let Some(Value::String(id)) = map.get("__context_id") {
+                    id.clone()
+                } else {
+                    return Ok(Value::Undefined);
+                }
+            }
+            _ => return Ok(Value::Undefined),
+        };
+        let idx = self.hook_idx;
+        self.hook_idx += 1;
+        let value = self.contexts.get(&ctx_id).cloned().unwrap_or(Value::Undefined);
+        if idx >= self.hook_slots.len() {
+            self.hook_slots.push(HookSlot::Context {
+                value: value.clone(),
+            });
+        } else if let Some(HookSlot::Context { value: stored }) = self.hook_slots.get_mut(idx) {
+            *stored = value.clone();
+        }
+        Ok(value)
+    }
+
+    fn call_use_input(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        // No-op in HIR runtime — input is handled at compile time
+        Ok(Value::Undefined)
+    }
+
+    fn call_use_app(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("exit".to_string(), Value::Function {
+                params: vec!["code".to_string()],
+                body: Box::new(hir::Expr::Undefined),
+            });
+            m
+        }))
+    }
+
+    fn call_use_stdin(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("isRawModeSupported".to_string(), Value::Boolean(false));
+            m.insert("setRawMode".to_string(), Value::Function {
+                params: vec!["raw".to_string()],
+                body: Box::new(hir::Expr::Undefined),
+            });
+            m
+        }))
+    }
+
+    fn call_use_stdout(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("write".to_string(), Value::Function {
+                params: vec!["data".to_string()],
+                body: Box::new(hir::Expr::Undefined),
+            });
+            m
+        }))
+    }
+
+    fn call_use_stderr(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("write".to_string(), Value::Function {
+                params: vec!["data".to_string()],
+                body: Box::new(hir::Expr::Undefined),
+            });
+            m
+        }))
+    }
+
+    fn call_use_window_size(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("width".to_string(), Value::Number(80.0));
+            m.insert("height".to_string(), Value::Number(24.0));
+            m
+        }))
+    }
+
+    fn call_use_focus(
+        &mut self,
+        _arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Object({
+            let mut m = std::collections::HashMap::new();
+            m.insert("isFocused".to_string(), Value::Boolean(true));
+            m.insert("focus".to_string(), Value::Function {
+                params: vec![],
+                body: Box::new(hir::Expr::Undefined),
+            });
+            m
+        }))
+    }
+
+    fn call_string_method(
+        &mut self,
+        s: String,
+        method_name: &str,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        match method_name {
+            "toUpperCase" => Ok(Value::String(s.to_uppercase())),
+            "toLowerCase" => Ok(Value::String(s.to_lowercase())),
+            "trim" => Ok(Value::String(s.trim().to_string())),
+            "slice" | "substring" => {
+                let start = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::Number(n) => Some(n as usize), _ => None }).unwrap_or(0);
+                let end = arguments.get(1).and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::Number(n) => Some(n as usize), _ => None }).unwrap_or(s.len());
+                Ok(Value::String(s.chars().skip(start).take(end.saturating_sub(start)).collect()))
+            }
+            "includes" => {
+                let needle = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                Ok(Value::Boolean(s.contains(&needle)))
+            }
+            "indexOf" => {
+                let needle = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                if let Some(pos) = s.find(&needle) {
+                    Ok(Value::Number(pos as f64))
+                } else {
+                    Ok(Value::Number(-1.0))
+                }
+            }
+            "replace" => {
+                let from = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                let to = arguments.get(1).and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                Ok(Value::String(s.replacen(&from, &to, 1)))
+            }
+            "split" => {
+                let sep = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                let parts = s.split(&sep).map(|p| Value::String(p.to_string())).collect();
+                Ok(Value::Array(parts))
+            }
+            "startsWith" => {
+                let prefix = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                Ok(Value::Boolean(s.starts_with(&prefix)))
+            }
+            "endsWith" => {
+                let suffix = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => Some(s), _ => None }).unwrap_or_default();
+                Ok(Value::Boolean(s.ends_with(&suffix)))
+            }
+            "padStart" => {
+                let target = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::Number(n) => Some(n as usize), _ => None }).unwrap_or(0);
+                let pad_char = arguments.get(1).and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => s.chars().next(), _ => None }).unwrap_or(' ');
+                let len = s.chars().count();
+                if len >= target {
+                    Ok(Value::String(s))
+                } else {
+                    let pad_len = target - len;
+                    let mut result: String = std::iter::repeat(pad_char).take(pad_len).collect();
+                    result.push_str(&s);
+                    Ok(Value::String(result))
+                }
+            }
+            "padEnd" => {
+                let target = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::Number(n) => Some(n as usize), _ => None }).unwrap_or(0);
+                let pad_char = arguments.get(1).and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::String(s) => s.chars().next(), _ => None }).unwrap_or(' ');
+                let len = s.chars().count();
+                if len >= target {
+                    Ok(Value::String(s))
+                } else {
+                    let pad_len = target - len;
+                    let mut result = s.clone();
+                    result.extend(std::iter::repeat(pad_char).take(pad_len));
+                    Ok(Value::String(result))
+                }
+            }
+            "repeat" => {
+                let count = arguments.first().and_then(|a| self.eval_expr(a).ok()).and_then(|v| match v { Value::Number(n) => Some(n as usize), _ => None }).unwrap_or(0);
+                Ok(Value::String(s.repeat(count)))
+            }
+            "concat" => {
+                let mut result = s.clone();
+                for arg in arguments {
+                    if let Ok(Value::String(other)) = self.eval_expr(arg) {
+                        result.push_str(&other);
+                    }
+                }
+                Ok(Value::String(result))
+            }
+            _ => Ok(Value::Undefined),
+        }
     }
 
     fn call_array_method(

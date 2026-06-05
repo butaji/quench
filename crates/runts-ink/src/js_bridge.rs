@@ -1,5 +1,3 @@
-//! allow:complexity
-//! allow:too_many_lines
 //!
 //! rquickjs FFI bridge: expose the runts-ink VNode
 //! builder API to JavaScript.

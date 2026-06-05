@@ -1,6 +1,5 @@
 //! Spec: Classes - parser + codegen tests
 //!
-//! allow:too_many_lines,complexity
 //!
 //! Covers:
 //! - Simple class declarations with fields and methods

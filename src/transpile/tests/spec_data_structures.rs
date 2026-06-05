@@ -5,7 +5,6 @@
 //! - Array literals (simple, spread, mixed, empty)
 //! - Destructuring (object, array, nested, default, rest, function params, arrow params)
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod spec_data_structures_tests {

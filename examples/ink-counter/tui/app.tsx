@@ -1,20 +1,27 @@
-// Counter example — demonstrates state and static rendering.
-// NOTE: useInput hook is not yet supported in runts dev mode.
-// This version shows static count=0 for parity testing.
+// Counter example — demonstrates useState and useInput hooks with Ink.
 //
 // All three environments must produce the same look:
-//   1. deno (real Ink)
-//   2. runts dev (HIR runtime) - static render
-//   3. runts build (codegen->runts-ink) - full interactivity
+//   1. deno (real Ink) — interactive with keyboard
+//   2. runts dev (HIR runtime) — static render with initial state
+//   3. runts build (codegen->runts-ink) — full interactivity
 
-import React from 'react';
-import { Box, Text } from 'ink';
+import React, { useState } from 'react';
+import { Box, Text, useInput } from 'ink';
 
 export default function Counter() {
-  // NOTE: For runts dev mode (HIR runtime), useInput is not supported.
-  // For parity testing, we show static count=0.
-  // The runts compile path supports useInput when built with ratatui.
-  const count = 0;
+  const [count, setCount] = useState(0);
+
+  useInput((input, key) => {
+    if (input === 'q') {
+      process.exit(0);
+    }
+    if (key.upArrow) {
+      setCount(c => c + 1);
+    }
+    if (key.downArrow) {
+      setCount(c => c - 1);
+    }
+  });
 
   return (
     <Box flexDirection="column" padding={1}>
