@@ -248,33 +248,47 @@ struct BraceState {
     in_str: bool,
     in_char: bool,
     esc: bool,
+    /// Track position when we see `quote!` to detect `quote! {` pattern
+    after_excl: bool,
+    /// Track position when we see `!` to detect `identifier!` macro invocation
+    prev_was_excl: bool,
 }
 
 impl BraceState {
     fn new() -> Self {
-        Self { depth: 0, in_str: false, in_char: false, esc: false }
+        Self { depth: 0, in_str: false, in_char: false, esc: false, after_excl: false, prev_was_excl: false }
     }
 
     fn handle_char(&mut self, ch: char) -> bool {
+        // Handle `quote! {` specially - the `{` after `!` followed by space or `{` is a macro body
+        if self.after_excl {
+            self.after_excl = false;
+            if ch == '{' {
+                self.depth += 1;
+                return false;
+            }
+        }
+        
         if self.in_str {
             if self.esc { self.esc = false; }
             else if ch == '\\' { self.esc = true; }
             else if ch == '"' { self.in_str = false; }
+            self.prev_was_excl = false;
             return false;
         }
         if self.in_char {
             if self.esc { self.esc = false; }
             else if ch == '\\' { self.esc = true; }
             else if ch == '\'' { self.in_char = false; }
+            self.prev_was_excl = false;
             return false;
         }
-        if ch == '"' { self.in_str = true; return false; }
-        // Note: single quotes are used for char literals AND lifetime
-        // annotations in Rust. Only treat as char literal if followed by
-        // a single quote or backslash (heuristic for actual char literals).
-        if ch == '\'' { return false; }
+        if ch == '"' { self.in_str = true; self.prev_was_excl = false; return false; }
+        if ch == '\'' { self.prev_was_excl = false; return false; }
+        if ch == '!' && !self.prev_was_excl { self.after_excl = true; }
         if ch == '{' { self.depth += 1; }
         else if ch == '}' { self.depth -= 1; return self.depth == 0; }
+        self.prev_was_excl = ch == '!' && !self.prev_was_excl;
         false
     }
 }

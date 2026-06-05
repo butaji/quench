@@ -1165,7 +1165,7 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_simple_div() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Hello", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Text": "Hello World"}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Hello", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Text": "Hello World"}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         assert!(result.is_some(), "Should generate code for JSX");
