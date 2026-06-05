@@ -1,66 +1,72 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// Lint rules enforced on ALL files:
-// file ≤500 lines, function ≤40 lines, complexity ≤10
 const MAX_FILE_LINES: usize = 500;
 const MAX_FN_LINES: usize = 40;
 const MAX_FN_COMPLEXITY: usize = 10;
-
 const EXCLUDED_DIRS: &[&str] = &["target", ".runts", "node_modules"];
-
-fn is_excluded(path: &str) -> bool {
-    EXCLUDED_DIRS.iter().any(|d| path.starts_with(d))
-}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/");
     println!("cargo:rerun-if-changed=crates/");
 
-    let mut violations: Vec<String> = Vec::new();
-    let mut files_checked = 0;
-
-    for entry in walk_dir("src") {
-        let path_str = entry.to_str().unwrap_or("");
-        if is_excluded(path_str) {
-            continue;
-        }
-        if let Some(v) = check_file(&entry) {
-            violations.extend(v);
-        }
-        files_checked += 1;
-    }
-    for entry in walk_dir("crates") {
-        let path_str = entry.to_str().unwrap_or("");
-        if is_excluded(path_str) {
-            continue;
-        }
-        if let Some(v) = check_file(&entry) {
-            violations.extend(v);
-        }
-        files_checked += 1;
-    }
+    let (violations, files_checked) = run_linter();
 
     if !violations.is_empty() {
-        eprintln!("\n========== RUNTS LINTER VIOLATIONS ==========\n");
-        for v in &violations {
-            eprintln!("{}", v);
-        }
-        eprintln!(
-            "\n{} violation(s) in {} file(s)",
-            violations.len(),
-            files_checked
-        );
-        eprintln!(
-            "Limits: file ≤{} lines, fn ≤{} lines, fn complexity ≤{}",
-            MAX_FILE_LINES, MAX_FN_LINES, MAX_FN_COMPLEXITY
-        );
-        eprintln!("=============================================\n");
+        print_violations(&violations, files_checked);
         std::process::exit(1);
     }
 
     println!("runts-lint: {} file(s) OK", files_checked);
+}
+
+fn run_linter() -> (Vec<String>, usize) {
+    let mut violations = Vec::new();
+    let mut files_checked = 0;
+
+    for entry in walk_dir("src") {
+        if is_excluded(entry.to_str().unwrap_or("")) {
+            continue;
+        }
+        check_and_collect(&entry, &mut violations, &mut files_checked);
+    }
+    for entry in walk_dir("crates") {
+        if is_excluded(entry.to_str().unwrap_or("")) {
+            continue;
+        }
+        check_and_collect(&entry, &mut violations, &mut files_checked);
+    }
+
+    (violations, files_checked)
+}
+
+fn check_and_collect(path: &Path, violations: &mut Vec<String>, files_checked: &mut usize) {
+    if let Some(v) = check_file(path) {
+        violations.extend(v);
+    }
+    *files_checked += 1;
+}
+
+fn is_excluded(path: &str) -> bool {
+    EXCLUDED_DIRS.iter().any(|d| path.starts_with(d))
+}
+
+fn print_violations(violations: &[String], files_checked: usize) {
+    eprintln!("\n========== RUNTS LINTER VIOLATIONS ==========\n");
+    for v in violations {
+        eprintln!("{}", v);
+    }
+    eprintln!(
+        "\n{} violation(s) in {} file(s)",
+        violations.len(),
+        files_checked
+    );
+    eprintln!(
+        "Limits: file ≤{} lines, fn ≤{} lines, fn complexity ≤{}",
+        MAX_FILE_LINES, MAX_FN_LINES, MAX_FN_COMPLEXITY
+    );
+    eprintln!("=============================================\n");
 }
 
 fn walk_dir(root: &str) -> Vec<PathBuf> {
@@ -98,30 +104,10 @@ struct FnInfo {
 fn check_file(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
-
-    // Check for file-level allow comments like: // allow:complexity
-    let allows: Vec<&str> = content
-        .lines()
-        .filter(|l| {
-            l.trim().starts_with("// allow:")
-                || l.trim().starts_with("//! allow:")
-                || l.trim().starts_with("#![allow")
-        })
-        .collect();
-    let allow_complexity = allows.iter().any(|l| l.contains("complexity"))
-        || allows.iter().any(|l| l.contains("too_many_lines"));
-
-    let code_lines = lines
-        .iter()
-        .filter(|l| {
-            let t = l.trim();
-            !t.is_empty() && !t.starts_with("//") && !t.starts_with("/*")
-        })
-        .count();
-
+    let code_lines = count_code_lines(&lines);
     let mut violations = Vec::new();
 
-    if code_lines > MAX_FILE_LINES && !allow_complexity {
+    if code_lines > MAX_FILE_LINES {
         violations.push(format!(
             "[FILE_TOO_LONG] {}: {} code lines (max {})",
             path.display(),
@@ -132,20 +118,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
 
     let fns = find_functions(&lines);
     for f in &fns {
-        let end_idx = (f.start_line + 2).min(lines.len());
-        let fn_allows: Vec<&str> = lines[f.start_line - 1..end_idx]
-            .iter()
-            .filter(|l| {
-                l.contains(&format!("fn {}", f.name))
-                    || l.contains("allow(")
-                    || l.contains("allow:")
-            })
-            .cloned()
-            .collect();
-        let fn_allow_complexity = fn_allows.iter().any(|l| l.contains("complexity"))
-            || fn_allows.iter().any(|l| l.contains("too_many_lines"));
-
-        if f.line_count > MAX_FN_LINES && !fn_allow_complexity && !allow_complexity {
+        if f.line_count > MAX_FN_LINES {
             violations.push(format!(
                 "[FN_TOO_LONG] {}::{}: {} lines (max {}) at line {}",
                 path.display(),
@@ -155,7 +128,7 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
                 f.start_line
             ));
         }
-        if f.complexity > MAX_FN_COMPLEXITY && !fn_allow_complexity && !allow_complexity {
+        if f.complexity > MAX_FN_COMPLEXITY {
             violations.push(format!(
                 "[FN_TOO_COMPLEX] {}::{}: complexity {} (max {}) at line {}",
                 path.display(),
@@ -172,6 +145,16 @@ fn check_file(path: &Path) -> Option<Vec<String>> {
     } else {
         Some(violations)
     }
+}
+
+fn count_code_lines(lines: &[&str]) -> usize {
+    lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with("//") && !t.starts_with("/*")
+        })
+        .count()
 }
 
 fn find_functions(lines: &[&str]) -> Vec<FnInfo> {
@@ -258,51 +241,77 @@ fn find_fn_body(lines: &[&str], fn_line_idx: usize) -> Option<(usize, usize)> {
 }
 
 fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut delim = '\0';
-    let mut in_char = false;
-    let mut esc = false;
+    let mut state = BraceState::new();
 
     for (idx, line) in lines.iter().enumerate().skip(start - 1) {
         let code = line.split("//").next().unwrap_or("");
         for ch in code.chars() {
-            if in_str || in_char {
-                if esc {
-                    esc = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    esc = true;
-                    continue;
-                }
-                if ch == delim {
-                    in_str = false;
-                    in_char = false;
-                }
-                continue;
-            }
-            if ch == '"' {
-                in_str = true;
-                delim = ch;
-                continue;
-            }
-            if ch == '\'' {
-                in_char = true;
-                delim = ch;
-                continue;
-            }
-            if ch == '{' {
-                depth += 1;
-            } else if ch == '}' {
-                depth -= 1;
-                if depth == 0 {
+            if state.handle_char(ch) {
+                if state.depth == 0 {
                     return Some(idx + 1);
                 }
             }
         }
     }
     None
+}
+
+struct BraceState {
+    depth: i32,
+    in_str: bool,
+    delim: char,
+    in_char: bool,
+    esc: bool,
+}
+
+impl BraceState {
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            in_str: false,
+            delim: '\0',
+            in_char: false,
+            esc: false,
+        }
+    }
+
+    fn handle_char(&mut self, ch: char) -> bool {
+        if self.in_str || self.in_char {
+            if self.esc {
+                self.esc = false;
+                return false;
+            }
+            if ch == '\\' {
+                self.esc = true;
+                return false;
+            }
+            if ch == self.delim {
+                self.in_str = false;
+                self.in_char = false;
+            }
+            return false;
+        }
+        if ch == '"' {
+            self.in_str = true;
+            self.delim = ch;
+            return false;
+        }
+        if ch == '\'' {
+            self.in_char = true;
+            self.delim = ch;
+            return false;
+        }
+        if self.in_str || self.in_char {
+            return false;
+        }
+        if ch == '{' {
+            self.depth += 1;
+        } else if ch == '}' {
+            self.depth -= 1;
+            return self.depth == 0;
+        }
+        false
+    }
 }
 
 fn compute_complexity(lines: &[&str]) -> usize {

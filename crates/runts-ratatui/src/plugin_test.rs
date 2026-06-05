@@ -271,7 +271,6 @@ fn test_try_codegen_jsx_row() {
 }
 
 #[test]
-// allow:too_many_lines
 fn test_try_codegen_jsx_borderstyle_round() {
     // The HIR emits `borderStyle` as
     // `{String: "round"}` (parser envelope). The
@@ -322,7 +321,6 @@ fn test_try_codegen_jsx_borderstyle_round() {
 }
 
 #[test]
-// allow:too_many_lines
 fn test_try_codegen_jsx_paddingx_expr() {
     // The HIR emits `paddingX={2}` as
     // `{Expr: {Number: 2.0}}`. The codegen must

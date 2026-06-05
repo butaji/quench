@@ -1,5 +1,4 @@
 //! Virtual DOM implementation
-//! allow:complexity,too_many_lines
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

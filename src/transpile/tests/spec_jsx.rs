@@ -2,7 +2,6 @@
 //!
 //! Tests parse correctness, HIR structure, and codegen output for all JSX variants.
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod spec_jsx_tests {
@@ -36,29 +35,43 @@ mod spec_jsx_tests {
 
     fn find_jsx_expr_in_stmt(module: &Module) -> Option<JSXExpr> {
         for item in &module.items {
-            match item {
-                ModuleItem::Decl(Decl::Variable(var)) => {
-                    if let Some(Expr::JSX(jsx)) = &var.init {
-                        return Some(jsx.clone());
-                    }
-                }
-                ModuleItem::Decl(Decl::Function(func)) => {
-                    // Look inside function body for return statements with JSX
-                    if let Some(ref body) = func.body {
-                        for stmt in &body.0 {
-                            if let crate::transpile::hir::Stmt::Return { arg: Some(Expr::JSX(jsx)) } = stmt {
-                                return Some(jsx.clone());
-                            }
-                        }
-                    }
-                }
-                ModuleItem::Stmt(stmt) => {
-                    if let crate::transpile::hir::Stmt::Return { arg: Some(Expr::JSX(jsx)) } = stmt {
-                        return Some(jsx.clone());
-                    }
-                }
-                _ => {}
+            if let Some(jsx) = find_jsx_in_module_item(item) {
+                return Some(jsx);
             }
+        }
+        None
+    }
+
+    fn find_jsx_in_module_item(item: &ModuleItem) -> Option<JSXExpr> {
+        match item {
+            ModuleItem::Decl(Decl::Variable(var)) => find_jsx_in_var_decl(var),
+            ModuleItem::Decl(Decl::Function(func)) => find_jsx_in_function(func),
+            ModuleItem::Stmt(stmt) => find_jsx_in_stmt(stmt),
+            _ => None,
+        }
+    }
+
+    fn find_jsx_in_var_decl(var: &crate::transpile::hir::VariableDecl) -> Option<JSXExpr> {
+        if let Some(Expr::JSX(jsx)) = &var.init {
+            return Some(jsx.clone());
+        }
+        None
+    }
+
+    fn find_jsx_in_function(func: &crate::transpile::hir::FunctionDecl) -> Option<JSXExpr> {
+        if let Some(ref body) = func.body {
+            for stmt in &body.0 {
+                if let crate::transpile::hir::Stmt::Return { arg: Some(Expr::JSX(jsx)) } = stmt {
+                    return Some(jsx.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn find_jsx_in_stmt(stmt: &crate::transpile::hir::Stmt) -> Option<JSXExpr> {
+        if let crate::transpile::hir::Stmt::Return { arg: Some(Expr::JSX(jsx)) } = stmt {
+            return Some(jsx.clone());
         }
         None
     }

@@ -1,6 +1,5 @@
 //! Semantic analyzer for runts
 //!
-//! allow:complexity,too_many_lines
 
 use super::hir::*;
 use super::hir::{ForInit, ObjectProp};
@@ -155,94 +154,109 @@ impl Analyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::FunctionDecl(func) => {
-                self.analyze_function_body(func);
-            }
-            Stmt::For { init, test, update, body } => {
-                self.analyze_for_init(init);
-                if let Some(t) = test {
-                    self.validate_expr_type(t, &Type::Boolean);
-                }
-                if let Some(u) = update {
-                    self.validate_expr_type(u, &Type::Unknown);
-                }
-                self.analyze_stmt(body);
-            }
-            Stmt::ForIn { left, right, body } => {
-                self.analyze_for_init(&Some(left.clone()));
-                self.analyze_expr(right);
-                self.analyze_stmt(body);
-            }
-            Stmt::ForOf { left, right, body, .. } => {
-                self.analyze_for_init(&Some(left.clone()));
-                self.analyze_expr(right);
-                self.analyze_stmt(body);
-            }
-            Stmt::While { test, body } => {
-                self.validate_expr_type(test, &Type::Boolean);
-                self.analyze_stmt(body);
-            }
-            Stmt::DoWhile { body, test } => {
-                self.analyze_stmt(body);
-                self.validate_expr_type(test, &Type::Boolean);
-            }
-            Stmt::If { test, consequent, alternate } => {
-                self.validate_expr_type(test, &Type::Boolean);
-                self.analyze_stmt(consequent);
-                if let Some(a) = alternate {
-                    self.analyze_stmt(a);
-                }
-            }
-            Stmt::Switch { discriminant, cases } => {
-                self.analyze_expr(discriminant);
-                for case in cases {
-                    for s in &case.consequent {
-                        self.analyze_stmt(s);
-                    }
-                }
-            }
-            Stmt::Return { arg } => {
-                if let Some(e) = arg {
-                    self.analyze_expr(e);
-                }
-            }
-            Stmt::Throw { arg } => {
-                self.analyze_expr(arg);
-            }
-            Stmt::Try { block, handler, finalizer } => {
-                for s in &block.0 {
-                    self.analyze_stmt(s);
-                }
-                if let Some(h) = handler {
-                    for s in &h.body.0 {
-                        self.analyze_stmt(s);
-                    }
-                }
-                if let Some(f) = finalizer {
-                    for s in &f.0 {
-                        self.analyze_stmt(s);
-                    }
-                }
-            }
-            Stmt::Block { stmts } => {
-                for s in stmts {
-                    self.analyze_stmt(s);
-                }
-            }
-            Stmt::Expr { expr } => {
-                self.analyze_expr(expr);
-            }
+            Stmt::FunctionDecl(func) => self.analyze_function_body(func),
+            Stmt::For { init, test, update, body } => self.analyze_for_loop(init, test, update, body),
+            Stmt::ForIn { left, right, body } => self.analyze_for_in(left, right, body),
+            Stmt::ForOf { left, right, body, .. } => self.analyze_for_of(left, right, body),
+            Stmt::While { test, body } => self.analyze_while(test, body),
+            Stmt::DoWhile { body, test } => self.analyze_do_while(body, test),
+            Stmt::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
+            Stmt::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
+            Stmt::Return { arg } => self.analyze_return(arg),
+            Stmt::Throw { arg } => self.analyze_expr(arg),
+            Stmt::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
+            Stmt::Block { stmts } => self.analyze_block(stmts),
+            Stmt::Expr { expr } => self.analyze_expr(expr),
             Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Empty => {}
             Stmt::Labeled { body, .. } => self.analyze_stmt(body),
-            Stmt::With { obj, body } => {
-                self.analyze_expr(obj);
-                self.analyze_stmt(body);
-            }
+            Stmt::With { obj, body } => self.analyze_with(obj, body),
             _ => {}
         }
+    }
+
+    fn analyze_for_loop(&mut self, init: &Option<ForInit>, test: &Option<Box<Expr>>, update: &Option<Box<Expr>>, body: &Box<Stmt>) {
+        self.analyze_for_init(init);
+        if let Some(t) = test {
+            self.validate_expr_type(t, &Type::Boolean);
+        }
+        if let Some(u) = update {
+            self.validate_expr_type(u, &Type::Unknown);
+        }
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_for_in(&mut self, left: &ForInit, right: &Expr, body: &Box<Stmt>) {
+        self.analyze_for_init(&Some(left.clone()));
+        self.analyze_expr(right);
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_for_of(&mut self, left: &ForInit, right: &Expr, body: &Box<Stmt>) {
+        self.analyze_for_init(&Some(left.clone()));
+        self.analyze_expr(right);
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_while(&mut self, test: &Expr, body: &Box<Stmt>) {
+        self.validate_expr_type(test, &Type::Boolean);
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_do_while(&mut self, body: &Box<Stmt>, test: &Expr) {
+        self.analyze_stmt(body);
+        self.validate_expr_type(test, &Type::Boolean);
+    }
+
+    fn analyze_if(&mut self, test: &Expr, consequent: &Box<Stmt>, alternate: &Option<Box<Stmt>>) {
+        self.validate_expr_type(test, &Type::Boolean);
+        self.analyze_stmt(consequent);
+        if let Some(a) = alternate {
+            self.analyze_stmt(a);
+        }
+    }
+
+    fn analyze_switch(&mut self, discriminant: &Expr, cases: &[SwitchCase]) {
+        self.analyze_expr(discriminant);
+        for case in cases {
+            for s in &case.consequent {
+                self.analyze_stmt(s);
+            }
+        }
+    }
+
+    fn analyze_return(&mut self, arg: &Option<Box<Expr>>) {
+        if let Some(e) = arg {
+            self.analyze_expr(e);
+        }
+    }
+
+    fn analyze_try(&mut self, block: &Block, handler: &Option<CatchClause>, finalizer: &Option<Block>) {
+        for s in &block.0 {
+            self.analyze_stmt(s);
+        }
+        if let Some(h) = handler {
+            for s in &h.body.0 {
+                self.analyze_stmt(s);
+            }
+        }
+        if let Some(f) = finalizer {
+            for s in &f.0 {
+                self.analyze_stmt(s);
+            }
+        }
+    }
+
+    fn analyze_block(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
+            self.analyze_stmt(s);
+        }
+    }
+
+    fn analyze_with(&mut self, obj: &Expr, body: &Box<Stmt>) {
+        self.analyze_expr(obj);
+        self.analyze_stmt(body);
     }
 
     fn analyze_for_init(&mut self, init: &Option<ForInit>) {
@@ -261,70 +275,64 @@ impl Analyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Call { callee, arguments } => {
-                self.analyze_expr(callee);
-                for a in arguments {
-                    self.analyze_expr(a);
-                }
-            }
-            Expr::New { callee, arguments } => {
-                self.analyze_expr(callee);
-                for a in arguments {
-                    self.analyze_expr(a);
-                }
-            }
-            Expr::Bin { left, right, .. } => {
-                self.analyze_expr(left);
-                self.analyze_expr(right);
-            }
-            Expr::Logical { left, right, .. } => {
-                self.analyze_expr(left);
-                self.analyze_expr(right);
-            }
-            Expr::Cond { test, consequent, alternate } => {
-                self.analyze_expr(test);
-                self.validate_expr_type(test, &Type::Boolean);
-                self.analyze_expr(consequent);
-                self.analyze_expr(alternate);
-            }
-            Expr::Assign { left, right, .. } => {
-                self.analyze_expr(left);
-                self.analyze_expr(right);
-            }
-            Expr::Update { arg, .. } => {
-                self.analyze_expr(arg);
-            }
-            Expr::Unary { arg, .. } => {
-                self.analyze_expr(arg);
-            }
-            Expr::Await { arg } => {
-                self.analyze_expr(arg);
-            }
-            Expr::Array { elems } => {
-                for e in elems {
-                    if let Some(x) = e {
-                        self.analyze_expr(x);
-                    }
-                }
-            }
-            Expr::Object { members } => {
-                for m in members {
-                    if let ObjectProp::Init { value, .. } = &m.prop {
-                        self.analyze_expr(value);
-                    }
-                }
-            }
-            Expr::Seq { left, right } => {
-                self.analyze_expr(left);
-                self.analyze_expr(right);
-            }
-            Expr::Spread { arg } => {
-                self.analyze_expr(arg);
-            }
+            Expr::Call { callee, arguments } => self.analyze_call(callee, arguments),
+            Expr::New { callee, arguments } => self.analyze_new(callee, arguments),
+            Expr::Bin { left, right, .. } => self.analyze_bin(left, right),
+            Expr::Logical { left, right, .. } => self.analyze_bin(left, right),
+            Expr::Cond { test, consequent, alternate } => self.analyze_cond(test, consequent, alternate),
+            Expr::Assign { left, right, .. } => self.analyze_bin(left, right),
+            Expr::Update { arg, .. } => self.analyze_expr(arg),
+            Expr::Unary { arg, .. } => self.analyze_expr(arg),
+            Expr::Await { arg } => self.analyze_expr(arg),
+            Expr::Array { elems } => self.analyze_array(elems),
+            Expr::Object { members } => self.analyze_object(members),
+            Expr::Seq { left, right } => self.analyze_bin(left, right),
+            Expr::Spread { arg } => self.analyze_expr(arg),
             _ => {}
+        }
+    }
+
+    fn analyze_call(&mut self, callee: &Box<Expr>, arguments: &[Expr]) {
+        self.analyze_expr(callee);
+        for a in arguments {
+            self.analyze_expr(a);
+        }
+    }
+
+    fn analyze_new(&mut self, callee: &Box<Expr>, arguments: &[Expr]) {
+        self.analyze_expr(callee);
+        for a in arguments {
+            self.analyze_expr(a);
+        }
+    }
+
+    fn analyze_bin(&mut self, left: &Box<Expr>, right: &Box<Expr>) {
+        self.analyze_expr(left);
+        self.analyze_expr(right);
+    }
+
+    fn analyze_cond(&mut self, test: &Box<Expr>, consequent: &Box<Expr>, alternate: &Box<Expr>) {
+        self.analyze_expr(test);
+        self.validate_expr_type(test, &Type::Boolean);
+        self.analyze_expr(consequent);
+        self.analyze_expr(alternate);
+    }
+
+    fn analyze_array(&mut self, elems: &[Option<Box<Expr>>]) {
+        for e in elems {
+            if let Some(x) = e {
+                self.analyze_expr(x);
+            }
+        }
+    }
+
+    fn analyze_object(&mut self, members: &[ObjectMemberExpr]) {
+        for m in members {
+            if let ObjectProp::Init { value, .. } = &m.prop {
+                self.analyze_expr(value);
+            }
         }
     }
 
@@ -338,7 +346,6 @@ impl Analyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn infer_type(&self, expr: &Expr) -> Type {
         match expr {
             Expr::Number(_) => Type::Number,
@@ -358,20 +365,23 @@ impl Analyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn types_compatible(&self, expected: &Type, actual: &Type) -> bool {
-        match (expected, actual) {
-            (Type::Unknown, _) => true,
-            (_, Type::Unknown) => true,
-            (Type::Any, _) => true,
-            (_, Type::Any) => true,
-            (Type::Number, Type::Number) => true,
-            (Type::String, Type::String) => true,
-            (Type::Boolean, Type::Boolean) => true,
-            (Type::Null, Type::Undefined) => true,
-            (Type::Undefined, Type::Null) => true,
-            _ => false,
-        }
+        self.is_universal_type(expected) || self.is_universal_type(actual) || self.is_same_primitive(expected, actual)
+    }
+
+    fn is_universal_type(&self, ty: &Type) -> bool {
+        matches!(ty, Type::Unknown | Type::Any)
+    }
+
+    fn is_same_primitive(&self, expected: &Type, actual: &Type) -> bool {
+        matches!(
+            (expected, actual),
+            (Type::Number, Type::Number)
+                | (Type::String, Type::String)
+                | (Type::Boolean, Type::Boolean)
+                | (Type::Null, Type::Undefined)
+                | (Type::Undefined, Type::Null)
+        )
     }
 
     fn validate_function_signature(&mut self, func: &FunctionDecl) {
@@ -401,49 +411,16 @@ impl Analyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn validate_type_compatibility(&mut self, ty: &Type, context: &str) {
         match ty {
-            Type::Ref { name, generics } => {
-                // Check if referenced type exists
-                if !self.types.contains(name) && !self.functions.contains(name) {
-                    // Could be external type, just warn
-                    self.warnings.push(format!("Unknown type reference: {}", name));
-                }
-                // Validate generics
-                for g in generics {
-                    self.validate_type_compatibility(g, context);
-                }
-            }
-            Type::Union { types } => {
-                for t in types {
-                    self.validate_type_compatibility(t, context);
-                }
-            }
-            Type::Intersection { types } => {
-                for t in types {
-                    self.validate_type_compatibility(t, context);
-                }
-            }
-            Type::Array { elem } => {
-                self.validate_type_compatibility(elem, context);
-            }
-            Type::Function { params, ret } => {
-                for p in params {
-                    self.validate_type_compatibility(p, context);
-                }
-                self.validate_type_compatibility(ret, context);
-            }
-            Type::Object { members } => {
-                for m in members {
-                    self.validate_type_compatible(m);
-                }
-            }
+            Type::Ref { name, generics } => self.validate_ref_type(name, generics, context),
+            Type::Union { types } => self.validate_type_list(types, context),
+            Type::Intersection { types } => self.validate_type_list(types, context),
+            Type::Array { elem } => self.validate_type_compatibility(elem, context),
+            Type::Function { params, ret } => self.validate_function_type(params, ret, context),
+            Type::Object { members } => self.validate_object_members(members),
             Type::Conditional { check, extends, true_type, false_type } => {
-                self.validate_type_compatibility(check, context);
-                self.validate_type_compatibility(extends, context);
-                self.validate_type_compatibility(true_type, context);
-                self.validate_type_compatibility(false_type, context);
+                self.validate_conditional_type(check, extends, true_type, false_type, context);
             }
             Type::Mapped { from, to } => {
                 self.validate_type_compatibility(from, context);
@@ -459,6 +436,48 @@ impl Analyzer {
 
     fn validate_type_compatible(&mut self, member: &TypeMember) {
         self.validate_type_compatibility(&member.type_, &format!("member '{}'", member.key));
+    }
+
+    fn validate_ref_type(&mut self, name: &str, generics: &[Type], context: &str) {
+        if !self.types.contains(name) && !self.functions.contains(name) {
+            self.warnings.push(format!("Unknown type reference: {}", name));
+        }
+        for g in generics {
+            self.validate_type_compatibility(g, context);
+        }
+    }
+
+    fn validate_type_list(&mut self, types: &[Type], context: &str) {
+        for t in types {
+            self.validate_type_compatibility(t, context);
+        }
+    }
+
+    fn validate_function_type(&mut self, params: &[Type], ret: &Box<Type>, context: &str) {
+        for p in params {
+            self.validate_type_compatibility(p, context);
+        }
+        self.validate_type_compatibility(ret, context);
+    }
+
+    fn validate_object_members(&mut self, members: &[TypeMember]) {
+        for m in members {
+            self.validate_type_compatible(m);
+        }
+    }
+
+    fn validate_conditional_type(
+        &mut self,
+        check: &Box<Type>,
+        extends: &Box<Type>,
+        true_type: &Box<Type>,
+        false_type: &Box<Type>,
+        context: &str,
+    ) {
+        self.validate_type_compatibility(check, context);
+        self.validate_type_compatibility(extends, context);
+        self.validate_type_compatibility(true_type, context);
+        self.validate_type_compatibility(false_type, context);
     }
 
     fn validate_class_members(&mut self, class: &ClassDecl) {

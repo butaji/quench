@@ -136,7 +136,6 @@ fn vnode_style(vnode: &VNode) -> Style {
         VNodeContent::Fragment(_) => unreachable!("Fragments do not get Taffy nodes"),
     }
 }
-// allow:too_many_lines
 
 fn box_style(b: &InkBox) -> Style {
     Style {

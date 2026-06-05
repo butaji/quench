@@ -1,11 +1,10 @@
 //! Source file generation
 //!
-//! allow:complexity,too_many_lines
 
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 use anyhow::{Context, Result};
 use regex::Regex;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 use crate::commands::build::{ComponentEntry, GeneratedFile, IslandEntry, RouteEntry};
 use crate::transpile::hir::{self, QuoteCodegen, Stmt};
@@ -121,16 +120,14 @@ pub fn generate_all(files: &[PathBuf]) -> Result<SourceGenResult, anyhow::Error>
         };
 
         // Extract both Stmt items and Decl items (functions, variables) for codegen
-        let stmts: Vec<_> = module.items.into_iter()
+        let stmts: Vec<_> = module
+            .items
+            .into_iter()
             .filter_map(|item| match item {
                 hir::ModuleItem::Stmt(s) => Some(s),
                 hir::ModuleItem::Decl(d) => match d {
-                    hir::Decl::Function(func) => {
-                        Some(hir::Stmt::FunctionDecl(func))
-                    }
-                    hir::Decl::Variable(var) => {
-                        Some(hir::Stmt::Variable(var))
-                    }
+                    hir::Decl::Function(func) => Some(hir::Stmt::FunctionDecl(func)),
+                    hir::Decl::Variable(var) => Some(hir::Stmt::Variable(var)),
                     _ => None, // Skip type and class declarations for now
                 },
                 _ => None,
@@ -151,7 +148,11 @@ pub fn generate_all(files: &[PathBuf]) -> Result<SourceGenResult, anyhow::Error>
 
     Ok(SourceGenResult {
         generated_files: generated,
-        single_file_stmts: if all_stmts.is_empty() { None } else { Some(all_stmts) },
+        single_file_stmts: if all_stmts.is_empty() {
+            None
+        } else {
+            Some(all_stmts)
+        },
     })
 }
 
@@ -169,47 +170,9 @@ pub struct LibGenResult {
 /// This bypasses TokenStream to_string() which produces malformed code
 pub fn generate_lib_from_hir(stmts: &[Stmt], source_path: &Path) -> LibGenResult {
     let codegen = QuoteCodegen::default();
-    let mut lib_output = String::new();
-    lib_output.push_str("//! Auto-generated library\n\n");
-    lib_output.push_str(&format!("// Generated from {}\n\n", source_path.display()));
-
-    // Collect function definitions and executable statements
-    let mut fn_defs = Vec::new();
-    let mut exec_stmts = Vec::new();
-
-    for stmt in stmts {
-        match stmt {
-            Stmt::FunctionDecl(func) => {
-                // Generate function definition directly
-                let fn_str = generate_function_string(&codegen, func);
-                fn_defs.push(fn_str);
-            }
-            Stmt::Variable(var) => {
-                // Variable declarations go in main
-                exec_stmts.push(stmt.clone());
-            }
-            _ => {
-                // Other statements (expr, return, etc.) go in main
-                exec_stmts.push(stmt.clone());
-            }
-        }
-    }
-
-    // Output function definitions at module level
-    for fn_def in &fn_defs {
-        lib_output.push_str(fn_def);
-        lib_output.push_str("\n\n");
-    }
-
-    // Generate exec statements strings for main.rs
-    let mut exec_stmt_strings = Vec::new();
-    for stmt in &exec_stmts {
-        if let Some(stmt_tokens) = codegen.gen_stmt(stmt) {
-            let stmt_str = stmt_tokens.to_string();
-            exec_stmt_strings.push(stmt_str);
-        }
-    }
-
+    let (fn_defs, exec_stmts) = collect_stmts(stmts, &codegen);
+    let lib_output = build_lib_output(&fn_defs, source_path);
+    let exec_stmt_strings = generate_exec_stmts(&exec_stmts, &codegen);
     LibGenResult {
         lib_content: lib_output,
         exec_stmts: exec_stmt_strings,
@@ -217,36 +180,92 @@ pub fn generate_lib_from_hir(stmts: &[Stmt], source_path: &Path) -> LibGenResult
     }
 }
 
+fn collect_stmts(stmts: &[Stmt], codegen: &QuoteCodegen) -> (Vec<String>, Vec<Stmt>) {
+    let mut fn_defs = Vec::new();
+    let mut exec_stmts = Vec::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::FunctionDecl(func) => {
+                fn_defs.push(generate_function_string(codegen, func));
+            }
+            _ => {
+                exec_stmts.push(stmt.clone());
+            }
+        }
+    }
+    (fn_defs, exec_stmts)
+}
+
+fn build_lib_output(fn_defs: &[String], source_path: &Path) -> String {
+    let mut lib_output = format!(
+        "//! Auto-generated library\n\n// Generated from {}\n\n",
+        source_path.display()
+    );
+    for fn_def in fn_defs {
+        lib_output.push_str(fn_def);
+        lib_output.push_str("\n\n");
+    }
+    lib_output
+}
+
+fn generate_exec_stmts(exec_stmts: &[Stmt], codegen: &QuoteCodegen) -> Vec<String> {
+    exec_stmts
+        .iter()
+        .filter_map(|stmt| codegen.gen_stmt(stmt).map(|t| t.to_string()))
+        .collect()
+}
+
 /// Generate a function definition string directly from HIR
 /// This avoids TokenStream to_string() issues
-fn generate_function_string(codegen: &QuoteCodegen, func: &crate::transpile::hir::FunctionDecl) -> String {
-    use crate::transpile::hir::Type as HirType;
-    use crate::transpile::hir::Stmt;
-
+fn generate_function_string(
+    codegen: &QuoteCodegen,
+    func: &crate::transpile::hir::FunctionDecl,
+) -> String {
     let fn_name = &func.name;
     let async_kw = if func.is_async { "async " } else { "" };
+    let params_str = gen_params_string(func);
+    let ret_type_str = gen_ret_type_string(func);
+    let body_str = generate_body_string(codegen, &func.body, &ret_type_str);
+    let header = make_fn_header(async_kw, fn_name, &params_str, &ret_type_str);
+    make_fn_string(&header, &body_str)
+}
 
-    // Generate parameters
-    let params: Vec<String> = func.params.iter().map(|p| {
-        let name = &p.name;
-        let ty_str = p.type_.as_ref()
-            .map(|t| type_to_rust_string(t))
-            .unwrap_or_else(|| "String".to_string());
-        format!("{}: {}", name, ty_str)
-    }).collect();
-    let params_str = params.join(", ");
+fn make_fn_header(async_kw: &str, name: &str, params: &str, ret: &str) -> String {
+    format!("pub ",)
+        .to_string()
+        + async_kw
+        + "fn "
+        + name
+        + "("
+        + params
+        + ") -> "
+        + ret
+        + " {"
+}
 
-    // Generate return type - if None, infer from return statements in body
-    let ret_type_str = func.return_type.as_ref()
+fn make_fn_string(header: &str, body: &str) -> String {
+    header.to_string() + "\n" + body + "}\n"
+}
+
+fn gen_params_string(func: &crate::transpile::hir::FunctionDecl) -> String {
+    let params: Vec<String> = func.params.iter().map(gen_param_string).collect();
+    params.join(", ")
+}
+
+fn gen_param_string(p: &crate::transpile::hir::Param) -> String {
+    let name = &p.name;
+    let ty_str = p.type_.as_ref()
+        .map(|t| type_to_rust_string(t))
+        .unwrap_or_else(|| "String".to_string());
+    format!("{}: {}", name, ty_str)
+}
+
+fn gen_ret_type_string(func: &crate::transpile::hir::FunctionDecl) -> String {
+    func.return_type.as_ref()
         .map(|t| type_to_rust_string(t))
         .unwrap_or_else(|| {
             infer_return_type_from_body(&func.body).unwrap_or_else(|| "()".to_string())
-        });
-
-    // Generate function body
-    let body_str = generate_body_string(codegen, &func.body, &ret_type_str);
-
-    format!("pub {}fn {}({}) -> {} {{\n{}}}\n", async_kw, fn_name, params_str, ret_type_str, body_str)
+        })
 }
 
 /// Infer return type from return statements in the body
@@ -276,7 +295,11 @@ fn infer_type_from_expr(expr: &crate::transpile::hir::Expr) -> String {
         E::Number(_) => "f64".to_string(),
         E::Boolean(_) => "bool".to_string(),
         E::Null | E::Undefined => "Value".to_string(),
-        E::Bin { op, left: _, right: _ } => {
+        E::Bin {
+            op,
+            left: _,
+            right: _,
+        } => {
             // For Add with string operands, result is String
             use crate::transpile::hir::BinaryOp;
             if matches!(op, BinaryOp::Add) {
@@ -305,7 +328,11 @@ fn type_to_rust_string(ty: &crate::transpile::hir::Type) -> String {
             if generics.is_empty() {
                 name.clone()
             } else {
-                let inner = generics.iter().map(type_to_rust_string).collect::<Vec<_>>().join(", ");
+                let inner = generics
+                    .iter()
+                    .map(type_to_rust_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("{}<{}>", name, inner)
             }
         }
@@ -314,7 +341,11 @@ fn type_to_rust_string(ty: &crate::transpile::hir::Type) -> String {
 }
 
 /// Generate function body string from HIR Block
-fn generate_body_string(codegen: &QuoteCodegen, body: &Option<crate::transpile::hir::Block>, ret_type: &str) -> String {
+fn generate_body_string(
+    codegen: &QuoteCodegen,
+    body: &Option<crate::transpile::hir::Block>,
+    ret_type: &str,
+) -> String {
     use crate::transpile::hir::Stmt;
 
     let body = match body {
@@ -334,7 +365,10 @@ fn generate_body_string(codegen: &QuoteCodegen, body: &Option<crate::transpile::
             // and the return type wasn't declared, we need to handle it
             let stmt_str = if stmt_str.starts_with("return ") && is_last_stmt && ret_type != "()" {
                 // Remove "return " prefix and trailing semicolon, just output the expression
-                stmt_str["return ".len()..].trim_end_matches(';').trim().to_string()
+                stmt_str["return ".len()..]
+                    .trim_end_matches(';')
+                    .trim()
+                    .to_string()
             } else {
                 stmt_str
             };
@@ -347,26 +381,32 @@ fn generate_body_string(codegen: &QuoteCodegen, body: &Option<crate::transpile::
                 }
                 // For the last statement, don't add semicolon if it would make it return ()
                 // Instead, just output the expression so Rust returns it implicitly
-                let line_final = if is_last_stmt && !trimmed.ends_with('{') && !trimmed.ends_with('}') {
-                    // Check if this is an expression statement (not control flow)
-                    if !trimmed.starts_with("if ") && !trimmed.starts_with("while ") &&
-                       !trimmed.starts_with("for ") && !trimmed.starts_with("loop ") &&
-                       !trimmed.starts_with("match ") && !trimmed.starts_with("return ") &&
-                       !trimmed.ends_with(',') && !trimmed.ends_with(";") {
-                        // This is an expression that should be returned
+                let line_final =
+                    if is_last_stmt && !trimmed.ends_with('{') && !trimmed.ends_with('}') {
+                        // Check if this is an expression statement (not control flow)
+                        if !trimmed.starts_with("if ")
+                            && !trimmed.starts_with("while ")
+                            && !trimmed.starts_with("for ")
+                            && !trimmed.starts_with("loop ")
+                            && !trimmed.starts_with("match ")
+                            && !trimmed.starts_with("return ")
+                            && !trimmed.ends_with(',')
+                            && !trimmed.ends_with(";")
+                        {
+                            // This is an expression that should be returned
+                            trimmed.to_string()
+                        } else if trimmed.ends_with(';') {
+                            trimmed.trim_end_matches(';').trim().to_string()
+                        } else {
+                            trimmed.to_string()
+                        }
+                    } else if trimmed.ends_with('}') || trimmed.ends_with('{') {
                         trimmed.to_string()
                     } else if trimmed.ends_with(';') {
-                        trimmed.trim_end_matches(';').trim().to_string()
-                    } else {
                         trimmed.to_string()
-                    }
-                } else if trimmed.ends_with('}') || trimmed.ends_with('{') {
-                    trimmed.to_string()
-                } else if trimmed.ends_with(';') {
-                    trimmed.to_string()
-                } else {
-                    format!("{};", trimmed)
-                };
+                    } else {
+                        format!("{};", trimmed)
+                    };
                 output.push_str(&format!("    {}\n", line_final));
             }
         }
@@ -417,7 +457,11 @@ pub fn generate_lib(
 
 /// Generate main.rs content
 /// For single-file builds, the exec_stmts are inlined in main()
-pub fn generate_main(source_file: Option<&Path>, exec_stmts: &[String], fn_defs: &[String]) -> String {
+pub fn generate_main(
+    source_file: Option<&Path>,
+    exec_stmts: &[String],
+    fn_defs: &[String],
+) -> String {
     let mut output = String::new();
     output.push_str("//! Auto-generated main\n\n");
 
@@ -477,16 +521,18 @@ fn fix_string_arguments(stmt: &str) -> String {
     // Find patterns like `func("string")` or `func ("string")` and add .to_string()
     // We look for function calls followed by string arguments
     let re_pattern = regex::Regex::new(r#"(\w+)\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
-    result = re_pattern.replace_all(&result, |caps: &regex::Captures| {
-        let func_name = &caps[1];
-        let arg = &caps[2];
-        // Don't add .to_string() if already present
-        if arg.contains(".to_string()") || arg.contains('(') {
-            caps[0].to_string()
-        } else {
-            format!(r#"{}("{}".to_string())"#, func_name, arg)
-        }
-    }).to_string();
+    result = re_pattern
+        .replace_all(&result, |caps: &regex::Captures| {
+            let func_name = &caps[1];
+            let arg = &caps[2];
+            // Don't add .to_string() if already present
+            if arg.contains(".to_string()") || arg.contains('(') {
+                caps[0].to_string()
+            } else {
+                format!(r#"{}("{}".to_string())"#, func_name, arg)
+            }
+        })
+        .to_string();
 
     result
 }
@@ -655,8 +701,7 @@ export function double(x: number): number { return x * 2; }
         let dir = tempfile::tempdir().expect("tempdir");
         let bad = dir.path().join("bad.ts");
         let good = dir.path().join("good.ts");
-        fs::write(&bad, "this is not valid typescript !!! @@@\n")
-            .expect("write bad");
+        fs::write(&bad, "this is not valid typescript !!! @@@\n").expect("write bad");
         fs::write(&good, "export const x = 1;\n").expect("write good");
 
         let result = generate_all(&[bad.clone(), good.clone()]).expect("generate_all");

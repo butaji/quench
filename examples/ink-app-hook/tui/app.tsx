@@ -1,6 +1,4 @@
 // App hook example — demonstrates app-level hooks.
-// NOTE: useApp and useStdin hooks are not yet supported in runts HIR runtime.
-// Shows static values for parity testing.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -8,12 +6,11 @@
 //   3. runts build (codegen->runts-ink)
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useApp } from 'ink';
 
 export default function AppHook() {
-  // NOTE: useApp is not supported in runts HIR runtime.
-  // For parity testing, we show static content.
-  const canExit = true;
+  const app = useApp();
+  const canExit = !!app?.exit;
 
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={2} paddingY={1}>

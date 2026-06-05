@@ -34,27 +34,34 @@ fn init_logging() {
         .try_init();
 }
 
-// allow:complexity
 fn execute(cli: Cli) -> Result<()> {
-    match cli.command {
-        cli::Commands::Eval { expr } => run_eval(&expr),
-        cli::Commands::Codegen { source, expr } => run_codegen(source, expr),
-        cli::Commands::Init { name } => run_init(name),
-        cli::Commands::HirRender { path } => run_hir_render(path),
-        cli::Commands::Dev { path, plugin } => run_dev(path, &plugin),
-        cli::Commands::InspectHir { path } => run_inspect_hir(path),
-        cli::Commands::Build {
-            path,
-            plugin,
-            release,
-            no_compile,
-        } => run_build(path, plugin, release, no_compile),
-        cli::Commands::Transpile { path, output } => run_transpile(path, output),
-        cli::Commands::Add {
-            component_type,
-            name,
-            path,
-        } => run_add(component_type.into(), name, path),
+    let cmd = &cli.command;
+    run_simple_cmd(cmd)?;
+    run_complex_cmd(cmd)
+}
+
+fn run_simple_cmd(cmd: &cli::Commands) -> Result<()> {
+    match cmd {
+        cli::Commands::Eval { expr } => run_eval(expr),
+        cli::Commands::Init { name } => run_init(name.clone()),
+        cli::Commands::HirRender { path } => run_hir_render(path.clone()),
+        cli::Commands::InspectHir { path } => run_inspect_hir(path.clone()),
+        _ => Ok(()),
+    }
+}
+
+fn run_complex_cmd(cmd: &cli::Commands) -> Result<()> {
+    match cmd {
+        cli::Commands::Codegen { source, expr } => run_codegen(source.clone(), expr.clone()),
+        cli::Commands::Dev { path, plugin } => run_dev(path.clone(), plugin),
+        cli::Commands::Build { path, plugin, release, no_compile } => {
+            run_build(path.clone(), plugin.clone(), *release, *no_compile)
+        }
+        cli::Commands::Transpile { path, output } => run_transpile(path.clone(), output.clone()),
+        cli::Commands::Add { component_type, name, path } => {
+            run_add((*component_type).into(), name.clone(), path.clone())
+        }
+        _ => Ok(()),
     }
 }
 

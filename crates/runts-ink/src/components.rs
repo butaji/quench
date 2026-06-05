@@ -516,7 +516,6 @@ impl Box {
 }
 
 impl Default for Box {
-    // allow:too_many_lines
     // The Box struct has 30+ Ink-style fields; the
     // Default impl just lists each one with its initial
     // value. Splitting it into helper builders would

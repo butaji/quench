@@ -2,8 +2,6 @@
 //! runs the JS reconciler in rquickjs, polls crossterm
 //! events, and draws the result to Ratatui each frame.
 //!
-//! allow:too_many_lines
-//! allow:complexity
 //!
 //! Architecture:
 //!

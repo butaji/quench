@@ -2,7 +2,6 @@
 //!
 //! Tests the full pipeline: TS source → Parser → HIR → Codegen → Rust output
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod spec_roundtrip_tests {

@@ -5,7 +5,6 @@
 //! - Exports: named declarations, named specifiers, re-exports, default exports
 //! - Fresh-specific: handler objects, page components
 //!
-//! allow:too_many_lines,complexity,nested_externals
 
 #[cfg(test)]
 mod spec_modules_tests {

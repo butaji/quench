@@ -1,6 +1,5 @@
 //! Type parsing utilities - converts oxc TypeAnnotation to HIR Type
 //!
-//! allow:complexity,too_many_lines
 
 use super::super::hir::*;
 use anyhow::Result;
@@ -46,35 +45,31 @@ impl TypeParser {
             TSType::TSThisType(_) => Ok(Type::This),
             TSType::TSArrayType(a) => self.convert_array_type(a),
             TSType::TSConditionalType(c) => self.convert_conditional_type(c),
-            TSType::TSConstructorType(c) => self.convert_function_or_constructor_type(&c.params, &c.return_type),
-            TSType::TSFunctionType(f) => self.convert_function_or_constructor_type(&f.params, &f.return_type),
+            TSType::TSConstructorType(c) => self.convert_fn_or_ctor(&c.params, &c.return_type),
+            TSType::TSFunctionType(f) => self.convert_fn_or_ctor(&f.params, &f.return_type),
             TSType::TSIndexedAccessType(i) => self.convert_indexed_access_type(i),
             TSType::TSInferType(i) => Ok(Type::Infer { name: i.type_parameter.name.to_string() }),
             TSType::TSIntersectionType(i) => self.convert_intersection_type(i),
             TSType::TSMappedType(m) => self.convert_mapped_type(m),
-            TSType::TSNeverKeyword(_) => Ok(Type::Never),
-            TSType::TSNullKeyword(_) => Ok(Type::Null),
-            TSType::TSNumberKeyword(_) => Ok(Type::Number),
-            TSType::TSObjectKeyword(_) => Ok(Type::Object { members: vec![] }),
             TSType::TSOptionalType(o) => self.convert_optional_type(o),
             TSType::TSParenthesizedType(p) => self.convert_ts_type(&p.type_annotation),
             TSType::TSQualifiedName(_) => Ok(Type::Unknown),
             TSType::TSRecordType(r) => self.convert_record_type(r),
             TSType::TSReferenceType(r) => self.convert_reference_type(r),
             TSType::TSRestType(r) => self.convert_ts_type(&r.type_annotation),
-            TSType::TSStringKeyword(_) => Ok(Type::String),
-            TSType::TSSymbolKeyword(_) => Ok(Type::Symbol),
             TSType::TSTemplateLiteralType(t) => self.convert_template_literal_type(t),
             TSType::TSTypeLiteralType(l) => self.convert_type_literal(l),
             TSType::TSTypeOperatorType(t) => self.convert_type_operator(t),
             TSType::TSTypeQueryType(q) => Ok(Type::Query { expr: q.expr_name.to_string() }),
-            TSType::TSUndefinedKeyword(_) => Ok(Type::Undefined),
             TSType::TSUnionType(u) => self.convert_union_type(u),
-            TSType::TSUnknownKeyword(_) => Ok(Type::Unknown),
-            TSType::TSVoidKeyword(_) => Ok(Type::Void),
-            // Fallback for types we don't handle yet
             _ => Ok(Type::Unknown),
         }
+    }
+
+    fn convert_fn_or_ctor(&self, params: &[TSTypeParameter], ret: &TSType) -> Result<Type> {
+        let params = params.iter().filter_map(|p| self.convert_param_type(p)).collect();
+        let ret = self.convert_ts_type(ret)?;
+        Ok(Type::Function { params, ret: Box::new(ret) })
     }
 
     fn convert_array_type(&self, a: &TSArrayType) -> Result<Type> {
@@ -93,16 +88,6 @@ impl TypeParser {
             true_type: Box::new(true_type),
             false_type: Box::new(false_type),
         })
-    }
-
-    fn convert_function_or_constructor_type(
-        &self,
-        params: &[TSTypeParameter],
-        return_type: &TSType,
-    ) -> Result<Type> {
-        let params = params.iter().filter_map(|p| self.convert_param_type(p)).collect();
-        let ret = self.convert_ts_type(return_type)?;
-        Ok(Type::Function { params, ret: Box::new(ret) })
     }
 
     fn convert_indexed_access_type(&self, i: &TSIndexedAccessType) -> Result<Type> {

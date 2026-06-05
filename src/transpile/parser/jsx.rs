@@ -1,6 +1,5 @@
 //! JSX conversion
 //!
-//! allow:too_many_lines,complexity
 
 use crate::transpile::hir;
 use crate::transpile::parser::expr::convert_expr;
@@ -70,28 +69,26 @@ fn convert_jsx_name(name: &JSXElementName) -> hir::JSXName {
             ns: ns.namespace.name.to_string(),
             name: ns.name.name.to_string(),
         },
-        JSXElementName::MemberExpression(m) => {
-            // Handle <Foo.Bar> - member expression like React.Foo
-            let object_name = match &m.object {
-                JSXMemberExpressionObject::IdentifierReference(id) => id.name.to_string(),
-                JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
-                JSXMemberExpressionObject::MemberExpression(inner) => {
-                    // Recursively handle nested member expressions
-                    match &inner.object {
-                        JSXMemberExpressionObject::IdentifierReference(id) => id.name.to_string(),
-                        _ => String::new(),
-                    }
-                }
-            };
-            hir::JSXName::Member {
-                object: object_name,
-                property: m.property.name.to_string(),
-            }
-        }
+        JSXElementName::MemberExpression(m) => convert_jsx_member_expr(m),
         JSXElementName::IdentifierReference(id) => hir::JSXName::Ident(id.name.to_string()),
-        JSXElementName::ThisExpression(_) => {
-            // Handle <this.Foo> - 'this' in JSX
-            hir::JSXName::Dynamic(Box::new(hir::Expr::This))
+        JSXElementName::ThisExpression(_) => hir::JSXName::Dynamic(Box::new(hir::Expr::This)),
+    }
+}
+
+fn convert_jsx_member_expr(m: &JSXMemberExpression) -> hir::JSXName {
+    let object_name = extract_member_object(&m.object);
+    hir::JSXName::Member {
+        object: object_name,
+        property: m.property.name.to_string(),
+    }
+}
+
+fn extract_member_object(obj: &JSXMemberExpressionObject) -> String {
+    match obj {
+        JSXMemberExpressionObject::IdentifierReference(id) => id.name.to_string(),
+        JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
+        JSXMemberExpressionObject::MemberExpression(inner) => {
+            extract_member_object(&inner.object)
         }
     }
 }
@@ -135,22 +132,33 @@ fn convert_jsx_attr_value(value: &JSXAttributeValue) -> Option<hir::JSXAttrValue
     }
 }
 
-// allow:complexity
 pub fn convert_jsx_expression(expr: &JSXExpression) -> Option<hir::Expr> {
     match expr {
-        JSXExpression::EmptyExpression(_) => Some(hir::Expr::Null),
-        JSXExpression::Identifier(id) => Some(hir::Expr::Ident {
-            name: id.name.to_string(),
-        }),
+        JSXExpression::EmptyExpression(_) | JSXExpression::NullLiteral(_) => Some(hir::Expr::Null),
+        JSXExpression::Identifier(id) => Some(hir::Expr::Ident { name: id.name.to_string() }),
         JSXExpression::NumericLiteral(n) => Some(hir::Expr::Number(n.value)),
         JSXExpression::StringLiteral(s) => Some(hir::Expr::String(s.value.to_string())),
         JSXExpression::BooleanLiteral(b) => Some(hir::Expr::Boolean(b.value)),
-        JSXExpression::NullLiteral(_) => Some(hir::Expr::Null),
-        JSXExpression::ThisExpression(_) => Some(hir::Expr::This),
-        JSXExpression::Super(_) => Some(hir::Expr::Super),
-        JSXExpression::BigIntLiteral(b) => Some(hir::Expr::BigInt(b.raw.as_ref().map(|s| s.to_string()).unwrap_or_else(|| b.value.to_string()).parse().unwrap_or(0))),
+        JSXExpression::ThisExpression(_) | JSXExpression::Super(_) => convert_this_super(expr),
+        JSXExpression::BigIntLiteral(b) => Some(hir::Expr::BigInt(bigint_literal(b))),
         _ => expr.as_expression().and_then(|e| convert_expr(e).ok()),
     }
+}
+
+fn convert_this_super(expr: &JSXExpression) -> Option<hir::Expr> {
+    match expr {
+        JSXExpression::ThisExpression(_) => Some(hir::Expr::This),
+        JSXExpression::Super(_) => Some(hir::Expr::Super),
+        _ => None,
+    }
+}
+
+fn bigint_literal(b: &BigIntLiteral) -> i64 {
+    b.raw.as_ref()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| b.value.to_string())
+        .parse()
+        .unwrap_or(0)
 }
 
 pub fn convert_jsx_child(child: &JSXChild) -> Option<hir::JSXChild> {
@@ -257,68 +265,65 @@ mod tests {
 
     #[test]
     fn parse_simple_text_preserves_content() {
-        // End-to-end: parse "<Text>Hello, World!</Text>"
-        // and verify the HIR has the full text.
         let src = r#"
 export default function App() {
   return <Text>Hello, World!</Text>;
 }
 "#;
         let module = crate::transpile::parser::parse_source(src, true).unwrap();
-        // Find the return statement's JSX
-        for item in &module.items {
-            if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
-                if let Some(block) = &f.body {
-                    for stmt in &block.0 {
-                        if let hir::Stmt::Return { arg: Some(hir::Expr::JSX(jsx)) } = stmt {
-                            assert_eq!(jsx.children.len(), 1);
-                            match &jsx.children[0] {
-                                hir::JSXChild::Text(s) => {
-                                    assert_eq!(s, "Hello, World!",
-                                        "expected full text, got: {s:?}");
-                                }
-                                other => panic!("expected Text, got {other:?}"),
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let jsx = find_jsx_in_module(&module);
+        assert_eq!(jsx.children.len(), 1);
+        assert_text_child(&jsx.children[0], "Hello, World!");
     }
 
     #[test]
     fn parse_multipart_text_coalesces() {
-        // End-to-end: parse "<Text>Centered Title</Text>"
-        // and verify the HIR has the full text after
-        // coalescing. This is the exact case that
-        // was producing "C" before the fix.
         let src = r#"
 export default function App() {
   return <Text>Centered Title</Text>;
 }
 "#;
         let module = crate::transpile::parser::parse_source(src, true).unwrap();
+        let jsx = find_jsx_in_module(&module);
+        assert_eq!(jsx.children.len(), 1, "expected 1 child after coalesce, got {}", jsx.children.len());
+        assert_text_child(&jsx.children[0], "Centered Title");
+    }
+
+    fn find_jsx_in_module(module: &hir::Module) -> &hir::JSXExpr {
         for item in &module.items {
             if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
                 if let Some(block) = &f.body {
                     for stmt in &block.0 {
                         if let hir::Stmt::Return { arg: Some(hir::Expr::JSX(jsx)) } = stmt {
-                            // After coalesce, should be 1 child
-                            assert_eq!(jsx.children.len(), 1,
-                                "expected 1 child after coalesce, got {}: {:?}",
-                                jsx.children.len(), jsx.children);
-                            match &jsx.children[0] {
-                                hir::JSXChild::Text(s) => {
-                                    assert_eq!(s, "Centered Title",
-                                        "expected 'Centered Title', got: {s:?}");
-                                }
-                                other => panic!("expected Text, got {other:?}"),
-                            }
+                            return jsx;
                         }
                     }
                 }
             }
         }
+        panic!("No JSX found in module");
+    }
+
+    fn assert_text_child(child: &hir::JSXChild, expected: &str) {
+        match child {
+            hir::JSXChild::Text(s) => {
+                assert_eq!(s, expected, "expected '{expected}', got: {s:?}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_multipart_text_coalesces() {
+        let src = r#"
+export default function App() {
+  return <Text>Centered Title</Text>;
+}
+"#;
+        let module = crate::transpile::parser::parse_source(src, true).unwrap();
+        let jsx = find_jsx_in_module(&module);
+        assert_eq!(jsx.children.len(), 1, "expected 1 child after coalesce, got {}", jsx.children.len());
+        assert_text_child(&jsx.children[0], "Centered Title");
     }
 }
 

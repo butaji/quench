@@ -284,7 +284,6 @@ fn value_to_string(value: Value<'_>) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-// allow:complexity
 fn simple_type_str(typ: &str, value: Value<'_>) -> String {
     match typ {
         "undefined" => "undefined".to_string(),

@@ -146,7 +146,6 @@ fn apply_keycode(k: &mut Key, key: &crossterm::event::KeyEvent) {
 /// `Key` flags. The remaining rare keys are silently
 /// dropped (matching Ink's behaviour — they don't have
 /// first-class `useInput` flags).
-// allow:complexity
 fn apply_navigation(k: &mut Key, code: &crossterm::event::KeyCode) {
     use crossterm::event::KeyCode;
     match code {

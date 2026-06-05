@@ -5,7 +5,6 @@
 //! - Mut (&mut T): function mutates the parameter
 //! - Owned (T): function takes ownership
 //!
-//! allow:complexity,too_many_lines
 
 use super::{ClassMethod, Expr, FunctionDecl, Ownership, Param, Stmt, VariableKind};
 
@@ -69,7 +68,6 @@ impl OwnershipAnalyzer {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
@@ -356,7 +354,6 @@ impl OwnershipAnalyzer {
         matches!(left, Expr::Member { .. } | Expr::StaticMember { .. })
     }
 
-    // allow:complexity,too_many_lines
     fn mark_as_mutated(&mut self, expr: &Expr) {
         if let Expr::Ident { name } = expr {
             self.mut_vars.insert(name.clone());

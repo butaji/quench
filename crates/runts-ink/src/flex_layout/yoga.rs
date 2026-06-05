@@ -132,7 +132,6 @@ fn apply_vnode_style(node: &mut yoga::Node, vnode: &VNode) {
     }
 }
 
-// allow:too_many_lines
 fn apply_box_style(node: &mut yoga::Node, b: &InkBox) {
     use yoga::FlexStyle;
 

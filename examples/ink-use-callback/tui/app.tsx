@@ -11,31 +11,28 @@ import { Box, Text } from 'ink';
 
 export default function UseCallbackExample() {
   const [count, setCount] = useState(0);
-  const [renderCount, setRenderCount] = useState(0);
-  
-  // Memoized callback - identity stable across renders
+  const [multiplier, setMultiplier] = useState(1);
+
+  // Memoized callback — identity stable across renders
   const increment = useCallback(() => {
     setCount(c => c + 1);
   }, []);
-  
+
   // Callback with dependency
-  const setMultiplier = useCallback((val: number) => {
-    // In a real app this would update state
-  }, []);
-  
+  const applyMultiplier = useCallback(() => {
+    setCount(c => c * multiplier);
+  }, [multiplier]);
+
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">useCallback Demo</Text>
       <Text></Text>
-      
       <Text>Count: {count}</Text>
-      <Text>Renders: {renderCount}</Text>
+      <Text>Multiplier: {multiplier}</Text>
       <Text></Text>
-      
       <Text dimColor>useCallback ensures callback identity is stable.</Text>
       <Text dimColor>This prevents unnecessary re-renders in child components.</Text>
       <Text></Text>
-      
       <Text dimColor>Press q to quit.</Text>
     </Box>
   );

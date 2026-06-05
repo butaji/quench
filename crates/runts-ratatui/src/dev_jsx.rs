@@ -1,5 +1,3 @@
-//! allow:complexity
-//! allow:too_many_lines
 //!
 //! JSX-to-JS transformer for the `runts dev --ink` path.
 //!

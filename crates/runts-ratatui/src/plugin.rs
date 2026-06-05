@@ -81,8 +81,6 @@ impl Plugin for RatatuiPlugin {
     }
 
     fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
-        // allow:complexity
-        // allow:too_many_lines
         // Try the new runts-ink JSX codegen first.
         if let Some(code) = self.first_ink_codegen(modules) {
             return Ok(code);

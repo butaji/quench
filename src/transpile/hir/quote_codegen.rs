@@ -3,7 +3,6 @@
 //! Generates proper Rust TokenStream instead of strings.
 //! This enables compile-time validation and better error messages.
 //!
-//! allow:complexity,too_many_lines
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -155,7 +154,6 @@ impl QuoteCodegen {
         }
     }
     
-    // allow:complexity,too_many_lines
     pub(crate) fn gen_type(&self, ty: &Type) -> TokenStream {
         use super::Type as T;
         match ty {
@@ -500,7 +498,6 @@ impl QuoteCodegen {
         quote! { { #(#fields);* } }
     }
     
-    // allow:complexity,too_many_lines
     pub(crate) fn gen_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
@@ -777,7 +774,6 @@ impl QuoteCodegen {
         }
     }
 
-    // allow:complexity,too_many_lines
     fn gen_for_init(&self, init: &Option<super::ForInit>) -> TokenStream {
         match init {
             Some(super::ForInit::Variable(kind, vars)) => {
@@ -1000,7 +996,6 @@ impl QuoteCodegen {
         quote! { std::panic::panic_any(#expr); }
     }
 
-    // allow:complexity,too_many_lines
     fn gen_try(&self, block: &super::Block, handler: &Option<super::CatchClause>, finalizer: &Option<super::Block>) -> TokenStream {
         let block_stmts: Vec<TokenStream> = block.0.iter()
             .filter_map(|s| self.gen_stmt(s))

@@ -1,26 +1,31 @@
 // Dynamic children example — demonstrates rendering arrays as children.
-// Simplified for parity: uses simple text list layout
-// that renders consistently across all environments.
+// Uses real array mapping with useState.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 
 export default function DynamicChildrenExample() {
+  const [items] = useState([
+    { label: 'First item', color: 'green' },
+    { label: 'Second item', color: 'yellow' },
+    { label: 'Third item', color: 'red' },
+  ]);
+
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Dynamic Children</Text>
       <Text dimColor>Items from array:</Text>
       <Box flexDirection="column" marginTop={1}>
-        <Text color="green">First item</Text>
-        <Text color="yellow">Second item</Text>
-        <Text color="red">Third item</Text>
+        {items.map((item, i) => (
+          <Text key={i} color={item.color as any}>{item.label}</Text>
+        ))}
       </Box>
-      <Text dimColor marginTop={1}>Total: 3</Text>
+      <Text dimColor marginTop={1}>Total: {items.length}</Text>
     </Box>
   );
 }

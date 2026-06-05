@@ -1,6 +1,5 @@
 //! Spec 2.1-2.2: Variables & Functions parser + codegen tests
 //!
-//! allow:too_many_lines,complexity
 //!
 //! Covers:
 //! - Variable bindings (const, let, var)

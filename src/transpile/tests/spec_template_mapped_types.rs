@@ -1,6 +1,5 @@
 //! Tests for template literal types and mapped types
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod template_mapped_type_tests {
