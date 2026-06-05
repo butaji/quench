@@ -944,7 +944,6 @@ async fn main() {{
     /// Accepts both the externally-tagged shape
     /// `{"Return": {"arg": ...}}` and the older internally-tagged
     /// shape `{"kind": "Return", "arg": ...}`.
-    // allow:complexity,too_many_lines
     fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
         // For internally-tagged enums (the Stmt enum uses
         // `#[serde(tag = "kind")]`), "kind" is the discriminator and
@@ -1091,7 +1090,6 @@ async fn main() {{
     }
 
     /// Convert JSX attribute value to TokenStream.
-    // allow:complexity
     fn jsx_attr_value_to_tokenstream(&self, val: &serde_json::Value) -> Option<TokenStream> {
         match val {
             serde_json::Value::Null => None,
@@ -1152,7 +1150,6 @@ async fn main() {{
     }
 
     /// Convert a JSX child to TokenStream.
-    // allow:complexity
     fn jsx_child_to_tokenstream(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
         // Text child
         if let Some(text) = child.as_str() {
@@ -1221,7 +1218,6 @@ async fn main() {{
     }
 
     /// Convert JSX expression to TokenStream.
-    // allow:complexity
     fn jsx_expr_to_tokenstream(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
         // Handle actual HIR format: direct keys without "kind" wrapper
         if let Some(name) = expr.get("Ident")?.as_str() {

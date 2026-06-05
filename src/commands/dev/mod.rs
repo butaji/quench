@@ -12,53 +12,53 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 /// Run dev server using plugin lifecycle hooks
-// allow:complexity
-// allow:too_many_lines
-pub async fn run_dev_server(_config: &Config, path: PathBuf, plugin_name: String) -> Result<()> {
+pub async fn run_dev_server(
+    _config: &Config,
+    path: PathBuf,
+    plugin_name: String,
+) -> Result<()> {
     let plugin = plugin::get_plugin(&plugin_name)?;
-
-    // Resolve project root - handle both absolute and relative paths
-    let project_root = if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()?.join(&path)
-    };
-
+    let project_root = resolve_project_root(&path)?;
     let modules = scan_modules(&project_root)?;
-    // Skip the initial cargo build for the Ink dev
-    // path — the rquickjs+bridge path doesn't
-    // need a Rust compile.
     let has_tsx = modules.iter().any(|m| m.ends_with(".tsx"));
-    let mut ctx = DevContext {
-        root: project_root.clone(),
-        modules,
-    };
+    let mut ctx = DevContext { root: project_root.clone(), modules };
 
-    // Run initial full build to populate .runts/build directory AND compile
-    // This is required because FreshDevState::compile_project() expects
-    // the build directory to exist and compiles there (it runs cargo build in .runts/build).
-    // The Ink dev path uses the HIR runtime — a
-    // pure-Rust interpreter that walks the HIR AST.
-    // No rquickjs, no cargo build for the dev path.
-    // We still run the initial build to set up
-    // .runts/build/ for the compile path, but the
-    // dev path itself uses hir-render.
-    tracing::info!("Running initial build...");
-    if has_tsx && plugin_name == "fresh" {
-        if let Err(e) = build::run_full_build(_config, project_root.clone(), false)
-            .await
-            .context("Initial build failed")
-        {
-            tracing::error!("Initial build failed: {}", e);
-            return Err(e);
-        }
-    }
-    tracing::info!("Initial build complete, starting dev server...");
+    run_initial_build(_config, &project_root, has_tsx, &plugin_name)?;
 
     let mut state = plugin.dev_init(&mut ctx)?;
     let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;
 
     dev_loop(&*plugin, &project_root, &mut ctx, &mut *state, tx, rx)
+}
+
+fn resolve_project_root(path: &PathBuf) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.clone())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn run_initial_build(
+    _config: &Config,
+    project_root: &PathBuf,
+    has_tsx: bool,
+    plugin_name: &str,
+) -> Result<()> {
+    if !has_tsx || plugin_name != "fresh" {
+        return Ok(());
+    }
+    tracing::info!("Running initial build...");
+    match build::run_full_build(_config, project_root.clone(), false).await {
+        Ok(_) => {
+            tracing::info!("Initial build complete, starting dev server...");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Initial build failed: {}", e);
+            Err(e).context("Initial build failed")
+        }
+    }
 }
 
 fn dev_loop(

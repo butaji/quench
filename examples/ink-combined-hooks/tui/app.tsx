@@ -1,25 +1,37 @@
 // Combined Hooks Example — demonstrates multiple hooks working together.
-// Shows useState, useEffect, useInput, useApp, and useStdin integration.
+// Shows useState, useEffect, useCallback, useMemo, and useContext integration.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
-import React from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Text } from 'ink';
 
 export default function CombinedHooks() {
-  // Static values for parity testing
-  const count = 0;
-  const name = "Combined Hooks Demo";
-  const status = "ready";
+  const [count, setCount] = useState(0);
+  const [name, setName] = useState('Combined Hooks Demo');
+  const [status, setStatus] = useState('ready');
+
+  useEffect(() => {
+    if (count > 5) {
+      setStatus('active');
+    }
+  }, [count]);
+
+  const doubled = useMemo(() => count * 2, [count]);
+
+  const increment = useCallback(() => {
+    setCount(c => c + 1);
+  }, []);
 
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Combined Hooks Demo</Text>
       <Text></Text>
       <Text>Count: <Text bold color="green">{count}</Text></Text>
+      <Text>Doubled: <Text bold color="yellow">{doubled}</Text></Text>
       <Text>Name: <Text italic>{name}</Text></Text>
       <Text>Status: {status}</Text>
       <Text></Text>

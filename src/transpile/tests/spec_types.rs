@@ -6,7 +6,6 @@
 //! 3. Type declarations (interface, type alias, enum)
 //! 4. Type-directed lowering (THE KEY FEATURE - string unions -> enums, interfaces -> structs, etc.)
 //!
-//! allow:too_many_lines,complexity
 
 #[cfg(test)]
 mod spec_types_tests {

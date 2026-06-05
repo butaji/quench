@@ -3,7 +3,6 @@
 //! Provides a single source of truth for converting HIR types to Rust types.
 //! Used by both String-based (type_gen.rs) and TokenStream-based (quote_codegen.rs) code generation.
 //!
-//! allow:complexity,too_many_lines
 
 use crate::transpile::hir::{LiteralKind, ObjectMemberExpr, ObjectProp, Type, TypeMember};
 
@@ -26,7 +25,6 @@ impl TypeToRust {
         Self { kind }
     }
 
-    // allow:complexity,too_many_lines
     pub fn convert(&self, ty: &Type) -> RustType {
         match ty {
             Type::String => RustType::Primitive("String".into()),
@@ -401,7 +399,6 @@ pub enum RustType {
 }
 
 impl RustType {
-    // allow:complexity,too_many_lines
     pub fn type_name(&self) -> String {
         match self {
             RustType::Primitive(s) => s.clone(),

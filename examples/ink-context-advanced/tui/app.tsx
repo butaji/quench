@@ -5,11 +5,8 @@
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
-//
-// NOTE: createContext, useContext, and custom components are not supported
-// in runts HIR runtime. For compatibility, we use direct object access.
 
-import React from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { Box, Text } from 'ink';
 
 interface Theme {
@@ -17,24 +14,42 @@ interface Theme {
   secondary: string;
 }
 
+const ThemeContext = createContext<Theme>({
+  primary: 'cyan',
+  secondary: 'gray',
+});
+
+function ThemedText({ children, bold }: { children: React.ReactNode; bold?: boolean }) {
+  const theme = useContext(ThemeContext);
+  return (
+    <Text color={theme.primary as any} bold={bold}>
+      {children}
+    </Text>
+  );
+}
+
+function ThemeInfo() {
+  const theme = useContext(ThemeContext);
+  return (
+    <Box flexDirection="column">
+      <Text>Primary: <Text color={theme.primary as any}>{theme.primary}</Text></Text>
+      <Text>Secondary: <Text color={theme.secondary as any}>{theme.secondary}</Text></Text>
+    </Box>
+  );
+}
+
 export default function ContextAdvancedExample() {
-  // Static theme for parity testing
-  const theme: Theme = {
+  const [theme] = useState<Theme>({
     primary: 'cyan',
     secondary: 'gray',
-  };
-  
+  });
+
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold color="cyan">Context Advanced Demo</Text>
+      <ThemedText bold>Context Advanced Demo</ThemedText>
       <Text></Text>
-      
-      <Text bold>Theme (object access):</Text>
-      <Box flexDirection="column">
-        <Text>Primary color: <Text color={theme.primary as any}>{theme.primary}</Text></Text>
-        <Text>Secondary color: <Text color={theme.secondary as any}>{theme.secondary}</Text></Text>
-      </Box>
-      
+      <Text bold>Theme (from context):</Text>
+      <ThemeInfo />
       <Text></Text>
       <Text dimColor>Theme provides consistent styling across components.</Text>
       <Text dimColor>Press q to quit.</Text>

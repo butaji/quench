@@ -115,7 +115,6 @@ pub(crate) mod app {
         }
     }
 
-    // allow:complexity
     pub fn tui_handle_events() -> TokenStream {
         quote! {
             if crossterm::event::poll(std::time::Duration::from_millis(100))? {

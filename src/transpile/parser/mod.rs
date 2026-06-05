@@ -1,6 +1,5 @@
 //! TypeScript parser using oxc
 //!
-//! allow:too_many_lines,complexity
 
 pub mod expr;
 pub mod jsx;
@@ -50,7 +49,6 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
 }
 
 /// Run ownership and effect analysis on parsed module
-// allow:complexity,too_many_lines
 fn run_analysis_passes(module: &mut hir::Module) {
     for item in &mut module.items {
         match item {
@@ -84,31 +82,10 @@ fn run_analysis_passes(module: &mut hir::Module) {
 }
 
 /// Analyze expression passes for arrow functions and other nested expressions
-// allow:complexity,too_many_lines
 fn analyze_expr_passes(expr: &mut hir::Expr) {
     match expr {
         hir::Expr::ArrowFunction { ref mut params, body, is_async: _ } => {
-            // Create a temporary FunctionDecl for analysis
-            let mut func = hir::FunctionDecl {
-                name: String::new(),
-                generics: vec![],
-                params: params.clone(),
-                return_type: None,
-                body: None,
-                is_async: false,
-                is_generator: false,
-                decorators: vec![],
-                throws: false,
-                error_type: None,
-            };
-            // Set body from the arrow function body expression
-            if let hir::Expr::Block(stmts) = &**body {
-                func.body = Some(hir::Block(stmts.clone()));
-            }
-            hir::infer_function_ownership(&mut func);
-            hir::analyze_effects(&mut func);
-            // Update params with inferred ownership
-            *params = func.params;
+            analyze_arrow_fn(params, body);
         }
         hir::Expr::Function(ref mut func) => {
             hir::infer_function_ownership(func);
@@ -119,34 +96,52 @@ fn analyze_expr_passes(expr: &mut hir::Expr) {
                 analyze_stmt_passes(stmt);
             }
         }
-        hir::Expr::Call { callee, arguments: _ } => {
-            analyze_expr_passes(callee);
-        }
+        hir::Expr::Call { callee, arguments: _ } => analyze_expr_passes(callee),
         hir::Expr::Member { obj, property, computed: _ } => {
             analyze_expr_passes(obj);
             analyze_expr_passes(property);
         }
-        hir::Expr::StaticMember { obj, property: _ } => {
-            analyze_expr_passes(obj);
-        }
-        hir::Expr::JSX(ref mut jsx) => {
-            for attr in &mut jsx.opening.attrs {
-                if let hir::JSXAttr::Spread { expr } = attr {
-                    analyze_expr_passes(expr);
-                }
-            }
-            for child in &mut jsx.children {
-                if let hir::JSXChild::Spread { expr } = child {
-                    analyze_expr_passes(expr);
-                }
-            }
-        }
+        hir::Expr::StaticMember { obj, property: _ } => analyze_expr_passes(obj),
+        hir::Expr::JSX(ref mut jsx) => analyze_jsx_spreads(jsx),
         _ => {}
     }
 }
 
+fn analyze_arrow_fn(params: &mut Vec<hir::Param>, body: &Box<hir::Expr>) {
+    let mut func = hir::FunctionDecl {
+        name: String::new(),
+        generics: vec![],
+        params: params.clone(),
+        return_type: None,
+        body: None,
+        is_async: false,
+        is_generator: false,
+        decorators: vec![],
+        throws: false,
+        error_type: None,
+    };
+    if let hir::Expr::Block(stmts) = &**body {
+        func.body = Some(hir::Block(stmts.clone()));
+    }
+    hir::infer_function_ownership(&mut func);
+    hir::analyze_effects(&mut func);
+    *params = func.params;
+}
+
+fn analyze_jsx_spreads(jsx: &mut hir::JSXExpr) {
+    for attr in &mut jsx.opening.attrs {
+        if let hir::JSXAttr::Spread { expr } = attr {
+            analyze_expr_passes(expr);
+        }
+    }
+    for child in &mut jsx.children {
+        if let hir::JSXChild::Spread { expr } = child {
+            analyze_expr_passes(expr);
+        }
+    }
+}
+
 /// Analyze statement passes for nested expressions
-// allow:complexity,too_many_lines
 fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
     match stmt {
         hir::Stmt::If { test, consequent, alternate } => {
@@ -160,29 +155,7 @@ fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
             analyze_expr_passes(test);
             analyze_stmt_passes(body);
         }
-        hir::Stmt::For { init, test, update, body } => {
-            if let Some(ref mut for_init) = init {
-                match for_init {
-                    hir::ForInit::Variable(_, vars) => {
-                        for (_, init) in vars {
-                            if let Some(ref mut e) = init {
-                                analyze_expr_passes(e);
-                            }
-                        }
-                    }
-                    hir::ForInit::Expr(ref mut e) => {
-                        analyze_expr_passes(e);
-                    }
-                }
-            }
-            if let Some(ref mut t) = test {
-                analyze_expr_passes(t);
-            }
-            if let Some(ref mut u) = update {
-                analyze_expr_passes(u);
-            }
-            analyze_stmt_passes(body);
-        }
+        hir::Stmt::For { init, test, update, body } => analyze_for_loop(init, test, update, body),
         hir::Stmt::Block { stmts } => {
             for s in stmts {
                 analyze_stmt_passes(s);
@@ -193,16 +166,47 @@ fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
                 analyze_expr_passes(a);
             }
         }
-        hir::Stmt::Expr { expr } => {
-            analyze_expr_passes(expr);
-        }
-        hir::Stmt::Class(ref mut class) => {
-            for method in &mut class.methods {
-                hir::infer_method_ownership(method);
-                hir::analyze_method_effects(method);
+        hir::Stmt::Expr { expr } => analyze_expr_passes(expr),
+        hir::Stmt::Class(ref mut class) => analyze_class_methods(class),
+        _ => {}
+    }
+}
+
+fn analyze_for_loop(
+    init: &mut Option<hir::ForInit>,
+    test: &mut Option<Box<hir::Expr>>,
+    update: &mut Option<Box<hir::Expr>>,
+    body: &mut Box<hir::Stmt>,
+) {
+    if let Some(ref mut for_init) = init {
+        analyze_for_init(for_init);
+    }
+    if let Some(ref mut t) = test {
+        analyze_expr_passes(t);
+    }
+    if let Some(ref mut u) = update {
+        analyze_expr_passes(u);
+    }
+    analyze_stmt_passes(body);
+}
+
+fn analyze_for_init(for_init: &mut hir::ForInit) {
+    match for_init {
+        hir::ForInit::Variable(_, vars) => {
+            for (_, init) in vars {
+                if let Some(ref mut e) = init {
+                    analyze_expr_passes(e);
+                }
             }
         }
-        _ => {}
+        hir::ForInit::Expr(ref mut e) => analyze_expr_passes(e),
+    }
+}
+
+fn analyze_class_methods(class: &mut hir::Class) {
+    for method in &mut class.methods {
+        hir::infer_method_ownership(method);
+        hir::analyze_method_effects(method);
     }
 }
 

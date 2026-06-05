@@ -5,7 +5,6 @@
 //! 2. Runtime no-silent-fallback: assert output is not Value::Null for each variant
 //! 3. Round-trip integration: parse TS, generate Rust, verify output
 //!
-//! allow:too_many_lines,complexity,nested_externals
 
 #[cfg(test)]
 mod completeness_tests {
@@ -27,43 +26,25 @@ mod completeness_tests {
     /// will cause a compilation error here.
     fn assert_expr_codegen_compiles(expr: &Expr) -> TokenStream {
         let cg = QuoteCodegen::default();
+        gen_expr_for_codegen(&cg, expr)
+    }
+
+    fn gen_expr_for_codegen(cg: &QuoteCodegen, expr: &Expr) -> TokenStream {
         match expr {
-            Expr::String(_) => cg.gen_expr(expr),
-            Expr::Number(_) => cg.gen_expr(expr),
-            Expr::BigInt(_) => cg.gen_expr(expr),
-            Expr::Boolean(_) => cg.gen_expr(expr),
-            Expr::Null => cg.gen_expr(expr),
-            Expr::Undefined => cg.gen_expr(expr),
-            Expr::RegExp { .. } => cg.gen_expr(expr),
-            Expr::Template { .. } => cg.gen_expr(expr),
-            Expr::Ident { .. } => cg.gen_expr(expr),
-            Expr::JSX(_) => cg.gen_expr(expr),
-            Expr::Bin { .. } => cg.gen_expr(expr),
-            Expr::Unary { .. } => cg.gen_expr(expr),
-            Expr::Update { .. } => cg.gen_expr(expr),
-            Expr::Logical { .. } => cg.gen_expr(expr),
-            Expr::Cond { .. } => cg.gen_expr(expr),
-            Expr::Assign { .. } => cg.gen_expr(expr),
-            Expr::Array { .. } => cg.gen_expr(expr),
-            Expr::Object { .. } => cg.gen_expr(expr),
-            Expr::Function(_) => cg.gen_expr(expr),
-            Expr::ArrowFunction { .. } => cg.gen_expr(expr),
-            Expr::Await { .. } => cg.gen_expr(expr),
-            Expr::Yield { .. } => cg.gen_expr(expr),
-            Expr::Call { .. } => cg.gen_expr(expr),
-            Expr::New { .. } => cg.gen_expr(expr),
-            Expr::Member { .. } => cg.gen_expr(expr),
-            Expr::Super => cg.gen_expr(expr),
-            Expr::This => cg.gen_expr(expr),
-            Expr::StaticMember { .. } => cg.gen_expr(expr),
-            Expr::PrivateMember { .. } => cg.gen_expr(expr),
-            Expr::MetaProperty { .. } => cg.gen_expr(expr),
-            Expr::TaggedTemplate { .. } => cg.gen_expr(expr),
-            Expr::Seq { .. } => cg.gen_expr(expr),
-            Expr::Spread { .. } => cg.gen_expr(expr),
-            Expr::Class { .. } => cg.gen_expr(expr),
-            Expr::TypeAnnot { .. } => cg.gen_expr(expr),
-            Expr::ArrowWithType { .. } => cg.gen_expr(expr),
+            Expr::String(_) | Expr::Number(_) | Expr::BigInt(_) | Expr::Boolean(_) => cg.gen_expr(expr),
+            Expr::Null | Expr::Undefined => cg.gen_expr(expr),
+            Expr::RegExp { .. } | Expr::Template { .. } | Expr::Ident { .. } => cg.gen_expr(expr),
+            Expr::JSX(_) | Expr::Bin { .. } | Expr::Unary { .. } => cg.gen_expr(expr),
+            Expr::Update { .. } | Expr::Logical { .. } | Expr::Cond { .. } => cg.gen_expr(expr),
+            Expr::Assign { .. } | Expr::Array { .. } | Expr::Object { .. } => cg.gen_expr(expr),
+            Expr::Function(_) | Expr::ArrowFunction { .. } => cg.gen_expr(expr),
+            Expr::Await { .. } | Expr::Yield { .. } => cg.gen_expr(expr),
+            Expr::Call { .. } | Expr::New { .. } => cg.gen_expr(expr),
+            Expr::Member { .. } | Expr::Super | Expr::This => cg.gen_expr(expr),
+            Expr::StaticMember { .. } | Expr::PrivateMember { .. } => cg.gen_expr(expr),
+            Expr::MetaProperty { .. } | Expr::TaggedTemplate { .. } => cg.gen_expr(expr),
+            Expr::Seq { .. } | Expr::Spread { .. } => cg.gen_expr(expr),
+            Expr::Class { .. } | Expr::TypeAnnot { .. } | Expr::ArrowWithType { .. } => cg.gen_expr(expr),
             Expr::Block(_) => cg.gen_expr(expr),
             Expr::Invalid => panic!("Invalid expression in codegen"),
         }
@@ -73,31 +54,20 @@ mod completeness_tests {
     /// will cause a compilation error here.
     fn assert_stmt_codegen_returns_some(stmt: &Stmt) -> Option<TokenStream> {
         let cg = QuoteCodegen::default();
+        gen_stmt_for_codegen(&cg, stmt)
+    }
+
+    fn gen_stmt_for_codegen(cg: &QuoteCodegen, stmt: &Stmt) -> Option<TokenStream> {
         match stmt {
-            Stmt::Empty => cg.gen_stmt(stmt),
-            Stmt::Block { .. } => cg.gen_stmt(stmt),
-            Stmt::Expr { .. } => cg.gen_stmt(stmt),
-            Stmt::If { .. } => cg.gen_stmt(stmt),
-            Stmt::While { .. } => cg.gen_stmt(stmt),
-            Stmt::DoWhile { .. } => cg.gen_stmt(stmt),
-            Stmt::For { .. } => cg.gen_stmt(stmt),
-            Stmt::ForIn { .. } => cg.gen_stmt(stmt),
-            Stmt::ForOf { .. } => cg.gen_stmt(stmt),
-            Stmt::Continue { .. } => cg.gen_stmt(stmt),
-            Stmt::Break { .. } => cg.gen_stmt(stmt),
-            Stmt::Return { .. } => cg.gen_stmt(stmt),
-            Stmt::With { .. } => cg.gen_stmt(stmt),
-            Stmt::Labeled { .. } => cg.gen_stmt(stmt),
-            Stmt::Switch { .. } => cg.gen_stmt(stmt),
-            Stmt::Throw { .. } => cg.gen_stmt(stmt),
-            Stmt::Try { .. } => cg.gen_stmt(stmt),
-            Stmt::FunctionDecl(_) => cg.gen_stmt(stmt),
-            Stmt::Class(_) => cg.gen_stmt(stmt),
-            Stmt::Variable(_) => cg.gen_stmt(stmt),
-            Stmt::ExportNamed { .. } => cg.gen_stmt(stmt),
-            Stmt::ExportDefault { .. } => cg.gen_stmt(stmt),
-            Stmt::ImportNamed { .. } => cg.gen_stmt(stmt),
-            Stmt::ImportDefault { .. } => cg.gen_stmt(stmt),
+            Stmt::Empty | Stmt::Block { .. } | Stmt::Expr { .. } => cg.gen_stmt(stmt),
+            Stmt::If { .. } | Stmt::While { .. } | Stmt::DoWhile { .. } => cg.gen_stmt(stmt),
+            Stmt::For { .. } | Stmt::ForIn { .. } | Stmt::ForOf { .. } => cg.gen_stmt(stmt),
+            Stmt::Continue { .. } | Stmt::Break { .. } | Stmt::Return { .. } => cg.gen_stmt(stmt),
+            Stmt::With { .. } | Stmt::Labeled { .. } | Stmt::Switch { .. } => cg.gen_stmt(stmt),
+            Stmt::Throw { .. } | Stmt::Try { .. } => cg.gen_stmt(stmt),
+            Stmt::FunctionDecl(_) | Stmt::Class(_) | Stmt::Variable(_) => cg.gen_stmt(stmt),
+            Stmt::ExportNamed { .. } | Stmt::ExportDefault { .. } => cg.gen_stmt(stmt),
+            Stmt::ImportNamed { .. } | Stmt::ImportDefault { .. } => cg.gen_stmt(stmt),
         }
     }
 
@@ -105,43 +75,60 @@ mod completeness_tests {
     /// will cause a compilation error here.
     fn assert_type_codegen_compiles(ty: &Type) -> TokenStream {
         let cg = QuoteCodegen::default();
-        match ty {
-            Type::String => cg.gen_type(ty),
-            Type::Number => cg.gen_type(ty),
-            Type::Boolean => cg.gen_type(ty),
-            Type::Undefined => cg.gen_type(ty),
-            Type::Null => cg.gen_type(ty),
-            Type::Void => cg.gen_type(ty),
-            Type::Never => cg.gen_type(ty),
-            Type::Unknown => cg.gen_type(ty),
-            Type::Any => cg.gen_type(ty),
-            Type::BigInt => cg.gen_type(ty),
-            Type::Symbol => cg.gen_type(ty),
-            Type::Literal { .. } => cg.gen_type(ty),
-            Type::Ref { .. } => cg.gen_type(ty),
-            Type::Union { .. } => cg.gen_type(ty),
-            Type::Intersection { .. } => cg.gen_type(ty),
-            Type::Array { .. } => cg.gen_type(ty),
-            Type::Function { .. } => cg.gen_type(ty),
-            Type::Object { .. } => cg.gen_type(ty),
-            Type::Index { .. } => cg.gen_type(ty),
-            Type::Query { .. } => cg.gen_type(ty),
-            Type::Infer { .. } => cg.gen_type(ty),
-            Type::Mapped { .. } => cg.gen_type(ty),
-            Type::Conditional { .. } => cg.gen_type(ty),
-            Type::This => cg.gen_type(ty),
-            Type::Template { .. } => cg.gen_type(ty),
-            Type::Partial { .. } => cg.gen_type(ty),
-            Type::Required { .. } => cg.gen_type(ty),
-            Type::Pick { .. } => cg.gen_type(ty),
-            Type::Omit { .. } => cg.gen_type(ty),
-            Type::Record { .. } => cg.gen_type(ty),
-            Type::KeyOf { .. } => cg.gen_type(ty),
-            Type::ReturnType { .. } => cg.gen_type(ty),
-            Type::Parameters { .. } => cg.gen_type(ty),
-            Type::Readonly { .. } => cg.gen_type(ty),
-            Type::Tuple { .. } => cg.gen_type(ty),
-        }
+        gen_type_for_codegen(&cg, ty)
+    }
+
+    fn gen_type_for_codegen(cg: &QuoteCodegen, ty: &Type) -> TokenStream {
+        if is_primitive_type(ty) { return cg.gen_type(ty); }
+        if is_complex_type(ty) { return cg.gen_type(ty); }
+        cg.gen_type(ty)
+    }
+
+    fn is_primitive_type(ty: &Type) -> bool {
+        matches!(
+            ty,
+            Type::String
+                | Type::Number
+                | Type::Boolean
+                | Type::Undefined
+                | Type::Null
+                | Type::Void
+                | Type::Never
+                | Type::Unknown
+                | Type::Any
+                | Type::BigInt
+                | Type::Symbol
+                | Type::This
+        )
+    }
+
+    fn is_complex_type(ty: &Type) -> bool {
+        matches!(
+            ty,
+            Type::Literal { .. }
+                | Type::Ref { .. }
+                | Type::Union { .. }
+                | Type::Intersection { .. }
+                | Type::Array { .. }
+                | Type::Function { .. }
+                | Type::Object { .. }
+                | Type::Index { .. }
+                | Type::Query { .. }
+                | Type::Infer { .. }
+                | Type::Mapped { .. }
+                | Type::Conditional { .. }
+                | Type::Template { .. }
+                | Type::Partial { .. }
+                | Type::Required { .. }
+                | Type::Pick { .. }
+                | Type::Omit { .. }
+                | Type::Record { .. }
+                | Type::KeyOf { .. }
+                | Type::ReturnType { .. }
+                | Type::Parameters { .. }
+                | Type::Readonly { .. }
+                | Type::Tuple { .. }
+        )
     }
 
     // =============================================================================
