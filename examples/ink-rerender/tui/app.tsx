@@ -11,12 +11,10 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function RerenderDemo() {
-  // NOTE: Hooks not supported in runts dev mode
   // Static values for parity testing
   const count = 0;
   const name = "Static User";
   const isVisible = true;
-  const items = ["Item A", "Item B", "Item C"];
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -28,12 +26,12 @@ export default function RerenderDemo() {
       <Text>Visible: {isVisible ? "Yes" : "No"}</Text>
       
       <Text></Text>
-      <Text bold>Items ({items.length}):</Text>
-      {items.map((item, i) => (
-        <Text key={item} dimColor>
-          - {item}
-        </Text>
-      ))}
+      <Text bold>Items:</Text>
+      <Box flexDirection="column" gap={1}>
+        <Text dimColor>- Item A</Text>
+        <Text dimColor>- Item B</Text>
+        <Text dimColor>- Item C</Text>
+      </Box>
       
       <Text></Text>
       <Text dimColor italic>
