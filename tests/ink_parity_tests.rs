@@ -585,6 +585,10 @@ fn test_new_examples_have_main_tsx() {
         "ink-combined-hooks",
         "ink-progress-bar",
         "ink-dynamic-children",
+        "ink-stderr",
+        "ink-relative",
+        "ink-hooks",
+        "ink-import",
     ];
     
     for example in new_examples {
@@ -662,4 +666,177 @@ fn test_parity_harness_script_exists() {
         metadata.permissions().readonly() == false,
         "parity harness script should be writable"
     );
+}
+
+/// Verify ink-stderr example exists and has correct structure
+#[test]
+fn test_ink_stderr_example() {
+    let path = Path::new("./examples/ink-stderr/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useStderr"), "should mention useStderr hook");
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+}
+
+/// Verify ink-relative example exists and uses position prop
+#[test]
+fn test_ink_relative_example() {
+    let path = Path::new("./examples/ink-relative/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // The example should demonstrate position styling
+    assert!(content.contains("Position Demo") || content.contains("position"), 
+            "should have position demo");
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+}
+
+/// Verify ink-hooks example exists and covers all hooks
+#[test]
+fn test_ink_hooks_example() {
+    let path = Path::new("./examples/ink-hooks/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useStdin"), "should cover useStdin");
+    assert!(content.contains("useStdout"), "should cover useStdout");
+    assert!(content.contains("useStderr"), "should cover useStderr");
+    assert!(content.contains("useWindowSize"), "should cover useWindowSize");
+}
+
+/// Verify ink-import example exists and uses imports
+#[test]
+fn test_ink_import_example() {
+    let path = Path::new("./examples/ink-import/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Check for multiple imports
+    assert!(content.contains("from 'ink'"), "should import from ink");
+    assert!(content.contains("Box"), "should use Box");
+    assert!(content.contains("Text"), "should use Text");
+    assert!(content.contains("Newline"), "should use Newline");
+    assert!(content.contains("Spacer"), "should use Spacer");
+}
+
+/// Verify all ink examples have valid TypeScript structure
+#[test]
+fn test_all_ink_examples_typescript_structure() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        
+        let content = fs::read_to_string(&app_tsx)
+            .expect(&format!("should read {}", name));
+        
+        // All examples should export a default function
+        assert!(
+            content.contains("export default") || content.contains("function "),
+            "{} should export a function",
+            name
+        );
+        
+        // All examples should use Box or Text (core components)
+        assert!(
+            content.contains("<Box") || content.contains("<Text"),
+            "{} should use Box or Text components",
+            name
+        );
+        
+        // No syntax errors: check for balanced braces
+        let open_braces = content.matches('{').count();
+        let close_braces = content.matches('}').count();
+        assert_eq!(
+            open_braces, close_braces,
+            "{} should have balanced braces ({} open, {} close)",
+            name, open_braces, close_braces
+        );
+    }
+}
+
+/// Verify ink examples total count for feature coverage
+#[test]
+fn test_ink_examples_comprehensive_coverage() {
+    let examples_dir = Path::new("./examples");
+    
+    let count: usize = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().is_dir() && {
+                e.path().file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("ink-"))
+                    .unwrap_or(false)
+            }
+        })
+        .count();
+    
+    // We should have comprehensive coverage with at least 45 examples
+    assert!(
+        count >= 45,
+        "should have at least 45 ink examples for comprehensive coverage, found {}",
+        count
+    );
+}
+
+/// Verify each ink example has a working deno.json
+#[test]
+fn test_all_deno_json_have_valid_imports() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let deno_json = entry.path().join("deno.json");
+        
+        let content = fs::read_to_string(&deno_json)
+            .expect(&format!("should read deno.json for {}", name));
+        
+        let json: serde_json::Value = serde_json::from_str(&content)
+            .expect(&format!("deno.json for {} should be valid JSON", name));
+        
+        // Verify imports object exists
+        let imports = json.get("imports")
+            .and_then(|i| i.as_object())
+            .expect(&format!("{} deno.json should have imports object", name));
+        
+        // Verify ink is imported
+        assert!(
+            imports.contains_key("ink"),
+            "{} deno.json should import ink",
+            name
+        );
+        
+        // Verify react is imported
+        assert!(
+            imports.contains_key("react"),
+            "{} deno.json should import react",
+            name
+        );
+    }
 }
