@@ -270,12 +270,37 @@ fn test_total_ink_examples_count() {
         })
         .count();
     
-    // We should have at least 35 ink examples
+    // We should have at least 50 ink examples
     assert!(
-        count >= 35,
-        "should have at least 35 ink examples, found {}",
+        count >= 50,
+        "should have at least 50 ink examples, found {}",
         count
     );
+}
+
+/// Verify ink-switch example structure
+#[test]
+fn test_ink_switch_structure() {
+    let path = Path::new("./examples/ink-switch/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(components.contains(&"Text"), "should use Text component");
+}
+
+/// Verify ink-uncontrolled-input example structure
+#[test]
+fn test_ink_uncontrolled_input_structure() {
+    let path = Path::new("./examples/ink-uncontrolled-input/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(components.contains(&"Text"), "should use Text component");
+    assert!(content.contains("backgroundColor"), "should use backgroundColor prop");
 }
 
 /// Verify ink-text-styling example structure
