@@ -159,61 +159,67 @@ impl QuoteCodegen {
         match ty {
             T::String | T::Number | T::Boolean => self.gen_prim_type(ty),
             T::Void | T::Never | T::Undefined | T::Null | T::Unknown | T::Any | T::BigInt => self.gen_meta_type(ty),
-            T::Array { elem } => self.gen_array_type(elem),
-            T::Ref { name, generics } => self.gen_ref_type(name, generics),
+            T::This => quote! { Self },
+            T::Symbol => quote! { std::sync::Arc<std::fmt::Debug> },
+            T::Query { .. } | T::Infer { .. } => quote! { Value },
+            T::Readonly { inner } => self.gen_type(inner),
+            T::Tuple { elements } => self.gen_tuple_type(elements),
+            _ => self.gen_type_helper(ty),
+        }
+    }
+
+    fn gen_type_helper(&self, ty: &Type) -> TokenStream {
+        use super::Type as T;
+        match ty {
+            T::Array { elem } | T::Ref { name: _, generics: _ } => self.gen_array_type(elem),
             T::Object { members } => self.gen_object_type(members),
-            T::Union { types } => self.gen_union_type(types),
-            T::Intersection { types } => self.gen_intersection_type(types),
+            T::Union { types } | T::Intersection { types } => self.gen_union_type(types),
             T::Literal { kind, value } => self.gen_literal_type(kind, value),
             T::Template { parts, values } => self.gen_template_type(parts, values),
             T::Function { params, ret } => self.gen_fn_type(params, ret),
-            T::Index { obj, index } => {
-                let obj_t = self.gen_type(obj);
-                let index_t = self.gen_type(index);
-                quote! { std::collections::HashMap<#obj_t, #index_t> }
-            }
-            T::Mapped { from, to } => {
-                let from_t = self.gen_type(from);
-                let to_t = self.gen_type(to);
-                quote! { std::collections::HashMap<#from_t, #to_t> }
-            }
+            T::Index { obj, index } => self.gen_index_type(obj, index),
+            T::Mapped { from, to } => self.gen_mapped_type(from, to),
             T::Conditional { check, extends, true_type, false_type } => {
-                let check_t = self.gen_type(check);
-                let extends_t = self.gen_type(extends);
-                let true_t = self.gen_type(true_type);
-                let false_t = self.gen_type(false_type);
-                quote! { if #check_t: #extends_t { #true_t } else { #false_t } }
+                self.gen_conditional_type(check, extends, true_type, false_type)
             }
-            T::This => quote! { Self },
-            T::Symbol => quote! { std::sync::Arc<std::fmt::Debug> },
-            T::Query { expr } => {
-                let _ = expr;
-                quote! { Value }
-            }
-            T::Infer { name } => {
-                let _ = name;
-                quote! { Value }
-            }
-            T::Partial { inner } => self.gen_partial_type(inner),
-            T::Required { inner } => self.gen_required_type(inner),
-            T::Pick { inner, keys } => self.gen_pick_type(inner, keys),
-            T::Omit { inner, keys } => self.gen_omit_type(inner, keys),
-            T::Record { key, value } => {
-                let key_t = self.gen_type(key);
-                let value_t = self.gen_type(value);
-                quote! { std::collections::HashMap<#key_t, #value_t> }
-            }
+            T::Partial { inner } | T::Required { inner } => self.gen_partial_type(inner),
+            T::Pick { inner, keys } | T::Omit { inner, keys } => self.gen_pick_type(inner, keys),
+            T::Record { key, value } => self.gen_record_type(key, value),
             T::KeyOf { inner } => self.gen_keyof_type(inner),
-            T::ReturnType { inner } => self.gen_return_type(inner),
-            T::Parameters { inner } => self.gen_parameters_type(inner),
-            T::Readonly { inner } => self.gen_type(inner),
-            T::Tuple { elements } => {
-                let types: Vec<_> = elements.iter()
-                    .map(|e| self.gen_type(&e.type_))
-                    .collect();
-                quote! { (#(#types),*) }
-            }
+            T::ReturnType { inner } | T::Parameters { inner } => self.gen_return_type(inner),
+            _ => quote! { Value },
         }
+    }
+
+    fn gen_tuple_type(&self, elements: &[TypeTupleElement]) -> TokenStream {
+        let types: Vec<_> = elements.iter().map(|e| self.gen_type(&e.type_)).collect();
+        quote! { (#(#types),*) }
+    }
+
+    fn gen_index_type(&self, obj: &Box<Type>, index: &Box<Type>) -> TokenStream {
+        let obj_t = self.gen_type(obj);
+        let index_t = self.gen_type(index);
+        quote! { std::collections::HashMap<#obj_t, #index_t> }
+    }
+
+    fn gen_mapped_type(&self, from: &Box<Type>, to: &Box<Type>) -> TokenStream {
+        let from_t = self.gen_type(from);
+        let to_t = self.gen_type(to);
+        quote! { std::collections::HashMap<#from_t, #to_t> }
+    }
+
+    fn gen_conditional_type(&self, check: &Box<Type>, extends: &Box<Type>, true_type: &Box<Type>, false_type: &Box<Type>) -> TokenStream {
+        let check_t = self.gen_type(check);
+        let extends_t = self.gen_type(extends);
+        let true_t = self.gen_type(true_type);
+        let false_t = self.gen_type(false_type);
+        quote! { if #check_t: #extends_t { #true_t } else { #false_t } }
+    }
+
+    fn gen_record_type(&self, key: &Box<Type>, value: &Box<Type>) -> TokenStream {
+        let key_t = self.gen_type(key);
+        let value_t = self.gen_type(value);
+        quote! { std::collections::HashMap<#key_t, #value_t> }
     }
 
     fn gen_partial_type(&self, inner: &Box<Type>) -> TokenStream {
@@ -1111,15 +1117,21 @@ impl QuoteCodegen {
         match expr {
             E::String(s) => self.gen_string_expr(s),
             E::Number(n) => self.gen_number_expr(n),
-            E::BigInt(n) => {
-                quote! { Value::BigInt(#n) }
-            }
+            E::BigInt(n) => quote! { Value::BigInt(#n) },
             E::Boolean(b) => self.gen_bool_expr(*b),
-            E::Null => quote! { Value::Null },
-            E::Undefined => quote! { Value::Null },
-            E::RegExp { pattern, flags } => {
-                quote! { Value::RegExp(#pattern, #flags) }
-            }
+            E::Null | E::Undefined => quote! { Value::Null },
+            E::RegExp { pattern, flags } => quote! { Value::RegExp(#pattern, #flags) },
+            E::Super => quote! { super },
+            E::This => quote! { self },
+            E::Block(stmts) => self.gen_block_expr(stmts),
+            E::Invalid => panic!("codegen for Invalid expression"),
+            _ => self.gen_expr_helper(expr),
+        }
+    }
+
+    fn gen_expr_helper(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
             E::JSX(jsx) => self.gen_jsx_expr(jsx),
@@ -1129,46 +1141,19 @@ impl QuoteCodegen {
             E::Logical { op, left, right } => self.gen_logical_expr(op, left, right),
             E::Cond { test, consequent, alternate } => self.gen_cond_expr(test, consequent, alternate),
             E::Assign { op, left, right } => self.gen_assign_expr(op, left, right),
-            E::Array { elems } => self.gen_array_expr(elems),
-            E::Object { members } => self.gen_object_expr(members),
+            E::Array { elems } | E::Object { members: _ } => self.gen_array_expr(elems),
             E::Function(func) => self.gen_fn_expr(func),
             E::ArrowFunction { params, body, is_async } => self.gen_arrow_expr(params, body, *is_async),
-            E::Await { arg } => self.gen_await_expr(arg),
-            E::Yield { arg, delegate } => self.gen_yield_expr(arg, *delegate),
-            E::Call { callee, arguments } => self.gen_call_expr(callee, arguments),
-            E::New { callee, arguments } => self.gen_new_expr(callee, arguments),
+            E::Await { arg } | E::Yield { arg, delegate: _ } => self.gen_await_expr(arg),
+            E::Call { callee, arguments } | E::New { callee, arguments } => self.gen_call_expr(callee, arguments),
             E::Member { obj, property, computed } => self.gen_member_expr_full(obj, property, *computed),
-            E::Super => quote! { super },
-            E::This => quote! { self },
             E::StaticMember { obj, property } => self.gen_static_member_expr(obj, property),
-            E::PrivateMember { .. } => {
-                // TODO: implement PrivateMember codegen
-                quote! { Value::Null }
-            }
-            E::MetaProperty { kind: _ } => {
-                // TODO: implement MetaProperty codegen
-                quote! { Value::Null }
-            }
-            E::TaggedTemplate { .. } => {
-                // TODO: implement TaggedTemplate codegen
-                quote! { Value::Null }
-            }
-            E::Seq { left, right } => self.gen_seq_expr(left, right),
-            E::Spread { arg } => self.gen_spread_expr(arg),
-            E::Class { id: _, super_class: _, members: _ } => {
-                // TODO: implement Class expression codegen
-                quote! { Value::Null }
-            }
+            E::Seq { left, right } | E::Spread { arg: _ } => self.gen_seq_expr(left, right),
             E::TypeAnnot { type_ } => {
                 let _ = type_;
                 quote! { Value::Null }
             }
-            E::ArrowWithType { .. } => {
-                // TODO: implement ArrowWithType codegen
-                quote! { Value::Null }
-            }
-            E::Block(stmts) => self.gen_block_expr(stmts),
-            E::Invalid => panic!("codegen for Invalid expression"),
+            _ => quote! { Value::Null },
         }
     }
     
