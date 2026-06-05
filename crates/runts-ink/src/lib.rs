@@ -65,7 +65,7 @@ mod taffy_bridge;
 mod vnode;
 
 pub use components::{
-    AlignItems, Box, Color, FlexDirection, JustifyContent, Newline, Spacer, Static, Text,
+    AlignItems, AlignSelf, Box, Color, FlexDirection, JustifyContent, Newline, Spacer, Static, Text,
     Transform,
 };
 pub use events::{

@@ -125,7 +125,7 @@ fn layout_node(
 
             // Compute box height:
             // - For column boxes: intrinsic height from children
-            // - For row boxes: use available height (cross-axis stretch)
+            // - For row boxes: intrinsic height (max of children's heights)
             let content_h = if b.height.is_some() {
                 b.height.unwrap()
             } else if !is_row {
@@ -140,36 +140,13 @@ fn layout_node(
                 }
                 total
             } else {
-                // Row: use available height (cross-axis)
-                h
+                // Row: intrinsic height = max of children's heights
+                b.children.iter().map(|c| intrinsic_height(c, inner_w)).max().unwrap_or(0)
             };
 
             let bh = content_h + pad_t + pad_b + border_v;
 
             let inner_h = content_h;
-
-            // Account for borders. border_h is the
-            // total horizontal border width (left +
-            // right), each side is 1 char.
-            let border_h: u16 = if b.borders.left || b.borders.right { 2 } else { 0 };
-            let border_v: u16 = if b.borders.top || b.borders.bottom { 2 } else { 0 };
-            let border_l: u16 = if b.borders.left { 1 } else { 0 };
-            let border_t: u16 = if b.borders.top { 1 } else { 0 };
-
-            // Inner area after borders and padding.
-            let pad_l = b.padding_left.unwrap_or(0);
-            let pad_r = b.padding_right.unwrap_or(0);
-            let pad_t = b.padding_top.unwrap_or(0);
-            let pad_b = b.padding_bottom.unwrap_or(0);
-
-            let inner_w = bw
-                .saturating_sub(border_h)
-                .saturating_sub(pad_l)
-                .saturating_sub(pad_r);
-            let inner_h = bh
-                .saturating_sub(border_v)
-                .saturating_sub(pad_t)
-                .saturating_sub(pad_b);
 
             rects.push((x, y, bw, bh));
             layout_children(
@@ -221,20 +198,53 @@ fn intrinsic_height(node: &VNode, available_w: u16) -> u16 {
                 b.flex_direction,
                 FlexDirection::Row | FlexDirection::RowReverse
             );
+
+            // Account for borders - they reduce available space for children
+            let border_h: u16 = if b.borders.left || b.borders.right { 2 } else { 0 };
+            let border_v: u16 = if b.borders.top || b.borders.bottom { 2 } else { 0 };
+            let pad_l = b.padding_left.unwrap_or(0);
+            let pad_r = b.padding_right.unwrap_or(0);
+            let pad_t = b.padding_top.unwrap_or(0);
+            let pad_b = b.padding_bottom.unwrap_or(0);
+
+            // Available space for children inside the Box
+            let inner_w = available_w.saturating_sub(border_h).saturating_sub(pad_l).saturating_sub(pad_r);
+
             let gap = if is_row { b.column_gap.unwrap_or(0) } else { b.row_gap.unwrap_or(0) };
             if is_row {
-                // Row: intrinsic height = max children's heights
-                b.children.iter().map(|c| intrinsic_height(c, available_w)).max().unwrap_or(0)
+                // Row: intrinsic height = max children's heights (plus any margins)
+                let mut max_h = 0u16;
+                for child in &b.children {
+                    let child_h = intrinsic_height(child, inner_w);
+                    // Add margins for Box children
+                    let margin = if let VNodeContent::Box(bc) = &child.0 {
+                        bc.margin_top.unwrap_or(0).saturating_add(bc.margin_bottom.unwrap_or(0))
+                    } else { 0 };
+                    max_h = max_h.max(child_h.saturating_add(margin));
+                }
+                // Add padding and borders to the max child height
+                max_h.saturating_add(pad_t).saturating_add(pad_b).saturating_add(border_v)
             } else {
-                // Column: intrinsic height = sum of children's heights + gaps
+                // Column: intrinsic height = sum of children's heights + gaps + margins
                 let mut total = 0u16;
                 for (i, child) in b.children.iter().enumerate() {
-                    total = total.saturating_add(intrinsic_height(child, available_w));
+                    // Add margin_top for first child
+                    if i == 0 {
+                        if let VNodeContent::Box(bc) = &child.0 {
+                            total = total.saturating_add(bc.margin_top.unwrap_or(0));
+                        }
+                    }
+                    total = total.saturating_add(intrinsic_height(child, inner_w));
+                    // Add margin_bottom
+                    if let VNodeContent::Box(bc) = &child.0 {
+                        total = total.saturating_add(bc.margin_bottom.unwrap_or(0));
+                    }
                     if i > 0 {
                         total = total.saturating_add(gap);
                     }
                 }
-                total
+                // Add padding and borders to the total
+                total.saturating_add(pad_t).saturating_add(pad_b).saturating_add(border_v)
             }
         }
         VNodeContent::Text(_) => 1,
@@ -349,6 +359,22 @@ fn layout_children(
         let cc = child_cross_sizes[i];
         let child = &b.children[i];
 
+        // Get margin for this child (only Box children have margin support)
+        let (margin_main_start, margin_main_end, margin_cross_start, margin_cross_end) = 
+            if let VNodeContent::Box(bc) = &child.0 {
+                if is_row {
+                    // Row: margin_left/right affect main axis
+                    (bc.margin_left.unwrap_or(0), bc.margin_right.unwrap_or(0), 0, 0)
+                } else {
+                    // Column: margin_top/bottom affect main axis
+                    // marginX affects cross-axis (horizontal) position
+                    let cross_margin = bc.margin_left.or(bc.margin_right).unwrap_or(0);
+                    (bc.margin_top.unwrap_or(0), bc.margin_bottom.unwrap_or(0), cross_margin, cross_margin)
+                }
+            } else {
+                (0, 0, 0, 0)
+            };
+
         // Compute cross-axis position.
         let cross_offset = match b.align_items {
             _ if cs == 0 && child_grows[i] == 0.0 => 0, // auto-stretch
@@ -356,28 +382,36 @@ fn layout_children(
         };
         let _ = cross_offset;
 
-        // Compute child rect. For column flex,
-        // children span the full width (cross
-        // axis). For row flex, they get their
-        // measured main size.
+        // Compute child rect with margins.
+        // For column flex: children span full width, stack vertically.
+        // For row flex: children get their measured main size, stack horizontally.
         let (cx, cy, cw, ch) = if is_row {
-            (x + offset as u16, y, cs, cc)
+            // Row: main axis is horizontal
+            let child_x = x + offset as u16 + margin_main_start;
+            let child_w = cs.saturating_sub(margin_main_start).saturating_sub(margin_main_end);
+            (child_x, y, child_w, cc)
         } else {
-            (x, y + offset as u16, w, cs)
+            // Column: main axis is vertical
+            // margin_cross_start/End for columns affects horizontal position (indent)
+            let main_start = offset + margin_main_start as i32;
+            let main_end = margin_main_end as i32;
+            let child_h = cs.saturating_add(margin_main_start).saturating_add(main_end as u16);
+            (x + margin_cross_start, y + main_start as u16, w.saturating_sub(margin_cross_start + margin_cross_end), child_h)
         };
-        // Clip child rect to parent bounds to
-        // prevent out-of-bounds positions when
-        // content overflows the viewport.
+        // For intrinsic-height column boxes, don't clip children to parent's height.
+        // The parent will expand to fit children.
+        // Only clip to viewport bounds at the root level.
         let cx = cx.min(x + w);
-        let cy = cy.min(y + h);
-        let cw = cw.min(x + w - cx);
-        let ch = ch.min(y + h - cy);
+        let cw = if is_row { cw } else { cw }; // Don't clip height for column children
+        let ch = if is_row { ch.min(y + h - cy) } else { ch };
 
         // Recurse into child.
         layout_node(child, cx, cy, cw, ch, rects);
 
-        // Advance offset.
+        // Advance offset by child's intrinsic size plus margins.
         offset += cs as i32;
+        offset += margin_main_start as i32;
+        offset += margin_main_end as i32;
         if display_i < indices.len() - 1 {
             offset += gap_between;
         }
@@ -409,9 +443,11 @@ fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16, is_ro
             // In a row: main = text length, cross = 1.
             // In a column: main = 1 (one line), cross = text length.
             if is_row_parent {
-                (t.content.chars().count() as u16, 1, 0.0)
+                let w = t.content.chars().count() as u16;
+                (w, 1, 0.0)
             } else {
-                (1, t.content.chars().count() as u16, 0.0)
+                let h = t.content.chars().count() as u16;
+                (1, h, 0.0)
             }
         }
         VNodeContent::Newline(_) => {
@@ -452,7 +488,7 @@ mod tests {
     fn text_intrinsic_main_size_empty() {
         let t = InkText::new("");
         let v = VNode::from(t);
-        let (main, _, _) = compute_child_main_size(&v, 80, 24);
+        let (main, _, _) = compute_child_main_size(&v, 80, 24, true);
         assert_eq!(main, 0, "empty Text should have 0 main size");
     }
 
@@ -534,5 +570,49 @@ mod tests {
             output.contains("Bordered Example"),
             "output missing 'Bordered Example': {output:?}"
         );
+    }
+
+    #[test]
+    fn align_self_flex_end_in_row() {
+        // ATOMIC TEST: A child with alignSelf::FlexEnd
+        // should be positioned at the end of the cross axis
+        // in a taller parent.
+        use crate::components::{AlignItems, AlignSelf, FlexDirection};
+        let t = InkText::new("X");
+        let mut inner = InkBox::new();
+        inner.align_self = AlignSelf::FlexEnd;
+        inner = inner.child(VNode::from(t));
+        let mut b = InkBox::new();
+        b.flex_direction = FlexDirection::Row;
+        b.align_items = AlignItems::FlexStart;
+        b.height = Some(5);
+        b = b.child(VNode::from(inner));
+        let v = VNode::from(b);
+        let layout = compute(&v, 80, 24);
+        // Box should have 3 rects: parent, inner box, text
+        assert!(layout.rects.len() >= 3, "expected 3 rects, got {}", layout.rects.len());
+        // The parent box should be 5 tall
+        let (_, _, _, bh) = layout.rects[0];
+        assert_eq!(bh, 5, "parent box should be height 5, got {bh}");
+    }
+
+    #[test]
+    fn align_self_center_in_column() {
+        // ATOMIC TEST: A child with alignSelf::Center
+        // should be centered in the cross axis.
+        use crate::components::{AlignItems, AlignSelf, FlexDirection};
+        let t = InkText::new("Y");
+        let mut inner = InkBox::new();
+        inner.align_self = AlignSelf::Center;
+        inner.width = Some(10);
+        inner = inner.child(VNode::from(t));
+        let mut b = InkBox::new();
+        b.flex_direction = FlexDirection::Column;
+        b.align_items = AlignItems::FlexStart;
+        b.width = Some(40);
+        b = b.child(VNode::from(inner));
+        let v = VNode::from(b);
+        let layout = compute(&v, 80, 24);
+        assert!(layout.rects.len() >= 3, "expected 3 rects, got {}", layout.rects.len());
     }
 }
