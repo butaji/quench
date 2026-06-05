@@ -93,24 +93,45 @@ impl EffectAnalyzer {
             S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
             S::While { test, body } => self.analyze_while(test, body),
             S::For { init, test, update, body } => self.analyze_for(init, test, update, body),
-            S::ForIn { left, right, body } => { self.analyze_for_init(Some(left)); self.analyze_expr(right); self.analyze_stmt(body); }
-            S::ForOf { left, right, body, is_await } => {
-                self.analyze_for_init(Some(left)); self.analyze_expr(right);
-                if *is_await { self.analyze_await_expr(&Expr::Await { arg: Box::new(right.clone()) }); }
-                self.analyze_stmt(body);
-            }
-            S::DoWhile { body, test } => { self.analyze_stmt(body); self.analyze_expr(test); }
+            S::ForIn { left, right, body } => self.analyze_forin(left, right, body),
+            S::ForOf { left, right, body, is_await } => self.analyze_forof(left, right, body, *is_await),
+            S::DoWhile { body, test } => self.analyze_dowhile(body, test),
             S::Return { arg } => self.analyze_return(arg),
             S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
             S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
             S::Break { .. } | S::Continue { .. } | S::Labeled { .. } => {}
-            S::With { obj, body } => { self.analyze_expr(obj); self.analyze_stmt(body); }
+            S::With { obj, body } => self.analyze_with(obj, body),
             S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             S::Throw { arg } => self.analyze_throw(arg),
             S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
             | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
         }
+    }
+
+    fn analyze_forin(&mut self, left: &super::ForInitLeft, right: &Expr, body: &Box<Stmt>) {
+        self.analyze_for_init(Some(left));
+        self.analyze_expr(right);
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_forof(&mut self, left: &super::ForInitLeft, right: &Expr, body: &Box<Stmt>, is_await: bool) {
+        self.analyze_for_init(Some(left));
+        self.analyze_expr(right);
+        if is_await {
+            self.analyze_await_expr(&Expr::Await { arg: Box::new(right.clone()) });
+        }
+        self.analyze_stmt(body);
+    }
+
+    fn analyze_dowhile(&mut self, body: &Box<Stmt>, test: &Expr) {
+        self.analyze_stmt(body);
+        self.analyze_expr(test);
+    }
+
+    fn analyze_with(&mut self, obj: &Expr, body: &Box<Stmt>) {
+        self.analyze_expr(obj);
+        self.analyze_stmt(body);
     }
 
     fn analyze_throw(&mut self, arg: &Expr) {

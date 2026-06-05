@@ -73,18 +73,9 @@ impl OwnershipAnalyzer {
         match stmt {
             S::Expr { expr } => self.analyze_expr(expr),
             S::Block { stmts } => self.analyze_block(stmts),
-            S::If {
-                test,
-                consequent,
-                alternate,
-            } => self.analyze_if(test, consequent, alternate),
+            S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
             S::While { test, body } => self.analyze_while(test, body),
-            S::For {
-                init,
-                test,
-                update,
-                body,
-            } => self.analyze_for(init, test, update, body),
+            S::For { init, test, update, body } => self.analyze_for(init, test, update, body),
             S::ForIn { left, right, body } => self.analyze_for_in(left, right, body),
             S::ForOf { left, right, body, .. } => self.analyze_for_of(left, right, body),
             S::Return { arg } => self.analyze_return(arg),
@@ -93,13 +84,15 @@ impl OwnershipAnalyzer {
             S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
             S::Break { .. } | S::Continue { .. } => {}
             S::Throw { arg } => self.analyze_expr(arg),
-            S::With { obj, body } => {
-                self.analyze_expr(obj);
-                self.analyze_stmt(body);
-            }
+            S::With { obj, body } => self.analyze_with_stmt(obj, body),
             S::Labeled { body, .. } => self.analyze_stmt(body),
             _ => {}
         }
+    }
+
+    fn analyze_with_stmt(&mut self, obj: &Expr, body: &Box<Stmt>) {
+        self.analyze_expr(obj);
+        self.analyze_stmt(body);
     }
     fn analyze_block(&mut self, stmts: &[Stmt]) {
         for s in stmts {
