@@ -1197,16 +1197,20 @@ pub(crate) mod jsx {
     /// Handles conditional, member access, array literals, etc.
     fn expr_to_rust(expr: &serde_json::Value) -> Option<TokenStream> {
         let map = expr.as_object()?;
-        if let Some(cond) = map.get("Cond") { let test = Self::expr_to_rust(cond.get("test")?)?; let consequent = Self::expr_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_to_rust(cond.get("alternate")?)?; return Some(quote! { (#test ? #consequent : #alternate) }); }
-        if let Some(member) = map.get("Member") { let obj = Self::expr_to_rust(member.get("obj")?)?; let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false); let property = Self::expr_to_rust(member.get("property")?)?; return Some(if computed { quote! { #obj[#property as usize] } } else { quote! { #obj . #property } }); }
-        if let Some(arr) = map.get("Array") { let elems = arr.get("elems")?.as_array()?; let elem_tokens: Vec<TokenStream> = elems.iter().filter_map(|e| Self::expr_to_rust(e)).collect(); return Some(quote! { [#(#elem_tokens),*] }); }
+        if let Some(cond) = map.get("Cond") { return Self::expr_rust_cond(cond); }
+        if let Some(member) = map.get("Member") { return Self::expr_rust_member(member); }
+        if let Some(arr) = map.get("Array") { return Self::expr_rust_array(arr); }
         if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(quote! { #s }); }
         if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(quote! { #n }); }
         if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(quote! { #b }); }
         if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) { let ident = quote::format_ident!("{}", name); return Some(quote! { #ident }); }
         if let Some(inner) = map.get("Expr") { return Self::expr_to_rust(inner); }
-        if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) { match kind { "String" => Some(quote! { #{} }), "Number" => Some(quote! { #{} }), "Bool" => Some(quote! { #{} }), "Ident" => { let name = map.get("0")?.as_object()?.get("name")?.as_str()?; let ident = quote::format_ident!("{}", name); Some(quote! { #ident }) } _ => None } } else { None }
+        Self::expr_rust_kind(map)
     }
+    fn expr_rust_cond(cond: &serde_json::Value) -> Option<TokenStream> { let test = Self::expr_to_rust(cond.get("test")?)?; let consequent = Self::expr_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_to_rust(cond.get("alternate")?)?; Some(quote! { (#test ? #consequent : #alternate) }) }
+    fn expr_rust_member(member: &serde_json::Value) -> Option<TokenStream> { let obj = Self::expr_to_rust(member.get("obj")?)?; let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false); let property = Self::expr_to_rust(member.get("property")?)?; Some(if computed { quote! { #obj[#property as usize] } } else { quote! { #obj . #property } }) }
+    fn expr_rust_array(arr: &serde_json::Value) -> Option<TokenStream> { let elems = arr.get("elems")?.as_array()?; let elem_tokens: Vec<TokenStream> = elems.iter().filter_map(|e| Self::expr_to_rust(e)).collect(); Some(quote! { [#(#elem_tokens),*] }) }
+    fn expr_rust_kind(map: &serde_json::Map<std::string::String, serde_json::Value>) -> Option<TokenStream> { if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) { match kind { "Ident" => { let name = map.get("0")?.as_object()?.get("name")?.as_str()?; let ident = quote::format_ident!("{}", name); Some(quote! { #ident }) } _ => None } } else { None } }
 
     /// Flatten JSX children to a single text string
     /// (whitespace-separated). Used by `<Text>` to
@@ -1712,19 +1716,24 @@ pub(crate) mod jsx {
 
     /// Convert a HIR expression value to Rust code.
     pub(crate) fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
-        if let Some(n) = value.as_f64() { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
+        if let Some(n) = value.as_f64() { return Some(num_to_rust(n)); }
         let map = value.as_object()?;
+        Self::expr_value_to_rust_map(value, map)
+    }
+    fn expr_value_to_rust_map(value: &serde_json::Value, map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
         if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))); }
-        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
-        if let Some(n) = map.get("Number").and_then(|v| v.as_object()).and_then(|o| o.get("0")).and_then(|v| v.as_f64()) { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()).or_else(|| map.get("Number").and_then(|v| v.as_object()).and_then(|o| o.get("0")).and_then(|v| v.as_f64())) { return Some(num_to_rust(n)); }
         if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(b.to_string()); }
-        if let Some(ident) = map.get("Ident").and_then(|v| v.as_object()) { if let Some(name) = ident.get("name").and_then(|v| v.as_str()) { return Some(name.to_string()); } }
+        if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) { return Some(name.to_string()); }
         if let Some(inner) = map.get("Expr") { return Self::expr_value_to_rust(inner); }
-        if let Some(cond) = map.get("Cond") { let test = Self::expr_value_to_rust(cond.get("test")?)?; let consequent = Self::expr_value_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_value_to_rust(cond.get("alternate")?)?; return Some(format!("({} ? {} : {})", test, consequent, alternate)); }
-        if let Some(arr) = map.get("Array") { let elems = arr.get("elems")?.as_array()?; let parts: Vec<String> = elems.iter().filter_map(|e| Self::expr_value_to_rust(e)).collect(); return Some(format!("[{}]", parts.join(", "))); }
+        if let Some(cond) = map.get("Cond") { return Self::value_to_rust_cond(cond); }
+        if let Some(arr) = map.get("Array") { return Self::value_to_rust_array(arr); }
         if map.contains_key("Object") { let json = serde_json::to_string(value).ok()?; return Some(format!("serde_json::json!({})", json)); }
         None
     }
+    fn num_to_rust(n: f64) -> String { if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) } }
+    fn value_to_rust_cond(cond: &serde_json::Value) -> Option<String> { let test = Self::expr_value_to_rust(cond.get("test")?)?; let consequent = Self::expr_value_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_value_to_rust(cond.get("alternate")?)?; Some(format!("({} ? {} : {})", test, consequent, alternate)) }
+    fn value_to_rust_array(arr: &serde_json::Value) -> Option<String> { let elems = arr.get("elems")?.as_array()?; let parts: Vec<String> = elems.iter().filter_map(|e| Self::expr_value_to_rust(e)).collect(); Some(format!("[{}]", parts.join(", "))) }
 
     /// Try to generate widget code from HIR items JSON.
     /// Returns Some(code) if JSX was detected, None otherwise.

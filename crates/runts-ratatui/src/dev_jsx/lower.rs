@@ -61,23 +61,15 @@ pub fn lower_children(inner: &str) -> Vec<String> {
     let mut in_expr = false;
     let mut expr_buf = String::new();
     let mut text_buf = String::new();
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '{' && !in_expr {
-            if !text_buf.trim().is_empty() { results.push(format!("\"{}\"", text_buf.trim())); text_buf.clear(); }
-            in_expr = true; expr_buf.clear(); i += 1;
-        } else if c == '}' && in_expr {
-            let expr = expr_buf.trim().to_string();
-            if !expr.is_empty() { results.push(format!("format!(\"{{}}\", {})", expr)); }
-            in_expr = false; i += 1;
-        } else if in_expr {
-            expr_buf.push(c); i += 1;
-        } else {
-            text_buf.push(c); i += 1;
-        }
-    }
+    while i < chars.len() { lower_children_char(chars[i], &mut in_expr, &mut expr_buf, &mut text_buf, &mut i, &mut results); }
     if !text_buf.trim().is_empty() { results.push(format!("\"{}\"", text_buf.trim())); }
     results
+}
+fn lower_children_char(c: char, in_expr: &mut bool, expr_buf: &mut String, text_buf: &mut String, i: &mut usize, results: &mut Vec<String>) {
+    if c == '{' && !*in_expr { if !text_buf.trim().is_empty() { results.push(format!("\"{}\"", text_buf.trim())); text_buf.clear(); } *in_expr = true; expr_buf.clear(); *i += 1; }
+    else if c == '}' && *in_expr { let expr = expr_buf.trim().to_string(); if !expr.is_empty() { results.push(format!("format!(\"{}\", {})", expr)); } *in_expr = false; *i += 1; }
+    else if *in_expr { expr_buf.push(c); *i += 1; }
+    else { text_buf.push(c); *i += 1; }
 }
 
 pub fn lower_box(props: &[(String, String)], children: &[String]) -> String { lower_box_elem(props, children) }
