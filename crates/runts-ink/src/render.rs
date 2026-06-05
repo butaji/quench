@@ -1085,23 +1085,26 @@ fn count_vnodes(node: &VNode) -> usize {
     }
     let mut count = 1;
     match &node.0 {
-        VNodeContent::Box(b) => {
-            for child in &b.children {
-                count += count_vnodes(child);
-            }
-        }
-        VNodeContent::Static(s) => {
-            for child in &s.children {
-                count += count_vnodes(child);
-            }
-        }
-        VNodeContent::Transform(t) => {
-            count += count_vnodes(&t.child);
-        }
-        VNodeContent::Fragment(fs) => {
-            for child in fs {
-                count += count_vnodes(child);
-            }
+        VNodeContent::Box(b) => count += count_box_children(&b.children),
+        VNodeContent::Static(s) => count += count_static_children(&s.children),
+        VNodeContent::Transform(t) => count += count_vnodes(&t.child),
+        VNodeContent::Fragment(fs) => count += count_fragment_children(fs),
+        _ => {}
+    };
+    count
+}
+
+fn count_box_children(children: &[VNode]) -> usize {
+    children.iter().map(count_vnodes).sum()
+}
+
+fn count_static_children(children: &[VNode]) -> usize {
+    children.iter().map(count_vnodes).sum()
+}
+
+fn count_fragment_children(children: &[VNode]) -> usize {
+    children.iter().map(count_vnodes).sum()
+}
         }
         _ => {}
     }
