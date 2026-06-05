@@ -314,9 +314,9 @@ fn make_type_module_item(name: &str) -> Vec<hir::ModuleItem> {
 
 fn convert_export_default(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> {
     match &e.declaration {
-        ExportDefaultDeclarationKind::FunctionDeclaration(f) => export_func_decl(f),
-        ExportDefaultDeclarationKind::ClassDeclaration(c) => export_class_decl(c),
-        ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => make_type_module_item(&i.id.name),
+        ExportDefaultDeclarationKind::FunctionDeclaration(_) | ExportDefaultDeclarationKind::ClassDeclaration(_) | ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => {
+            convert_export_decl_or_type(e)
+        }
         ExportDefaultDeclarationKind::NumericLiteral(n) => expr_stmt(hir::Expr::Number(n.value)),
         ExportDefaultDeclarationKind::StringLiteral(s) => expr_stmt(hir::Expr::String(s.value.to_string())),
         ExportDefaultDeclarationKind::BooleanLiteral(b) => expr_stmt(hir::Expr::Boolean(b.value)),
@@ -324,6 +324,15 @@ fn convert_export_default(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> 
         ExportDefaultDeclarationKind::Identifier(id) => expr_stmt(hir::Expr::Ident { name: id.name.to_string() }),
         ExportDefaultDeclarationKind::ArrowFunctionExpression(a) => convert_arrow_export(a),
         _ => convert_default_kind(e),
+    }
+}
+
+fn convert_export_decl_or_type(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> {
+    match &e.declaration {
+        ExportDefaultDeclarationKind::FunctionDeclaration(f) => export_func_decl(f),
+        ExportDefaultDeclarationKind::ClassDeclaration(c) => export_class_decl(c),
+        ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => make_type_module_item(&i.id.name),
+        _ => vec![],
     }
 }
 
