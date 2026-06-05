@@ -65,7 +65,16 @@ fn run_init(name: String) -> Result<()> {
 
 fn run_hir_render(path: PathBuf) -> Result<()> {
     let source = std::fs::read_to_string(&path)?;
-    let output = hir_runtime::render_tsx(&source, 80, 24)
+    // Read terminal size from environment variables
+    let cols: u16 = std::env::var("COLS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(80);
+    let lines: u16 = std::env::var("LINES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24);
+    let output = hir_runtime::render_tsx(&source, cols, lines)
         .map_err(|e| anyhow::anyhow!("HIR render error: {e:?}"))?;
     print!("{output}");
     Ok(())

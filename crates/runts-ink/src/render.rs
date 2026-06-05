@@ -86,6 +86,10 @@ pub struct RenderOptions {
     /// not implemented — the renderer always draws the
     /// full frame.
     pub incremental_rendering: bool,
+    /// Terminal columns for rendering. Default 80.
+    pub columns: u16,
+    /// Terminal rows for rendering. Default 24.
+    pub rows: u16,
 }
 
 impl Default for RenderOptions {
@@ -98,6 +102,8 @@ impl Default for RenderOptions {
             alternate_screen: true,
             max_fps: 60,
             incremental_rendering: false,
+            columns: 80,
+            rows: 24,
         }
     }
 }
@@ -780,13 +786,10 @@ fn input_loop(
 /// serialise the buffer to a string with trailing
 /// whitespace stripped per line.
 pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
-    let width = options.max_fps.max(1) as u16; // reuse as columns
-    let _ = width;
-    // For the v0.1 implementation, render with a
-    // reasonable default size of 80x24.
-    let cols = 80u16;
-    let rows = 24u16;
-    let backend = ratatui::backend::TestBackend::new(cols as u16, rows as u16);
+    // Use terminal size from options, default to 80x24
+    let cols = options.columns.max(1);
+    let rows = options.rows.max(1);
+    let backend = ratatui::backend::TestBackend::new(cols, rows);
     let mut terminal = Terminal::new(backend).context("create test terminal")?;
     let mut layout = Layout::new();
     let tree = TaffyTree::from_vnode(&root, &mut layout);
