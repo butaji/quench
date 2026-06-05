@@ -982,23 +982,29 @@ impl QuoteCodegen {
     fn gen_try(&self, block: &super::Block, handler: &Option<super::CatchClause>, finalizer: &Option<super::Block>) -> TokenStream {
         let block_stmts: Vec<TokenStream> = block.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
         match (handler, finalizer) {
-            (Some(h), Some(f)) => {
-                let catch_param = syn::Ident::new(&h.param, proc_macro2::Span::call_site());
-                let catch_body: Vec<TokenStream> = h.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
-                let finally_stmts: Vec<TokenStream> = f.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
-                quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } }; #(#finally_stmts)* } }
-            }
-            (Some(h), None) => {
-                let catch_param = syn::Ident::new(&h.param, proc_macro2::Span::call_site());
-                let catch_body: Vec<TokenStream> = h.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
-                quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } } } }
-            }
-            (None, Some(f)) => {
-                let finally_stmts: Vec<TokenStream> = f.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
-                quote! { { #(#block_stmts)* #(#finally_stmts)* } }
-            }
+            (Some(h), Some(f)) => self.gen_try_catch_finally(&block_stmts, h, f),
+            (Some(h), None) => self.gen_try_catch(&block_stmts, h),
+            (None, Some(f)) => self.gen_try_finally(&block_stmts, f),
             (None, None) => quote! { #(#block_stmts)* },
         }
+    }
+
+    fn gen_try_catch_finally(&self, block_stmts: &[TokenStream], handler: &super::CatchClause, finalizer: &super::Block) -> TokenStream {
+        let catch_param = syn::Ident::new(&handler.param, proc_macro2::Span::call_site());
+        let catch_body: Vec<TokenStream> = handler.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+        let finally_stmts: Vec<TokenStream> = finalizer.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+        quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } }; #(#finally_stmts)* } }
+    }
+
+    fn gen_try_catch(&self, block_stmts: &[TokenStream], handler: &super::CatchClause) -> TokenStream {
+        let catch_param = syn::Ident::new(&handler.param, proc_macro2::Span::call_site());
+        let catch_body: Vec<TokenStream> = handler.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+        quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } } } }
+    }
+
+    fn gen_try_finally(&self, block_stmts: &[TokenStream], finalizer: &super::Block) -> TokenStream {
+        let finally_stmts: Vec<TokenStream> = finalizer.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+        quote! { { #(#block_stmts)* #(#finally_stmts)* } }
     }
 
     fn gen_block(&self, stmts: &[Stmt]) -> TokenStream {
