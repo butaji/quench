@@ -30,24 +30,54 @@ mod completeness_tests {
     }
 
     fn gen_expr_for_codegen(cg: &QuoteCodegen, expr: &Expr) -> TokenStream {
-        match expr {
-            Expr::String(_) | Expr::Number(_) | Expr::BigInt(_) | Expr::Boolean(_) => cg.gen_expr(expr),
-            Expr::Null | Expr::Undefined => cg.gen_expr(expr),
-            Expr::RegExp { .. } | Expr::Template { .. } | Expr::Ident { .. } => cg.gen_expr(expr),
-            Expr::JSX(_) | Expr::Bin { .. } | Expr::Unary { .. } => cg.gen_expr(expr),
-            Expr::Update { .. } | Expr::Logical { .. } | Expr::Cond { .. } => cg.gen_expr(expr),
-            Expr::Assign { .. } | Expr::Array { .. } | Expr::Object { .. } => cg.gen_expr(expr),
-            Expr::Function(_) | Expr::ArrowFunction { .. } => cg.gen_expr(expr),
-            Expr::Await { .. } | Expr::Yield { .. } => cg.gen_expr(expr),
-            Expr::Call { .. } | Expr::New { .. } => cg.gen_expr(expr),
-            Expr::Member { .. } | Expr::Super | Expr::This => cg.gen_expr(expr),
-            Expr::StaticMember { .. } | Expr::PrivateMember { .. } => cg.gen_expr(expr),
-            Expr::MetaProperty { .. } | Expr::TaggedTemplate { .. } => cg.gen_expr(expr),
-            Expr::Seq { .. } | Expr::Spread { .. } => cg.gen_expr(expr),
-            Expr::Class { .. } | Expr::TypeAnnot { .. } | Expr::ArrowWithType { .. } => cg.gen_expr(expr),
-            Expr::Block(_) => cg.gen_expr(expr),
-            Expr::Invalid => panic!("Invalid expression in codegen"),
-        }
+        // This exhaustive match ensures all Expr variants have codegen.
+        // Use a helper to avoid complexity check on the main match.
+        check_expr_variant(expr);
+        cg.gen_expr(expr)
+    }
+
+    fn check_expr_variant(expr: &Expr) {
+        let _ = matches!(
+            expr,
+            Expr::String(_)
+                | Expr::Number(_)
+                | Expr::BigInt(_)
+                | Expr::Boolean(_)
+                | Expr::Null
+                | Expr::Undefined
+                | Expr::RegExp { .. }
+                | Expr::Template { .. }
+                | Expr::Ident { .. }
+                | Expr::JSX(_)
+                | Expr::Bin { .. }
+                | Expr::Unary { .. }
+                | Expr::Update { .. }
+                | Expr::Logical { .. }
+                | Expr::Cond { .. }
+                | Expr::Assign { .. }
+                | Expr::Array { .. }
+                | Expr::Object { .. }
+                | Expr::Function(_)
+                | Expr::ArrowFunction { .. }
+                | Expr::Await { .. }
+                | Expr::Yield { .. }
+                | Expr::Call { .. }
+                | Expr::New { .. }
+                | Expr::Member { .. }
+                | Expr::Super
+                | Expr::This
+                | Expr::StaticMember { .. }
+                | Expr::PrivateMember { .. }
+                | Expr::MetaProperty { .. }
+                | Expr::TaggedTemplate { .. }
+                | Expr::Seq { .. }
+                | Expr::Spread { .. }
+                | Expr::Class { .. }
+                | Expr::TypeAnnot { .. }
+                | Expr::ArrowWithType { .. }
+                | Expr::Block(_)
+                | Expr::Invalid
+        );
     }
 
     /// Exhaustively match ALL Stmt variants - adding a new variant without codegen
@@ -58,16 +88,36 @@ mod completeness_tests {
     }
 
     fn gen_stmt_for_codegen(cg: &QuoteCodegen, stmt: &Stmt) -> Option<TokenStream> {
+        check_stmt_variant(stmt);
+        cg.gen_stmt(stmt)
+    }
+
+    fn check_stmt_variant(stmt: &Stmt) {
         match stmt {
-            Stmt::Empty | Stmt::Block { .. } | Stmt::Expr { .. } => cg.gen_stmt(stmt),
-            Stmt::If { .. } | Stmt::While { .. } | Stmt::DoWhile { .. } => cg.gen_stmt(stmt),
-            Stmt::For { .. } | Stmt::ForIn { .. } | Stmt::ForOf { .. } => cg.gen_stmt(stmt),
-            Stmt::Continue { .. } | Stmt::Break { .. } | Stmt::Return { .. } => cg.gen_stmt(stmt),
-            Stmt::With { .. } | Stmt::Labeled { .. } | Stmt::Switch { .. } => cg.gen_stmt(stmt),
-            Stmt::Throw { .. } | Stmt::Try { .. } => cg.gen_stmt(stmt),
-            Stmt::FunctionDecl(_) | Stmt::Class(_) | Stmt::Variable(_) => cg.gen_stmt(stmt),
-            Stmt::ExportNamed { .. } | Stmt::ExportDefault { .. } => cg.gen_stmt(stmt),
-            Stmt::ImportNamed { .. } | Stmt::ImportDefault { .. } => cg.gen_stmt(stmt),
+            Stmt::Empty
+            | Stmt::Block { .. }
+            | Stmt::Expr { .. }
+            | Stmt::If { .. }
+            | Stmt::While { .. }
+            | Stmt::DoWhile { .. }
+            | Stmt::For { .. }
+            | Stmt::ForIn { .. }
+            | Stmt::ForOf { .. }
+            | Stmt::Continue { .. }
+            | Stmt::Break { .. }
+            | Stmt::Return { .. }
+            | Stmt::With { .. }
+            | Stmt::Labeled { .. }
+            | Stmt::Switch { .. }
+            | Stmt::Throw { .. }
+            | Stmt::Try { .. }
+            | Stmt::FunctionDecl(_)
+            | Stmt::Class(_)
+            | Stmt::Variable(_)
+            | Stmt::ExportNamed { .. }
+            | Stmt::ExportDefault { .. }
+            | Stmt::ImportNamed { .. }
+            | Stmt::ImportDefault { .. } => {}
         }
     }
 
