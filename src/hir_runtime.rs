@@ -2022,17 +2022,27 @@ fn apply_text_prop(t: &mut InkText, key: &str, val: &Value) {
 }
 
 fn parse_color(s: &str) -> Color {
+    let basic = parse_basic_color(s);
+    if basic.is_some() {
+        return basic.unwrap();
+    }
+    if s == "gray" || s == "grey" {
+        return Color::Gray;
+    }
+    Color::Default
+}
+
+fn parse_basic_color(s: &str) -> Option<Color> {
     match s {
-        "black" => Color::Black,
-        "red" => Color::Red,
-        "green" => Color::Green,
-        "yellow" => Color::Yellow,
-        "blue" => Color::Blue,
-        "magenta" => Color::Magenta,
-        "cyan" => Color::Cyan,
-        "white" => Color::White,
-        "gray" | "grey" => Color::Gray,
-        _ => Color::Default,
+        "black" => Some(Color::Black),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        "white" => Some(Color::White),
+        _ => None,
     }
 }
 
