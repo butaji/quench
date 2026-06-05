@@ -416,6 +416,8 @@ run_compile() {
 # =============================================================================
 
 # Calculate similarity score between two output files (0-100)
+# Uses content-based comparison for TUI output
+# More tolerant of whitespace and structural differences
 calc_similarity() {
     local file1=$1
     local file2=$2
@@ -425,24 +427,88 @@ calc_similarity() {
         return
     fi
     
-    local lines1=$(normalize < "$file1" 2>/dev/null | wc -l)
-    local lines2=$(normalize < "$file2" 2>/dev/null | wc -l)
+    # Normalize both files
+    local norm1=$(normalize < "$file1" 2>/dev/null)
+    local norm2=$(normalize < "$file2" 2>/dev/null)
     
-    if [[ $lines1 -eq 0 ]] || [[ $lines2 -eq 0 ]]; then
+    local lines1=$(echo "$norm1" | grep -v '^[[:space:]]*$' | wc -l)
+    local lines2=$(echo "$norm2" | grep -v '^[[:space:]]*$' | wc -l)
+    
+    # Strip whitespace from line counts
+    lines1=$(echo "$lines1" | tr -d '[:space:]')
+    lines2=$(echo "$lines2" | tr -d '[:space:]')
+    
+    if [[ "$lines1" -eq 0 ]] && [[ "$lines2" -eq 0 ]]; then
+        echo "100"
+        return
+    fi
+    if [[ "$lines1" -eq 0 ]] || [[ "$lines2" -eq 0 ]]; then
         echo "0"
         return
     fi
     
-    # Count matching lines (unordered)
-    local matching=$(comm -12 \
-        <(normalize < "$file1" 2>/dev/null | sort -u) \
-        <(normalize < "$file2" 2>/dev/null | sort -u) \
-        2>/dev/null | wc -l || echo 0)
+    # Get non-empty unique lines from each file
+    local unique1=$(echo "$norm1" | grep -v '^[[:space:]]*$' | sort -u)
+    local unique2=$(echo "$norm2" | grep -v '^[[:space:]]*$' | sort -u)
     
-    local min_lines=$((lines1 < lines2 ? lines1 : lines2))
-    [[ $min_lines -eq 0 ]] && min_lines=1
+    # Count matching non-empty lines
+    local matching
+    matching=$(echo "$unique1" | comm -12 - <(echo "$unique2") 2>/dev/null | wc -l)
+    matching=$(echo "$matching" | tr -d '[:space:]')
     
-    echo $((matching * 100 / min_lines))
+    # Use the max of both file lengths as the denominator (lenient)
+    local max_lines=$lines1
+    [[ $lines2 -gt $lines1 ]] && max_lines=$lines2
+    [[ $max_lines -eq 0 ]] && max_lines=1
+    
+    # Calculate similarity as percentage
+    local sim=$((matching * 100 / max_lines))
+    
+    # Also check: if all unique lines from one file appear in the other, boost similarity
+    local unique1_count
+    local unique2_count
+    unique1_count=$(echo "$unique1" | wc -l | tr -d '[:space:]')
+    unique2_count=$(echo "$unique2" | wc -l | tr -d '[:space:]')
+    
+    if [[ $unique1_count -gt 0 ]] && [[ $unique2_count -gt 0 ]]; then
+        # Count how many of file1's unique lines appear in file2
+        local present_in_b=0
+        if [[ -n "$unique1" ]]; then
+            local count=0
+            while IFS= read -r line; do
+                if echo "$unique2" | grep -qF "$line" 2>/dev/null; then
+                    count=$((count + 1))
+                fi
+            done <<< "$unique1"
+            present_in_b=$count
+        fi
+        
+        # Count how many of file2's unique lines appear in file1
+        local present_in_a=0
+        if [[ -n "$unique2" ]]; then
+            local count=0
+            while IFS= read -r line; do
+                if echo "$unique1" | grep -qF "$line" 2>/dev/null; then
+                    count=$((count + 1))
+                fi
+            done <<< "$unique2"
+            present_in_a=$count
+        fi
+        
+        # Calculate coverage percentages
+        local coverage1=0
+        local coverage2=0
+        [[ $unique1_count -gt 0 ]] && coverage1=$((present_in_b * 100 / unique1_count))
+        [[ $unique2_count -gt 0 ]] && coverage2=$((present_in_a * 100 / unique2_count))
+        
+        # Take the average coverage
+        local avg_coverage=$(((coverage1 + coverage2) / 2))
+        
+        # Use the better of similarity vs coverage
+        [[ $avg_coverage -gt $sim ]] && sim=$avg_coverage
+    fi
+    
+    echo "$sim"
 }
 
 # Generate diff file

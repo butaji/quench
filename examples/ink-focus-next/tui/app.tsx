@@ -1,6 +1,8 @@
 // Focus navigation example — demonstrates tab-based focus navigation.
-// NOTE: useFocus and useInput hooks are not yet supported in runts HIR runtime.
-// Shows static focus state for parity testing.
+// Simplified version for cross-environment parity.
+//
+// NOTE: useFocus and useInput hooks are not yet supported.
+// This example uses a simple static layout for parity testing.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -10,54 +12,61 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-function FocusableBox({ children, isFocused }: { children: React.ReactNode; isFocused: boolean }) {
-  return (
-    <Box
-      borderStyle="round"
-      borderColor={isFocused ? 'cyan' : 'white'}
-      paddingX={2}
-      paddingY={1}
-      minWidth={15}
-    >
-      <Text
-        bold={isFocused}
-        color={isFocused ? 'cyan' : 'white'}
-        dimColor={!isFocused}
-      >
-        {children}
-      </Text>
-    </Box>
-  );
-}
-
 export default function FocusNextExample() {
-  // NOTE: For runts HIR runtime, useFocus/useInput are not supported.
-  // For parity testing, we show static focus state (first element focused).
+  // Static focused element for parity testing
   const selected = 0;
-  const ids = ['first', 'second', 'third', 'fourth'];
+  const items = ['First', 'Second', 'Third', 'Fourth'];
 
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Focus Navigation Demo</Text>
       <Text></Text>
       <Text>Press Tab/Shift+Tab to navigate.</Text>
-      <Text dimColor>Current: {ids[selected]}</Text>
+      <Text dimColor>Current: item {selected + 1}</Text>
       <Text></Text>
-      
       <Box gap={1} flexDirection="column">
         <Box gap={1}>
-          <FocusableBox isFocused={selected === 0}>First</FocusableBox>
-          <FocusableBox isFocused={selected === 1}>Second</FocusableBox>
+          {items.slice(0, 2).map((label, idx) => (
+            <Box
+              key={idx}
+              borderStyle="round"
+              borderColor={idx === selected ? 'cyan' : 'white'}
+              paddingX={2}
+              paddingY={1}
+            >
+              <Text
+                bold={idx === selected}
+                color={idx === selected ? 'cyan' : 'white'}
+                dimColor={idx !== selected}
+              >
+                {idx === selected ? '> ' : '  '}{label}
+              </Text>
+            </Box>
+          ))}
         </Box>
         <Box gap={1}>
-          <FocusableBox isFocused={selected === 2}>Third</FocusableBox>
-          <FocusableBox isFocused={selected === 3}>Fourth</FocusableBox>
+          {items.slice(2).map((label, idx) => (
+            <Box
+              key={idx + 2}
+              borderStyle="round"
+              borderColor={idx + 2 === selected ? 'cyan' : 'white'}
+              paddingX={2}
+              paddingY={1}
+            >
+              <Text
+                bold={idx + 2 === selected}
+                color={idx + 2 === selected ? 'cyan' : 'white'}
+                dimColor={idx + 2 !== selected}
+              >
+                {idx + 2 === selected ? '> ' : '  '}{label}
+              </Text>
+            </Box>
+          ))}
         </Box>
       </Box>
-      
       <Text></Text>
       <Text italic dimColor>
-        Focus navigation works with useFocus and useFocusManager.
+        Focus navigation works with useFocus.
       </Text>
     </Box>
   );
