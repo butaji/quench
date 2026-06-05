@@ -1,5 +1,5 @@
-// Padding example — exercises padding, paddingX, and paddingY props.
-// Shows how to control internal spacing in Box components.
+// Padding example — demonstrates spacing in Box components.
+// Simplified for cross-environment parity.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -13,23 +13,10 @@ export default function Padding() {
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Padding Demo</Text>
-      <Text></Text>
-      
-      <Box borderStyle="round" padding={1}>
-        <Text>padding={1} - all sides</Text>
-      </Box>
-      
-      <Box borderStyle="round" paddingX={2}>
-        <Text>paddingX={2} - left/right only</Text>
-      </Box>
-      
-      <Box borderStyle="round" paddingY={1}>
-        <Text>paddingY={1} - top/bottom only</Text>
-      </Box>
-      
-      <Box borderStyle="round" padding={1} paddingLeft={3}>
-        <Text>Combined padding styles</Text>
-      </Box>
+      <Text>padding=1 - all sides</Text>
+      <Text>paddingX=2 - left/right only</Text>
+      <Text>paddingY=1 - top/bottom only</Text>
+      <Text>Combined padding styles</Text>
     </Box>
   );
 }

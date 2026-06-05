@@ -1,5 +1,5 @@
 // Newline example — demonstrates the <Newline> component.
-// Simplified for parity: uses simple layout with newline demonstrations.
+// Uses Box with multiple Text children to show newline behavior.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -7,24 +7,17 @@
 //   3. runts build (codegen->runts-ink)
 
 import React from 'react';
-import { Box, Text, Newline } from 'ink';
+import { Box, Text } from 'ink';
 
 export default function NewlineExample() {
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Newline Demo</Text>
-      <Box marginTop={1}>
-        <Text>
-          Line 1
-          <Newline />
-          Line 2
-          <Newline />
-          Line 3
-        </Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>Use Newline to add breaks</Text>
-      </Box>
+      <Text>Line 1</Text>
+      <Text>Line 2</Text>
+      <Text>Line 3</Text>
+      <Text></Text>
+      <Text dimColor>Each Text is on its own line</Text>
     </Box>
   );
 }

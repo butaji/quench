@@ -365,10 +365,10 @@ pub(crate) mod jsx {
     /// The parser emits children as single-key
     /// objects: `{Text: "..."}`, `{JSX: {...}}`,
     /// `{Fragment: {children: [...]}}`, or
-    /// `{kind: "Expr", expr: ...}`. Check the
-    /// single-key shape first (that's the common
-    /// case), then fall back to the `kind`
-    /// discriminator for expression children.
+    /// `{Expr: {...}}`. Check the single-key shape
+    /// first (that's the common case), then fall
+    /// back to the `kind` discriminator for
+    /// expression children.
     fn jsx_child_to_value(
         child: &serde_json::Value,
     ) -> Option<Option<serde_json::Value>> {
@@ -384,6 +384,11 @@ pub(crate) mod jsx {
         }
         if child.get("Fragment").is_some() {
             return jsx_fragment_value(child);
+        }
+        // Handle `{Expr: {...}}` shape directly
+        // (HIR format for expression children).
+        if child.get("Expr").is_some() {
+            return Some(Some(child.clone()));
         }
         // Then the `kind` discriminator for
         // expression children. `Text` here means
@@ -495,10 +500,44 @@ pub(crate) mod jsx {
     }
 
     /// Core parser, takes the map directly.
+    /// Handles complex expressions including:
+    /// - Cond (ternary: test ? consequent : alternate)
+    /// - Member (property access: obj.prop or arr[0])
+    /// - Array (array literals)
+    /// - Binary (binary expressions)
     fn parse_expr_inner_map(
         map: &serde_json::Map<String, serde_json::Value>,
     ) -> Option<String> {
-        let map = map;
+        // Cond: ternary expression {Cond: {test, consequent, alternate}}
+        if let Some(cond) = map.get("Cond") {
+            let test = cond.get("test").and_then(|t| parse_expr_inner(t))?;
+            let consequent = cond.get("consequent").and_then(|c| parse_expr_inner(c))?;
+            let alternate = cond.get("alternate").and_then(|a| parse_expr_inner(a))?;
+            return Some(format!("({test} ? {consequent} : {alternate})"));
+        }
+
+        // Member: property/array access (obj.prop or arr[0])
+        if let Some(member) = map.get("Member") {
+            let obj = member.get("obj").and_then(|o| parse_expr_inner(o))?;
+            let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false);
+            let property = member.get("property").and_then(|p| parse_expr_inner(p))?;
+            if computed {
+                return Some(format!("{obj}[{property}]"));
+            } else {
+                return Some(format!("{obj}.{property}"));
+            }
+        }
+
+        // Array: array literal [a, b, c]
+        if let Some(arr) = map.get("Array") {
+            let elems = arr.get("elems").and_then(|e| e.as_array())?;
+            let parts: Vec<String> = elems
+                .iter()
+                .filter_map(|e| parse_expr_inner(e))
+                .collect();
+            return Some(format!("[{}]", parts.join(", ")));
+        }
+
         // Tuple-struct-like `{"kind": "X", "0": value}`.
         if let (Some(kind), Some(val)) = (map.get("kind"), map.get("0")) {
             return match kind.as_str()? {
@@ -946,9 +985,14 @@ pub(crate) mod jsx {
     /// Ink `<Text>` — a styled string.
     /// Emits a `runts_ink::Text` builder chain that
     /// returns a `runts_ink::VNode`.
+    /// 
+    /// `content` is a TokenStream that produces a String.
+    /// For simple text, this is just `"text"`.
+    /// For expressions, this might be `format!("{}", expr)`.
+    /// For mixed content, this joins parts with `.to_string()`.
     fn widget_ink_text_call(
         attrs: Vec<(String, serde_json::Value)>,
-        content: String,
+        content: TokenStream,
     ) -> TokenStream {
         let mut builder = quote! { runts_ink::Text::new(#content) };
         for (name, value) in &attrs {
@@ -1129,8 +1173,29 @@ pub(crate) mod jsx {
                 // `<Text>foo</Text>`, and
                 // `<text>foo</text>` are all just a
                 // Text.
-                let text = collect_text_from_children(&children);
-                widget_ink_text_call(attrs, text)
+                // Handle expressions by collecting tokens instead of just strings.
+                let parts = collect_text_children_tokens(&children);
+                if parts.is_empty() {
+                    // Empty Text — return a spacer
+                    return quote! { runts_ink::Spacer::new() };
+                } else if parts.len() == 1 {
+                    // Single part — use as-is
+                    widget_ink_text_call(attrs, parts.into_iter().next().unwrap())
+                } else {
+                    // Multiple parts — join with string concatenation
+                    // Use format! macro for cleaner concatenation
+                    let mut format_str = String::new();
+                    let mut format_args: Vec<TokenStream> = Vec::new();
+                    for part in &parts {
+                        if !format_str.is_empty() {
+                            format_str.push_str(" ");
+                        }
+                        format_str.push_str("{}");
+                        format_args.push(quote! { #part });
+                    }
+                    let joined = quote! { format!(#format_str, #(#format_args),*) };
+                    widget_ink_text_call(attrs, joined)
+                }
             }
             "row" | "col" => {
                 // `<row>` / `<col>` are flex-direction
@@ -1154,10 +1219,135 @@ pub(crate) mod jsx {
                 // Unknown intrinsic — fall back to a
                 // Text with the tag name. This matches
                 // the previous placeholder behaviour.
-                let label = tag.to_string();
+                let label = quote! { #tag };
                 widget_ink_text_call(Vec::new(), label)
             }
         }
+    }
+
+    /// Collect JSX children into a TokenStream for text content.
+    /// Handles both plain text and expressions.
+    /// For expressions, converts HIR expressions to Rust expressions.
+    /// 
+    /// Supports multiple child shapes:
+    /// - `{"Text": "text"}` - text children from HIR
+    /// - `{"text": "text"}` - normalized shape
+    /// - `{"kind": "Text", "text": "..."}` - fixture shape
+    /// - `{"Expr": {...}}` - expression children
+    fn collect_text_children_tokens(children: &[serde_json::Value]) -> Vec<TokenStream> {
+        let mut parts: Vec<TokenStream> = Vec::new();
+        for raw in children {
+            // Check for "Text" key (uppercase) - HIR format
+            if let Some(text) = raw.get("Text").and_then(|t| t.as_str()) {
+                // Skip pure whitespace
+                if !text.chars().all(|c| c.is_whitespace()) {
+                    parts.push(quote! { #text });
+                }
+            // Check for "text" key (lowercase) - normalized shape
+            } else if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
+                // Skip pure whitespace
+                if !text.chars().all(|c| c.is_whitespace()) {
+                    parts.push(quote! { #text });
+                }
+            } else if let Some(jsx) = raw.get("jsx") {
+                // Recurse into nested JSX
+                let nested = extract_jsx_children(
+                    jsx.get("children").unwrap_or(&serde_json::Value::Null),
+                )
+                .unwrap_or_default();
+                let inner = collect_text_children_tokens(&nested);
+                parts.extend(inner);
+            } else if let Some(expr) = raw.get("Expr") {
+                // Expression child — convert HIR expression to Rust expression
+                if let Some(expr_tokens) = expr_to_rust(expr) {
+                    // Wrap the expression in format! to coerce to string
+                    parts.push(quote! { format!("{}", #expr_tokens) });
+                }
+            }
+        }
+        parts
+    }
+
+    /// Convert a HIR expression to Rust TokenStream.
+    /// Handles conditional, member access, array literals, etc.
+    fn expr_to_rust(expr: &serde_json::Value) -> Option<TokenStream> {
+        let map = expr.as_object()?;
+        
+        // Cond: ternary expression {Cond: {test, consequent, alternate}}
+        if let Some(cond) = map.get("Cond") {
+            let test = expr_to_rust(cond.get("test")?)?;
+            let consequent = expr_to_rust(cond.get("consequent")?)?;
+            let alternate = expr_to_rust(cond.get("alternate")?)?;
+            return Some(quote! { (#test ? #consequent : #alternate) });
+        }
+
+        // Member: property/array access (obj.prop or arr[0])
+        if let Some(member) = map.get("Member") {
+            let obj = expr_to_rust(member.get("obj")?)?;
+            let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false);
+            let property = expr_to_rust(member.get("property")?)?;
+            if computed {
+                // For array indices, convert to usize
+                return Some(quote! { #obj[#property as usize] });
+            } else {
+                return Some(quote! { #obj . #property });
+            }
+        }
+
+        // Array: array literal [a, b, c]
+        if let Some(arr) = map.get("Array") {
+            let elems = arr.get("elems")?.as_array()?;
+            let elem_tokens: Vec<TokenStream> = elems
+                .iter()
+                .filter_map(|e| expr_to_rust(e))
+                .collect();
+            return Some(quote! { [#(#elem_tokens),*] });
+        }
+
+        // Simple values
+        if let Some(s) = map.get("String").and_then(|v| v.as_str()) {
+            return Some(quote! { #s });
+        }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) {
+            // Convert float to appropriate integer for array indices
+            return Some(quote! { #n });
+        }
+        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) {
+            return Some(quote! { #b });
+        }
+        if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
+            return Some(quote! { #name });
+        }
+        
+        // Handle nested "Expr" wrapper
+        if let Some(inner) = map.get("Expr") {
+            return expr_to_rust(inner);
+        }
+
+        // Handle "kind" discriminator (older HIR format)
+        if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) {
+            match kind {
+                "String" => {
+                    let s = map.get("0")?.as_str()?;
+                    return Some(quote! { #s });
+                }
+                "Number" => {
+                    let n = map.get("0")?.as_f64()?;
+                    return Some(quote! { #n });
+                }
+                "Bool" => {
+                    let b = map.get("0")?.as_bool()?;
+                    return Some(quote! { #b });
+                }
+                "Ident" => {
+                    let name = map.get("0")?.as_object()?.get("name")?.as_str()?;
+                    return Some(quote! { #name });
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Flatten JSX children to a single text string
@@ -1166,6 +1356,11 @@ pub(crate) mod jsx {
     /// example, all `<Text>` children are either
     /// text strings or `{''}` empty expressions,
     /// so this produces the right concatenation.
+    /// 
+    /// Now also handles expression children like
+    /// `{Expr: {...}}` by converting them to Rust
+    /// expressions, allowing `<Text>{count}</Text>`
+    /// to work properly.
     fn collect_text_from_children(children: &[serde_json::Value]) -> String {
         let mut out = String::new();
         for raw in children {
@@ -1193,12 +1388,18 @@ pub(crate) mod jsx {
                     }
                     out.push_str(&inner);
                 }
+            } else if let Some(expr) = raw.get("Expr") {
+                // Expression child — convert to Rust expression.
+                // For text content, we need to convert the expression
+                // to a string. The expression will be included as-is
+                // and coerced at runtime.
+                if let Some(expr_str) = parse_expr_inner(expr) {
+                    // Don't add space before expressions
+                    // to avoid: "Status:  ACTIVE" instead of "Status: ACTIVE"
+                    out.push_str(&format!("{}", expr_str));
+                }
             }
-            // Expression children and Fragments are
-            // skipped — `<Text>{count}</Text>` would
-            // need an interpolation pipeline that
-            // we don't have yet (useState-equivalent
-            // comes with the rquickjs dev path).
+            // Fragments are skipped.
         }
         out
     }
