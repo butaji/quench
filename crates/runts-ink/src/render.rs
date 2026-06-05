@@ -364,44 +364,12 @@ fn walk(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, d
     match &node.0 {
         VNodeContent::Box(b) => walk_box(b, layout, frame, area, depth),
         VNodeContent::Text(t) => render_text(t, frame, area),
-        VNodeContent::Newline(_) => {
-            frame.render_widget(ratatui::widgets::Paragraph::new(""), area);
-        }
-        VNodeContent::Spacer(_) => {
-            // A Spacer is layout-only; no widget.
-        }
-        VNodeContent::Static(s) => {
-            // Children of a Static start at depth+1.
-            walk_children(
-                s.children.as_slice(),
-                layout,
-                frame,
-                area,
-                depth + 1,
-                FlexDirection::Row,
-                JustifyContent::FlexStart,
-            );
-        }
-        VNodeContent::Transform(t) => {
-            walk_transform(t, layout, frame, area, depth);
-        }
-        VNodeContent::Fragment(fs) => {
-            // Children of a Fragment start at depth+1.
-            walk_children(
-                fs.as_slice(),
-                layout,
-                frame,
-                area,
-                depth + 1,
-                FlexDirection::Row,
-                JustifyContent::FlexStart,
-            );
-        }
+        VNodeContent::Newline(_) => frame.render_widget(ratatui::widgets::Paragraph::new(""), area),
+        VNodeContent::Spacer(_) => {}
+        VNodeContent::Static(s) => walk_children(s.children.as_slice(), layout, frame, area, depth + 1, FlexDirection::Row, JustifyContent::FlexStart),
+        VNodeContent::Transform(t) => walk_transform(t, layout, frame, area, depth),
+        VNodeContent::Fragment(fs) => walk_children(fs.as_slice(), layout, frame, area, depth + 1, FlexDirection::Row, JustifyContent::FlexStart),
     }
-    // `layout` and `depth` are unused by the v0.1
-    // renderer but are part of the function signature
-    // so future versions can swap in a per-node rect
-    // lookup without changing call sites.
     let _ = (layout, depth);
 }
 
@@ -993,55 +961,16 @@ mod tests {
 
     #[test]
     fn render_box_with_padding() {
-        // The renderer walks the VNode tree top-to-bottom
-        // and divides the area into per-child chunks. The
-        // padding shrinks the area at the taffy level but
-        // the renderer's per-child chunking is uniform
-        // and taffy doesn't repaint, so the visual
-        // position is the start of the area.
         let backend = ratatui::backend::TestBackend::new(20, 4);
         let mut terminal = Terminal::new(backend).unwrap();
-        let tree = VNode::from(
-            InkBox::column()
-                .padding(1)
-                .child(Text::new("x"))
-                .child(Text::new("y")),
-        );
+        let tree = VNode::from(InkBox::column().padding(1).child(Text::new("x")).child(Text::new("y")));
         let mut layout = Layout::new();
         let taffy_tree = TaffyTree::from_vnode(&tree, &mut layout);
-        taffy_tree.compute(
-            &mut layout,
-            Size {
-                width: AvailableSpace::Definite(20.0),
-                height: AvailableSpace::Definite(4.0),
-            },
-        );
-        terminal
-            .draw(|frame| render_tree(&tree, &layout, frame, small_area()))
-            .unwrap();
+        taffy_tree.compute(&mut layout, Size { width: AvailableSpace::Definite(20.0), height: AvailableSpace::Definite(4.0) });
+        terminal.draw(|frame| render_tree(&tree, &layout, frame, small_area())).unwrap();
         let buffer = terminal.backend().buffer().clone();
-        // Without per-child rect lookup, the children
-        // stack top-to-bottom starting at row 0. The
-        // padding affects the *inner* area taffy computes
-        // for the children, but the current renderer
-        // walks the VNode tree in pre-order and assigns
-        // equal-size rects. We assert the children are
-        // present in the buffer (rather than the exact
-        // positions) so the test isn't tied to a
-        // specific layout algorithm.
-        let mut has_x = false;
-        let mut has_y = false;
-        for y in 0..4 {
-            for x in 0..20 {
-                let s = buffer.get(x, y).symbol();
-                if s == "x" {
-                    has_x = true;
-                }
-                if s == "y" {
-                    has_y = true;
-                }
-            }
-        }
+        let mut has_x = false; let mut has_y = false;
+        for y in 0..4 { for x in 0..20 { let s = buffer.get(x, y).symbol(); if s == "x" { has_x = true; } if s == "y" { has_y = true; } } }
         assert!(has_x, "expected 'x' somewhere in the rendered buffer");
         assert!(has_y, "expected 'y' somewhere in the rendered buffer");
     }

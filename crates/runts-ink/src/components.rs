@@ -521,50 +521,7 @@ impl Default for Box {
     // value. Splitting it into helper builders would
     // add noise without reducing the field-by-field
     // clarity of this single source of truth.
-    fn default() -> Self {
-        Self {
-            flex_direction: FlexDirection::Row,
-            flex_wrap: FlexWrap::NoWrap,
-            flex_grow: 0.0,
-            flex_shrink: 1.0,
-            flex_basis_pct: 0.0,
-            width: None,
-            height: None,
-            min_width: None,
-            min_height: None,
-            max_width: None,
-            max_height: None,
-            padding_top: None,
-            padding_right: None,
-            padding_bottom: None,
-            padding_left: None,
-            margin_top: None,
-            margin_right: None,
-            margin_bottom: None,
-            margin_left: None,
-            row_gap: None,
-            column_gap: None,
-            align_items: AlignItems::Stretch,
-            align_self: AlignSelf::Auto,
-            align_content: AlignContent::FlexStart,
-            justify_content: JustifyContent::FlexStart,
-            position: Position::Relative,
-            top: None,
-            right: None,
-            bottom: None,
-            left: None,
-            display: Display::Flex,
-            overflow_x: Overflow::Visible,
-            overflow_y: Overflow::Visible,
-            borders: Borders::default(),
-            border_style: BorderStyle::Single,
-            border_color: None,
-            border_dim_color: false,
-            border_background_color: None,
-            background_color: None,
-            children: Vec::new(),
-        }
-    }
+    fn default() -> Self { Self { flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::NoWrap, flex_grow: 0.0, flex_shrink: 1.0, flex_basis_pct: 0.0, width: None, height: None, min_width: None, min_height: None, max_width: None, max_height: None, padding_top: None, padding_right: None, padding_bottom: None, padding_left: None, margin_top: None, margin_right: None, margin_bottom: None, margin_left: None, row_gap: None, column_gap: None, align_items: AlignItems::Stretch, align_self: AlignSelf::Auto, align_content: AlignContent::FlexStart, justify_content: JustifyContent::FlexStart, position: Position::Relative, top: None, right: None, bottom: None, left: None, display: Display::Flex, overflow_x: Overflow::Visible, overflow_y: Overflow::Visible, borders: Borders::default(), border_style: BorderStyle::Single, border_color: None, border_dim_color: false, border_background_color: None, background_color: None, children: Vec::new() } }
 }
 
 // ---------------------------------------------------------------------------
