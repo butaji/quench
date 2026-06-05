@@ -92,11 +92,12 @@ fn parse_align_items(s: &str) -> AlignItems {
 }
 
 /// Parse a color. Ink's `color` prop accepts a color
-/// name string ("red", "blue", etc.) or undefined. We
-/// only handle the named colors for now; hex codes
-/// fall back to default. Mirrors Ink 5's color name
-/// set.
+/// name string ("red", "blue", etc.) or a hex string
+/// ("#rrggbb"). Mirrors Ink 5's supported color set.
 fn parse_color(s: &str) -> Color {
+    if s.starts_with('#') && s.len() == 7 {
+        return Color::Hex(s.to_string());
+    }
     match s {
         "black" => Color::Black,
         "red" => Color::Red,
@@ -498,9 +499,6 @@ fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
 Function::new(
     ctx.clone(),
     |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
-        eprintln!("make_text_fn called, content type: {}", content.type_name());
-        eprintln!("  as_string: {:?}", content.as_string().map(|s| s.to_string()));
-        eprintln!("  as_array: {:?}", content.as_array().map(|a| a.len()));
             // WORKAROUND: rquickjs truncates strings
             // and arrays passed from JS to Rust.
             // The JS side wraps text in JSON.stringify
@@ -642,7 +640,6 @@ mod tests {
             let result: String = f
                 .call(("Bordered Example",))
                 .unwrap();
-            eprintln!("Long string result: {result:?}");
             assert_eq!(result, "Bordered Example",
                 "rquickjs truncated long string: got {result:?}");
         });
@@ -659,7 +656,6 @@ mod tests {
             )
             .unwrap();
             let result: String = f.call(("hi",)).unwrap();
-            eprintln!("Short string result: {result:?}");
             assert_eq!(result, "hi");
         });
     }
