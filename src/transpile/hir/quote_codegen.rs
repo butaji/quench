@@ -1060,45 +1060,142 @@ impl QuoteCodegen {
     pub(crate) fn gen_expr(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
-            E::String(s) => self.gen_string_expr(s),
-            E::Number(n) => self.gen_number_expr(n),
-            E::BigInt(n) => quote! { Value::BigInt(#n) },
-            E::Boolean(b) => self.gen_bool_expr(*b),
-            E::Null | E::Undefined => quote! { Value::Null },
-            E::RegExp { pattern, flags } => quote! { Value::RegExp(#pattern, #flags) },
-            E::Super => quote! { super },
-            E::This => quote! { self },
+            E::String(s) | E::Number(n) | E::BigInt(n) => self.gen_lit_expr(expr),
+            E::Boolean(b) | E::Null | E::Undefined => self.gen_bool_null(expr),
+            E::RegExp { .. } => self.gen_reg_exp(expr),
+            E::Super | E::This => self.gen_super_this(expr),
             E::Block(stmts) => self.gen_block_expr(stmts),
             E::Invalid => panic!("codegen for Invalid expression"),
             _ => self.gen_expr_helper(expr),
         }
     }
 
+    fn gen_bool_null(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
+            E::Boolean(b) => self.gen_bool_expr(*b),
+            E::Null | E::Undefined => quote! { Value::Null },
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_super_this(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
+            E::Super => quote! { super },
+            E::This => quote! { self },
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_lit_expr(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
+            E::String(s) => self.gen_string_expr(s),
+            E::Number(n) => self.gen_number_expr(n),
+            E::BigInt(n) => quote! { Value::BigInt(#n) },
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_reg_exp(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        if let E::RegExp { pattern, flags } = expr {
+            quote! { Value::RegExp(#pattern, #flags) }
+        } else {
+            quote! { Value::Null }
+        }
+    }
+
     fn gen_expr_helper(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
+            E::Template { .. } | E::Ident { .. } | E::JSX(_) => self.gen_templ_ident_jsx(expr),
+            E::Bin { .. } | E::Unary { .. } | E::Update { .. } => self.gen_bin_unary_update(expr),
+            E::Logical { .. } | E::Cond { .. } | E::Assign { .. } => self.gen_log_cond_assign(expr),
+            E::Array { .. } | E::Object { .. } => self.gen_array_expr(&expr),
+            E::Function(_) | E::ArrowFunction { .. } => self.gen_fn_arrow(expr),
+            E::Await { .. } | E::Yield { .. } => self.gen_await_yield(expr),
+            E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } => self.gen_call_member_static(expr),
+            E::Seq { .. } | E::Spread { .. } | E::TypeAnnot { .. } | _ => self.gen_seq_type_or_null(expr),
+        }
+    }
+
+    fn gen_seq_type_or_null(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        if let E::Seq { left, right } = expr {
+            self.gen_seq_expr(left, right)
+        } else {
+            quote! { Value::Null }
+        }
+    }
+
+    fn gen_templ_ident_jsx(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
             E::Template { parts, exprs } => self.gen_template_expr(parts, exprs),
             E::Ident { name } => self.gen_ident_expr(name),
             E::JSX(jsx) => self.gen_jsx_expr(jsx),
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_bin_unary_update(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
             E::Bin { op, left, right } => self.gen_bin_expr(op, left, right),
             E::Unary { op, arg, prefix } => self.gen_unary_expr(op, arg, *prefix),
             E::Update { op, arg, prefix } => self.gen_update_expr(op, arg, *prefix),
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_log_cond_assign(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
             E::Logical { op, left, right } => self.gen_logical_expr(op, left, right),
             E::Cond { test, consequent, alternate } => self.gen_cond_expr(test, consequent, alternate),
             E::Assign { op, left, right } => self.gen_assign_expr(op, left, right),
-            E::Array { elems } | E::Object { members: _ } => self.gen_array_expr(elems),
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_fn_arrow(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
             E::Function(func) => self.gen_fn_expr(func),
             E::ArrowFunction { params, body, is_async } => self.gen_arrow_expr(params, body, *is_async),
-            E::Await { arg } | E::Yield { arg, delegate: _ } => self.gen_await_expr(arg),
+            _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_await_yield(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        if let E::Await { arg } = expr {
+            self.gen_await_expr(arg)
+        } else if let E::Yield { arg, delegate: _ } = expr {
+            self.gen_await_expr(arg.as_ref().map(|a| a.as_ref()))
+        } else {
+            quote! { Value::Null }
+        }
+    }
+
+    fn gen_call_member_static(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        match expr {
             E::Call { callee, arguments } | E::New { callee, arguments } => self.gen_call_expr(callee, arguments),
             E::Member { obj, property, computed } => self.gen_member_expr_full(obj, property, *computed),
             E::StaticMember { obj, property } => self.gen_static_member_expr(obj, property),
-            E::Seq { left, right } | E::Spread { arg: _ } => self.gen_seq_expr(left, right),
-            E::TypeAnnot { type_ } => {
-                let _ = type_;
-                quote! { Value::Null }
-            }
             _ => quote! { Value::Null },
+        }
+    }
+
+    fn gen_seq_type(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        if let E::Seq { left, right } = expr {
+            self.gen_seq_expr(left, right)
+        } else {
+            quote! { Value::Null }
         }
     }
     
