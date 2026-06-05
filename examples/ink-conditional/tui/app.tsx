@@ -1,3 +1,14 @@
+// Conditional rendering example — exercises JSX
+// conditional expressions ({condition ? 'yes' : 'no'}).
+//
+// Renders a column box with text content that
+// uses ternary operators to show/hide values.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink)
+//   2. runts dev (rquickjs+bridge)
+//   3. runts build (codegen->runts-ink)
+
 import { Box, Text } from 'ink';
 import React from 'react';
 
