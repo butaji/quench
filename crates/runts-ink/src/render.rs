@@ -941,6 +941,7 @@ impl TaffyTree {
 mod tests {
     use super::*;
     use crate::components::Box as InkBox;
+    use crate::BorderStyle;
 
     fn small_area() -> Rect {
         Rect {
@@ -1134,6 +1135,27 @@ mod tests {
             first_line.contains('L') && first_line.contains('R'),
             "L and R should be on the same line, got: {first_line:?}"
         );
+    }
+
+    /// A bordered Box with a Text child should render the text.
+    #[test]
+    fn render_bordered_box_with_text() {
+        let root: VNode = InkBox::column()
+            .child(
+                InkBox::new()
+                    .border_style(BorderStyle::Round)
+                    .child(Text::new("green border")),
+            )
+            .child(
+                InkBox::new()
+                    .border_style(BorderStyle::Round)
+                    .child(Text::new("dim border")),
+            )
+            .into();
+        let s = render_to_string(root, RenderOptions::new()).unwrap();
+        eprintln!("Bordered box result:\n{}", s);
+        assert!(s.contains("green"), "missing 'green' in: {s:?}");
+        assert!(s.contains("dim"), "missing 'dim' in: {s:?}");
     }
 }
 /// Count the total number of VNodes in a tree

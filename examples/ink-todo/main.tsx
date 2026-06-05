@@ -1,1 +1,5 @@
-// This example has its own main entry point that renders directly.
+import React from 'react';
+import { render } from 'ink';
+import App from './tui/app.tsx';
+
+render(<App />);
