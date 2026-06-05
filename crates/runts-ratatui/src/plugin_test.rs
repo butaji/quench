@@ -524,6 +524,77 @@ fn test_ink_newline_codegens_empty_paragraph() {
     assert!(code.contains("runts_ink::Newline::new"));
 }
 
+/// A `<Text>` with a conditional expression like
+/// `<Text>{active ? 'yes' : 'no'}</Text>` should
+/// include the expression in the generated Text.
+#[test]
+fn test_text_with_conditional_expression() {
+    let plugin = ratatui_plugin();
+    // Text with a conditional expression
+    let inner = serde_json::json!({
+        "kind": "JSX",
+        "opening": {
+            "name": { "Ident": "Text" },
+            "attrs": [],
+            "self_closing": false
+        },
+        "children": [
+            { "Text": "Status: " },
+            {
+                "Expr": {
+                    "Cond": {
+                        "test": { "Ident": { "name": "isActive" } },
+                        "consequent": { "String": "ACTIVE" },
+                        "alternate": { "String": "INACTIVE" }
+                    }
+                }
+            }
+        ],
+        "closing": { "name": { "Ident": "Text" } }
+    });
+    let items = items_with_fn("App", inner);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some());
+    let code = normalize(&result.unwrap());
+    // The generated code should include the expression
+    // Should have Text::new with format! macro
+    assert!(code.contains("Text::new"), "missing Text::new: {}", code);
+    // Should have the conditional expression
+    assert!(code.contains("isActive") || code.contains("format!"), 
+            "missing expression in codegen: {}", code);
+}
+
+/// A `<Text>` with an identifier expression like
+/// `<Text>Count: {count}</Text>` should include
+/// the identifier in the generated Text.
+#[test]
+fn test_text_with_identifier_expression() {
+    let plugin = ratatui_plugin();
+    // Text with an identifier
+    let inner = serde_json::json!({
+        "kind": "JSX",
+        "opening": {
+            "name": { "Ident": "Text" },
+            "attrs": [],
+            "self_closing": false
+        },
+        "children": [
+            { "Text": "Count: " },
+            { "Expr": { "Ident": { "name": "count" } } }
+        ],
+        "closing": { "name": { "Ident": "Text" } }
+    });
+    let items = items_with_fn("App", inner);
+    let result = plugin.try_codegen_jsx(&items);
+    assert!(result.is_some());
+    let code = normalize(&result.unwrap());
+    // Should have Text::new with format! macro for the expression
+    assert!(code.contains("Text::new"), "missing Text::new: {}", code);
+    // Should have the identifier
+    assert!(code.contains("count") || code.contains("format!"), 
+            "missing count expression: {}", code);
+}
+
 #[test]
 fn run_ink_dev_bordered_example() {
     // The dev path: read the .tsx, lower to JS,
