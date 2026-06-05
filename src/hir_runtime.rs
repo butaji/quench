@@ -2040,8 +2040,7 @@ fn parse_basic_color(s: &str) -> Option<Color> {
         "yellow" => Some(Color::Yellow),
         "blue" => Some(Color::Blue),
         "magenta" => Some(Color::Magenta),
-        "cyan" => Some(Color::Cyan),
-        "white" => Some(Color::White),
+        "cyan" | "white" => Some(Color::Cyan),
         _ => None,
     }
 }
