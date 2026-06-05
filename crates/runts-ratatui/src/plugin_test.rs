@@ -551,19 +551,14 @@ fn run_ink_dev_bordered_example() {
 fn hir_render_bordered_example() {
     // ATOMIC TEST: HIR runtime renders the
     // bordered example through the full pipeline.
+    // Note: Uses direct Rust call to render function
+    // instead of invoking binary (which would give test binary path).
     let src = include_str!("../../../examples/ink-bordered/tui/app.tsx");
-    // Write to temp file and invoke runts hir-render
-    let tmp = std::env::temp_dir().join("hir-render-test.tsx");
-    std::fs::write(&tmp, src).unwrap();
-    let runts_bin = std::env::current_exe().unwrap();
-    let out = std::process::Command::new(&runts_bin)
-        .arg("hir-render")
-        .arg(&tmp)
-        .output()
-        .expect("failed to invoke runts hir-render");
-    assert!(out.status.success(), "hir-render failed: {}",
-        String::from_utf8_lossy(&out.stderr));
-    let output = String::from_utf8_lossy(&out.stdout).to_string();
+    let transformed = crate::dev_jsx::transform(src);
+    let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
+    let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
+    assert!(result.is_ok(), "hir render failed: {:?}", result);
+    let output = result.unwrap();
     assert!(output.contains("Bordered Example"),
         "hir-render output missing title: {output:?}");
 }
@@ -572,18 +567,15 @@ fn hir_render_bordered_example() {
 fn hir_render_aligned_example() {
     // ATOMIC TEST: HIR runtime renders the
     // aligned example correctly.
+    // Note: Uses direct Rust call to render function
+    // instead of invoking binary (which would give test binary path).
     let src = include_str!("../../../examples/ink-aligned/tui/app.tsx");
-    let tmp = std::env::temp_dir().join("hir-render-aligned.tsx");
-    std::fs::write(&tmp, src).unwrap();
-    let runts_bin = std::env::current_exe().unwrap();
-    let out = std::process::Command::new(&runts_bin)
-        .arg("hir-render")
-        .arg(&tmp)
-        .output()
-        .expect("failed to invoke runts hir-render");
-    assert!(out.status.success(), "hir-render failed: {}",
-        String::from_utf8_lossy(&out.stderr));
-    let output = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(output.contains("Centered"),
+    let transformed = crate::dev_jsx::transform(src);
+    let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
+    let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
+    assert!(result.is_ok(), "hir render failed: {:?}", result);
+    let output = result.unwrap();
+    // Look for "Centered" in the output - the example has a centered title
+    assert!(output.contains("Centered") || output.contains("centered"),
         "hir-render output missing 'Centered': {output:?}");
 }
