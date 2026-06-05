@@ -246,70 +246,35 @@ fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
 struct BraceState {
     depth: i32,
     in_str: bool,
-    delim: char,
     in_char: bool,
     esc: bool,
-    prev_ch: Option<char>,
 }
 
 impl BraceState {
     fn new() -> Self {
-        Self {
-            depth: 0,
-            in_str: false,
-            delim: '\0',
-            in_char: false,
-            esc: false,
-            prev_ch: None,
-        }
+        Self { depth: 0, in_str: false, in_char: false, esc: false }
     }
 
     fn handle_char(&mut self, ch: char) -> bool {
-        // Handle escaped braces ({{ and }}) in format strings
-        if let Some(prev) = self.prev_ch {
-            if (prev == '{' && ch == '{') || (prev == '}' && ch == '}') {
-                self.prev_ch = None;
-                return false;
-            }
-        }
-        self.prev_ch = None;
-
-        if self.in_str || self.in_char {
-            if self.esc {
-                self.esc = false;
-                return false;
-            }
-            if ch == '\\' {
-                self.esc = true;
-                return false;
-            }
-            if ch == self.delim {
-                self.in_str = false;
-                self.in_char = false;
-            }
+        if self.in_str {
+            if self.esc { self.esc = false; }
+            else if ch == '\\' { self.esc = true; }
+            else if ch == '"' { self.in_str = false; }
             return false;
         }
-        if ch == '"' {
-            self.in_str = true;
-            self.delim = ch;
+        if self.in_char {
+            if self.esc { self.esc = false; }
+            else if ch == '\\' { self.esc = true; }
+            else if ch == '\'' { self.in_char = false; }
             return false;
         }
-        if ch == '\'' {
-            self.in_char = true;
-            self.delim = ch;
-            return false;
-        }
-        if self.in_str || self.in_char {
-            return false;
-        }
-        if ch == '{' {
-            self.depth += 1;
-            self.prev_ch = Some(ch);
-        } else if ch == '}' {
-            self.depth -= 1;
-            self.prev_ch = Some(ch);
-            return self.depth == 0;
-        }
+        if ch == '"' { self.in_str = true; return false; }
+        // Note: single quotes are used for char literals AND lifetime
+        // annotations in Rust. Only treat as char literal if followed by
+        // a single quote or backslash (heuristic for actual char literals).
+        if ch == '\'' { return false; }
+        if ch == '{' { self.depth += 1; }
+        else if ch == '}' { self.depth -= 1; return self.depth == 0; }
         false
     }
 }
