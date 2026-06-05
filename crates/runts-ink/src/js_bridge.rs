@@ -131,228 +131,74 @@ fn vnode_to_js<'js>(ctx: &Ctx<'js>, node: &VNode) -> JsResult<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     let inner = Object::new(ctx.clone())?;
     match &node.0 {
-        VNodeContent::Box(b) => {
-            let props = Object::new(ctx.clone())?;
-            // serialise the prop values that the
-            // bridge recognises.
-            let dir = match b.flex_direction {
-                FlexDirection::Row => "row",
-                FlexDirection::Column => "column",
-                FlexDirection::RowReverse => "row-reverse",
-                FlexDirection::ColumnReverse => "column-reverse",
-            };
-            props.set("flexDirection", dir)?;
-            // Serialise justify/align so the
-            // round-trip preserves them. Only
-            // emit when non-default to keep the
-            // JS payload small.
-            let justify = match b.justify_content {
-                JustifyContent::FlexStart => "flex-start",
-                JustifyContent::FlexEnd => "flex-end",
-                JustifyContent::Center => "center",
-                JustifyContent::SpaceBetween => "space-between",
-                JustifyContent::SpaceAround => "space-around",
-                JustifyContent::SpaceEvenly => "space-evenly",
-            };
-            props.set("justifyContent", justify)?;
-            let align = match b.align_items {
-                AlignItems::FlexStart => "flex-start",
-                AlignItems::FlexEnd => "flex-end",
-                AlignItems::Center => "center",
-                AlignItems::Stretch => "stretch",
-                AlignItems::Baseline => "baseline",
-            };
-            props.set("alignItems", align)?;
-            // Only serialise the borderStyle if
-            // the Box actually has borders
-            // enabled. A Box with no explicit
-            // border (default) should round-trip
-            // as a borderless Box, not a Box
-            // that suddenly grows Single borders
-            // because the default is Single.
-            if b.borders.top
-                || b.borders.right
-                || b.borders.bottom
-                || b.borders.left
-            {
-                let style = match b.border_style {
-                    BorderStyle::Single => "single",
-                    BorderStyle::Double => "double",
-                    BorderStyle::Round => "round",
-                    BorderStyle::Bold => "bold",
-                    BorderStyle::Classic => "classic",
-                };
-                props.set("borderStyle", style)?;
-            }
-            if let Some(p) = b.padding_left {
-                props.set("paddingX", p as i32)?;
-            }
-            if let Some(p) = b.padding_top {
-                props.set("paddingY", p as i32)?;
-            }
-            let children = Object::new(ctx.clone())?;
-            for (i, c) in b.children.iter().enumerate() {
-                let child_js = vnode_to_js(ctx, c)?;
-                children.set(i.to_string().as_str(), child_js)?;
-            }
-            inner.set("__children", children)?;
-            inner.set("__props", props)?;
-            obj.set("Box", inner)?;
-        }
-        VNodeContent::Text(t) => {
-            let content = t.content.clone();
-            let props = Object::new(ctx.clone())?;
-            inner.set("__content", content)?;
-            inner.set("__props", props)?;
-            obj.set("Text", inner)?;
-        }
-        VNodeContent::Newline(_) => {
-            obj.set("Newline", inner)?;
-        }
-        VNodeContent::Spacer(_) => {
-            obj.set("Spacer", inner)?;
-        }
-        VNodeContent::Static(s) => {
-            let children = Object::new(ctx.clone())?;
-            for (i, c) in s.children.iter().enumerate() {
-                let child_js = vnode_to_js(ctx, c)?;
-                children.set(i.to_string().as_str(), child_js)?;
-            }
-            inner.set("__children", children)?;
-            obj.set("Static", inner)?;
-        }
-        VNodeContent::Transform(t) => {
-            let child = vnode_to_js(ctx, &t.child)?;
-            inner.set("__child", child)?;
-            obj.set("Transform", inner)?;
-        }
-        VNodeContent::Fragment(children) => {
-            let arr = Object::new(ctx.clone())?;
-            for (i, c) in children.iter().enumerate() {
-                let child_js = vnode_to_js(ctx, c)?;
-                arr.set(i.to_string().as_str(), child_js)?;
-            }
-            inner.set("__children", arr)?;
-            obj.set("Fragment", inner)?;
-        }
+        VNodeContent::Box(b) => { vnode_to_js_box(ctx, &obj, &inner, b)?; }
+        VNodeContent::Text(t) => { let props = Object::new(ctx.clone())?; inner.set("__content", &t.content)?; inner.set("__props", props)?; obj.set("Text", inner)?; }
+        VNodeContent::Newline(_) => { obj.set("Newline", inner)?; }
+        VNodeContent::Spacer(_) => { obj.set("Spacer", inner)?; }
+        VNodeContent::Static(s) => { let children = vnode_to_js_children(ctx, &s.children)?; inner.set("__children", children)?; obj.set("Static", inner)?; }
+        VNodeContent::Transform(t) => { let child = vnode_to_js(ctx, &t.child)?; inner.set("__child", child)?; obj.set("Transform", inner)?; }
+        VNodeContent::Fragment(c) => { let arr = vnode_to_js_children(ctx, c)?; inner.set("__children", arr)?; obj.set("Fragment", inner)?; }
     }
     Ok(Value::from_object(obj))
+}
+fn vnode_to_js_box<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, b: &InkBox) -> JsResult<()> {
+    let props = Object::new(ctx.clone())?;
+    set_box_props(&props, b)?;
+    let children = vnode_to_js_children(ctx, &b.children)?;
+    inner.set("__children", children)?;
+    inner.set("__props", props)?;
+    obj.set("Box", inner)?;
+    Ok(())
+}
+fn set_box_props<'js>(props: &Object<'js>, b: &InkBox) -> JsResult<()> { props.set("flexDirection", box_flex_dir(b))?; props.set("justifyContent", box_justify(b))?; props.set("alignItems", box_align(b))?; box_border(props, b)?; box_padding(props, b); Ok(()) }
+fn box_flex_dir(b: &InkBox) -> &'static str { match b.flex_direction { FlexDirection::Row => "row", FlexDirection::Column => "column", FlexDirection::RowReverse => "row-reverse", FlexDirection::ColumnReverse => "column-reverse" } }
+fn box_justify(b: &InkBox) -> &'static str { match b.justify_content { JustifyContent::FlexStart => "flex-start", JustifyContent::FlexEnd => "flex-end", JustifyContent::Center => "center", JustifyContent::SpaceBetween => "space-between", JustifyContent::SpaceAround => "space-around", JustifyContent::SpaceEvenly => "space-evenly" } }
+fn box_align(b: &InkBox) -> &'static str { match b.align_items { AlignItems::FlexStart => "flex-start", AlignItems::FlexEnd => "flex-end", AlignItems::Center => "center", AlignItems::Stretch => "stretch", AlignItems::Baseline => "baseline" } }
+fn box_border<'js>(props: &Object<'js>, b: &InkBox) -> JsResult<()> { if b.borders.top || b.borders.right || b.borders.bottom || b.borders.left { props.set("borderStyle", match b.border_style { BorderStyle::Single => "single", BorderStyle::Double => "double", BorderStyle::Round => "round", BorderStyle::Bold => "bold", BorderStyle::Classic => "classic" })?; } Ok(()) }
+fn box_padding<'js>(props: &Object<'js>, b: &InkBox) { if let Some(p) = b.padding_left { let _ = props.set("paddingX", p as i32); } if let Some(p) = b.padding_top { let _ = props.set("paddingY", p as i32); } }
+fn vnode_to_js_children<'js>(ctx: &Ctx<'js>, children: &[VNode]) -> JsResult<Object<'js>> {
+    let arr = Object::new(ctx.clone())?;
+    for (i, c) in children.iter().enumerate() { let child_js = vnode_to_js(ctx, c)?; arr.set(i.to_string().as_str(), child_js)?; }
+    Ok(arr)
 }
 
 /// Convert a JS handle back to a VNode.
 fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
-    let obj = v.as_object().ok_or_else(|| rquickjs::Error::FromJs {
-        from: "value",
-        to: "VNode",
-        message: Some("expected object".to_string()),
-    })?;
-    if let Some(inner) = obj.get::<_, Object>("Box").ok() {
-        let children: Object = inner
-            .get("__children")
-            .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
-        let props: Object = inner
-            .get("__props")
-            .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
-        let mut b = InkBox::new();
-        if let Ok(dir_v) = props.get::<_, Value>("flexDirection") {
-            if let Some(s) = dir_v.as_string() {
-                if let Ok(s) = s.to_string() {
-                    b = b.flex_direction(parse_flex_dir(&s));
-                }
-            }
-        }
-        if let Ok(grow_v) = props.get::<_, Value>("flexGrow") {
-            if let Some(n) = grow_v.as_int() {
-                b = b.flex_grow(n as f32);
-            } else if let Some(n) = grow_v.as_float() {
-                b = b.flex_grow(n as f32);
-            }
-        }
-        if let Ok(style_v) = props.get::<_, Value>("borderStyle") {
-            if let Some(s) = style_v.as_string() {
-                if let Ok(s) = s.to_string() {
-                    b = b.border_style(parse_border_style(&s));
-                }
-            }
-        }
-        if let Ok(p) = props.get::<_, Value>("justifyContent") {
-            if let Some(s) = p.as_string() {
-                if let Ok(s) = s.to_string() {
-                    b = b.justify_content(parse_justify(&s));
-                }
-            }
-        }
-        if let Ok(p) = props.get::<_, Value>("alignItems") {
-            if let Some(s) = p.as_string() {
-                if let Ok(s) = s.to_string() {
-                    b = b.align_items(parse_align_items(&s));
-                }
-            }
-        }
-        if let Ok(p) = props.get::<_, Value>("paddingX") {
-            b = b.padding_x(to_u16(&p));
-        }
-        if let Ok(p) = props.get::<_, Value>("paddingY") {
-            b = b.padding_y(to_u16(&p));
-        }
-        // Only apply `padding` if the value is
-        // a real number. `props.get("padding")`
-        // returns Ok(Undefined) when the key is
-        // absent, which would otherwise reset all
-        // four padding fields to 0 and clobber
-        // the paddingX/paddingY we just set.
-        if let Ok(p) = props.get::<_, Value>("padding") {
-            if p.as_int().is_some() || p.as_float().is_some() {
-                b = b.padding(to_u16(&p));
-            }
-        }
-        for i in 0..children.len() {
-            if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) {
-                if let Ok(c) = vnode_from_js(ctx, &child) {
-                    b = b.child(c);
-                }
-            }
-        }
-        return Ok(VNode::from(b));
-    }
-    if let Some(inner) = obj.get::<_, Object>("Text").ok() {
-        let content: String = inner.get("__content").unwrap_or_else(|_| String::new());
-        let props: Object = inner
-            .get("__props")
-            .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
-        let mut t = InkText::new(content);
-        if props.get::<_, bool>("bold").unwrap_or(false) {
-            t = t.bold();
-        }
-        if props.get::<_, bool>("italic").unwrap_or(false) {
-            t = t.italic();
-        }
-        if props.get::<_, bool>("underline").unwrap_or(false) {
-            t = t.underline();
-        }
-        if let Ok(c) = props.get::<_, String>("color") {
-            if !c.is_empty() {
-                t = t.color(parse_color(&c));
-            }
-        }
-        if let Ok(c) = props.get::<_, String>("bgColor") {
-            if !c.is_empty() {
-                t = t.background_color(parse_color(&c));
-            }
-        }
-        return Ok(VNode::from(t));
-    }
-    if obj.get::<_, Object>("Newline").is_ok() {
-        return Ok(VNode::from(Newline::new()));
-    }
-    if obj.get::<_, Object>("Spacer").is_ok() {
-        return Ok(VNode::from(Spacer::new()));
-    }
-    Err(rquickjs::Error::FromJs {
-        from: "object",
-        to: "VNode",
-        message: Some("unknown VNode shape".to_string()),
-    })
+    let obj = v.as_object().ok_or_else(|| rquickjs::Error::FromJs { from: "value", to: "VNode", message: Some("expected object".to_string()) })?;
+    if let Some(inner) = obj.get::<_, Object>("Box").ok() { return vnode_from_js_box(ctx, &inner); }
+    if let Some(inner) = obj.get::<_, Object>("Text").ok() { return vnode_from_js_text(&inner); }
+    if obj.get::<_, Object>("Newline").is_ok() { return Ok(VNode::from(Newline::new())); }
+    if obj.get::<_, Object>("Spacer").is_ok() { return Ok(VNode::from(Spacer::new())); }
+    Err(rquickjs::Error::FromJs { from: "object", to: "VNode", message: Some("unknown VNode shape".to_string()) })
+}
+fn vnode_from_js_box<'js>(ctx: &Ctx<'js>, inner: &Object<'js>) -> JsResult<VNode> {
+    let children: Object = inner.get("__children").unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
+    let props: Object = inner.get("__props").unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
+    let mut b = InkBox::new();
+    apply_box_props(&props, &mut b);
+    for i in 0..children.len() { if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) { if let Ok(c) = vnode_from_js(ctx, &child) { b = b.child(c); } } }
+    Ok(VNode::from(b))
+}
+fn apply_box_props<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") { if let Some(s) = dir_v.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().flex_direction(parse_flex_dir(&s)); } } }
+    if let Ok(grow_v) = props.get::<_, Value>("flexGrow") { if let Some(n) = grow_v.as_int() { *b = b.clone().flex_grow(n as f32); } else if let Some(n) = grow_v.as_float() { *b = b.clone().flex_grow(n as f32); } }
+    if let Ok(style_v) = props.get::<_, Value>("borderStyle") { if let Some(s) = style_v.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().border_style(parse_border_style(&s)); } } }
+    if let Ok(p) = props.get::<_, Value>("justifyContent") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().justify_content(parse_justify(&s)); } } }
+    if let Ok(p) = props.get::<_, Value>("alignItems") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().align_items(parse_align_items(&s)); } } }
+    if let Ok(p) = props.get::<_, Value>("paddingX") { *b = b.clone().padding_x(to_u16(&p)); }
+    if let Ok(p) = props.get::<_, Value>("paddingY") { *b = b.clone().padding_y(to_u16(&p)); }
+    if let Ok(p) = props.get::<_, Value>("padding") { if p.as_int().is_some() || p.as_float().is_some() { *b = b.clone().padding(to_u16(&p)); } }
+}
+fn vnode_from_js_text<'js>(inner: &Object<'js>) -> JsResult<VNode> {
+    let content: String = inner.get("__content").unwrap_or_else(|_| String::new());
+    let props: Object = inner.get("__props").unwrap_or_else(|_| Object::new(inner.ctx().clone()).unwrap());
+    let mut t = InkText::new(content);
+    if props.get::<_, bool>("bold").unwrap_or(false) { t = t.bold(); }
+    if props.get::<_, bool>("italic").unwrap_or(false) { t = t.italic(); }
+    if props.get::<_, bool>("underline").unwrap_or(false) { t = t.underline(); }
+    if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { t = t.color(parse_color(&c)); } }
+    if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { t = t.background_color(parse_color(&c)); } }
+    Ok(VNode::from(t))
 }
 
 /// Install the bridge into the given rquickjs Context.
@@ -397,99 +243,28 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
 
 /// Build `runts_ink.box(props) -> VNode object`.
 fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
-    Function::new(
-        ctx.clone(),
-        |ctx: Ctx<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
-            let mut b = InkBox::new();
-            if let Ok(dir_v) = props.get::<_, Value>("flexDirection") {
-                if let Some(s) = dir_v.as_string() {
-                    let s = s.to_string().map_err(|e| rquickjs::Error::FromJs {
-                        from: "string",
-                        to: "string",
-                        message: Some(format!("{e:?}")),
-                    })?;
-                    b = b.flex_direction(parse_flex_dir(&s));
-                }
-            }
-            if let Ok(style_v) = props.get::<_, Value>("borderStyle") {
-                if let Some(s) = style_v.as_string() {
-                    let s = s.to_string().map_err(|e| rquickjs::Error::FromJs {
-                        from: "string",
-                        to: "string",
-                        message: Some(format!("{e:?}")),
-                    })?;
-                    b = b.border_style(parse_border_style(&s));
-                }
-            }
-            if let Ok(p) = props.get::<_, Value>("justifyContent") {
-                if let Some(s) = p.as_string() {
-                    if let Ok(s) = s.to_string() {
-                        b = b.justify_content(parse_justify(&s));
-                    }
-                }
-            }
-            if let Ok(p) = props.get::<_, Value>("alignItems") {
-                if let Some(s) = p.as_string() {
-                    if let Ok(s) = s.to_string() {
-                        b = b.align_items(parse_align_items(&s));
-                    }
-                }
-            }
-            if let Ok(p) = props.get::<_, Value>("paddingX") {
-                b = b.padding_x(to_u16(&p));
-            }
-            if let Ok(p) = props.get::<_, Value>("paddingY") {
-                b = b.padding_y(to_u16(&p));
-            }
-            // Only apply `padding` if the value is
-            // a real number. `props.get("padding")`
-            // returns Ok(Undefined) when the key is
-            // absent, which would otherwise reset all
-            // four padding fields to 0 and clobber
-            // the paddingX/paddingY we just set.
-            if let Ok(p) = props.get::<_, Value>("padding") {
-                if p.as_int().is_some() || p.as_float().is_some() {
-                    b = b.padding(to_u16(&p));
-                }
-            }
-            if let Ok(children_v) = props.get::<_, Value>("children") {
-                // Accept both arrays and objects.
-                // Real Ink passes arrays; the
-                // `vnode_to_js` round-trip stores
-                // children as an object.
-                let child_count: Option<usize> = children_v
-                    .as_array()
-                    .map(|a| a.len())
-                    .or_else(|| {
-                        children_v.as_object().map(|o| o.len())
-                    });
-                if let Some(len) = child_count {
-                    for i in 0..len {
-                        let key = i.to_string();
-                        let child_val = if let Some(arr) =
-                            children_v.as_array()
-                        {
-                            arr.get(i)
-                        } else if let Some(obj) =
-                            children_v.as_object()
-                        {
-                            obj.get::<_, Value>(key.as_str())
-                        } else {
-                            continue;
-                        };
-                        if let Ok(child) = child_val {
-                            if let Ok(c) =
-                                vnode_from_js(&ctx, &child)
-                            {
-                                b = b.child(c);
-                            }
-                        }
-                    }
-                }
-            }
-            vnode_to_js(&ctx, &VNode::from(b))
-        },
-    )
+    Function::new(ctx.clone(), |ctx: Ctx<'js>, props: Object<'js>| -> JsResult<Value<'js>> { box_fn_impl(&ctx, &props) })
+}
+fn box_fn_impl<'js>(ctx: &Ctx<'js>, props: &Object<'js>) -> JsResult<Value<'js>> {
+    let mut b = InkBox::new();
+    apply_box_fn_props(props, &mut b)?;
+    if let Ok(children_v) = props.get::<_, Value>("children") { box_add_children(ctx, props, children_v, &mut b)?; }
+    vnode_to_js(ctx, &VNode::from(b))
+}
+fn apply_box_fn_props<'js>(props: &Object<'js>, b: &mut InkBox) -> JsResult<()> {
+    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") { if let Some(s) = dir_v.as_string() { let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?; *b = b.clone().flex_direction(parse_flex_dir(&s)); } }
+    if let Ok(style_v) = props.get::<_, Value>("borderStyle") { if let Some(s) = style_v.as_string() { let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?; *b = b.clone().border_style(parse_border_style(&s)); } }
+    if let Ok(p) = props.get::<_, Value>("justifyContent") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().justify_content(parse_justify(&s)); } } }
+    if let Ok(p) = props.get::<_, Value>("alignItems") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().align_items(parse_align_items(&s)); } } }
+    if let Ok(p) = props.get::<_, Value>("paddingX") { *b = b.clone().padding_x(to_u16(&p)); }
+    if let Ok(p) = props.get::<_, Value>("paddingY") { *b = b.clone().padding_y(to_u16(&p)); }
+    if let Ok(p) = props.get::<_, Value>("padding") { if p.as_int().is_some() || p.as_float().is_some() { *b = b.clone().padding(to_u16(&p)); } }
+    Ok(())
+}
+fn box_add_children<'js>(ctx: &Ctx<'js>, props: &Object<'js>, children_v: Value<'js>, b: &mut InkBox) -> JsResult<()> {
+    let child_count: Option<usize> = children_v.as_array().map(|a| a.len()).or_else(|| children_v.as_object().map(|o| o.len()));
+    if let Some(len) = child_count { for i in 0..len { let key = i.to_string(); let child_val = if let Some(arr) = children_v.as_array() { arr.get(i) } else if let Some(obj) = children_v.as_object() { obj.get::<_, Value>(key.as_str()) } else { continue; }; if let Ok(child) = child_val { if let Ok(c) = vnode_from_js(ctx, &child) { *b = b.clone().child(c); } } } }
+    Ok(())
 }
 
 /// Build `runts_ink.text(content, props) -> VNode object`.
