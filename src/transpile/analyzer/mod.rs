@@ -172,6 +172,15 @@ impl Analyzer {
             Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Empty => {}
             Stmt::Labeled { body, .. } => self.analyze_stmt(body),
             Stmt::With { obj, body } => self.analyze_with(obj, body),
+            _ => self.analyze_stmt_remaining(stmt),
+        }
+    }
+
+    fn analyze_stmt_remaining(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Class(_) | Stmt::Variable(_) => {}
+            Stmt::ExportNamed { .. } | Stmt::ExportDefault { .. } => {}
+            Stmt::ImportNamed { .. } | Stmt::ImportDefault { .. } => {}
             _ => {}
         }
     }
