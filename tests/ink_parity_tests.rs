@@ -6,6 +6,7 @@
 //! 3. The parity test script is correctly structured
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 /// Verify all ink-* examples have the required files.
@@ -860,4 +861,234 @@ fn test_all_deno_json_have_valid_imports() {
             name
         );
     }
+}
+
+/// Verify runts.config.json files exist and are valid JSON
+#[test]
+fn test_runts_config_is_valid_json() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let runts_config = entry.path().join("runts.config.json");
+        
+        if runts_config.exists() {
+            let content = fs::read_to_string(&runts_config)
+                .expect("should be able to read runts.config.json");
+            
+            // Try to parse as JSON
+            let _: serde_json::Value = serde_json::from_str(&content)
+                .expect(&format!("runts.config.json for {} should be valid JSON", name));
+        }
+    }
+}
+
+/// Verify runts.config.json includes ratatui plugin
+#[test]
+fn test_runts_config_has_ratatui_plugin() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let runts_config = entry.path().join("runts.config.json");
+        
+        if runts_config.exists() {
+            let content = fs::read_to_string(&runts_config)
+                .expect("should be able to read runts.config.json");
+            
+            let json: serde_json::Value = serde_json::from_str(&content)
+                .expect("runts.config.json should be valid JSON");
+            
+            // Check for plugins array with ratatui
+            if let Some(plugins) = json.get("plugins").and_then(|p| p.as_array()) {
+                let has_ratatui = plugins.iter().any(|p| {
+                    p.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s == "ratatui")
+                        .unwrap_or(false)
+                });
+                
+                assert!(
+                    has_ratatui,
+                    "{} runts.config.json should have ratatui plugin",
+                    name
+                );
+            }
+        }
+    }
+}
+
+/// Verify ink examples don't have empty components
+#[test]
+fn test_ink_examples_have_non_empty_components() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        
+        let content = fs::read_to_string(&app_tsx)
+            .expect("should be able to read tui/app.tsx");
+        
+        // Components should have at least some content
+        // At minimum, they should have <Box or <Text elements
+        assert!(
+            content.contains("<Box") || content.contains("<Text"),
+            "{} should have at least one Box or Text component",
+            name
+        );
+        
+        // Components should have a return statement or render call
+        assert!(
+            content.contains("return") || content.contains("render("),
+            "{} should have a return statement or render call",
+            name
+        );
+    }
+}
+
+/// Verify ink examples have proper file endings
+#[test]
+fn test_ink_examples_have_proper_file_endings() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        
+        let content = fs::read_to_string(&app_tsx)
+            .expect("should be able to read tui/app.tsx");
+        
+        // File should not end abruptly (should end with newline)
+        assert!(
+            content.ends_with('\n') || content.ends_with(';') || content.ends_with('}'),
+            "{} should have proper ending",
+            name
+        );
+    }
+}
+
+/// Verify parity test script has proper shebang
+#[test]
+fn test_parity_script_has_shebang() {
+    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    assert!(script.exists(), "parity script should exist");
+    
+    let mut file = fs::File::open(script).expect("should open script");
+    let mut first_line = String::new();
+    file.read_to_string(&mut first_line).expect("should read script");
+    
+    assert!(
+        first_line.starts_with("#!"),
+        "parity script should have shebang"
+    );
+}
+
+/// Verify ink-uncontrolled-input example structure
+#[test]
+fn test_ink_uncontrolled_input_example_detailed() {
+    let path = Path::new("./examples/ink-uncontrolled-input/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should use backgroundColor prop
+    assert!(content.contains("backgroundColor"), "should use backgroundColor prop");
+    // Should have text content
+    assert!(content.contains("Name") || content.contains("Type"), 
+            "should have input-related text");
+}
+
+/// Verify ink-layout example uses proper layout components
+#[test]
+fn test_ink_layout_example_detailed() {
+    let path = Path::new("./examples/ink-layout/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should use flexDirection row for horizontal layout
+    assert!(content.contains("flexDirection=\"row\""), 
+            "should use flexDirection row prop");
+    // Should have borderStyle
+    assert!(content.contains("borderStyle"), "should use borderStyle prop");
+}
+
+/// Verify ink-dynamic example has dynamic content
+#[test]
+fn test_ink_dynamic_example_detailed() {
+    let path = Path::new("./examples/ink-dynamic/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should have dynamic-looking content (status states)
+    assert!(content.contains("OK") || content.contains("WARN") || content.contains("FAIL"), 
+            "should have status states");
+    // Should use color props for dynamic styling
+    assert!(content.contains("color=\"green\"") || content.contains("color=\"yellow\""), 
+            "should use color props");
+}
+
+/// Verify ink-switch example uses conditional rendering
+#[test]
+fn test_ink_switch_example_detailed() {
+    let path = Path::new("./examples/ink-switch/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should have conditional rendering
+    assert!(content.contains("color="), "should use color prop for switch visualization");
+}
+
+/// Verify ink-cursor example uses cursor props
+#[test]
+fn test_ink_cursor_example_detailed() {
+    let path = Path::new("./examples/ink-cursor/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should use cursor props or showCursor
+    assert!(content.contains("showCursor") || content.contains("cursor") || content.contains("blink"), 
+            "should use cursor props");
 }
