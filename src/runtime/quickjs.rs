@@ -62,35 +62,35 @@ impl QuickJsRuntime {
 }
 
 fn eval_inner(ctx: rquickjs::Context, code: &str) -> Result<String, JsError> {
-    // Use scope to get a Ctx for evaluation
     ctx.with(|ctx| {
-        // Catch JS exceptions by checking for errors after eval
-        let value: Value<'_> = match ctx.eval(code) {
-            Ok(v) => v,
-            Err(rquickjs::Error::Exception) => {
-                // Pull the actual JS error message out of the context using
-                // the cookbook recipe. rquickjs' `Exception` variant has no
-                // payload; the caught value lives in the context.
-                let caught = ctx.catch();
-                let js_msg = format!("{:?}", caught);
-                return Err(JsError::new(format!("JS Error: {}", js_msg)));
-            }
-            Err(e) => {
-                return Err(JsError::new(format!("JS Error: {}", e)));
-            }
-        };
-
-        let typ = value.type_name();
-        if typ == "array" || typ == "object" {
-            let json_result = json_stringify_result(ctx.clone(), value.clone());
-            match json_result {
-                Ok(s) => Ok(s),
-                Err(_) => Ok(value_to_string(value)),
-            }
-        } else {
-            Ok(value_to_string(value))
-        }
+        let value = eval_js_code(&ctx, code)?;
+        convert_value_to_string(ctx, value)
     })
+}
+
+fn eval_js_code(ctx: &rquickjs::Ctx, code: &str) -> Result<Value, JsError> {
+    match ctx.eval(code) {
+        Ok(v) => Ok(v),
+        Err(rquickjs::Error::Exception) => {
+            let caught = ctx.catch();
+            let js_msg = format!("{:?}", caught);
+            Err(JsError::new(format!("JS Error: {}", js_msg)))
+        }
+        Err(e) => Err(JsError::new(format!("JS Error: {}", e))),
+    }
+}
+
+fn convert_value_to_string(ctx: rquickjs::Ctx, value: Value) -> Result<String, JsError> {
+    let typ = value.type_name();
+    if typ == "array" || typ == "object" {
+        let json_result = json_stringify_result(ctx.clone(), value.clone());
+        match json_result {
+            Ok(s) => Ok(s),
+            Err(_) => Ok(value_to_string(value)),
+        }
+    } else {
+        Ok(value_to_string(value))
+    }
 }
 
 /// Wrap code to inject console.log and serialize result via JSON.stringify
