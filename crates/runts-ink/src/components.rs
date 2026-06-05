@@ -327,6 +327,42 @@ impl Box {
         self
     }
 
+    /// Set the flex wrap mode.
+    pub fn flex_wrap(mut self, wrap: FlexWrap) -> Self {
+        self.flex_wrap = wrap;
+        self
+    }
+
+    /// Set the position mode (relative / absolute).
+    pub fn position(mut self, pos: Position) -> Self {
+        self.position = pos;
+        self
+    }
+
+    /// Set the top inset (for absolute positioning).
+    pub fn top(mut self, v: u16) -> Self {
+        self.top = Some(v);
+        self
+    }
+
+    /// Set the left inset (for absolute positioning).
+    pub fn left(mut self, v: u16) -> Self {
+        self.left = Some(v);
+        self
+    }
+
+    /// Set the right inset (for absolute positioning).
+    pub fn right(mut self, v: u16) -> Self {
+        self.right = Some(v);
+        self
+    }
+
+    /// Set the bottom inset (for absolute positioning).
+    pub fn bottom(mut self, v: u16) -> Self {
+        self.bottom = Some(v);
+        self
+    }
+
     /// Set the flex-grow factor.
     pub fn flex_grow(mut self, grow: f32) -> Self {
         self.flex_grow = grow;
@@ -347,6 +383,36 @@ impl Box {
     /// alignment) of the children.
     pub fn align_items(mut self, a: AlignItems) -> Self {
         self.align_items = a;
+        self
+    }
+
+    /// Set align-self for this box.
+    pub fn align_self(mut self, a: AlignSelf) -> Self {
+        self.align_self = a;
+        self
+    }
+
+    /// Set the display mode (flex / none).
+    pub fn display(mut self, d: Display) -> Self {
+        self.display = d;
+        self
+    }
+
+    /// Set the overflow-x mode.
+    pub fn overflow_x(mut self, o: Overflow) -> Self {
+        self.overflow_x = o;
+        self
+    }
+
+    /// Set the column gap (horizontal spacing).
+    pub fn column_gap(mut self, g: u16) -> Self {
+        self.column_gap = Some(g);
+        self
+    }
+
+    /// Set the row gap (vertical spacing).
+    pub fn row_gap(mut self, g: u16) -> Self {
+        self.row_gap = Some(g);
         self
     }
 

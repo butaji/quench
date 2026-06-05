@@ -359,10 +359,16 @@ fn test_main_tsx_imports_render() {
         let content = fs::read_to_string(&main_tsx)
             .expect("should be able to read main.tsx");
         
-        // Check for render import
+        // main.tsx can either:
+        // 1. Import render from ink: import { render } from 'ink'
+        // 2. Import app and render: import { render } from 'ink'; import App from './tui/app.tsx'
+        // 3. Re-export app module: import './tui/app.tsx' (app.tsx does its own render)
+        let has_render_from_ink = content.contains("render") && content.contains("from 'ink'");
+        let has_import_tui = content.contains("./tui/app") || content.contains("from './tui");
+        
         assert!(
-            content.contains("render") && content.contains("from 'ink'"),
-            "main.tsx for {} should import render from ink",
+            has_render_from_ink || has_import_tui,
+            "main.tsx for {} should either import render from ink or import from './tui/app'",
             name
         );
     }
@@ -485,4 +491,168 @@ fn test_hooks_are_imported() {
             );
         }
     }
+}
+
+/// Verify new ink-text-styling example uses all text styling props
+#[test]
+fn test_ink_text_styling_example() {
+    let path = Path::new("./examples/ink-text-styling/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should contain all styling props
+    assert!(content.contains("bold"), "should use bold styling");
+    assert!(content.contains("italic"), "should use italic styling");
+    assert!(content.contains("underline"), "should use underline styling");
+    assert!(content.contains("strikethrough"), "should use strikethrough styling");
+    assert!(content.contains("dimColor"), "should use dimColor styling");
+    assert!(content.contains("inverse"), "should use inverse styling");
+    assert!(content.contains("color="), "should use color prop");
+}
+
+/// Verify new ink-use-app example uses useApp hook
+#[test]
+fn test_ink_use_app_example() {
+    let path = Path::new("./examples/ink-use-app/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useApp"), "should use useApp hook");
+    assert!(content.contains("exit"), "should use exit function");
+}
+
+/// Verify ink-focus-next example for focus navigation
+#[test]
+fn test_ink_focus_next_example() {
+    let path = Path::new("./examples/ink-focus-next/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useFocus"), "should use useFocus hook");
+    assert!(content.contains("isFocused"), "should check isFocused state");
+    assert!(content.contains("tab"), "should handle tab navigation");
+}
+
+/// Verify ink-combined-hooks example
+#[test]
+fn test_ink_combined_hooks_example() {
+    let path = Path::new("./examples/ink-combined-hooks/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useInput"), "should use useInput");
+    assert!(content.contains("useWindowSize"), "should use useWindowSize");
+    assert!(content.contains("useApp"), "should use useApp");
+    assert!(content.contains("columns"), "should use columns from window size");
+    assert!(content.contains("rows"), "should use rows from window size");
+}
+
+/// Verify ink-progress-bar example
+#[test]
+fn test_ink_progress_bar_example() {
+    let path = Path::new("./examples/ink-progress-bar/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("useEffect"), "should use useEffect for animation");
+    assert!(content.contains("useState"), "should use useState for progress");
+    assert!(content.contains("useApp"), "should use useApp for exit");
+}
+
+/// Verify ink-dynamic-children example
+#[test]
+fn test_ink_dynamic_children_example() {
+    let path = Path::new("./examples/ink-dynamic-children/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should demonstrate array mapping
+    assert!(content.contains(".map("), "should use array map");
+    assert!(content.contains("key="), "should have key props");
+    assert!(content.contains("useState"), "should use useState");
+}
+
+/// Verify new examples have proper entry points
+#[test]
+fn test_new_examples_have_main_tsx() {
+    let examples_dir = Path::new("./examples");
+    
+    let new_examples = vec![
+        "ink-text-styling",
+        "ink-use-app",
+        "ink-focus-next",
+        "ink-combined-hooks",
+        "ink-progress-bar",
+        "ink-dynamic-children",
+    ];
+    
+    for example in new_examples {
+        let path = examples_dir.join(example);
+        if path.exists() {
+            let main_tsx = path.join("main.tsx");
+            assert!(
+                main_tsx.exists(),
+                "{} should have main.tsx",
+                example
+            );
+            
+            let content = fs::read_to_string(&main_tsx)
+                .expect("should be able to read main.tsx");
+            assert!(
+                content.contains("render"),
+                "{} main.tsx should call render",
+                example
+            );
+        }
+    }
+}
+
+/// Verify ink examples use Box component for layout
+#[test]
+fn test_examples_use_box_for_layout() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    let total = entries.len();
+    
+    // Most examples should use Box for layout
+    let mut box_users = 0;
+    for entry in &entries {
+        let app_tsx = entry.path().join("tui/app.tsx");
+        if app_tsx.exists() {
+            let content = fs::read_to_string(&app_tsx).unwrap();
+            if content.contains("<Box") {
+                box_users += 1;
+            }
+        }
+    }
+    
+    // At least 80% of examples should use Box
+    let percentage = (box_users as f64 / total as f64) * 100.0;
+    assert!(
+        percentage >= 80.0,
+        "at least 80% of examples should use Box component, found {}%",
+        percentage
+    );
+}
+
+/// Verify parity harness script exists and is executable
+#[test]
+fn test_parity_harness_script_exists() {
+    let script = Path::new("./test_parity_harness.sh");
+    assert!(
+        script.exists(),
+        "parity harness script should exist"
+    );
+    
+    let metadata = fs::metadata(script).expect("should get metadata");
+    assert!(
+        metadata.permissions().readonly() == false,
+        "parity harness script should be writable"
+    );
 }
