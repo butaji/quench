@@ -16,3 +16,5 @@ Parity test must be run by a single script, harnessing all the executing, tracin
 All the changes and complicated sections must be covered with unit-tests. High test coverage is a requirement.
 
 task=commit + push
+
+before starting make a code and architecture review, track tasks in tasks/index.json and tasks/xxx.md per each task with descriptions

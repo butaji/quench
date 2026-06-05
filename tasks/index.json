@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-05",
+  "project": "runts-ink Examples Parity",
+  "tasks": [
+    {
+      "id": "001",
+      "title": "Architecture Review & Task Planning",
+      "status": "completed",
+      "priority": "critical"
+    },
+    {
+      "id": "002",
+      "title": "Analyze Current Ink Examples Coverage",
+      "status": "completed",
+      "priority": "critical"
+    },
+    {
+      "id": "003",
+      "title": "Create Missing Ink Examples",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "004",
+      "title": "Improve Parity Test Harness",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "005",
+      "title": "Add Unit Tests for New Features",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "006",
+      "title": "Run Parity Tests & Fix Issues",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "007",
+      "title": "Commit and Push Changes",
+      "status": "in_progress",
+      "priority": "critical"
+    }
+  ],
+  "stats": {
+    "total_examples": 88,
+    "examples_added": 8,
+    "features_covered": 80,
+    "features_total": 85,
+    "unit_tests": 150,
+    "test_files": 14
+  }
+}
