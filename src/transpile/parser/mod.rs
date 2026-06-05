@@ -51,33 +51,35 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
 /// Run ownership and effect analysis on parsed module
 fn run_analysis_passes(module: &mut hir::Module) {
     for item in &mut module.items {
-        match item {
-            hir::ModuleItem::Stmt(hir::Stmt::FunctionDecl(ref mut func)) => {
-                hir::infer_function_ownership(func);
-                hir::analyze_effects(func);
+        run_pass_on_item(item);
+    }
+}
+
+fn run_pass_on_item(item: &mut hir::ModuleItem) {
+    match item {
+        hir::ModuleItem::Stmt(hir::Stmt::FunctionDecl(ref mut func)) => {
+            hir::infer_function_ownership(func);
+            hir::analyze_effects(func);
+        }
+        hir::ModuleItem::Decl(hir::Decl::Function(ref mut func)) => {
+            hir::infer_function_ownership(func);
+            hir::analyze_effects(func);
+        }
+        hir::ModuleItem::Decl(hir::Decl::Class(ref mut class)) => {
+            for method in &mut class.methods {
+                hir::infer_method_ownership(method);
+                hir::analyze_method_effects(method);
             }
-            hir::ModuleItem::Decl(hir::Decl::Function(ref mut func)) => {
-                hir::infer_function_ownership(func);
-                hir::analyze_effects(func);
-            }
-            hir::ModuleItem::Decl(hir::Decl::Class(ref mut class)) => {
-                // Analyze class methods
-                for method in &mut class.methods {
-                    hir::infer_method_ownership(method);
-                    hir::analyze_method_effects(method);
-                }
-            }
-            hir::ModuleItem::Decl(hir::Decl::Variable(ref mut var)) => {
-                // Analyze arrow functions in variable initializers
-                if let Some(ref mut expr) = var.init {
-                    analyze_expr_passes(expr);
-                }
-            }
-            hir::ModuleItem::Stmt(hir::Stmt::Expr { ref mut expr }) => {
+        }
+        hir::ModuleItem::Decl(hir::Decl::Variable(ref mut var)) => {
+            if let Some(ref mut expr) = var.init {
                 analyze_expr_passes(expr);
             }
-            _ => {}
         }
+        hir::ModuleItem::Stmt(hir::Stmt::Expr { ref mut expr }) => {
+            analyze_expr_passes(expr);
+        }
+        _ => {}
     }
 }
 
@@ -96,14 +98,24 @@ fn analyze_expr_passes(expr: &mut hir::Expr) {
                 analyze_stmt_passes(stmt);
             }
         }
-        hir::Expr::Call { callee, arguments: _ } => analyze_expr_passes(callee),
-        hir::Expr::Member { obj, property, computed: _ } => {
-            analyze_expr_passes(obj);
-            analyze_expr_passes(property);
-        }
-        hir::Expr::StaticMember { obj, property: _ } => analyze_expr_passes(obj),
+        hir::Expr::Call { callee, .. } => analyze_expr_passes(callee),
+        hir::Expr::Member { .. } => analyze_member_expr(expr),
+        hir::Expr::StaticMember { .. } => analyze_static_member_expr(expr),
         hir::Expr::JSX(ref mut jsx) => analyze_jsx_spreads(jsx),
         _ => {}
+    }
+}
+
+fn analyze_member_expr(expr: &mut hir::Expr) {
+    if let hir::Expr::Member { obj, property, .. } = expr {
+        analyze_expr_passes(obj);
+        analyze_expr_passes(property);
+    }
+}
+
+fn analyze_static_member_expr(expr: &mut hir::Expr) {
+    if let hir::Expr::StaticMember { obj, .. } = expr {
+        analyze_expr_passes(obj);
     }
 }
 
@@ -144,13 +156,7 @@ fn analyze_jsx_spreads(jsx: &mut hir::JSXExpr) {
 /// Analyze statement passes for nested expressions
 fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
     match stmt {
-        hir::Stmt::If { test, consequent, alternate } => {
-            analyze_expr_passes(test);
-            analyze_stmt_passes(consequent);
-            if let Some(alt) = alternate {
-                analyze_stmt_passes(alt);
-            }
-        }
+        hir::Stmt::If { test, consequent, alternate } => analyze_if_stmt(test, consequent, alternate),
         hir::Stmt::While { test, body } => {
             analyze_expr_passes(test);
             analyze_stmt_passes(body);
@@ -169,6 +175,14 @@ fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
         hir::Stmt::Expr { expr } => analyze_expr_passes(expr),
         hir::Stmt::Class(ref mut class) => analyze_class_methods(class),
         _ => {}
+    }
+}
+
+fn analyze_if_stmt(test: &mut hir::Expr, consequent: &mut Box<hir::Stmt>, alternate: &mut Option<Box<hir::Stmt>>) {
+    analyze_expr_passes(test);
+    analyze_stmt_passes(consequent);
+    if let Some(alt) = alternate {
+        analyze_stmt_passes(alt);
     }
 }
 
