@@ -49,8 +49,9 @@
     {
       "id": "008",
       "title": "Commit and Push Changes",
-      "status": "in_progress",
-      "priority": "critical"
+      "status": "completed",
+      "priority": "critical",
+      "commit": "8854dea"
     }
   ],
   "stats": {
