@@ -140,16 +140,45 @@ fn to_u16(v: &Value<'_>) -> u16 {
 fn vnode_to_js<'js>(ctx: &Ctx<'js>, node: &VNode) -> JsResult<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     let inner = Object::new(ctx.clone())?;
-    match &node.0 {
-        VNodeContent::Box(b) => { vnode_to_js_box(ctx, &obj, &inner, b)?; }
-        VNodeContent::Text(t) => { let props = Object::new(ctx.clone())?; inner.set("__content", &t.content)?; inner.set("__props", props)?; obj.set("Text", inner.clone())?; }
-        VNodeContent::Newline(_) => { obj.set("Newline", inner.clone())?; }
-        VNodeContent::Spacer(_) => { obj.set("Spacer", inner.clone())?; }
-        VNodeContent::Static(s) => { let children = vnode_to_js_children(ctx, &s.children)?; inner.set("__children", children)?; obj.set("Static", inner.clone())?; }
-        VNodeContent::Transform(t) => { let child = vnode_to_js(ctx, &t.child)?; inner.set("__child", child)?; obj.set("Transform", inner.clone())?; }
-        VNodeContent::Fragment(c) => { let arr = vnode_to_js_children(ctx, c)?; inner.set("__children", arr)?; obj.set("Fragment", inner.clone())?; }
-    }
+    convert_vnode_to_js(ctx, &obj, &inner, node)?;
     Ok(Value::from_object(obj))
+}
+
+fn convert_vnode_to_js<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, node: &VNode) -> JsResult<()> {
+    match &node.0 {
+        VNodeContent::Box(b) => vnode_to_js_box(ctx, obj, inner, b),
+        VNodeContent::Text(t) => vnode_to_js_text(ctx, obj, inner, t),
+        VNodeContent::Newline(_) => obj.set("Newline", inner.clone()),
+        VNodeContent::Spacer(_) => obj.set("Spacer", inner.clone()),
+        VNodeContent::Static(s) => vnode_to_js_static(ctx, obj, inner, s),
+        VNodeContent::Transform(t) => vnode_to_js_transform(ctx, obj, inner, t),
+        VNodeContent::Fragment(c) => vnode_to_js_fragment(ctx, obj, inner, c),
+    }
+}
+
+fn vnode_to_js_text<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, t: &InkText) -> JsResult<()> {
+    let props = Object::new(ctx.clone())?;
+    inner.set("__content", &t.content)?;
+    inner.set("__props", props)?;
+    obj.set("Text", inner.clone())
+}
+
+fn vnode_to_js_static<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, s: &crate::components::Static) -> JsResult<()> {
+    let children = vnode_to_js_children(ctx, &s.children)?;
+    inner.set("__children", children)?;
+    obj.set("Static", inner.clone())
+}
+
+fn vnode_to_js_transform<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, t: &crate::components::Transform) -> JsResult<()> {
+    let child = vnode_to_js(ctx, &t.child)?;
+    inner.set("__child", child)?;
+    obj.set("Transform", inner.clone())
+}
+
+fn vnode_to_js_fragment<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, c: &[VNode]) -> JsResult<()> {
+    let arr = vnode_to_js_children(ctx, c)?;
+    inner.set("__children", arr)?;
+    obj.set("Fragment", inner.clone())
 }
 fn vnode_to_js_box<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, b: &InkBox) -> JsResult<()> {
     let props = Object::new(ctx.clone())?;
@@ -211,14 +240,84 @@ fn vnode_from_js_box<'js>(ctx: &Ctx<'js>, inner: &Object<'js>) -> JsResult<VNode
     Ok(VNode::from(b))
 }
 fn apply_box_props<'js>(props: &Object<'js>, b: &mut InkBox) {
-    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") { if let Some(s) = dir_v.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().flex_direction(parse_flex_dir(&s)); } } }
-    if let Ok(grow_v) = props.get::<_, Value>("flexGrow") { if let Some(n) = grow_v.as_int() { *b = b.clone().flex_grow(n as f32); } else if let Some(n) = grow_v.as_float() { *b = b.clone().flex_grow(n as f32); } }
-    if let Ok(style_v) = props.get::<_, Value>("borderStyle") { if let Some(s) = style_v.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().border_style(parse_border_style(&s)); } } }
-    if let Ok(p) = props.get::<_, Value>("justifyContent") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().justify_content(parse_justify(&s)); } } }
-    if let Ok(p) = props.get::<_, Value>("alignItems") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().align_items(parse_align_items(&s)); } } }
-    if let Ok(p) = props.get::<_, Value>("paddingX") { *b = b.clone().padding_x(to_u16(&p)); }
-    if let Ok(p) = props.get::<_, Value>("paddingY") { *b = b.clone().padding_y(to_u16(&p)); }
-    if let Ok(p) = props.get::<_, Value>("padding") { if p.as_int().is_some() || p.as_float().is_some() { *b = b.clone().padding(to_u16(&p)); } }
+    apply_box_flex_dir(props, b);
+    apply_box_flex_grow(props, b);
+    apply_box_border_style(props, b);
+    apply_box_justify(props, b);
+    apply_box_align(props, b);
+    apply_box_padding_x(props, b);
+    apply_box_padding_y(props, b);
+    apply_box_padding(props, b);
+}
+
+fn apply_box_flex_dir<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") {
+        if let Some(s) = dir_v.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().flex_direction(parse_flex_dir(&s));
+            }
+        }
+    }
+}
+
+fn apply_box_flex_grow<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(grow_v) = props.get::<_, Value>("flexGrow") {
+        if let Some(n) = grow_v.as_int() {
+            *b = b.clone().flex_grow(n as f32);
+        } else if let Some(n) = grow_v.as_float() {
+            *b = b.clone().flex_grow(n as f32);
+        }
+    }
+}
+
+fn apply_box_border_style<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(style_v) = props.get::<_, Value>("borderStyle") {
+        if let Some(s) = style_v.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().border_style(parse_border_style(&s));
+            }
+        }
+    }
+}
+
+fn apply_box_justify<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("justifyContent") {
+        if let Some(s) = p.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().justify_content(parse_justify(&s));
+            }
+        }
+    }
+}
+
+fn apply_box_align<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("alignItems") {
+        if let Some(s) = p.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().align_items(parse_align_items(&s));
+            }
+        }
+    }
+}
+
+fn apply_box_padding_x<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("paddingX") {
+        *b = b.clone().padding_x(to_u16(&p));
+    }
+}
+
+fn apply_box_padding_y<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("paddingY") {
+        *b = b.clone().padding_y(to_u16(&p));
+    }
+}
+
+fn apply_box_padding<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("padding") {
+        if p.as_int().is_some() || p.as_float().is_some() {
+            *b = b.clone().padding(to_u16(&p));
+        }
+    }
 }
 fn vnode_from_js_text<'js>(inner: &Object<'js>) -> JsResult<VNode> {
     let content: String = inner.get("__content").unwrap_or_else(|_| String::new());
@@ -233,36 +332,28 @@ fn vnode_from_js_text<'js>(inner: &Object<'js>) -> JsResult<VNode> {
 }
 
 /// Install the bridge into the given rquickjs Context.
-/// Sets a global `runts_ink` object with `box`, `text`,
 /// Install the bridge into the given rquickjs Context.
 /// Sets a global `runts_ink` object with `box`, `text`,
 /// `newline`, `spacer`, and `render_to_string`.
 pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     let globals = ctx.globals();
     let runts_ink = Object::new(ctx.clone())?;
+    install_functions(ctx.clone(), &runts_ink)?;
+    globals.set("runts_ink", runts_ink)
+}
 
-    // runts_ink.box(props) -> VNode object.
+fn install_functions<'js>(ctx: Ctx<'js>, runts_ink: &Object<'js>) -> JsResult<()> {
     let box_fn = make_box_fn(ctx.clone())?;
     runts_ink.set("box", box_fn)?;
-
-    // runts_ink.text(content, props) -> VNode object.
     let text_fn = make_text_fn(ctx.clone())?;
     runts_ink.set("text", text_fn)?;
-
-    // runts_ink.newline() -> VNode object.
     let newline_fn = make_newline_fn(ctx.clone())?;
     runts_ink.set("newline", newline_fn)?;
-
-    // runts_ink.spacer() -> VNode object.
     let spacer_fn = make_spacer_fn(ctx.clone())?;
     runts_ink.set("spacer", spacer_fn)?;
-
-    // runts_ink.render_to_string(handle) -> string.
     let render_fn = make_render_fn(ctx.clone())?;
-    runts_ink.set("render_to_string", render_fn)?;
-
-    globals.set("runts_ink", runts_ink)?;
-    Ok(())
+    runts_ink.set("render_to_string", render_fn)
+}
 }
 
 // Helper functions below wrap the closures in named
@@ -283,14 +374,74 @@ fn box_fn_impl<'js>(ctx: &Ctx<'js>, props: &Object<'js>) -> JsResult<Value<'js>>
     vnode_to_js(ctx, &VNode::from(b))
 }
 fn apply_box_fn_props<'js>(props: &Object<'js>, b: &mut InkBox) -> JsResult<()> {
-    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") { if let Some(s) = dir_v.as_string() { let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?; *b = b.clone().flex_direction(parse_flex_dir(&s)); } }
-    if let Ok(style_v) = props.get::<_, Value>("borderStyle") { if let Some(s) = style_v.as_string() { let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?; *b = b.clone().border_style(parse_border_style(&s)); } }
-    if let Ok(p) = props.get::<_, Value>("justifyContent") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().justify_content(parse_justify(&s)); } } }
-    if let Ok(p) = props.get::<_, Value>("alignItems") { if let Some(s) = p.as_string() { if let Ok(s) = s.to_string() { *b = b.clone().align_items(parse_align_items(&s)); } } }
-    if let Ok(p) = props.get::<_, Value>("paddingX") { *b = b.clone().padding_x(to_u16(&p)); }
-    if let Ok(p) = props.get::<_, Value>("paddingY") { *b = b.clone().padding_y(to_u16(&p)); }
-    if let Ok(p) = props.get::<_, Value>("padding") { if p.as_int().is_some() || p.as_float().is_some() { *b = b.clone().padding(to_u16(&p)); } }
+    apply_fn_flex_dir(props, b)?;
+    apply_fn_border_style(props, b)?;
+    apply_fn_justify(props, b);
+    apply_fn_align(props, b);
+    apply_fn_padding_x(props, b);
+    apply_fn_padding_y(props, b);
+    apply_fn_padding(props, b);
     Ok(())
+}
+
+fn apply_fn_flex_dir<'js>(props: &Object<'js>, b: &mut InkBox) -> JsResult<()> {
+    if let Ok(dir_v) = props.get::<_, Value>("flexDirection") {
+        if let Some(s) = dir_v.as_string() {
+            let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?;
+            *b = b.clone().flex_direction(parse_flex_dir(&s));
+        }
+    }
+    Ok(())
+}
+
+fn apply_fn_border_style<'js>(props: &Object<'js>, b: &mut InkBox) -> JsResult<()> {
+    if let Ok(style_v) = props.get::<_, Value>("borderStyle") {
+        if let Some(s) = style_v.as_string() {
+            let s = s.to_string().map_err(|e| rquickjs::Error::FromJs { from: "string", to: "string", message: Some(format!("{e:?}")) })?;
+            *b = b.clone().border_style(parse_border_style(&s));
+        }
+    }
+    Ok(())
+}
+
+fn apply_fn_justify<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("justifyContent") {
+        if let Some(s) = p.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().justify_content(parse_justify(&s));
+            }
+        }
+    }
+}
+
+fn apply_fn_align<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("alignItems") {
+        if let Some(s) = p.as_string() {
+            if let Ok(s) = s.to_string() {
+                *b = b.clone().align_items(parse_align_items(&s));
+            }
+        }
+    }
+}
+
+fn apply_fn_padding_x<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("paddingX") {
+        *b = b.clone().padding_x(to_u16(&p));
+    }
+}
+
+fn apply_fn_padding_y<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("paddingY") {
+        *b = b.clone().padding_y(to_u16(&p));
+    }
+}
+
+fn apply_fn_padding<'js>(props: &Object<'js>, b: &mut InkBox) {
+    if let Ok(p) = props.get::<_, Value>("padding") {
+        if p.as_int().is_some() || p.as_float().is_some() {
+            *b = b.clone().padding(to_u16(&p));
+        }
+    }
 }
 fn box_add_children<'js>(ctx: &Ctx<'js>, props: &Object<'js>, children_v: Value<'js>, b: &mut InkBox) -> JsResult<()> {
     let child_count: Option<usize> = children_v.as_array().map(|a| a.len()).or_else(|| children_v.as_object().map(|o| o.len()));
@@ -300,16 +451,37 @@ fn box_add_children<'js>(ctx: &Ctx<'js>, props: &Object<'js>, children_v: Value<
 
 /// Build `runts_ink.text(content, props) -> VNode object`.
 fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
-Function::new(ctx.clone(), |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
-let content_str = if let Some(s) = content.as_string() { let raw = s.to_string().unwrap_or_default(); if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 { raw[1..raw.len() - 1].to_string() } else { raw } } else { content.get::<String>().unwrap_or_default() };
-let mut t = InkText::new(content_str);
-if let Ok(b) = props.get::<_, bool>("bold") { if b { t = t.bold(); } }
-if let Ok(b) = props.get::<_, bool>("italic") { if b { t = t.italic(); } }
-if let Ok(b) = props.get::<_, bool>("underline") { if b { t = t.underline(); } }
-if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { t = t.color(parse_color(&c)); } }
-if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { t = t.background_color(parse_color(&c)); } }
-vnode_to_js(&ctx, &VNode::from(t))
-})
+    Function::new(ctx.clone(), |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
+        make_text_vnode(&ctx, content, &props)
+    })
+}
+
+fn make_text_vnode<'js>(ctx: &Ctx<'js>, content: rquickjs::Value<'js>, props: &Object<'js>) -> JsResult<Value<'js>> {
+    let content_str = extract_string_content(content);
+    let mut t = InkText::new(content_str);
+    apply_text_styles(props, &mut t);
+    vnode_to_js(ctx, &VNode::from(t))
+}
+
+fn extract_string_content(content: rquickjs::Value<'_>) -> String {
+    if let Some(s) = content.as_string() {
+        let raw = s.to_string().unwrap_or_default();
+        if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+            raw[1..raw.len() - 1].to_string()
+        } else {
+            raw
+        }
+    } else {
+        content.get::<String>().unwrap_or_default()
+    }
+}
+
+fn apply_text_styles(props: &Object<'_>, t: &mut InkText) {
+    if let Ok(true) = props.get::<_, bool>("bold") { *t = t.bold(); }
+    if let Ok(true) = props.get::<_, bool>("italic") { *t = t.italic(); }
+    if let Ok(true) = props.get::<_, bool>("underline") { *t = t.underline(); }
+    if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { *t = t.color(parse_color(&c)); } }
+    if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { *t = t.background_color(parse_color(&c)); } }
 }
 
 /// Build `runts_ink.newline() -> VNode object`.
