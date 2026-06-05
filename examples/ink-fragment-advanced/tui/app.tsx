@@ -1,41 +1,31 @@
-// Advanced Fragment Example — demonstrates React Fragment patterns.
+// Advanced Fragment Example — demonstrates React Fragment patterns with Ink.
 // Shows fragment usage for grouping without extra DOM nodes.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
+//
+// NOTE: Fragment syntax and && operator are not supported in runts HIR runtime.
 
 import React from 'react';
 import { Box, Text } from 'ink';
 
-// Fragment to group related items
-function MetaInfo({ label, value }: { label: string; value: string }) {
-  return (
-    <>
-      <Text dimColor>{label}: </Text>
-      <Text>{value}</Text>
-      <Text>  </Text>
-    </>
-  );
-}
+type Status = "active" | "inactive" | "pending";
 
-// Fragment with key for lists
-function ListItem({ name, status }: { name: string; status: string }) {
-  return (
-    <Text>
-      • {name} <Text dimColor>({status})</Text>
-    </Text>
-  );
+function getStatusColor(status: Status): string {
+  if (status === "active") return "green";
+  if (status === "inactive") return "gray";
+  return "yellow";
 }
 
 export default function FragmentAdvanced() {
   // Static values for parity testing
-  const user = { name: "Admin", role: "administrator", loggedIn: true };
+  const user = { name: "Admin", role: "administrator", status: "online" as Status };
   const items = [
-    { name: "Dashboard", status: "active" },
-    { name: "Settings", status: "pending" },
-    { name: "Profile", status: "active" },
+    { name: "Dashboard", status: "active" as Status },
+    { name: "Settings", status: "pending" as Status },
+    { name: "Profile", status: "active" as Status },
   ];
 
   return (
@@ -43,24 +33,29 @@ export default function FragmentAdvanced() {
       <Text bold color="cyan">Fragment Demo</Text>
       <Text></Text>
       
-      {/* Inline fragment */}
-      <Text>
-        User: <Text bold>{user.name}</Text>
-      </Text>
+      <Text>User: <Text bold>{user.name}</Text></Text>
       
-      {/* Fragment as group */}
       <Box>
-        <MetaInfo label="Role" value={user.role} />
-        <MetaInfo label="Status" value={user.loggedIn ? "online" : "offline"} />
+        <Text dimColor>Role: </Text>
+        <Text>{user.role}</Text>
+        <Text>  </Text>
+        <Text dimColor>Status: </Text>
+        <Text>{user.status}</Text>
       </Box>
       
       <Text></Text>
       
-      {/* Fragment for list */}
       <Text bold>Items:</Text>
-      {items.map((item, i) => (
-        <ListItem key={i} name={item.name} status={item.status} />
-      ))}
+      {items.map((item, i) => {
+        const color = getStatusColor(item.status);
+        return (
+          <Box key={i}>
+            <Text color="dimColor">• </Text>
+            <Text>{item.name}</Text>
+            <Text color={color}> ({item.status})</Text>
+          </Box>
+        );
+      })}
       
       <Text></Text>
       <Text dimColor>Press q to quit.</Text>

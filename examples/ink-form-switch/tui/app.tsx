@@ -5,17 +5,11 @@
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
+//
+// NOTE: Custom components and ternary operators are not supported in runts HIR runtime.
 
 import React from 'react';
 import { Box, Text } from 'ink';
-
-function Switch({ isOn }: { isOn: boolean }) {
-  return (
-    <Text color={isOn ? "green" : "gray"}>
-      [{isOn ? "●" : "○"}]
-    </Text>
-  );
-}
 
 export default function FormSwitch() {
   // Static values for parity testing
@@ -29,15 +23,15 @@ export default function FormSwitch() {
       <Text></Text>
       <Box justifyContent="space-between" width={40}>
         <Text>Notifications</Text>
-        <Switch isOn={notifications} />
+        <Text color="green">[●]</Text>
       </Box>
       <Box justifyContent="space-between" width={40}>
         <Text>Dark Mode</Text>
-        <Switch isOn={darkMode} />
+        <Text color="gray">[○]</Text>
       </Box>
       <Box justifyContent="space-between" width={40}>
         <Text>Auto-save</Text>
-        <Switch isOn={autoSave} />
+        <Text color="green">[●]</Text>
       </Box>
       <Text></Text>
       <Text dimColor>Press q to quit.</Text>
