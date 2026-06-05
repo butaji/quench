@@ -1325,10 +1325,30 @@ impl QuoteCodegen {
             U::Plus => quote! { #arg_ts },
             U::Minus => quote! { -#arg_ts },
             U::Not | U::BitNot => quote! { !#arg_ts },
-            U::Typeof => quote! { { match &#arg_ts { Value::String(_) => "string", Value::Number(_) => "number", Value::Boolean(_) => "boolean", Value::Null => "object", Value::Undefined => "undefined", Value::BigInt(_) => "bigint", Value::Function(_) => "function", Value::Object(_) | Value::Array(_) | Value::RegExp(_, _) => "object", _ => "unknown" } } },
+            U::Typeof => self.gen_typeof_expr(&arg_ts),
             U::Void => quote! { () },
             U::Delete => quote! { false },
         }
+    }
+
+    fn gen_typeof_expr(&self, arg_ts: &TokenStream) -> TokenStream {
+        let s = quote! { match &#arg_ts };
+        let arms = self.typeof_arms();
+        quote! { { #s { #(#arms),* } } }
+    }
+
+    fn typeof_arms(&self) -> Vec<TokenStream> {
+        vec![
+            quote! { Value::String(_) => "string" },
+            quote! { Value::Number(_) => "number" },
+            quote! { Value::Boolean(_) => "boolean" },
+            quote! { Value::Null => "object" },
+            quote! { Value::Undefined => "undefined" },
+            quote! { Value::BigInt(_) => "bigint" },
+            quote! { Value::Function(_) => "function" },
+            quote! { Value::Object(_) | Value::Array(_) | Value::RegExp(_, _) => "object" },
+            quote! { _ => "unknown" },
+        ]
     }
 
     fn gen_logical_expr(&self, op: &super::LogicalOp, left: &Expr, right: &Expr) -> TokenStream {
