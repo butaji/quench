@@ -455,7 +455,12 @@ run_tests() {
     echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST HARNESS - UNIFIED${NC}                                  ${BOLD}║${NC}"
     echo -e "${BOLD}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BOLD}║${NC}  Environments: ${GREEN}deno${NC} | ${GREEN}runts dev${NC} | ${GREEN}runts build${NC}                         ${BOLD}║${NC}"
-    echo -e "${BOLD}║${NC}  Mode: ${YELLOW}$( [[ "$QUICK_MODE" == "true" ]] && echo "QUICK (no compile)" || echo "FULL (with compile)" }${NC}                                           ${BOLD}║${NC}"
+    
+    if [[ "$QUICK_MODE" == "true" ]]; then
+        echo -e "${BOLD}║${NC}  Mode: ${YELLOW}QUICK (no compile)${NC}                                           ${BOLD}║${NC}"
+    else
+        echo -e "${BOLD}║${NC}  Mode: ${YELLOW}FULL (with compile)${NC}                                          ${BOLD}║${NC}"
+    fi
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
