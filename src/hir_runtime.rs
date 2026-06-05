@@ -12,7 +12,7 @@
 
 use crate::transpile::hir;
 use runts_ink::{
-    AlignSelf, BorderStyle, Box as InkBox, Color, Display, Newline, Overflow, Spacer, Text as InkText, VNode,
+    AlignSelf, BorderStyle, Box as InkBox, Color, Display, FlexWrap, Newline, Overflow, Spacer, Text as InkText, VNode,
     VNodeContent,
 };
 
@@ -691,6 +691,16 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
         "columnGap" => {
             if let Value::Number(n) = val {
                 b.column_gap = Some(*n as u16);
+            }
+        }
+        "flexWrap" => {
+            if let Value::String(s) = val {
+                b.flex_wrap = match s.as_str() {
+                    "wrap" => FlexWrap::Wrap,
+                    "nowrap" => FlexWrap::NoWrap,
+                    "wrap-reverse" => FlexWrap::WrapReverse,
+                    _ => FlexWrap::NoWrap,
+                };
             }
         }
         "borderStyle" => {
