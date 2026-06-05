@@ -231,16 +231,16 @@ fn generate_function_string(
 }
 
 fn make_fn_header(async_kw: &str, name: &str, params: &str, ret: &str) -> String {
-    format!("pub ",)
-        .to_string()
-        + async_kw
-        + "fn "
-        + name
-        + "("
-        + params
-        + ") -> "
-        + ret
-        + " {"
+    let mut s = String::from("pub ");
+    s.push_str(async_kw);
+    s.push_str("fn ");
+    s.push_str(name);
+    s.push('(');
+    s.push_str(params);
+    s.push_str(") -> ");
+    s.push_str(ret);
+    s.push_str(" {");
+    s
 }
 
 fn make_fn_string(header: &str, body: &str) -> String {
