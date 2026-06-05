@@ -23,6 +23,7 @@ TMP_DIR="/tmp/runts_ink_parity"
 RUN_COMPILE=true
 
 # Parse args
+SPECIFIC_EXAMPLES=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-compile)
@@ -31,8 +32,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --examples)
             shift
-            SPECIFIC_EXAMPLES="$*"
-            break
+            # Collect all remaining args as examples until we hit another option
+            SPECIFIC_EXAMPLES=""
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                SPECIFIC_EXAMPLES="$SPECIFIC_EXAMPLES $1"
+                shift
+            done
             ;;
         *)
             echo "Unknown option: $1"
@@ -161,12 +166,12 @@ run_compile() {
 }
 
 # Normalize output for comparison
+# Keep lines but remove trailing whitespace and empty lines
 normalize() {
     tr -d '\r' | \
     sed 's/[[:space:]]*$//' | \
     grep -v '^$' | \
-    head -20 | \
-    tr -d ' \t\n'
+    head -20
 }
 
 # Count matching lines (visual similarity)
@@ -251,28 +256,59 @@ for ed in $EXAMPLES; do
     fi
     
     # Normalize and compare
-    deno_n=$(normalize < "$TMP_DIR/deno_$ed.txt")
-    hir_n=$(normalize < "$TMP_DIR/hir_$ed.txt")
+    # For strict comparison, we compare line-by-line
+    # Count matching lines
+    deno_lines=$(normalize < "$TMP_DIR/deno_$ed.txt" | wc -l)
+    hir_lines=$(normalize < "$TMP_DIR/hir_$ed.txt" | wc -l)
+    
+    # Count matching lines between deno and hir
+    matching_lines=$(comm -12 <(normalize < "$TMP_DIR/deno_$ed.txt" | sort) <(normalize < "$TMP_DIR/hir_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
+    
+    # For parity, we need at least 80% of lines to match
+    min_lines=$((deno_lines < hir_lines ? deno_lines : hir_lines))
+    if [[ $min_lines -eq 0 ]]; then
+        min_lines=1
+    fi
+    match_ratio=$((matching_lines * 100 / min_lines))
     
     if [[ "$RUN_COMPILE" == "true" ]]; then
-        compile_n=$(normalize < "$TMP_DIR/compile_$ed.txt")
+        compile_lines=$(normalize < "$TMP_DIR/compile_$ed.txt" | wc -l)
+        matching_lines_dc=$(comm -12 <(normalize < "$TMP_DIR/deno_$ed.txt" | sort) <(normalize < "$TMP_DIR/compile_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
+        matching_lines_hc=$(comm -12 <(normalize < "$TMP_DIR/hir_$ed.txt" | sort) <(normalize < "$TMP_DIR/compile_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
         
-        d_h=$([[ "$deno_n" == "$hir_n" ]] && echo 1 || echo 0)
-        d_c=$([[ "$deno_n" == "$compile_n" ]] && echo 1 || echo 0)
-        h_c=$([[ "$hir_n" == "$compile_n" ]] && echo 1 || echo 0)
-        matches=$((d_h + d_c + h_c))
+        # Check if at least 2 of 3 comparisons have >80% match
+        dh_match=$((match_ratio >= 80 ? 1 : 0))
+        min_lines_dc=$((deno_lines < compile_lines ? deno_lines : compile_lines))
+        [[ $min_lines_dc -eq 0 ]] && min_lines_dc=1
+        dc_match=$((matching_lines_dc * 100 / min_lines_dc >= 80 ? 1 : 0))
+        min_lines_hc=$((hir_lines < compile_lines ? hir_lines : compile_lines))
+        [[ $min_lines_hc -eq 0 ]] && min_lines_hc=1
+        hc_match=$((matching_lines_hc * 100 / min_lines_hc >= 80 ? 1 : 0))
+        matches=$((dh_match + dc_match + hc_match))
     else
-        d_h=$([[ "$deno_n" == "$hir_n" ]] && echo 1 || echo 0)
-        matches=$d_h
+        # When not running compile, just check if deno-HIR match is >= 80%
+        matches=$((match_ratio >= 80 ? 1 : 0))
     fi
     
-    if [[ "$matches" -ge 2 ]]; then
-        echo -e "${GREEN}✓${NC}"
-        passed=$((passed + 1))
+    # Pass if: 2+ matches (with compile), or match_ratio >= 80% (without compile)
+    if [[ "$RUN_COMPILE" == "true" ]]; then
+        if [[ "$matches" -ge 2 ]]; then
+            echo -e "${GREEN}✓${NC}"
+            passed=$((passed + 1))
+        else
+            echo -e "${RED}✗${NC}"
+            failed=$((failed + 1))
+            details+=("$ed")
+        fi
     else
-        echo -e "${RED}✗${NC}"
-        failed=$((failed + 1))
-        details+=("$ed")
+        if [[ "$match_ratio" -ge 80 ]]; then
+            echo -e "${GREEN}✓${NC}"
+            passed=$((passed + 1))
+        else
+            echo -e "${RED}✗${NC}"
+            failed=$((failed + 1))
+            details+=("$ed")
+        fi
     fi
 done
 

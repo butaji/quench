@@ -1,3 +1,14 @@
+// Spacer example — exercises the Spacer component
+// and the Newline component.
+//
+// Spacer fills remaining space in a flex container.
+// Newline adds vertical spacing.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink)
+//   2. runts dev (rquickjs+bridge)
+//   3. runts build (codegen->runts-ink)
+
 import { Box, Text, Newline, Spacer } from 'ink';
 import React from 'react';
 
