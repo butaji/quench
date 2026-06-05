@@ -71,22 +71,54 @@ impl OwnershipAnalyzer {
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
+            S::Expr { expr } | S::Block { stmts: _ } => self.analyze_expr_block(stmt),
+            S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
+            S::While { test, body } | S::DoWhile { body, test } => self.analyze_while_do(test, body),
+            S::For { .. } | S::ForIn { .. } | S::ForOf { .. } => self.analyze_stmt_for(stmt),
+            S::Return { arg } | S::Throw { arg } => self.analyze_return_throw(arg.as_deref()),
+            S::Switch { discriminant, cases } | S::Try { block: _, handler: _, finalizer: _ } => {
+                self.analyze_switch_try(stmt)
+            }
+            S::Break { .. } | S::Continue { .. } | S::Labeled { .. } | S::With { .. } => {}
+            _ => {}
+        }
+    }
+
+    fn analyze_expr_block(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::Expr { expr } => self.analyze_expr(expr),
             S::Block { stmts } => self.analyze_block(stmts),
-            S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
-            S::While { test, body } => self.analyze_while(test, body),
+            _ => {}
+        }
+    }
+
+    fn analyze_switch_try(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
+            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
+            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
+            _ => {}
+        }
+    }
+
+    fn analyze_while_do(&mut self, test: &Expr, body: &Box<Stmt>) {
+        self.analyze_while(test, body);
+    }
+
+    fn analyze_stmt_for(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::For { init, test, update, body } => self.analyze_for(init, test, update, body),
             S::ForIn { left, right, body } => self.analyze_for_in(left, right, body),
             S::ForOf { left, right, body, .. } => self.analyze_for_of(left, right, body),
-            S::Return { arg } => self.analyze_return(arg),
-            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
-            S::DoWhile { body, test } => self.analyze_do_while(body, test),
-            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
-            S::Break { .. } | S::Continue { .. } => {}
-            S::Throw { arg } => self.analyze_expr(arg),
-            S::With { obj, body } => self.analyze_with_stmt(obj, body),
-            S::Labeled { body, .. } => self.analyze_stmt(body),
             _ => {}
+        }
+    }
+
+    fn analyze_return_throw(&mut self, arg: Option<&Expr>) {
+        if let Some(a) = arg {
+            self.analyze_expr(a);
         }
     }
 
