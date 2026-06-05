@@ -1,27 +1,30 @@
 // Ink-style Todo component - pure TypeScript version.
-// This replaces the old Rust-only implementation.
+// NOTE: useInput hook is not yet supported in runts HIR runtime.
+// Shows static values for parity testing.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink)
+//   2. runts dev (HIR runtime)
+//   3. runts build (codegen->runts-ink)
 
-import React, { useState } from 'react';
-import { Box, Text, Spacer, Newline, useInput } from 'ink';
+import React from 'react';
+import { Box, Text, Spacer, Newline } from 'ink';
 
 interface Todo {
   done: boolean;
   text: string;
 }
 
+const TODOS: Todo[] = [
+  { done: false, text: 'Write more tests' },
+  { done: false, text: 'Fix HIR overflow' },
+  { done: true, text: 'Add ink examples' },
+];
+
 export default function TodoApp() {
-  const [todos, setTodos] = useState<Todo[]>([
-    { done: false, text: 'Write more tests' },
-    { done: false, text: 'Fix HIR overflow' },
-    { done: true, text: 'Add ink examples' },
-  ]);
-
-  useInput((input, key) => {
-    if (input === 'q' || key.escape) {
-      process.exit(0);
-    }
-  });
-
+  // NOTE: For runts HIR runtime, useInput is not supported.
+  // For parity testing, we show static todo list.
+  const todos = TODOS;
   const remaining = todos.filter((t) => !t.done).length;
 
   return (

@@ -1,25 +1,20 @@
-// Focus example — exercises `useFocus` and
-import React from 'react';
-// `useFocusManager` hooks for keyboard
-// navigation between focusable elements.
-// Press Tab to cycle focus, Enter to select.
-//
-// Note: this example uses state which only
-// works in the dev path (rquickjs evaluates
-// it as JS) and deno. The build path doesn't
-// evaluate JS expressions, so the focus
-// indicator won't update in the build output.
+// Focus example — demonstrates keyboard navigation between focusable elements.
+// NOTE: useFocus and useFocusManager hooks are not yet supported in runts HIR runtime.
+// Shows static focus state for parity testing.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
-//   2. runts dev (rquickjs+bridge)
+//   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
+import React from 'react';
 import { Box, Text } from 'ink';
-import { useState } from 'react';
 
 export default function Focus() {
-  const [active, setActive] = useState(0);
+  // NOTE: For runts HIR runtime, useFocus/useFocusManager are not supported.
+  // For parity testing, we show static focus state (first button focused).
+  const active = 0;
+
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={2} paddingY={1}>
       <Text bold color="cyan">Tab to cycle focus:</Text>

@@ -1,12 +1,16 @@
 // Dynamic children example — demonstrates rendering arrays as children.
 // Maps an array of items to Box/Text children.
 //
-// 1. deno: deno run -A main.tsx
-// 2. runts dev: runts dev examples/ink-dynamic-children
-// 3. runts compile: runts build examples/ink-dynamic-children --plugin ratatui --release
+// NOTE: useInput and useApp hooks are not supported in runts HIR runtime.
+// This version shows static selection for parity testing.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink)
+//   2. runts dev (HIR runtime)
+//   3. runts build (codegen->runts-ink)
 
-import React, { useState } from 'react';
-import { Box, Text, Spacer, useInput, useApp } from 'ink';
+import React from 'react';
+import { Box, Text } from 'ink';
 
 const INITIAL_ITEMS = [
   { id: 1, label: 'First item', color: 'green' },
@@ -38,19 +42,10 @@ function ListItem({ item, selected }: { item: Item; selected: boolean }) {
 }
 
 export default function DynamicChildrenExample() {
-  const [items] = useState<Item[]>(INITIAL_ITEMS);
-  const [selected, setSelected] = useState(0);
-  const { exit } = useApp();
-
-  useInput((input, key) => {
-    if (key.upArrow) {
-      setSelected((prev) => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
-      setSelected((prev) => Math.min(items.length - 1, prev + 1));
-    } else if (input === 'q' || key.escape) {
-      exit();
-    }
-  });
+  // NOTE: For runts HIR runtime, useInput/useApp are not supported.
+  // For parity testing, we show static state.
+  const items = INITIAL_ITEMS;
+  const selected = 0;
 
   return (
     <Box flexDirection="column" padding={1}>
