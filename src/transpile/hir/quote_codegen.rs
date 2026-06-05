@@ -1404,17 +1404,7 @@ impl QuoteCodegen {
         let mut attr_calls: Vec<TokenStream> = Vec::new();
         for attr in attrs {
             match attr {
-                super::JSXAttr::Attr { name, value } => {
-                    let key = name.to_string();
-                    match value {
-                        Some(JSXAttrValue::String(s)) => attr_calls.push(quote! { .attr(#key, #s) }),
-                        Some(JSXAttrValue::Expr(expr)) => {
-                            let val = self.gen_expr(expr);
-                            attr_calls.push(quote! { .attr(#key, #val) });
-                        }
-                        Some(JSXAttrValue::Empty) | None => attr_calls.push(quote! { .attr(#key, true) }),
-                    }
-                }
+                super::JSXAttr::Attr { name, value } => self.gen_jsx_attr_call(name, value, &mut attr_calls),
                 super::JSXAttr::Spread { expr } => {
                     let expr_tokens = self.gen_expr(expr);
                     attr_calls.push(quote! { /* spread: #expr_tokens */ });
@@ -1426,6 +1416,19 @@ impl QuoteCodegen {
         for attr_call in attr_calls { result = quote! { #result #attr_call }; }
         for child in child_nodes { result = quote! { #result .child(#child) }; }
         result
+    }
+
+    fn gen_jsx_attr_call(&self, name: &str, value: &Option<super::JSXAttrValue>, attr_calls: &mut Vec<TokenStream>) {
+        use super::JSXAttrValue;
+        let key = name.to_string();
+        match value {
+            Some(JSXAttrValue::String(s)) => attr_calls.push(quote! { .attr(#key, #s) }),
+            Some(JSXAttrValue::Expr(expr)) => {
+                let val = self.gen_expr(expr);
+                attr_calls.push(quote! { .attr(#key, #val) });
+            }
+            Some(JSXAttrValue::Empty) | None => attr_calls.push(quote! { .attr(#key, true) }),
+        }
     }
 
     fn gen_jsx_component(&self, name: &str, attrs: &[super::JSXAttr], children: &[super::JSXChild]) -> TokenStream {
