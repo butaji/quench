@@ -355,33 +355,38 @@ impl OwnershipAnalyzer {
     }
 
     fn mark_as_mutated(&mut self, expr: &Expr) {
-        if let Expr::Ident { name } = expr {
-            self.mut_vars.insert(name.clone());
-            // Propagate mutation to aliases
-            if let Some(aliases) = self.aliases.get(name) {
-                for alias in aliases {
-                    self.mut_vars.insert(alias.clone());
-                }
+        match expr {
+            Expr::Ident { name } => self.mark_ident_mutated(name),
+            Expr::Member { .. } | Expr::StaticMember { .. } => self.mark_member_mutated(expr),
+            _ => {}
+        }
+    }
+
+    fn mark_ident_mutated(&mut self, name: &str) {
+        self.mut_vars.insert(name.to_string());
+        if let Some(aliases) = self.aliases.get(name) {
+            for alias in aliases {
+                self.mut_vars.insert(alias.clone());
             }
-            // Check if any variable aliases this one
-            for (key, alias_set) in &self.aliases {
-                if alias_set.contains(name) {
-                    self.mut_vars.insert(key.clone());
-                }
+        }
+        for (key, alias_set) in &self.aliases {
+            if alias_set.contains(name) {
+                self.mut_vars.insert(key.clone());
             }
-        } else if let Expr::Member { obj, .. } = expr {
-            self.mark_as_mutated(obj);
-        } else if let Expr::StaticMember { obj, .. } = expr {
-            self.mark_as_mutated(obj);
-        } else if let Expr::Member { obj, property, .. } = expr {
-            // obj.property - mark obj as mutably accessed
-            self.mark_as_mutated(obj);
-            let prop_name = self.extract_property_name(property);
-            if let Expr::Ident { name } = &**obj {
-                // Track nested mutation
-                let nested_key = format!("{}.{}", name, prop_name);
-                self.mut_vars.insert(nested_key);
-            }
+        }
+    }
+
+    fn mark_member_mutated(&mut self, expr: &Expr) {
+        let (obj, property) = match expr {
+            Expr::Member { obj, property, .. } => (obj, property),
+            Expr::StaticMember { obj, property, .. } => (obj, property),
+            _ => return,
+        };
+        self.mark_as_mutated(obj);
+        let prop_name = self.extract_property_name(property);
+        if let Expr::Ident { name } = &**obj {
+            let nested_key = format!("{}.{}", name, prop_name);
+            self.mut_vars.insert(nested_key);
         }
     }
 

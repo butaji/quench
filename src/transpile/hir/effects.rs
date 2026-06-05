@@ -370,16 +370,7 @@ impl EffectAnalyzer {
                 name: name.clone(),
                 generics: vec![],
             },
-            Expr::StaticMember { property, .. } => {
-                if property == "TypeError" || property == "Error" || property == "RangeError" {
-                    Type::Ref {
-                        name: property.clone(),
-                        generics: vec![],
-                    }
-                } else {
-                    Type::Unknown
-                }
-            }
+            Expr::StaticMember { property, .. } => self.infer_error_type(property),
             Expr::String(s) => Type::Literal {
                 kind: super::LiteralKind::String,
                 value: s.clone(),
@@ -393,6 +384,17 @@ impl EffectAnalyzer {
                 value: b.to_string(),
             },
             _ => Type::Unknown,
+        }
+    }
+
+    fn infer_error_type(&self, property: &str) -> Type {
+        if property == "TypeError" || property == "Error" || property == "RangeError" {
+            Type::Ref {
+                name: property.clone(),
+                generics: vec![],
+            }
+        } else {
+            Type::Unknown
         }
     }
 
