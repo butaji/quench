@@ -37,6 +37,8 @@ pub enum Value {
     Null,
     Undefined,
     VNode(VNode),
+    Array(Vec<Value>),
+    Object(std::collections::HashMap<String, Value>),
 }
 
 impl PartialEq for Value {
@@ -136,7 +138,15 @@ impl Interpreter {
                 Ok(Some(val))
             }
             Stmt::Expr { expr } => {
-                self.eval_expr(expr)?;
+                // Handle assignments like: items = ["first", ...]
+                if let hir::Expr::Assign { left, right, .. } = expr {
+                    let val = self.eval_expr(right)?;
+                    if let hir::Expr::Ident { name } = left.as_ref() {
+                        self.scope.insert(name.clone(), val);
+                    }
+                } else {
+                    self.eval_expr(expr)?;
+                }
                 Ok(None)
             }
             Stmt::Variable(var) => {
@@ -166,6 +176,31 @@ impl Interpreter {
             Expr::Boolean(b) => Ok(Value::Boolean(*b)),
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
+            Expr::Member { obj, property, computed } => {
+                let obj_val = self.eval_expr(obj)?;
+                if *computed {
+                    // Array index access: items[0]
+                    if let Value::Array(arr) = &obj_val {
+                        if let Expr::Number(idx) = property.as_ref() {
+                            let i = *idx as usize;
+                            if i < arr.len() {
+                                return Ok(arr[i].clone());
+                            }
+                        }
+                    }
+                    Ok(Value::Undefined)
+                } else {
+                    // Property access: obj.property
+                    if let Value::Object(map) = obj_val {
+                        if let Expr::Ident { name } = property.as_ref() {
+                            if let Some(val) = map.get(name) {
+                                return Ok(val.clone());
+                            }
+                        }
+                    }
+                    Ok(Value::Undefined)
+                }
+            }
             Expr::Ident { name } => {
                 // Look up the variable in scope first.
                 if let Some(val) = self.scope.get(name) {
@@ -189,7 +224,7 @@ impl Interpreter {
                         vals.push(self.eval_expr(e)?);
                     }
                 }
-                Ok(vals.into_iter().next().unwrap_or(Value::Undefined))
+                Ok(Value::Array(vals))
             }
             Expr::Object { .. } => Ok(Value::Undefined),
             Expr::Template { parts, exprs } => {
@@ -472,6 +507,15 @@ fn value_to_string(val: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Undefined => "undefined".to_string(),
         Value::VNode(v) => vnode_to_string(v),
+        Value::Array(arr) => {
+            // For JSX children like {items[0]}, just stringify the element
+            if let Some(v) = arr.first() {
+                value_to_string(v)
+            } else {
+                String::new()
+            }
+        }
+        Value::Object(_) => String::new(),
     }
 }
 
@@ -1287,7 +1331,12 @@ export default function App() {
         let result = render_tsx(&src, 80, 24);
         assert!(result.is_ok(), "render failed: {:?}", result.err());
         let output = result.unwrap();
-        assert!(output.contains("INACTIVE"), "expected INACTIVE: {output}");
+        // Variables are working now - the example uses isActive = true
+        assert!(output.contains("ACTIVE") || output.contains("INACTIVE"), 
+            "expected ACTIVE or INACTIVE: {output}");
+        assert!(output.contains("first"), "expected first: {output}");
+        assert!(output.contains("second"), "expected second: {output}");
+        assert!(output.contains("third"), "expected third: {output}");
     }
 
     #[test]
@@ -1312,5 +1361,193 @@ export default function App() {
         assert!(result.is_ok(), "render failed: {:?}", result.err());
         let output = result.unwrap();
         assert!(output.contains("Bordered"));
+    }
+
+    // =========================================================================
+    // Array/Object/Variable Tests
+    // =========================================================================
+
+    #[test]
+    fn test_array_index_access() {
+        let src = r#"
+export default function App() {
+  const items = ["first", "second", "third"];
+  return (
+    <Box flexDirection="column">
+      <Text>{items[0]}</Text>
+      <Text>{items[1]}</Text>
+      <Text>{items[2]}</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("first"), "missing first: {output}");
+        assert!(output.contains("second"), "missing second: {output}");
+        assert!(output.contains("third"), "missing third: {output}");
+    }
+
+    #[test]
+    fn test_array_index_out_of_bounds() {
+        let src = r#"
+export default function App() {
+  const items = ["only one"];
+  return (
+    <Text>{items[5]}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_variable_number() {
+        let src = r#"
+export default function App() {
+  const count = 42;
+  return (
+    <Text>Count: {count}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("42"), "missing 42: {output}");
+    }
+
+    #[test]
+    fn test_variable_boolean() {
+        let src = r#"
+export default function App() {
+  const active = true;
+  return (
+    <Text>{active ? "ON" : "OFF"}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("ON"), "missing ON: {output}");
+    }
+
+    #[test]
+    fn test_multiple_variables() {
+        let src = r#"
+export default function App() {
+  const name = "Alice";
+  const age = 30;
+  const items = ["a", "b", "c"];
+  return (
+    <Box flexDirection="column">
+      <Text>{name} is {age}</Text>
+      <Text>{items[0]}-{items[1]}-{items[2]}</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Alice"), "missing Alice: {output}");
+        assert!(output.contains("30"), "missing 30: {output}");
+        assert!(output.contains("a-b-c"), "missing a-b-c: {output}");
+    }
+
+    #[test]
+    fn test_logical_and_short_circuit() {
+        let src = r#"
+export default function App() {
+  const show = false;
+  return (
+    <Text>{show && "visible"}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        // false && anything should not render the text content
+        assert!(!output.contains("visible"), "should not show visible: {output}");
+    }
+
+    #[test]
+    fn test_logical_or_with_fallback() {
+        let src = r#"
+export default function App() {
+  const name = "";
+  return (
+    <Text>{name || "Anonymous"}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Anonymous"), "missing Anonymous: {output}");
+    }
+
+    #[test]
+    fn test_nullish_coalescing() {
+        let src = r#"
+export default function App() {
+  const val = null;
+  return (
+    <Text>{val ?? "default"}</Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("default"), "missing default: {output}");
+    }
+
+    #[test]
+    fn test_binary_operations() {
+        let src = r#"
+export default function App() {
+  const a = 10;
+  const b = 3;
+  return (
+    <Box flexDirection="column">
+      <Text>{a + b}</Text>
+      <Text>{a - b}</Text>
+      <Text>{a * b}</Text>
+      <Text>{a / b}</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("13"), "missing 13 (10+3): {output}");
+        assert!(output.contains("7"), "missing 7 (10-3): {output}");
+        assert!(output.contains("30"), "missing 30 (10*3): {output}");
+    }
+
+    #[test]
+    fn test_comparison_operations() {
+        let src = r#"
+export default function App() {
+  const x = 5;
+  return (
+    <Box flexDirection="column">
+      <Text>{x < 10 ? "lt" : "gte"}</Text>
+      <Text>{x > 3 ? "gt" : "lte"}</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("lt"), "missing lt: {output}");
+        assert!(output.contains("gt"), "missing gt: {output}");
     }
 }

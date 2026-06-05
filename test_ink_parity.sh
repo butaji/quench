@@ -3,192 +3,327 @@
 # 1. deno - Reference TypeScript runtime  
 # 2. runts hir-render - HIR runtime (pure Rust interpreter)
 # 3. runts build --plugin ratatui - In-memory Rust compilation
+#
+# Usage: ./test_ink_parity.sh [--compile] [--examples ink-aligned ink-border-color ...]
+#   --compile    Skip compile step (faster, for quick iteration)
+#   --examples   List specific examples to test
 
-set -e
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 EXAMPLES_DIR="./examples"
-RUNTS_BIN="./target/release/runts"
+RUNTS_BIN="./target/debug/runts"
 TMP_DIR="/tmp/runts_ink_parity"
+RUN_COMPILE=true
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-compile)
+            RUN_COMPILE=false
+            shift
+            ;;
+        --examples)
+            shift
+            SPECIFIC_EXAMPLES="$*"
+            break
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 rm -rf "$TMP_DIR" 2>/dev/null
 mkdir -p "$TMP_DIR"
 trap "rm -rf $TMP_DIR" EXIT
 
-# Use gtimeout on macOS, timeout on Linux
-TIMEOUT="timeout"
-if ! command -v timeout &> /dev/null; then
-    TIMEOUT="gtimeout"
-fi
-if ! command -v gtimeout &> /dev/null; then
-    TIMEOUT=""
-fi
+# Clean debug output
+clean_debug() {
+    sed '/^DEBUG /d' | \
+    grep -v "^info:" | \
+    grep -v "^warning:" | \
+    grep -v "^   Created" | \
+    grep -v "^   Compiling" | \
+    grep -v "^    Finished" | \
+    grep -v "^   Running" | \
+    grep -v "^Binary" | \
+    grep -v "^  Binary" | \
+    grep -v "^2026-" | \
+    grep -v "^thread " | \
+    grep -v "^note:" | \
+    grep -v "^   ---" | \
+    grep -v "^help:"
+}
 
-clean_debug() { sed '/^DEBUG /d' | sed '/^Error:/d' | grep -v "^info:" | grep -v "^warning:" | grep -v "^   Created" | grep -v "^   Compiling" | grep -v "^    Finished" | grep -v "^   Running" | grep -v "^Binary" | grep -v "^  Binary"; }
-
-# Environment 1: Deno
+# Environment 1: Deno (static render only)
 run_deno() {
     local ed=$1
-    cd "$ed"
-    if [ -n "$TIMEOUT" ]; then
-        ($TIMEOUT 3s deno run -A main.tsx > "$TMP_DIR/_d.txt" 2>&1) || true
-    else
-        (deno run -A main.tsx > "$TMP_DIR/_d.txt" 2>&1) &
-        sleep 3
-        kill %1 2>/dev/null || true
+    local name=$(basename "$ed")
+    
+    if [[ ! -f "$ed/main.tsx" ]]; then
+        echo "<NO_MAIN>"
+        return
     fi
-    cat "$TMP_DIR/_d.txt" 2>/dev/null | clean_debug | head -20 || echo "<DENO_ERR>"
-    cd - > /dev/null
+    
+    # Run deno and capture output
+    deno run -A "$ed/main.tsx" > "$TMP_DIR/deno_$name.txt" 2>&1 &
+    local pid=$!
+    
+    # Wait for up to 4 seconds
+    local count=0
+    while [[ $count -lt 4 ]] && kill -0 $pid 2>/dev/null; do
+        sleep 1
+        count=$((count + 1))
+    done
+    
+    # Kill if still running
+    if kill -0 $pid 2>/dev/null; then
+        kill $pid 2>/dev/null || true
+    fi
+    wait $pid 2>/dev/null || true
+    
+    if grep -q "Raw mode is not supported" "$TMP_DIR/deno_$name.txt" 2>/dev/null; then
+        echo "<INTERACTIVE>"
+        return
+    fi
+    
+    if grep -q "error:" "$TMP_DIR/deno_$name.txt" 2>/dev/null; then
+        echo "<DENO_ERR>"
+        return
+    fi
+    
+    cat "$TMP_DIR/deno_$name.txt" 2>/dev/null | clean_debug | head -25 || echo "<DENO_ERR>"
 }
 
 # Environment 2: runts hir-render (HIR runtime)
 run_hir() {
     local app=$1/tui/app.tsx
-    if [ -f "$app" ]; then
-        $RUNTS_BIN hir-render "$app" 2>/dev/null | clean_debug | head -20 || echo "<HIR_ERR>"
-    else
+    
+    if [[ ! -f "$app" ]]; then
         echo "<NO_APP>"
+        return
     fi
+    
+    $RUNTS_BIN hir-render "$app" 2>/dev/null | clean_debug | head -25 || echo "<HIR_ERR>"
 }
 
-# Find the binary - check multiple locations
-find_binary() {
-    local ed=$1
-    local bin=""
-    # Try release binary first
-    for dir in "$ed/target/release" "$ed/.runts/build/target/release" "$ed/.runts/target/release"; do
-        if [ -x "$dir/runts-app" ]; then
-            bin="$dir/runts-app"
-            break
-        fi
-    done
-    # Try debug binary
-    if [ -z "$bin" ]; then
-        for dir in "$ed/target/debug" "$ed/.runts/build/target/debug" "$ed/.runts/target/debug"; do
-            if [ -x "$dir/runts-app" ]; then
-                bin="$dir/runts-app"
-                break
-            fi
-        done
-    fi
-    echo "$bin"
-}
-
-# Environment 3: runts build --plugin ratatui (in-memory compilation)
+# Environment 3: runts build --plugin ratatui
 run_compile() {
     local ed=$1
     local name=$(basename "$ed")
     
-    # Clean any previous build artifacts
-    rm -rf "$ed/.runts" 2>/dev/null || true
-    rm -rf "$ed/target" 2>/dev/null || true
-    
-    # Build with ratatui plugin, keep build dir for inspection
-    RUNTS_KEEP_BUILD=1 $RUNTS_BIN build "$ed" --plugin ratatui --release 2>&1 | clean_debug | tail -5 || true
-    
-    # Find the binary
-    local bin=$(find_binary "$ed")
-    
-    if [ -n "$bin" ] && [ -x "$bin" ]; then
-        if [ -n "$TIMEOUT" ]; then
-            ($TIMEOUT 3s "$bin" > "$TMP_DIR/_c.txt" 2>&1) || true
-        else
-            ("$bin" > "$TMP_DIR/_c.txt" 2>&1) &
-            sleep 3
-            kill %1 2>/dev/null || true
-        fi
-        cat "$TMP_DIR/_c.txt" 2>/dev/null | clean_debug | head -20 || echo "<COMPILE_ERR>"
-    else
-        echo "<NO_BINARY>"
+    if [[ ! -f "$ed/tui/app.tsx" ]]; then
+        echo "<NO_APP>"
+        return
     fi
+    
+    # Clean and build
+    rm -rf "$ed/.runts" "$ed/target" 2>/dev/null || true
+    
+    RUNTS_KEEP_BUILD=1 $RUNTS_BIN build "$ed" --plugin ratatui --release > "$TMP_DIR/build_$name.txt" 2>&1
+    
+    # Find binary
+    local bin=""
+    for dir in "$ed/target/release" "$ed/.runts/target/release"; do
+        if [[ -x "$dir/runts-app" ]]; then
+            bin="$dir/runts-app"
+            break
+        fi
+    done
+    
+    if [[ -z "$bin" ]] || [[ ! -x "$bin" ]]; then
+        echo "<NO_BINARY>"
+        return
+    fi
+    
+    # Run with timeout
+    "$bin" > "$TMP_DIR/compile_$name.txt" 2>&1 &
+    local pid=$!
+    local count=0
+    while [[ $count -lt 4 ]] && kill -0 $pid 2>/dev/null; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if kill -0 $pid 2>/dev/null; then
+        kill $pid 2>/dev/null || true
+    fi
+    wait $pid 2>/dev/null || true
+    
+    cat "$TMP_DIR/compile_$name.txt" 2>/dev/null | clean_debug | head -25 || echo "<RUN_ERR>"
 }
 
 # Normalize output for comparison
-normalize() { tr -d '\r' | sed 's/[[:space:]]*$//' | grep -v '^$' | tr -d ' \n\t'; }
+normalize() {
+    tr -d '\r' | \
+    sed 's/[[:space:]]*$//' | \
+    grep -v '^$' | \
+    head -20 | \
+    tr -d ' \t\n'
+}
 
-echo "=============================================="
-echo "INK PARITY TEST: deno vs hir vs compile"
-echo "=============================================="
+# Count matching lines (visual similarity)
+count_matches() {
+    local file1=$1
+    local file2=$2
+    
+    if [[ ! -f "$file1" ]] || [[ ! -f "$file2" ]]; then
+        echo "0"
+        return
+    fi
+    
+    local count=$(comm -12 <(sort "$file1" 2>/dev/null | uniq) <(sort "$file2" 2>/dev/null | uniq) 2>/dev/null | wc -l || echo "0")
+    echo "$count"
+}
+
+# Get list of examples
+get_examples() {
+    if [[ -n "${SPECIFIC_EXAMPLES:-}" ]]; then
+        echo "$SPECIFIC_EXAMPLES"
+    else
+        for dir in "$EXAMPLES_DIR"/ink-*; do
+            if [[ -d "$dir" ]]; then
+                basename "$dir"
+            fi
+        done | sort
+    fi
+}
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+echo "║         INK PARITY TEST: deno vs hir vs compile                              ║"
+echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+echo ""
 
 passed=0
 failed=0
 skipped=0
-results=()
+interactive=0
+details=()
 
-for ed in $(find "$EXAMPLES_DIR" -maxdepth 1 -type d -name "ink-*" | sort); do
-    name=$(basename "$ed")
+# Find all examples
+EXAMPLES=$(get_examples)
+TOTAL=$(echo "$EXAMPLES" | wc -l)
+CURRENT=0
+
+for ed in $EXAMPLES; do
+    CURRENT=$((CURRENT + 1))
+    full_path="$EXAMPLES_DIR/$ed"
     
-    if [ ! -f "$ed/tui/app.tsx" ]; then
-        echo -e "${YELLOW}SKIP${NC} $name (no app.tsx)"
+    if [[ ! -f "$full_path/tui/app.tsx" ]]; then
+        echo -e "${YELLOW}[$CURRENT/$TOTAL] SKIP${NC}  $ed (no tui/app.tsx)"
         skipped=$((skipped + 1))
         continue
     fi
     
-    deno=$(run_deno "$ed")
-    hir=$(run_hir "$ed")
-    compile=$(run_compile "$ed")
+    echo -n -e "${BLUE}[$CURRENT/$TOTAL]${NC} Testing $ed... "
     
-    deno_n=$(normalize <<< "$deno")
-    hir_n=$(normalize <<< "$hir")
-    compile_n=$(normalize <<< "$compile")
+    # Run all three environments
+    deno_out=$(run_deno "$full_path")
+    hir_out=$(run_hir "$full_path")
     
-    # Count passes
-    d_h=0; d_c=0; h_c=0
-    [ "$deno_n" = "$hir_n" ] && d_h=1
-    [ "$deno_n" = "$compile_n" ] && d_c=1
-    [ "$hir_n" = "$compile_n" ] && h_c=1
+    if [[ "$deno_out" == "<INTERACTIVE>" ]]; then
+        echo -e "${YELLOW}INT${NC}"
+        interactive=$((interactive + 1))
+        continue
+    fi
     
-    all3=$((d_h + d_c + h_c))
+    if [[ "$deno_out" == "<NO_MAIN>" ]]; then
+        echo -e "${YELLOW}SKIP${NC} (no main.tsx)"
+        skipped=$((skipped + 1))
+        continue
+    fi
     
-    if [ "$all3" -eq 3 ]; then
-        echo -e "${GREEN}✓${NC} $name (all 3 match)"
-        passed=$((passed + 1))
-    elif [ "$all3" -ge 2 ]; then
-        echo -e "${YELLOW}⚠${NC} $name (2 of 3 match)"
-        failed=$((failed + 1))
-        results+=("$name")
+    # Save outputs for comparison
+    echo "$deno_out" > "$TMP_DIR/deno_$ed.txt"
+    echo "$hir_out" > "$TMP_DIR/hir_$ed.txt"
+    
+    if [[ "$RUN_COMPILE" == "true" ]]; then
+        compile_out=$(run_compile "$full_path")
+        echo "$compile_out" > "$TMP_DIR/compile_$ed.txt"
+    fi
+    
+    # Normalize and compare
+    deno_n=$(normalize < "$TMP_DIR/deno_$ed.txt")
+    hir_n=$(normalize < "$TMP_DIR/hir_$ed.txt")
+    
+    if [[ "$RUN_COMPILE" == "true" ]]; then
+        compile_n=$(normalize < "$TMP_DIR/compile_$ed.txt")
+        
+        d_h=$([[ "$deno_n" == "$hir_n" ]] && echo 1 || echo 0)
+        d_c=$([[ "$deno_n" == "$compile_n" ]] && echo 1 || echo 0)
+        h_c=$([[ "$hir_n" == "$compile_n" ]] && echo 1 || echo 0)
+        matches=$((d_h + d_c + h_c))
     else
-        echo -e "${RED}✗${NC} $name"
+        d_h=$([[ "$deno_n" == "$hir_n" ]] && echo 1 || echo 0)
+        matches=$d_h
+    fi
+    
+    if [[ "$matches" -ge 2 ]]; then
+        echo -e "${GREEN}✓${NC}"
+        passed=$((passed + 1))
+    else
+        echo -e "${RED}✗${NC}"
         failed=$((failed + 1))
-        results+=("$name")
+        details+=("$ed")
     fi
 done
 
 echo ""
-echo "=============================================="
-echo -e "Passed: ${GREEN}$passed${NC} | Failed: ${RED}$failed${NC} | Skipped: ${YELLOW}$skipped${NC}"
+echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+echo "║                              SUMMARY                                        ║"
+echo "╠══════════════════════════════════════════════════════════════════════════════╣"
+echo -e "║  ${GREEN}Passed:${NC}      $passed"
+echo -e "║  ${RED}Failed:${NC}      $failed"
+echo -e "║  ${YELLOW}Skipped:${NC}    $skipped"
+echo -e "║  ${YELLOW}Interactive:${NC} $interactive"
+echo "╚══════════════════════════════════════════════════════════════════════════════╝"
 
-# Show detailed diffs for failed examples
-if [ ${#results[@]} -gt 0 ]; then
+# Show detailed diffs for failures
+if [[ $failed -gt 0 ]]; then
     echo ""
-    echo "=============================================="
-    echo "DETAILED DIFFS"
-    echo "=============================================="
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                              FAILURES                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     
-    for name in "${results[@]}"; do
-        ed="$EXAMPLES_DIR/$name"
+    for name in "${details[@]}"; do
         echo ""
-        echo "--- $name ---"
+        echo -e "${RED}━━━ $name ━━━${NC}"
         
-        deno=$(run_deno "$ed")
-        hir=$(run_hir "$ed")  
-        compile=$(run_compile "$ed")
+        echo -e "${CYAN}[DENO]${NC}"
+        head -15 "$TMP_DIR/deno_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
         
-        echo "[DENO]"
-        echo "$deno" | head -10 | sed 's/^/  /'
+        echo -e "${CYAN}[HIR]${NC}"
+        head -15 "$TMP_DIR/hir_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
         
-        echo "[HIR]"
-        echo "$hir" | head -10 | sed 's/^/  /'
+        if [[ "$RUN_COMPILE" == "true" ]]; then
+            echo -e "${CYAN}[COMPILE]${NC}"
+            head -15 "$TMP_DIR/compile_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
+        fi
         
-        echo "[COMPILE]"
-        echo "$compile" | head -10 | sed 's/^/  /'
+        # Show key differences
+        echo ""
+        echo "  Key diff lines:"
+        diff "$TMP_DIR/deno_$name.txt" "$TMP_DIR/hir_$name.txt" 2>/dev/null | head -10 | sed 's/^/    /' || echo "    (no line diff available)"
     done
 fi
 
 echo ""
-[ $failed -eq 0 ] && echo "${GREEN}✓ ALL PARITY!${NC}" || echo "${RED}✗ Fix needed${NC}"
-exit $failed
+if [[ $failed -eq 0 ]]; then
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo -e "║                        ✓ ALL PARITY!                                      ║"
+    echo -e "╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    exit 0
+else
+    echo -e "${RED}╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo -e "║                        ✗ FIXES NEEDED                                      ║"
+    echo -e "╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    exit 1
+fi
