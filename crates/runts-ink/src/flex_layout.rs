@@ -97,9 +97,56 @@ fn layout_node(
                 return;
             }
 
-            // Compute effective width/height.
+            // Determine flex direction
+            let is_row = matches!(
+                b.flex_direction,
+                FlexDirection::Row | FlexDirection::RowReverse
+            );
+
+            // Compute effective width.
             let bw = b.width.unwrap_or(w);
-            let bh = b.height.unwrap_or(h);
+            
+            // Account for borders.
+            let border_h: u16 = if b.borders.left || b.borders.right { 2 } else { 0 };
+            let border_v: u16 = if b.borders.top || b.borders.bottom { 2 } else { 0 };
+            let border_l: u16 = if b.borders.left { 1 } else { 0 };
+            let border_t: u16 = if b.borders.top { 1 } else { 0 };
+
+            // Padding
+            let pad_l = b.padding_left.unwrap_or(0);
+            let pad_r = b.padding_right.unwrap_or(0);
+            let pad_t = b.padding_top.unwrap_or(0);
+            let pad_b = b.padding_bottom.unwrap_or(0);
+
+            let inner_w = bw
+                .saturating_sub(border_h)
+                .saturating_sub(pad_l)
+                .saturating_sub(pad_r);
+
+            // Compute box height:
+            // - For column boxes: intrinsic height from children
+            // - For row boxes: use available height (cross-axis stretch)
+            let content_h = if b.height.is_some() {
+                b.height.unwrap()
+            } else if !is_row {
+                // Column: intrinsic height = sum of children + gaps
+                let gap = b.row_gap.unwrap_or(0);
+                let mut total = 0u16;
+                for (i, child) in b.children.iter().enumerate() {
+                    total = total.saturating_add(intrinsic_height(child, inner_w));
+                    if i > 0 {
+                        total = total.saturating_add(gap);
+                    }
+                }
+                total
+            } else {
+                // Row: use available height (cross-axis)
+                h
+            };
+
+            let bh = content_h + pad_t + pad_b + border_v;
+
+            let inner_h = content_h;
 
             // Account for borders. border_h is the
             // total horizontal border width (left +
@@ -160,6 +207,53 @@ fn layout_node(
     }
 }
 
+/// Compute the intrinsic height of a node for column layout.
+/// Returns the sum of children's heights for column boxes,
+/// or max children's heights for row boxes.
+fn intrinsic_height(node: &VNode, available_w: u16) -> u16 {
+    match &node.0 {
+        VNodeContent::Box(b) => {
+            // If explicit height, use it
+            if let Some(h) = b.height {
+                return h;
+            }
+            let is_row = matches!(
+                b.flex_direction,
+                FlexDirection::Row | FlexDirection::RowReverse
+            );
+            let gap = if is_row { b.column_gap.unwrap_or(0) } else { b.row_gap.unwrap_or(0) };
+            if is_row {
+                // Row: intrinsic height = max children's heights
+                b.children.iter().map(|c| intrinsic_height(c, available_w)).max().unwrap_or(0)
+            } else {
+                // Column: intrinsic height = sum of children's heights + gaps
+                let mut total = 0u16;
+                for (i, child) in b.children.iter().enumerate() {
+                    total = total.saturating_add(intrinsic_height(child, available_w));
+                    if i > 0 {
+                        total = total.saturating_add(gap);
+                    }
+                }
+                total
+            }
+        }
+        VNodeContent::Text(_) => 1,
+        VNodeContent::Newline(_) => 1,
+        VNodeContent::Spacer(_) => 0,
+        VNodeContent::Static(s) => {
+            s.children.iter().map(|c| intrinsic_height(c, available_w)).max().unwrap_or(0)
+        }
+        VNodeContent::Transform(t) => intrinsic_height(&t.child, available_w),
+        VNodeContent::Fragment(fs) => {
+            let mut total = 0u16;
+            for child in fs {
+                total = total.saturating_add(intrinsic_height(child, available_w));
+            }
+            total
+        }
+    }
+}
+
 /// Lay out the children of a Box using flexbox.
 fn layout_children(
     b: &InkBox,
@@ -189,7 +283,7 @@ fn layout_children(
     let mut total_grow: f32 = 0.0;
 
     for child in &b.children {
-        let (cs, cc, cg) = compute_child_main_size(child, main_size, cross_size);
+        let (cs, cc, cg) = compute_child_main_size(child, main_size, cross_size, is_row);
         child_sizes.push(cs);
         child_cross_sizes.push(cc);
         child_grows.push(cg);
@@ -292,24 +386,33 @@ fn layout_children(
 
 /// Compute a child's main-axis size, cross-axis
 /// size, and flex-grow factor.
-fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16) -> (u16, u16, f32) {
+/// The `is_row` parameter indicates if the parent is a row flex container.
+fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16, is_row_parent: bool) -> (u16, u16, f32) {
     match &child.0 {
         VNodeContent::Box(b) => {
             let grow = b.flex_grow;
-            let ms = if grow > 0.0 {
-                0 // flex-grow children start at 0
+            let (ms, cs) = if is_row_parent {
+                // Row parent: main = width, cross = height
+                let w = if grow > 0.0 { 0 } else { b.width.unwrap_or(main_size) };
+                let h = b.height.unwrap_or(cross_size);
+                (w, h)
             } else {
-                b.width.unwrap_or(main_size)
+                // Column parent: main = intrinsic height, cross = width
+                let h = if grow > 0.0 { 0 } else { intrinsic_height(child, cross_size) };
+                let w = b.width.unwrap_or(cross_size);
+                (h, w)
             };
-            let cs = b.height.unwrap_or(cross_size);
             (ms.min(main_size), cs.min(cross_size), grow)
         }
         VNodeContent::Text(t) => {
-            // Text: intrinsic main size is the
-            // character count of the content.
-            // The walker measures the actual width
-            // for row flex.
-            (t.content.chars().count() as u16, 1, 0.0)
+            // Text: intrinsic main size depends on direction.
+            // In a row: main = text length, cross = 1.
+            // In a column: main = 1 (one line), cross = text length.
+            if is_row_parent {
+                (t.content.chars().count() as u16, 1, 0.0)
+            } else {
+                (1, t.content.chars().count() as u16, 0.0)
+            }
         }
         VNodeContent::Newline(_) => {
             // Newline: intrinsic main size is 0.
@@ -321,17 +424,17 @@ fn compute_child_main_size(child: &VNode, main_size: u16, cross_size: u16) -> (u
         VNodeContent::Static(s) => {
             // Static: shrink-wrap to first child's size.
             if let Some(first) = s.children.first() {
-                compute_child_main_size(first, main_size, cross_size)
+                compute_child_main_size(first, main_size, cross_size, is_row_parent)
             } else {
                 (0, 0, 0.0)
             }
         }
         VNodeContent::Transform(t) => {
-            compute_child_main_size(&t.child, main_size, cross_size)
+            compute_child_main_size(&t.child, main_size, cross_size, is_row_parent)
         }
         VNodeContent::Fragment(fs) => {
             if let Some(first) = fs.first() {
-                compute_child_main_size(first, main_size, cross_size)
+                compute_child_main_size(first, main_size, cross_size, is_row_parent)
             } else {
                 (0, 0, 0.0)
             }
@@ -357,7 +460,7 @@ mod tests {
     fn text_intrinsic_main_size_single_char() {
         let t = InkText::new("A");
         let v = VNode::from(t);
-        let (main, _, _) = compute_child_main_size(&v, 80, 24);
+        let (main, _, _) = compute_child_main_size(&v, 80, 24, true);
         assert_eq!(main, 1, "single char Text should have 1 main size");
     }
 
@@ -368,7 +471,7 @@ mod tests {
         // intrinsic main size = 16.
         let t = InkText::new("Bordered Example");
         let v = VNode::from(t);
-        let (main, _cross, _grow) = compute_child_main_size(&v, 80, 24);
+        let (main, _cross, _grow) = compute_child_main_size(&v, 80, 24, true);
         assert_eq!(
             main, 16,
             "Text intrinsic main size should be 16 chars, got {main}"

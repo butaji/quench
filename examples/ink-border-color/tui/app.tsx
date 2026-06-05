@@ -1,4 +1,5 @@
 // Border color example — exercises
+import React from 'react';
 // `borderColor`, `borderTopColor`,
 // `borderBottomColor`, `borderLeftColor`,
 // `borderRightColor`, `borderDimColor` on Box.

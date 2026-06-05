@@ -1,4 +1,5 @@
 // Flex reverse example — exercises
+import React from 'react';
 // `flexDirection: "row-reverse"` and
 // `flexDirection: "column-reverse"` to lay
 // out children in reverse order.

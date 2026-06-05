@@ -798,6 +798,10 @@ pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
             line.push_str(buffer.get(x, y).symbol());
         }
         let trimmed = line.trim_end();
+        // Skip empty lines at the end
+        if trimmed.is_empty() {
+            continue;
+        }
         if !out.is_empty() {
             out.push('\n');
         }

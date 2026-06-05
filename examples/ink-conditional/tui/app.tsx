@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import React from 'react';
 
 export default function App() {
   const isActive = true;

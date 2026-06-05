@@ -1,4 +1,5 @@
 // Text props example — exercises `strikethrough`,
+import React from 'react';
 // `inverse`, and `wrap` on Text.
 //
 // All three environments must produce the same look:

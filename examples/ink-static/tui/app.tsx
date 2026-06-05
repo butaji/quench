@@ -1,4 +1,5 @@
 // Static example — exercises the `<Static>`
+import React from 'react';
 // component which renders a list of items
 // once and never re-renders them. Items below
 // the Static can be updated without disturbing

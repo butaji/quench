@@ -1,4 +1,5 @@
 // Input hook example — exercises the `useInput`
+import React from 'react';
 // hook for keyboard input handling. Shows a
 // counter that increments on Enter and exits
 // on q.

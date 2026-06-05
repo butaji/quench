@@ -1,4 +1,5 @@
 // Margin example — exercises `marginTop`,
+import React from 'react';
 // `marginBottom`, `marginLeft`, `marginRight`,
 // `marginX`, `marginY` on Box.
 //

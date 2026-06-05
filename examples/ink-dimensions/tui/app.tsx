@@ -1,4 +1,5 @@
 // Dimensions example — exercises `width`,
+import React from 'react';
 // `height`, `minWidth`, `aspectRatio` on Box.
 //
 // All three environments must produce the same look:

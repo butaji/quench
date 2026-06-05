@@ -1,4 +1,5 @@
 // Focus example — exercises `useFocus` and
+import React from 'react';
 // `useFocusManager` hooks for keyboard
 // navigation between focusable elements.
 // Press Tab to cycle focus, Enter to select.

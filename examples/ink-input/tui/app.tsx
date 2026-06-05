@@ -1,4 +1,5 @@
 // Input example — pure Ink source that shows
+import React from 'react';
 // a prompt with a label and current value.
 // Exercises the `bold`, `underline`, and
 // `dimColor` props on Text.
