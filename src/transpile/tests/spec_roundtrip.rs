@@ -124,31 +124,29 @@ export default function Counter({ initial = 0 }: CounterProps) {
 }
 "#;
         let (module, rust) = run_pipeline(source);
-
-        // 1. Parse succeeds
         assert!(!module.items.is_empty(), "Module should have items");
+        check_module_has_type(&module);
+        check_module_has_function(&module, "Counter");
+        assert!(!rust.is_empty(), "Generated Rust should not be empty");
+        assert_rust_contains(&rust, &["fn Counter"]);
+    }
 
-        // 2. HIR contains interface/type declaration
+    fn check_module_has_type(module: &Module) {
         let has_type = module.items.iter().any(|item| {
             matches!(item, ModuleItem::Decl(Decl::Type(_)))
         });
         assert!(has_type, "Module should have type declaration");
+    }
 
-        // 3. HIR contains function declaration named Counter
-        let has_counter_fn = module.items.iter().any(|item| {
+    fn check_module_has_function(module: &Module, name: &str) {
+        let has_fn = module.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Function(f)) = item {
-                f.name == "Counter"
+                f.name == name
             } else {
                 false
             }
         });
-        assert!(has_counter_fn, "Module should have Counter function");
-
-        // 4. Codegen produces non-empty output
-        assert!(!rust.is_empty(), "Generated Rust should not be empty");
-
-        // 5. Generated Rust contains expected patterns
-        assert_rust_contains(&rust, &["fn Counter"]);
+        assert!(has_fn, "Module should have {} function", name);
     }
 
     // =============================================================================
@@ -247,35 +245,22 @@ export default function Counter({ start }: Props) {
 }
 "#;
         let (module, rust) = run_pipeline(source);
-
-        // 1. Parse succeeds
         assert!(!module.items.is_empty(), "Module should have items");
-
-        // 2. HIR contains Props interface
-        let has_props = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                t.name == "Props"
-            } else {
-                false
-            }
-        });
-        assert!(has_props, "Module should have Props interface");
-
-        // 3. HIR contains Counter function
-        let has_counter = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Function(f)) = item {
-                f.name == "Counter"
-            } else {
-                false
-            }
-        });
-        assert!(has_counter, "Module should have Counter function");
-
-        // 4. Codegen produces non-empty output
+        check_module_has_type_named(&module, "Props");
+        check_module_has_function(&module, "Counter");
         assert!(!rust.is_empty(), "Generated Rust should not be empty");
-
-        // 5. Generated Rust contains function
         assert_rust_contains(&rust, &["fn Counter"]);
+    }
+
+    fn check_module_has_type_named(module: &Module, name: &str) {
+        let has_type = module.items.iter().any(|item| {
+            if let ModuleItem::Decl(Decl::Type(t)) = item {
+                t.name == name
+            } else {
+                false
+            }
+        });
+        assert!(has_type, "Module should have {} type", name);
     }
 
     // =============================================================================
@@ -308,24 +293,9 @@ export default function Blog({ data }: PageProps<{ posts: Post[] }>) {
 }
 "#;
         let (module, rust) = run_pipeline(source);
-
-        // 1. Parse succeeds
         assert!(!module.items.is_empty(), "Module should have items");
-
-        // 2. HIR contains Post interface
-        let has_post = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                t.name == "Post"
-            } else {
-                false
-            }
-        });
-        assert!(has_post, "Module should have Post interface");
-
-        // 3. Codegen produces non-empty output
+        check_module_has_type_named(&module, "Post");
         assert!(!rust.is_empty(), "Generated Rust should not be empty");
-
-        // 4. Generated Rust contains Blog function
         assert_rust_contains(&rust, &["fn Blog"]);
     }
 
@@ -571,9 +541,7 @@ export default function Button() {
     // Stress tests with larger realistic code
     // =============================================================================
 
-    #[test]
-    fn test_roundtrip_data_pipeline() {
-        let source = r#"
+    const DATA_PIPELINE_SOURCE: &str = r#"
 interface User {
     id: number;
     name: string;
@@ -616,59 +584,35 @@ export function getUserStats(orders: Order[]): { total: number; avg: number } {
     return { total, avg };
 }
 "#;
-        let (module, rust) = run_pipeline(source);
 
-        // 1. Parse succeeds
+    #[test]
+    fn test_roundtrip_data_pipeline() {
+        let (module, rust) = run_pipeline(DATA_PIPELINE_SOURCE);
         assert!(!module.items.is_empty(), "Module should have items");
-
-        // 2. HIR contains interfaces
-        let has_user = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                t.name == "User"
-            } else {
-                false
-            }
-        });
-        let has_order = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Type(t)) = item {
-                t.name == "Order"
-            } else {
-                false
-            }
-        });
-        assert!(has_user, "Module should have User interface");
-        assert!(has_order, "Module should have Order interface");
-
-        // 3. HIR contains functions
-        let has_process = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Function(f)) = item {
-                f.name == "processOrders"
-            } else {
-                false
-            }
-        });
-        let has_stats = module.items.iter().any(|item| {
-            if let ModuleItem::Decl(Decl::Function(f)) = item {
-                f.name == "getUserStats"
-            } else {
-                false
-            }
-        });
-        assert!(has_process, "Module should have processOrders function");
-        assert!(has_stats, "Module should have getUserStats function");
-
-        // 4. Codegen produces non-empty output
+        check_pipeline_interfaces(&module);
+        check_pipeline_functions(&module);
         assert!(!rust.is_empty(), "Generated Rust should not be empty");
-
-        // 5. Generated Rust contains functions
         assert_rust_contains(&rust, &["fn processOrders", "fn getUserStats"]);
+        check_null_fallback_count(&rust, 5);
+    }
 
-        // 6. Check for reasonable null fallback count
-        let null_count = count_value_null(&rust);
+    fn check_pipeline_interfaces(module: &Module) {
+        check_module_has_type_named(module, "User");
+        check_module_has_type_named(module, "Order");
+    }
+
+    fn check_pipeline_functions(module: &Module) {
+        check_module_has_function(module, "processOrders");
+        check_module_has_function(module, "getUserStats");
+    }
+
+    fn check_null_fallback_count(rust: &str, max_allowed: usize) {
+        let null_count = count_value_null(rust);
         assert!(
-            null_count <= 5,
-            "Generated code has {} Value::Null (expected <= 5 for complex pipeline), output:\n{}",
+            null_count <= max_allowed,
+            "Generated code has {} Value::Null (expected <= {}), output:\n{}",
             null_count,
+            max_allowed,
             rust
         );
     }
