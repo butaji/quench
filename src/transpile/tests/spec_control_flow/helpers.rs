@@ -94,17 +94,25 @@ pub fn loop_body_contains(stmt: &Stmt, target: &str) -> bool {
         Stmt::Labeled { body, .. } => body.as_ref(),
         other => other,
     };
+    find_loop_body(stmt).map_or(false, |body_stmt| has_target_stmt(body_stmt, target))
+}
+
+fn find_loop_body(stmt: &Stmt) -> Option<&Stmt> {
     match stmt {
-        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
-            let body_stmt = body.as_ref();
-            if let Stmt::Block { stmts } = body_stmt {
-                stmts.iter().any(|s| match target {
-                    "break" => matches!(s, Stmt::Break { .. }),
-                    "continue" => matches!(s, Stmt::Continue { .. }),
-                    _ => false,
-                })
-            } else {
-                false
+        Stmt::For { body, .. } => Some(body.as_ref()),
+        Stmt::While { body, .. } => Some(body.as_ref()),
+        Stmt::DoWhile { body, .. } => Some(body.as_ref()),
+        _ => None,
+    }
+}
+
+fn has_target_stmt(stmt: &Stmt, target: &str) -> bool {
+    if let Stmt::Block { stmts } = stmt {
+        stmts.iter().any(|s| match target {
+            "break" => matches!(s, Stmt::Break { .. }),
+            "continue" => matches!(s, Stmt::Continue { .. }),
+            _ => false,
+        })
             }
         }
         _ => false,
