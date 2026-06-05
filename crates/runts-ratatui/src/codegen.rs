@@ -1316,7 +1316,9 @@ pub(crate) mod jsx {
             return Some(quote! { #b });
         }
         if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
-            return Some(quote! { #name });
+            // Use format_ident! to create a proper identifier, not a string literal
+            let ident = quote::format_ident!("{}", name);
+            return Some(quote! { #ident });
         }
         
         // Handle nested "Expr" wrapper
@@ -1341,7 +1343,9 @@ pub(crate) mod jsx {
                 }
                 "Ident" => {
                     let name = map.get("0")?.as_object()?.get("name")?.as_str()?;
-                    return Some(quote! { #name });
+                    // Use format_ident! to create a proper identifier
+                    let ident = quote::format_ident!("{}", name);
+                    return Some(quote! { #ident });
                 }
                 _ => {}
             }
@@ -1866,6 +1870,181 @@ pub(crate) mod jsx {
         }
     }
 
+    /// Extract variable declarations from a function body.
+    /// Returns Rust code for each `const` or `let` declaration
+    /// that appears before the return statement.
+    /// 
+    /// Handles patterns like:
+    /// - `const count = 0;`
+    /// - `const name = "hello";`
+    /// - `let value = true;`
+    fn extract_var_declarations(body: &serde_json::Value) -> Vec<String> {
+        let mut declarations = Vec::new();
+        
+        // Handle when body is directly an array of statements
+        if let Some(stmt_arr) = body.as_array() {
+            for stmt in stmt_arr {
+                // Check if this statement is a Block
+                if stmt.get("kind").and_then(|k| k.as_str()) == Some("Block") {
+                    // Recursively extract from block's statements
+                    if let Some(block_stmts) = stmt.get("stmts").and_then(|s| s.as_array()) {
+                        for block_stmt in block_stmts {
+                            if let Some(decl) = extract_stmt_var_decl(block_stmt) {
+                                declarations.push(decl);
+                            }
+                        }
+                    }
+                } else {
+                    // Direct statement
+                    if let Some(decl) = extract_stmt_var_decl(stmt) {
+                        declarations.push(decl);
+                    }
+                }
+            }
+        }
+        
+        // Handle when body is a Block object directly
+        if let Some(stmts) = body.get("Block").and_then(|b| b.get("stmts")) {
+            if let Some(stmt_arr) = stmts.as_array() {
+                for stmt in stmt_arr {
+                    if let Some(decl) = extract_stmt_var_decl(stmt) {
+                        declarations.push(decl);
+                    }
+                }
+            }
+        }
+        
+        declarations
+    }
+
+    /// Extract variable declaration from a single statement.
+    /// Returns Rust code for the declaration if found.
+    fn extract_stmt_var_decl(stmt: &serde_json::Value) -> Option<String> {
+        let kind = stmt.get("kind")?.as_str()?;
+        
+        // Handle Block statements
+        if kind == "Block" {
+            if let Some(stmts) = stmt.get("stmts")?.as_array() {
+                for s in stmts {
+                    if let Some(decl) = extract_stmt_var_decl(s) {
+                        return Some(decl);
+                    }
+                }
+            }
+            return None;
+        }
+        
+        // Look for Expr statements that contain assignments
+        if kind == "Expr" {
+            if let Some(expr) = stmt.get("expr") {
+                return extract_assign_expr(expr);
+            }
+        }
+        
+        None
+    }
+
+    /// Extract variable declaration from an assignment expression.
+    /// Handles `const x = value` or `let x = value`.
+    fn extract_assign_expr(expr: &serde_json::Value) -> Option<String> {
+        // Check for Assign expression
+        if let Some(assign) = expr.get("Assign") {
+            // Get the left-hand side (variable name)
+            let name = if let Some(ident) = assign.get("left").and_then(|l| l.get("Ident")) {
+                ident.get("name")?.as_str()?
+            } else {
+                return None;
+            };
+            
+            // Get the right-hand side (value)
+            let value = assign.get("right")?;
+            let rust_value = expr_value_to_rust(value)?;
+            
+            // Check if this is a const or let
+            let keyword = if expr.get("kind").and_then(|k| k.as_str()) == Some("Decl") {
+                "const"
+            } else {
+                "let"
+            };
+            
+            return Some(format!("{} {} = {};", keyword, name, rust_value));
+        }
+        
+        None
+    }
+
+    /// Convert a HIR expression value to Rust code.
+    fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
+        // Handle direct values
+        if let Some(n) = value.as_f64() {
+            // Check if it's an integer
+            if n.fract() == 0.0 {
+                return Some(format!("{}i32", n as i64));
+            }
+            return Some(format!("{}f64", n));
+        }
+        
+        // Handle object values with specific keys
+        let map = value.as_object()?;
+        
+        // String: {"String": "value"}
+        if let Some(s) = map.get("String").and_then(|v| v.as_str()) {
+            return Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")));
+        }
+        
+        // Number: {"Number": 1.5} or {"Number": {"0": 1.5}}
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) {
+            if n.fract() == 0.0 {
+                return Some(format!("{}i32", n as i64));
+            }
+            return Some(format!("{}f64", n));
+        }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_object()).and_then(|o| o.get("0")).and_then(|v| v.as_f64()) {
+            if n.fract() == 0.0 {
+                return Some(format!("{}i32", n as i64));
+            }
+            return Some(format!("{}f64", n));
+        }
+        
+        // Bool: {"Bool": true}
+        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) {
+            return Some(b.to_string());
+        }
+        
+        // Ident: {"Ident": {"name": "x"}}
+        if let Some(ident) = map.get("Ident").and_then(|v| v.as_object()) {
+            if let Some(name) = ident.get("name").and_then(|v| v.as_str()) {
+                return Some(name.to_string());
+            }
+        }
+        
+        // Handle nested Expr wrapper
+        if let Some(inner) = map.get("Expr") {
+            return expr_value_to_rust(inner);
+        }
+        
+        // Array: {"Array": {"elems": [...]}}
+        if let Some(arr) = map.get("Array") {
+            let elems = arr.get("elems")?.as_array()?;
+            let mut parts = Vec::new();
+            for elem in elems {
+                if let Some(rust_val) = expr_value_to_rust(elem) {
+                    parts.push(rust_val);
+                }
+            }
+            return Some(format!("[{}]", parts.join(", ")));
+        }
+        
+        // Object literal: handle as JSON
+        let is_object = map.contains_key("Object");
+        if is_object {
+            let json = serde_json::to_string(value).ok()?;
+            return Some(format!("serde_json::json!({})", json));
+        }
+        
+        None
+    }
+
     /// Try to generate widget code from HIR items JSON.
     /// Returns Some(code) if JSX was detected, None otherwise.
     /// The returned code is a complete Rust file
@@ -1876,13 +2055,30 @@ pub(crate) mod jsx {
     pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
         let items_arr = items.as_array()?;
         for item in items_arr {
-            if let Some(jsx_expr) = extract_jsx_from_function(item) {
+            if let Some((jsx_expr, var_decls)) = extract_jsx_from_function_with_vars(item) {
                 let widget_code = generate_widget_for_jsx(jsx_expr)?;
-                let code = wrap_ink_main(&widget_code.to_string());
+                let code = wrap_ink_main(&widget_code.to_string(), &var_decls);
                 return Some(code);
             }
         }
         None
+    }
+
+    /// Extract JSX from a HIR declaration item along with variable declarations.
+    /// Returns (JSX, var_declarations) where var_declarations is a list of
+    /// Rust variable declarations extracted from the function body.
+    fn extract_jsx_from_function_with_vars(item: &serde_json::Value) -> Option<(serde_json::Value, Vec<String>)> {
+        let decl = item.get("Decl")?;
+        let func = decl.get("Function")?;
+        let body = func.get("body")?;
+        
+        // Extract variable declarations from the function body
+        let var_decls = extract_var_declarations(body);
+        
+        // Find JSX in body
+        let jsx = find_jsx_in_body(body)?;
+        
+        Some((jsx, var_decls))
     }
 
     /// Wrap a VNode expression in a `fn main()` that
@@ -1891,8 +2087,32 @@ pub(crate) mod jsx {
     /// stdout. This matches actual Ink's behaviour
     /// for a non-interactive app: write the rendered
     /// grid to the terminal.
-    fn wrap_ink_main(vnode_expr: &str) -> String {
-        let header = String::from("//! Ink app entry: generated by runts-ratatui 0.1\n") + "use runts_ink;\n" + "fn main() -> anyhow::Result<()> {\n" + "    let root: runts_ink::VNode = PLACEHOLDER.into();\n" + "    let rendered = runts_ink::render_to_string(root, runts_ink::RenderOptions::default())?;\n" + "    print!(\"{}\", rendered);\n" + "    Ok(())\n" + "}\n";
-        header.replace("PLACEHOLDER", vnode_expr)
+    fn wrap_ink_main(vnode_expr: &str, var_decls: &[String]) -> String {
+        // Include variable declarations if any
+        let vars_section = if var_decls.is_empty() {
+            String::new()
+        } else {
+            let indent = "    ";
+            var_decls
+                .iter()
+                .map(|d| format!("{}{}", indent, d))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n"
+        };
+        
+        format!(
+            "//! Ink app entry: generated by runts-ratatui 0.1\n\
+            use runts_ink;\n\
+            fn main() -> anyhow::Result<()> {{\n\
+{}\
+    let root: runts_ink::VNode = {}.into();\n\
+    let rendered = runts_ink::render_to_string(root, runts_ink::RenderOptions::default())?;\n\
+    print!(\"{{}}\", rendered);\n\
+    Ok(())\n\
+}}\n",
+            vars_section,
+            vnode_expr
+        )
     }
 }

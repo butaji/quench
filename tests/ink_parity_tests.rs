@@ -281,10 +281,10 @@ fn test_minimum_ink_examples_count() {
         })
         .count();
     
-    // We should have at least 30 ink examples covering various features
+    // We should have at least 70 ink examples covering various features
     assert!(
-        count >= 30,
-        "should have at least 30 ink examples, found {}",
+        count >= 70,
+        "should have at least 70 ink examples, found {}",
         count
     );
 }
@@ -785,10 +785,10 @@ fn test_ink_examples_comprehensive_coverage() {
         })
         .count();
     
-    // We should have comprehensive coverage with at least 50 examples
+    // We should have comprehensive coverage with at least 70 examples
     assert!(
-        count >= 50,
-        "should have at least 50 ink examples for comprehensive coverage, found {}",
+        count >= 70,
+        "should have at least 70 ink examples for comprehensive coverage, found {}",
         count
     );
 }
@@ -1325,5 +1325,157 @@ fn test_ink_examples_consistent_imports() {
                 );
             }
         }
+    }
+}
+
+/// Verify ink-enter-submit example exists and has correct structure
+#[test]
+fn test_ink_enter_submit_example() {
+    let path = Path::new("./examples/ink-enter-submit/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+    assert!(content.contains("borderStyle"), "should use borderStyle");
+    assert!(content.contains("borderColor"), "should use borderColor");
+}
+
+/// Verify ink-enter-submit has proper entry point
+#[test]
+fn test_ink_enter_submit_main() {
+    let path = Path::new("./examples/ink-enter-submit/main.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("render"), "should call render");
+    assert!(content.contains("from 'ink'"), "should import from ink");
+}
+
+/// Verify ink-multi-select example exists and has correct structure
+#[test]
+fn test_ink_multi_select_example() {
+    let path = Path::new("./examples/ink-multi-select/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+    assert!(content.contains("Option A"), "should have option text");
+    assert!(content.contains("color"), "should use color styling");
+}
+
+/// Verify ink-multi-select has proper entry point
+#[test]
+fn test_ink_multi_select_main() {
+    let path = Path::new("./examples/ink-multi-select/main.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("render"), "should call render");
+    assert!(content.contains("from 'ink'"), "should import from ink");
+}
+
+/// Verify ink-focus-cycle example exists and has correct structure
+#[test]
+fn test_ink_focus_cycle_example() {
+    let path = Path::new("./examples/ink-focus-cycle/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Text"), "should use Text component");
+    assert!(content.contains("Input"), "should show input elements");
+    assert!(content.contains("bold"), "should use bold styling");
+    assert!(content.contains("Focus"), "should show focus indicator");
+}
+
+/// Verify ink-focus-cycle has proper entry point
+#[test]
+fn test_ink_focus_cycle_main() {
+    let path = Path::new("./examples/ink-focus-cycle/main.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("render"), "should call render");
+    assert!(content.contains("from 'ink'"), "should import from ink");
+}
+
+/// Verify all new examples have valid deno.json
+#[test]
+fn test_new_examples_have_valid_deno_json() {
+    let new_examples = vec![
+        "ink-enter-submit",
+        "ink-multi-select",
+        "ink-focus-cycle",
+    ];
+    
+    for example in new_examples {
+        let path = Path::new("./examples").join(example).join("deno.json");
+        let content = fs::read_to_string(&path).expect("should read deno.json");
+        let json: serde_json::Value = serde_json::from_str(&content).expect("should be valid JSON");
+        
+        assert!(json.get("imports").is_some(), "{} should have imports", example);
+    }
+}
+
+/// Verify all new examples have valid runts.config.json
+#[test]
+fn test_new_examples_have_valid_runts_config() {
+    let new_examples = vec![
+        "ink-enter-submit",
+        "ink-multi-select",
+        "ink-focus-cycle",
+    ];
+    
+    for example in new_examples {
+        let path = Path::new("./examples").join(example).join("runts.config.json");
+        let content = fs::read_to_string(&path).expect("should read runts.config.json");
+        let json: serde_json::Value = serde_json::from_str(&content).expect("should be valid JSON");
+        
+        assert!(json.get("plugins").is_some(), "{} should have plugins", example);
+    }
+}
+
+/// Verify new examples use React and Ink correctly
+#[test]
+fn test_new_examples_use_react_and_ink() {
+    let new_examples = vec![
+        "ink-enter-submit",
+        "ink-multi-select",
+        "ink-focus-cycle",
+    ];
+    
+    for example in new_examples {
+        let path = Path::new("./examples").join(example).join("tui/app.tsx");
+        let content = fs::read_to_string(&path).expect("should read app.tsx");
+        
+        assert!(
+            content.contains("React") || content.contains("react"),
+            "{} should import React",
+            example
+        );
+        assert!(
+            content.contains("from 'ink'") || content.contains("from \"ink\""),
+            "{} should import from ink",
+            example
+        );
+    }
+}
+
+/// Verify new examples export default or use render
+#[test]
+fn test_new_examples_export_or_render() {
+    let new_examples = vec![
+        "ink-enter-submit",
+        "ink-multi-select",
+        "ink-focus-cycle",
+    ];
+    
+    for example in new_examples {
+        let path = Path::new("./examples").join(example).join("tui/app.tsx");
+        let content = fs::read_to_string(&path).expect("should read app.tsx");
+        
+        let has_default_export = content.contains("export default");
+        let has_render_call = content.contains("render(<");
+        
+        assert!(
+            has_default_export || has_render_call,
+            "{} should either export default or call render(<...>)",
+            example
+        );
     }
 }
