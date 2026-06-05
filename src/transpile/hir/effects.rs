@@ -90,58 +90,26 @@ impl EffectAnalyzer {
     fn analyze_control_flow(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
-            S::If {
-                test,
-                consequent,
-                alternate,
-            } => self.analyze_if(test, consequent, alternate),
+            S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
             S::While { test, body } => self.analyze_while(test, body),
-            S::For {
-                init,
-                test,
-                update,
-                body,
-            } => self.analyze_for(init, test, update, body),
-            S::ForIn { left, right, body } => {
-                self.analyze_for_init(Some(left));
-                self.analyze_expr(right);
-                self.analyze_stmt(body);
-            }
+            S::For { init, test, update, body } => self.analyze_for(init, test, update, body),
+            S::ForIn { left, right, body } => { self.analyze_for_init(Some(left)); self.analyze_expr(right); self.analyze_stmt(body); }
             S::ForOf { left, right, body, is_await } => {
-                self.analyze_for_init(Some(left));
-                self.analyze_expr(right);
-                if *is_await {
-                    self.analyze_await_expr(&Expr::Await {
-                        arg: Box::new(right.clone()),
-                    });
-                }
+                self.analyze_for_init(Some(left)); self.analyze_expr(right);
+                if *is_await { self.analyze_await_expr(&Expr::Await { arg: Box::new(right.clone()) }); }
                 self.analyze_stmt(body);
             }
-            S::DoWhile { body, test } => {
-                self.analyze_stmt(body);
-                self.analyze_expr(test);
-            }
+            S::DoWhile { body, test } => { self.analyze_stmt(body); self.analyze_expr(test); }
             S::Return { arg } => self.analyze_return(arg),
-            S::Try {
-                block,
-                handler,
-                finalizer,
-            } => self.analyze_try(block, handler, finalizer),
-            S::Switch {
-                discriminant,
-                cases,
-            } => self.analyze_switch(discriminant, cases),
+            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
+            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
             S::Break { .. } | S::Continue { .. } | S::Labeled { .. } => {}
-            S::With { obj, body } => {
-                self.analyze_expr(obj);
-                self.analyze_stmt(body);
-            }
+            S::With { obj, body } => { self.analyze_expr(obj); self.analyze_stmt(body); }
             S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             S::Throw { arg } => self.analyze_throw(arg),
-            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_)
-            | S::ExportNamed { .. } | S::ExportDefault { .. } | S::ImportNamed { .. }
-            | S::ImportDefault { .. } => {}
+            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
+            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
         }
     }
 
