@@ -1631,29 +1631,37 @@ impl Interpreter {
 fn value_to_string(val: &Value) -> String {
     match val {
         Value::String(s) => s.clone(),
-        Value::Number(n) => {
-            if n.fract() == 0.0 {
-                format!("{}", *n as i64)
-            } else {
-                format!("{n}")
-            }
-        }
+        Value::Number(n) => num_to_string(*n),
         Value::Boolean(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
+        Value::Null | Value::Undefined => "null".to_string(),
         Value::VNode(v) => vnode_to_string(v),
-        Value::Array(arr) => {
-            // For JSX children like {items[0]}, just stringify the element
-            if let Some(v) = arr.first() {
-                value_to_string(v)
-            } else {
-                String::new()
-            }
-        }
-        Value::Object(_) => String::new(),
-        Value::Function { .. } => String::new(),
-        Value::HookState { idx } => format!("<hook state #{idx}>"),
-        Value::HookSetter { idx } => format!("<hook setter #{idx}>"),
+        Value::Array(arr) => array_to_string(arr),
+        Value::Object(_) | Value::Function { .. } => String::new(),
+        Value::HookState { idx } | Value::HookSetter { idx } => hook_idx_to_string(val, idx),
+    }
+}
+
+fn hook_idx_to_string(val: &Value, idx: &str) -> String {
+    match val {
+        Value::HookState { .. } => format!("<hook state #{idx}>"),
+        Value::HookSetter { .. } => format!("<hook setter #{idx}>"),
+        _ => String::new(),
+    }
+}
+
+fn num_to_string(n: f64) -> String {
+    if n.fract() == 0.0 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
+
+fn array_to_string(arr: &[Value]) -> String {
+    if let Some(v) = arr.first() {
+        value_to_string(v)
+    } else {
+        String::new()
     }
 }
 
