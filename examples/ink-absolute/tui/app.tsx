@@ -1,4 +1,5 @@
 // Absolute position example — exercises
+import React from 'react';
 // `position="absolute"` with `top`, `right`,
 // `bottom`, `left` to position a Box at
 // specific coordinates within its parent.

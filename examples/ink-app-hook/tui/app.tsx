@@ -1,4 +1,5 @@
 // App hook example — exercises `useApp` hook
+import React from 'react';
 // to access the app instance and call `exit()`
 // programmatically. Also demonstrates the
 // `useStdin`, `useStdout`, `useStderr` hooks

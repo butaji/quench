@@ -1,4 +1,5 @@
 // Dynamic example — pure Ink source. Shows
+import React from 'react';
 // different status states in a bordered box.
 // Exercises `color`, `bold`, `dimColor`
 // on Text.
