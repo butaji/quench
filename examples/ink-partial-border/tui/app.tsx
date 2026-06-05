@@ -1,4 +1,5 @@
 // Partial border example — exercises `borderTop`,
+import React from 'react';
 // `borderBottom`, `borderLeft`, `borderRight` props
 // on Box to draw partial borders.
 //

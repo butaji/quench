@@ -1,4 +1,5 @@
 // Overflow example — exercises `overflowX`
+import React from 'react';
 // and `overflowY` to control how content
 // that exceeds the box dimensions is handled.
 // Options: "visible" (default), "hidden",

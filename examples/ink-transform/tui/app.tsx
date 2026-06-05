@@ -1,4 +1,5 @@
 // Transform example — exercises the `<Transform>`
+import React from 'react';
 // component which applies a string transform
 // function to its child's output.
 //

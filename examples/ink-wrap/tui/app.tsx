@@ -1,4 +1,5 @@
 // Flex wrap example — exercises `flexWrap="wrap"`
+import React from 'react';
 // and `columnGap` / `rowGap` on Box.
 //
 // All three environments must produce the same look:

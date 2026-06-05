@@ -1,4 +1,5 @@
 // Align self example — exercises `alignSelf`
+import React from 'react';
 // on individual Box children to override the
 // parent's `alignItems` for that child.
 // Values: "flex-start", "center", "flex-end",

@@ -1,4 +1,5 @@
 // Layout example — pure Ink source for
+import React from 'react';
 // horizontal Box layout. Exercises the
 // `flexDirection="row"` path of the
 // runts-ink renderer.

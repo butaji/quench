@@ -1,4 +1,5 @@
 // Display example — exercises `display="none"`
+import React from 'react';
 // to hide a Box from the layout (it takes no
 // space and is not rendered).
 //

@@ -1,4 +1,5 @@
 // Static color example — pure Ink source that
+import React from 'react';
 // exercises color + backgroundColor on every
 // Text variant. Useful for visual smoke tests
 // of the runts-ink color palette.

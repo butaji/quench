@@ -1,4 +1,5 @@
 // Aligned example — pure Ink source that
+import React from 'react';
 // exercises the `gap`, `marginTop`, and
 // `alignItems="center"` props for box layout.
 // Renders a centered title with a wrapped
