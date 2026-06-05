@@ -793,35 +793,41 @@ impl QuoteCodegen {
 
         // Handle patterns
         if let Some(ref pattern) = var.pattern {
-            let decls = self.gen_pat(pattern, &init_expr);
-            if decls.is_empty() {
-                return None;
-            }
-            let keyword = match var.kind {
-                VariableKind::Var => quote! { let mut },
-                VariableKind::Let => quote! { let },
-                VariableKind::Const => quote! { let },
-            };
-            // Wrap in block if multiple declarations
-            if decls.len() == 1 {
-                let decl = &decls[0];
-                Some(quote! { #keyword #decl; })
-            } else {
-                let stmts: Vec<TokenStream> = decls
-                    .into_iter()
-                    .map(|d| quote! { #keyword #d; })
-                    .collect();
-                Some(quote! { #(#stmts)* })
-            }
+            self.gen_var_decl_pattern(var.kind, pattern, &init_expr)
         } else {
-            // Simple variable without pattern
-            let id = syn::Ident::new(&var.name, proc_macro2::Span::call_site());
-            let keyword = match var.kind {
-                VariableKind::Var => quote! { let mut },
-                VariableKind::Let => quote! { let },
-                VariableKind::Const => quote! { let },
-            };
-            Some(quote! { #keyword #id = #init_expr; })
+            self.gen_var_decl_simple(var.kind, &var.name, &init_expr)
+        }
+    }
+
+    fn gen_var_decl_pattern(&self, kind: VariableKind, pat: &Pat, init_expr: &TokenStream) -> Option<TokenStream> {
+        let decls = self.gen_pat(pat, init_expr);
+        if decls.is_empty() {
+            return None;
+        }
+        let keyword = self.var_keyword(kind);
+        if decls.len() == 1 {
+            let decl = &decls[0];
+            Some(quote! { #keyword #decl; })
+        } else {
+            let stmts: Vec<TokenStream> = decls
+                .into_iter()
+                .map(|d| quote! { #keyword #d; })
+                .collect();
+            Some(quote! { #(#stmts)* })
+        }
+    }
+
+    fn gen_var_decl_simple(&self, kind: VariableKind, name: &str, init_expr: &TokenStream) -> Option<TokenStream> {
+        let id = syn::Ident::new(name, proc_macro2::Span::call_site());
+        let keyword = self.var_keyword(kind);
+        Some(quote! { #keyword #id = #init_expr; })
+    }
+
+    fn var_keyword(&self, kind: VariableKind) -> TokenStream {
+        match kind {
+            VariableKind::Var => quote! { let mut },
+            VariableKind::Let => quote! { let },
+            VariableKind::Const => quote! { let },
         }
     }
 
@@ -1448,20 +1454,18 @@ impl QuoteCodegen {
     }
 
     fn gen_jsx_component(&self, name: &str, attrs: &[super::JSXAttr], children: &[super::JSXChild]) -> TokenStream {
-        use super::JSXAttrValue;
+        let props_fields = self.gen_jsx_props(attrs);
+        let child_nodes: Vec<TokenStream> = self.gen_jsx_children(children);
+        self.gen_component_render(name, &props_fields, &child_nodes)
+    }
+
+    fn gen_jsx_props(&self, attrs: &[super::JSXAttr]) -> Vec<TokenStream> {
         let mut props_fields: Vec<TokenStream> = Vec::new();
         for attr in attrs {
             match attr {
                 super::JSXAttr::Attr { name: prop_name, value } => {
                     let key = syn::Ident::new(prop_name, proc_macro2::Span::call_site());
-                    match value {
-                        Some(JSXAttrValue::String(s)) => props_fields.push(quote! { #key: #s.to_string() }),
-                        Some(JSXAttrValue::Expr(expr)) => {
-                            let val = self.gen_expr(expr);
-                            props_fields.push(quote! { #key: #val });
-                        }
-                        Some(JSXAttrValue::Empty) | None => props_fields.push(quote! { #key: true }),
-                    }
+                    self.gen_jsx_attr_value(&key, value, &mut props_fields);
                 }
                 super::JSXAttr::Spread { expr } => {
                     let expr_tokens = self.gen_expr(expr);
@@ -1469,9 +1473,22 @@ impl QuoteCodegen {
                 }
             }
         }
-        let child_nodes: Vec<TokenStream> = self.gen_jsx_children(children);
-        // For member expressions like "React.Foo", we can't use syn::Ident
-        // Instead, use the string directly in the quote
+        props_fields
+    }
+
+    fn gen_jsx_attr_value(&self, key: &syn::Ident, value: &Option<super::JSXAttrValue>, props: &mut Vec<TokenStream>) {
+        use super::JSXAttrValue;
+        match value {
+            Some(JSXAttrValue::String(s)) => props.push(quote! { #key: #s.to_string() }),
+            Some(JSXAttrValue::Expr(expr)) => {
+                let val = self.gen_expr(expr);
+                props.push(quote! { #key: #val });
+            }
+            Some(JSXAttrValue::Empty) | None => props.push(quote! { #key: true }),
+        }
+    }
+
+    fn gen_component_render(&self, name: &str, props_fields: &[TokenStream], child_nodes: &[TokenStream]) -> TokenStream {
         let component_name_str = name.to_string();
         let props_name_str = format!("{}Props", name);
         if props_fields.is_empty() && child_nodes.is_empty() {
