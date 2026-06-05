@@ -1,4 +1,5 @@
 // Custom render example entry point - demonstrates custom rendering options.
+import React from 'react';
 import { render } from 'ink';
 import App from './tui/app.tsx';
 
