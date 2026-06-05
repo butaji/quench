@@ -115,7 +115,8 @@ fn test_box_gaps() {
 #[test]
 fn test_box_alignment() {
     let b = Box::column();
-    assert_eq!(b.align_items, AlignItems::FlexStart);
+    // Box Default sets align_items to Stretch (per Ink/Yoga behavior for cross-axis stretch)
+    assert_eq!(b.align_items, AlignItems::Stretch);
     assert_eq!(b.align_self, AlignSelf::Auto);
     assert_eq!(b.justify_content, JustifyContent::FlexStart);
     

@@ -7,9 +7,11 @@
 //   3. runts build (codegen->runts-ink)
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useCursor } from 'ink';
 
 export default function CursorExample() {
+  const { hideCursor, showCursor, isCursorVisible } = useCursor();
+  
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Cursor Control Demo</Text>

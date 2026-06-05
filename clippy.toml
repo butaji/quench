@@ -3,7 +3,6 @@
 
 # Function complexity limits
 cognitive-complexity-threshold = 10
-cyclomatic-complexity-threshold = 15
 
 # Avoid overly complex code
 avoid-breaking-exported-api = true

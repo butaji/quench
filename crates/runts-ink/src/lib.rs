@@ -65,7 +65,7 @@ mod style;
 mod vnode;
 
 pub use components::{
-    AlignItems, AlignSelf, Box, Color, FlexDirection, FlexWrap, JustifyContent, Newline, Spacer, Static, Text,
+    AlignContent, AlignItems, AlignSelf, Box, Color, FlexDirection, FlexWrap, JustifyContent, Newline, Spacer, Static, Text,
     Transform,
 };
 pub use events::{

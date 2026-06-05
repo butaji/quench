@@ -418,32 +418,23 @@ fn walk_box(b: &InkBox, layout: &Layout, frame: &mut ratatui::Frame, area: Rect,
         let bg_style = ratatui::style::Style::default().bg(color_to_ratatui(bg));
         frame.render_widget(ratatui::widgets::Paragraph::new("").style(bg_style), area);
     }
-    // Draw the border (if any) as a `Block`.
+    // Draw the border (if any) as a `Block`.  Yoga already
+    // accounts for the border in child positions, so we use
+    // the full `area` for children — no `block.inner(area)`.
     if b.borders.top || b.borders.right || b.borders.bottom || b.borders.left {
         let block = build_block(b);
-        let inner = block.inner(area);
         frame.render_widget(block, area);
-        // Children start at depth+1 (this box is at `depth`).
-        walk_children(
-            b.children.as_slice(),
-            layout,
-            frame,
-            inner,
-            depth + 1,
-            b.flex_direction,
-            b.justify_content,
-        );
-    } else {
-        walk_children(
-            b.children.as_slice(),
-            layout,
-            frame,
-            area,
-            depth + 1,
-            b.flex_direction,
-            b.justify_content,
-        );
     }
+    // Children start at depth+1 (this box is at `depth`).
+    walk_children(
+        b.children.as_slice(),
+        layout,
+        frame,
+        area,
+        depth + 1,
+        b.flex_direction,
+        b.justify_content,
+    );
 }
 
 fn walk_transform(
@@ -453,15 +444,11 @@ fn walk_transform(
     area: Rect,
     depth: usize,
 ) {
-    // Apply the offset, then render the child. ratatui's
-    // `u16::saturating_add_signed` accepts `i16` directly.
-    let inner = Rect {
-        x: area.x.saturating_add_signed(t.x),
-        y: area.y.saturating_add_signed(t.y),
-        width: area.width,
-        height: area.height,
-    };
-    walk(&t.child, layout, frame, inner, depth + 1);
+    // The Yoga layout pass already bakes the transform
+    // offset into the child's rect, so we render the
+    // child at the area that the layout engine produced.
+    let _ = (t, area);
+    walk(&t.child, layout, frame, area, depth + 1);
 }
 
 fn walk_children(
@@ -625,11 +612,16 @@ fn rect_at(
             // so the child has somewhere to draw.
             return fallback;
         }
+        // Clip the rect to the viewport bounds to prevent
+        // rendering outside the buffer. This handles cases
+        // where the layout exceeds the terminal size.
+        let max_x = fallback.x.saturating_add(fallback.width);
+        let max_y = fallback.y.saturating_add(fallback.height);
         Rect {
-            x,
-            y,
-            width: w,
-            height: h,
+            x: x.min(max_x.saturating_sub(1)),
+            y: y.min(max_y.saturating_sub(1)),
+            width: w.min(max_x.saturating_sub(x)).max(1),
+            height: h.min(max_y.saturating_sub(y)).max(1),
         }
     } else {
         fallback
@@ -804,6 +796,7 @@ pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     terminal
         .draw(|frame| render_tree(&root, &layout, frame, area))
         .context("draw")?;
+    eprintln!("DEBUG layout.rects len={} rects={:?}", layout.rects.len(), layout.rects);
     let buffer = terminal.backend().buffer().clone();
     let mut out = String::new();
     for y in 0..rows {
@@ -1152,13 +1145,26 @@ mod tests {
 }
 /// Count the total number of VNodes in a tree
 /// (DFS pre-order). Used to pre-allocate
-/// `layout.rects`.
+/// `layout.rects`.  `display:none` subtrees are
+/// skipped so that the rect vector lines up with
+/// the layout engine's output.
 fn count_vnodes(node: &VNode) -> usize {
     use crate::vnode::VNodeContent;
+    if matches!(
+        &node.0,
+        VNodeContent::Box(InkBox { display: crate::style::Display::None, .. })
+    ) {
+        return 1;
+    }
     let mut count = 1;
     match &node.0 {
         VNodeContent::Box(b) => {
             for child in &b.children {
+                count += count_vnodes(child);
+            }
+        }
+        VNodeContent::Static(s) => {
+            for child in &s.children {
                 count += count_vnodes(child);
             }
         }
