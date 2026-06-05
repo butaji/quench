@@ -104,9 +104,6 @@ fn convert_regexp(r: &RegExpLiteral) -> Option<hir::Expr> {
         flags: r.regex.flags.to_string(),
     })
 }
-        _ => None,
-    }
-}
 
 fn convert_binary_expr(b: &BinaryExpression) -> Option<hir::Expr> {
     let left = Box::new(convert_expr(&b.left).ok()?);
@@ -311,9 +308,7 @@ fn try_class_expr_module_item(stmt: &Statement) -> Option<Vec<hir::ModuleItem>> 
 
 fn make_type_module_item(name: &str) -> Vec<hir::ModuleItem> {
     vec![hir::ModuleItem::Decl(hir::Decl::Type(hir::TypeDecl {
-        name: name.to_string(),
-        generics: vec![],
-        type_: hir::Type::Object { members: vec![] },
+        name: name.to_string(), generics: vec![], type_: hir::Type::Object { members: vec![] },
     }))]
 }
 
@@ -322,9 +317,6 @@ fn convert_export_default(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> 
         ExportDefaultDeclarationKind::FunctionDeclaration(f) => vec![hir::ModuleItem::Decl(func_to_decl(f))],
         ExportDefaultDeclarationKind::ClassDeclaration(c) => vec![hir::ModuleItem::Decl(class_to_hir(c))],
         ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => make_type_module_item(&i.id.name),
-                type_: hir::Type::Object { members: vec![] },
-            }))]
-        }
         ExportDefaultDeclarationKind::NumericLiteral(n) => expr_stmt(hir::Expr::Number(n.value)),
         ExportDefaultDeclarationKind::StringLiteral(s) => expr_stmt(hir::Expr::String(s.value.to_string())),
         ExportDefaultDeclarationKind::BooleanLiteral(b) => expr_stmt(hir::Expr::Boolean(b.value)),

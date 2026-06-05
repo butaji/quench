@@ -556,53 +556,20 @@ impl QuoteCodegen {
         use super::Export as E;
         let items: Vec<TokenStream> = specifiers.iter().map(|spec| {
             match spec {
-                E::Named { name } => {
-                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-                    quote! { #ident }
-                }
-                E::NamedWithValue { name, value } => {
-                    let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-                    let val = self.gen_expr(value);
-                    quote! { #ident = #val }
-                }
-                E::ReExport { source, names } => {
-                    let mod_path = self.module_path(source);
-                    let idents: Vec<_> = names.iter()
-                        .map(|n| syn::Ident::new(n, proc_macro2::Span::call_site()))
-                        .collect();
-                    quote! { pub use #mod_path::{#(#idents),*}; }
-                }
-                E::All { source } => {
-                    let mod_path = self.module_path(source);
-                    quote! { pub use #mod_path::*; }
-                }
-                E::Default { expr } => {
-                    // export default expr - handled by gen_export_default
-                    let val = self.gen_expr(expr);
-                    quote! { #val }
-                }
+                E::Named { name } => { let ident = syn::Ident::new(name, proc_macro2::Span::call_site()); quote! { #ident } }
+                E::NamedWithValue { name, value } => { let ident = syn::Ident::new(name, proc_macro2::Span::call_site()); let val = self.gen_expr(value); quote! { #ident = #val } }
+                E::ReExport { source, names } => { let mod_path = self.module_path(source); let idents: Vec<_> = names.iter().map(|n| syn::Ident::new(n, proc_macro2::Span::call_site())).collect(); quote! { pub use #mod_path::{#(#idents),*}; } }
+                E::All { source } => { let mod_path = self.module_path(source); quote! { pub use #mod_path::*; } }
+                E::Default { expr } => { let val = self.gen_expr(expr); quote! { #val } }
             }
         }).collect();
 
         if items.len() == 1 {
-            // Single specifier - could be pub use or pub const
             let item = &items[0];
-            if matches!(specifiers[0], E::Named { .. }) {
-                // export { x } => pub use ...x;
-                quote! { pub use #item; }
-            } else {
-                quote! { #item }
-            }
+            if matches!(specifiers[0], E::Named { .. }) { quote! { pub use #item; } } else { quote! { #item } }
         } else {
-            // Multiple specifiers - all become pub use statements
             let uses: Vec<TokenStream> = specifiers.iter().filter_map(|spec| {
-                match spec {
-                    E::Named { name } => {
-                        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-                        Some(quote! { pub use #ident; })
-                    }
-                    _ => None,
-                }
+                if let E::Named { name } = spec { let ident = syn::Ident::new(name, proc_macro2::Span::call_site()); Some(quote! { pub use #ident; }) } else { None }
             }).collect();
             quote! { #(#uses)* }
         }
@@ -1003,68 +970,24 @@ impl QuoteCodegen {
     }
 
     fn gen_try(&self, block: &super::Block, handler: &Option<super::CatchClause>, finalizer: &Option<super::Block>) -> TokenStream {
-        let block_stmts: Vec<TokenStream> = block.0.iter()
-            .filter_map(|s| self.gen_stmt(s))
-            .collect();
+        let block_stmts: Vec<TokenStream> = block.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
         match (handler, finalizer) {
             (Some(h), Some(f)) => {
                 let catch_param = syn::Ident::new(&h.param, proc_macro2::Span::call_site());
-                let catch_body: Vec<TokenStream> = h.body.0.iter()
-                    .filter_map(|s| self.gen_stmt(s))
-                    .collect();
-                let finally_stmts: Vec<TokenStream> = f.0.iter()
-                    .filter_map(|s| self.gen_stmt(s))
-                    .collect();
-                quote! {
-                    {
-                        let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            #(#block_stmts)*
-                        }));
-                        match __result {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let #catch_param = e;
-                                #(#catch_body)*
-                            }
-                        };
-                        #(#finally_stmts)*
-                    }
-                }
+                let catch_body: Vec<TokenStream> = h.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+                let finally_stmts: Vec<TokenStream> = f.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+                quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } }; #(#finally_stmts)* } }
             }
             (Some(h), None) => {
                 let catch_param = syn::Ident::new(&h.param, proc_macro2::Span::call_site());
-                let catch_body: Vec<TokenStream> = h.body.0.iter()
-                    .filter_map(|s| self.gen_stmt(s))
-                    .collect();
-                quote! {
-                    {
-                        let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            #(#block_stmts)*
-                        }));
-                        match __result {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let #catch_param = e;
-                                #(#catch_body)*
-                            }
-                        }
-                    }
-                }
+                let catch_body: Vec<TokenStream> = h.body.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+                quote! { { let __result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #(#block_stmts)* })); match __result { Ok(v) => v, Err(e) => { let #catch_param = e; #(#catch_body)* } } } }
             }
             (None, Some(f)) => {
-                let finally_stmts: Vec<TokenStream> = f.0.iter()
-                    .filter_map(|s| self.gen_stmt(s))
-                    .collect();
-                quote! {
-                    {
-                        #(#block_stmts)*
-                        #(#finally_stmts)*
-                    }
-                }
+                let finally_stmts: Vec<TokenStream> = f.0.iter().filter_map(|s| self.gen_stmt(s)).collect();
+                quote! { { #(#block_stmts)* #(#finally_stmts)* } }
             }
-            (None, None) => {
-                quote! { #(#block_stmts)* }
-            }
+            (None, None) => quote! { #(#block_stmts)* },
         }
     }
 
@@ -1207,7 +1130,6 @@ impl QuoteCodegen {
     }
 
     fn gen_static_member_expr(&self, obj: &Expr, property: &str) -> TokenStream {
-        // Special handling for Number static properties
         if let Expr::Ident { name: obj_name } = obj {
             let obj_name_str: &str = obj_name.as_str();
             match obj_name_str {
@@ -1218,10 +1140,7 @@ impl QuoteCodegen {
                         "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
                         "MAX_VALUE" => quote! { f64::MAX },
                         "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
-                        _ => {
-                            let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
-                            quote! { #obj_name.#prop }
-                        }
+                        _ => { let prop = syn::Ident::new(property, proc_macro2::Span::call_site()); quote! { #obj_name.#prop } }
                     };
                 }
                 "Math" => {
@@ -1234,23 +1153,18 @@ impl QuoteCodegen {
                         "LN10" => quote! { std::f64::consts::LN_10 },
                         "LOG2E" => quote! { std::f64::consts::LOG2_E },
                         "LOG10E" => quote! { std::f64::consts::LOG10_E },
-                        _ => {
-                            let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
-                            quote! { #obj_name.#prop }
-                        }
+                        _ => { let prop = syn::Ident::new(property, proc_macro2::Span::call_site()); quote! { #obj_name.#prop } }
                     };
                 }
                 _ => {}
             }
         }
-
         let obj = self.gen_expr(obj);
         let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
         quote! { #obj.#prop }
     }
 
     fn gen_member_expr_full(&self, obj: &Expr, property: &Expr, computed: bool) -> TokenStream {
-        // Special handling for Number static properties
         if let Expr::Ident { name: obj_name } = obj {
             if obj_name == "Number" {
                 if let Expr::Ident { name: prop_name } = property {
@@ -1260,14 +1174,10 @@ impl QuoteCodegen {
                         "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
                         "MAX_VALUE" => quote! { f64::MAX },
                         "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
-                        _ => {
-                            let prop = self.gen_expr(property);
-                            quote! { #obj_name.#prop }
-                        }
+                        _ => { let prop = self.gen_expr(property); quote! { #obj_name.#prop } }
                     };
                 }
             }
-            // Special handling for Math static properties
             if obj_name == "Math" {
                 if let Expr::Ident { name: prop_name } = property {
                     return match prop_name.as_str() {
@@ -1279,71 +1189,26 @@ impl QuoteCodegen {
                         "LN10" => quote! { std::f64::consts::LN_10 },
                         "LOG2E" => quote! { std::f64::consts::LOG2_E },
                         "LOG10E" => quote! { std::f64::consts::LOG10_E },
-                        _ => {
-                            let prop = self.gen_expr(property);
-                            quote! { #obj_name.#prop }
-                        }
+                        _ => { let prop = self.gen_expr(property); quote! { #obj_name.#prop } }
                     };
                 }
             }
         }
-
         let obj = self.gen_expr(obj);
-        if computed {
-            let prop = self.gen_expr(property);
-            quote! { #obj[#prop] }
-        } else {
-            let prop = self.gen_expr(property);
-            quote! { #obj.#prop }
-        }
+        let prop = self.gen_expr(property);
+        if computed { quote! { #obj[#prop] } } else { quote! { #obj.#prop } }
     }
 
-    fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, prefix: bool) -> TokenStream {
+    fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, _prefix: bool) -> TokenStream {
         use super::UnaryOp as U;
+        let arg_ts = self.gen_expr(arg);
         match op {
-            U::Plus => {
-                let arg_ts = self.gen_expr(arg);
-                quote! { #arg_ts }
-            }
-            U::Minus => {
-                let arg_ts = self.gen_expr(arg);
-                quote! { -#arg_ts }
-            }
-            U::Not => {
-                let arg_ts = self.gen_expr(arg);
-                quote! { !#arg_ts }
-            }
-            U::BitNot => {
-                let arg_ts = self.gen_expr(arg);
-                quote! { !#arg_ts }
-            }
-            U::Typeof => {
-                let arg_ts = self.gen_expr(arg);
-                // Generate a runtime typeof match expression
-                quote! {
-                    {
-                        // typeof check
-                        match &#arg_ts {
-                            Value::String(_) => "string",
-                            Value::Number(_) => "number",
-                            Value::Boolean(_) => "boolean",
-                            Value::Null => "object",
-                            Value::Undefined => "undefined",
-                            Value::BigInt(_) => "bigint",
-                            Value::Function(_) => "function",
-                            Value::Object(_) | Value::Array(_) | Value::RegExp(_, _) => "object",
-                            _ => "unknown",
-                        }
-                    }
-                }
-            }
+            U::Plus => quote! { #arg_ts },
+            U::Minus => quote! { -#arg_ts },
+            U::Not | U::BitNot => quote! { !#arg_ts },
+            U::Typeof => quote! { { match &#arg_ts { Value::String(_) => "string", Value::Number(_) => "number", Value::Boolean(_) => "boolean", Value::Null => "object", Value::Undefined => "undefined", Value::BigInt(_) => "bigint", Value::Function(_) => "function", Value::Object(_) | Value::Array(_) | Value::RegExp(_, _) => "object", _ => "unknown" } } },
             U::Void => quote! { () },
-            U::Delete => quote! {
-                {
-                    // delete operator not supported
-                    false
-                }
-            },
+            U::Delete => quote! { false },
         }
     }
 
@@ -1477,97 +1342,23 @@ impl QuoteCodegen {
     /// Generate a class as a Rust struct + impl block
     pub fn gen_class(&self, class: &super::ClassDecl) -> TokenStream {
         let name = syn::Ident::new(&class.name, proc_macro2::Span::call_site());
-
-        // Panic if class has inheritance
-        if class.extends.is_some() {
-            panic!("class inheritance (extends) is not supported");
-        }
-
-        // Generate struct fields from members
-        let field_defs: Vec<TokenStream> = class.members.iter()
-            .filter(|m| !m.is_static)
-            .map(|m| {
-                let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site());
-                let ty = m.type_.as_ref()
-                    .map(|t| self.gen_type(t))
-                    .unwrap_or_else(|| quote! { f64 });
-                quote! { pub #field_name: #ty }
-            })
-            .collect();
-
-        // Collect field names for constructor initialization
-        let field_names: Vec<_> = class.members.iter()
-            .filter(|m| !m.is_static)
-            .map(|m| syn::Ident::new(&m.name, proc_macro2::Span::call_site()))
-            .collect();
-
-        // Generate constructor and methods
+        if class.extends.is_some() { panic!("class inheritance (extends) is not supported"); }
+        let field_defs: Vec<TokenStream> = class.members.iter().filter(|m| !m.is_static).map(|m| { let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site()); let ty = m.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { pub #field_name: #ty } }).collect();
+        let field_names: Vec<_> = class.members.iter().filter(|m| !m.is_static).map(|m| syn::Ident::new(&m.name, proc_macro2::Span::call_site())).collect();
         let mut constructor_tokens: Option<TokenStream> = None;
         let mut method_tokens: Vec<TokenStream> = Vec::new();
-
         for method in &class.methods {
             if method.kind == super::MethodKind::Constructor {
-                let params: Vec<_> = method.params.iter().map(|p| {
-                    let pname = syn::Ident::new(&p.name, proc_macro2::Span::call_site());
-                    let ty = p.type_.as_ref()
-                        .map(|t| self.gen_type(t))
-                        .unwrap_or_else(|| quote! { f64 });
-                    quote! { #pname: #ty }
-                }).collect();
-                // Constructor body: Point { x, y, ... }
-                constructor_tokens = Some(quote! {
-                    pub fn new(#(#params),*) -> Self {
-                        #name { #(#field_names),* }
-                    }
-                });
+                let params: Vec<_> = method.params.iter().map(|p| { let pname = syn::Ident::new(&p.name, proc_macro2::Span::call_site()); let ty = p.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { #pname: #ty } }).collect();
+                constructor_tokens = Some(quote! { pub fn new(#(#params),*) -> Self { #name { #(#field_names),* } } });
             } else {
                 let method_name = syn::Ident::new(&method.name, proc_macro2::Span::call_site());
-                // Instance methods get &self as first param
-                let params_with_self: Vec<TokenStream> = {
-                    let mut p = vec![quote! { &self }];
-                    p.extend(method.params.iter().map(|pm| {
-                        let pname = syn::Ident::new(&pm.name, proc_macro2::Span::call_site());
-                        let ty = pm.type_.as_ref()
-                            .map(|t| self.gen_type(t))
-                            .unwrap_or_else(|| quote! { f64 });
-                        quote! { #pname: #ty }
-                    }));
-                    p
-                };
-                let body = self.gen_expr(&method.body);
-                method_tokens.push(quote! {
-                    pub fn #method_name(#(#params_with_self),*) -> f64 {
-                        #body
-                    }
-                });
+                let params_with_self: Vec<TokenStream> = { let mut p = vec![quote! { &self }]; p.extend(method.params.iter().map(|pm| { let pname = syn::Ident::new(&pm.name, proc_macro2::Span::call_site()); let ty = pm.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { #pname: #ty } })); p };
+                method_tokens.push(quote! { pub fn #method_name(#(#params_with_self),*) -> f64 { #(#method_tokens)* } });
             }
         }
-
-        // Build struct body - join fields with semicolons
-        let struct_body: TokenStream = if field_defs.is_empty() {
-            quote! {}
-        } else {
-            let mut combined = quote! {};
-            for (i, field) in field_defs.iter().enumerate() {
-                if i > 0 {
-                    combined = quote! { #combined, #field };
-                } else {
-                    combined = quote! { #field };
-                }
-            }
-            quote! { #combined }
-        };
-
-        quote! {
-            struct #name {
-                #struct_body
-            }
-
-            impl #name {
-                #constructor_tokens
-                #(#method_tokens)*
-            }
-        }
+        let struct_body: TokenStream = if field_defs.is_empty() { quote! {} } else { let mut combined = quote! {}; for (i, field) in field_defs.iter().enumerate() { combined = if i > 0 { quote! { #combined, #field } } else { quote! { #field } }; } quote! { #combined } };
+        quote! { struct #name { #struct_body } impl #name { #constructor_tokens #(#method_tokens)* } }
     }
 
     fn gen_block_expr(&self, stmts: &[super::Stmt]) -> TokenStream {
@@ -1711,45 +1502,17 @@ impl QuoteCodegen {
 
     fn gen_bin_expr(&self, op: &super::BinaryOp, left: &Expr, right: &Expr) -> TokenStream {
         use super::BinaryOp as B;
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
 
-        // Handle instanceof: generate a placeholder
-        if matches!(op, B::Instanceof) {
-            let lhs = self.gen_expr(left);
-            let rhs = self.gen_expr(right);
-            return quote! {
-                {
-                    // instanceof check: #lhs instanceof #rhs
-                    false  // TODO: implement proper instanceof
-                }
-            };
-        }
+        if matches!(op, B::Instanceof) { return quote! { false }; }
+        if matches!(op, B::In) { return quote! { #rhs.contains_key(&#lhs) }; }
 
-        // Handle in: generate contains_key call
-        if matches!(op, B::In) {
-            let lhs = self.gen_expr(left);
-            let rhs = self.gen_expr(right);
-            return quote! { #rhs.contains_key(&#lhs) };
-        }
+        if matches!(op, B::Add) && self.is_string_expr(left) { return quote! { format!(concat!(#lhs, "{}"), #rhs) }; }
+        if matches!(op, B::Add) && self.is_string_expr(right) { return quote! { format!("{}{}", #lhs, #rhs) }; }
 
-        // String concatenation: use format! for string + anything
-        if matches!(op, B::Add) && self.is_string_expr(left) {
-            // Handle "string" + expr - add {} to string and use expr as argument
-            let lhs = self.gen_expr(left);
-            let rhs = self.gen_expr(right);
-            // The string literal needs {} appended to become a format template
-            quote! { format!(concat!(#lhs, "{}"), #rhs) }
-        } else if matches!(op, B::Add) && self.is_string_expr(right) {
-            // Handle expr + "string" - use format to concatenate
-            let lhs = self.gen_expr(left);
-            let rhs = self.gen_expr(right);
-            // {} for lhs, {} for rhs - format will concatenate them
-            quote! { format!("{}{}", #lhs, #rhs) }
-        } else {
-            let lhs = self.gen_expr(left);
-            let rhs = self.gen_expr(right);
-            let op = self.bin_op(op);
-            quote! { #lhs #op #rhs }
-        }
+        let op_tok = self.bin_op(op);
+        quote! { #lhs #op_tok #rhs }
     }
 
     fn is_string_expr(&self, expr: &Expr) -> bool {
@@ -1757,83 +1520,29 @@ impl QuoteCodegen {
     }
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
-        // Special handling for fetch() -> reqwest::get()
         if let Expr::Ident { name } = callee {
-            if name == "fetch" {
-                let url = arguments.first()
-                    .map(|a| self.gen_expr(a))
-                    .unwrap_or_else(|| quote! { String::new() });
-                return quote! { reqwest::get(#url).await? };
-            }
-            // Special handling for setTimeout(resolve, ms) -> tokio::time::sleep
-            if name == "setTimeout" {
-                let duration = arguments.get(1)
-                    .map(|a| self.gen_expr(a))
-                    .unwrap_or_else(|| quote! { 0 });
-                return quote! { tokio::time::sleep(std::time::Duration::from_millis(#duration as u64)).await };
-            }
-            // Special handling for setInterval -> tokio::time::interval
-            if name == "setInterval" {
-                let duration = arguments.get(1)
-                    .map(|a| self.gen_expr(a))
-                    .unwrap_or_else(|| quote! { 0 });
-                return quote! { tokio::time::interval(std::time::Duration::from_millis(#duration as u64)) };
-            }
+            if name == "fetch" { let url = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() }); return quote! { reqwest::get(#url).await? }; }
+            if name == "setTimeout" { let duration = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); return quote! { tokio::time::sleep(std::time::Duration::from_millis(#duration as u64)).await }; }
+            if name == "setInterval" { let duration = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); return quote! { tokio::time::interval(std::time::Duration::from_millis(#duration as u64)) }; }
         }
-
-        // Special handling for console methods
         if let Expr::StaticMember { obj, property } = callee {
             if let Expr::Ident { name } = obj.as_ref() {
                 if name == "console" {
                     let is_error = property == "error" || property == "warn";
-                    let use_print = property == "log" || property == "error" || property == "info" || property == "table" || property == "warn";
-
-                    if use_print || property == "assert" {
+                    if property == "log" || property == "error" || property == "info" || property == "table" || property == "warn" || property == "assert" {
                         let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-
                         if property == "assert" {
-                            // console.assert(condition, msg) -> assert!(condition, "{}", msg)
-                            if arguments.len() >= 2 {
-                                let cond = args.first().expect("assert needs condition");
-                                let msg = args.get(1).expect("assert needs message");
-                                return quote! { assert!(#cond, "{}", #msg) };
-                            } else if arguments.len() == 1 {
-                                let cond = args.first().expect("assert needs condition");
-                                return quote! { assert!(#cond) };
-                            }
-                            return quote! { () };
+                            return if arguments.len() >= 2 { let cond = args.first().unwrap(); let msg = args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } } else if arguments.len() == 1 { quote! { assert!(#(args.first().unwrap())) } } else { quote! { () } };
                         }
-
-                        // println!/eprintln! for log, info, table, warn, error
-                        if arguments.len() == 1 {
-                            if is_error {
-                                return syn::parse_quote! { eprintln!("{}", #(#args),*) };
-                            } else {
-                                return syn::parse_quote! { println!("{}", #(#args),*) };
-                            }
-                        } else {
-                            let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
-                            if is_error {
-                                return syn::parse_quote! { eprintln!(#(#format_args),*, #(#args),*) };
-                            } else {
-                                return syn::parse_quote! { println!(#(#format_args),*, #(#args),*) };
-                            }
-                        }
+                        if arguments.len() == 1 { return if is_error { syn::parse_quote! { eprintln!("{}", #(#args),*) } } else { syn::parse_quote! { println!("{}", #(#args),*) } }; }
+                        let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
+                        return if is_error { syn::parse_quote! { eprintln!(#(#format_args),*, #(#args),*) } } else { syn::parse_quote! { println!(#(#format_args),*, #(#args),*) } };
                     }
                 }
             }
         }
-
         let callee = self.gen_expr(callee);
-        // For string arguments, add .to_string() since function params expect String
-        let args: Vec<_> = arguments.iter().map(|a| {
-            let arg = self.gen_expr(a);
-            if matches!(a, Expr::String(_)) {
-                quote! { #arg.to_string() }
-            } else {
-                arg
-            }
-        }).collect();
+        let args: Vec<_> = arguments.iter().map(|a| { let arg = self.gen_expr(a); if matches!(a, Expr::String(_)) { quote! { #arg.to_string() } } else { arg } }).collect();
         quote! { #callee(#(#args),*) }
     }
 

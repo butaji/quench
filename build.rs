@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Strict linting rules - NO EXCEPTIONS
 const MAX_FILE_LINES: usize = 500;
 const MAX_FN_LINES: usize = 40;
 const MAX_FN_COMPLEXITY: usize = 10;
-const EXCLUDED_DIRS: &[&str] = &["target", ".runts", "node_modules"];
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -26,15 +26,9 @@ fn run_linter() -> (Vec<String>, usize) {
     let mut files_checked = 0;
 
     for entry in walk_dir("src") {
-        if is_excluded(entry.to_str().unwrap_or("")) {
-            continue;
-        }
         check_and_collect(&entry, &mut violations, &mut files_checked);
     }
     for entry in walk_dir("crates") {
-        if is_excluded(entry.to_str().unwrap_or("")) {
-            continue;
-        }
         check_and_collect(&entry, &mut violations, &mut files_checked);
     }
 
@@ -46,10 +40,6 @@ fn check_and_collect(path: &Path, violations: &mut Vec<String>, files_checked: &
         violations.extend(v);
     }
     *files_checked += 1;
-}
-
-fn is_excluded(path: &str) -> bool {
-    EXCLUDED_DIRS.iter().any(|d| path.starts_with(d))
 }
 
 fn print_violations(violations: &[String], files_checked: usize) {
@@ -81,10 +71,7 @@ fn walk_dir(root: &str) -> Vec<PathBuf> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !EXCLUDED_DIRS.contains(&name) {
-                        stack.push(path);
-                    }
+                    stack.push(path);
                 } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
                     result.push(path);
                 }
