@@ -262,6 +262,7 @@ struct BraceState {
     delim: char,
     in_char: bool,
     esc: bool,
+    prev_ch: Option<char>,
 }
 
 impl BraceState {
@@ -272,10 +273,20 @@ impl BraceState {
             delim: '\0',
             in_char: false,
             esc: false,
+            prev_ch: None,
         }
     }
 
     fn handle_char(&mut self, ch: char) -> bool {
+        // Handle escaped braces ({{ and }}) in format strings
+        if let Some(prev) = self.prev_ch {
+            if (prev == '{' && ch == '{') || (prev == '}' && ch == '}') {
+                self.prev_ch = None;
+                return false;
+            }
+        }
+        self.prev_ch = None;
+
         if self.in_str || self.in_char {
             if self.esc {
                 self.esc = false;
@@ -306,8 +317,10 @@ impl BraceState {
         }
         if ch == '{' {
             self.depth += 1;
+            self.prev_ch = Some(ch);
         } else if ch == '}' {
             self.depth -= 1;
+            self.prev_ch = Some(ch);
             return self.depth == 0;
         }
         false
