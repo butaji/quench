@@ -172,21 +172,45 @@ impl QuoteCodegen {
         use super::Type as T;
         match ty {
             T::Array { elem } | T::Ref { name: _, generics: _ } => self.gen_array_type(elem),
-            T::Object { members } => self.gen_object_type(members),
-            T::Union { types } | T::Intersection { types } => self.gen_union_type(types),
-            T::Literal { kind, value } => self.gen_literal_type(kind, value),
-            T::Template { parts, values } => self.gen_template_type(parts, values),
-            T::Function { params, ret } => self.gen_fn_type(params, ret),
+            T::Object { .. } | T::Union { .. } | T::Intersection { .. } | T::Literal { .. } | T::Template { .. } => self.gen_obj_union_literal_template(ty),
+            T::Function { .. } | T::Record { .. } | T::KeyOf { .. } => self.gen_fn_record_keyof(ty),
             T::Index { obj, index } => self.gen_index_type(obj, index),
             T::Mapped { from, to } => self.gen_mapped_type(from, to),
             T::Conditional { check, extends, true_type, false_type } => {
                 self.gen_conditional_type(check, extends, true_type, false_type)
             }
+            T::Partial { .. } | T::Required { .. } | T::Pick { .. } | T::Omit { .. } | T::ReturnType { .. } | T::Parameters { .. } => self.gen_type_with_inner(ty),
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_type_with_inner(&self, ty: &Type) -> TokenStream {
+        use super::Type as T;
+        match ty {
             T::Partial { inner } | T::Required { inner } => self.gen_partial_type(inner),
             T::Pick { inner, keys } | T::Omit { inner, keys } => self.gen_pick_type(inner, keys),
+            T::ReturnType { inner } | T::Parameters { inner } => self.gen_return_type(inner),
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_obj_union_literal_template(&self, ty: &Type) -> TokenStream {
+        use super::Type as T;
+        match ty {
+            T::Object { members } => self.gen_object_type(members),
+            T::Union { types } | T::Intersection { types } => self.gen_union_type(types),
+            T::Literal { kind, value } => self.gen_literal_type(kind, value),
+            T::Template { parts, values } => self.gen_template_type(parts, values),
+            _ => quote! { Value },
+        }
+    }
+
+    fn gen_fn_record_keyof(&self, ty: &Type) -> TokenStream {
+        use super::Type as T;
+        match ty {
+            T::Function { params, ret } => self.gen_fn_type(params, ret),
             T::Record { key, value } => self.gen_record_type(key, value),
             T::KeyOf { inner } => self.gen_keyof_type(inner),
-            T::ReturnType { inner } | T::Parameters { inner } => self.gen_return_type(inner),
             _ => quote! { Value },
         }
     }
