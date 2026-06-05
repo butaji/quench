@@ -319,7 +319,8 @@ run_hir() {
     fi
     
     # Check for errors (only if file has content)
-    if [[ -s "$output_file" ]] && grep -qi "error\|panic" "$output_file" 2>/dev/null; then
+    # Use more specific patterns to avoid false positives like "Stderr"
+    if [[ -s "$output_file" ]] && grep -qiE "^(error|Error|ERROR)[^a-z]|panic!|Panic:" "$output_file" 2>/dev/null; then
         return 3
     fi
     
