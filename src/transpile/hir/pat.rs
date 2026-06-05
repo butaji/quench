@@ -60,37 +60,40 @@ impl Pat {
     pub fn binding_names(&self) -> Vec<String> {
         match self {
             Pat::Ident { name, .. } => vec![name.clone()],
-            Pat::Array { elems, rest } => {
-                let mut names = Vec::new();
-                for elem in elems {
-                    if let Some(p) = elem {
-                        names.extend(p.binding_names());
-                    }
-                }
-                if let Some(r) = rest {
-                    names.extend(r.binding_names());
-                }
-                names
-            }
-            Pat::Object { props, rest } => {
-                let mut names = Vec::new();
-                for prop in props {
-                    match prop {
-                        ObjectPatProp::Init { value, .. } => names.extend(value.binding_names()),
-                        ObjectPatProp::Rest { arg } => names.extend(arg.binding_names()),
-                        ObjectPatProp::Spread { arg } => names.extend(arg.binding_names()),
-                        ObjectPatProp::Method { .. } => {}
-                    }
-                }
-                if let Some(r) = rest {
-                    names.extend(r.binding_names());
-                }
-                names
-            }
+            Pat::Array { elems, rest } => self.binding_names_array(elems, rest),
+            Pat::Object { props, rest } => self.binding_names_object(props, rest),
             Pat::Assign { left, .. } => left.binding_names(),
             Pat::Rest { arg } => arg.binding_names(),
             Pat::Default { arg, .. } => arg.binding_names(),
         }
+    }
+
+    fn binding_names_array(&self, elems: &[Option<Box<Pat>>], rest: &Option<Box<Pat>>) -> Vec<String> {
+        let mut names = Vec::new();
+        for elem in elems {
+            if let Some(p) = elem {
+                names.extend(p.binding_names());
+            }
+        }
+        if let Some(r) = rest {
+            names.extend(r.binding_names());
+        }
+        names
+    }
+
+    fn binding_names_object(&self, props: &[ObjectPatProp], rest: &Option<Box<Pat>>) -> Vec<String> {
+        let mut names = Vec::new();
+        for prop in props {
+            match prop {
+                ObjectPatProp::Init { value, .. } => names.extend(value.binding_names()),
+                ObjectPatProp::Rest { arg } | ObjectPatProp::Spread { arg } => names.extend(arg.binding_names()),
+                ObjectPatProp::Method { .. } => {}
+            }
+        }
+        if let Some(r) = rest {
+            names.extend(r.binding_names());
+        }
+        names
     }
 }
 
