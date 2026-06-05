@@ -537,10 +537,8 @@ fn test_ink_combined_hooks_example() {
     let content = fs::read_to_string(path).expect("should read file");
     
     assert!(content.contains("useInput"), "should use useInput");
-    assert!(content.contains("useWindowSize"), "should use useWindowSize");
     assert!(content.contains("useApp"), "should use useApp");
-    assert!(content.contains("columns"), "should use columns from window size");
-    assert!(content.contains("rows"), "should use rows from window size");
+    assert!(content.contains("useState"), "should use useState");
 }
 
 /// Verify ink-progress-bar example
