@@ -363,15 +363,15 @@ impl Analyzer {
             Expr::Null => Type::Null,
             Expr::Undefined => Type::Undefined,
             Expr::BigInt(_) => Type::BigInt,
-            Expr::Ident { name } => {
-                self.type_env.get(name).cloned().unwrap_or(Type::Unknown)
-            }
-            Expr::Array { .. } => Type::Array {
-                elem: Box::new(Type::Unknown),
-            },
+            Expr::Ident { name } => self.infer_ident_type(name),
+            Expr::Array { .. } => Type::Array { elem: Box::new(Type::Unknown) },
             Expr::Object { .. } => Type::Object { members: vec![] },
             _ => Type::Unknown,
         }
+    }
+
+    fn infer_ident_type(&self, name: &str) -> Type {
+        self.type_env.get(name).cloned().unwrap_or(Type::Unknown)
     }
 
     fn types_compatible(&self, expected: &Type, actual: &Type) -> bool {
@@ -431,16 +431,20 @@ impl Analyzer {
             Type::Conditional { check, extends, true_type, false_type } => {
                 self.validate_conditional_type(check, extends, true_type, false_type, context);
             }
-            Type::Mapped { from, to } => {
-                self.validate_type_compatibility(from, context);
-                self.validate_type_compatibility(to, context);
-            }
-            Type::Index { obj, index } => {
-                self.validate_type_compatibility(obj, context);
-                self.validate_type_compatibility(index, context);
-            }
+            Type::Mapped { from, to } => self.validate_mapped_type(from, to, context),
+            Type::Index { obj, index } => self.validate_index_type(obj, index, context),
             _ => {}
         }
+    }
+
+    fn validate_mapped_type(&mut self, from: &Type, to: &Type, context: &str) {
+        self.validate_type_compatibility(from, context);
+        self.validate_type_compatibility(to, context);
+    }
+
+    fn validate_index_type(&mut self, obj: &Type, index: &Type, context: &str) {
+        self.validate_type_compatibility(obj, context);
+        self.validate_type_compatibility(index, context);
     }
 
     fn validate_type_compatible(&mut self, member: &TypeMember) {
