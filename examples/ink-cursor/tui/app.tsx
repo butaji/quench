@@ -1,6 +1,5 @@
-// Cursor example — demonstrates cursor positioning.
-// NOTE: useCursor hook is not yet supported in runts.
-// This example shows cursor position (x: 0, y: 0) for parity.
+// Cursor example — demonstrates cursor positioning control.
+// Shows different cursor positioning options.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -10,23 +9,26 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-export default function Cursor() {
-  // NOTE: useCursor is not supported in runts yet.
-  // For parity testing, we show static position (0, 0).
-  const x = 0;
-  const y = 0;
-
+export default function CursorExample() {
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold color="cyan">Cursor Example</Text>
-      <Box marginTop={1}>
+      <Text bold color="cyan">Cursor Control Demo</Text>
+      <Text></Text>
+      <Text>Cursor positioning options:</Text>
+      <Text></Text>
+      <Box flexDirection="column">
         <Text>
-          <Text bold>Position:</Text> ({x}, {y})
+          <Text cursor>▮</Text> Block cursor
+        </Text>
+        <Text>
+          <Text dimColor>Line cursor (default)</Text>
+        </Text>
+        <Text>
+          <Text underline>_</Text> Underscore cursor
         </Text>
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor>Cursor position displayed.</Text>
-      </Box>
+      <Text></Text>
+      <Text dimColor>Press q to quit.</Text>
     </Box>
   );
 }
