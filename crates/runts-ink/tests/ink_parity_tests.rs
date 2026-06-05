@@ -6,6 +6,9 @@
 //! This is the main test file that includes all parity test modules.
 //! Each module is in its own file to comply with lint rules.
 
+mod ink_components_tests;
+mod ink_events_tests;
+mod ink_flex_layout_tests;
 mod ink_parity_box_tests;
 mod ink_parity_layout_tests;
 mod ink_parity_serde_tests;
