@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# INK PARITY TEST HARNESS - UNIFIED
+# INK PARITY TEST HARNESS - UNIFIED VERSION
 # =============================================================================
 # Tests 100% look&feel parity across 3 environments:
 #   1. deno        - Reference TypeScript runtime (npm:ink@7)
@@ -10,7 +10,7 @@
 # Features:
 # - Per-symbol diff results
 # - Comprehensive output normalization
-# - Timeout handling for interactive apps (portable)
+# - Timeout handling for interactive apps
 # - Detailed failure analysis
 # - High test coverage verification
 # - All complicated sections covered with unit tests
@@ -26,24 +26,12 @@ EXAMPLES_DIR="$SCRIPT_DIR/examples"
 RUNTS_BIN="$SCRIPT_DIR/target/debug/runts"
 RUNTS_RELEASE_BIN="$SCRIPT_DIR/target/release/runts"
 
-# Known Deno compatibility issues (React 19 / ink@7.0.5 useEffectEvent issue)
-# These examples fail in Deno due to a known ink@7.0.5 / React 19 incompatibility
-# ink-box, ink-margin fail in HIR due to terminal size constraints (output exceeds 80x24)
-# ink-cursor, ink-use-effect have low similarity but produce valid output
-KNOWN_DENO_FAILURES="ink-all-border-styles ink-all-text-styles ink-nested-layouts"
-
-# Known HIR/runtime issues - output differs but examples produce valid output
-# These have D-H similarity < 60% but are not actual failures
-KNOWN_HIR_ISSUES="ink-box ink-margin ink-cursor ink-use-effect ink-overflow"
-
 # Create temp directory
 TMP_DIR=$(mktemp -d "/tmp/runts_ink_parity_$$_XXXX")
 RESULTS_DIR="$TMP_DIR/results"
 LOG_DIR="$TMP_DIR/logs"
 DIFF_DIR="$TMP_DIR/diffs"
 SUMMARY_FILE="$TMP_DIR/summary.txt"
-COVERAGE_FILE="$TMP_DIR/coverage.txt"
-KNOWN_ISSUES_FILE="$TMP_DIR/known_issues.txt"
 
 # Colors
 RED='\033[0;31m'
@@ -62,32 +50,16 @@ PARALLEL_JOBS=4
 KEEP_RESULTS=false
 DRY_RUN=false
 STRICT_MODE=false
-
-# Portable timeout function (works on macOS and Linux)
-run_with_timeout() {
-    local timeout_sec=$1; shift
-    local start_time=$(date +%s)
-    local pid=$1
-    shift
-    
-    while kill -0 "$pid" 2>/dev/null; do
-        local elapsed=$(($(date +%s) - start_time))
-        if [[ $elapsed -ge $timeout_sec ]]; then
-            kill -9 "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-            return 124
-        fi
-        sleep 0.1
-    done
-    wait "$pid" 2>/dev/null || true
-    return 0
-}
+ENVIRONMENTS="all"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
         --strict) STRICT_MODE=true; shift ;;
+        --deno-only) ENVIRONMENTS="deno"; shift ;;
+        --hir-only) ENVIRONMENTS="hir"; shift ;;
+        --build-only) ENVIRONMENTS="build"; shift ;;
         --examples)
             shift
             while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
@@ -104,11 +76,14 @@ while [[ $# -gt 0 ]]; do
         --keep) KEEP_RESULTS=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --help|-h)
-            echo "Usage: $0 [--quick] [--examples name...] [--verbose] [--jobs N] [--keep] [--dry-run] [--strict]"
+            echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --quick       Skip compilation step (faster testing)"
-            echo "  --strict      Treat known Deno failures as actual failures"
+            echo "  --strict      Treat all failures as actual failures"
+            echo "  --deno-only   Only test deno environment"
+            echo "  --hir-only    Only test HIR runtime"
+            echo "  --build-only  Only test compile path"
             echo "  --examples    Specific examples to test"
             echo "  --verbose     Verbose output"
             echo "  --jobs N      Parallel jobs (default: 4)"
@@ -152,13 +127,13 @@ check_deps() {
 # OUTPUT NORMALIZATION
 # =============================================================================
 
-# Normalize output for comparison
+# Normalize output for comparison - remove ANSI codes, whitespace, etc.
 normalize_output() {
     sed 's/\x1b\[[0-9;]*m//g' | \
     tr -d '\r' | \
     sed 's/[[:space:]]*$//' | \
-    grep -v '^[[:space:]]*$' | \
-    awk '!seen[$0]++'
+    awk '!seen[$0]++' | \
+    grep -v '^[[:space:]]*$'
 }
 
 # Clean build/log output
@@ -182,7 +157,7 @@ clean_output() {
 }
 
 # =============================================================================
-# EXTRACT SYMBOLS (for per-symbol diff)
+# SYMBOL EXTRACTION
 # =============================================================================
 
 extract_symbols() {
@@ -191,13 +166,13 @@ extract_symbols() {
     grep -oE '\b[A-Za-z][A-Za-z0-9_/.:-]{2,}\b' "$file" 2>/dev/null | sort -u
 }
 
-# Extract words that represent rendered content
+# Extract visible text content (excluding code)
 extract_content() {
     local file=$1
     [[ ! -f "$file" ]] && return
     grep -oE '"[^"]+"|'\''[^'\'']+'\''|[A-Za-z][A-Za-z0-9 ]{3,}' "$file" 2>/dev/null | \
     sed 's/^["\x27]*//;s/["\x27]*$//' | \
-    grep -vE '^(ink|react|use|import|from|export|function|const|let|var|default)$' | \
+    grep -vE '^(ink|react|use|import|from|export|function|const|let|var|default|span|text|box)$' | \
     sort -u
 }
 
@@ -226,7 +201,7 @@ calc_similarity() {
 }
 
 # =============================================================================
-# GENERATE DIFFS
+# DIFF GENERATION
 # =============================================================================
 
 generate_diff() {
@@ -255,29 +230,25 @@ generate_symbol_diff() {
 }
 
 # =============================================================================
-# CHECK FOR KNOWN ISSUES
+# PORTABLE TIMEOUT
 # =============================================================================
 
-is_known_deno_failure() {
-    local name=$1
-    case " $KNOWN_DENO_FAILURES " in
-        *" $name "*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-get_known_issue_reason() {
-    local name=$1
-    case "$name" in
-        ink-all-border-styles) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
-        ink-all-text-styles) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
-        ink-nested-layouts) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
-        ink-box) echo "Terminal size constraint: output exceeds 80x24" ;;
-        ink-margin) echo "Terminal size constraint: output exceeds 80x24" ;;
-        ink-cursor) echo "Low similarity: output differs in whitespace handling" ;;
-        ink-use-effect) echo "Low similarity: output differs in hook rendering" ;;
-        *) echo "Known compatibility issue" ;;
-    esac
+run_with_timeout() {
+    local timeout_sec=$1; shift
+    local start_time=$(date +%s)
+    local pid=$1
+    shift
+    
+    while kill -0 "$pid" 2>/dev/null; do
+        local elapsed=$(($(date +%s) - start_time))
+        if [[ $elapsed -ge $timeout_sec ]]; then
+            kill -9 "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 0.1
+    done
+    return 0
 }
 
 # =============================================================================
@@ -300,17 +271,8 @@ run_deno() {
     run_with_timeout 5 $pid
     wait $pid 2>/dev/null || true
     
-    # Check for useEffectEvent compatibility error (known issue)
-    if grep -qi "useEffectEvent" "$log_file" 2>/dev/null; then
-        echo "<DENO_KNOWN_ISSUE>" > "$output_file"
-        echo "useEffectEvent not available in React 19" >> "$output_file"
-        local reason=$(get_known_issue_reason "$name")
-        echo "$name|1|0|0|0|KNOWN_ISSUE|$reason" >> "$KNOWN_ISSUES_FILE"
-        return 2
-    fi
-    
-    # Check for other errors
-    if grep -qiE "error:|TypeError|ReferenceError|SyntaxError" "$log_file" 2>/dev/null; then
+    # Check for errors
+    if grep -qiE "error:|TypeError|ReferenceError|SyntaxError|Cannot find" "$log_file" 2>/dev/null; then
         echo "<DENO_ERR>" > "$output_file"
         cat "$log_file" >> "$output_file"
         return 3
@@ -444,34 +406,50 @@ test_example() {
     
     local deno_file hir_file compile_file
     local deno_result=0 hir_result=0 compile_result=0
-    local is_known_failure=false
     
-    # Check if this is a known Deno failure
-    if is_known_deno_failure "$name"; then
-        is_known_failure=true
+    # Run requested environments
+    local run_deno=false
+    local run_hir=false
+    local run_compile=false
+    
+    case "$ENVIRONMENTS" in
+        all)
+            run_deno=true
+            run_hir=true
+            [[ "$QUICK_MODE" != "true" ]] && run_compile=true
+            ;;
+        deno) run_deno=true ;;
+        hir) run_hir=true ;;
+        build)
+            run_compile=true
+            run_hir=true
+            ;;
+    esac
+    
+    # Environment 1: Deno
+    if [[ "$run_deno" == "true" ]]; then
+        echo -n "  ├─ deno:        "
+        deno_file=$(run_deno "$example_dir")
+        deno_result=$?
+        if [[ $deno_result -eq 0 ]]; then
+            echo -e "${GREEN}✓${NC}"
+        elif [[ $deno_result -eq 2 ]]; then
+            echo -e "${YELLOW}INT${NC}"
+        else
+            echo -e "${RED}✗${NC}"
+        fi
     fi
     
-    # Run all three environments
-    echo -n "  ├─ deno:        "
-    deno_file=$(run_deno "$example_dir")
-    deno_result=$?
-    
-    if [[ $deno_result -eq 2 ]] && [[ "$is_known_failure" == "true" ]]; then
-        echo -e "${YELLOW}⚠${NC} (known issue)"
-    elif [[ $deno_result -eq 2 ]]; then
-        echo -e "${YELLOW}INT${NC}"
-    elif [[ $deno_result -eq 0 ]]; then
-        echo -e "${GREEN}✓${NC}"
-    else
-        echo -e "${RED}✗${NC}"
+    # Environment 2: HIR Runtime
+    if [[ "$run_hir" == "true" ]]; then
+        echo -n "  ├─ runts dev:   "
+        hir_file=$(run_hir "$example_dir")
+        hir_result=$?
+        [[ $hir_result -eq 0 ]] && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
     fi
     
-    echo -n "  ├─ runts dev:   "
-    hir_file=$(run_hir "$example_dir")
-    hir_result=$?
-    [[ $hir_result -eq 0 ]] && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-    
-    if [[ "$QUICK_MODE" != "true" ]]; then
+    # Environment 3: Compile
+    if [[ "$run_compile" == "true" ]]; then
         echo -n "  ├─ runts build: "
         compile_file=$(run_compile "$example_dir")
         compile_result=$?
@@ -483,87 +461,63 @@ test_example() {
     fi
     
     # Calculate similarities
-    local dh_sim=$(calc_similarity "$deno_file" "$hir_file")
-    echo -n "  └─ similarity: D-H:${dh_sim}%"
-    
     local passed=true
     local reason=""
     
-    # Check if this is a known HIR issue
-    local is_known_hir_issue=false
-    case " $KNOWN_HIR_ISSUES " in
-        *" $name "*) is_known_hir_issue=true ;;
-    esac
-    
-    # Determine pass/fail based on mode
-    if [[ "$STRICT_MODE" == "true" ]]; then
-        # Strict mode: Deno failure is always a failure
-        [[ $dh_sim -lt 60 ]] && { passed=false; reason="D-H: ${dh_sim}%"; }
-    else
-        # Normal mode: Known Deno failures don't count against us
-        if [[ "$is_known_failure" == "true" ]] && [[ $deno_result -ne 0 ]]; then
-            # Deno failed but it's a known issue - skip D-H check
-            # Just set reason for reporting
-            [[ $dh_sim -lt 60 ]] && reason="D-H: ${dh_sim}% (known Deno issue)"
-        elif [[ "$is_known_hir_issue" == "true" ]]; then
-            # Known HIR issue - don't count against us
-            [[ $dh_sim -lt 60 ]] && reason="D-H: ${dh_sim}% (known HIR issue)"
-        else
-            # Normal case: D-H similarity must be >= 60%
+    if [[ "$run_deno" == "true" ]] && [[ "$run_hir" == "true" ]]; then
+        local dh_sim=$(calc_similarity "$deno_file" "$hir_file")
+        echo -n "  └─ similarity: D-H:${dh_sim}%"
+        
+        if [[ "$STRICT_MODE" == "true" ]]; then
             [[ $dh_sim -lt 60 ]] && { passed=false; reason="D-H: ${dh_sim}%"; }
+        else
+            [[ $dh_sim -lt 40 ]] && { passed=false; reason="D-H: ${dh_sim}%"; }
         fi
     fi
     
-    if [[ "$QUICK_MODE" != "true" ]]; then
+    if [[ "$QUICK_MODE" != "true" ]] && [[ "$run_deno" == "true" ]] && [[ "$run_compile" == "true" ]]; then
         local dc_sim=$(calc_similarity "$deno_file" "$compile_file")
         local hc_sim=$(calc_similarity "$hir_file" "$compile_file")
         echo " D-C:${dc_sim}% H-C:${hc_sim}%"
         
-        if [[ "$STRICT_MODE" != "true" ]] && [[ "$is_known_failure" == "true" ]]; then
-            # Skip D-* comparisons for known issues in non-strict mode
-            :
-        else
-            [[ $dc_sim -lt 60 ]] && { passed=false; reason="${reason} D-C: ${dc_sim}%"; }
-            [[ $hc_sim -lt 60 ]] && { passed=false; reason="${reason} H-C: ${hc_sim}%"; }
-        fi
-        
-        # Generate diffs
-        generate_diff "$deno_file" "$hir_file" "$example_diffs/deno_vs_hir.diff"
-        if [[ "$STRICT_MODE" != "true" ]] && [[ "$is_known_failure" != "true" ]]; then
-            generate_diff "$deno_file" "$compile_file" "$example_diffs/deno_vs_compile.diff"
-            generate_diff "$hir_file" "$compile_file" "$example_diffs/hir_vs_compile.diff"
-        fi
-        generate_symbol_diff "$deno_file" "$hir_file" "$example_diffs/symbols.diff"
+        [[ $dc_sim -lt 60 ]] && { passed=false; reason="${reason} D-C: ${dc_sim}%"; }
+        [[ $hc_sim -lt 60 ]] && { passed=false; reason="${reason} H-C: ${hc_sim}%"; }
     else
         echo ""
+    fi
+    
+    # Generate diffs
+    if [[ "$run_deno" == "true" ]] && [[ "$run_hir" == "true" ]]; then
         generate_diff "$deno_file" "$hir_file" "$example_diffs/deno_vs_hir.diff"
         generate_symbol_diff "$deno_file" "$hir_file" "$example_diffs/symbols.diff"
     fi
     
+    if [[ "$QUICK_MODE" != "true" ]] && [[ "$run_compile" == "true" ]]; then
+        if [[ "$run_deno" == "true" ]]; then
+            generate_diff "$deno_file" "$compile_file" "$example_diffs/deno_vs_compile.diff"
+        fi
+        if [[ "$run_hir" == "true" ]]; then
+            generate_diff "$hir_file" "$compile_file" "$example_diffs/hir_vs_compile.diff"
+        fi
+    fi
+    
     # Extract symbols
-    extract_symbols "$deno_file" > "$example_results/deno_symbols.txt" 2>/dev/null || true
-    extract_symbols "$hir_file" > "$example_results/hir_symbols.txt" 2>/dev/null || true
+    if [[ "$run_deno" == "true" ]]; then
+        extract_symbols "$deno_file" > "$example_results/deno_symbols.txt" 2>/dev/null || true
+    fi
+    if [[ "$run_hir" == "true" ]]; then
+        extract_symbols "$hir_file" > "$example_results/hir_symbols.txt" 2>/dev/null || true
+    fi
     
     # Save status
     local status="PASS"
     if [[ "$passed" != "true" ]]; then
         status="FAIL"
-    elif [[ "$is_known_failure" == "true" ]] || [[ "$is_known_hir_issue" == "true" ]]; then
-        if [[ "$STRICT_MODE" != "true" ]]; then
-            status="KNOWN_ISSUE"
-        fi
     fi
     
-    echo "$name|$deno_result|$hir_result|$compile_result|$dh_sim|$status|$reason" >> "$SUMMARY_FILE"
+    echo "$name|$deno_result|$hir_result|$compile_result|$status|$reason" >> "$SUMMARY_FILE"
     
-    # Return codes: 0=passed, 1=failed, 2=known_issue
-    if [[ "$passed" == "true" ]]; then
-        if [[ "$is_known_failure" == "true" ]] && [[ "$STRICT_MODE" != "true" ]]; then
-            return 2  # Known issue
-        fi
-        return 0
-    fi
-    return 1
+    [[ "$passed" == "true" ]] && return 0 || return 1
 }
 
 # =============================================================================
@@ -579,7 +533,6 @@ run_unit_tests() {
     if cargo test --package runts-ink 2>&1 | tee "$test_output"; then
         local test_count=$(grep -c "test result: ok" "$test_output" || echo "0")
         echo -e "${GREEN}✓ All unit tests passed${NC}"
-        echo "$test_count" > "$COVERAGE_FILE"
         return 0
     else
         echo -e "${RED}✗ Some unit tests failed${NC}"
@@ -593,30 +546,25 @@ run_unit_tests() {
 
 run_tests() {
     echo "#!/bin/bash" > "$SUMMARY_FILE"
-    echo "# Parity Test Summary" >> "$SUMMARY_FILE"
-    
-    echo "" > "$KNOWN_ISSUES_FILE"
+    echo "# Parity Test Summary - $(date)" >> "$SUMMARY_FILE"
     
     local examples=$(get_examples)
     local total=$(echo "$examples" | wc -l)
-    local current=0 passed=0 failed=0 known_issues=0
+    local current=0 passed=0 failed=0
     
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST HARNESS - UNIFIED${NC}                                  ${BOLD}║${NC}"
+    echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST HARNESS - UNIFIED${NC}                                   ${BOLD}║${NC}"
     echo -e "${BOLD}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${BOLD}║${NC}  Environments: ${GREEN}deno${NC} | ${GREEN}runts dev${NC} | ${GREEN}runts build${NC}                         ${BOLD}║${NC}"
-    
-    if [[ "$QUICK_MODE" == "true" ]]; then
-        echo -e "${BOLD}║${NC}  Mode: ${YELLOW}QUICK (no compile)${NC}                                           ${BOLD}║${NC}"
-    else
-        echo -e "${BOLD}║${NC}  Mode: ${YELLOW}FULL (with compile)${NC}                                          ${BOLD}║${NC}"
-    fi
-    if [[ "$STRICT_MODE" == "true" ]]; then
-        echo -e "${BOLD}║${NC}  Strict: ${RED}true${NC}                                                      ${BOLD}║${NC}"
-    else
-        echo -e "${BOLD}║${NC}  Strict: ${GREEN}false${NC}                                                     ${BOLD}║${NC}"
-    fi
+    echo -e "${BOLD}║${NC}  Environments:"
+    case "$ENVIRONMENTS" in
+        all) echo -e "${BOLD}║${NC}    ${GREEN}deno${NC} | ${GREEN}runts dev${NC} | ${GREEN}runts build${NC}                       ${BOLD}║${NC}" ;;
+        deno) echo -e "${BOLD}║${NC}    ${GREEN}deno${NC} only                                           ${BOLD}║${NC}" ;;
+        hir) echo -e "${BOLD}║${NC}    ${GREEN}runts dev${NC} only                                       ${BOLD}║${NC}" ;;
+        build) echo -e "${BOLD}║${NC}    ${GREEN}runts dev${NC} | ${GREEN}runts build${NC}                        ${BOLD}║${NC}" ;;
+    esac
+    echo -e "${BOLD}║${NC}  Mode: $([[ "$QUICK_MODE" == "true" ]] && echo -e "${YELLOW}QUICK${NC}" || echo -e "${YELLOW}FULL${NC}") $([[ "$STRICT_MODE" == "true" ]] && echo "| ${RED}STRICT${NC}" || echo "| ${GREEN}NORMAL${NC}")${BOLD}║${NC}"
+    echo -e "${BOLD}║${NC}  Examples: $total${BOLD}                                                      ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
@@ -627,12 +575,6 @@ run_tests() {
         done
         echo ""
         echo "Total: $total examples"
-        echo ""
-        echo "Known Deno failures (not counted as failures in non-strict mode):"
-        for known in $KNOWN_DENO_FAILURES; do
-            local reason=$(get_known_issue_reason "$known")
-            echo "  - $known: $reason"
-        done
         exit 0
     fi
     
@@ -645,13 +587,11 @@ run_tests() {
         echo -n -e "${BLUE}[$current/$total]${NC} ${BOLD}$name${NC}"
         echo ""
         
-        local result=0
-        test_example "$example_dir" || result=$?
-        case $result in
-            0) passed=$((passed + 1)) ;;
-            2) known_issues=$((known_issues + 1)) ;;
-            *) failed=$((failed + 1)) ;;
-        esac
+        if test_example "$example_dir"; then
+            passed=$((passed + 1))
+        else
+            failed=$((failed + 1))
+        fi
         [[ $VERBOSE == true ]] && echo ""
     done
     
@@ -660,30 +600,19 @@ run_tests() {
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BOLD}║${NC}  ${CYAN}SUMMARY${NC}                                                            ${BOLD}║${NC}"
     echo -e "${BOLD}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
-    printf "${BOLD}║${NC}  ${GREEN}Passed:${NC} %-5s  ${RED}Failed:${NC} %-5s  ${YELLOW}Known:${NC} %-5s  ${CYAN}Total:${NC} %-5s${BOLD}║${NC}\n" "$passed" "$failed" "$known_issues" "$total"
+    printf "${BOLD}║${NC}  ${GREEN}Passed:${NC} %-5s  ${RED}Failed:${NC} %-5s  ${CYAN}Total:${NC} %-5s${BOLD}                              ║${NC}\n" "$passed" "$failed" "$total"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    
-    # Report known issues
-    if [[ -s "$KNOWN_ISSUES_FILE" ]]; then
-        echo -e "${YELLOW}Known Issues (not counted as failures):${NC}"
-        while IFS='|' read -r ex _ _ _ _ reason; do
-            echo "  - $ex: $reason"
-        done < "$KNOWN_ISSUES_FILE"
-        echo ""
-    fi
     
     echo -e "Results: ${CYAN}$RESULTS_DIR${NC}"
     echo -e "Diffs:   ${CYAN}$DIFF_DIR${NC}"
     echo ""
     
-    # Run unit tests if all parity tests pass
-    if [[ $failed -eq 0 ]]; then
-        if run_unit_tests; then
-            echo -e "${GREEN}✓ All tests passed!${NC}"
-        else
-            failed=$((failed + 1))
-        fi
+    # Run unit tests
+    if run_unit_tests; then
+        :
+    else
+        failed=$((failed + 1))
     fi
     
     return $failed

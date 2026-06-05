@@ -1,6 +1,6 @@
 {
   "imports": {
     "ink": "npm:ink@7",
-    "react": "npm:react@18"
+    "react": "npm:react@19"
   }
 }

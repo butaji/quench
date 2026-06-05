@@ -265,9 +265,9 @@ run_deno() {
     
     [[ ! -f "$example_dir/main.tsx" ]] && { echo "<NO_MAIN>" > "$output_file"; return 1; }
     
-    # Run deno with timeout
+    # Run deno with timeout (cd so Deno picks up example's deno.json)
     (
-        deno run -A "$example_dir/main.tsx" > "$output_file" 2> "$log_file"
+        cd "$example_dir" && deno run --config deno.json -A main.tsx > "$output_file" 2> "$log_file"
     ) &
     local pid=$!
     run_with_timeout 5 $pid

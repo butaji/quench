@@ -545,7 +545,7 @@ impl Default for Box {
             margin_left: None,
             row_gap: None,
             column_gap: None,
-            align_items: AlignItems::FlexStart,
+            align_items: AlignItems::Stretch,
             align_self: AlignSelf::Auto,
             align_content: AlignContent::FlexStart,
             justify_content: JustifyContent::FlexStart,
