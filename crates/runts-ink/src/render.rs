@@ -42,7 +42,8 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
-use taffy::prelude::*;
+// Layout computed by flex_layout (yoga-based)
+use crate::flex_layout::{self, Rect as FlexRect};
 
 use crate::components::{
     Box as InkBox, Color, FlexDirection, JustifyContent, Newline, Spacer,
@@ -50,7 +51,7 @@ use crate::components::{
 };
 use crate::events::{InputEvent, ResizeEvent, WindowSize};
 use crate::props::Props;
-use crate::taffy_bridge::{style_for_box, style_for_spacer, style_for_text};
+// Box styles applied directly via flex_layout
 use crate::vnode::{VNode, VNodeContent};
 
 /// Options that control how `render` mounts the TUI.
@@ -401,6 +402,10 @@ fn walk(node: &VNode, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, d
 }
 
 fn walk_box(b: &InkBox, layout: &Layout, frame: &mut ratatui::Frame, area: Rect, depth: usize) {
+    // Skip rendering for display:none boxes.
+    if matches!(b.display, crate::style::Display::None) {
+        return;
+    }
     // Apply background fill (if any) to the whole area
     // before drawing the border.
     if let Some(ref bg) = b.background_color {
@@ -536,7 +541,13 @@ fn compute_preorder_index(
 /// that have their own children.
 fn subtree_size(node: &VNode) -> usize {
     1 + match &node.0 {
-        VNodeContent::Box(b) => b.children.iter().map(subtree_size).sum(),
+        VNodeContent::Box(b) => {
+            // display:none boxes have no layout - their subtree doesn't count
+            if matches!(b.display, crate::style::Display::None) {
+                return 0;
+            }
+            b.children.iter().map(subtree_size).sum()
+        }
         VNodeContent::Static(s) => s.children.iter().map(subtree_size).sum(),
         VNodeContent::Fragment(fs) => fs.iter().map(subtree_size).sum(),
         VNodeContent::Transform(t) => subtree_size(&t.child),
@@ -811,91 +822,73 @@ pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     }
 
 // ---------------------------------------------------------------------------
-// Taffy tree: bridges the VNode tree to a Taffy tree.
+// Yoga-based layout: bridges VNode tree to Ratatui rendering.
 // ---------------------------------------------------------------------------
 
-/// A Taffy layout computation result. Stored after
-/// `compute_layout` so the renderer can look up
-/// per-node rects.
+/// The available space for layout computation.
+#[derive(Debug, Clone, Copy)]
+pub enum AvailableSpace {
+    /// A definite size in points.
+    Definite(f32),
+    /// An indefinite size (let the content determine the size).
+    Indefinite,
+    /// The maximum possible size.
+    MaxContent,
+}
+
+/// A 2D size with available-space semantics.
+#[derive(Debug, Clone, Copy)]
+pub struct Size<S = AvailableSpace> {
+    /// Width.
+    pub width: S,
+    /// Height.
+    pub height: S,
+}
+
+/// A layout computation result using Yoga.
+/// Stored after layout computation so the renderer
+/// can look up per-node rects.
 pub struct Layout {
-    /// The Taffy tree. Held by reference; the lifetime
-    /// is tied to the `TaffyTree` that produced it.
-    pub taffy: taffy::TaffyTree,
-    /// Per-VNode-index rect. Indexed by **VNode
-    /// pre-order DFS position**, not Taffy node
-    /// position. The renderer walks the VNode tree in
-    /// the same DFS order, so index N in `walk`'s
-    /// `depth` counter lines up with index N here.
-    /// We use the VNode order (not the Taffy order)
-    /// because Taffy's pre-order traversal interleaves
-    /// leaf styles for `Text` / `Newline` / `Spacer`
-    /// with the `Box` they belong to — but the
-    /// renderer wants to look up the rect for a Box
-    /// that wraps a `Text` child at the same index as
-    /// the VNode, not the leaf. The mapping from
-    /// VNode-index to Taffy rect is established by
-    /// `from_vnode` which pushes a rect for every
-    /// visited VNode.
+    /// Per-VNode-index rect. Indexed by VNode
+    /// pre-order DFS position. The renderer walks
+    /// the VNode tree in the same DFS order, so
+    /// index N in `walk`'s `depth` counter lines
+    /// up with index N here.
     pub rects: Vec<(u16, u16, u16, u16)>,
-    /// Per-Taffy-NodeId text content for `<Text>`
-    /// leaves. Used by the measure function in
-    /// `compute()` so Taffy can compute intrinsic
-    /// text size (and therefore propagate
-    /// shrink-to-fit sizes to auto-sized
-    /// parent Boxes).
-    pub text_by_node:
-        std::collections::HashMap<taffy::NodeId, String>,
-    /// Explicit width/height for Box nodes that
-    /// have `width` or `height` props set. The
-    /// measure function uses this to return the
-    /// correct size for Boxes with definite
-    /// cross-axis sizes (Taffy would otherwise
-    /// return 0×0 because non-text leaves have no
-    /// intrinsic size).
-    pub box_size_by_node:
-        std::collections::HashMap<taffy::NodeId, (Option<u16>, Option<u16>)>,
     /// The root VNode, stored so `TaffyTree::compute`
-    /// can re-walk it with the viewport size. The
-    /// custom flexbox engine needs the viewport.
+    /// can re-walk it with the viewport size.
     pub root_vnode: Option<VNode>,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Layout {
     /// Build a fresh, empty layout state.
     pub fn new() -> Self {
         Self {
-            taffy: taffy::TaffyTree::new(),
             rects: Vec::new(),
-            text_by_node: std::collections::HashMap::new(),
-            box_size_by_node: std::collections::HashMap::new(),
             root_vnode: None,
         }
     }
 }
 
-/// The Taffy tree built from a VNode tree.
-///
-/// Holds the root node id and (when computed) the
-/// per-node rects. The renderer walks the VNode tree
-/// and, for each node, looks up its computed rect by
-/// index in `Layout::rects`.
-/// The Yoga/flexbox tree built from a VNode tree.
+/// The Yoga-based layout tree built from a VNode tree.
 ///
 /// This is a thin wrapper around `flex_layout::compute`.
-/// It exists for API compatibility with the old
-/// Taffy-based implementation.
 pub struct TaffyTree {
-    /// Unused — kept for API compatibility.
+    /// Placeholder for API compatibility.
     pub root: (),
-    /// Unused — kept for API compatibility.
-    taffy_index: Vec<()>,
 }
 
 impl TaffyTree {
     /// Build a layout tree from a VNode tree. The
-    /// result is a `TaffyTree` (now a stub) whose
-    /// only job is to populate `layout.rects` via
-    /// the custom flexbox engine.
+    /// result is a `TaffyTree` whose only job is
+    /// to populate `layout.rects` via the yoga-based
+    /// flexbox engine.
     pub fn from_vnode(root: &VNode, layout: &mut Layout) -> Self {
         // Stash the root VNode for `compute` to
         // re-walk with the viewport size.
@@ -904,14 +897,11 @@ impl TaffyTree {
         // The values are filled in by `compute`.
         let node_count = count_vnodes(root);
         layout.rects = vec![(0, 0, 0, 0); node_count];
-        Self {
-            root: (),
-            taffy_index: Vec::new(),
-        }
+        Self { root: () }
     }
 
     /// Compute the layout with the given viewport.
-    /// Uses the custom flexbox engine in
+    /// Uses the yoga-based flexbox engine in
     /// `crate::flex_layout`.
     pub fn compute(
         &self,
@@ -926,13 +916,12 @@ impl TaffyTree {
             AvailableSpace::Definite(v) => v,
             _ => 24.0,
         };
-        // Recompute the layout. `from_vnode` doesn't
-        // know the viewport size, so `compute` is
-        // the right place. But `from_vnode` is
-        // called first and the root is stored in
-        // `layout.root_vnode` (we add this field).
+        // Recompute the layout using Yoga.
         if let Some(root) = layout.root_vnode.as_ref() {
-            layout.rects = crate::flex_layout::compute(root, w as u16, h as u16).rects;
+            let yoga_layout = flex_layout::compute(root, w as u16, h as u16);
+            layout.rects = yoga_layout.rects.iter()
+                .map(|r| (r.0, r.1, r.2, r.3))
+                .collect();
         }
     }
 }
