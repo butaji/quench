@@ -238,27 +238,24 @@ fn extract_var_decls_before(src: &str, before: usize) -> String {
     let mut out = String::new();
     let chars: Vec<char> = prefix.chars().collect();
     let mut i = 0;
-    while i < chars.len() {
-        let remaining: String = chars[i..].iter().collect();
-        if remaining.starts_with("const ") || remaining.starts_with("let ") {
-            let start = i;
-            let mut j = i + 5;
-            let mut depth = 0;
-            while j < chars.len() {
-                let c = chars[j];
-                if c == '{' || c == '(' || c == '[' { depth += 1; }
-                else if c == '}' || c == ')' || c == ']' { depth -= 1; }
-                else if depth == 0 && c == ';' { j += 1; break; }
-                else if depth == 0 && c == '\n' { break; }
-                j += 1;
-            }
-            let stmt: String = chars[start..j].iter().collect();
-            if stmt.contains('=') && !stmt.contains("=>") { out.push_str(&stmt); out.push('\n'); }
-            i = j;
-        } else { i += 1; }
-    }
+    while i < chars.len() { i = extract_var_or_advance(&chars, i, &mut out); }
     out
 }
+fn extract_var_or_advance(chars: &[char], i: usize, out: &mut String) -> usize {
+    let remaining: String = chars[i..].iter().collect();
+    if remaining.starts_with("const ") || remaining.starts_with("let ") { extract_var_decl(chars, i, out) } else { i + 1 }
+}
+fn extract_var_decl(chars: &[char], i: usize, out: &mut String) -> usize {
+    let start = i;
+    let mut j = i + 5;
+    let mut depth = 0;
+    while j < chars.len() { j = find_stmt_end(chars, j, &mut depth); if depth == 0 { break; } }
+    let stmt: String = chars[start..j].iter().collect();
+    if stmt.contains('=') && !stmt.contains("=>") { out.push_str(&stmt); out.push('\n'); }
+    j
+}
+fn find_stmt_end(chars: &[char], j: usize, depth: &mut usize) -> usize {
+    match chars[j] { '{' | '(' | '[' => { *depth += 1; j + 1 } '}' | ')' | ']' => { *depth -= 1; j + 1 } ';' if *depth == 0 => j + 1, '\n' if *depth == 0 => j, _ => j + 1 }
 
 /// Wrap the dev-path JS so rquickjs can eval it.
 /// The dev path's `run_ink_dev` expects the
@@ -305,14 +302,27 @@ fn parse_jsx_top(chars: &[char], i: usize) -> Option<(usize, String)> {
     if j >= chars.len() || !chars[j].is_ascii_alphabetic() { return None; }
     while j < chars.len() && chars[j].is_ascii_alphanumeric() { j += 1; }
     let tag: String = chars[i + 1..j].iter().collect();
+    let (k, self_closing) = parse_tag_end(chars, j);
+    if self_closing { return Some((k, chars[i..k].iter().collect())); }
+    find_closing_top(chars, i, &tag, k)
+}
+fn parse_tag_end(chars: &[char], j: usize) -> (usize, bool) {
     let mut k = j; let mut self_closing = false;
     while k < chars.len() { if chars[k] == '/' && k + 1 < chars.len() && chars[k + 1] == '>' { self_closing = true; k += 2; break; } if chars[k] == '>' { k += 1; break; } k += 1; }
-    if self_closing { return Some((k, chars[i..k].iter().collect())); }
-    let open = format!("<{tag}"); let close = format!("</{tag}>"); let open_chars: Vec<char> = open.chars().collect(); let close_chars: Vec<char> = close.chars().collect();
-    let mut depth: usize = 1; let mut m = k;
-    while m < chars.len() && depth > 0 { if m + close_chars.len() <= chars.len() { let cand: String = chars[m..m + close_chars.len()].iter().collect(); if cand == close { depth -= 1; if depth == 0 { let end = m + close_chars.len(); return Some((end, chars[i..end].iter().collect())); } m += close_chars.len(); continue; } } if m + open_chars.len() <= chars.len() { let cand: String = chars[m..m + open_chars.len()].iter().collect(); if cand == open { let next_pos = m + open_chars.len(); if next_pos < chars.len() { let nc = chars[next_pos]; if nc == ' ' || nc == '>' || nc == '/' || nc == '\t' || nc == '\n' { depth += 1; m += open_chars.len(); continue; } } } } m += 1; }
-    None
+    (k, self_closing)
 }
+fn find_closing_top(chars: &[char], i: usize, tag: &str, k: usize) -> Option<(usize, String)> {
+    let open_chars: Vec<char> = format!("<{tag}").chars().collect(); let close_chars: Vec<char> = format!("</{tag}>").chars().collect();
+    let mut depth: usize = 1; let mut m = k;
+    while m < chars.len() && depth > 0 { m = find_close_or_open_top(chars, &close_chars, &open_chars, &mut depth, m); }
+    if depth == 0 { None } else { None }
+}
+fn find_close_or_open_top(chars: &[char], close_chars: &[char], open_chars: &[char], depth: &mut usize, m: usize) -> usize {
+    if m + close_chars.len() <= chars.len() && chars[m..].starts_with(close_chars) { *depth -= 1; m + close_chars.len() }
+    else if m + open_chars.len() <= chars.len() && chars[m..].starts_with(open_chars) { if is_tag_char(chars.get(m + open_chars.len())) { *depth += 1; } m + open_chars.len() }
+    else { m + 1 }
+}
+fn is_tag_char(c: Option<&char>) -> bool { c.map_or(false, |&ch| ch == ' ' || ch == '>' || ch == '/' || ch == '\t' || ch == '\n') }
 
 /// Find the index of the closing paren that
 /// matches the opening paren at `open_idx`.
