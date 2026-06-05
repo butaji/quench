@@ -314,26 +314,38 @@ fn make_type_module_item(name: &str) -> Vec<hir::ModuleItem> {
 
 fn convert_export_default(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> {
     match &e.declaration {
-        ExportDefaultDeclarationKind::FunctionDeclaration(f) => vec![hir::ModuleItem::Decl(func_to_decl(f))],
-        ExportDefaultDeclarationKind::ClassDeclaration(c) => vec![hir::ModuleItem::Decl(class_to_hir(c))],
+        ExportDefaultDeclarationKind::FunctionDeclaration(f) => export_func_decl(f),
+        ExportDefaultDeclarationKind::ClassDeclaration(c) => export_class_decl(c),
         ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => make_type_module_item(&i.id.name),
         ExportDefaultDeclarationKind::NumericLiteral(n) => expr_stmt(hir::Expr::Number(n.value)),
         ExportDefaultDeclarationKind::StringLiteral(s) => expr_stmt(hir::Expr::String(s.value.to_string())),
         ExportDefaultDeclarationKind::BooleanLiteral(b) => expr_stmt(hir::Expr::Boolean(b.value)),
         ExportDefaultDeclarationKind::NullLiteral(_) => expr_stmt(hir::Expr::Null),
         ExportDefaultDeclarationKind::Identifier(id) => expr_stmt(hir::Expr::Ident { name: id.name.to_string() }),
-        ExportDefaultDeclarationKind::ArrowFunctionExpression(a) => {
-            if let Some(expr) = conv_arrow(a) {
-                vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
-            } else {
-                vec![hir::ModuleItem::Stmt(hir::Stmt::Empty)]
-            }
-        }
-        _ => {
-            let expr = export_default_kind_to_expr(&e.declaration).unwrap_or(hir::Expr::Undefined);
-            vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
-        }
+        ExportDefaultDeclarationKind::ArrowFunctionExpression(a) => convert_arrow_export(a),
+        _ => convert_default_kind(e),
     }
+}
+
+fn export_func_decl(f: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::FunctionDeclaration>>) -> Vec<hir::ModuleItem> {
+    vec![hir::ModuleItem::Decl(func_to_decl(f))]
+}
+
+fn export_class_decl(c: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ClassDeclaration>>) -> Vec<hir::ModuleItem> {
+    vec![hir::ModuleItem::Decl(class_to_hir(c))]
+}
+
+fn convert_arrow_export(a: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ArrowFunctionExpression>>) -> Vec<hir::ModuleItem> {
+    if let Some(expr) = conv_arrow(a) {
+        vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
+    } else {
+        vec![hir::ModuleItem::Stmt(hir::Stmt::Empty)]
+    }
+}
+
+fn convert_default_kind(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> {
+    let expr = export_default_kind_to_expr(&e.declaration).unwrap_or(hir::Expr::Undefined);
+    vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
 }
 
 fn expr_stmt(expr: hir::Expr) -> Vec<hir::ModuleItem> {
