@@ -133,122 +133,21 @@ fn apply_vnode_style(node: &mut yoga::Node, vnode: &VNode) {
 }
 
 fn apply_box_style(node: &mut yoga::Node, b: &InkBox) {
-    use yoga::FlexStyle;
-
-    let mut styles: Vec<FlexStyle> = Vec::new();
-
-    styles.push(FlexStyle::Display(match b.display {
-        InkDisplay::Flex => yoga::Display::Flex,
-        InkDisplay::None => yoga::Display::None,
-    }));
-
-    styles.push(FlexStyle::FlexDirection(match b.flex_direction {
-        InkFlexDirection::Row => yoga::FlexDirection::Row,
-        InkFlexDirection::Column => yoga::FlexDirection::Column,
-        InkFlexDirection::RowReverse => yoga::FlexDirection::RowReverse,
-        InkFlexDirection::ColumnReverse => yoga::FlexDirection::ColumnReverse,
-    }));
-
-    styles.push(FlexStyle::FlexWrap(match b.flex_wrap {
-        InkFlexWrap::NoWrap => yoga::Wrap::NoWrap,
-        InkFlexWrap::Wrap => yoga::Wrap::Wrap,
-        InkFlexWrap::WrapReverse => yoga::Wrap::WrapReverse,
-    }));
-
-    styles.push(FlexStyle::FlexGrow(OrderedFloat(b.flex_grow)));
-    styles.push(FlexStyle::FlexShrink(OrderedFloat(b.flex_shrink)));
-
-    if b.flex_basis_pct > 0.0 {
-        styles.push(FlexStyle::FlexBasis(pct(b.flex_basis_pct)));
-    } else {
-        styles.push(FlexStyle::FlexBasis(auto()));
-    }
-
-    styles.push(FlexStyle::Width(opt_pt(b.width)));
-    styles.push(FlexStyle::Height(opt_pt(b.height)));
-    styles.push(FlexStyle::MinWidth(opt_pt(b.min_width)));
-    styles.push(FlexStyle::MinHeight(opt_pt(b.min_height)));
-    styles.push(FlexStyle::MaxWidth(opt_pt(b.max_width)));
-    styles.push(FlexStyle::MaxHeight(opt_pt(b.max_height)));
-
-    if let Some(v) = b.padding_top {
-        styles.push(FlexStyle::PaddingTop(pt(v)));
-    }
-    if let Some(v) = b.padding_right {
-        styles.push(FlexStyle::PaddingRight(pt(v)));
-    }
-    if let Some(v) = b.padding_bottom {
-        styles.push(FlexStyle::PaddingBottom(pt(v)));
-    }
-    if let Some(v) = b.padding_left {
-        styles.push(FlexStyle::PaddingLeft(pt(v)));
-    }
-
-    if let Some(v) = b.margin_top {
-        styles.push(FlexStyle::MarginTop(pt(v)));
-    }
-    if let Some(v) = b.margin_right {
-        styles.push(FlexStyle::MarginRight(pt(v)));
-    }
-    if let Some(v) = b.margin_bottom {
-        styles.push(FlexStyle::MarginBottom(pt(v)));
-    }
-    if let Some(v) = b.margin_left {
-        styles.push(FlexStyle::MarginLeft(pt(v)));
-    }
-
-    if let Some(v) = b.row_gap {
-        styles.push(FlexStyle::RowGap(pt(v)));
-    }
-    if let Some(v) = b.column_gap {
-        styles.push(FlexStyle::ColumnGap(pt(v)));
-    }
-
-    styles.push(FlexStyle::AlignItems(map_align_items(&b.align_items)));
-    styles.push(FlexStyle::AlignSelf(map_align_self(&b.align_self)));
-    styles.push(FlexStyle::AlignContent(map_align_content(&b.align_content)));
-    styles.push(FlexStyle::JustifyContent(map_justify(&b.justify_content)));
-
-    styles.push(FlexStyle::Position(match b.position {
-        InkPosition::Relative => yoga::PositionType::Relative,
-        InkPosition::Absolute => yoga::PositionType::Absolute,
-    }));
-
-    if let Some(v) = b.top {
-        styles.push(FlexStyle::Top(pt(v)));
-    }
-    if let Some(v) = b.right {
-        styles.push(FlexStyle::Right(pt(v)));
-    }
-    if let Some(v) = b.bottom {
-        styles.push(FlexStyle::Bottom(pt(v)));
-    }
-    if let Some(v) = b.left {
-        styles.push(FlexStyle::Left(pt(v)));
-    }
-
-    styles.push(FlexStyle::Overflow(match b.overflow_x {
-        InkOverflow::Visible => yoga::Overflow::Visible,
-        InkOverflow::Hidden => yoga::Overflow::Hidden,
-    }));
-
-    let bt = if b.borders.top { 1.0 } else { 0.0 };
-    let br = if b.borders.right { 1.0 } else { 0.0 };
-    let bb = if b.borders.bottom { 1.0 } else { 0.0 };
-    let bl = if b.borders.left { 1.0 } else { 0.0 };
-    if bt > 0.0 {
-        styles.push(FlexStyle::BorderTop(OrderedFloat(bt)));
-    }
-    if br > 0.0 {
-        styles.push(FlexStyle::BorderRight(OrderedFloat(br)));
-    }
-    if bb > 0.0 {
-        styles.push(FlexStyle::BorderBottom(OrderedFloat(bb)));
-    }
-    if bl > 0.0 {
-        styles.push(FlexStyle::BorderLeft(OrderedFloat(bl)));
-    }
-
+    use yoga::FlexStyle; let mut styles: Vec<FlexStyle> = Vec::new();
+    styles.push(FlexStyle::Display(match b.display { InkDisplay::Flex => yoga::Display::Flex, InkDisplay::None => yoga::Display::None }));
+    styles.push(FlexStyle::FlexDirection(match b.flex_direction { InkFlexDirection::Row => yoga::FlexDirection::Row, InkFlexDirection::Column => yoga::FlexDirection::Column, InkFlexDirection::RowReverse => yoga::FlexDirection::RowReverse, InkFlexDirection::ColumnReverse => yoga::FlexDirection::ColumnReverse }));
+    styles.push(FlexStyle::FlexWrap(match b.flex_wrap { InkFlexWrap::NoWrap => yoga::Wrap::NoWrap, InkFlexWrap::Wrap => yoga::Wrap::Wrap, InkFlexWrap::WrapReverse => yoga::Wrap::WrapReverse }));
+    styles.push(FlexStyle::FlexGrow(OrderedFloat(b.flex_grow))); styles.push(FlexStyle::FlexShrink(OrderedFloat(b.flex_shrink))); styles.push(FlexStyle::FlexBasis(if b.flex_basis_pct > 0.0 { pct(b.flex_basis_pct) } else { auto() }));
+    styles.push(FlexStyle::Width(opt_pt(b.width))); styles.push(FlexStyle::Height(opt_pt(b.height))); styles.push(FlexStyle::MinWidth(opt_pt(b.min_width))); styles.push(FlexStyle::MinHeight(opt_pt(b.min_height))); styles.push(FlexStyle::MaxWidth(opt_pt(b.max_width))); styles.push(FlexStyle::MaxHeight(opt_pt(b.max_height)));
+    if let Some(v) = b.padding_top { styles.push(FlexStyle::PaddingTop(pt(v))); } if let Some(v) = b.padding_right { styles.push(FlexStyle::PaddingRight(pt(v))); } if let Some(v) = b.padding_bottom { styles.push(FlexStyle::PaddingBottom(pt(v))); } if let Some(v) = b.padding_left { styles.push(FlexStyle::PaddingLeft(pt(v))); }
+    if let Some(v) = b.margin_top { styles.push(FlexStyle::MarginTop(pt(v))); } if let Some(v) = b.margin_right { styles.push(FlexStyle::MarginRight(pt(v))); } if let Some(v) = b.margin_bottom { styles.push(FlexStyle::MarginBottom(pt(v))); } if let Some(v) = b.margin_left { styles.push(FlexStyle::MarginLeft(pt(v))); }
+    if let Some(v) = b.row_gap { styles.push(FlexStyle::RowGap(pt(v))); } if let Some(v) = b.column_gap { styles.push(FlexStyle::ColumnGap(pt(v))); }
+    styles.push(FlexStyle::AlignItems(map_align_items(&b.align_items))); styles.push(FlexStyle::AlignSelf(map_align_self(&b.align_self))); styles.push(FlexStyle::AlignContent(map_align_content(&b.align_content))); styles.push(FlexStyle::JustifyContent(map_justify(&b.justify_content)));
+    styles.push(FlexStyle::Position(match b.position { InkPosition::Relative => yoga::PositionType::Relative, InkPosition::Absolute => yoga::PositionType::Absolute }));
+    if let Some(v) = b.top { styles.push(FlexStyle::Top(pt(v))); } if let Some(v) = b.right { styles.push(FlexStyle::Right(pt(v))); } if let Some(v) = b.bottom { styles.push(FlexStyle::Bottom(pt(v))); } if let Some(v) = b.left { styles.push(FlexStyle::Left(pt(v))); }
+    styles.push(FlexStyle::Overflow(match b.overflow_x { InkOverflow::Visible => yoga::Overflow::Visible, InkOverflow::Hidden => yoga::Overflow::Hidden }));
+    let bt = if b.borders.top { 1.0 } else { 0.0 }; let br = if b.borders.right { 1.0 } else { 0.0 }; let bb = if b.borders.bottom { 1.0 } else { 0.0 }; let bl = if b.borders.left { 1.0 } else { 0.0 };
+    if bt > 0.0 { styles.push(FlexStyle::BorderTop(OrderedFloat(bt))); } if br > 0.0 { styles.push(FlexStyle::BorderRight(OrderedFloat(br))); } if bb > 0.0 { styles.push(FlexStyle::BorderBottom(OrderedFloat(bb))); } if bl > 0.0 { styles.push(FlexStyle::BorderLeft(OrderedFloat(bl))); }
     node.apply_styles(&styles);
 }
 

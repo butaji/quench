@@ -134,67 +134,18 @@ impl Plugin for RatatuiPlugin {
     }
 
     fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        // The dev path uses the HIR runtime — a
-        // pure-Rust interpreter that walks the HIR
-        // AST. No rquickjs, no cargo build, no Rust
-        // files on disk. Fast hot-reload.
-        //
-        // We spawn the runts binary with `hir-render`
-        // which parses the TSX, interprets the HIR,
-        // and renders to stdout.
         let st_any = state.as_any_mut();
-        let st = match st_any.downcast_mut::<RatatuiDevState>() {
-            Some(s) => s,
-            None => {
-                return Err(PluginError::codegen(
-                    "ratatui",
-                    "dev",
-                    "unexpected DevState type",
-                ));
-            }
-        };
-        if !st.dirty {
-            return Ok(DevAction::Continue);
-        }
+        let st = match st_any.downcast_mut::<RatatuiDevState>() { Some(s) => s, None => return Err(PluginError::codegen("ratatui", "dev", "unexpected DevState type")) };
+        if !st.dirty { return Ok(DevAction::Continue); }
         st.dirty = false;
-        let Some(module_path) = st.module.clone() else {
-            return Ok(DevAction::Continue);
-        };
-        // Read the TSX source from the file path
-        // stored in st.module. The ctx.modules list
-        // contains paths, not contents.
-        let source = match std::fs::read_to_string(&module_path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("HIR render: read {module_path} failed: {e}");
-                return Ok(DevAction::Continue);
-            }
-        };
-        // Write module source to a temp file and
-        // invoke `runts hir-render` to render it
-        // through the HIR runtime.
+        let Some(module_path) = st.module.clone() else { return Ok(DevAction::Continue) };
+        let source = match std::fs::read_to_string(&module_path) { Ok(s) => s, Err(e) => { eprintln!("HIR render: read {module_path} failed: {e}"); return Ok(DevAction::Continue); }};
         let tmp = std::env::temp_dir().join("runts-hir-render.tsx");
         let _ = std::fs::write(&tmp, source.as_bytes());
-        let runts_bin =
-            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("runts"));
-        match std::process::Command::new(&runts_bin)
-            .arg("hir-render")
-            .arg(&tmp)
-            .output()
-        {
-            Ok(out) => {
-                use std::io::Write;
-                let _ = std::io::stdout().write_all(&out.stdout);
-                let _ = std::io::stdout().flush();
-                if !out.stderr.is_empty() {
-                    eprint!("{}", String::from_utf8_lossy(&out.stderr));
-                }
-                Ok(DevAction::Continue)
-            }
-            Err(e) => {
-                eprintln!("hir-render failed: {e}");
-                Ok(DevAction::Continue)
-            }
+        let runts_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("runts"));
+        match std::process::Command::new(&runts_bin).arg("hir-render").arg(&tmp).output() {
+            Ok(out) => { let _ = std::io::stdout().write_all(&out.stdout); let _ = std::io::stdout().flush(); if !out.stderr.is_empty() { eprint!("{}", String::from_utf8_lossy(&out.stderr)); } Ok(DevAction::Continue) }
+            Err(e) => { eprintln!("hir-render failed: {e}"); Ok(DevAction::Continue) }
         }
     }
 
@@ -285,45 +236,26 @@ pub fn dev_eval_program_with_lowered(
 fn extract_var_decls_before(src: &str, before: usize) -> String {
     let prefix = &src[..before.min(src.len())];
     let mut out = String::new();
-    // Iterate by char to avoid panicking on
-    // multi-byte UTF-8 boundaries.
     let chars: Vec<char> = prefix.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        // Look for `const` or `let` followed by
-        // an identifier and `=`.
         let remaining: String = chars[i..].iter().collect();
         if remaining.starts_with("const ") || remaining.starts_with("let ") {
-            // Find the end of the statement (semicolon
-            // or end of line).
             let start = i;
-            let mut j = i + 5; // skip "const " or "let "
+            let mut j = i + 5;
             let mut depth = 0;
             while j < chars.len() {
                 let c = chars[j];
-                if c == '{' || c == '(' || c == '[' {
-                    depth += 1;
-                } else if c == '}' || c == ')' || c == ']' {
-                    depth -= 1;
-                } else if depth == 0 && c == ';' {
-                    j += 1;
-                    break;
-                } else if depth == 0 && c == '\n' {
-                    break;
-                }
+                if c == '{' || c == '(' || c == '[' { depth += 1; }
+                else if c == '}' || c == ')' || c == ']' { depth -= 1; }
+                else if depth == 0 && c == ';' { j += 1; break; }
+                else if depth == 0 && c == '\n' { break; }
                 j += 1;
             }
             let stmt: String = chars[start..j].iter().collect();
-            // Only include simple declarations:
-            // const NAME = VALUE;
-            if stmt.contains('=') && !stmt.contains("=>") {
-                out.push_str(&stmt);
-                out.push('\n');
-            }
+            if stmt.contains('=') && !stmt.contains("=>") { out.push_str(&stmt); out.push('\n'); }
             i = j;
-        } else {
-            i += 1;
-        }
+        } else { i += 1; }
     }
     out
 }
@@ -370,77 +302,15 @@ fn find_top_level_jsx(src: &str) -> Vec<(usize, String)> {
 /// tag and the raw JSX text.
 fn parse_jsx_top(chars: &[char], i: usize) -> Option<(usize, String)> {
     let mut j = i + 1;
-    // Tag name: must be alpha + alphanum.
-    if j >= chars.len() || !chars[j].is_ascii_alphabetic() {
-        return None;
-    }
-    while j < chars.len() && chars[j].is_ascii_alphanumeric() {
-        j += 1;
-    }
+    if j >= chars.len() || !chars[j].is_ascii_alphabetic() { return None; }
+    while j < chars.len() && chars[j].is_ascii_alphanumeric() { j += 1; }
     let tag: String = chars[i + 1..j].iter().collect();
-    // Self-closing?
-    let mut k = j;
-    let mut self_closing = false;
-    while k < chars.len() {
-        if chars[k] == '/' && k + 1 < chars.len() && chars[k + 1] == '>' {
-            self_closing = true;
-            k += 2;
-            break;
-        }
-        if chars[k] == '>' {
-            k += 1;
-            break;
-        }
-        k += 1;
-    }
-    if self_closing {
-        return Some((k, chars[i..k].iter().collect()));
-    }
-    // Find matching `</Tag>`. Track nested
-    // opens of the same tag so we skip past
-    // inner `</Tag>` closes that belong to a
-    // nested element, not this one.
-    let open = format!("<{tag}");
-    let close = format!("</{tag}>");
-    let open_chars: Vec<char> = open.chars().collect();
-    let close_chars: Vec<char> = close.chars().collect();
-    let mut depth: usize = 1;
-    let mut m = k;
-    while m < chars.len() && depth > 0 {
-        if m + close_chars.len() <= chars.len() {
-            let cand: String = chars[m..m + close_chars.len()].iter().collect();
-            if cand == close {
-                depth -= 1;
-                if depth == 0 {
-                    let end = m + close_chars.len();
-                    return Some((end, chars[i..end].iter().collect()));
-                }
-                m += close_chars.len();
-                continue;
-            }
-        }
-        if m + open_chars.len() <= chars.len() {
-            let cand: String = chars[m..m + open_chars.len()].iter().collect();
-            if cand == open {
-                // Only count a real open if the
-                // next non-space char is a space,
-                // `>`, or `/` (attrs, close, or
-                // self-close) — otherwise the
-                // substring is part of a longer
-                // identifier like `<Boxer`.
-                let next_pos = m + open_chars.len();
-                if next_pos < chars.len() {
-                    let nc = chars[next_pos];
-                    if nc == ' ' || nc == '>' || nc == '/' || nc == '\t' || nc == '\n' {
-                        depth += 1;
-                        m += open_chars.len();
-                        continue;
-                    }
-                }
-            }
-        }
-        m += 1;
-    }
+    let mut k = j; let mut self_closing = false;
+    while k < chars.len() { if chars[k] == '/' && k + 1 < chars.len() && chars[k + 1] == '>' { self_closing = true; k += 2; break; } if chars[k] == '>' { k += 1; break; } k += 1; }
+    if self_closing { return Some((k, chars[i..k].iter().collect())); }
+    let open = format!("<{tag}"); let close = format!("</{tag}>"); let open_chars: Vec<char> = open.chars().collect(); let close_chars: Vec<char> = close.chars().collect();
+    let mut depth: usize = 1; let mut m = k;
+    while m < chars.len() && depth > 0 { if m + close_chars.len() <= chars.len() { let cand: String = chars[m..m + close_chars.len()].iter().collect(); if cand == close { depth -= 1; if depth == 0 { let end = m + close_chars.len(); return Some((end, chars[i..end].iter().collect())); } m += close_chars.len(); continue; } } if m + open_chars.len() <= chars.len() { let cand: String = chars[m..m + open_chars.len()].iter().collect(); if cand == open { let next_pos = m + open_chars.len(); if next_pos < chars.len() { let nc = chars[next_pos]; if nc == ' ' || nc == '>' || nc == '/' || nc == '\t' || nc == '\n' { depth += 1; m += open_chars.len(); continue; } } } } m += 1; }
     None
 }
 

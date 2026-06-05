@@ -945,54 +945,13 @@ async fn main() {{
     /// `{"Return": {"arg": ...}}` and the older internally-tagged
     /// shape `{"kind": "Return", "arg": ...}`.
     fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
-        // For internally-tagged enums (the Stmt enum uses
-        // `#[serde(tag = "kind")]`), "kind" is the discriminator and
-        // there are also other fields alongside it. For
-        // externally-tagged enums (the JSX/Cond enums), the variant
-        // name is the top-level key. Check "kind" first, then fall
-        // back to the first key.
         let obj = stmt.as_object()?;
-        let (variant, inner) = if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
-            (kind.to_string(), stmt.clone())
-        } else {
-            let (k, v) = obj.iter().next()?;
-            (k.clone(), v.clone())
-        };
-
+        let (variant, inner) = if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) { (kind.to_string(), stmt.clone()) } else { let (k, v) = obj.iter().next()?; (k.clone(), v.clone()) };
         match variant.as_str() {
-            "Return" => {
-                let arg = inner.get("arg")?;
-                if self.is_jsx_expr(arg) {
-                    return Some(arg.clone());
-                }
-                return self.find_jsx_in_expr(arg);
-            }
-            "Expr" => {
-                let expr = inner.get("expr")?;
-                if self.is_jsx_expr(expr) {
-                    return Some(expr.clone());
-                }
-                return self.find_jsx_in_expr(expr);
-            }
-            "Block" => {
-                if let Some(stmts) = inner.get("stmts").and_then(|s| s.as_array()) {
-                    for s in stmts {
-                        if let Some(jsx) = self.find_jsx_in_stmt(s) {
-                            return Some(jsx);
-                        }
-                    }
-                }
-            }
-            "If" => {
-                if let Some(cons) = inner.get("consequent") {
-                    if let Some(jsx) = self.find_jsx_in_stmt(cons) {
-                        return Some(jsx);
-                    }
-                }
-                if let Some(alt) = inner.get("alternate") {
-                    return self.find_jsx_in_stmt(alt);
-                }
-            }
+            "Return" => { let arg = inner.get("arg")?; if self.is_jsx_expr(arg) { return Some(arg.clone()); } self.find_jsx_in_expr(arg) }
+            "Expr" => { let expr = inner.get("expr")?; if self.is_jsx_expr(expr) { return Some(expr.clone()); } self.find_jsx_in_expr(expr) }
+            "Block" => { if let Some(stmts) = inner.get("stmts").and_then(|s| s.as_array()) { for s in stmts { if let Some(jsx) = self.find_jsx_in_stmt(s) { return Some(jsx); } } } }
+            "If" => { if let Some(cons) = inner.get("consequent") { if let Some(jsx) = self.find_jsx_in_stmt(cons) { return Some(jsx); } } if let Some(alt) = inner.get("alternate") { return self.find_jsx_in_stmt(alt); } }
             _ => {}
         }
         None
@@ -1151,70 +1110,13 @@ async fn main() {{
 
     /// Convert a JSX child to TokenStream.
     fn jsx_child_to_tokenstream(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
-        // Text child
-        if let Some(text) = child.as_str() {
-            return Some(Some(jsx_text(text)));
-        }
-
-        // Handle actual HIR format: {"Text": "..."}, {"JSX": {...}}, etc.
-        // without "kind" wrapper
-        if let Some(text) = child.get("Text").and_then(|v| v.as_str()) {
-            return Some(Some(jsx_text(text)));
-        }
-        if child.get("JSX").is_some() {
-            let jsx_expr = child.get("JSX")?;
-            return self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some);
-        }
-        if child.get("Fragment").is_some() {
-            let frag_children = child.get("Fragment")?.get("children")?;
-            let children = self.extract_jsx_children(frag_children)?;
-            return Some(Some(jsx_fragment(children)));
-        }
-        if child.get("Expr").is_some() {
-            let expr_val = child.get("Expr")?;
-            if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
-                return Some(Some(ts));
-            } else {
-                return Some(None);
-            }
-        }
-        if child.get("Spread").is_some() {
-            // Spread children - skip for v0.1
-            return Some(None);
-        }
-
-        // Fallback: check for "kind" field (old format)
-        if let Some(kind) = child.get("kind").and_then(|v| v.as_str()) {
-            match kind {
-                "Text" => {
-                    let text = child.get("Text").and_then(|v| v.as_str())?;
-                    return Some(Some(jsx_text(text)));
-                }
-                "JSX" => {
-                    let jsx_expr = child.get("JSX")?;
-                    return self.generate_jsx_vnode_code(jsx_expr.clone()).map(Some);
-                }
-                "Fragment" => {
-                    let frag_children = child.get("Fragment")?.get("children")?;
-                    let children = self.extract_jsx_children(frag_children)?;
-                    return Some(Some(jsx_fragment(children)));
-                }
-                "Expr" => {
-                    let expr_val = child.get("Expr")?;
-                    if let Some(ts) = self.jsx_expr_to_tokenstream(expr_val)? {
-                        return Some(Some(ts));
-                    } else {
-                        return Some(None);
-                    }
-                }
-                "Spread" => {
-                    return Some(None);
-                }
-                _ => return Some(None),
-            }
-        }
-
-        Some(None)
+        if let Some(text) = child.as_str() { return Some(Some(jsx_text(text))); }
+        if let Some(text) = child.get("Text").and_then(|v| v.as_str()) { return Some(Some(jsx_text(text))); }
+        if child.get("JSX").is_some() { return self.generate_jsx_vnode_code(child.get("JSX")?.clone()).map(Some); }
+        if child.get("Fragment").is_some() { let children = self.extract_jsx_children(child.get("Fragment")?.get("children")?)?; return Some(Some(jsx_fragment(children))); }
+        if child.get("Expr").is_some() { let ts = self.jsx_expr_to_tokenstream(child.get("Expr")?)?; return Some(ts); }
+        if child.get("Spread").is_some() { return Some(None); }
+        if let Some(kind) = child.get("kind").and_then(|v| v.as_str()) { match kind { "Text" => Some(Some(jsx_text(child.get("Text")?.as_str()?))), "JSX" => self.generate_jsx_vnode_code(child.get("JSX")?.clone()).map(Some), "Fragment" => { let children = self.extract_jsx_children(child.get("Fragment")?.get("children")?)?; Some(Some(jsx_fragment(children))) } "Expr" => self.jsx_expr_to_tokenstream(child.get("Expr")?), "Spread" => Some(None), _ => Some(None) } } else { Some(None) }
     }
 
     /// Convert JSX expression to TokenStream.

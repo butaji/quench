@@ -1078,76 +1078,15 @@ pub(crate) mod jsx {
     /// `TokenStream` expression that produces a
     /// `runts_ink::VNode`.
     fn child_to_vnode(child: &serde_json::Value) -> TokenStream {
-        // Whitespace-only text between JSX elements
-        // (e.g. newlines and indent between
-        // `<Box>` and `<Text>...</Text>`) is
-        // ignored by real Ink. Detect it in any
-        // shape: single-key `{Text: "..."}` or
-        // normalized `{kind: "Text", text: "..."}`,
-        // and skip it.
-        if let Some(s) = child
-            .get("Text")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                if child.get("kind").and_then(|k| k.as_str()) == Some("Text") {
-                    child.get("text").and_then(|v| v.as_str())
-                } else {
-                    None
-                }
-            })
-        {
-            if s.chars().all(|c| c.is_whitespace()) {
-                return quote! { runts_ink::Spacer::new() };
-            }
-        }
-        // Short-circuit: a normalized `{kind: "Text",
-        // text: "..."}` child (from
-        // `extract_jsx_children`) is a bare Text,
-        // not a JSX element. Build it directly.
-        if let Some(kind) = child.get("kind").and_then(|k| k.as_str()) {
-            // Distinguish: a bare Text wrapper
-            // (`{kind: "Text", text: "..."}`) from a
-            // real JSX element that also happens to
-            // have a `kind` field (`{kind: "JSX",
-            // opening: {...}, children: [...]}`).
-            match kind {
-                "Text"
-                    if child.get("text").is_some()
-                        && child.get("opening").is_none() =>
-                {
-                    let text = child.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    // No `.into()` here: `Box::child`
-                    // takes `impl Into<VNode>`, and
-                    // emitting the bare expression lets
-                    // Rust infer the type (otherwise
-                    // chained `.child().child()` fails
-                    // with E0283).
-                    return quote! { runts_ink::Text::new(#text) };
-                }
-                "JSX" if child.get("jsx").is_some() && child.get("opening").is_none() => {
-                    // `{kind: "JSX", jsx: {...}}` —
-                    // wrapped JSX, recurse.
-                    if let Some(inner) = child.get("jsx") {
-                        return child_to_vnode(inner);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let opening = child.get("opening");
-        let tag = opening
-            .and_then(|o| o.get("name"))
-            .and_then(|n| n.get("Ident"))
-            .and_then(|i| i.as_str())
-            .unwrap_or("text");
-        let attrs = opening
-            .and_then(|o| o.get("attrs"))
-            .map(|a| extract_jsx_attrs(a).unwrap_or_default())
-            .unwrap_or_default();
-        let kids = extract_jsx_children(
-            child.get("children").unwrap_or(&serde_json::Value::Null),
-        )
-        .unwrap_or_default();
+        if let Some(s) = child.get("Text").and_then(|v| v.as_str()).or_else(|| { if child.get("kind").and_then(|k| k.as_str()) == Some("Text") { child.get("text").and_then(|v| v.as_str()) } else { None } }) { if s.chars().all(|c| c.is_whitespace()) { return quote! { runts_ink::Spacer::new() }; } }
+        if let Some(kind) = child.get("kind").and_then(|k| k.as_str()) { Self::child_to_vnode_kind(child, kind) }
+        else { Self::child_to_vnode_tag(child) }
+    }
+    fn child_to_vnode_kind(child: &serde_json::Value, kind: &str) -> TokenStream {
+        match kind { "Text" if child.get("text").is_some() && child.get("opening").is_none() => { let text = child.get("text").and_then(|v| v.as_str()).unwrap_or(""); quote! { runts_ink::Text::new(#text) } } "JSX" if child.get("jsx").is_some() && child.get("opening").is_none() => { if let Some(inner) = child.get("jsx") { Self::child_to_vnode(inner) } else { quote! { runts_ink::Spacer::new() } } } _ => Self::child_to_vnode_tag(child) }
+    }
+    fn child_to_vnode_tag(child: &serde_json::Value) -> TokenStream {
+        let opening = child.get("opening"); let tag = opening.and_then(|o| o.get("name")).and_then(|n| n.get("Ident")).and_then(|i| i.as_str()).unwrap_or("text"); let attrs = opening.and_then(|o| o.get("attrs")).map(|a| extract_jsx_attrs(a).unwrap_or_default()).unwrap_or_default(); let kids = extract_jsx_children(child.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default();
         tag_to_ink(tag, attrs, kids)
     }
 
@@ -1240,122 +1179,33 @@ pub(crate) mod jsx {
     /// - `{"Expr": {...}}` - expression children
     fn collect_text_children_tokens(children: &[serde_json::Value]) -> Vec<TokenStream> {
         let mut parts: Vec<TokenStream> = Vec::new();
-        for raw in children {
-            // Check for "Text" key (uppercase) - HIR format
-            if let Some(text) = raw.get("Text").and_then(|t| t.as_str()) {
-                // Skip pure whitespace
-                if !text.chars().all(|c| c.is_whitespace()) {
-                    parts.push(quote! { #text });
-                }
-            // Check for "text" key (lowercase) - normalized shape
-            } else if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
-                // Skip pure whitespace
-                if !text.chars().all(|c| c.is_whitespace()) {
-                    parts.push(quote! { #text });
-                }
-            } else if let Some(jsx) = raw.get("jsx") {
-                // Recurse into nested JSX
-                let nested = extract_jsx_children(
-                    jsx.get("children").unwrap_or(&serde_json::Value::Null),
-                )
-                .unwrap_or_default();
-                let inner = collect_text_children_tokens(&nested);
-                parts.extend(inner);
-            } else if let Some(expr) = raw.get("Expr") {
-                // Expression child — convert HIR expression to Rust expression
-                if let Some(expr_tokens) = expr_to_rust(expr) {
-                    // Wrap the expression in format! to coerce to string
-                    parts.push(quote! { format!("{}", #expr_tokens) });
-                }
-            }
-        }
+        for raw in children { Self::collect_text_token_child(raw, &mut parts); }
         parts
+    }
+    fn collect_text_token_child(raw: &serde_json::Value, parts: &mut Vec<TokenStream>) {
+        if let Some(text) = raw.get("Text").and_then(|t| t.as_str()).or_else(|| raw.get("text").and_then(|t| t.as_str())) { if !text.chars().all(|c| c.is_whitespace()) { parts.push(quote! { #text }); } }
+        else if let Some(jsx) = raw.get("jsx") { Self::collect_text_token_jsx(jsx, parts); }
+        else if let Some(expr) = raw.get("Expr") { if let Some(expr_tokens) = Self::expr_to_rust(expr) { parts.push(quote! { format!("{}", #expr_tokens) }); } }
+    }
+    fn collect_text_token_jsx(jsx: &serde_json::Value, parts: &mut Vec<TokenStream>) {
+        let nested = extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default();
+        let inner = Self::collect_text_children_tokens(&nested);
+        parts.extend(inner);
     }
 
     /// Convert a HIR expression to Rust TokenStream.
     /// Handles conditional, member access, array literals, etc.
     fn expr_to_rust(expr: &serde_json::Value) -> Option<TokenStream> {
         let map = expr.as_object()?;
-        
-        // Cond: ternary expression {Cond: {test, consequent, alternate}}
-        if let Some(cond) = map.get("Cond") {
-            let test = expr_to_rust(cond.get("test")?)?;
-            let consequent = expr_to_rust(cond.get("consequent")?)?;
-            let alternate = expr_to_rust(cond.get("alternate")?)?;
-            return Some(quote! { (#test ? #consequent : #alternate) });
-        }
-
-        // Member: property/array access (obj.prop or arr[0])
-        if let Some(member) = map.get("Member") {
-            let obj = expr_to_rust(member.get("obj")?)?;
-            let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false);
-            let property = expr_to_rust(member.get("property")?)?;
-            if computed {
-                // For array indices, convert to usize
-                return Some(quote! { #obj[#property as usize] });
-            } else {
-                return Some(quote! { #obj . #property });
-            }
-        }
-
-        // Array: array literal [a, b, c]
-        if let Some(arr) = map.get("Array") {
-            let elems = arr.get("elems")?.as_array()?;
-            let elem_tokens: Vec<TokenStream> = elems
-                .iter()
-                .filter_map(|e| expr_to_rust(e))
-                .collect();
-            return Some(quote! { [#(#elem_tokens),*] });
-        }
-
-        // Simple values
-        if let Some(s) = map.get("String").and_then(|v| v.as_str()) {
-            return Some(quote! { #s });
-        }
-        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) {
-            // Convert float to appropriate integer for array indices
-            return Some(quote! { #n });
-        }
-        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) {
-            return Some(quote! { #b });
-        }
-        if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
-            // Use format_ident! to create a proper identifier, not a string literal
-            let ident = quote::format_ident!("{}", name);
-            return Some(quote! { #ident });
-        }
-        
-        // Handle nested "Expr" wrapper
-        if let Some(inner) = map.get("Expr") {
-            return expr_to_rust(inner);
-        }
-
-        // Handle "kind" discriminator (older HIR format)
-        if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) {
-            match kind {
-                "String" => {
-                    let s = map.get("0")?.as_str()?;
-                    return Some(quote! { #s });
-                }
-                "Number" => {
-                    let n = map.get("0")?.as_f64()?;
-                    return Some(quote! { #n });
-                }
-                "Bool" => {
-                    let b = map.get("0")?.as_bool()?;
-                    return Some(quote! { #b });
-                }
-                "Ident" => {
-                    let name = map.get("0")?.as_object()?.get("name")?.as_str()?;
-                    // Use format_ident! to create a proper identifier
-                    let ident = quote::format_ident!("{}", name);
-                    return Some(quote! { #ident });
-                }
-                _ => {}
-            }
-        }
-
-        None
+        if let Some(cond) = map.get("Cond") { let test = Self::expr_to_rust(cond.get("test")?)?; let consequent = Self::expr_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_to_rust(cond.get("alternate")?)?; return Some(quote! { (#test ? #consequent : #alternate) }); }
+        if let Some(member) = map.get("Member") { let obj = Self::expr_to_rust(member.get("obj")?)?; let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false); let property = Self::expr_to_rust(member.get("property")?)?; return Some(if computed { quote! { #obj[#property as usize] } } else { quote! { #obj . #property } }); }
+        if let Some(arr) = map.get("Array") { let elems = arr.get("elems")?.as_array()?; let elem_tokens: Vec<TokenStream> = elems.iter().filter_map(|e| Self::expr_to_rust(e)).collect(); return Some(quote! { [#(#elem_tokens),*] }); }
+        if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(quote! { #s }); }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(quote! { #n }); }
+        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(quote! { #b }); }
+        if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) { let ident = quote::format_ident!("{}", name); return Some(quote! { #ident }); }
+        if let Some(inner) = map.get("Expr") { return Self::expr_to_rust(inner); }
+        if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) { match kind { "String" => Some(quote! { #{} }), "Number" => Some(quote! { #{} }), "Bool" => Some(quote! { #{} }), "Ident" => { let name = map.get("0")?.as_object()?.get("name")?.as_str()?; let ident = quote::format_ident!("{}", name); Some(quote! { #ident }) } _ => None } } else { None }
     }
 
     /// Flatten JSX children to a single text string
@@ -1371,46 +1221,15 @@ pub(crate) mod jsx {
     /// to work properly.
     fn collect_text_from_children(children: &[serde_json::Value]) -> String {
         let mut out = String::new();
-        for raw in children {
-            // Children at this layer are the
-            // normalized shape (see
-            // `extract_jsx_children`): each is
-            // `{kind: "Text", text: "..."}` or
-            // `{kind: "JSX", jsx: {...}}`.
-            if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
-                if !out.is_empty() {
-                    out.push(' ');
-                }
-                out.push_str(text);
-            } else if let Some(jsx) = raw.get("jsx") {
-                // Recurse into a nested JSX element
-                // to get its text content.
-                let nested = extract_jsx_children(
-                    jsx.get("children").unwrap_or(&serde_json::Value::Null),
-                )
-                .unwrap_or_default();
-                let inner = collect_text_from_children(&nested);
-                if !inner.is_empty() {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(&inner);
-                }
-            } else if let Some(expr) = raw.get("Expr") {
-                // Expression child — convert to Rust expression.
-                // For text content, we need to convert the expression
-                // to a string. The expression will be included as-is
-                // and coerced at runtime.
-                if let Some(expr_str) = parse_expr_inner(expr) {
-                    // Don't add space before expressions
-                    // to avoid: "Status:  ACTIVE" instead of "Status: ACTIVE"
-                    out.push_str(&format!("{}", expr_str));
-                }
-            }
-            // Fragments are skipped.
-        }
+        for raw in children { Self::collect_text_child(raw, &mut out); }
         out
     }
+    fn collect_text_child(raw: &serde_json::Value, out: &mut String) {
+        if let Some(text) = raw.get("text").and_then(|t| t.as_str()) { Self::append_text(out, text); }
+        else if let Some(jsx) = raw.get("jsx") { let nested = extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default(); let inner = Self::collect_text_from_children(&nested); if !inner.is_empty() { Self::append_text(out, &inner); } }
+        else if let Some(expr) = raw.get("Expr") { if let Some(expr_str) = parse_expr_inner(expr) { out.push_str(&format!("{}", expr_str)); } }
+    }
+    fn append_text(out: &mut String, text: &str) { if !out.is_empty() { out.push(' '); } out.push_str(text); }
 
     /// Map a `flexDirection` JSON value to a
     /// `runts_ink::FlexDirection` token. Returns
@@ -1456,60 +1275,19 @@ pub(crate) mod jsx {
     /// to zero height; we drop it from the
     /// generated builder chain to match.
     fn is_empty_text_jsx(child: &serde_json::Value) -> bool {
-        // Must be a JSX element with tag "Text"
-        // and no text of its own. Check
-        // `opening.name.Ident == "Text"`.
-        let jsx = child.get("jsx");
-        let Some(jsx) = jsx else {
-            return false;
-        };
-        let opening = jsx.get("opening");
-        let Some(opening) = opening else {
-            return false;
-        };
-        let name = opening.get("name");
-        let Some(name) = name else {
-            return false;
-        };
-        let ident = name.get("Ident");
-        let Some(ident) = ident else {
-            return false;
-        };
-        if ident.as_str() != Some("Text") {
-            return false;
-        }
-        // Children should be a single
-        // `{Expr: {String: ""}}` expression.
-        let children = jsx
-            .get("children")
-            .and_then(|c| c.as_array())
-            .map(|a| a.as_slice())
-            .unwrap_or(&[]);
-        if children.len() != 1 {
-            return false;
-        }
-        // The child may be wrapped in
-        // `{Expr: {String: ""}}` or
-        // `{kind: "Expr", value: ...}`.
+        let jsx = match child.get("jsx") { Some(j) => j, None => return false };
+        Self::is_jsx_tag_text(&jsx).and_then(|| Self::is_jsx_single_child_empty(&jsx)).unwrap_or(false)
+    }
+    fn is_jsx_tag_text(jsx: &serde_json::Value) -> Option<()> {
+        let opening = jsx.get("opening")?; let name = opening.get("name")?; let ident = name.get("Ident")?; if ident.as_str() != Some("Text") { return None; } Some(())
+    }
+    fn is_jsx_single_child_empty(jsx: &serde_json::Value) -> Option<bool> {
+        let children = jsx.get("children").and_then(|c| c.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
+        if children.len() != 1 { return Some(false); }
         let c = &children[0];
-        if let Some(s) = c
-            .get("Expr")
-            .and_then(|e| e.get("String"))
-            .and_then(|s| s.as_str())
-        {
-            return s.is_empty();
-        }
-        // Alt shape: `{kind: "Expr", value: {String: ""}}`
-        if c.get("kind").and_then(|k| k.as_str()) == Some("Expr") {
-            if let Some(s) = c
-                .get("value")
-                .and_then(|v| v.get("String"))
-                .and_then(|s| s.as_str())
-            {
-                return s.is_empty();
-            }
-        }
-        false
+        if let Some(s) = c.get("Expr").and_then(|e| e.get("String")).and_then(|s| s.as_str()) { return Some(s.is_empty()); }
+        if c.get("kind").and_then(|k| k.as_str()) == Some("Expr") { if let Some(s) = c.get("value").and_then(|v| v.get("String")).and_then(|s| s.as_str()) { return Some(s.is_empty()); } }
+        Some(false)
     }
 
     /// Is this a `<Text>{''}</Text>` (empty
@@ -1618,30 +1396,13 @@ pub(crate) mod jsx {
     /// Map a `color` JSON value to a
     /// `runts_ink::Color` token.
     fn color_token(value: &serde_json::Value) -> Option<TokenStream> {
-        let name = value.as_str()?;
-        let tok = match name.to_ascii_lowercase().as_str() {
-            "default" => quote! { runts_ink::Color::Default },
-            "black" => quote! { runts_ink::Color::Black },
-            "red" => quote! { runts_ink::Color::Red },
-            "green" => quote! { runts_ink::Color::Green },
-            "yellow" => quote! { runts_ink::Color::Yellow },
-            "blue" => quote! { runts_ink::Color::Blue },
-            "magenta" => quote! { runts_ink::Color::Magenta },
-            "cyan" => quote! { runts_ink::Color::Cyan },
-            "white" => quote! { runts_ink::Color::White },
-            "gray" | "grey" => quote! { runts_ink::Color::Gray },
-            "blackbright" => quote! { runts_ink::Color::BrightBlack },
-            "redbright" => quote! { runts_ink::Color::BrightRed },
-            "greenbright" => quote! { runts_ink::Color::BrightGreen },
-            "yellowbright" => quote! { runts_ink::Color::BrightYellow },
-            "bluebright" => quote! { runts_ink::Color::BrightBlue },
-            "magentabright" => quote! { runts_ink::Color::BrightMagenta },
-            "cyanbright" => quote! { runts_ink::Color::BrightCyan },
-            "whitebright" => quote! { runts_ink::Color::BrightWhite },
-            _ => return None,
-        };
-        Some(tok)
+        let name = value.as_str()?.to_ascii_lowercase();
+        Self::color_basic_1(&name).or_else(|| Self::color_basic_2(&name)).or_else(|| Self::color_bright_1(&name)).or_else(|| Self::color_bright_2(&name))
     }
+    fn color_basic_1(name: &str) -> Option<TokenStream> { match name { "default" => Some(quote! { runts_ink::Color::Default }), "black" => Some(quote! { runts_ink::Color::Black }), "red" => Some(quote! { runts_ink::Color::Red }), "green" => Some(quote! { runts_ink::Color::Green }), _ => None } }
+    fn color_basic_2(name: &str) -> Option<TokenStream> { match name { "yellow" => Some(quote! { runts_ink::Color::Yellow }), "blue" => Some(quote! { runts_ink::Color::Blue }), "magenta" => Some(quote! { runts_ink::Color::Magenta }), "cyan" => Some(quote! { runts_ink::Color::Cyan }), "white" => Some(quote! { runts_ink::Color::White }), "gray" | "grey" => Some(quote! { runts_ink::Color::Gray }), _ => None } }
+    fn color_bright_1(name: &str) -> Option<TokenStream> { match name { "blackbright" => Some(quote! { runts_ink::Color::BrightBlack }), "redbright" => Some(quote! { runts_ink::Color::BrightRed }), "greenbright" => Some(quote! { runts_ink::Color::BrightGreen }), "yellowbright" => Some(quote! { runts_ink::Color::BrightYellow }), _ => None } }
+    fn color_bright_2(name: &str) -> Option<TokenStream> { match name { "bluebright" => Some(quote! { runts_ink::Color::BrightBlue }), "magentabright" => Some(quote! { runts_ink::Color::BrightMagenta }), "cyanbright" => Some(quote! { runts_ink::Color::BrightCyan }), "whitebright" => Some(quote! { runts_ink::Color::BrightWhite }), _ => None } }
 
     /// Map a `wrap` JSON value to a
     /// `runts_ink::Wrap` token.
@@ -1884,41 +1645,13 @@ pub(crate) mod jsx {
     /// - `let value = true;`
     pub(crate) fn extract_var_declarations(body: &serde_json::Value) -> Vec<String> {
         let mut declarations = Vec::new();
-        
-        // Handle when body is directly an array of statements
-        if let Some(stmt_arr) = body.as_array() {
-            for stmt in stmt_arr {
-                // Check if this statement is a Block
-                if stmt.get("kind").and_then(|k| k.as_str()) == Some("Block") {
-                    // Recursively extract from block's statements
-                    if let Some(block_stmts) = stmt.get("stmts").and_then(|s| s.as_array()) {
-                        for block_stmt in block_stmts {
-                            if let Some(decl) = extract_stmt_var_decl(block_stmt) {
-                                declarations.push(decl);
-                            }
-                        }
-                    }
-                } else {
-                    // Direct statement
-                    if let Some(decl) = extract_stmt_var_decl(stmt) {
-                        declarations.push(decl);
-                    }
-                }
-            }
-        }
-        
-        // Handle when body is a Block object directly
-        if let Some(stmts) = body.get("Block").and_then(|b| b.get("stmts")) {
-            if let Some(stmt_arr) = stmts.as_array() {
-                for stmt in stmt_arr {
-                    if let Some(decl) = extract_stmt_var_decl(stmt) {
-                        declarations.push(decl);
-                    }
-                }
-            }
-        }
-        
+        if let Some(stmt_arr) = body.as_array() { for stmt in stmt_arr { Self::extract_var_from_stmt(stmt, &mut declarations); } }
+        if let Some(stmts) = body.get("Block").and_then(|b| b.get("stmts")) { if let Some(stmt_arr) = stmts.as_array() { for stmt in stmt_arr { if let Some(decl) = Self::extract_stmt_var_decl(stmt) { declarations.push(decl); } } } }
         declarations
+    }
+    fn extract_var_from_stmt(stmt: &serde_json::Value, declarations: &mut Vec<String>) {
+        if stmt.get("kind").and_then(|k| k.as_str()) == Some("Block") { if let Some(block_stmts) = stmt.get("stmts").and_then(|s| s.as_array()) { for block_stmt in block_stmts { if let Some(decl) = Self::extract_stmt_var_decl(block_stmt) { declarations.push(decl); } } } }
+        else if let Some(decl) = Self::extract_stmt_var_decl(stmt) { declarations.push(decl); }
     }
 
     /// Extract variable declaration from a single statement.
@@ -1979,81 +1712,17 @@ pub(crate) mod jsx {
 
     /// Convert a HIR expression value to Rust code.
     pub(crate) fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
-        // Handle direct values
-        if let Some(n) = value.as_f64() {
-            // Check if it's an integer
-            if n.fract() == 0.0 {
-                return Some(format!("{}i32", n as i64));
-            }
-            return Some(format!("{}f64", n));
-        }
-        
-        // Handle object values with specific keys
+        if let Some(n) = value.as_f64() { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
         let map = value.as_object()?;
-        
-        // String: {"String": "value"}
-        if let Some(s) = map.get("String").and_then(|v| v.as_str()) {
-            return Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")));
-        }
-        
-        // Number: {"Number": 1.5} or {"Number": {"0": 1.5}}
-        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) {
-            if n.fract() == 0.0 {
-                return Some(format!("{}i32", n as i64));
-            }
-            return Some(format!("{}f64", n));
-        }
-        if let Some(n) = map.get("Number").and_then(|v| v.as_object()).and_then(|o| o.get("0")).and_then(|v| v.as_f64()) {
-            if n.fract() == 0.0 {
-                return Some(format!("{}i32", n as i64));
-            }
-            return Some(format!("{}f64", n));
-        }
-        
-        // Bool: {"Bool": true}
-        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) {
-            return Some(b.to_string());
-        }
-        
-        // Ident: {"Ident": {"name": "x"}}
-        if let Some(ident) = map.get("Ident").and_then(|v| v.as_object()) {
-            if let Some(name) = ident.get("name").and_then(|v| v.as_str()) {
-                return Some(name.to_string());
-            }
-        }
-        
-        // Handle nested Expr wrapper
-        if let Some(inner) = map.get("Expr") {
-            return expr_value_to_rust(inner);
-        }
-        
-        // Cond: ternary expression {Cond: {test, consequent, alternate}}
-        if let Some(cond) = map.get("Cond") {
-            let test = expr_value_to_rust(cond.get("test")?)?;
-            let consequent = expr_value_to_rust(cond.get("consequent")?)?;
-            let alternate = expr_value_to_rust(cond.get("alternate")?)?;
-            return Some(format!("({} ? {} : {})", test, consequent, alternate));
-        }
-        
-        // Array: {"Array": {"elems": [...]}}
-        if let Some(arr) = map.get("Array") {
-            let elems = arr.get("elems")?.as_array()?;
-            let mut parts = Vec::new();
-            for elem in elems {
-                if let Some(rust_val) = expr_value_to_rust(elem) {
-                    parts.push(rust_val);
-                }
-            }
-            return Some(format!("[{}]", parts.join(", ")));
-        }
-        
-        // Object literal: handle as JSON
-        let is_object = map.contains_key("Object");
-        if is_object {
-            let json = serde_json::to_string(value).ok()?;
-            return Some(format!("serde_json::json!({})", json));
-        }
-        
+        if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))); }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
+        if let Some(n) = map.get("Number").and_then(|v| v.as_object()).and_then(|o| o.get("0")).and_then(|v| v.as_f64()) { return Some(if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }); }
+        if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(b.to_string()); }
+        if let Some(ident) = map.get("Ident").and_then(|v| v.as_object()) { if let Some(name) = ident.get("name").and_then(|v| v.as_str()) { return Some(name.to_string()); } }
+        if let Some(inner) = map.get("Expr") { return Self::expr_value_to_rust(inner); }
+        if let Some(cond) = map.get("Cond") { let test = Self::expr_value_to_rust(cond.get("test")?)?; let consequent = Self::expr_value_to_rust(cond.get("consequent")?)?; let alternate = Self::expr_value_to_rust(cond.get("alternate")?)?; return Some(format!("({} ? {} : {})", test, consequent, alternate)); }
+        if let Some(arr) = map.get("Array") { let elems = arr.get("elems")?.as_array()?; let parts: Vec<String> = elems.iter().filter_map(|e| Self::expr_value_to_rust(e)).collect(); return Some(format!("[{}]", parts.join(", "))); }
+        if map.contains_key("Object") { let json = serde_json::to_string(value).ok()?; return Some(format!("serde_json::json!({})", json)); }
         None
     }
 
