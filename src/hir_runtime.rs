@@ -114,16 +114,29 @@ impl Interpreter {
     /// Build an interpreter from a parsed HIR module.
     pub fn new(module: &hir::Module) -> Self {
         let mut default_export = None;
+        let mut scope = std::collections::HashMap::new();
+        
         for item in &module.items {
             if let hir::ModuleItem::Decl(hir::Decl::Function(f)) = item {
+                // Store all functions in scope
+                let param_names: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
+                let body = if let Some(block) = &f.body {
+                    Box::new(hir::Expr::Block(block.0.clone()))
+                } else {
+                    Box::new(hir::Expr::Undefined)
+                };
+                scope.insert(f.name.clone(), Value::Function { params: param_names, body });
+                
+                // Set default export (prefer "App")
                 if f.name == "App" || default_export.is_none() {
                     default_export = Some(f.clone());
                 }
             }
         }
+        
         Self {
             default_export,
-            scope: std::collections::HashMap::new(),
+            scope,
             hook_slots: Vec::new(),
             hook_idx: 0,
         }
@@ -227,15 +240,42 @@ impl Interpreter {
                     Ok(Value::Undefined)
                 } else {
                     // Property access: obj.property
-                    if let Value::Object(map) = obj_val {
-                        if let Expr::Ident { name } = property.as_ref() {
-                            if let Some(val) = map.get(name) {
+                    if let Expr::Ident { name: prop_name } = property.as_ref() {
+                        // Handle array properties
+                        if let Value::Array(arr) = &obj_val {
+                            match prop_name.as_str() {
+                                "length" => return Ok(Value::Number(arr.len() as f64)),
+                                _ => {}
+                            }
+                        }
+                        // Handle object properties
+                        if let Value::Object(map) = &obj_val {
+                            if let Some(val) = map.get(prop_name) {
                                 return Ok(val.clone());
                             }
                         }
                     }
                     Ok(Value::Undefined)
                 }
+            }
+            Expr::StaticMember { obj, property } => {
+                // Property/method access: obj.property
+                let obj_val = self.eval_expr(obj)?;
+                // Handle array properties
+                if let Value::Array(arr) = &obj_val {
+                    match property.as_str() {
+                        "length" => return Ok(Value::Number(arr.len() as f64)),
+                        _ => {}
+                    }
+                }
+                // Handle object properties
+                if let Value::Object(map) = &obj_val {
+                    if let Some(val) = map.get(property) {
+                        return Ok(val.clone());
+                    }
+                }
+                // For unknown properties, return undefined
+                Ok(Value::Undefined)
             }
             Expr::Ident { name } => {
                 // Look up the variable in scope first.
@@ -262,7 +302,21 @@ impl Interpreter {
                 }
                 Ok(Value::Array(vals))
             }
-            Expr::Object { .. } => Ok(Value::Undefined),
+            Expr::Object { members } => {
+                let mut map = std::collections::HashMap::new();
+                for member in members {
+                    if let hir::ObjectMemberExpr { prop: hir::ObjectProp::Init { key, value, .. } } = member {
+                        let key_str = match key {
+                            hir::PropKey::Str(s) => s.clone(),
+                            hir::PropKey::Num(n) => n.to_string(),
+                            hir::PropKey::Computed { .. } => continue,
+                        };
+                        let val = self.eval_expr(&value)?;
+                        map.insert(key_str, val);
+                    }
+                }
+                Ok(Value::Object(map))
+            }
             Expr::ArrowFunction { params, body, .. } => {
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 Ok(Value::Function {
@@ -432,6 +486,27 @@ impl Interpreter {
                 }
                 Ok(last)
             }
+            // Ternary operator: condition ? consequent : alternate
+            Expr::Cond { test, consequent, alternate } => {
+                let test_val = self.eval_expr(test)?;
+                let is_truthy = match test_val {
+                    Value::Boolean(b) => b,
+                    Value::Number(n) => n != 0.0,
+                    Value::String(s) => !s.is_empty(),
+                    Value::Array(arr) => !arr.is_empty(),
+                    Value::VNode(_) => true,
+                    Value::Object(_) => true,
+                    Value::Function { .. } => true,
+                    Value::HookState { .. } => true,
+                    Value::HookSetter { .. } => true,
+                    Value::Null | Value::Undefined => false,
+                };
+                if is_truthy {
+                    self.eval_expr(consequent)
+                } else {
+                    self.eval_expr(alternate)
+                }
+            }
             Expr::Call { callee, arguments } => {
                 // Hook calls are identified by the callee name so that
                 // we can persist state across renders.
@@ -442,6 +517,27 @@ impl Interpreter {
                         _ => {}
                     }
                 }
+
+                // Handle method calls on arrays: items.map(...)
+                // Support both Member (computed) and StaticMember patterns
+                match callee.as_ref() {
+                    Expr::Member { obj, property, computed: false } => {
+                        let obj_val = self.eval_expr(obj)?;
+                        if let Expr::Ident { name: method_name } = property.as_ref() {
+                            if let Value::Array(arr) = obj_val {
+                                return self.call_array_method(arr.clone(), method_name, arguments);
+                            }
+                        }
+                    }
+                    Expr::StaticMember { obj, property } => {
+                        let obj_val = self.eval_expr(obj)?;
+                        if let Value::Array(arr) = obj_val {
+                            return self.call_array_method(arr.clone(), property, arguments);
+                        }
+                    }
+                    _ => {}
+                }
+
                 let callee_val = self.eval_expr(callee)?;
                 match callee_val {
                     Value::HookSetter { idx } => {
@@ -514,6 +610,15 @@ impl Interpreter {
                 }
                 t.content = text_content;
                 Ok(Value::VNode(VNode::from(t)))
+            }
+            // Support Fragment syntax <>
+            "Fragment" | "React.Fragment" | "" => {
+                // Fragment just returns its children as a Fragment VNode
+                let mut vnodes = Vec::new();
+                for child in children {
+                    vnodes.push(child.clone().into());
+                }
+                Ok(Value::VNode(VNode(VNodeContent::Fragment(vnodes))))
             }
             "Newline" | "newline" => {
                 Ok(Value::VNode(VNode::from(Newline::new())))
@@ -668,7 +773,59 @@ impl Interpreter {
                     }
                 }
             }
-            _ => Err(RuntimeError(format!("unknown JSX tag: {tag_name}"))),
+            // Check if this is a user-defined function component
+            _ => {
+                // Look up the tag name in the scope to see if it's a function
+                if let Some(Value::Function { params, body }) = self.scope.get(&tag_name).cloned() {
+                    // Build the arguments for the function call
+                    // Props become an object passed as the first argument
+                    let mut prop_obj = std::collections::HashMap::new();
+                    for (k, v) in props {
+                        prop_obj.insert(k, v);
+                    }
+                    
+                    // Also pass children as props.children
+                    let children_vnode: Vec<VNode> = children.iter().map(|c| c.clone().into()).collect();
+                    prop_obj.insert("children".to_string(), Value::Array(children_vnode.iter().map(|v| Value::VNode(v.clone())).collect()));
+                    
+                    // Create args array with the props object
+                    let args = vec![Value::Object(prop_obj)];
+                    
+                    // Build scope with props bound to parameter names
+                    let saved_scope = self.scope.clone();
+                    let saved_hook_idx = self.hook_idx;
+                    
+                    // For each parameter, extract the value from props
+                    for (i, param) in params.iter().enumerate() {
+                        if param.is_empty() {
+                            // This is a destructured parameter - extract props from the object
+                            if let Some(Value::Object(props_map)) = args.get(i) {
+                                // The props object contains the destructured fields
+                                for (key, val) in props_map {
+                                    self.scope.insert(key.clone(), val.clone());
+                                }
+                            }
+                        } else {
+                            // Simple parameter
+                            let val = args.get(i).cloned().unwrap_or(Value::Undefined);
+                            self.scope.insert(param.clone(), val);
+                        }
+                    }
+                    
+                    // Evaluate the function body
+                    let result = self.eval_expr(&body);
+                    
+                    // Restore scope
+                    self.scope = saved_scope;
+                    self.hook_idx = saved_hook_idx;
+                    
+                    // If the result is not a VNode, wrap it
+                    result.map(|v| v.into())
+                } else {
+                    // Unknown component, return empty
+                    Ok(Value::VNode(VNode::from(Spacer::new())))
+                }
+            }
         }
     }
 
@@ -685,7 +842,18 @@ impl Interpreter {
                     }
                 }
                 hir::JSXChild::Expr(e) => {
-                    out.push(self.eval_expr(e)?);
+                    let val = self.eval_expr(e)?;
+                    // Handle ternary operator result
+                    match val {
+                        // Flatten arrays (from .map() etc.) into individual elements
+                        Value::Array(arr) => out.extend(arr),
+                        // Skip falsy values (from && operator)
+                        Value::Boolean(false) | Value::Null | Value::Undefined => {}
+                        // Skip empty static content
+                        Value::VNode(v) if vnode_to_string(&v).trim().is_empty() => {}
+                        // Add the value
+                        _ => out.push(val),
+                    }
                 }
                 hir::JSXChild::JSX(j) => {
                     out.push(self.eval_jsx(j)?);
@@ -800,6 +968,259 @@ impl Interpreter {
             }
         }
         Ok(Value::Undefined)
+    }
+
+    fn call_array_method(
+        &mut self,
+        arr: Vec<Value>,
+        method_name: &str,
+        arguments: &[hir::Expr],
+    ) -> Result<Value, RuntimeError> {
+        match method_name {
+            "map" => {
+                // Get the callback function
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    let mut results = Vec::new();
+                    for (i, item) in arr.iter().enumerate() {
+                        // Build args array for the callback
+                        let mut args = vec![item.clone()];
+                        args.push(Value::Number(i as f64));
+                        let result = self.call_function(&params, &body, &args);
+                        results.push(result?);
+                    }
+                    Ok(Value::Array(results))
+                } else {
+                    Ok(Value::Array(vec![]))
+                }
+            }
+            "filter" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    let mut results = Vec::new();
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(1) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        let result = self.call_function(&params, &body, &[])?;
+                        self.scope = saved_scope;
+                        if let Value::Boolean(true) = result {
+                            results.push(item.clone());
+                        }
+                    }
+                    Ok(Value::Array(results))
+                } else {
+                    Ok(Value::Array(arr))
+                }
+            }
+            "reduce" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                let initial = if let Some(expr) = arguments.get(1) {
+                    self.eval_expr(expr)?
+                } else {
+                    Value::Undefined
+                };
+
+                if let Value::Function { params, body } = callback {
+                    let mut accumulator = initial;
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), accumulator);
+                        self.scope.insert(params.get(1).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(2) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        accumulator = self.call_function(&params, &body, &[])?;
+                        self.scope = saved_scope;
+                    }
+                    Ok(accumulator)
+                } else {
+                    Ok(initial)
+                }
+            }
+            "forEach" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(1) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        let _ = self.call_function(&params, &body, &[]);
+                        self.scope = saved_scope;
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            "find" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(1) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        let result = self.call_function(&params, &body, &[])?;
+                        self.scope = saved_scope;
+                        if let Value::Boolean(true) = result {
+                            return Ok(item.clone());
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            "some" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(1) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        let result = self.call_function(&params, &body, &[])?;
+                        self.scope = saved_scope;
+                        if let Value::Boolean(true) = result {
+                            return Ok(Value::Boolean(true));
+                        }
+                    }
+                }
+                Ok(Value::Boolean(false))
+            }
+            "every" => {
+                let callback = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                if let Value::Function { params, body } = callback {
+                    for (i, item) in arr.iter().enumerate() {
+                        let saved_scope = self.scope.clone();
+                        self.scope.insert(params.get(0).cloned().unwrap_or_default(), item.clone());
+                        if let Some(idx_param) = params.get(1) {
+                            self.scope.insert(idx_param.clone(), Value::Number(i as f64));
+                        }
+                        let result = self.call_function(&params, &body, &[])?;
+                        self.scope = saved_scope;
+                        if let Value::Boolean(false) = result {
+                            return Ok(Value::Boolean(false));
+                        }
+                    }
+                }
+                Ok(Value::Boolean(true))
+            }
+            "includes" => {
+                let search = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                for item in &arr {
+                    if item == &search {
+                        return Ok(Value::Boolean(true));
+                    }
+                }
+                Ok(Value::Boolean(false))
+            }
+            "indexOf" => {
+                let search = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined);
+
+                for (i, item) in arr.iter().enumerate() {
+                    if item == &search {
+                        return Ok(Value::Number(i as f64));
+                    }
+                }
+                Ok(Value::Number(-1.0))
+            }
+            "length" => {
+                Ok(Value::Number(arr.len() as f64))
+            }
+            "join" => {
+                let sep = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .map(|v| value_to_string(&v))
+                    .unwrap_or_default();
+                let parts: Vec<String> = arr.iter().map(value_to_string).collect();
+                Ok(Value::String(parts.join(&sep)))
+            }
+            "slice" => {
+                let start = arguments
+                    .first()
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .and_then(|v| {
+                        if let Value::Number(n) = v {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                let end = arguments
+                    .get(1)
+                    .map(|a| self.eval_expr(a))
+                    .transpose()?
+                    .and_then(|v| {
+                        if let Value::Number(n) = v {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(arr.len());
+                let start = start.min(arr.len());
+                let end = end.min(arr.len());
+                Ok(Value::Array(arr[start..end].to_vec()))
+            }
+            "push" | "pop" | "shift" | "unshift" | "reverse" | "sort" => {
+                // These would mutate, which we don't support in pure functional context
+                // Just return the array as-is
+                Ok(Value::Array(arr))
+            }
+            _ => Ok(Value::Undefined),
+        }
     }
 
     fn call_function(
