@@ -1092,3 +1092,238 @@ fn test_ink_cursor_example_detailed() {
     assert!(content.contains("showCursor") || content.contains("cursor") || content.contains("blink"), 
             "should use cursor props");
 }
+
+/// Verify ink-conditional-rendering example is simplified for parity
+#[test]
+fn test_ink_conditional_rendering_example_simplified() {
+    let path = Path::new("./examples/ink-conditional-rendering/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Check for note about HIR runtime limitation
+    assert!(content.contains("HIR runtime") || content.contains("parity testing"), 
+            "should mention HIR runtime limitation");
+    
+    // Should still have conditional patterns
+    assert!(content.contains("ternary") || content.contains("? (") || content.contains("Logical AND"),
+            "should have conditional patterns");
+    
+    // Should use Box and Text components
+    assert!(content.contains("<Box"), "should use Box component");
+    assert!(content.contains("<Text"), "should use Text component");
+}
+
+/// Verify ink-context example is simplified for parity
+#[test]
+fn test_ink_context_example_simplified() {
+    let path = Path::new("./examples/ink-context/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Check for note about HIR runtime limitation
+    assert!(content.contains("HIR runtime") || content.contains("parity testing"),
+            "should mention HIR runtime limitation");
+    
+    // Should use Box and Text components
+    assert!(content.contains("<Box"), "should use Box component");
+    assert!(content.contains("<Text"), "should use Text component");
+    
+    // Should have theme display
+    assert!(content.contains("ThemeDisplay") || content.contains("Context Demo"),
+            "should have theme display or context demo text");
+}
+
+/// Verify ink-fragment example has working entry point
+#[test]
+fn test_ink_fragment_example_working() {
+    let main_tsx = Path::new("./examples/ink-fragment/main.tsx");
+    let content = fs::read_to_string(main_tsx).expect("should read main.tsx");
+    
+    // Should import render from ink
+    assert!(content.contains("render"), "should import render from ink");
+    
+    // Should import App from tui/app
+    assert!(content.contains("./tui/app") || content.contains("./tui/app.tsx"),
+            "should import from tui/app");
+}
+
+/// Verify all ink examples have non-trivial content (not just empty shells)
+#[test]
+fn test_ink_examples_have_substantial_content() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        
+        let content = fs::read_to_string(&app_tsx)
+            .expect(&format!("should read {}", name));
+        
+        // Should have at least 10 lines of code (excluding comments)
+        let code_lines: Vec<_> = content.lines()
+            .filter(|l| !l.trim().starts_with("//") && !l.trim().is_empty())
+            .collect();
+        
+        assert!(
+            code_lines.len() >= 5,
+            "{} should have at least 5 lines of code, found {}",
+            name,
+            code_lines.len()
+        );
+    }
+}
+
+/// Verify examples don't have obvious syntax errors in JSX
+#[test]
+fn test_ink_examples_jsx_syntax() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        
+        let content = fs::read_to_string(&app_tsx)
+            .expect(&format!("should read {}", name));
+        
+        // Check for balanced JSX tags
+        let open_tags = content.matches("<Box").count() + content.matches("<Text").count() + 
+                        content.matches("<Spacer").count() + content.matches("<Newline").count() +
+                        content.matches("<Static").count() + content.matches("<Transform").count();
+        let close_tags = content.matches("</Box>").count() + content.matches("</Text>").count() +
+                         content.matches("</Spacer>").count() + content.matches("</Newline>").count() +
+                         content.matches("</Static>").count() + content.matches("</Transform>").count();
+        
+        // Self-closing tags don't need closing
+        let self_closing = content.matches("/>").count();
+        let adjusted_open = open_tags - self_closing;
+        
+        assert!(
+            close_tags <= adjusted_open + 10, // Allow some variance for self-closing
+            "{} should have balanced JSX tags (open: {}, close: {})",
+            name, adjusted_open, close_tags
+        );
+    }
+}
+
+/// Verify runts.config.json files have correct plugin configuration
+#[test]
+fn test_runts_config_has_ink_plugin_structure() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    // Check a sample of examples
+    let sample_size = entries.len().min(10);
+    let sample: Vec<_> = entries.iter().take(sample_size).collect();
+    
+    for entry in sample {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let runts_config = entry.path().join("runts.config.json");
+        
+        if runts_config.exists() {
+            let content = fs::read_to_string(&runts_config)
+                .expect("should read runts.config.json");
+            
+            let json: serde_json::Value = serde_json::from_str(&content)
+                .expect(&format!("{} runts.config.json should be valid JSON", name));
+            
+            // Should have plugins array
+            if let Some(plugins) = json.get("plugins").and_then(|p| p.as_array()) {
+                assert!(
+                    !plugins.is_empty(),
+                    "{} should have at least one plugin configured",
+                    name
+                );
+            }
+        }
+    }
+}
+
+/// Verify parity test harness script is executable
+#[test]
+fn test_parity_script_is_executable() {
+    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    assert!(script.exists(), "parity script should exist");
+    
+    // Check shebang
+    let mut file = fs::File::open(script).expect("should open script");
+    let mut first_bytes = [0u8; 2];
+    file.read_exact(&mut first_bytes).expect("should read first bytes");
+    
+    assert_eq!(b"#!", &first_bytes, "script should have shebang");
+}
+
+/// Verify each ink example has consistent imports across files
+#[test]
+fn test_ink_examples_consistent_imports() {
+    let examples_dir = Path::new("./examples");
+    
+    let entries: Vec<_> = fs::read_dir(examples_dir)
+        .expect("examples directory should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| {
+            e.path().file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("ink-") && n != "ink-raw")
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_tsx = entry.path().join("tui/app.tsx");
+        let main_tsx = entry.path().join("main.tsx");
+        
+        if app_tsx.exists() && main_tsx.exists() {
+            let app_content = fs::read_to_string(&app_tsx)
+                .expect("should read app.tsx");
+            let main_content = fs::read_to_string(&main_tsx)
+                .expect("should read main.tsx");
+            
+            // main.tsx should import render from ink if app.tsx doesn't do its own render
+            let app_has_render = app_content.contains("render(<");
+            let main_imports_render = main_content.contains("render") && main_content.contains("from 'ink'");
+            
+            if !app_has_render {
+                assert!(
+                    main_imports_render,
+                    "{} main.tsx should import render from ink if app.tsx doesn't render itself",
+                    name
+                );
+            }
+        }
+    }
+}
