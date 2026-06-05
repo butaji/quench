@@ -96,18 +96,28 @@ fn parse_color(s: &str) -> Color {
     if s.starts_with('#') && s.len() == 7 {
         return Color::Hex(s.to_string());
     }
-    match s {
-        "black" => Color::Black,
-        "red" => Color::Red,
-        "green" => Color::Green,
-        "yellow" => Color::Yellow,
-        "blue" => Color::Blue,
-        "magenta" => Color::Magenta,
-        "cyan" => Color::Cyan,
-        "white" => Color::White,
-        "gray" | "grey" => Color::Gray,
-        _ => Color::Default,
+    color_by_name(s)
+}
+
+fn color_by_name(s: &str) -> Color {
+    const PAIRS: &[(&str, Color)] = &[
+        ("black", Color::Black),
+        ("red", Color::Red),
+        ("green", Color::Green),
+        ("yellow", Color::Yellow),
+        ("blue", Color::Blue),
+        ("magenta", Color::Magenta),
+        ("cyan", Color::Cyan),
+        ("white", Color::White),
+        ("gray", Color::Gray),
+        ("grey", Color::Gray),
+    ];
+    for (name, color) in PAIRS {
+        if *name == s {
+            return *color;
+        }
     }
+    Color::Default
 }
 
 /// Get a u16 from a JS number. Returns 0 if not a
@@ -132,12 +142,12 @@ fn vnode_to_js<'js>(ctx: &Ctx<'js>, node: &VNode) -> JsResult<Value<'js>> {
     let inner = Object::new(ctx.clone())?;
     match &node.0 {
         VNodeContent::Box(b) => { vnode_to_js_box(ctx, &obj, &inner, b)?; }
-        VNodeContent::Text(t) => { let props = Object::new(ctx.clone())?; inner.set("__content", &t.content)?; inner.set("__props", props)?; obj.set("Text", inner)?; }
-        VNodeContent::Newline(_) => { obj.set("Newline", inner)?; }
-        VNodeContent::Spacer(_) => { obj.set("Spacer", inner)?; }
-        VNodeContent::Static(s) => { let children = vnode_to_js_children(ctx, &s.children)?; inner.set("__children", children)?; obj.set("Static", inner)?; }
-        VNodeContent::Transform(t) => { let child = vnode_to_js(ctx, &t.child)?; inner.set("__child", child)?; obj.set("Transform", inner)?; }
-        VNodeContent::Fragment(c) => { let arr = vnode_to_js_children(ctx, c)?; inner.set("__children", arr)?; obj.set("Fragment", inner)?; }
+        VNodeContent::Text(t) => { let props = Object::new(ctx.clone())?; inner.set("__content", &t.content)?; inner.set("__props", props)?; obj.set("Text", inner.clone())?; }
+        VNodeContent::Newline(_) => { obj.set("Newline", inner.clone())?; }
+        VNodeContent::Spacer(_) => { obj.set("Spacer", inner.clone())?; }
+        VNodeContent::Static(s) => { let children = vnode_to_js_children(ctx, &s.children)?; inner.set("__children", children)?; obj.set("Static", inner.clone())?; }
+        VNodeContent::Transform(t) => { let child = vnode_to_js(ctx, &t.child)?; inner.set("__child", child)?; obj.set("Transform", inner.clone())?; }
+        VNodeContent::Fragment(c) => { let arr = vnode_to_js_children(ctx, c)?; inner.set("__children", arr)?; obj.set("Fragment", inner.clone())?; }
     }
     Ok(Value::from_object(obj))
 }
@@ -147,14 +157,35 @@ fn vnode_to_js_box<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, inner: &Object<'js>, 
     let children = vnode_to_js_children(ctx, &b.children)?;
     inner.set("__children", children)?;
     inner.set("__props", props)?;
-    obj.set("Box", inner)?;
+    obj.set("Box", inner.clone())?;
     Ok(())
 }
 fn set_box_props<'js>(props: &Object<'js>, b: &InkBox) -> JsResult<()> { props.set("flexDirection", box_flex_dir(b))?; props.set("justifyContent", box_justify(b))?; props.set("alignItems", box_align(b))?; box_border(props, b)?; box_padding(props, b); Ok(()) }
 fn box_flex_dir(b: &InkBox) -> &'static str { match b.flex_direction { FlexDirection::Row => "row", FlexDirection::Column => "column", FlexDirection::RowReverse => "row-reverse", FlexDirection::ColumnReverse => "column-reverse" } }
 fn box_justify(b: &InkBox) -> &'static str { match b.justify_content { JustifyContent::FlexStart => "flex-start", JustifyContent::FlexEnd => "flex-end", JustifyContent::Center => "center", JustifyContent::SpaceBetween => "space-between", JustifyContent::SpaceAround => "space-around", JustifyContent::SpaceEvenly => "space-evenly" } }
 fn box_align(b: &InkBox) -> &'static str { match b.align_items { AlignItems::FlexStart => "flex-start", AlignItems::FlexEnd => "flex-end", AlignItems::Center => "center", AlignItems::Stretch => "stretch", AlignItems::Baseline => "baseline" } }
-fn box_border<'js>(props: &Object<'js>, b: &InkBox) -> JsResult<()> { if b.borders.top || b.borders.right || b.borders.bottom || b.borders.left { props.set("borderStyle", match b.border_style { BorderStyle::Single => "single", BorderStyle::Double => "double", BorderStyle::Round => "round", BorderStyle::Bold => "bold", BorderStyle::Classic => "classic" })?; } Ok(()) }
+fn box_border<'js>(props: &Object<'js>, b: &InkBox) -> JsResult<()> {
+    if has_any_border(&b.borders) {
+        let style = border_style_name(b.border_style);
+        props.set("borderStyle", style)?;
+    }
+    Ok(())
+}
+
+fn has_any_border(b: &crate::style::Borders) -> bool {
+    b.top || b.right || b.bottom || b.left
+}
+
+fn border_style_name(style: BorderStyle) -> &'static str {
+    const STYLES: [(BorderStyle, &str); 5] = [
+        (BorderStyle::Single, "single"),
+        (BorderStyle::Double, "double"),
+        (BorderStyle::Round, "round"),
+        (BorderStyle::Bold, "bold"),
+        (BorderStyle::Classic, "classic"),
+    ];
+    STYLES.iter().find(|(s, _)| *s == style).map(|(_, n)| *n).unwrap_or("single")
+}
 fn box_padding<'js>(props: &Object<'js>, b: &InkBox) { if let Some(p) = b.padding_left { let _ = props.set("paddingX", p as i32); } if let Some(p) = b.padding_top { let _ = props.set("paddingY", p as i32); } }
 fn vnode_to_js_children<'js>(ctx: &Ctx<'js>, children: &[VNode]) -> JsResult<Object<'js>> {
     let arr = Object::new(ctx.clone())?;
