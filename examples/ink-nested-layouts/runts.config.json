@@ -1,0 +1,4 @@
+{
+  "plugin": "ratatui",
+  "entry": "./tui/app.tsx"
+}

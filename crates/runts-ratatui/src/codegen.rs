@@ -407,6 +407,11 @@ pub(crate) mod jsx {
                         "text": text,
                     })))
                 }
+                "JSX" => {
+                    // Direct JSX: {kind: "JSX", opening: ..., children: [...]}
+                    // Return as-is so child_to_vnode can handle it
+                    Some(Some(child.clone()))
+                }
                 "Expr" => Some(Some(child.clone())),
                 "Spread" => Some(None),
                 _ => Some(None),
@@ -1878,7 +1883,7 @@ pub(crate) mod jsx {
     /// - `const count = 0;`
     /// - `const name = "hello";`
     /// - `let value = true;`
-    fn extract_var_declarations(body: &serde_json::Value) -> Vec<String> {
+    pub(crate) fn extract_var_declarations(body: &serde_json::Value) -> Vec<String> {
         let mut declarations = Vec::new();
         
         // Handle when body is directly an array of statements
@@ -1974,7 +1979,7 @@ pub(crate) mod jsx {
     }
 
     /// Convert a HIR expression value to Rust code.
-    fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
+    pub(crate) fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
         // Handle direct values
         if let Some(n) = value.as_f64() {
             // Check if it's an integer
@@ -2023,6 +2028,14 @@ pub(crate) mod jsx {
             return expr_value_to_rust(inner);
         }
         
+        // Cond: ternary expression {Cond: {test, consequent, alternate}}
+        if let Some(cond) = map.get("Cond") {
+            let test = expr_value_to_rust(cond.get("test")?)?;
+            let consequent = expr_value_to_rust(cond.get("consequent")?)?;
+            let alternate = expr_value_to_rust(cond.get("alternate")?)?;
+            return Some(format!("({} ? {} : {})", test, consequent, alternate));
+        }
+        
         // Array: {"Array": {"elems": [...]}}
         if let Some(arr) = map.get("Array") {
             let elems = arr.get("elems")?.as_array()?;
@@ -2067,7 +2080,7 @@ pub(crate) mod jsx {
     /// Extract JSX from a HIR declaration item along with variable declarations.
     /// Returns (JSX, var_declarations) where var_declarations is a list of
     /// Rust variable declarations extracted from the function body.
-    fn extract_jsx_from_function_with_vars(item: &serde_json::Value) -> Option<(serde_json::Value, Vec<String>)> {
+    pub(crate) fn extract_jsx_from_function_with_vars(item: &serde_json::Value) -> Option<(serde_json::Value, Vec<String>)> {
         let decl = item.get("Decl")?;
         let func = decl.get("Function")?;
         let body = func.get("body")?;
