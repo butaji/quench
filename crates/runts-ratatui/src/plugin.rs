@@ -134,18 +134,49 @@ impl Plugin for RatatuiPlugin {
     }
 
     fn dev_run_once(&self, state: &mut dyn DevState) -> Result<DevAction, PluginError> {
-        let st_any = state.as_any_mut();
-        let st = match st_any.downcast_mut::<RatatuiDevState>() { Some(s) => s, None => return Err(PluginError::codegen("ratatui", "dev", "unexpected DevState type")) };
+        let st = self.get_ratatui_state(state)?;
         if !st.dirty { return Ok(DevAction::Continue); }
         st.dirty = false;
         let Some(module_path) = st.module.clone() else { return Ok(DevAction::Continue) };
-        let source = match std::fs::read_to_string(&module_path) { Ok(s) => s, Err(e) => { eprintln!("HIR render: read {module_path} failed: {e}"); return Ok(DevAction::Continue); }};
+        let source = self.read_module_source(&module_path)?;
+        self.run_hir_render(&source)
+    }
+
+    fn get_ratatui_state(&self, state: &mut dyn DevState) -> Result<&mut RatatuiDevState, PluginError> {
+        let st_any = state.as_any_mut();
+        match st_any.downcast_mut::<RatatuiDevState>() {
+            Some(s) => Ok(s),
+            None => Err(PluginError::codegen("ratatui", "dev", "unexpected DevState type")),
+        }
+    }
+
+    fn read_module_source(&self, module_path: &std::path::Path) -> Result<String, DevAction> {
+        match std::fs::read_to_string(module_path) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                eprintln!("HIR render: read {module_path} failed: {e}");
+                Err(DevAction::Continue)
+            }
+        }
+    }
+
+    fn run_hir_render(&self, source: &str) -> Result<DevAction, PluginError> {
         let tmp = std::env::temp_dir().join("runts-hir-render.tsx");
         let _ = std::fs::write(&tmp, source.as_bytes());
         let runts_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("runts"));
         match std::process::Command::new(&runts_bin).arg("hir-render").arg(&tmp).output() {
-            Ok(out) => { let _ = std::io::stdout().write_all(&out.stdout); let _ = std::io::stdout().flush(); if !out.stderr.is_empty() { eprint!("{}", String::from_utf8_lossy(&out.stderr)); } Ok(DevAction::Continue) }
-            Err(e) => { eprintln!("hir-render failed: {e}"); Ok(DevAction::Continue) }
+            Ok(out) => {
+                let _ = std::io::stdout().write_all(&out.stdout);
+                let _ = std::io::stdout().flush();
+                if !out.stderr.is_empty() {
+                    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+                }
+                Ok(DevAction::Continue)
+            }
+            Err(e) => {
+                eprintln!("hir-render failed: {e}");
+                Ok(DevAction::Continue)
+            }
         }
     }
 
