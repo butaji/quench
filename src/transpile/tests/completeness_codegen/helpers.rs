@@ -958,8 +958,7 @@
         let module = parser.parse_tsx(source).expect("parse failed");
         assert!(!module.items.is_empty(), "Module should have items");
         let cg = QuoteCodegen::default();
-        let mut all_tokens = TokenStream::new();
-        for item in &module.items { match item { ModuleItem::Decl(Decl::Function(func)) => { all_tokens.extend(cg.gen_fn(func)); } ModuleItem::Stmt(stmt) => { if let Some(stmt_tokens) = cg.gen_stmt(stmt) { all_tokens.extend(stmt_tokens); } } _ => {} } }
+        let all_tokens = gen_tokens_for_module(&cg, &module);
         let output = all_tokens.to_string();
         assert!(!output.is_empty(), "Generated Rust code should not be empty");
         let null_count = output.matches("Value::Null").count();
@@ -967,4 +966,18 @@
         assert!(output.contains("fn test"), "Should contain function declaration");
         assert!(output.contains("for"), "Should contain for loop");
         assert!(output.contains("match") || output.contains("catch"), "Should contain try-catch or match");
+    }
+
+    fn gen_tokens_for_module(cg: &QuoteCodegen, module: &Module) -> TokenStream {
+        use crate::transpile::hir::quote_codegen::ModuleItem;
+        use crate::transpile::hir::Decl;
+        let mut all_tokens = TokenStream::new();
+        for item in &module.items {
+            match item {
+                ModuleItem::Decl(Decl::Function(func)) => { all_tokens.extend(cg.gen_fn(func)); }
+                ModuleItem::Stmt(stmt) => { if let Some(stmt_tokens) = cg.gen_stmt(stmt) { all_tokens.extend(stmt_tokens); } }
+                _ => {}
+            }
+        }
+        all_tokens
     }
