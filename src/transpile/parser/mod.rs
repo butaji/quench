@@ -99,23 +99,22 @@ fn analyze_expr_passes(expr: &mut hir::Expr) {
             }
         }
         hir::Expr::Call { callee, .. } => analyze_expr_passes(callee),
-        hir::Expr::Member { .. } => analyze_member_expr(expr),
-        hir::Expr::StaticMember { .. } => analyze_static_member_expr(expr),
+        hir::Expr::Member { .. } | hir::Expr::StaticMember { .. } => analyze_member_static_expr(expr),
         hir::Expr::JSX(ref mut jsx) => analyze_jsx_spreads(jsx),
         _ => {}
     }
 }
 
-fn analyze_member_expr(expr: &mut hir::Expr) {
-    if let hir::Expr::Member { obj, property, .. } = expr {
-        analyze_expr_passes(obj);
-        analyze_expr_passes(property);
-    }
-}
-
-fn analyze_static_member_expr(expr: &mut hir::Expr) {
-    if let hir::Expr::StaticMember { obj, .. } = expr {
-        analyze_expr_passes(obj);
+fn analyze_member_static_expr(expr: &mut hir::Expr) {
+    match expr {
+        hir::Expr::Member { obj, property, .. } => {
+            analyze_expr_passes(obj);
+            analyze_expr_passes(property);
+        }
+        hir::Expr::StaticMember { obj, .. } => {
+            analyze_expr_passes(obj);
+        }
+        _ => {}
     }
 }
 

@@ -91,21 +91,60 @@ impl EffectAnalyzer {
         use Stmt as S;
         match stmt {
             S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
+            S::While { test, body } | S::DoWhile { body, test } => self.analyze_cf_while(stmt),
+            S::For { .. } | S::ForIn { .. } | S::ForOf { .. } => self.analyze_cf_loop(stmt),
+            S::Return { .. } | S::Throw { .. } => self.analyze_cf_control(stmt),
+            S::Try { .. } | S::Switch { .. } => self.analyze_cf_complex(stmt),
+            S::Break { .. } | S::Continue { .. } | S::Labeled { .. } | S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
+            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
+            S::With { obj, body } => self.analyze_with(obj, body),
+            S::Block { stmts } | S::Expr { expr: _ } => self.analyze_cf_block(stmt),
+        }
+    }
+
+    fn analyze_cf_while(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::While { test, body } => self.analyze_while(test, body),
+            S::DoWhile { body, test } => self.analyze_dowhile(body, test),
+            _ => {}
+        }
+    }
+
+    fn analyze_cf_loop(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::For { init, test, update, body } => self.analyze_for(init, test, update, body),
             S::ForIn { left, right, body } => self.analyze_forin(left, right, body),
             S::ForOf { left, right, body, is_await } => self.analyze_forof(left, right, body, *is_await),
-            S::DoWhile { body, test } => self.analyze_dowhile(body, test),
-            S::Return { arg } => self.analyze_return(arg),
+            _ => {}
+        }
+    }
+
+    fn analyze_cf_complex(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
             S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
-            S::Break { .. } | S::Continue { .. } | S::Labeled { .. } => {}
-            S::With { obj, body } => self.analyze_with(obj, body),
+            _ => {}
+        }
+    }
+
+    fn analyze_cf_block(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
             S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
+            _ => {}
+        }
+    }
+
+    fn analyze_cf_control(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
+            S::Return { arg } => self.analyze_return(arg),
             S::Throw { arg } => self.analyze_throw(arg),
-            S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
-            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
+            _ => {}
         }
     }
 
