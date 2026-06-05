@@ -12,7 +12,7 @@
 
 use crate::transpile::hir;
 use runts_ink::{
-    BorderStyle, Box as InkBox, Color, Newline, Spacer, Text as InkText, VNode,
+    AlignSelf, BorderStyle, Box as InkBox, Color, Display, Newline, Overflow, Spacer, Text as InkText, VNode,
     VNodeContent,
 };
 
@@ -37,6 +37,19 @@ pub enum Value {
     Null,
     Undefined,
     VNode(VNode),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Null, Value::Null) => true,
+            (Value::Undefined, Value::Undefined) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -66,6 +79,8 @@ impl From<Value> for VNode {
 /// The HIR interpreter.
 pub struct Interpreter {
     default_export: Option<hir::FunctionDecl>,
+    /// Simple scope for local variables.
+    scope: std::collections::HashMap<String, Value>,
 }
 
 impl Interpreter {
@@ -79,21 +94,21 @@ impl Interpreter {
                 }
             }
         }
-        Self { default_export }
+        Self { default_export, scope: std::collections::HashMap::new() }
     }
 
     /// Run the default export and return the VNode.
-    pub fn run(&self) -> Result<VNode, RuntimeError> {
+    pub fn run(&mut self) -> Result<VNode, RuntimeError> {
         let func = self
             .default_export
-            .as_ref()
+            .clone()
             .ok_or_else(|| RuntimeError("no default export found".into()))?;
-        let val = self.eval_function_body(func)?;
+        let val = self.eval_function_body(&func)?;
         val.as_vnode()
     }
 
     fn eval_function_body(
-        &self,
+        &mut self,
         func: &hir::FunctionDecl,
     ) -> Result<Value, RuntimeError> {
         let mut last_val = Value::Undefined;
@@ -108,7 +123,7 @@ impl Interpreter {
     }
 
     fn eval_stmt(
-        &self,
+        &mut self,
         stmt: &hir::Stmt,
     ) -> Result<Option<Value>, RuntimeError> {
         use hir::Stmt;
@@ -124,6 +139,21 @@ impl Interpreter {
                 self.eval_expr(expr)?;
                 Ok(None)
             }
+            Stmt::Variable(var) => {
+                if let Some(init) = &var.init {
+                    let val = self.eval_expr(init)?;
+                    self.scope.insert(var.name.clone(), val);
+                }
+                Ok(None)
+            }
+            Stmt::Block { stmts } => {
+                for stmt in stmts {
+                    if let Some(val) = self.eval_stmt(stmt)? {
+                        return Ok(Some(val));
+                    }
+                }
+                Ok(None)
+            }
             _ => Ok(None),
         }
     }
@@ -136,6 +166,21 @@ impl Interpreter {
             Expr::Boolean(b) => Ok(Value::Boolean(*b)),
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
+            Expr::Ident { name } => {
+                // Look up the variable in scope first.
+                if let Some(val) = self.scope.get(name) {
+                    Ok(val.clone())
+                } else {
+                    // Fall back to literal values.
+                    match name.as_str() {
+                        "true" => Ok(Value::Boolean(true)),
+                        "false" => Ok(Value::Boolean(false)),
+                        "undefined" => Ok(Value::Undefined),
+                        "null" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    }
+                }
+            }
             Expr::JSX(jsx) => self.eval_jsx(jsx),
             Expr::Array { elems } => {
                 let mut vals = Vec::new();
@@ -159,6 +204,134 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::String(s))
+            }
+            Expr::Cond { test, consequent, alternate } => {
+                let test_val = self.eval_expr(test)?;
+                let is_true = match test_val {
+                    Value::Boolean(b) => b,
+                    Value::String(s) => !s.is_empty(),
+                    Value::Number(n) => n != 0.0,
+                    Value::Null | Value::Undefined => false,
+                    _ => false,
+                };
+                if is_true {
+                    self.eval_expr(consequent)
+                } else {
+                    self.eval_expr(alternate)
+                }
+            }
+            Expr::Logical { op, left, right } => {
+                let left_val = self.eval_expr(left)?;
+                match op {
+                    hir::LogicalOp::And => {
+                        let is_true = match &left_val {
+                            Value::Boolean(b) => *b,
+                            Value::String(s) => !s.is_empty(),
+                            Value::Number(n) => *n != 0.0,
+                            Value::Null | Value::Undefined => false,
+                            _ => false,
+                        };
+                        if is_true {
+                            self.eval_expr(right)
+                        } else {
+                            Ok(left_val)
+                        }
+                    }
+                    hir::LogicalOp::Or => {
+                        let is_true = match &left_val {
+                            Value::Boolean(b) => *b,
+                            Value::String(s) => !s.is_empty(),
+                            Value::Number(n) => *n != 0.0,
+                            Value::Null | Value::Undefined => false,
+                            _ => false,
+                        };
+                        if is_true {
+                            Ok(left_val)
+                        } else {
+                            self.eval_expr(right)
+                        }
+                    }
+                    hir::LogicalOp::NullishCoalescing => {
+                        // ?? operator: return right if left is null/undefined
+                        match &left_val {
+                            Value::Null | Value::Undefined => self.eval_expr(right),
+                            _ => Ok(left_val),
+                        }
+                    }
+                }
+            }
+            Expr::Bin { op, left, right } => {
+                let left_val = self.eval_expr(left)?;
+                let right_val = self.eval_expr(right)?;
+                match op {
+                    hir::BinaryOp::Add => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Number(l + r))
+                        } else {
+                            Ok(Value::String(format!("{}{}", value_to_string(&left_val), value_to_string(&right_val))))
+                        }
+                    }
+                    hir::BinaryOp::Sub => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Number(l - r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Mul => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Number(l * r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Div => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            if r != 0.0 {
+                                Ok(Value::Number(l / r))
+                            } else {
+                                Ok(Value::Number(f64::INFINITY))
+                            }
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Eq | hir::BinaryOp::StrictEq => {
+                        Ok(Value::Boolean(left_val == right_val))
+                    }
+                    hir::BinaryOp::Neq | hir::BinaryOp::StrictNeq => {
+                        Ok(Value::Boolean(left_val != right_val))
+                    }
+                    hir::BinaryOp::Lt => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Boolean(l < r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Lte => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Boolean(l <= r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Gt => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Boolean(l > r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    hir::BinaryOp::Gte => {
+                        if let (Value::Number(l), Value::Number(r)) = (left_val.clone(), right_val.clone()) {
+                            Ok(Value::Boolean(l >= r))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
+                    }
+                    _ => Ok(Value::Undefined),
+                }
             }
             _ => Ok(Value::Undefined),
         }
@@ -198,9 +371,13 @@ impl Interpreter {
                 for (k, v) in props {
                     apply_text_prop(&mut t, &k, &v);
                 }
-                for child in children {
-                    if let Value::VNode(v) = child {
-                        text_content.push_str(&vnode_to_string(&v));
+                for child in &children {
+                    match child {
+                        Value::VNode(v) => text_content.push_str(&vnode_to_string(v)),
+                        Value::String(s) => text_content.push_str(s),
+                        Value::Number(n) => text_content.push_str(&n.to_string()),
+                        Value::Boolean(b) => text_content.push_str(&b.to_string()),
+                        _ => {}
                     }
                 }
                 t.content = text_content;
@@ -211,6 +388,43 @@ impl Interpreter {
             }
             "Spacer" | "spacer" => {
                 Ok(Value::VNode(VNode::from(Spacer::new())))
+            }
+            "Transform" | "transform" => {
+                // Ink's Transform applies a string function to child's text.
+                // Transform: uppercase, lowercase, reverse
+                use runts_ink::Transform as InkTransform;
+                let transform_type = props.iter()
+                    .find(|(k, _)| *k == "children")
+                    .and_then(|(_, v)| {
+                        if let Value::String(s) = v {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                
+                if let Some(Value::VNode(v)) = children.first() {
+                    let content = vnode_to_string(&v);
+                    let transformed = match transform_type.as_str() {
+                        "uppercase" => content.to_uppercase(),
+                        "lowercase" => content.to_lowercase(),
+                        "reverse" => content.chars().rev().collect(),
+                        _ => content,
+                    };
+                    Ok(Value::VNode(VNode::from(InkText::new(transformed))))
+                } else {
+                    Ok(Value::VNode(VNode::from(InkText::new(""))))
+                }
+            }
+            "Static" | "static" => {
+                // Static renders children once without re-render on parent updates
+                // For HIR runtime, just render the first child
+                if let Some(child) = children.first() {
+                    Ok(child.clone())
+                } else {
+                    Ok(Value::VNode(VNode::from(Spacer::new())))
+                }
             }
             _ => Err(RuntimeError(format!("unknown JSX tag: {tag_name}"))),
         }
@@ -302,6 +516,19 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
                     "flex-end" => AlignItems::FlexEnd,
                     "center" => AlignItems::Center,
                     "stretch" => AlignItems::Stretch,
+                    _ => return,
+                };
+            }
+        }
+        "alignSelf" => {
+            if let Value::String(s) = val {
+                b.align_self = match s.as_str() {
+                    "flex-start" => AlignSelf::FlexStart,
+                    "flex-end" => AlignSelf::FlexEnd,
+                    "center" => AlignSelf::Center,
+                    "stretch" => AlignSelf::Stretch,
+                    "baseline" => AlignSelf::Baseline,
+                    "auto" => AlignSelf::Auto,
                     _ => return,
                 };
             }
@@ -436,6 +663,38 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
                 *b = std::mem::take(b).border_style(bs);
             }
         }
+        "borderColor" => {
+            if let Value::String(s) = val {
+                b.border_color = Some(parse_color(s));
+            }
+        }
+        "display" => {
+            if let Value::String(s) = val {
+                b.display = match s.as_str() {
+                    "none" => Display::None,
+                    "flex" | "grid" => Display::Flex,
+                    _ => Display::default(),
+                };
+            }
+        }
+        "overflowX" => {
+            if let Value::String(s) = val {
+                b.overflow_x = match s.as_str() {
+                    "hidden" => Overflow::Hidden,
+                    "visible" | "scroll" => Overflow::Visible,
+                    _ => Overflow::Visible,
+                };
+            }
+        }
+        "overflowY" => {
+            if let Value::String(s) = val {
+                b.overflow_y = match s.as_str() {
+                    "hidden" => Overflow::Hidden,
+                    "visible" | "scroll" => Overflow::Visible,
+                    _ => Overflow::Visible,
+                };
+            }
+        }
         _ => {}
     }
 }
@@ -508,12 +767,12 @@ fn parse_color(s: &str) -> Color {
 /// replacement for the rquickjs JS-eval approach.
 pub fn render_tsx(
     source: &str,
-    cols: u16,
-    rows: u16,
+    _cols: u16,
+    _rows: u16,
 ) -> Result<String, RuntimeError> {
     let module = crate::transpile::parser::parse_source(source, true)
         .map_err(|e| RuntimeError(format!("parse error: {e:?}")))?;
-    let interp = Interpreter::new(&module);
+    let mut interp = Interpreter::new(&module);
     let vnode = interp.run()?;
     runts_ink::render_to_string(vnode, runts_ink::RenderOptions::new())
         .map_err(|e| RuntimeError(format!("render error: {e:?}")))
@@ -523,20 +782,23 @@ pub fn render_tsx(
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // Simple component tests
+    // =========================================================================
+
     #[test]
     fn test_simple_text() {
         let src = r#"
 export default function App() {
-  #[test]
-  fn test_ink_aligned() {
-      let src = std::fs::read_to_string("examples/ink-aligned/tui/app.tsx").unwrap();
-      let result = render_tsx(&src, 80, 24);
-      eprintln!("RESULT: {result:?}");
-      match result {
-          Ok(output) => eprintln!("OUTPUT: {output}"),
-          Err(e) => eprintln!("ERROR: {e:?}"),
-      }
-  }
+  return <Text>Hello</Text>;
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Hello"), "output missing Hello: {output}");
+    }
+
     #[test]
     fn test_box_with_text() {
         let src = r#"
@@ -554,6 +816,307 @@ export default function App() {
     }
 
     #[test]
+    fn test_spacer() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box flexDirection="column">
+      <Text>First</Text>
+      <Spacer />
+      <Text>Last</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("First") && output.contains("Last"), "output missing text: {output}");
+    }
+
+    // =========================================================================
+    // Layout tests
+    // =========================================================================
+
+    #[test]
+    fn test_flex_direction_row() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box flexDirection="row">
+      <Text>A</Text>
+      <Text>B</Text>
+      <Text>C</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("A") && output.contains("B") && output.contains("C"));
+    }
+
+    #[test]
+    fn test_flex_direction_column() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box flexDirection="column">
+      <Text>Top</Text>
+      <Text>Bottom</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Top") && output.contains("Bottom"));
+    }
+
+    #[test]
+    fn test_justify_content_space_between() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box justifyContent="space-between" width={40}>
+      <Text>L</Text>
+      <Text>R</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_align_items_center() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box alignItems="center" height={5}>
+      <Text>C</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Border tests
+    // =========================================================================
+
+    #[test]
+    fn test_border_single() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box borderStyle="single" paddingX={1}>
+      <Text>Bordered</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Bordered"));
+        // Single border uses │ characters
+        assert!(output.contains('│'), "missing vertical border: {output}");
+    }
+
+    #[test]
+    fn test_border_round() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box borderStyle="round" paddingX={1}>
+      <Text>Rounded</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        // Round border uses ╭ ╮ ╰ ╯ characters
+        assert!(output.contains('╭') || output.contains('╰'), "missing round border: {output}");
+    }
+
+    #[test]
+    fn test_border_bold() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box borderStyle="bold" paddingX={1}>
+      <Text>Bold</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Padding/Margin tests
+    // =========================================================================
+
+    #[test]
+    fn test_padding() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box padding={2}>
+      <Text>Padded</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_padding_xy() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box paddingX={3} paddingY={1}>
+      <Text>XY Padding</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Dimension tests
+    // =========================================================================
+
+    #[test]
+    fn test_fixed_width() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box width={20}>
+      <Text>Fixed</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_fixed_height() {
+        let src = r#"
+export default function App() {
+  return (
+    <Box height={5}>
+      <Text>Height</Text>
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Color tests
+    // =========================================================================
+
+    #[test]
+    fn test_text_color() {
+        let src = r#"
+export default function App() {
+  return <Text color="green">Green</Text>;
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Green"));
+    }
+
+    #[test]
+    fn test_text_background_color() {
+        let src = r#"
+export default function App() {
+  return <Text backgroundColor="blue">Blue BG</Text>;
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Conditional rendering tests
+    // =========================================================================
+
+    #[test]
+    fn test_conditional_true() {
+        let src = r#"
+export default function App() {
+  const show = true;
+  return (
+    <Box>
+      {show && <Text>Shown</Text>}
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_conditional_false() {
+        let src = r#"
+export default function App() {
+  const show = false;
+  return (
+    <Box>
+      {show && <Text>Hidden</Text>}
+    </Box>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ternary_conditional() {
+        let src = r#"
+export default function App() {
+  const active = false;
+  return (
+    <Text>
+      {active ? "ON" : "OFF"}
+    </Text>
+  );
+}
+"#;
+        let result = render_tsx(src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("OFF"), "expected OFF: {output}");
+    }
+
+    // =========================================================================
+    // Example file tests
+    // =========================================================================
+
+    #[test]
     fn test_ink_aligned() {
         let src = std::fs::read_to_string(
             "examples/ink-aligned/tui/app.tsx",
@@ -566,5 +1129,188 @@ export default function App() {
             output.contains("Centered"),
             "output missing Centered: {output}"
         );
+    }
+
+    #[test]
+    fn test_ink_border_color() {
+        let src = std::fs::read_to_string(
+            "examples/ink-border-color/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(
+            output.contains("green") || output.contains("border"),
+            "output missing green/border: {output}"
+        );
+    }
+
+    #[test]
+    fn test_ink_partial_border() {
+        let src = std::fs::read_to_string(
+            "examples/ink-partial-border/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_spacer() {
+        let src = std::fs::read_to_string(
+            "examples/ink-spacer/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("First") && output.contains("Right"));
+    }
+
+    #[test]
+    fn test_ink_text_props() {
+        let src = std::fs::read_to_string(
+            "examples/ink-text-props/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("HIGHLIGHTED"));
+    }
+
+    #[test]
+    fn test_ink_transform() {
+        let src = std::fs::read_to_string(
+            "examples/ink-transform/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("uppercase"));
+    }
+
+    #[test]
+    fn test_ink_display() {
+        let src = std::fs::read_to_string(
+            "examples/ink-display/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Visible"));
+    }
+
+    #[test]
+    fn test_ink_margin() {
+        let src = std::fs::read_to_string(
+            "examples/ink-margin/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_wrap() {
+        let src = std::fs::read_to_string(
+            "examples/ink-wrap/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_justify_space() {
+        let src = std::fs::read_to_string(
+            "examples/ink-justify-space/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Left") && output.contains("Right"));
+    }
+
+    #[test]
+    fn test_ink_flex_reverse() {
+        let src = std::fs::read_to_string(
+            "examples/ink-flex-reverse/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_dimensions() {
+        let src = std::fs::read_to_string(
+            "examples/ink-dimensions/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_static() {
+        let src = std::fs::read_to_string(
+            "examples/ink-static/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("OK"));
+    }
+
+    #[test]
+    fn test_ink_static_color() {
+        let src = std::fs::read_to_string(
+            "examples/ink-static-color/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ink_conditional() {
+        let src = std::fs::read_to_string(
+            "examples/ink-conditional/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("INACTIVE"), "expected INACTIVE: {output}");
+    }
+
+    #[test]
+    fn test_ink_counter() {
+        let src = std::fs::read_to_string(
+            "examples/ink-counter/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Ink Counter"), "output missing title: {output}");
+    }
+
+    #[test]
+    fn test_ink_bordered() {
+        let src = std::fs::read_to_string(
+            "examples/ink-bordered/tui/app.tsx",
+        )
+        .unwrap();
+        let result = render_tsx(&src, 80, 24);
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(output.contains("Bordered"));
     }
 }

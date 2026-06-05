@@ -1,37 +1,14 @@
-You are a senior Rust and compiler engineer. Design and implement "runts" — a
-CLI tool that provides full framework-level compatibility with
-Fresh[](https://fresh.deno.dev/docs/concepts/architecture) and Preact using only
-a well-defined efficient subset of TypeScript + TSX.
+You need to work with Ink examples/ to cover most of Ink features. If you feel like to add more examples, do it.
 
-Strict constraints:
+Examples can contain only ts/tsx, can not have any rust code.
 
-- Zero external JS runtimes (no V8, no Deno, no WebAssembly JS).
-- All code compiles to native Rust (TS/TSX -> High Level AST -> Rust source via in-mem codegen → binary).
-- Users write pure Fresh-style Preact TSX (islands, partial hydration, routes,
-  middleware, components, hooks) and it must work with minimal changes.
+runts -- to work with tx/tsx
 
-Requirements:
+runts plugins/crates -- glue to frameworks
 
-1. Precisely define the supported TS/TSX subset that covers 95%+ of real
-   Fresh/Preact usage (JSX/TSX, hooks, async components, signals if used,
-   File-based routing, etc.). List clear exclusions.
-2. Architecture: parser (TSX) → semantic analysis → Rust code generation that
-   emulates Preact runtime (virtual DOM or fine-grained reactivity via Rust
-   signals/leptos-style).
-3. Dev mode: extremely fast hot-reload with custom TS/TSX-subset runtime. No compilation in development mode. Only pur runtime execution with instant hot-reload on changes.
-4. Production: full static compilation to efficient native binary (use
-   Axum/Tower for server).
-5. Full islands architecture and partial hydration implemented in Rust.
-6. Any of those can have some alternative / more efficient clean solution
+You have to reach 100% look&feel parity on each Ink example in 3 enviroments:
+1) deno
+2) runts dev (quickjs or HIR runtime with hot-reload, not compilation at all)
+3) runts compile (ts/tsx transpile to rust in-memory, and then compile)
 
-Deliver:
-
-- Supported subset specification
-- Detailed transpilation and runtime strategy
-- Roadmap for MVP → full Fresh coverage
-- Performance targets and trade-offs
-
-Prioritize correctness and Fresh compatibility first, then performance. Be
-ruthless on keeping the TS subset minimal but sufficient.
-
-Git: task/scope=commit, no push.
+task=commit + push
