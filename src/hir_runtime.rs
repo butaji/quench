@@ -1985,47 +1985,42 @@ fn apply_box_prop(b: &mut InkBox, key: &str, val: &Value) {
 
 fn apply_text_prop(t: &mut InkText, key: &str, val: &Value) {
     match key {
-        "color" => {
-            if let Value::String(s) = val {
-                t.color = parse_color(s);
-            }
-        }
-        "backgroundColor" => {
-            if let Value::String(s) = val {
-                t.background_color = parse_color(s);
-            }
-        }
-        "bold" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.bold = true;
-            }
-        }
-        "italic" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.italic = true;
-            }
-        }
-        "underline" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.underline = true;
-            }
-        }
-        "strikethrough" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.strikethrough = true;
-            }
-        }
-        "inverse" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.inverse = true;
-            }
-        }
-        "dimColor" => {
-            if matches!(val, Value::Boolean(true)) {
-                t.dim_color = true;
-            }
-        }
+        "color" => apply_color_prop(t, val, |t, c| t.color = c),
+        "backgroundColor" => apply_color_prop(t, val, |t, c| t.background_color = c),
+        "bold" | "italic" | "underline" | "strikethrough" | "inverse" | "dimColor" => apply_style_prop(t, key, val),
         _ => {}
+    }
+}
+
+fn apply_style_prop(t: &mut InkText, key: &str, val: &Value) {
+    if matches!(val, Value::Boolean(true)) {
+        match key {
+            "bold" => t.bold = true,
+            "italic" => t.italic = true,
+            "underline" => t.underline = true,
+            "strikethrough" => t.strikethrough = true,
+            "inverse" => t.inverse = true,
+            "dimColor" => t.dim_color = true,
+            _ => {}
+        }
+    }
+}
+
+fn apply_color_prop<F>(t: &mut InkText, val: &Value, setter: F)
+where
+    F: FnOnce(&mut InkText, Color),
+{
+    if let Value::String(s) = val {
+        setter(t, parse_color(s));
+    }
+}
+
+fn apply_bool_prop<F>(t: &mut InkText, val: &Value, setter: F)
+where
+    F: FnOnce(&mut InkText),
+{
+    if matches!(val, Value::Boolean(true)) {
+        setter(t);
     }
 }
 
