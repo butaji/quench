@@ -324,12 +324,11 @@ fn test_ink_combined_hooks_structure() {
     let path = Path::new("./examples/ink-combined-hooks/tui/app.tsx");
     let content = fs::read_to_string(path).expect("should read file");
     
-    let (valid, _components, hooks) = parse_tsx_structure(&content);
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
     assert!(valid, "should be valid TSX");
-    assert!(hooks.contains(&"useInput"), "should use useInput hook");
-    assert!(hooks.contains(&"useApp"), "should use useApp hook");
-    // Should use useState (indicated by React.useState or useState import)
-    assert!(content.contains("useState"), "should use useState");
+    // This example now uses static values for parity testing
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(components.contains(&"Text"), "should use Text component");
 }
 
 /// Verify ink-progress-bar example structure
