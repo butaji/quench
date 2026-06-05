@@ -234,9 +234,17 @@ fn test_main_tsx_renders_component() {
         let content = fs::read_to_string(&main_tsx)
             .expect("should be able to read main.tsx");
         
+        // main.tsx can either:
+        // 1. Call render directly: render(<...>)
+        // 2. Import app and render: import App from './tui/app.tsx'; render(<App />);
+        // 3. Re-export app module: import './tui/app.tsx';
+        let has_render_call = content.contains("render(<");
+        let has_import = content.contains("import");
+        let has_from_app = content.contains("./tui/app") || content.contains("from './tui");
+        
         assert!(
-            content.contains("render(<"),
-            "main.tsx for {} should call render(<...)",
+            has_render_call || (has_import && has_from_app),
+            "main.tsx for {} should either call render(<...>) or import from './tui/app'",
             name
         );
     }
@@ -266,4 +274,126 @@ fn test_total_ink_examples_count() {
         "should have at least 35 ink examples, found {}",
         count
     );
+}
+
+/// Verify ink-text-styling example structure
+#[test]
+fn test_ink_text_styling_structure() {
+    let path = Path::new("./examples/ink-text-styling/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(components.contains(&"Text"), "should use Text component");
+    
+    // Check for text styling props
+    assert!(content.contains("bold"), "should use bold prop");
+    assert!(content.contains("italic"), "should use italic prop");
+    assert!(content.contains("underline"), "should use underline prop");
+    assert!(content.contains("strikethrough"), "should use strikethrough prop");
+    assert!(content.contains("dimColor"), "should use dimColor prop");
+    assert!(content.contains("inverse"), "should use inverse prop");
+}
+
+/// Verify ink-use-app example structure
+#[test]
+fn test_ink_use_app_structure() {
+    let path = Path::new("./examples/ink-use-app/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, _components, hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(hooks.contains(&"useApp"), "should use useApp hook");
+}
+
+/// Verify ink-focus-next example structure
+#[test]
+fn test_ink_focus_next_structure() {
+    let path = Path::new("./examples/ink-focus-next/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, _components, hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(hooks.contains(&"useFocus"), "should use useFocus hook");
+}
+
+/// Verify ink-combined-hooks example structure
+#[test]
+fn test_ink_combined_hooks_structure() {
+    let path = Path::new("./examples/ink-combined-hooks/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, _components, hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(hooks.contains(&"useInput"), "should use useInput hook");
+    assert!(hooks.contains(&"useWindowSize"), "should use useWindowSize hook");
+}
+
+/// Verify ink-progress-bar example structure
+#[test]
+fn test_ink_progress_bar_structure() {
+    let path = Path::new("./examples/ink-progress-bar/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(components.contains(&"Text"), "should use Text component");
+}
+
+/// Verify ink-dynamic-children example structure
+#[test]
+fn test_ink_dynamic_children_structure() {
+    let path = Path::new("./examples/ink-dynamic-children/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let (valid, components, _hooks) = parse_tsx_structure(&content);
+    assert!(valid, "should be valid TSX");
+    assert!(components.contains(&"Box"), "should use Box component");
+    assert!(content.contains(".map("), "should use array map");
+    assert!(content.contains("key="), "should have key props");
+}
+
+/// Verify new examples have proper deno.json
+#[test]
+fn test_new_examples_have_deno_json() {
+    let examples_dir = Path::new("./examples");
+    
+    let new_examples = vec![
+        "ink-text-styling",
+        "ink-use-app",
+        "ink-focus-next",
+        "ink-combined-hooks",
+        "ink-progress-bar",
+        "ink-dynamic-children",
+    ];
+    
+    for example in new_examples {
+        let path = examples_dir.join(example);
+        if path.exists() {
+            let deno_json = path.join("deno.json");
+            assert!(
+                deno_json.exists(),
+                "{} should have deno.json",
+                example
+            );
+            
+            let content = fs::read_to_string(&deno_json)
+                .expect("should be able to read deno.json");
+            
+            let json: serde_json::Value = serde_json::from_str(&content)
+                .expect("deno.json should be valid JSON");
+            
+            let imports = json.get("imports")
+                .and_then(|i| i.as_object())
+                .expect("deno.json should have imports");
+            
+            assert!(
+                imports.contains_key("ink"),
+                "{} deno.json should import ink",
+                example
+            );
+        }
+    }
 }

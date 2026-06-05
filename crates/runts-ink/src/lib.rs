@@ -15,7 +15,7 @@
 //!     │
 //!     ▼
 //! Reconciler Bridge (Rust)
-//!     ├─► Taffy tree (CSS flexbox layout)
+//!     ├─► Yoga tree (flexbox layout)
 //!     ├─► Event loop (crossterm)
 //!     └─► Ratatui render (immediate-mode widgets)
 //! ```
@@ -25,14 +25,14 @@
 //!
 //! 1. Hosts an `rquickjs` context running the React
 //!    reconciler + Ink's component code.
-//! 2. Maintains a `Taffy` flexbox tree. The JS reconciler
+//! 2. Maintains a `Yoga` flexbox tree. The JS reconciler
 //!    pushes "tree ops" (CreateNode / SetStyle / AddChild
 //!    / SetText) over an mpsc channel; the Rust render
 //!    loop applies them.
 //! 3. Polls `crossterm::event` for key / resize / paste
 //!    events and routes them to the JS `useInput` /
 //!    `useFocus` / `useApp` handlers.
-//! 4. Renders the Taffy-computed layout to Ratatui each
+//! 4. Renders the Yoga-computed layout to Ratatui each
 //!    frame.
 //!
 //! # Public API
@@ -61,7 +61,7 @@ pub mod js_bridge;
 mod props;
 mod render;
 mod style;
-mod taffy_bridge;
+
 mod vnode;
 
 pub use components::{

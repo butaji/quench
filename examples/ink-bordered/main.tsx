@@ -1,1 +1,4 @@
-// This example has its own main entry point that renders directly.
+// Bordered example entry point.
+// Note: This example uses render() directly in app.tsx.
+import './tui/app.tsx';
+

@@ -11,6 +11,7 @@ You have to reach 100% look&feel parity on each Ink example in 3 enviroments:
 2) runts dev (quickjs or HIR runtime with hot-reload, not compilation at all)
 3) runts compile (ts/tsx transpile to rust in-memory, and then compile)
 
+Parity test must be run by a single script, harnessing all the executing, tracing TUI/CLI apps output to files, and providing per symbol diff results.
 
 All the changes and complicated sections must be covered with unit-tests. High test coverage is a requirement.
 
