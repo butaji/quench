@@ -294,24 +294,68 @@ fn extract_content(input: &str) -> Vec<String> {
     results
 }
 
+/// Categorizes a failure based on error message patterns
 fn categorize_failure(error: &str) -> String {
     let error_lower = error.to_lowercase();
     
+    // Check for specific error patterns in priority order
     if error_lower.contains("timeout") {
-        "TIMEOUT".to_string()
-    } else if error_lower.contains("useeffectevent") || error_lower.contains("react 19") {
-        "REACT_VERSION".to_string()
-    } else if error_lower.contains("panic") {
-        "RUNTIME_PANIC".to_string()
-    } else if error_lower.contains("compile") {
-        "COMPILE_ERROR".to_string()
-    } else if error_lower.contains("raw mode") || error_lower.contains("terminal") || error_lower.contains("isatty") {
-        "TERMINAL".to_string()
-    } else if error_lower.contains("typeerror") || error_lower.contains("referenceerror") || error_lower.contains("syntaxerror") {
-        "JS_ERROR".to_string()
-    } else if error_lower.contains("layout") || error_lower.contains("style") || error_lower.contains("render") {
-        "LAYOUT_STYLE".to_string()
-    } else {
-        "RUNTIME".to_string()
+        return "TIMEOUT".to_string();
+    }
+    if error_lower.contains("useeffectevent") || error_lower.contains("react 19") {
+        return "REACT_VERSION".to_string();
+    }
+    if error_lower.contains("panic") {
+        return "RUNTIME_PANIC".to_string();
+    }
+    if error_lower.contains("compile") {
+        return "COMPILE_ERROR".to_string();
+    }
+    if error_lower.contains_terminal_issue() {
+        return "TERMINAL".to_string();
+    }
+    if error_lower.contains_js_error() {
+        return "JS_ERROR".to_string();
+    }
+    if error_lower.contains_layout_style_issue() {
+        return "LAYOUT_STYLE".to_string();
+    }
+    
+    "RUNTIME".to_string()
+}
+
+/// Check for terminal-related issues
+fn contains_terminal_issue(s: &str) -> bool {
+    s.contains("raw mode") || s.contains("terminal") || s.contains("isatty")
+}
+
+/// Check for JavaScript errors
+fn contains_js_error(s: &str) -> bool {
+    s.contains("typeerror") || s.contains("referenceerror") || s.contains("syntaxerror")
+}
+
+/// Check for layout/style issues
+fn contains_layout_style_issue(s: &str) -> bool {
+    s.contains("layout") || s.contains("style") || s.contains("render")
+}
+
+// Enable trait methods on String for cleaner code
+trait StringExt {
+    fn contains_terminal_issue(&self) -> bool;
+    fn contains_js_error(&self) -> bool;
+    fn contains_layout_style_issue(&self) -> bool;
+}
+
+impl StringExt for str {
+    fn contains_terminal_issue(&self) -> bool {
+        self.contains("raw mode") || self.contains("terminal") || self.contains("isatty")
+    }
+    
+    fn contains_js_error(&self) -> bool {
+        self.contains("typeerror") || self.contains("referenceerror") || self.contains("syntaxerror")
+    }
+    
+    fn contains_layout_style_issue(&self) -> bool {
+        self.contains("layout") || self.contains("style") || self.contains("render")
     }
 }
