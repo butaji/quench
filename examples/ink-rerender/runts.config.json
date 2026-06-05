@@ -1,3 +1,28 @@
 {
-  "plugins": [{"name": "ratatui"}]
+  "plugins": [{"name": "ratatui"}],
+  "server": {
+    "port": 8000,
+    "host": "127.0.0.1"
+  },
+  "build": {
+    "optimization": {
+      "lto": true,
+      "opt_level": "z"
+    },
+    "parallel": true,
+    "incremental": true
+  },
+  "islands": {
+    "hydration": "eager",
+    "serializer": "json"
+  },
+  "dev": {
+    "port": 8000,
+    "open": false,
+    "hmr": true
+  },
+  "watch": {
+    "ignored": ["**/node_modules/**", "**/target/**", "**/.git/**"],
+    "include": ["**/*.tsx", "**/*.ts"]
+  }
 }

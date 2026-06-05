@@ -270,10 +270,10 @@ fn test_total_ink_examples_count() {
         })
         .count();
     
-    // We should have at least 50 ink examples
+    // We should have at least 70 ink examples
     assert!(
-        count >= 50,
-        "should have at least 50 ink examples, found {}",
+        count >= 70,
+        "should have at least 70 ink examples, found {}",
         count
     );
 }
