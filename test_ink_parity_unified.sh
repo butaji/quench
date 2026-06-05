@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# INK PARITY TEST HARNESS - UNIFIED v1
+# INK PARITY TEST HARNESS - UNIFIED v2
 # =============================================================================
 # Tests 100% look&feel parity across 3 environments:
-#   1. deno        - Reference TypeScript runtime (npm:ink@5/7)
+#   1. deno        - Reference TypeScript runtime (npm:ink@7)
 #   2. runts dev   - HIR runtime (QuickJS/HIR interpreter with hot-reload)
 #   3. runts build - In-memory transpile + Rust compilation
 #
@@ -47,6 +47,7 @@ QUICK_MODE=false
 SPECIFIC_EXAMPLES=""
 VERBOSE=false
 PARALLEL_JOBS=4
+KEEP_RESULTS=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -65,8 +66,9 @@ while [[ $# -gt 0 ]]; do
             PARALLEL_JOBS=$1
             shift
             ;;
+        --keep) KEEP_RESULTS=true; shift ;;
         --help|-h)
-            echo "Usage: $0 [--quick] [--examples name...] [--verbose] [--jobs N]"
+            echo "Usage: $0 [--quick] [--examples name...] [--verbose] [--jobs N] [--keep]"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -74,7 +76,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Cleanup on exit
-cleanup() { rm -rf "$TMP_DIR" 2>/dev/null || true; }
+cleanup() {
+    if [[ "$KEEP_RESULTS" == "false" ]]; then
+        rm -rf "$TMP_DIR" 2>/dev/null || true
+    fi
+}
 trap cleanup EXIT
 
 mkdir -p "$RESULTS_DIR" "$LOG_DIR" "$DIFF_DIR"

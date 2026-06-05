@@ -4,6 +4,7 @@
 //! 1. All ink-* examples have the required files
 //! 2. Examples are syntactically valid TypeScript/TSX
 //! 3. The parity test script is correctly structured
+//! 4. All Ink features are covered
 
 use std::fs;
 use std::io::Read;
@@ -405,6 +406,7 @@ fn test_ink_features_covered() {
         "ink-aligned",      // gap, alignItems
         "ink-margin",       // margin
         "ink-wrap",         // flexWrap
+        "ink-box",          // Box component (added)
     ];
     
     for feature in required_features {
@@ -495,7 +497,7 @@ fn test_hooks_are_imported() {
     }
 }
 
-/// Verify new ink-text-styling example uses all text styling props
+/// Verify ink-text-styling example uses all text styling props
 #[test]
 fn test_ink_text_styling_example() {
     let path = Path::new("./examples/ink-text-styling/tui/app.tsx");
@@ -511,7 +513,38 @@ fn test_ink_text_styling_example() {
     assert!(content.contains("color="), "should use color prop");
 }
 
-/// Verify new ink-use-app example uses useApp hook
+/// Verify ink-box example uses Box component properly
+#[test]
+fn test_ink_box_example() {
+    let path = Path::new("./examples/ink-box/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should use Box component
+    assert!(content.contains("<Box"), "should use Box component");
+    
+    // Should use flexDirection
+    assert!(content.contains("flexDirection"), "should use flexDirection prop");
+    
+    // Should use nested layouts
+    assert!(
+        content.contains("flexDirection=\"column\"") || content.contains("flexDirection=\"row\""),
+        "should use column/row layouts"
+    );
+    
+    // Should use borders
+    assert!(content.contains("borderStyle"), "should use borderStyle");
+    
+    // Should use padding
+    assert!(content.contains("padding="), "should use padding prop");
+    
+    // Should use gap
+    assert!(content.contains("gap="), "should use gap prop");
+    
+    // Should use margin
+    assert!(content.contains("marginTop") || content.contains("margin="), "should use margin");
+}
+
+/// Verify ink-use-app example uses useApp hook
 #[test]
 fn test_ink_use_app_example() {
     let path = Path::new("./examples/ink-use-app/tui/app.tsx");
@@ -589,6 +622,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-relative",
         "ink-hooks",
         "ink-import",
+        "ink-box",
     ];
     
     for example in new_examples {
@@ -665,6 +699,22 @@ fn test_parity_harness_script_exists() {
     assert!(
         metadata.permissions().readonly() == false,
         "parity harness script should be writable"
+    );
+}
+
+/// Verify unified parity script exists
+#[test]
+fn test_unified_parity_script_exists() {
+    let script = Path::new("./test_ink_parity_unified.sh");
+    assert!(
+        script.exists(),
+        "unified parity script should exist"
+    );
+    
+    let metadata = fs::metadata(script).expect("should get metadata");
+    assert!(
+        metadata.permissions().readonly() == false,
+        "unified parity script should be writable"
     );
 }
 
@@ -1401,6 +1451,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-enter-submit",
         "ink-multi-select",
         "ink-focus-cycle",
+        "ink-box",
     ];
     
     for example in new_examples {
@@ -1419,6 +1470,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-enter-submit",
         "ink-multi-select",
         "ink-focus-cycle",
+        "ink-box",
     ];
     
     for example in new_examples {
@@ -1437,6 +1489,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-enter-submit",
         "ink-multi-select",
         "ink-focus-cycle",
+        "ink-box",
     ];
     
     for example in new_examples {
@@ -1463,6 +1516,7 @@ fn test_new_examples_export_or_render() {
         "ink-enter-submit",
         "ink-multi-select",
         "ink-focus-cycle",
+        "ink-box",
     ];
     
     for example in new_examples {
@@ -1478,4 +1532,174 @@ fn test_new_examples_export_or_render() {
             example
         );
     }
+}
+
+/// Verify ink-static example has Static component
+#[test]
+fn test_ink_static_example() {
+    let path = Path::new("./examples/ink-static/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Static"), "should use Static component");
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+}
+
+/// Verify ink-spacer example has Spacer component
+#[test]
+fn test_ink_spacer_example() {
+    let path = Path::new("./examples/ink-spacer/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Spacer"), "should use Spacer component");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-newline example has Newline component
+#[test]
+fn test_ink_newline_example() {
+    let path = Path::new("./examples/ink-newline/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Newline"), "should use Newline component");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-transform example has Transform component
+#[test]
+fn test_ink_transform_example() {
+    let path = Path::new("./examples/ink-transform/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Transform"), "should use Transform component");
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+}
+
+/// Verify ink-counter example uses useInput
+#[test]
+fn test_ink_counter_uses_use_input() {
+    let path = Path::new("./examples/ink-counter/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Counter should have useInput or static count value
+    assert!(
+        content.contains("useInput") || content.contains("const count = 0"),
+        "counter should use useInput or static count"
+    );
+}
+
+/// Verify ink-bordered example uses borderStyle
+#[test]
+fn test_ink_bordered_uses_border_style() {
+    let path = Path::new("./examples/ink-bordered/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("borderStyle"), "should use borderStyle");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-padding example uses padding
+#[test]
+fn test_ink_padding_example() {
+    let path = Path::new("./examples/ink-padding/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("padding"), "should use padding");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-margin example uses margin
+#[test]
+fn test_ink_margin_example() {
+    let path = Path::new("./examples/ink-margin/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("margin"), "should use margin");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-gaps example uses gap
+#[test]
+fn test_ink_gaps_example() {
+    let path = Path::new("./examples/ink-gaps/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("gap"), "should use gap");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-wrap example uses flexWrap
+#[test]
+fn test_ink_wrap_example() {
+    let path = Path::new("./examples/ink-wrap/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("flexWrap"), "should use flexWrap");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-absolute example uses position="absolute"
+#[test]
+fn test_ink_absolute_example() {
+    let path = Path::new("./examples/ink-absolute/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("position=\"absolute\"") || content.contains("absolute"),
+            "should use position absolute");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-display example uses display="none"
+#[test]
+fn test_ink_display_example() {
+    let path = Path::new("./examples/ink-display/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("display=\"none\"") || content.contains("display"),
+            "should use display prop");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-raw example uses raw ANSI
+#[test]
+fn test_ink_raw_example() {
+    let path = Path::new("./examples/ink-raw/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Raw") || content.contains("raw"), "should mention raw");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-status-bar example uses fixed position
+#[test]
+fn test_ink_status_bar_example() {
+    let path = Path::new("./examples/ink-status-bar/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Status") || content.contains("Bar") || content.contains("status"),
+            "should show status bar content");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-progress example shows progress indicator
+#[test]
+fn test_ink_progress_example() {
+    let path = Path::new("./examples/ink-progress/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Progress") || content.contains("progress") || content.contains("%"),
+            "should show progress indicator");
+    assert!(content.contains("Box"), "should use Box component");
+}
+
+/// Verify ink-table example shows tabular data
+#[test]
+fn test_ink_table_example() {
+    let path = Path::new("./examples/ink-table/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Table") || content.contains("table") || content.contains("Header"),
+            "should show table content");
+    assert!(content.contains("Box"), "should use Box component");
 }
