@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# INK PARITY TEST HARNESS - UNIFIED
+# INK PARITY TEST HARNESS - FINAL VERSION
 # =============================================================================
 # Tests 100% look&feel parity across 3 environments:
 #   1. deno        - Reference TypeScript runtime (npm:ink@7)
@@ -15,7 +15,11 @@
 # - High test coverage verification
 # - All complicated sections covered with unit tests
 #
-# Usage: ./test_ink_parity.sh [OPTIONS]
+# Known Issues:
+# - ink@7.0.5 has a compatibility issue with React 19 where useEffectEvent
+#   is not exported. This causes some examples to fail in Deno.
+#
+# Usage: ./test_ink_parity_final.sh [OPTIONS]
 # =============================================================================
 
 set -eo pipefail
@@ -28,13 +32,7 @@ RUNTS_RELEASE_BIN="$SCRIPT_DIR/target/release/runts"
 
 # Known Deno compatibility issues (React 19 / ink@7.0.5 useEffectEvent issue)
 # These examples fail in Deno due to a known ink@7.0.5 / React 19 incompatibility
-# ink-box, ink-margin fail in HIR due to terminal size constraints (output exceeds 80x24)
-# ink-cursor, ink-use-effect have low similarity but produce valid output
 KNOWN_DENO_FAILURES="ink-all-border-styles ink-all-text-styles ink-nested-layouts"
-
-# Known HIR/runtime issues - output differs but examples produce valid output
-# These have D-H similarity < 60% but are not actual failures
-KNOWN_HIR_ISSUES="ink-box ink-margin ink-cursor ink-use-effect ink-overflow"
 
 # Create temp directory
 TMP_DIR=$(mktemp -d "/tmp/runts_ink_parity_$$_XXXX")
@@ -79,7 +77,6 @@ run_with_timeout() {
         fi
         sleep 0.1
     done
-    wait "$pid" 2>/dev/null || true
     return 0
 }
 
@@ -271,11 +268,6 @@ get_known_issue_reason() {
     case "$name" in
         ink-all-border-styles) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
         ink-all-text-styles) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
-        ink-nested-layouts) echo "ink@7.0.5 uses useEffectEvent which is not in React 19" ;;
-        ink-box) echo "Terminal size constraint: output exceeds 80x24" ;;
-        ink-margin) echo "Terminal size constraint: output exceeds 80x24" ;;
-        ink-cursor) echo "Low similarity: output differs in whitespace handling" ;;
-        ink-use-effect) echo "Low similarity: output differs in hook rendering" ;;
         *) echo "Known compatibility issue" ;;
     esac
 }
@@ -489,12 +481,6 @@ test_example() {
     local passed=true
     local reason=""
     
-    # Check if this is a known HIR issue
-    local is_known_hir_issue=false
-    case " $KNOWN_HIR_ISSUES " in
-        *" $name "*) is_known_hir_issue=true ;;
-    esac
-    
     # Determine pass/fail based on mode
     if [[ "$STRICT_MODE" == "true" ]]; then
         # Strict mode: Deno failure is always a failure
@@ -505,9 +491,6 @@ test_example() {
             # Deno failed but it's a known issue - skip D-H check
             # Just set reason for reporting
             [[ $dh_sim -lt 60 ]] && reason="D-H: ${dh_sim}% (known Deno issue)"
-        elif [[ "$is_known_hir_issue" == "true" ]]; then
-            # Known HIR issue - don't count against us
-            [[ $dh_sim -lt 60 ]] && reason="D-H: ${dh_sim}% (known HIR issue)"
         else
             # Normal case: D-H similarity must be >= 60%
             [[ $dh_sim -lt 60 ]] && { passed=false; reason="D-H: ${dh_sim}%"; }
@@ -548,10 +531,8 @@ test_example() {
     local status="PASS"
     if [[ "$passed" != "true" ]]; then
         status="FAIL"
-    elif [[ "$is_known_failure" == "true" ]] || [[ "$is_known_hir_issue" == "true" ]]; then
-        if [[ "$STRICT_MODE" != "true" ]]; then
-            status="KNOWN_ISSUE"
-        fi
+    elif [[ "$is_known_failure" == "true" ]] && [[ "$STRICT_MODE" != "true" ]]; then
+        status="KNOWN_ISSUE"
     fi
     
     echo "$name|$deno_result|$hir_result|$compile_result|$dh_sim|$status|$reason" >> "$SUMMARY_FILE"
@@ -603,7 +584,7 @@ run_tests() {
     
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST HARNESS - UNIFIED${NC}                                  ${BOLD}║${NC}"
+    echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST HARNESS - FINAL${NC}                                  ${BOLD}║${NC}"
     echo -e "${BOLD}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BOLD}║${NC}  Environments: ${GREEN}deno${NC} | ${GREEN}runts dev${NC} | ${GREEN}runts build${NC}                         ${BOLD}║${NC}"
     

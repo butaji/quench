@@ -1,6 +1,5 @@
-// Overflow example — demonstrates text layout behavior.
-// Simplified for parity: uses simple fixed-width boxes
-// that render consistently across all environments.
+// Overflow example — demonstrates overflow property control.
+// Shows how content overflow is handled.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
@@ -10,19 +9,49 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-export default function Overflow() {
+export default function OverflowExample() {
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold color="cyan">Overflow Demo</Text>
-      <Box width={20} borderStyle="round" padding={1} marginTop={1}>
-        <Text>Short text</Text>
+      <Text></Text>
+      
+      <Box 
+        width={30} 
+        borderStyle="single" 
+        padding={1}
+        overflow="hidden"
+      >
+        <Text>This text will be clipped if it exceeds the box width.</Text>
       </Box>
-      <Box width={20} borderStyle="round" padding={1} marginTop={1}>
-        <Text>Another box</Text>
+      
+      <Text></Text>
+      
+      <Box 
+        width={30} 
+        borderStyle="single" 
+        padding={1}
+        overflowX="hidden"
+      >
+        <Text>Horizontal overflow is hidden here.</Text>
       </Box>
-      <Box width={30} borderStyle="round" padding={1} marginTop={1}>
-        <Text>Text in fixed width box</Text>
+      
+      <Text></Text>
+      
+      <Box 
+        height={3} 
+        borderStyle="single" 
+        padding={1}
+        overflowY="hidden"
+      >
+        <Text>Line 1</Text>
+        <Text>Line 2</Text>
+        <Text>Line 3</Text>
+        <Text>Line 4</Text>
+        <Text>Line 5</Text>
       </Box>
+      
+      <Text></Text>
+      <Text dimColor>Press q to quit.</Text>
     </Box>
   );
 }
