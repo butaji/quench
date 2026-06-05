@@ -157,21 +157,10 @@ fn analyze_jsx_spreads(jsx: &mut hir::JSXExpr) {
 fn analyze_stmt_passes(stmt: &mut hir::Stmt) {
     match stmt {
         hir::Stmt::If { test, consequent, alternate } => analyze_if_stmt(test, consequent, alternate),
-        hir::Stmt::While { test, body } => {
-            analyze_expr_passes(test);
-            analyze_stmt_passes(body);
-        }
+        hir::Stmt::While { test, body } => analyze_while_stmt(test, body),
         hir::Stmt::For { init, test, update, body } => analyze_for_loop(init, test, update, body),
-        hir::Stmt::Block { stmts } => {
-            for s in stmts {
-                analyze_stmt_passes(s);
-            }
-        }
-        hir::Stmt::Return { arg } => {
-            if let Some(ref mut a) = arg {
-                analyze_expr_passes(a);
-            }
-        }
+        hir::Stmt::Block { stmts } => analyze_block_stmts(stmts),
+        hir::Stmt::Return { arg } => analyze_return_stmt(arg),
         hir::Stmt::Expr { expr } => analyze_expr_passes(expr),
         hir::Stmt::Class(ref mut class) => analyze_class_methods(class),
         _ => {}
@@ -183,6 +172,23 @@ fn analyze_if_stmt(test: &mut hir::Expr, consequent: &mut Box<hir::Stmt>, altern
     analyze_stmt_passes(consequent);
     if let Some(alt) = alternate {
         analyze_stmt_passes(alt);
+    }
+}
+
+fn analyze_while_stmt(test: &mut hir::Expr, body: &mut Box<hir::Stmt>) {
+    analyze_expr_passes(test);
+    analyze_stmt_passes(body);
+}
+
+fn analyze_block_stmts(stmts: &mut Vec<hir::Stmt>) {
+    for s in stmts {
+        analyze_stmt_passes(s);
+    }
+}
+
+fn analyze_return_stmt(arg: &mut Option<Box<hir::Expr>>) {
+    if let Some(ref mut a) = arg {
+        analyze_expr_passes(a);
     }
 }
 

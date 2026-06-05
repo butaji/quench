@@ -750,30 +750,40 @@ impl QuoteCodegen {
     fn gen_for_init(&self, init: &Option<super::ForInit>) -> TokenStream {
         match init {
             Some(super::ForInit::Variable(kind, vars)) => {
-                let decls: Vec<TokenStream> = vars
-                    .iter()
-                    .map(|(name, init)| {
-                        let id = syn::Ident::new(name, proc_macro2::Span::call_site());
-                        match init {
-                            Some(expr) => {
-                                let e = self.gen_expr(expr);
-                                quote! { #id = #e }
-                            }
-                            None => quote! { #id },
-                        }
-                    })
-                    .collect();
-                let keyword = match kind {
-                    super::VariableKind::Var => quote! { let mut },
-                    super::VariableKind::Let => quote! { let },
-                    super::VariableKind::Const => quote! { let },
-                };
-                quote! { #keyword #(#decls),* }
+                self.gen_for_var_init(kind, vars)
             }
             Some(super::ForInit::Expr(e)) => {
                 self.gen_expr(e)
             }
             None => quote! {},
+        }
+    }
+
+    fn gen_for_var_init(&self, kind: super::VariableKind, vars: &[(String, Option<super::Expr>)]) -> TokenStream {
+        let decls: Vec<TokenStream> = vars
+            .iter()
+            .map(|(name, init)| self.gen_var_declarator(name, init))
+            .collect();
+        let keyword = self.var_kind_to_keyword(kind);
+        quote! { #keyword #(#decls),* }
+    }
+
+    fn gen_var_declarator(&self, name: &str, init: &Option<super::Expr>) -> TokenStream {
+        let id = syn::Ident::new(name, proc_macro2::Span::call_site());
+        match init {
+            Some(expr) => {
+                let e = self.gen_expr(expr);
+                quote! { #id = #e }
+            }
+            None => quote! { #id },
+        }
+    }
+
+    fn var_kind_to_keyword(&self, kind: super::VariableKind) -> TokenStream {
+        match kind {
+            super::VariableKind::Var => quote! { let mut },
+            super::VariableKind::Let => quote! { let },
+            super::VariableKind::Const => quote! { let },
         }
     }
 
