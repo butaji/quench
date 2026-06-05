@@ -157,22 +157,46 @@ impl Analyzer {
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::FunctionDecl(func) => self.analyze_function_body(func),
+            Stmt::For { .. } | Stmt::ForIn { .. } | Stmt::ForOf { .. } | Stmt::While { .. } | Stmt::DoWhile { .. } => {
+                self.analyze_stmt_iteration(stmt)
+            }
+            Stmt::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
+            Stmt::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
+            Stmt::Return { .. } | Stmt::Throw { .. } => self.analyze_control_transfer(stmt),
+            Stmt::Try { .. } | Stmt::Block { .. } | Stmt::Expr { .. } | Stmt::With { .. } => {
+                self.analyze_stmt_block_like(stmt)
+            }
+            Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Empty | Stmt::Labeled { .. } => {}
+            _ => self.analyze_stmt_remaining(stmt),
+        }
+    }
+
+    fn analyze_control_transfer(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Return { arg } => self.analyze_return(arg),
+            Stmt::Throw { arg } => self.analyze_expr(arg),
+            _ => {}
+        }
+    }
+
+    fn analyze_stmt_iteration(&mut self, stmt: &Stmt) {
+        match stmt {
             Stmt::For { init, test, update, body } => self.analyze_for_loop(init, test, update, body),
             Stmt::ForIn { left, right, body } => self.analyze_for_in(left, right, body),
             Stmt::ForOf { left, right, body, .. } => self.analyze_for_of(left, right, body),
             Stmt::While { test, body } => self.analyze_while(test, body),
             Stmt::DoWhile { body, test } => self.analyze_do_while(body, test),
-            Stmt::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
-            Stmt::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
-            Stmt::Return { arg } => self.analyze_return(arg),
-            Stmt::Throw { arg } => self.analyze_expr(arg),
+            _ => {}
+        }
+    }
+
+    fn analyze_stmt_block_like(&mut self, stmt: &Stmt) {
+        match stmt {
             Stmt::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
             Stmt::Block { stmts } => self.analyze_block(stmts),
             Stmt::Expr { expr } => self.analyze_expr(expr),
-            Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Empty => {}
-            Stmt::Labeled { body, .. } => self.analyze_stmt(body),
             Stmt::With { obj, body } => self.analyze_with(obj, body),
-            _ => self.analyze_stmt_remaining(stmt),
+            _ => {}
         }
     }
 
@@ -288,17 +312,15 @@ impl Analyzer {
         match expr {
             Expr::Call { callee, arguments } => self.analyze_call(callee, arguments),
             Expr::New { callee, arguments } => self.analyze_new(callee, arguments),
-            Expr::Bin { left, right, .. } => self.analyze_bin(left, right),
-            Expr::Logical { left, right, .. } => self.analyze_bin(left, right),
+            Expr::Bin { left, right, .. } | Expr::Logical { left, right, .. } | Expr::Assign { left, right, .. } | Expr::Seq { left, right } => {
+                self.analyze_bin(left, right)
+            }
             Expr::Cond { test, consequent, alternate } => self.analyze_cond(test, consequent, alternate),
-            Expr::Assign { left, right, .. } => self.analyze_bin(left, right),
-            Expr::Update { arg, .. } => self.analyze_expr(arg),
-            Expr::Unary { arg, .. } => self.analyze_expr(arg),
-            Expr::Await { arg } => self.analyze_expr(arg),
+            Expr::Update { arg, .. } | Expr::Unary { arg, .. } | Expr::Await { arg } | Expr::Spread { arg } => {
+                self.analyze_expr(arg)
+            }
             Expr::Array { elems } => self.analyze_array(elems),
             Expr::Object { members } => self.analyze_object(members),
-            Expr::Seq { left, right } => self.analyze_bin(left, right),
-            Expr::Spread { arg } => self.analyze_expr(arg),
             _ => {}
         }
     }
@@ -360,9 +382,7 @@ impl Analyzer {
             Expr::Number(_) => Type::Number,
             Expr::String(_) => Type::String,
             Expr::Boolean(_) => Type::Boolean,
-            Expr::Null => Type::Null,
-            Expr::Undefined => Type::Undefined,
-            Expr::BigInt(_) => Type::BigInt,
+            Expr::Null | Expr::Undefined | Expr::BigInt(_) => Type::Unknown,
             Expr::Ident { name } => self.infer_ident_type(name),
             Expr::Array { .. } => Type::Array { elem: Box::new(Type::Unknown) },
             Expr::Object { .. } => Type::Object { members: vec![] },
@@ -423,16 +443,16 @@ impl Analyzer {
     fn validate_type_compatibility(&mut self, ty: &Type, context: &str) {
         match ty {
             Type::Ref { name, generics } => self.validate_ref_type(name, generics, context),
-            Type::Union { types } => self.validate_type_list(types, context),
-            Type::Intersection { types } => self.validate_type_list(types, context),
+            Type::Union { types } | Type::Intersection { types } => self.validate_type_list(types, context),
             Type::Array { elem } => self.validate_type_compatibility(elem, context),
             Type::Function { params, ret } => self.validate_function_type(params, ret, context),
             Type::Object { members } => self.validate_object_members(members),
             Type::Conditional { check, extends, true_type, false_type } => {
                 self.validate_conditional_type(check, extends, true_type, false_type, context);
             }
-            Type::Mapped { from, to } => self.validate_mapped_type(from, to, context),
-            Type::Index { obj, index } => self.validate_index_type(obj, index, context),
+            Type::Mapped { from, to } | Type::Index { obj: from, index: to } => {
+                self.validate_mapped_type(from, to, context)
+            }
             _ => {}
         }
     }
