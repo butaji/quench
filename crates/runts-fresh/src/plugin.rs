@@ -961,9 +961,6 @@ async fn main() {{
     /// shape `{"JSX": {...}}` / `{"Cond": {...}}` and the older
     /// internally-tagged shape `{"kind": "JSX", ...}`.
     fn find_jsx_in_expr(&self, expr: &serde_json::Value) -> Option<serde_json::Value> {
-        // Detect variant: externally tagged uses the variant name as the
-        // top-level key; internally tagged uses "kind" + the value at
-        // the same level.
         let obj = expr.as_object()?;
         let (variant, inner) = if obj.contains_key("kind") {
             let kind = obj.get("kind")?.as_str()?.to_string();
@@ -974,29 +971,31 @@ async fn main() {{
         };
 
         match variant.as_str() {
-            "JSX" => {
-                // For externally-tagged, the JSX fields are on `inner`.
-                // For internally-tagged, the fields are on `expr`.
-                if self.is_jsx_expr(&inner) {
-                    return Some(inner.clone());
-                }
-                if self.is_jsx_expr(expr) {
-                    return Some(expr.clone());
-                }
-                None
-            }
-            "Cond" => {
-                let consequent = inner.get("consequent")?;
-                if let Some(jsx) = self.find_jsx_in_expr(consequent) {
-                    return Some(jsx);
-                }
-                if let Some(alt) = inner.get("alternate") {
-                    return self.find_jsx_in_expr(alt);
-                }
-                None
-            }
+            "JSX" => self.find_jsx_variant(&inner, expr),
+            "Cond" => self.find_jsx_in_cond(&inner),
             _ => None,
         }
+    }
+
+    fn find_jsx_variant(&self, inner: &serde_json::Value, expr: &serde_json::Value) -> Option<serde_json::Value> {
+        if self.is_jsx_expr(inner) {
+            return Some(inner.clone());
+        }
+        if self.is_jsx_expr(expr) {
+            return Some(expr.clone());
+        }
+        None
+    }
+
+    fn find_jsx_in_cond(&self, inner: &serde_json::Value) -> Option<serde_json::Value> {
+        let consequent = inner.get("consequent")?;
+        if let Some(jsx) = self.find_jsx_in_expr(consequent) {
+            return Some(jsx);
+        }
+        if let Some(alt) = inner.get("alternate") {
+            return self.find_jsx_in_expr(alt);
+        }
+        None
     }
 
     /// Check if JSON value is a JSX expression.
