@@ -28,23 +28,27 @@ impl Plugin for ReactPlugin {
             .map_err(|e| PluginError::codegen("react", "unknown", format!("{e}")))?;
 
         let source_path = module.source_path.as_deref().unwrap_or("");
-
-        // Check if module has HIR items - use this to make smarter codegen decisions
         let has_hir_items = module.items_json.as_ref()
             .map_or(false, |v| v.as_array().map_or(false, |a| !a.is_empty()));
 
-        // Use items_json presence as a signal that this is a real module worth codegen
         if has_hir_items {
-            // Module has actual HIR content - treat as component or server based on path
-            if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
-                return Ok(self.codegen_component_module(source_path));
-            }
-            if source_path.contains("server") || source_path.contains("main") {
-                return Ok(self.codegen_server_module(source_path));
-            }
+            self.codegen_module_with_hir(source_path)
+        } else {
+            self.codegen_module_without_hir(source_path)
         }
+    }
 
-        // Fallback to path-based detection for modules without HIR items
+    fn codegen_module_with_hir(&self, source_path: &str) -> Result<String, PluginError> {
+        if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
+            return Ok(self.codegen_component_module(source_path));
+        }
+        if source_path.contains("server") || source_path.contains("main") {
+            return Ok(self.codegen_server_module(source_path));
+        }
+        Ok(self.codegen_generic_module())
+    }
+
+    fn codegen_module_without_hir(&self, source_path: &str) -> Result<String, PluginError> {
         if source_path.contains("/component/") || source_path.ends_with(".jsx") || source_path.ends_with(".tsx") {
             Ok(self.codegen_component_module(source_path))
         } else if source_path.contains("server") || source_path.contains("main") {
