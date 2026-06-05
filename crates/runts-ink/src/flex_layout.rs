@@ -347,12 +347,45 @@ fn layout_children(
         }
     };
 
-    // Reverse iteration for row-reverse/column-reverse.
-    let indices: Vec<usize> = if is_reverse {
-        (0..b.children.len()).rev().collect()
-    } else {
-        (0..b.children.len()).collect()
-    };
+    // For row-reverse/column-reverse, we need to pre-compute positions
+    // so that items are placed from the end of the container.
+    let indices: Vec<usize> = (0..b.children.len()).collect();
+    let mut child_positions: Vec<i32> = vec![0; b.children.len()];
+    
+    // Pre-compute positions for all children
+    if is_reverse {
+        // For reverse: compute positions working backwards from main_size
+        // The positions are the START positions of each child
+        let mut pos = main_size as i32;
+        for (display_i, &i) in indices.iter().enumerate() {
+            let cs = child_sizes[i] as i32;
+            let margin_start = if let VNodeContent::Box(bc) = &b.children[i].0 {
+                if is_row { bc.margin_right.unwrap_or(0) as i32 } else { bc.margin_bottom.unwrap_or(0) as i32 }
+            } else { 0 };
+            let margin_end = if let VNodeContent::Box(bc) = &b.children[i].0 {
+                if is_row { bc.margin_left.unwrap_or(0) as i32 } else { bc.margin_top.unwrap_or(0) as i32 }
+            } else { 0 };
+            
+            // Position the child at pos, then move pos backwards
+            child_positions[i] = pos - cs - margin_end as i32 + margin_start as i32;
+            pos -= cs + margin_end as i32 + margin_start as i32;
+            
+            if display_i < indices.len() - 1 {
+                pos -= gap_between;
+            }
+        }
+        
+        // Now adjust: the first child (in reverse order, which is the LAST visual item)
+        // should be at offset. So we set offset to the position of the first reverse child
+        // and adjust all positions accordingly.
+        // Actually, for simplicity: just offset all positions by the negative of the max
+        // position plus the offset.
+        let max_pos = child_positions.iter().max().copied().unwrap_or(0);
+        let adjustment = offset - max_pos;
+        for pos in &mut child_positions {
+            *pos += adjustment;
+        }
+    }
 
     for (display_i, &i) in indices.iter().enumerate() {
         let cs = child_sizes[i];
@@ -387,13 +420,21 @@ fn layout_children(
         // For row flex: children get their measured main size, stack horizontally.
         let (cx, cy, cw, ch) = if is_row {
             // Row: main axis is horizontal
-            let child_x = x + offset as u16 + margin_main_start;
+            let child_x = if is_reverse {
+                child_positions[i] as u16 + margin_main_start
+            } else {
+                x + offset as u16 + margin_main_start
+            };
             let child_w = cs.saturating_sub(margin_main_start).saturating_sub(margin_main_end);
             (child_x, y, child_w, cc)
         } else {
             // Column: main axis is vertical
             // margin_cross_start/End for columns affects horizontal position (indent)
-            let main_start = offset + margin_main_start as i32;
+            let main_start = if is_reverse {
+                child_positions[i] as i32 + margin_main_start as i32
+            } else {
+                offset + margin_main_start as i32
+            };
             let main_end = margin_main_end as i32;
             let child_h = cs.saturating_add(margin_main_start).saturating_add(main_end as u16);
             (x + margin_cross_start, y + main_start as u16, w.saturating_sub(margin_cross_start + margin_cross_end), child_h)
@@ -408,12 +449,17 @@ fn layout_children(
         // Recurse into child.
         layout_node(child, cx, cy, cw, ch, rects);
 
-        // Advance offset by child's intrinsic size plus margins.
-        offset += cs as i32;
-        offset += margin_main_start as i32;
-        offset += margin_main_end as i32;
-        if display_i < indices.len() - 1 {
-            offset += gap_between;
+        // Advance offset by child's intrinsic size plus margins (only for non-reverse).
+        if !is_reverse {
+            offset += cs as i32;
+            // Add any margin on Box children (for margins on Text/other, they don't have margins)
+            if let VNodeContent::Box(bc) = &child.0 {
+                offset += margin_main_start as i32;
+                offset += margin_main_end as i32;
+            }
+            if display_i < indices.len() - 1 {
+                offset += gap_between;
+            }
         }
     }
 }
@@ -614,5 +660,189 @@ mod tests {
         let v = VNode::from(b);
         let layout = compute(&v, 80, 24);
         assert!(layout.rects.len() >= 3, "expected 3 rects, got {}", layout.rects.len());
+    }
+
+    #[test]
+    fn row_reverse_positions_children_correctly() {
+        // ATOMIC TEST: In row-reverse, children should be
+        // positioned from right to left, so "A", "B", "C"
+        // appears as "C", "B", "A".
+        use crate::components::FlexDirection;
+        // Create: <Box flexDirection="row-reverse" width={10}>
+        //           <Text>A</Text><Text>B</Text><Text>C</Text>
+        //         </Box>
+        let b = InkBox::new()
+            .flex_direction(FlexDirection::RowReverse)
+            .width(10)
+            .child(VNode::from(InkText::new("A")))
+            .child(VNode::from(InkText::new("B")))
+            .child(VNode::from(InkText::new("C")));
+        let v = VNode::from(b);
+        let layout = compute(&v, 80, 24);
+        
+        // Layout should have 4 rects: outer box + 3 texts
+        assert!(layout.rects.len() >= 4, "expected 4 rects, got {}", layout.rects.len());
+        
+        // The outer box should be at x=0, y=0, width=10
+        let (bx, by, bw, bh) = layout.rects[0];
+        assert_eq!(bx, 0, "box x should be 0");
+        assert_eq!(bw, 10, "box width should be 10, got {}", bw);
+        
+        // Children are in DFS order: A, B, C
+        // In row-reverse, they should be positioned: C at left, B in middle, A at right
+        // rects[1] = A at x=?, rects[2] = B at x=?, rects[3] = C at x=?
+        let (ax, _, aw, _) = layout.rects[1];
+        let (bx2, _, bw2, _) = layout.rects[2];
+        let (cx, _, cw, _) = layout.rects[3];
+        
+        // In row-reverse: C should be at x < B < A
+        assert!(cx < bx2, "C ({}) should be left of B ({})", cx, bx2);
+        assert!(bx2 < ax, "B ({}) should be left of A ({})", bx2, ax);
+        
+        // All should be within the 10-char box
+        assert!(ax + aw <= 10, "A should end at or before x=10, got {}", ax + aw);
+    }
+
+    #[test]
+    fn column_reverse_positions_children_correctly() {
+        // ATOMIC TEST: In column-reverse, children should be
+        // positioned from bottom to top.
+        use crate::components::FlexDirection;
+        let b = InkBox::new()
+            .flex_direction(FlexDirection::ColumnReverse)
+            .height(10)
+            .child(VNode::from(InkText::new("TOP")))
+            .child(VNode::from(InkText::new("MID")))
+            .child(VNode::from(InkText::new("BOT")));
+        let v = VNode::from(b);
+        let layout = compute(&v, 80, 24);
+        
+        // Layout should have 4 rects: outer box + 3 texts
+        assert!(layout.rects.len() >= 4, "expected 4 rects, got {}", layout.rects.len());
+        
+        // Children are in DFS order: TOP, MID, BOT
+        // In column-reverse, they should be positioned: BOT at top, MID in middle, TOP at bottom
+        // rects[1] = TOP, rects[2] = MID, rects[3] = BOT
+        let (_, ty, _, _) = layout.rects[1];
+        let (_, my, _, _) = layout.rects[2];
+        let (_, by, _, _) = layout.rects[3];
+        
+        // In column-reverse: BOT should be at y < MID < TOP
+        assert!(by < my, "BOT ({}) should be above MID ({})", by, my);
+        assert!(my < ty, "MID ({}) should be above TOP ({})", my, ty);
+    }
+
+    #[test]
+    fn nested_column_with_row_children() {
+        // ATOMIC TEST: A column containing two row boxes.
+        // Each row should take 1 row of height, so total should be 2.
+        use crate::components::FlexDirection;
+        let outer = InkBox::new()
+            .flex_direction(FlexDirection::Column)
+            .width(80)
+            .border_style(crate::BorderStyle::Single)
+            .padding(1)
+            .child({
+                let row1 = InkBox::new()
+                    .flex_direction(FlexDirection::Row)
+                    .width(10)
+                    .child(VNode::from(InkText::new("A")))
+                    .child(VNode::from(InkText::new("B")))
+                    .child(VNode::from(InkText::new("C")));
+                VNode::from(row1)
+            })
+            .child({
+                let row2 = InkBox::new()
+                    .flex_direction(FlexDirection::RowReverse)
+                    .width(10)
+                    .child(VNode::from(InkText::new("A")))
+                    .child(VNode::from(InkText::new("B")))
+                    .child(VNode::from(InkText::new("C")));
+                VNode::from(row2)
+            });
+        let v = VNode::from(outer);
+        let layout = compute(&v, 80, 24);
+        
+        // Layout should have 9 rects: outer box + 2 row boxes + 6 texts
+        assert!(layout.rects.len() >= 9, "expected at least 9 rects, got {}", layout.rects.len());
+        
+        // Debug: print all rects
+        eprintln!("All rects: {:?}", layout.rects);
+        
+        // The outer box should be tall enough for both rows
+        let (ox, oy, ow, outer_h) = layout.rects[0];
+        eprintln!("Outer box: x={}, y={}, w={}, h={}", ox, oy, ow, outer_h);
+        
+        // Each row has 1 child of height 1, so row height = 1
+        // Total = 1 + 1 + padding*2 + borders = 1 + 1 + 2 + 2 = 6
+        assert!(outer_h >= 4, "outer box height should be at least 4, got {}", outer_h);
+        
+        // The second row box should be below the first
+        // rects[1] = row1, rects[5] = row2
+        let (_, row1_y, _, row1_h) = layout.rects[1];
+        let (_, row2_y, _, row2_h) = layout.rects[5];
+        eprintln!("Row1: y={}, h={}", row1_y, row1_h);
+        eprintln!("Row2: y={}, h={}", row2_y, row2_h);
+        
+        // Row2 should start at row1_y + row1_h (stacked vertically)
+        assert!(row2_y >= row1_y + row1_h, "second row ({}) should be at or below row1_y + row1_h ({})", row2_y, row1_y + row1_h);
+        
+        // Both rows should be within the outer box
+        assert!(row1_y >= oy, "row1 y ({}) should be >= outer y ({})", row1_y, oy);
+        assert!(row2_y + row2_h <= oy + outer_h, "row2 bottom ({}) should be <= outer bottom ({})", row2_y + row2_h, oy + outer_h);
+    }
+
+    #[test]
+    fn nested_column_renders_correctly() {
+        // ATOMIC TEST: Render a column with two row children and verify output.
+        use crate::components::FlexDirection;
+        let outer = InkBox::new()
+            .flex_direction(FlexDirection::Column)
+            .width(30)
+            .border_style(crate::BorderStyle::Single)
+            .padding(1)
+            .child({
+                let row1 = InkBox::new()
+                    .flex_direction(FlexDirection::Row)
+                    .width(10)
+                    .child(VNode::from(InkText::new("ABC")));
+                VNode::from(row1)
+            })
+            .child({
+                let row2 = InkBox::new()
+                    .flex_direction(FlexDirection::RowReverse)
+                    .width(10)
+                    .child(VNode::from(InkText::new("CBA")));
+                VNode::from(row2)
+            });
+        let v = VNode::from(outer);
+        let layout = compute(&v, 80, 24);
+        eprintln!("Rects: {:?}", layout.rects);
+        
+        let result = crate::render_to_string(v, crate::RenderOptions::new());
+        assert!(result.is_ok(), "render failed: {:?}", result.err());
+        let output = result.unwrap();
+        eprintln!("Output:\n{}", output);
+        
+        // The output should have borders on every line
+        // Count lines starting with border character
+        let lines: Vec<&str> = output.lines().collect();
+        eprintln!("Line count: {}", lines.len());
+        for (i, line) in lines.iter().enumerate() {
+            eprintln!("Line {}: '{}' (starts with border: {})", i, line, line.starts_with('│') || line.starts_with('┌') || line.starts_with('└'));
+        }
+        
+        // Check that the output is properly boxed
+        // First line should start with top border
+        assert!(lines.first().map(|l| l.starts_with('┌')).unwrap_or(false), 
+            "first line should start with top border");
+        // Last line should start with bottom border  
+        assert!(lines.last().map(|l| l.starts_with('└')).unwrap_or(false),
+            "last line should start with bottom border");
+        
+        // All content lines should be inside the border
+        // Line 3 should have border at start (row2 is inside box)
+        assert!(lines.get(3).map(|l| l.starts_with('│')).unwrap_or(false),
+            "Line 3 should have border at start, got: '{}'", lines.get(3).unwrap_or(&""));
     }
 }
