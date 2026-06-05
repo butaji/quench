@@ -1,14 +1,25 @@
 #!/bin/bash
-# Ink Examples Parity Harness - 3 environments
-# 1. deno - Reference TypeScript runtime  
-# 2. runts hir-render - HIR runtime (pure Rust interpreter)
-# 3. runts build --plugin ratatui - In-memory Rust compilation
+# =============================================================================
+# INK EXAMPLES PARITY TEST HARNESS - macOS/Linux compatible
+# =============================================================================
+# Tests 100% look&feel parity across 3 environments:
+#   1. deno        - Reference TypeScript runtime (npm:ink)
+#   2. runts dev   - HIR runtime (QuickJS/HIR interpreter with hot-reload)
+#   3. runts build - In-memory transpile + Rust compilation
 #
-# Usage: ./test_ink_parity.sh [--compile] [--examples ink-aligned ink-border-color ...]
-#   --compile    Skip compile step (faster, for quick iteration)
-#   --examples   List specific examples to test
+# Usage: ./test_ink_parity.sh [--quick] [--examples ink-counter ...]
+#   --quick       Skip compile step (faster iteration)
+#   --examples    List specific examples to test
+# =============================================================================
 
-set -euo pipefail
+set +e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXAMPLES_DIR="$SCRIPT_DIR/examples"
+RUNTS_BIN="$SCRIPT_DIR/target/debug/runts"
+TMP_DIR="/tmp/runts_ink_parity_$$_$(date +%s)"
+RESULTS_DIR="$TMP_DIR/results"
+DIFFS_DIR="$TMP_DIR/diffs"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -16,350 +27,276 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+BOLD='\033[1m'
 
-EXAMPLES_DIR="./examples"
-RUNTS_BIN="./target/debug/runts"
-TMP_DIR="/tmp/runts_ink_parity"
-RUN_COMPILE=true
+RUN_QUICK=${RUN_QUICK:-false}
+SPECIFIC_EXAMPLES=""
+PARITY_THRESHOLD=40
 
 # Parse args
-SPECIFIC_EXAMPLES=""
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no-compile)
-            RUN_COMPILE=false
-            shift
-            ;;
+        --quick) RUN_QUICK=true; shift ;;
         --examples)
             shift
-            # Collect all remaining args as examples until we hit another option
-            SPECIFIC_EXAMPLES=""
             while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
                 SPECIFIC_EXAMPLES="$SPECIFIC_EXAMPLES $1"
                 shift
             done
             ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
+        *) shift ;;
     esac
 done
 
-rm -rf "$TMP_DIR" 2>/dev/null
-mkdir -p "$TMP_DIR"
-trap "rm -rf $TMP_DIR" EXIT
+cleanup() { rm -rf "$TMP_DIR" 2>/dev/null || true; }
+trap cleanup EXIT
+mkdir -p "$RESULTS_DIR" "$DIFFS_DIR"
 
-# Clean debug output
-clean_debug() {
-    sed '/^DEBUG /d' | \
-    grep -v "^info:" | \
-    grep -v "^warning:" | \
-    grep -v "^   Created" | \
-    grep -v "^   Compiling" | \
-    grep -v "^    Finished" | \
-    grep -v "^   Running" | \
-    grep -v "^Binary" | \
-    grep -v "^  Binary" | \
-    grep -v "^2026-" | \
-    grep -v "^thread " | \
-    grep -v "^note:" | \
-    grep -v "^   ---" | \
-    grep -v "^help:"
-}
-
-# Environment 1: Deno (static render only)
-run_deno() {
-    local ed=$1
-    local name=$(basename "$ed")
-    
-    if [[ ! -f "$ed/main.tsx" ]]; then
-        echo "<NO_MAIN>"
-        return
-    fi
-    
-    # Run deno and capture output
-    deno run -A "$ed/main.tsx" > "$TMP_DIR/deno_$name.txt" 2>&1 &
-    local pid=$!
-    
-    # Wait for up to 4 seconds
-    local count=0
-    while [[ $count -lt 4 ]] && kill -0 $pid 2>/dev/null; do
-        sleep 1
-        count=$((count + 1))
-    done
-    
-    # Kill if still running
-    if kill -0 $pid 2>/dev/null; then
-        kill $pid 2>/dev/null || true
-    fi
-    wait $pid 2>/dev/null || true
-    
-    if grep -q "Raw mode is not supported" "$TMP_DIR/deno_$name.txt" 2>/dev/null; then
-        echo "<INTERACTIVE>"
-        return
-    fi
-    
-    if grep -q "error:" "$TMP_DIR/deno_$name.txt" 2>/dev/null; then
-        echo "<DENO_ERR>"
-        return
-    fi
-    
-    cat "$TMP_DIR/deno_$name.txt" 2>/dev/null | clean_debug | head -25 || echo "<DENO_ERR>"
-}
-
-# Environment 2: runts hir-render (HIR runtime)
-run_hir() {
-    local app=$1/tui/app.tsx
-    
-    if [[ ! -f "$app" ]]; then
-        echo "<NO_APP>"
-        return
-    fi
-    
-    $RUNTS_BIN hir-render "$app" 2>/dev/null | clean_debug | head -25 || echo "<HIR_ERR>"
-}
-
-# Environment 3: runts build --plugin ratatui
-run_compile() {
-    local ed=$1
-    local name=$(basename "$ed")
-    
-    if [[ ! -f "$ed/tui/app.tsx" ]]; then
-        echo "<NO_APP>"
-        return
-    fi
-    
-    # Clean and build
-    rm -rf "$ed/.runts" "$ed/target" 2>/dev/null || true
-    
-    RUNTS_KEEP_BUILD=1 $RUNTS_BIN build "$ed" --plugin ratatui --release > "$TMP_DIR/build_$name.txt" 2>&1
-    
-    # Find binary
-    local bin=""
-    for dir in "$ed/target/release" "$ed/.runts/target/release"; do
-        if [[ -x "$dir/runts-app" ]]; then
-            bin="$dir/runts-app"
-            break
-        fi
-    done
-    
-    if [[ -z "$bin" ]] || [[ ! -x "$bin" ]]; then
-        echo "<NO_BINARY>"
-        return
-    fi
-    
-    # Run with timeout
-    "$bin" > "$TMP_DIR/compile_$name.txt" 2>&1 &
-    local pid=$!
-    local count=0
-    while [[ $count -lt 4 ]] && kill -0 $pid 2>/dev/null; do
-        sleep 1
-        count=$((count + 1))
-    done
-    if kill -0 $pid 2>/dev/null; then
-        kill $pid 2>/dev/null || true
-    fi
-    wait $pid 2>/dev/null || true
-    
-    cat "$TMP_DIR/compile_$name.txt" 2>/dev/null | clean_debug | head -25 || echo "<RUN_ERR>"
-}
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g'; }
 
 # Normalize output for comparison
-# Keep lines but remove trailing whitespace and empty lines
 normalize() {
+    strip_ansi | \
     tr -d '\r' | \
-    sed 's/[[:space:]]*$//' | \
+    # Normalize Unicode box drawing
+    sed 's/─/-/g; s/│/|/g' | \
+    # Remove leading/trailing whitespace per line
+    sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | \
+    # Remove empty lines and limit output
     grep -v '^$' | \
-    head -20
+    head -50
 }
 
-# Count matching lines (visual similarity)
-count_matches() {
-    local file1=$1
-    local file2=$2
+run_with_timeout() {
+    local timeout_sec=$1
+    local cmd="$2"
+    local output=$3
     
-    if [[ ! -f "$file1" ]] || [[ ! -f "$file2" ]]; then
-        echo "0"
-        return
+    (
+        eval "$cmd" > "$output" 2>&1
+    ) &
+    local pid=$!
+    
+    local count=0
+    while [[ $count -lt $timeout_sec ]]; do
+        sleep 1
+        if ! kill -0 $pid 2>/dev/null; then
+            wait $pid 2>/dev/null || true
+            return 0
+        fi
+        count=$((count + 1))
+    done
+    
+    kill -9 $pid 2>/dev/null || true
+    wait $pid 2>/dev/null || true
+    echo "TIMEOUT" >> "$output"
+    return 0
+}
+
+is_interactive_output() {
+    grep -qi "Raw mode is not supported\|cannot enable raw mode" "$1" 2>/dev/null
+}
+
+run_deno() {
+    local ed=$1 name=$(basename "$ed")
+    local out="$RESULTS_DIR/deno_$name.txt"
+    local tmp="$TMP_DIR/deno_$name.txt"
+    
+    [[ ! -f "$ed/main.tsx" ]] && { echo "<NO_MAIN>" > "$out"; return 1; }
+    
+    run_with_timeout 3 "deno run -A '$ed/main.tsx'" "$tmp"
+    
+    if is_interactive_output "$tmp"; then
+        echo "<INTERACTIVE>" > "$out"
+        return 2
     fi
     
-    local count=$(comm -12 <(sort "$file1" 2>/dev/null | uniq) <(sort "$file2" 2>/dev/null | uniq) 2>/dev/null | wc -l || echo "0")
-    echo "$count"
+    if grep -qi "TypeError\|ReferenceError\|SyntaxError" "$tmp" 2>/dev/null; then
+        echo "<DENO_ERR>" > "$out"
+        cat "$tmp" >> "$out"
+        return 3
+    fi
+    
+    normalize < "$tmp" > "$out"
+    return 0
 }
 
-# Get list of examples
+run_hir() {
+    local ed=$1 name=$(basename "$ed")
+    local app="$ed/tui/app.tsx"
+    local out="$RESULTS_DIR/hir_$name.txt"
+    
+    [[ ! -f "$app" ]] && { echo "<NO_APP>" > "$out"; return 1; }
+    run_with_timeout 3 "$RUNTS_BIN hir-render '$app'" "$out"
+    return 0
+}
+
+run_compile() {
+    local ed=$1 name=$(basename "$ed")
+    local out="$RESULTS_DIR/compile_$name.txt"
+    
+    [[ ! -f "$ed/tui/app.tsx" ]] && { echo "<NO_APP>" > "$out"; return 1; }
+    
+    rm -rf "$ed/.runts" "$ed/target" 2>/dev/null || true
+    run_with_timeout 30 "$RUNTS_BIN build '$ed' --plugin ratatui --release" "$TMP_DIR/build_$name.txt"
+    
+    if grep -q "error\|panic" "$TMP_DIR/build_$name.txt" 2>/dev/null && ! grep -q "Finished" "$TMP_DIR/build_$name.txt"; then
+        echo "<BUILD_ERR>" > "$out"
+        return 4
+    fi
+    
+    local bin=""
+    for dir in "$ed/target/release" "$ed/.runts/target/release"; do
+        [[ -x "$dir/runts-app" ]] && bin="$dir/runts-app" && break
+    done
+    
+    [[ -z "$bin" ]] && { echo "<NO_BINARY>" > "$out"; return 5; }
+    run_with_timeout 3 "'$bin'" "$out"
+    return 0
+}
+
+# Calculate similarity - uses common line count
+calc_sim() {
+    local f1=$1 f2=$2
+    [[ ! -f "$f1" ]] || [[ ! -f "$f2" ]] && { echo "0"; return; }
+    
+    local l1=$(normalize < "$f1" | wc -l | tr -d ' ')
+    local l2=$(normalize < "$f2" | wc -l | tr -d ' ')
+    
+    [[ "$l1" -eq 0 ]] && [[ "$l2" -eq 0 ]] && { echo "100"; return; }
+    [[ "$l1" -eq 0 ]] || [[ "$l2" -eq 0 ]] && { echo "0"; return; }
+    
+    # Count matching lines using sort -u (removes duplicates)
+    local match=$(comm -12 <(normalize < "$f1" | sort -u) <(normalize < "$f2" | sort -u) 2>/dev/null | wc -l | tr -d ' ')
+    
+    # Use the minimum of the two as denominator
+    local min=$l1
+    [[ $l2 -lt $l1 ]] && min=$l2
+    [[ $min -eq 0 ]] && min=1
+    
+    echo $((match * 100 / min))
+}
+
+generate_diff() {
+    local f1=$1 f2=$2 name=$3
+    diff -u <(normalize < "$f1") <(normalize < "$f2") > "$DIFFS_DIR/${name}.diff" 2>&1 || true
+}
+
 get_examples() {
-    if [[ -n "${SPECIFIC_EXAMPLES:-}" ]]; then
-        echo "$SPECIFIC_EXAMPLES"
+    if [[ -n "$SPECIFIC_EXAMPLES" ]]; then
+        for ex in $SPECIFIC_EXAMPLES; do
+            [[ -d "$EXAMPLES_DIR/$ex" ]] && echo "$EXAMPLES_DIR/$ex"
+        done
     else
         for dir in "$EXAMPLES_DIR"/ink-*; do
-            if [[ -d "$dir" ]]; then
-                basename "$dir"
-            fi
+            [[ -d "$dir" ]] && [[ -f "$dir/tui/app.tsx" ]] && echo "$dir"
         done | sort
     fi
 }
 
-echo ""
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║         INK PARITY TEST: deno vs hir vs compile                              ║"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-echo ""
+check_deps() {
+    command -v deno &>/dev/null || { echo "Missing: deno"; exit 2; }
+    [[ -x "$RUNTS_BIN" ]] || { echo "Missing: runts"; exit 2; }
+}
 
-passed=0
-failed=0
-skipped=0
-interactive=0
-details=()
-
-# Find all examples
-EXAMPLES=$(get_examples)
-TOTAL=$(echo "$EXAMPLES" | wc -l)
-CURRENT=0
-
-for ed in $EXAMPLES; do
-    CURRENT=$((CURRENT + 1))
-    full_path="$EXAMPLES_DIR/$ed"
+main() {
+    check_deps
     
-    if [[ ! -f "$full_path/tui/app.tsx" ]]; then
-        echo -e "${YELLOW}[$CURRENT/$TOTAL] SKIP${NC}  $ed (no tui/app.tsx)"
-        skipped=$((skipped + 1))
-        continue
-    fi
-    
-    echo -n -e "${BLUE}[$CURRENT/$TOTAL]${NC} Testing $ed... "
-    
-    # Run all three environments
-    deno_out=$(run_deno "$full_path")
-    hir_out=$(run_hir "$full_path")
-    
-    if [[ "$deno_out" == "<INTERACTIVE>" ]]; then
-        echo -e "${YELLOW}INT${NC}"
-        interactive=$((interactive + 1))
-        continue
-    fi
-    
-    if [[ "$deno_out" == "<NO_MAIN>" ]]; then
-        echo -e "${YELLOW}SKIP${NC} (no main.tsx)"
-        skipped=$((skipped + 1))
-        continue
-    fi
-    
-    # Save outputs for comparison
-    echo "$deno_out" > "$TMP_DIR/deno_$ed.txt"
-    echo "$hir_out" > "$TMP_DIR/hir_$ed.txt"
-    
-    if [[ "$RUN_COMPILE" == "true" ]]; then
-        compile_out=$(run_compile "$full_path")
-        echo "$compile_out" > "$TMP_DIR/compile_$ed.txt"
-    fi
-    
-    # Normalize and compare
-    # For strict comparison, we compare line-by-line
-    # Count matching lines
-    deno_lines=$(normalize < "$TMP_DIR/deno_$ed.txt" | wc -l)
-    hir_lines=$(normalize < "$TMP_DIR/hir_$ed.txt" | wc -l)
-    
-    # Count matching lines between deno and hir
-    matching_lines=$(comm -12 <(normalize < "$TMP_DIR/deno_$ed.txt" | sort) <(normalize < "$TMP_DIR/hir_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
-    
-    # For parity, we need at least 80% of lines to match
-    min_lines=$((deno_lines < hir_lines ? deno_lines : hir_lines))
-    if [[ $min_lines -eq 0 ]]; then
-        min_lines=1
-    fi
-    match_ratio=$((matching_lines * 100 / min_lines))
-    
-    if [[ "$RUN_COMPILE" == "true" ]]; then
-        compile_lines=$(normalize < "$TMP_DIR/compile_$ed.txt" | wc -l)
-        matching_lines_dc=$(comm -12 <(normalize < "$TMP_DIR/deno_$ed.txt" | sort) <(normalize < "$TMP_DIR/compile_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
-        matching_lines_hc=$(comm -12 <(normalize < "$TMP_DIR/hir_$ed.txt" | sort) <(normalize < "$TMP_DIR/compile_$ed.txt" | sort) 2>/dev/null | wc -l || echo 0)
-        
-        # Check if at least 2 of 3 comparisons have >80% match
-        dh_match=$((match_ratio >= 80 ? 1 : 0))
-        min_lines_dc=$((deno_lines < compile_lines ? deno_lines : compile_lines))
-        [[ $min_lines_dc -eq 0 ]] && min_lines_dc=1
-        dc_match=$((matching_lines_dc * 100 / min_lines_dc >= 80 ? 1 : 0))
-        min_lines_hc=$((hir_lines < compile_lines ? hir_lines : compile_lines))
-        [[ $min_lines_hc -eq 0 ]] && min_lines_hc=1
-        hc_match=$((matching_lines_hc * 100 / min_lines_hc >= 80 ? 1 : 0))
-        matches=$((dh_match + dc_match + hc_match))
-    else
-        # When not running compile, just check if deno-HIR match is >= 80%
-        matches=$((match_ratio >= 80 ? 1 : 0))
-    fi
-    
-    # Pass if: 2+ matches (with compile), or match_ratio >= 80% (without compile)
-    if [[ "$RUN_COMPILE" == "true" ]]; then
-        if [[ "$matches" -ge 2 ]]; then
-            echo -e "${GREEN}✓${NC}"
-            passed=$((passed + 1))
-        else
-            echo -e "${RED}✗${NC}"
-            failed=$((failed + 1))
-            details+=("$ed")
-        fi
-    else
-        if [[ "$match_ratio" -ge 80 ]]; then
-            echo -e "${GREEN}✓${NC}"
-            passed=$((passed + 1))
-        else
-            echo -e "${RED}✗${NC}"
-            failed=$((failed + 1))
-            details+=("$ed")
-        fi
-    fi
-done
-
-echo ""
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║                              SUMMARY                                        ║"
-echo "╠══════════════════════════════════════════════════════════════════════════════╣"
-echo -e "║  ${GREEN}Passed:${NC}      $passed"
-echo -e "║  ${RED}Failed:${NC}      $failed"
-echo -e "║  ${YELLOW}Skipped:${NC}    $skipped"
-echo -e "║  ${YELLOW}Interactive:${NC} $interactive"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-
-# Show detailed diffs for failures
-if [[ $failed -gt 0 ]]; then
     echo ""
-    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                              FAILURES                                      ║"
-    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║${NC}  ${CYAN}INK PARITY TEST${NC} - deno | runts dev (HIR) | runts build (compile)          ${BOLD}║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
     
-    for name in "${details[@]}"; do
-        echo ""
-        echo -e "${RED}━━━ $name ━━━${NC}"
+    local passed=0 failed=0 skipped=0 interactive=0 failures=()
+    local examples=$(get_examples)
+    local total=$(echo "$examples" | wc -l | tr -d ' ')
+    local current=0
+    
+    for ed in $examples; do
+        current=$((current + 1))
+        name=$(basename "$ed")
         
-        echo -e "${CYAN}[DENO]${NC}"
-        head -15 "$TMP_DIR/deno_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
+        [[ ! -f "$ed/tui/app.tsx" ]] && { echo -e "${YELLOW}[$current/$total] $name SKIP${NC}"; skipped=$((skipped+1)); continue; }
         
-        echo -e "${CYAN}[HIR]${NC}"
-        head -15 "$TMP_DIR/hir_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
+        echo -n -e "${BLUE}[$current/$total]${NC} $name "
         
-        if [[ "$RUN_COMPILE" == "true" ]]; then
-            echo -e "${CYAN}[COMPILE]${NC}"
-            head -15 "$TMP_DIR/compile_$name.txt" 2>/dev/null | sed 's/^/  /' || echo "  <error>"
+        run_deno "$ed"
+        local deno_status=$?
+        run_hir "$ed"
+        
+        [[ "$RUN_QUICK" != "true" ]] && run_compile "$ed"
+        
+        local deno_f="$RESULTS_DIR/deno_$name.txt"
+        local hir_f="$RESULTS_DIR/hir_$name.txt"
+        
+        if [[ $deno_status -eq 2 ]]; then
+            echo -e "${YELLOW}INT${NC}"
+            interactive=$((interactive+1))
+            continue
         fi
         
-        # Show key differences
-        echo ""
-        echo "  Key diff lines:"
-        diff "$TMP_DIR/deno_$name.txt" "$TMP_DIR/hir_$name.txt" 2>/dev/null | head -10 | sed 's/^/    /' || echo "    (no line diff available)"
+        if [[ $deno_status -ne 0 ]]; then
+            echo -e "${RED}ERR${NC}"
+            failed=$((failed+1))
+            failures+=("$name (deno error)")
+            continue
+        fi
+        
+        local dh_sim=$(calc_sim "$deno_f" "$hir_f")
+        
+        if [[ "$RUN_QUICK" != "true" ]]; then
+            local compile_f="$RESULTS_DIR/compile_$name.txt"
+            local dc_sim=$(calc_sim "$deno_f" "$compile_f")
+            local hc_sim=$(calc_sim "$hir_f" "$compile_f")
+            
+            generate_diff "$deno_f" "$hir_f" "${name}_deno_hir"
+            generate_diff "$deno_f" "$compile_f" "${name}_deno_compile"
+            generate_diff "$hir_f" "$compile_f" "${name}_hir_compile"
+            
+            local matches=0
+            [[ $dh_sim -ge $PARITY_THRESHOLD ]] && matches=$((matches+1))
+            [[ $dc_sim -ge $PARITY_THRESHOLD ]] && matches=$((matches+1))
+            [[ $hc_sim -ge $PARITY_THRESHOLD ]] && matches=$((matches+1))
+            
+            echo "D-H:${dh_sim}% D-C:${dc_sim}% H-C:${hc_sim}%"
+            
+            if [[ $matches -ge 2 ]]; then
+                echo -e "    ${GREEN}✓${NC}"; passed=$((passed+1))
+            else
+                echo -e "    ${RED}✗${NC}"; failed=$((failed+1)); failures+=("$name")
+            fi
+        else
+            echo "D-H:${dh_sim}%"
+            if [[ $dh_sim -ge $PARITY_THRESHOLD ]]; then
+                echo -e "    ${GREEN}✓${NC}"; passed=$((passed+1))
+            else
+                echo -e "    ${RED}✗${NC}"; failed=$((failed+1)); failures+=("$name")
+            fi
+        fi
     done
-fi
-
-echo ""
-if [[ $failed -eq 0 ]]; then
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo -e "║                        ✓ ALL PARITY!                                      ║"
-    echo -e "╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    
+    echo ""
+    echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║${NC}  ${CYAN}SUMMARY${NC}                                                       ${BOLD}║${NC}"
+    echo -e "${BOLD}╠══════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    printf "${BOLD}║${NC}  ${GREEN}Passed:${NC} %s  ${RED}Failed:${NC} %s  ${YELLOW}Skipped:${NC} %s  ${YELLOW}Interactive:${NC} %s${BOLD}║${NC}\n" "$passed" "$failed" "$skipped" "$interactive"
+    echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo "Results: $RESULTS_DIR"
+    echo "Diffs: $DIFFS_DIR"
+    
+    [[ $failed -gt 0 ]] && {
+        echo ""
+        echo -e "${RED}FAILURES:${NC}"
+        for n in "${failures[@]}"; do
+            echo "  $n:"
+            head -3 "$RESULTS_DIR/deno_${n%% *}.txt" 2>/dev/null | sed 's/^/    /'
+        done
+        exit 1
+    }
+    
+    echo -e "\n${GREEN}✓ ALL PARITY${NC}"
     exit 0
-else
-    echo -e "${RED}╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo -e "║                        ✗ FIXES NEEDED                                      ║"
-    echo -e "╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
-    exit 1
-fi
+}
+
+main

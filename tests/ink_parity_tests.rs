@@ -784,12 +784,34 @@ fn test_ink_examples_comprehensive_coverage() {
         })
         .count();
     
-    // We should have comprehensive coverage with at least 45 examples
+    // We should have comprehensive coverage with at least 50 examples
     assert!(
-        count >= 45,
-        "should have at least 45 ink examples for comprehensive coverage, found {}",
+        count >= 50,
+        "should have at least 50 ink examples for comprehensive coverage, found {}",
         count
     );
+}
+
+/// Verify ink-switch example exists and has correct structure
+#[test]
+fn test_ink_switch_example() {
+    let path = Path::new("./examples/ink-switch/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+    assert!(content.contains("color"), "should use color prop");
+}
+
+/// Verify ink-uncontrolled-input example exists and has correct structure
+#[test]
+fn test_ink_uncontrolled_input_example() {
+    let path = Path::new("./examples/ink-uncontrolled-input/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    assert!(content.contains("Box"), "should use Box component");
+    assert!(content.contains("Text"), "should use Text component");
+    assert!(content.contains("backgroundColor"), "should use backgroundColor prop");
 }
 
 /// Verify each ink example has a working deno.json
