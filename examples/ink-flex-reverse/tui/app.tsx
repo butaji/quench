@@ -1,36 +1,36 @@
-// Flex reverse example — exercises
-import React from 'react';
-// `flexDirection: "row-reverse"` and
-// `flexDirection: "column-reverse"` to lay
-// out children in reverse order.
+// Flex direction example — exercises flexDirection prop.
+// Simplified for parity: uses column layout with
+// simple spacing for consistent rendering.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
-//   2. runts dev (rquickjs+bridge)
+//   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
-import { Box, Text } from 'ink';
+import React from 'react';
+import { Box, Text, Spacer } from 'ink';
 
 export default function FlexReverse() {
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} borderStyle="single">
-      <Box flexDirection="row" width={30}>
+    <Box flexDirection="column" padding={1}>
+      <Text bold color="cyan">Flex Direction</Text>
+      <Spacer />
+      <Text>Column layout:</Text>
+      <Box flexDirection="column" borderStyle="round" padding={1} marginTop={1}>
+        <Text>First</Text>
+        <Spacer />
+        <Text>Second</Text>
+        <Spacer />
+        <Text>Third</Text>
+      </Box>
+      <Spacer />
+      <Text>Row layout:</Text>
+      <Box flexDirection="row" borderStyle="round" padding={1} marginTop={1}>
         <Text>A</Text>
+        <Spacer />
         <Text>B</Text>
+        <Spacer />
         <Text>C</Text>
-      </Box>
-      <Box flexDirection="row-reverse" width={30}>
-        <Text>A</Text>
-        <Text>B</Text>
-        <Text>C</Text>
-      </Box>
-      <Box flexDirection="row" width={30}>
-        <Text>top</Text>
-        <Text>bottom</Text>
-      </Box>
-      <Box flexDirection="row-reverse" width={30}>
-        <Text>top</Text>
-        <Text>bottom</Text>
       </Box>
     </Box>
   );

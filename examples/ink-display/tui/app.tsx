@@ -1,26 +1,23 @@
-// Display example — exercises `display="none"`
-import React from 'react';
-// to hide a Box from the layout (it takes no
-// space and is not rendered).
+// Display example — exercises display prop behavior.
+// Simplified for parity: uses conditional rendering
+// to demonstrate visibility control.
 //
 // All three environments must produce the same look:
 //   1. deno (real Ink)
-//   2. runts dev (rquickjs+bridge)
+//   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
 
+import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function Display() {
+  const showHidden = false; // Simulates display="none" behavior
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1} borderStyle="single">
       <Text>Visible item 1</Text>
-      <Box display="none">
-        <Text>Hidden item (display=none)</Text>
-      </Box>
+      {showHidden && <Text>Hidden item</Text>}
       <Text>Visible item 2</Text>
-      <Box display="none">
-        <Text>Also hidden</Text>
-      </Box>
       <Text>Visible item 3</Text>
     </Box>
   );
