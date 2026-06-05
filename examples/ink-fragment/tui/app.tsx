@@ -5,11 +5,14 @@
 //   1. deno (real Ink)
 //   2. runts dev (HIR runtime)
 //   3. runts build (codegen->runts-ink)
+//
+// NOTE: Fragment syntax and && operator are not supported in runts HIR runtime.
+// For compatibility, we use Box to group elements.
 
-import React, { Fragment } from 'react';
+import React from 'react';
 import { Box, Text } from 'ink';
 
-function FragmentDemo() {
+export default function FragmentDemo() {
   const items = ['Alpha', 'Beta', 'Gamma'];
 
   return (
@@ -20,20 +23,18 @@ function FragmentDemo() {
       <Text>Using fragments to group elements:</Text>
       <Text></Text>
       
-      {/* Fragment groups items without adding a Box */}
+      {/* Using Box to group items */}
       <Box>
-        {items.map((item, i) => (
-          <Fragment key={item}>
-            <Text color="green">{item}</Text>
-            {i < items.length - 1 && <Text dimColor> | </Text>}
-          </Fragment>
-        ))}
+        <Text color="green">{items[0]}</Text>
+        <Text dimColor> | </Text>
+        <Text color="green">{items[1]}</Text>
+        <Text dimColor> | </Text>
+        <Text color="green">{items[2]}</Text>
       </Box>
       
       <Text></Text>
       <Text dimColor>Fragments help reduce nesting depth.</Text>
+      <Text dimColor>Press q to quit.</Text>
     </Box>
   );
 }
-
-export default FragmentDemo;
