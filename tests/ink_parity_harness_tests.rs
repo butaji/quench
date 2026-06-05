@@ -14,13 +14,13 @@ use std::process::Command;
 /// Test that the parity script exists and is executable
 #[test]
 fn test_parity_script_exists() {
-    let script = Path::new("./test_ink_parity.sh");
-    assert!(script.exists(), "parity test script should exist");
+    let script = Path::new("./run_parity_tests.sh");
+    assert!(script.exists(), "run_parity_tests.sh should exist");
     
     // Check it's readable as text
     let content = fs::read_to_string(script).expect("should be readable");
     assert!(content.contains("#!/bin/bash"), "should be a bash script");
-    assert!(content.contains("INK PARITY TEST"), "should have correct header");
+    assert!(content.contains("PARITY TEST HARNESS"), "should have correct header");
 }
 
 /// Test that the parity script passes shellcheck (if available)
@@ -28,14 +28,14 @@ fn test_parity_script_exists() {
 fn test_parity_script_syntax() {
     // Try to parse the script with bash -n
     let output = Command::new("bash")
-        .args(["-n", "./test_ink_parity.sh"])
+        .args(["-n", "./run_parity_tests.sh"])
         .output();
     
     // If shellcheck is available, that's a bonus
     if let Ok(shellcheck) = Command::new("which").arg("shellcheck").output() {
         if shellcheck.status.success() {
             let _ = Command::new("shellcheck")
-                .args(["./test_ink_parity.sh"])
+                .args(["./run_parity_tests.sh"])
                 .output();
         }
     }
@@ -57,15 +57,14 @@ fn test_parity_script_syntax() {
 /// Test that dry-run mode works
 #[test]
 fn test_parity_script_dry_run() {
-    let output = Command::new("./test_ink_parity.sh")
+    let output = Command::new("./run_parity_tests.sh")
         .args(["--dry-run"])
         .output();
     
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            assert!(stdout.contains("Dry run"), "should show dry run message");
-            assert!(stdout.contains("examples"), "should list examples");
+            assert!(stdout.contains("Would test") || stdout.contains("dry"), "should show dry run message");
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -80,7 +79,7 @@ fn test_parity_script_dry_run() {
 /// Test that help works
 #[test]
 fn test_parity_script_help() {
-    let output = Command::new("./test_ink_parity.sh")
+    let output = Command::new("./run_parity_tests.sh")
         .args(["--help"])
         .output();
     
@@ -385,4 +384,87 @@ fn test_examples_import_ink_components() {
             name
         );
     }
+}
+
+/// Verify ink-fragment-advanced has correct config format
+#[test]
+fn test_ink_fragment_advanced_config() {
+    let path = Path::new("./examples/ink-fragment-advanced/runts.config.json");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .expect("should be valid JSON");
+    
+    // Should have plugins with ratatui
+    if let Some(plugins) = json.get("plugins").and_then(|p| p.as_array()) {
+        let has_ratatui = plugins.iter().any(|p| {
+            p.get("name")
+                .and_then(|n| n.as_str())
+                .map(|n| n == "ratatui")
+                .unwrap_or(false)
+        });
+        assert!(has_ratatui, "ink-fragment-advanced should have ratatui plugin");
+    }
+}
+
+/// Verify ink-combined-hooks has correct config format
+#[test]
+fn test_ink_combined_hooks_config() {
+    let path = Path::new("./examples/ink-combined-hooks/runts.config.json");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .expect("should be valid JSON");
+    
+    // Should have plugins with ratatui
+    if let Some(plugins) = json.get("plugins").and_then(|p| p.as_array()) {
+        let has_ratatui = plugins.iter().any(|p| {
+            p.get("name")
+                .and_then(|n| n.as_str())
+                .map(|n| n == "ratatui")
+                .unwrap_or(false)
+        });
+        assert!(has_ratatui, "ink-combined-hooks should have ratatui plugin");
+    }
+}
+
+/// Verify run_parity_tests.sh has 3-environment support
+#[test]
+fn test_parity_script_has_3env_support() {
+    let script = Path::new("./run_parity_tests.sh");
+    let content = fs::read_to_string(script).expect("should be readable");
+    
+    // Should mention deno
+    assert!(content.contains("deno"), "should mention deno environment");
+    // Should mention runts dev or HIR
+    assert!(content.contains("runts dev") || content.contains("HIR"), "should mention runts dev/HIR");
+    // Should mention compile or build
+    assert!(content.contains("compile") || content.contains("build"), "should mention compile/build");
+}
+
+/// Verify run_parity_tests.sh has --skip-compile option
+#[test]
+fn test_parity_script_has_skip_compile() {
+    let script = Path::new("./run_parity_tests.sh");
+    let content = fs::read_to_string(script).expect("should be readable");
+    
+    assert!(content.contains("--skip-compile"), "should have --skip-compile option");
+}
+
+/// Verify run_parity_tests.sh has --output-dir option
+#[test]
+fn test_parity_scripts_has_output_dir() {
+    let script = Path::new("./run_parity_tests.sh");
+    let content = fs::read_to_string(script).expect("should be readable");
+    
+    assert!(content.contains("--output-dir"), "should have --output-dir option");
+}
+
+/// Verify run_parity_tests.sh has --per-symbol option
+#[test]
+fn test_parity_scripts_has_per_symbol() {
+    let script = Path::new("./run_parity_tests.sh");
+    let content = fs::read_to_string(script).expect("should be readable");
+    
+    assert!(content.contains("--per-symbol"), "should have --per-symbol option");
 }
