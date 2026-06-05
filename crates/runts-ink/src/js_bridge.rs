@@ -494,55 +494,16 @@ fn make_box_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
 
 /// Build `runts_ink.text(content, props) -> VNode object`.
 fn make_text_fn<'js>(ctx: Ctx<'js>) -> JsResult<Function<'js>> {
-Function::new(
-    ctx.clone(),
-    |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
-            // WORKAROUND: rquickjs truncates strings
-            // and arrays passed from JS to Rust.
-            // The JS side wraps text in JSON.stringify
-            // which produces a quoted JSON string.
-            // We strip the quotes to recover the
-            // original text.
-            let content_str = if let Some(s) = content.as_string() {
-                let raw = s.to_string().unwrap_or_default();
-                // Strip JSON quotes if present.
-                if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-                    raw[1..raw.len() - 1].to_string()
-                } else {
-                    raw
-                }
-            } else {
-                content.get::<String>().unwrap_or_default()
-            };
-            let mut t = InkText::new(content_str);
-            if let Ok(b) = props.get::<_, bool>("bold") {
-                if b {
-                    t = t.bold();
-                }
-            }
-            if let Ok(b) = props.get::<_, bool>("italic") {
-                if b {
-                    t = t.italic();
-                }
-            }
-            if let Ok(b) = props.get::<_, bool>("underline") {
-                if b {
-                    t = t.underline();
-                }
-            }
-            if let Ok(c) = props.get::<_, String>("color") {
-                if !c.is_empty() {
-                    t = t.color(parse_color(&c));
-                }
-            }
-            if let Ok(c) = props.get::<_, String>("bgColor") {
-                if !c.is_empty() {
-                    t = t.background_color(parse_color(&c));
-                }
-            }
-            vnode_to_js(&ctx, &VNode::from(t))
-        },
-    )
+Function::new(ctx.clone(), |ctx: Ctx<'js>, content: rquickjs::Value<'js>, props: Object<'js>| -> JsResult<Value<'js>> {
+let content_str = if let Some(s) = content.as_string() { let raw = s.to_string().unwrap_or_default(); if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 { raw[1..raw.len() - 1].to_string() } else { raw } } else { content.get::<String>().unwrap_or_default() };
+let mut t = InkText::new(content_str);
+if let Ok(b) = props.get::<_, bool>("bold") { if b { t = t.bold(); } }
+if let Ok(b) = props.get::<_, bool>("italic") { if b { t = t.italic(); } }
+if let Ok(b) = props.get::<_, bool>("underline") { if b { t = t.underline(); } }
+if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { t = t.color(parse_color(&c)); } }
+if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { t = t.background_color(parse_color(&c)); } }
+vnode_to_js(&ctx, &VNode::from(t))
+})
 }
 
 /// Build `runts_ink.newline() -> VNode object`.
