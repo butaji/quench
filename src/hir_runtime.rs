@@ -12,7 +12,7 @@
 
 use crate::transpile::hir;
 use runts_ink::{
-    AlignSelf, BorderStyle, Borders, Box as InkBox, Color, Display, FlexWrap, Newline, Overflow, Position, Spacer, Text as InkText, VNode,
+    AlignSelf, BorderStyle, Borders, Box as InkBox, Color, Display, FlexWrap, Newline, Overflow, Position, RenderOptions, Spacer, Text as InkText, VNode,
     VNodeContent,
 };
 
@@ -991,14 +991,17 @@ fn parse_color(s: &str) -> Color {
 /// replacement for the rquickjs JS-eval approach.
 pub fn render_tsx(
     source: &str,
-    _cols: u16,
-    _rows: u16,
+    cols: u16,
+    rows: u16,
 ) -> Result<String, RuntimeError> {
     let module = crate::transpile::parser::parse_source(source, true)
         .map_err(|e| RuntimeError(format!("parse error: {e:?}")))?;
     let mut interp = Interpreter::new(&module);
     let vnode = interp.run()?;
-    runts_ink::render_to_string(vnode, runts_ink::RenderOptions::new())
+    let mut options = RenderOptions::new();
+    options.columns = cols;
+    options.rows = rows;
+    runts_ink::render_to_string(vnode, options)
         .map_err(|e| RuntimeError(format!("render error: {e:?}")))
 }
 
