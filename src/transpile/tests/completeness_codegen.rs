@@ -39,44 +39,16 @@ mod completeness_tests {
     fn check_expr_variant(expr: &Expr) {
         let _ = matches!(
             expr,
-            Expr::String(_)
-                | Expr::Number(_)
-                | Expr::BigInt(_)
-                | Expr::Boolean(_)
-                | Expr::Null
-                | Expr::Undefined
-                | Expr::RegExp { .. }
-                | Expr::Template { .. }
-                | Expr::Ident { .. }
-                | Expr::JSX(_)
-                | Expr::Bin { .. }
-                | Expr::Unary { .. }
-                | Expr::Update { .. }
-                | Expr::Logical { .. }
-                | Expr::Cond { .. }
-                | Expr::Assign { .. }
-                | Expr::Array { .. }
-                | Expr::Object { .. }
-                | Expr::Function(_)
-                | Expr::ArrowFunction { .. }
-                | Expr::Await { .. }
-                | Expr::Yield { .. }
-                | Expr::Call { .. }
-                | Expr::New { .. }
-                | Expr::Member { .. }
-                | Expr::Super
-                | Expr::This
-                | Expr::StaticMember { .. }
-                | Expr::PrivateMember { .. }
-                | Expr::MetaProperty { .. }
-                | Expr::TaggedTemplate { .. }
-                | Expr::Seq { .. }
-                | Expr::Spread { .. }
-                | Expr::Class { .. }
-                | Expr::TypeAnnot { .. }
-                | Expr::ArrowWithType { .. }
-                | Expr::Block(_)
-                | Expr::Invalid
+            Expr::String(_) | Expr::Number(_) | Expr::BigInt(_) | Expr::Boolean(_) | Expr::Null
+                | Expr::Undefined | Expr::RegExp { .. } | Expr::Template { .. } | Expr::Ident { .. }
+                | Expr::JSX(_) | Expr::Bin { .. } | Expr::Unary { .. } | Expr::Update { .. }
+                | Expr::Logical { .. } | Expr::Cond { .. } | Expr::Assign { .. } | Expr::Array { .. }
+                | Expr::Object { .. } | Expr::Function(_) | Expr::ArrowFunction { .. } | Expr::Await { .. }
+                | Expr::Yield { .. } | Expr::Call { .. } | Expr::New { .. } | Expr::Member { .. }
+                | Expr::Super | Expr::This | Expr::StaticMember { .. } | Expr::PrivateMember { .. }
+                | Expr::MetaProperty { .. } | Expr::TaggedTemplate { .. } | Expr::Seq { .. }
+                | Expr::Spread { .. } | Expr::Class { .. } | Expr::TypeAnnot { .. }
+                | Expr::ArrowWithType { .. } | Expr::Block(_) | Expr::Invalid
         );
     }
 
@@ -990,83 +962,19 @@ mod completeness_tests {
     #[test]
     fn test_roundtrip_comprehensive_ts() {
         use crate::transpile::parser::TsParser;
-
-        let source = r#"
-function test(a: number, b: string): boolean {
-    const x = a + 1;
-    const arr = [1, 2, 3];
-    const obj = { a: 1, b: "two" };
-    if (x > 0) {
-        return true;
-    } else {
-        return false;
-    }
-    for (let i = 0; i < 10; i++) {
-        console.log(i);
-    }
-    try {
-        throw new Error("test");
-    } catch (e) {
-        // handle
-    }
-}
-"#;
-
+        let source = r#"function test(a: number, b: string): boolean { const x = a + 1; const arr = [1, 2, 3]; const obj = { a: 1, b: "two" }; if (x > 0) { return true; } else { return false; } for (let i = 0; i < 10; i++) { console.log(i); } try { throw new Error("test"); } catch (e) { } }"#;
         let parser = TsParser::new();
         let module = parser.parse_tsx(source).expect("parse failed");
-        assert!(
-            !module.items.is_empty(),
-            "Module should have items"
-        );
-
-        // Convert HIR to Rust via QuoteCodegen
+        assert!(!module.items.is_empty(), "Module should have items");
         let cg = QuoteCodegen::default();
         let mut all_tokens = TokenStream::new();
-
-        for item in &module.items {
-            match item {
-                ModuleItem::Decl(Decl::Function(func)) => {
-                    let fn_tokens = cg.gen_fn(func);
-                    all_tokens.extend(fn_tokens);
-                }
-                ModuleItem::Stmt(stmt) => {
-                    if let Some(stmt_tokens) = cg.gen_stmt(stmt) {
-                        all_tokens.extend(stmt_tokens);
-                    }
-                }
-                _ => {}
-            }
-        }
-
+        for item in &module.items { match item { ModuleItem::Decl(Decl::Function(func)) => { all_tokens.extend(cg.gen_fn(func)); } ModuleItem::Stmt(stmt) => { if let Some(stmt_tokens) = cg.gen_stmt(stmt) { all_tokens.extend(stmt_tokens); } } _ => {} } }
         let output = all_tokens.to_string();
-
-        // Verify output is non-empty
-        assert!(
-            !output.is_empty(),
-            "Generated Rust code should not be empty"
-        );
-
-        // Verify no excessive Value::Null (only legitimate uses in null/undefined handling)
+        assert!(!output.is_empty(), "Generated Rust code should not be empty");
         let null_count = output.matches("Value::Null").count();
-        assert!(
-            null_count <= 2,
-            "Generated code has {} Value::Null occurrences (expected <= 2 for null/undefined literals only), output: {}",
-            null_count,
-            output
-        );
-
-        // Verify key Rust constructs are present
-        assert!(
-            output.contains("fn test"),
-            "Should contain function declaration"
-        );
-        assert!(
-            output.contains("for"),
-            "Should contain for loop"
-        );
-        assert!(
-            output.contains("match") || output.contains("catch"),
-            "Should contain try-catch or match"
-        );
+        assert!(null_count <= 2, "Generated code has {} Value::Null occurrences (expected <= 2), output: {}", null_count, output);
+        assert!(output.contains("fn test"), "Should contain function declaration");
+        assert!(output.contains("for"), "Should contain for loop");
+        assert!(output.contains("match") || output.contains("catch"), "Should contain try-catch or match");
     }
 }

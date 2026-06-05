@@ -767,67 +767,11 @@ fn test_expr_value_to_rust_bool() {
 #[test]
 fn test_codegen_with_variable_declarations() {
     let plugin = ratatui_plugin();
-    
-    // Simulate the ink-counter example structure:
-    // const count = 0;
-    // return <Text>Count: {count}</Text>
-    let items = json!([
-        {
-            "Decl": {
-                "Function": {
-                    "name": "Counter",
-                    "body": [
-                        {
-                            "kind": "Block",
-                            "stmts": [
-                                {
-                                    "kind": "Expr",
-                                    "expr": {
-                                        "Assign": {
-                                            "op": "Assign",
-                                            "left": { "Ident": { "name": "count" } },
-                                            "right": { "Number": 0.0 }
-                                        }
-                                    }
-                                }
-                            ]
-                        },
-                        {
-                            "kind": "Return",
-                            "arg": {
-                                "JSX": {
-                                    "opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false },
-                                    "closing": { "name": { "Ident": "Box" } },
-                                    "children": [
-                                        {
-                                            "kind": "JSX",
-                                            "opening": { "name": { "Ident": "Text" }, "attrs": [], "self_closing": false },
-                                            "closing": { "name": { "Ident": "Text" } },
-                                            "children": [
-                                                { "Text": "Count: " },
-                                                { "Expr": { "Ident": { "name": "count" } } }
-                                            ]
-                                        }
-                                    ]
-                                }
-                            }
-                        }
-                    ]
-                }
-            }
-        }
-    ]);
-    
+    let items = json!([{"Decl": {"Function": {"name": "Counter", "body": [{"kind": "Block", "stmts": [{"kind": "Expr", "expr": {"Assign": {"op": "Assign", "left": { "Ident": { "name": "count" }}, "right": { "Number": 0.0}}}}]}, {"kind": "Return", "arg": {"JSX": {"opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false}, "closing": { "name": { "Ident": "Box" }}, "children": [{"kind": "JSX", "opening": { "name": { "Ident": "Text" }, "attrs": [], "self_closing": false}, "closing": { "name": { "Ident": "Text" }}, "children": [{"Text": "Count: "}, {"Expr": { "Ident": { "name": "count" }}}]}}]}}}}}]);
     let result = plugin.try_codegen_jsx(&items);
     assert!(result.is_some(), "codegen should succeed");
     let code = result.unwrap();
-    
-    // Should include the variable declaration
-    assert!(code.contains("let count") || code.contains("count"), 
-            "should include count variable: {code}");
-    
-    // Should include the Text with the count expression
-    // Note: Rust macro output may have spaces around :: operator
+    assert!(code.contains("let count") || code.contains("count"), "should include count variable: {code}");
     let code_normalized = code.replace(" :: ", "::").replace(" ::", "::").replace(":: ", "::");
     assert!(code_normalized.contains("Text::new"), "should include Text::new: {code}");
 }
@@ -835,49 +779,11 @@ fn test_codegen_with_variable_declarations() {
 /// Test that extract_jsx_from_function_with_vars extracts both JSX and variables
 #[test]
 fn test_extract_jsx_from_function_with_vars() {
-    let func_item = json!({
-        "Decl": {
-            "Function": {
-                "name": "Counter",
-                "body": [
-                    {
-                        "kind": "Block",
-                        "stmts": [
-                            {
-                                "kind": "Expr",
-                                "expr": {
-                                    "Assign": {
-                                        "op": "Assign",
-                                        "left": { "Ident": { "name": "count" } },
-                                        "right": { "Number": 0.0 }
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                    {
-                        "kind": "Return",
-                        "arg": {
-                            "JSX": {
-                                "opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false },
-                                "closing": { "name": { "Ident": "Box" } },
-                                "children": []
-                            }
-                        }
-                    }
-                ]
-            }
-        }
-    });
-    
+    let func_item = json!({"Decl": {"Function": {"name": "Counter", "body": [{"kind": "Block", "stmts": [{"kind": "Expr", "expr": {"Assign": {"op": "Assign", "left": { "Ident": { "name": "count" }}, "right": { "Number": 0.0}}}}]}, {"kind": "Return", "arg": {"JSX": {"opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false}, "closing": { "name": { "Ident": "Box" }}, "children": []}}}}]}}}}});
     let result = extract_jsx_from_function_with_vars(&func_item);
     assert!(result.is_some(), "should extract JSX and variables");
     let (jsx, var_decls) = result.unwrap();
-    
-    // Should extract JSX
     assert!(jsx.get("opening").is_some(), "should extract JSX");
-    
-    // Should extract variable declarations
     assert!(!var_decls.is_empty(), "should extract var declarations");
     assert!(var_decls[0].contains("count"), "should include count in declarations");
 }
@@ -885,44 +791,10 @@ fn test_extract_jsx_from_function_with_vars() {
 #[test]
 fn test_codegen_nested_jsx() {
     use crate::codegen::jsx::{extract_jsx_from_function_with_vars, generate_widget_for_jsx};
-
-    let func_item = json!({
-        "Decl": {
-            "Function": {
-                "name": "Nested",
-                "body": [
-                    {
-                        "kind": "Return",
-                        "arg": {
-                            "JSX": {
-                                "opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false },
-                                "closing": { "name": { "Ident": "Box" } },
-                                "children": [
-                                    {
-                                        "kind": "JSX",
-                                        "opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false },
-                                        "closing": { "name": { "Ident": "Box" } },
-                                        "children": [
-                                            {
-                                                "kind": "Text",
-                                                "text": "Inner"
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                ]
-            }
-        }
-    });
-
+    let func_item = json!({"Decl": {"Function": {"name": "Nested", "body": [{"kind": "Return", "arg": {"JSX": {"opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false}, "closing": { "name": { "Ident": "Box" }}, "children": [{"kind": "JSX", "opening": { "name": { "Ident": "Box" }, "attrs": [], "self_closing": false}, "closing": { "name": { "Ident": "Box" }}, "children": [{"kind": "Text", "text": "Inner"}]}]}}}}]}}}}});
     let result = extract_jsx_from_function_with_vars(&func_item);
     assert!(result.is_some(), "should extract JSX");
     let (jsx, _) = result.unwrap();
-
-    // Generate widget - should not panic
     let widget = generate_widget_for_jsx(jsx);
     assert!(widget.is_some(), "should generate widget for nested JSX");
 }

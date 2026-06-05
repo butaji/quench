@@ -131,40 +131,15 @@ fn generate_cargo(project_root: &Path, build_dir: &Path) -> Result<()> {
 
 fn find_ts_files(project_root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(project_root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(project_root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-
-        // Skip test files and hidden directories
-        if is_hidden_or_test_file(path) {
+        if is_hidden_or_test_file(path) || is_excluded_subpath(project_root, path) {
             continue;
         }
-
-        // Skip well-known non-source directories that may exist under a
-        // project root. This is critical: when the user runs
-        // `runts transpile examples/my-blog`, the project_root ends up
-        // being the runie-tsx repo root, which contains `crates/`,
-        // `target/`, `.runts/`, `examples/` (other examples), `tests/`,
-        // etc. Without this filter, the walker would try to parse the
-        // entire workspace, including Cargo.toml, .rs files renamed to
-        // .ts, and TypeScript fixtures that exist for other purposes.
-        //
-        // We only look at path components that are *descendants* of
-        // project_root — otherwise the root itself would match if its
-        // own name (or any ancestor like `examples` when the user passes
-        // `examples/my-blog`) happened to be in the excluded list.
-        if is_excluded_subpath(project_root, path) {
-            continue;
-        }
-
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext.to_lowercase() == "tsx" || ext.to_lowercase() == "ts" {
-                if !has_hidden_component(path) {
-                    files.push(path.to_path_buf());
-                }
+            let ext_lower = ext.to_lowercase();
+            if (ext_lower == "tsx" || ext_lower == "ts") && !has_hidden_component(path) {
+                files.push(path.to_path_buf());
             }
         }
     }

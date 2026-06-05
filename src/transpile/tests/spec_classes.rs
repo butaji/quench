@@ -173,73 +173,25 @@ mod spec_classes_tests {
         #[test]
         fn class_with_constructor_codegen() {
             let class = ClassDecl {
-                name: "Point".to_string(),
-                extends: None,
+                name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember {
-                        name: "x".to_string(),
-                        type_: Some(Type::Number),
-                        is_static: false,
-                        is_async: false,
-                    },
-                    ClassMember {
-                        name: "y".to_string(),
-                        type_: Some(Type::Number),
-                        is_static: false,
-                        is_async: false,
-                    },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
                 ],
                 generics: vec![],
-                methods: vec![
-                    ClassMethod {
-                        name: "constructor".to_string(),
-                        params: vec![
-                            Param {
-                                name: "x".to_string(),
-                                type_: Some(Type::Number),
-                                default: None,
-                                optional: false,
-                                pattern: None,
-                                ownership: Ownership::Owned,
-                            },
-                            Param {
-                                name: "y".to_string(),
-                                type_: Some(Type::Number),
-                                default: None,
-                                optional: false,
-                                pattern: None,
-                                ownership: Ownership::Owned,
-                            },
-                        ],
-                        body: Expr::Block(vec![
-                            Stmt::Expr {
-                                expr: Expr::Assign {
-                                    op: AssignOp::Assign,
-                                    left: Box::new(Expr::Member {
-                                        obj: Box::new(Expr::This),
-                                        property: Box::new(Expr::Ident { name: "x".to_string() }),
-                                        computed: false,
-                                    }),
-                                    right: Box::new(Expr::Ident { name: "x".to_string() }),
-                                },
-                            },
-                            Stmt::Expr {
-                                expr: Expr::Assign {
-                                    op: AssignOp::Assign,
-                                    left: Box::new(Expr::Member {
-                                        obj: Box::new(Expr::This),
-                                        property: Box::new(Expr::Ident { name: "y".to_string() }),
-                                        computed: false,
-                                    }),
-                                    right: Box::new(Expr::Ident { name: "y".to_string() }),
-                                },
-                            },
-                        ]),
-                        kind: MethodKind::Constructor,
-                    },
-                ],
+                methods: vec![ClassMethod {
+                    name: "constructor".to_string(),
+                    params: vec![
+                        Param { name: "x".to_string(), type_: Some(Type::Number), default: None, optional: false, pattern: None, ownership: Ownership::Owned },
+                        Param { name: "y".to_string(), type_: Some(Type::Number), default: None, optional: false, pattern: None, ownership: Ownership::Owned },
+                    ],
+                    body: Expr::Block(vec![
+                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "x".to_string() }), computed: false }), right: Box::new(Expr::Ident { name: "x".to_string() }) } },
+                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "y".to_string() }), computed: false }), right: Box::new(Expr::Ident { name: "y".to_string() }) } },
+                    ]),
+                    kind: MethodKind::Constructor,
+                }],
             };
-
             let tokens = codegen_class(&class);
             let s = normalize_ws(&tokens.to_string());
             assert!(s.contains("Point"), "should have Point: {}", s);
@@ -249,42 +201,18 @@ mod spec_classes_tests {
         #[test]
         fn class_with_instance_method_codegen() {
             let class = ClassDecl {
-                name: "Point".to_string(),
-                extends: None,
+                name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember {
-                        name: "x".to_string(),
-                        type_: Some(Type::Number),
-                        is_static: false,
-                        is_async: false,
-                    },
-                    ClassMember {
-                        name: "y".to_string(),
-                        type_: Some(Type::Number),
-                        is_static: false,
-                        is_async: false,
-                    },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
                 ],
                 generics: vec![],
-                methods: vec![
-                    ClassMethod {
-                        name: "distance".to_string(),
-                        params: vec![
-                            Param {
-                                name: "other".to_string(),
-                                type_: None,
-                                default: None,
-                                optional: false,
-                                pattern: None,
-                                ownership: Ownership::Borrow,
-                            },
-                        ],
-                        body: Expr::Number(0.0),
-                        kind: MethodKind::Method,
-                    },
-                ],
+                methods: vec![ClassMethod {
+                    name: "distance".to_string(),
+                    params: vec![Param { name: "other".to_string(), type_: None, default: None, optional: false, pattern: None, ownership: Ownership::Borrow }],
+                    body: Expr::Number(0.0), kind: MethodKind::Method,
+                }],
             };
-
             let tokens = codegen_class(&class);
             let s = normalize_ws(&tokens.to_string());
             assert!(s.contains("fn distance"), "should generate fn distance: {}", s);

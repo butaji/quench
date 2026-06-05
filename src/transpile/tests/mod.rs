@@ -22,6 +22,9 @@ pub mod routegen;
 pub mod spec_async_runtime;
 
 #[cfg(test)]
+pub mod spec_control_flow;
+
+#[cfg(test)]
 pub mod spec_data_structures;
 
 #[cfg(test)]

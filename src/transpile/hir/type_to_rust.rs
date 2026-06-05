@@ -32,90 +32,31 @@ impl TypeToRust {
             Type::Boolean => RustType::Primitive("bool".into()),
             Type::Void => RustType::Primitive("()".into()),
             Type::Never => RustType::Primitive("!".into()),
-            Type::Unknown => RustType::Value,
-            Type::Any => RustType::Value,
+            Type::Unknown | Type::Any | Type::Null | Type::Undefined => RustType::Value,
             Type::BigInt => RustType::Primitive("i64".into()),
             Type::Symbol => RustType::Primitive("std::sync::Arc<std::fmt::Debug>".into()),
             Type::This => RustType::Primitive("Self".into()),
-            Type::Null => RustType::Value,
-            Type::Undefined => RustType::Value,
-            Type::Array { elem } => {
-                let inner = self.convert(elem);
-                RustType::Vec(Box::new(inner))
-            }
-            Type::Ref { name, generics } => {
-                if generics.is_empty() {
-                    RustType::Named(name.clone())
-                } else {
-                    let gs: Vec<_> = generics.iter().map(|g| self.convert(g)).collect();
-                    RustType::Generic(name.clone(), gs)
-                }
-            }
-            Type::Object { members } => {
-                if members.is_empty() {
-                    RustType::Value
-                } else {
-                    RustType::Struct(members.iter().map(|m| self.convert_member(m)).collect())
-                }
-            }
+            Type::Array { elem } => { let inner = self.convert(elem); RustType::Vec(Box::new(inner)) }
+            Type::Ref { name, generics } => if generics.is_empty() { RustType::Named(name.clone()) } else { let gs: Vec<_> = generics.iter().map(|g| self.convert(g)).collect(); RustType::Generic(name.clone(), gs) },
+            Type::Object { members } => if members.is_empty() { RustType::Value } else { RustType::Struct(members.iter().map(|m| self.convert_member(m)).collect()) },
             Type::Union { types } => self.convert_union(types),
             Type::Intersection { types } => self.convert_intersection(types),
-            Type::Function { params, ret } => {
-                let ps: Vec<_> = params.iter().map(|p| self.convert(p)).collect();
-                let r = self.convert(ret);
-                RustType::Fn(ps, Box::new(r))
-            }
+            Type::Function { params, ret } => { let ps: Vec<_> = params.iter().map(|p| self.convert(p)).collect(); RustType::Fn(ps, Box::new(self.convert(ret))) }
             Type::Literal { kind, value } => self.convert_literal(kind, value),
             Type::Template { parts, values } => self.convert_template(parts, values),
-            Type::Index { obj, index } => {
-                let obj_t = self.convert(obj);
-                let index_t = self.convert(index);
-                RustType::HashMap(Box::new(obj_t), Box::new(index_t))
-            }
-            Type::Mapped { from, to } => {
-                let from_t = self.convert(from);
-                let to_t = self.convert(to);
-                RustType::HashMap(Box::new(from_t), Box::new(to_t))
-            }
-            Type::Conditional { check, extends, true_type, false_type } => {
-                let check_t = self.convert(check);
-                let extends_t = self.convert(extends);
-                let true_t = self.convert(true_type);
-                let false_t = self.convert(false_type);
-                RustType::Conditional {
-                    check: Box::new(check_t),
-                    extends: Box::new(extends_t),
-                    true_type: Box::new(true_t),
-                    false_type: Box::new(false_t),
-                }
-            }
-            Type::Query { expr } => {
-                let _ = expr;
-                RustType::Value
-            }
-            Type::Infer { name } => {
-                let _ = name;
-                RustType::Value
-            }
+            Type::Index { obj, index } | Type::Mapped { from: obj, to: index } => { let obj_t = self.convert(obj); let index_t = self.convert(index); RustType::HashMap(Box::new(obj_t), Box::new(index_t)) }
+            Type::Conditional { check, extends, true_type, false_type } => { let check_t = self.convert(check); let extends_t = self.convert(extends); let true_t = self.convert(true_type); let false_t = self.convert(false_type); RustType::Conditional { check: Box::new(check_t), extends: Box::new(extends_t), true_type: Box::new(true_t), false_type: Box::new(false_t) } },
+            Type::Query { .. } | Type::Infer { .. } => RustType::Value,
             Type::Partial { inner } => self.convert_partial(inner),
             Type::Required { inner } => self.convert_required(inner),
             Type::Pick { inner, keys } => self.convert_pick(inner, keys),
             Type::Omit { inner, keys } => self.convert_omit(inner, keys),
-            Type::Record { key, value } => {
-                let key_t = self.convert(key);
-                let value_t = self.convert(value);
-                RustType::HashMap(Box::new(key_t), Box::new(value_t))
-            }
+            Type::Record { key, value } => { let key_t = self.convert(key); let value_t = self.convert(value); RustType::HashMap(Box::new(key_t), Box::new(value_t)) },
             Type::KeyOf { inner } => self.convert_keyof(inner),
             Type::ReturnType { inner } => self.convert_return_type(inner),
             Type::Parameters { inner } => self.convert_parameters(inner),
             Type::Readonly { inner } => self.convert(inner),
-            Type::Tuple { elements } => {
-                let types: Vec<_> = elements.iter()
-                    .map(|e| self.convert(&e.type_))
-                    .collect();
-                RustType::Tuple(types)
-            }
+            Type::Tuple { elements } => { let types: Vec<_> = elements.iter().map(|e| self.convert(&e.type_)).collect(); RustType::Tuple(types) },
         }
     }
 
@@ -401,48 +342,17 @@ pub enum RustType {
 impl RustType {
     pub fn type_name(&self) -> String {
         match self {
-            RustType::Primitive(s) => s.clone(),
-            RustType::Named(s) => s.clone(),
-            RustType::Generic(name, args) => {
-                let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect();
-                format!("{}<{}>", name, args_str.join(", "))
-            }
-            RustType::Struct(fields) => {
-                let fields_str: Vec<_> = fields.iter()
-                    .map(|f| format!("{}: {}", f.name, f.ty.type_name()))
-                    .collect();
-                format!("{{ {} }}", fields_str.join(", "))
-            }
+            RustType::Primitive(s) | RustType::Named(s) => s.clone(),
+            RustType::Generic(name, args) => { let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect(); format!("{}<{}>", name, args_str.join(", ")) }
+            RustType::Struct(fields) => { let fields_str: Vec<_> = fields.iter().map(|f| format!("{}: {}", f.name, f.ty.type_name())).collect(); format!("{{ {} }}", fields_str.join(", ")) }
             RustType::Vec(inner) => format!("Vec<{}>", inner.type_name()),
-            RustType::Fn(params, ret) => {
-                let params_str: Vec<_> = params.iter().map(|p| p.type_name()).collect();
-                format!("fn({}) -> {}", params_str.join(", "), ret.type_name())
-            }
+            RustType::Fn(params, ret) => { let params_str: Vec<_> = params.iter().map(|p| p.type_name()).collect(); format!("fn({}) -> {}", params_str.join(", "), ret.type_name()) }
             RustType::HashMap(k, v) => format!("std::collections::HashMap<{}, {}>", k.type_name(), v.type_name()),
-            RustType::Enum(variants) => {
-                let var_strs: Vec<_> = variants.iter().map(|v| v.type_name()).collect();
-                format!("enum {{ {} }}", var_strs.join(", "))
-            }
-            RustType::Variant(name, args) => {
-                if args.is_empty() {
-                    name.clone()
-                } else {
-                    let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect();
-                    format!("{}({})", name, args_str.join(", "))
-                }
-            }
-            RustType::VariantStruct { index, fields } => {
-                let fields_str: Vec<_> = fields.iter()
-                    .map(|f| format!("{}: {}", f.name, f.ty.type_name()))
-                    .collect();
-                format!("Variant{}{{{}}}", index, fields_str.join(", "))
-            }
-            RustType::Tuple(types) => {
-                let types_str: Vec<_> = types.iter().map(|t| t.type_name()).collect();
-                format!("({})", types_str.join(", "))
-            }
-            RustType::Conditional { .. } => "Value".to_string(),
-            RustType::Value => "Value".to_string(),
+            RustType::Enum(variants) => { let var_strs: Vec<_> = variants.iter().map(|v| v.type_name()).collect(); format!("enum {{ {} }}", var_strs.join(", ")) }
+            RustType::Variant(name, args) => if args.is_empty() { name.clone() } else { let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect(); format!("{}({})", name, args_str.join(", ")) },
+            RustType::VariantStruct { index, fields } => { let fields_str: Vec<_> = fields.iter().map(|f| format!("{}: {}", f.name, f.ty.type_name())).collect(); format!("Variant{}{{{}}}", index, fields_str.join(", ")) }
+            RustType::Tuple(types) => { let types_str: Vec<_> = types.iter().map(|t| t.type_name()).collect(); format!("({})", types_str.join(", ")) }
+            RustType::Conditional { .. } | RustType::Value => "Value".to_string(),
             RustType::StringLiteral(s) => format!("\"{}\"", s),
             RustType::NumberLiteral(n) => n.to_string(),
             RustType::BoolLiteral(b) => b.to_string(),

@@ -1219,49 +1219,11 @@ async fn main() {{
 
     /// Convert JSX expression to TokenStream.
     fn jsx_expr_to_tokenstream(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
-        // Handle actual HIR format: direct keys without "kind" wrapper
-        if let Some(name) = expr.get("Ident")?.as_str() {
-            return Some(Some(jsx_expr(quote::quote! { #name })));
-        }
-        if let Some(s) = expr.get("String")?.as_str() {
-            return Some(Some(jsx_text(s)));
-        }
-        if let Some(n) = expr.get("Number")?.as_f64() {
-            return Some(Some(jsx_expr(quote::quote! { #n })));
-        }
-        if let Some(b) = expr.get("Boolean")?.as_bool() {
-            return Some(Some(jsx_expr(quote::quote! { #b })));
-        }
-
-        // Fallback: check for "kind" field (old format)
-        if let Some(kind) = expr.get("kind")?.as_str() {
-            match kind {
-                "Ident" => {
-                    let name = expr.get("name")?.as_str()?;
-                    return Some(Some(jsx_expr(quote::quote! { #name })));
-                }
-                "String" => {
-                    let s = expr.get("String")?.as_str()?;
-                    return Some(Some(jsx_text(s)));
-                }
-                "Number" => {
-                    let n = expr.get("0")?.as_f64()?;
-                    return Some(Some(jsx_expr(quote::quote! { #n })));
-                }
-                "Boolean" => {
-                    let b = expr.get("0")?.as_bool()?;
-                    return Some(Some(jsx_expr(quote::quote! { #b })));
-                }
-                "Bin" => {
-                    return Some(None);
-                }
-                "Call" => {
-                    return Some(None);
-                }
-                _ => return Some(None),
-            }
-        }
-
+        if let Some(name) = expr.get("Ident")?.as_str() { return Some(Some(jsx_expr(quote::quote! { #name }))); }
+        if let Some(s) = expr.get("String")?.as_str() { return Some(Some(jsx_text(s))); }
+        if let Some(n) = expr.get("Number")?.as_f64() { return Some(Some(jsx_expr(quote::quote! { #n }))); }
+        if let Some(b) = expr.get("Boolean")?.as_bool() { return Some(Some(jsx_expr(quote::quote! { #b }))); }
+        if let Some(kind) = expr.get("kind")?.as_str() { match kind { "Ident" => { let name = expr.get("name")?.as_str()?; return Some(Some(jsx_expr(quote::quote! { #name }))); } "String" => { return Some(Some(jsx_text(expr.get("String")?.as_str()?))); } "Number" => { let n = expr.get("0")?.as_f64()?; return Some(Some(jsx_expr(quote::quote! { #n }))); } "Boolean" => { let b = expr.get("0")?.as_bool()?; return Some(Some(jsx_expr(quote::quote! { #b }))); } _ => return Some(None), } }
         Some(None)
     }
 
@@ -1301,50 +1263,12 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_simple_div() {
         let plugin = FreshPlugin;
-        // Externally tagged shape: ModuleItem is `{"Decl": <Decl>}`,
-        // Decl is `{"Function": <FunctionDecl>}` (no inner "kind"),
-        // Block is `{"stmts": [...]}`, JSX is `{"JSX": {...}}`.
-        let items_json = serde_json::json!([
-            {
-                "Decl": {
-                    "Function": {
-                        "name": "Hello",
-                        "body": {
-                            "stmts": [
-                                {
-                                    "Return": {
-                                        "arg": {
-                                            "JSX": {
-                                                "opening": {
-                                                    "name": { "Ident": "div" },
-                                                    "attrs": [],
-                                                    "self_closing": false
-                                                },
-                                                "children": [
-                                                    { "Text": "Hello World" }
-                                                ],
-                                                "closing": {
-                                                    "name": { "Ident": "div" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Hello", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Text": "Hello World"}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
-
         assert!(result.is_some(), "Should generate code for JSX");
         let code = result.unwrap();
         eprintln!("Generated code:\n{}", code);
-
-        // Check for VNode generation
         assert!(code.contains("VNode::Element") || code.contains("VNode"), "Should contain VNode");
         assert!(code.contains("\"div\""), "Should contain div tag");
         assert!(code.contains("Hello World"), "Should contain text");
@@ -1353,49 +1277,9 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_attributes() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([
-            {
-                "Decl": {
-                    "Function": {
-                        "name": "Home",
-                        "body": {
-                            "stmts": [
-                                {
-                                    "Return": {
-                                        "arg": {
-                                            "JSX": {
-                                                "opening": {
-                                                    "name": { "Ident": "div" },
-                                                    "attrs": [
-                                                        {
-                                                            "Attr": {
-                                                                "name": "class",
-                                                                "value": "home"
-                                                            }
-                                                        }
-                                                    ],
-                                                    "self_closing": false
-                                                },
-                                                "children": [
-                                                    { "Text": "Welcome" }
-                                                ],
-                                                "closing": {
-                                                    "name": { "Ident": "div" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Home", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [{"Attr": {"name": "class", "value": "home"}}], "self_closing": false}, "children": [{"Text": "Welcome"}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
-
         assert!(result.is_some(), "Should generate code for JSX with attrs");
         let code = result.unwrap();
         eprintln!("Generated code with attrs:\n{}", code);
@@ -1436,61 +1320,13 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_nested_elements() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([
-            {
-                "Decl": {
-                    "Function": {
-                        "name": "Outer",
-                        "body": {
-                            "stmts": [
-                                {
-                                    "Return": {
-                                        "arg": {
-                                            "JSX": {
-                                                "opening": {
-                                                    "name": { "Ident": "div" },
-                                                    "attrs": [],
-                                                    "self_closing": false
-                                                },
-                                                "children": [
-                                                    {
-                                                        "JSX": {
-                                                            "opening": {
-                                                                "name": { "Ident": "span" },
-                                                                "attrs": [],
-                                                                "self_closing": false
-                                                            },
-                                                            "children": [
-                                                                { "Text": "nested" }
-                                                            ],
-                                                            "closing": {
-                                                                "name": { "Ident": "span" }
-                                                            }
-                                                        }
-                                                    }
-                                                ],
-                                                "closing": {
-                                                    "name": { "Ident": "div" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Outer", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"JSX": {"opening": {"name": { "Ident": "span" }, "attrs": [], "self_closing": false}, "children": [{"Text": "nested"}], "closing": {"name": { "Ident": "span" }}}}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         eprintln!("Result: {:?}", result);
-
         assert!(result.is_some(), "Should generate code for nested JSX");
         let code = result.unwrap();
         eprintln!("Generated nested code:\n{}", code);
-
         assert!(code.contains("\"div\""), "Should contain outer div");
         assert!(code.contains("\"span\""), "Should contain inner span");
     }
@@ -1498,52 +1334,12 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_expr_child() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([
-            {
-                "Decl": {
-                    "Function": {
-                        "name": "WithExpr",
-                        "body": {
-                            "stmts": [
-                                {
-                                    "Return": {
-                                        "arg": {
-                                            "JSX": {
-                                                "opening": {
-                                                    "name": { "Ident": "div" },
-                                                    "attrs": [],
-                                                    "self_closing": false
-                                                },
-                                                "children": [
-                                                    {
-                                                        "Expr": {
-                                                            "expr": {
-                                                                "Ident": { "name": "name" }
-                                                            }
-                                                        }
-                                                    }
-                                                ],
-                                                "closing": {
-                                                    "name": { "Ident": "div" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        ]);
-
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "WithExpr", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Expr": {"expr": {"Ident": { "name": "name" }}}}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
-
         assert!(result.is_some(), "Should generate code for JSX with expression child");
         let code = result.unwrap();
         eprintln!("Generated expr code:\n{}", code);
-
         assert!(code.contains("\"div\""), "Should contain div");
     }
 
@@ -1916,56 +1712,15 @@ mod tests {
 
     #[test]
     fn test_try_codegen_jsx_with_internally_tagged_stmt() {
-        // This is the actual HIR JSON shape that comes through the
-        // plugin pipeline: ModuleItem is `{"Decl": <Decl>}`, Decl is
-        // `{"Function": <FunctionDecl>}`, but FunctionDecl's body
-        // is `Option<Block>` where Block is a newtype variant
-        // `Block(Vec<Stmt>)` that serializes as the bare array. And
-        // Stmt uses `#[serde(tag = "kind")]` so it serializes as
-        // `{"kind": "Return", "arg": ...}`.
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([
-            {
-                "Decl": {
-                    "Function": {
-                        "name": "Counter",
-                        "body": [
-                            {
-                                "kind": "Return",
-                                "arg": {
-                                    "JSX": {
-                                        "opening": {
-                                            "name": { "Ident": "div" },
-                                            "attrs": [],
-                                            "self_closing": false
-                                        },
-                                        "children": [
-                                            { "Text": "Count: 0" }
-                                        ],
-                                        "closing": {
-                                            "name": { "Ident": "div" }
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                }
-            }
-        ]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Counter", "body": [{"kind": "Return", "arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Text": "Count: 0"}], "closing": {"name": { "Ident": "div" }}}}}]}}}]]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
-        assert!(
-            result.is_some(),
-            "Should generate code for JSX inside a Stmt::Return (the actual HIR shape)"
-        );
+        assert!(result.is_some(), "Should generate code for JSX inside a Stmt::Return (the actual HIR shape)");
         let code = result.unwrap();
         assert!(code.contains("VNode"), "Should contain VNode");
         assert!(code.contains("div"), "Should contain div tag");
-        assert!(
-            code.contains("render"),
-            "Wrapped module should expose a render function"
-        );
+        assert!(code.contains("render"), "Wrapped module should expose a render function");
     }
 
     #[test]
