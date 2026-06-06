@@ -15,7 +15,7 @@
 | HIR (High-Level IR) | ✅ | Typed, serializable, stripped |
 | Semantic analyzer | ✅ | Subset validation, hook rules, module classification |
 | Rust code generator | ✅ | HIR → idiomatic Rust source |
-| HIR interpreter (dev mode) | ✅ | Direct execution without compilation |
+| rquickjs dev engine | ✅ | TSX→JS→rquickjs with Yoga layout. HIR interpreter removed. |
 | Dev server (Axum + file watcher) | ✅ | < 50ms hot reload |
 | Signal system | ✅ | Leptos-style fine-grained reactivity |
 | Hooks engine | ✅ | useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, useId |
@@ -210,7 +210,7 @@
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-05 | Custom parser for v0.5 | Zero deps, fast compile, subset control. Migrate to oxc for v1.0. |
-| 2026-05 | HIR interpreter for dev | < 50ms reload without cargo. Full page refresh for correctness. |
+| 2026-05 | rquickjs for dev | Full JS semantics via rquickjs + Yoga. HIR interpreter removed (was becoming custom JS engine). |
 | 2026-05 | Signals + VDOM hybrid | Fine-grained for islands, VDOM for SSR composition. Best of both. |
 | 2026-05 | Vanilla JS client runtime | No Preact dependency in browser. < 5KB runtime. |
 | 2026-05 | Panic = abort in release | Smallest binary. Errors return HTTP 500; no unwinding needed. |

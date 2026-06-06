@@ -7,11 +7,11 @@
 
 ## The Problem
 
-20+ shell scripts exist. EXECUTE.md demands ONE script.
+10 old shell scripts still exist in repo root. EXECUTE.md demands ONE script.
 
 ## Steps
 
-1. Delete ALL old `test_parity*.sh`, `test_ink_parity*.sh`, `run_parity_tests*.sh`.
+1. Delete ALL old `test_parity*.sh`, `test_ink_parity*.sh` from repo root.
 2. Create `scripts/parity.sh` with CLI:
    ```bash
    ./scripts/parity.sh --env deno|rq|compile|all --examples GLOB --once
@@ -23,6 +23,6 @@
 ## Acceptance Criteria
 
 - [ ] Exactly one script: `scripts/parity.sh`.
-- [ ] `--env all` runs against all 89 examples.
+- [ ] `--env all` runs against all 88 examples.
 - [ ] Per-symbol diff + JSON summary.
 - [ ] Exit code 0 if all pass, else 1.

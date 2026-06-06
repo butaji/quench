@@ -155,7 +155,7 @@ runts compiles TypeScript/TSX to native Rust. We are **ruthlessly minimal** — 
 │              ▼                                               ▼               │
 │  ┌─────────────────────┐                         ┌─────────────────────┐   │
 │  │   Development Mode   │                         │   Production Mode   │   │
-│  │  HIR Interpreter     │                         │  Cargo Build         │   │
+│  │  rquickjs (TSX→JS)   │                         │  Cargo Build         │   │
 │  │  < 50ms hot reload   │                         │  --release binary    │   │
 │  │  Axum dev server     │                         │  ~1.5MB binary       │   │
 │  └─────────────────────┘                         └─────────────────────┘   │
@@ -316,7 +316,7 @@ Client Hydration:
 
 Hydration strategies: `load` (immediate), `visible` (IntersectionObserver), `idle` (requestIdleCallback), `interaction` (on first click/hover).
 
-### 2.7 Development Mode: HIR Interpreter
+### 2.7 Development Mode: rquickjs (HIR Interpreter REMOVED)
 
 **Core principle:** Parse TS/TSX → HIR → Execute HIR directly. No Rust compilation.
 
@@ -383,7 +383,7 @@ src/
 | HIR (High-Level IR) | ✅ |
 | Semantic analyzer | ✅ |
 | Rust code generator | ✅ |
-| HIR interpreter (dev mode) | ✅ |
+| rquickjs dev engine | ✅ | TSX→JS→rquickjs. HIR interpreter removed. |
 | Dev server (Axum + file watcher) | ✅ |
 | Signal system | ✅ |
 | Hooks engine (8 hooks) | ✅ |
@@ -478,7 +478,7 @@ src/
 | Decision | Rationale | Cost |
 |----------|-----------|------|
 | **Custom parser instead of swc** | Zero deps, fast compile, small binary | Parser maintenance burden; subset limitation |
-| **HIR interpreter in dev** | Instant hot reload (< 20ms) | 5-10x slower than native; no Rust type checking |
+| **rquickjs in dev** | Full JS semantics, ~1MB overhead | Slightly slower than HIR interpreter; correct JS semantics |
 | **String-based codegen** | Simple, debuggable, fast | Not using `syn` AST means no structured manipulation |
 | **TypeScript types fully erased** | Clean Rust codegen; no runtime overhead | No runtime type validation; `any` is forbidden |
 | **No V8/WASM JS** | Smallest binary, fastest cold start | Cannot run arbitrary JS libraries; subset required |

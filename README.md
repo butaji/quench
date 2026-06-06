@@ -67,12 +67,12 @@ TypeScript Source (TS/TSX)
     ├──────────────┬──────────────────────┤
     ▼              ▼                      ▼
 ┌─────────┐  ┌──────────────┐      ┌─────────────┐
-│ Dev Mode│  │ HIR Cache    │      │ Production  │
-│         │  │ (incremental)│      │             │
-│ rquickjs│  │              │      │ Rust Codegen│
-│ + Yoga  │  │ File Watcher │      │             │
-│ bridge  │  │ Hot Reload   │      │ cargo build │
-│ <100ms  │  │ <100ms       │      │ --release   │
+│ Dev Mode│  │ JS Bundle    │      │ Production  │
+│         │  │ Cache        │      │             │
+│ rquickjs│  │ (incremental)│      │ Rust Codegen│
+│ + Yoga  │  │              │      │             │
+│ bridge  │  │ File Watcher │      │ cargo build │
+│ <100ms  │  │ Hot Reload   │      │ --release   │
 └─────────┘  └──────────────┘      └─────────────┘
 ```
 
@@ -273,10 +273,15 @@ runts is in active development. The core compiler pipeline (oxc_parser → HIR �
 - ✅ Async/await → tokio futures
 - ✅ Incremental builds with content-hash cache
 
+**Completed:**
+- ✅ rquickjs dev engine for Ink TUI parity (Tasks 022-026)
+- ✅ TSX→JS transpile pipeline (Task 023)
+- ✅ Yoga-only layout engine (Taffy removed)
+
 **In progress:**
-- 🔄 rquickjs dev engine for Ink TUI parity (Task 022-026)
-- 🔄 Yoga-only layout engine (Task 033)
-- 🔄 TSX→JS transpile pipeline (Task 023)
+- 🔄 Compile path verification (Task 027)
+- 🔄 Single parity harness (Task 028)
+- 🔄 Re-enable disabled test modules (Task 033)
 
 **Planned:**
 - [ ] Better generic lowering (conditional types, indexed access)
