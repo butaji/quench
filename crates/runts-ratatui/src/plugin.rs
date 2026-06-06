@@ -286,7 +286,14 @@ fn extract_var_decl(chars: &[char], i: usize, out: &mut String) -> usize {
     j
 }
 fn find_stmt_end(chars: &[char], j: usize, depth: &mut usize) -> usize {
-    match chars[j] { '{' | '(' | '[' => { *depth += 1; j + 1 } '}' | ')' | ']' => { *depth -= 1; j + 1 } ';' if *depth == 0 => j + 1, '\n' if *depth == 0 => j, _ => j + 1 }
+    match chars[j] {
+        '{' | '(' | '[' => { *depth += 1; j + 1 }
+        '}' | ')' | ']' => { *depth -= 1; j + 1 }
+        ';' if *depth == 0 => j + 1,
+        '\n' if *depth == 0 => j,
+        _ => j + 1,
+    }
+}
 
 /// Wrap the dev-path JS so rquickjs can eval it.
 /// The dev path's `run_ink_dev` expects the

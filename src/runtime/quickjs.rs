@@ -122,99 +122,61 @@ fn has_top_level_semicolon(src: &str) -> bool {
     let mut in_block_comment = false;
 
     while i < bytes.len() {
-        let b = bytes[i];
-        let next = bytes.get(i + 1).copied();
-
-        if in_line_comment {
-            if b == b'\n' {
-                in_line_comment = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_block_comment {
-            if b == b'*' && next == Some(b'/') {
-                in_block_comment = false;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_single {
-            if b == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b == b'\'' {
-                in_single = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_double {
-            if b == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b == b'"' {
-                in_double = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_template {
-            // Naive template handling: treat ${ as a brace boundary and skip
-            // until we find the matching `}`. This is imperfect but good
-            // enough for our purposes — we only care about top-level `;`.
-            if b == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b == b'`' {
-                in_template = false;
-                i += 1;
-                continue;
-            }
-            // If we hit a `;` inside a template, it's a top-level semicolon
-            // from our perspective — the template spans a single line in 99%
-            // of cases. Don't treat it specially.
-            i += 1;
-            continue;
-        }
-
-        // Not in any string/comment.
-        if b == b'/' && next == Some(b'/') {
-            in_line_comment = true;
-            i += 2;
-            continue;
-        }
-        if b == b'/' && next == Some(b'*') {
-            in_block_comment = true;
-            i += 2;
-            continue;
-        }
-        if b == b'\'' {
-            in_single = true;
-            i += 1;
-            continue;
-        }
-        if b == b'"' {
-            in_double = true;
-            i += 1;
-            continue;
-        }
-        if b == b'`' {
-            in_template = true;
-            i += 1;
-            continue;
-        }
-        if b == b';' {
-            return true;
-        }
-        i += 1;
+        let (done, skip) = process_byte(
+            bytes[i],
+            bytes.get(i + 1).copied(),
+            &mut in_single,
+            &mut in_double,
+            &mut in_template,
+            &mut in_line_comment,
+            &mut in_block_comment,
+        );
+        if done { return true; }
+        i += skip;
     }
     false
+}
+
+fn process_byte(
+    b: u8,
+    next: Option<u8>,
+    in_single: &mut bool,
+    in_double: &mut bool,
+    in_template: &mut bool,
+    in_line_comment: &mut bool,
+    in_block_comment: &mut bool,
+) -> (bool, usize) {
+    if *in_line_comment {
+        if b == b'\n' { *in_line_comment = false; }
+        return (false, 1);
+    }
+    if *in_block_comment {
+        if b == b'*' && next == Some(b'/') { *in_block_comment = false; return (false, 2); }
+        return (false, 1);
+    }
+    if *in_single {
+        if b == b'\\' { return (false, 2); }
+        if b == b'\'' { *in_single = false; }
+        return (false, 1);
+    }
+    if *in_double {
+        if b == b'\\' { return (false, 2); }
+        if b == b'"' { *in_double = false; }
+        return (false, 1);
+    }
+    if *in_template {
+        if b == b'\\' { return (false, 2); }
+        if b == b'`' { *in_template = false; return (false, 1); }
+        return (false, 1);
+    }
+
+    if b == b'/' && next == Some(b'/') { *in_line_comment = true; return (false, 2); }
+    if b == b'/' && next == Some(b'*') { *in_block_comment = true; return (false, 2); }
+    if b == b'\'' { *in_single = true; return (false, 1); }
+    if b == b'"' { *in_double = true; return (false, 1); }
+    if b == b'`' { *in_template = true; return (false, 1); }
+    if b == b';' { return (true, 1); }
+    (false, 1)
 }
 
 /// JavaScript error wrapper
@@ -247,15 +209,17 @@ fn value_to_string(value: Value<'_>) -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn simple_type_str(typ: &str, value: Value<'_>) -> String {
-    match typ {
-        "undefined" => "undefined".to_string(),
-        "null" => "null".to_string(),
-        "string" => value.as_string().map(|s| s.to_string().unwrap_or_default()).unwrap_or_default(),
-        "int" => value.as_int().map(|n| n.to_string()).unwrap_or_default(),
-        "float" | "number" => value.as_float().map(|n| n.to_string()).unwrap_or_default(),
-        "bool" | "boolean" => value.as_bool().map(|b| b.to_string()).unwrap_or_default(),
-        _ => "[Complex]".to_string(),
-    }
+    static UNWRAP_TYPES: &[&str] = &["undefined", "null"];
+    static INT_TYPES: &[&str] = &["int"];
+    static FLOAT_TYPES: &[&str] = &["float", "number"];
+    static BOOL_TYPES: &[&str] = &["bool", "boolean"];
+
+    if UNWRAP_TYPES.contains(&typ) { return typ.to_string(); }
+    if typ == "string" { return value.as_string().and_then(|s| s.to_string()).unwrap_or_default(); }
+    if INT_TYPES.contains(&typ) { return value.as_int().map(|n| n.to_string()).unwrap_or_default(); }
+    if FLOAT_TYPES.contains(&typ) { return value.as_float().map(|n| n.to_string()).unwrap_or_default(); }
+    if BOOL_TYPES.contains(&typ) { return value.as_bool().map(|b| b.to_string()).unwrap_or_default(); }
+    "[Complex]".to_string()
 }
 
 /// Try to serialize a value using JSON.stringify by setting it as a global

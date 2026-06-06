@@ -1,0 +1,110 @@
+//! Expression to Rust conversion
+
+use proc_macro2::TokenStream;
+use quote::quote;
+
+pub(crate) fn expr_to_rust(expr: &serde_json::Value) -> Option<TokenStream> {
+    let map = expr.as_object()?;
+    if let Some(cond) = map.get("Cond") { return expr_cond_to_rust(cond); }
+    if let Some(member) = map.get("Member") { return member_expr_to_rust(member); }
+    if let Some(arr) = map.get("Array") { return expr_array_to_rust(arr); }
+    if let Some(tok) = simple_literal_to_rust(map) { return Some(tok); }
+    if let Some(inner) = map.get("Expr") { return expr_to_rust(inner); }
+    if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) { return kind_to_rust(map, kind); }
+    None
+}
+
+fn expr_cond_to_rust(cond: &serde_json::Value) -> Option<TokenStream> {
+    let test = expr_to_rust(cond.get("test")?)?;
+    let consequent = expr_to_rust(cond.get("consequent")?)?;
+    let alternate = expr_to_rust(cond.get("alternate")?)?;
+    Some(quote! { (#test ? #consequent : #alternate) })
+}
+
+fn expr_array_to_rust(arr: &serde_json::Value) -> Option<TokenStream> {
+    let elems = arr.get("elems")?.as_array()?;
+    let elem_tokens: Vec<TokenStream> = elems.iter().filter_map(expr_to_rust).collect();
+    Some(quote! { [#(#elem_tokens),*] })
+}
+
+fn simple_literal_to_rust(map: &serde_json::Map<String, serde_json::Value>) -> Option<TokenStream> {
+    if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(quote! { #s }); }
+    if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(quote! { #n }); }
+    if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(quote! { #b }); }
+    if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
+        let ident = quote::format_ident!("{}", name);
+        return Some(quote! { #ident });
+    }
+    None
+}
+
+fn kind_to_rust(map: &serde_json::Map<String, serde_json::Value>, kind: &str) -> Option<TokenStream> {
+    let v0 = map.get("0")?;
+    if kind == "String" { return v0.as_str().map(|s| quote! { #s }); }
+    if kind == "Number" { return v0.as_f64().map(|n| quote! { #n }); }
+    if kind == "Bool" { return v0.as_bool().map(|b| quote! { #b }); }
+    if kind == "Ident" {
+        if let Some(name) = v0.as_object()?.get("name")?.as_str() {
+            return Some(quote! { #name });
+        }
+    }
+    None
+}
+
+fn member_expr_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
+    let obj = expr_to_rust(member.get("obj")?)?;
+    let computed = member.get("computed").and_then(|c| c.as_bool()).unwrap_or(false);
+    let property = expr_to_rust(member.get("property")?)?;
+    if computed {
+        Some(quote! { #obj[#property as usize] })
+    } else {
+        Some(quote! { #obj . #property })
+    }
+}
+
+pub(crate) fn collect_text_children_tokens(children: &[serde_json::Value]) -> Vec<TokenStream> {
+    let mut parts: Vec<TokenStream> = Vec::new();
+    for raw in children {
+        if let Some(text) = text_token_from_child(raw) { parts.push(text); }
+        else if let Some(jsx) = raw.get("jsx") {
+            let nested = super::traversal::extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default();
+            parts.extend(collect_text_children_tokens(&nested));
+        } else if let Some(expr) = raw.get("Expr") {
+            if let Some(expr_tokens) = expr_to_rust(expr) {
+                parts.push(quote! { format!("{}", #expr_tokens) });
+            }
+        }
+    }
+    parts
+}
+
+fn text_token_from_child(raw: &serde_json::Value) -> Option<TokenStream> {
+    let s = raw.get("Text").and_then(|t| t.as_str())
+        .or_else(|| raw.get("text").and_then(|t| t.as_str()))?;
+    if !s.chars().all(|c| c.is_whitespace()) { Some(quote! { #s }) } else { None }
+}
+
+pub(crate) fn collect_text_from_children(children: &[serde_json::Value]) -> String {
+    let mut out = String::new();
+    for raw in children {
+        collect_text_into_string(&mut out, raw);
+    }
+    out
+}
+
+fn collect_text_into_string(out: &mut String, raw: &serde_json::Value) {
+    if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
+        if !out.is_empty() { out.push(' '); }
+        out.push_str(text);
+    } else if let Some(jsx) = raw.get("jsx") {
+        let nested = super::traversal::extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default();
+        for child in nested { collect_text_into_string(out, &child); }
+    } else if let Some(expr) = raw.get("Expr") {
+        if let Some(s) = parse_expr_inner(expr) { out.push_str(&s); }
+    }
+}
+
+fn parse_expr_inner(expr: &serde_json::Value) -> Option<String> {
+    expr.get("String").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .or_else(|| expr.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+}

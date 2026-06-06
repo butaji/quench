@@ -204,24 +204,16 @@ fn detect_fn_name(line: &str) -> Option<String> {
 fn find_fn_body(lines: &[&str], fn_line_idx: usize) -> Option<(usize, usize)> {
     for offset in 0..10 {
         let idx = fn_line_idx + offset;
-        if idx >= lines.len() {
-            break;
-        }
+        if idx >= lines.len() { break; }
         let code = lines[idx].split("//").next().unwrap_or("").trim();
-        if code.is_empty() {
-            continue;
-        }
+        if code.is_empty() { continue; }
         if offset == 0 {
             if let Some(pos) = code.find('{') {
-                if code[..pos].contains(')') {
-                    return Some((idx + 2, find_matching_brace(lines, idx + 1)?));
-                }
+                if code[..pos].contains(')') { return Some((idx + 1, find_matching_brace_from_same_line(lines, idx + 1)?)); }
             }
         } else {
             let t = code.trim();
-            if t.starts_with('{') {
-                return Some((idx + 1, find_matching_brace(lines, idx + 1)?));
-            }
+            if t.starts_with('{') { return Some((idx + 1, find_matching_brace(lines, idx + 2)?)); }
         }
     }
     None
@@ -239,6 +231,38 @@ fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
                 }
             }
         }
+        // Reset string state at line boundary
+        if state.in_str {
+            state.in_str = false;
+            state.esc = false;
+        }
+    }
+    None
+}
+
+/// Find matching brace when opening brace is on the same line as the function signature.
+/// Starts with depth=0 and counts ALL braces from scratch.
+/// Note: We reset in_str at line boundaries because we're interested in
+/// counting braces, not parsing complete strings. Strings across line boundaries
+/// are not brace-delimited in our counting.
+fn find_matching_brace_from_same_line(lines: &[&str], start: usize) -> Option<usize> {
+    let mut state = BraceState::new();
+
+    for (idx, line) in lines.iter().enumerate().skip(start - 1) {
+        let code = line.split("//").next().unwrap_or("");
+        for ch in code.chars() {
+            if state.handle_char(ch) {
+                if state.depth == 0 {
+                    return Some(idx + 1);
+                }
+            }
+        }
+        // Reset string state at line boundary - prevents strings spanning lines
+        // from affecting brace counting on subsequent lines
+        if state.in_str {
+            state.in_str = false;
+            state.esc = false;
+        }
     }
     None
 }
@@ -246,77 +270,30 @@ fn find_matching_brace(lines: &[&str], start: usize) -> Option<usize> {
 struct BraceState {
     depth: i32,
     in_str: bool,
-    in_char: bool,
     esc: bool,
-    /// Track position when we see `quote!` to detect `quote! {` pattern
     after_excl: bool,
-    /// Track position when we see `!` to detect `identifier!` macro invocation
-    prev_was_excl: bool,
 }
 
 impl BraceState {
     fn new() -> Self {
-        Self {
-            depth: 0,
-            in_str: false,
-            in_char: false,
-            esc: false,
-            after_excl: false,
-            prev_was_excl: false,
-        }
+        Self { depth: 0, in_str: false, esc: false, after_excl: false }
     }
 
     fn handle_char(&mut self, ch: char) -> bool {
-        // Handle `quote! {` specially - the `{` after `!` followed by space or `{` is a macro body
-        if self.after_excl {
-            self.after_excl = false;
-            if ch == '{' {
-                self.depth += 1;
-                return false;
-            }
-        }
-
         if self.in_str {
-            if self.esc {
-                self.esc = false;
-            } else if ch == '\\' {
-                self.esc = true;
-            } else if ch == '"' {
-                self.in_str = false;
-            }
-            self.prev_was_excl = false;
+            if self.esc { self.esc = false; } else if ch == '\\' { self.esc = true; } else if ch == '"' { self.in_str = false; }
             return false;
         }
-        if self.in_char {
-            if self.esc {
-                self.esc = false;
-            } else if ch == '\\' {
-                self.esc = true;
-            } else if ch == '\'' {
-                self.in_char = false;
-            }
-            self.prev_was_excl = false;
-            return false;
+        if ch == '"' { self.in_str = true; self.after_excl = false; return false; }
+        // After `!`, if we see `{` (possibly with whitespace), it's a macro invocation
+        if self.after_excl {
+            if ch == '{' { self.after_excl = false; return false; } // `!{` - macro
+            if ch == ' ' || ch == '\t' { return false; } // whitespace - keep after_excl
+            self.after_excl = false; // other char - clear after_excl
         }
-        if ch == '"' {
-            self.in_str = true;
-            self.prev_was_excl = false;
-            return false;
-        }
-        if ch == '\'' {
-            self.prev_was_excl = false;
-            return false;
-        }
-        if ch == '!' && !self.prev_was_excl {
-            self.after_excl = true;
-        }
-        if ch == '{' {
-            self.depth += 1;
-        } else if ch == '}' {
-            self.depth -= 1;
-            return self.depth == 0;
-        }
-        self.prev_was_excl = ch == '!' && !self.prev_was_excl;
+        if ch == '{' { self.depth += 1; }
+        else if ch == '}' { self.depth -= 1; if self.depth == 0 { return true; } }
+        if ch == '!' { self.after_excl = true; }
         false
     }
 }
