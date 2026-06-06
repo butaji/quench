@@ -95,55 +95,17 @@ fn convert_value_to_string(ctx: rquickjs::Ctx, value: Value) -> Result<String, J
 
 /// Wrap code to inject console.log and serialize result via JSON.stringify
 fn wrap_with_console_and_serialize(code: &str) -> String {
-    // Route console.log to stderr via a custom handler
-    let console_inject = r#"
-var console = {
-    log: function() {
-        var args = Array.prototype.slice.call(arguments);
-        try {
-            __runts_stderr__("LOG: " + args.map(function(a) { return String(a); }).join(" "));
-        } catch(e) {}
-    },
-    error: function() {
-        var args = Array.prototype.slice.call(arguments);
-        try {
-            __runts_stderr__("ERROR: " + args.map(function(a) { return String(a); }).join(" "));
-        } catch(e) {}
-    },
-    warn: function() {
-        var args = Array.prototype.slice.call(arguments);
-        try {
-            __runts_stderr__("WARN: " + args.map(function(a) { return String(a); }).join(" "));
-        } catch(e) {}
-    }
-};
-"#;
-
-    // Decide between statement-form and expression-form.
-    //
-    // Statement-form: user wrote a script with possibly multiple statements
-    // (separated by `;` or newlines). The script's completion value is the
-    // value of its last ExpressionStatement, or `undefined` otherwise. We just
-    // concatenate the console shim with the user code verbatim.
-    //
-    // Expression-form: user wrote a single expression (e.g. `1 + 2`, `'a' + 'b'`).
-    // We wrap it in `(...)` so its value becomes the script's completion.
-    //
-    // A simple, safe rule: if the code contains a top-level `;` (one that is
-    // not inside a string, regex, or template literal), treat it as
-    // statement-form. Otherwise treat as expression-form.
+    let console_inject = get_console_inject();
     let trimmed = code.trim();
     if trimmed.is_empty() {
-        // No-op: return a single `null` expression so the result is "null".
         return format!("{}\nnull", console_inject);
     }
-
     let is_expression = !has_top_level_semicolon(trimmed);
-    if is_expression {
-        format!("{}\n({})", console_inject, code)
-    } else {
-        format!("{}{}", console_inject, code)
-    }
+    if is_expression { format!("{}\n({})", console_inject, code) } else { format!("{}{}", console_inject, code) }
+}
+
+fn get_console_inject() -> String {
+    r#"var console = { log: function() { var a = Array.prototype.slice.call(arguments); try { __runts_stderr__("LOG: " + a.map(function(x) { return String(x); }).join(" ")); } catch(e) {} }, error: function() { var a = Array.prototype.slice.call(arguments); try { __runts_stderr__("ERROR: " + a.map(function(x) { return String(x); }).join(" ")); } catch(e) {} }, warn: function() { var a = Array.prototype.slice.call(arguments); try { __runts_stderr__("WARN: " + a.map(function(x) { return String(x); }).join(" ")); } catch(e) {} } };"#.to_string()
 }
 
 /// Detect a top-level `;` in the source — a `;` that is not inside a string
