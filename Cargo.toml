@@ -92,6 +92,10 @@ runts-ratatui = { path = "crates/runts-ratatui" }
 # runts-react = { path = "crates/runts-react" }  # TEMPORARILY DISABLED - has pre-existing bugs
 runts-plugin = { path = "crates/runts-plugin" }
 
+# TUI rendering (for dev interactive mode)
+ratatui = { version = "0.26", features = ["crossterm"] }
+crossterm = "0.27"
+
 # Cryptographic hashing (incremental build cache)
 sha2 = "0.10"
 
