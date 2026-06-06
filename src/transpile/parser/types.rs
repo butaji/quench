@@ -23,50 +23,124 @@ impl TypeParser {
 }
 
 // ============================================================================
-// TSType conversion
+// TSType conversion - main entry point
 // ============================================================================
 
 impl TypeParser {
     /// Convert a TSNode to HIR Type
     pub fn convert_ts_type(&self, ts_type: &TSType) -> Result<Type> {
         match ts_type {
-            TSType::TSAnyKeyword(_) => Ok(Type::Any),
-            TSType::TSBigIntKeyword(_) => Ok(Type::BigInt),
-            TSType::TSBooleanKeyword(_) => Ok(Type::Boolean),
-            TSType::TSNeverKeyword(_) => Ok(Type::Never),
-            TSType::TSNullKeyword(_) => Ok(Type::Null),
-            TSType::TSNumberKeyword(_) => Ok(Type::Number),
-            TSType::TSObjectKeyword(_) => Ok(Type::Object { members: vec![] }),
-            TSType::TSStringKeyword(_) => Ok(Type::String),
-            TSType::TSSymbolKeyword(_) => Ok(Type::Symbol),
-            TSType::TSUndefinedKeyword(_) => Ok(Type::Undefined),
-            TSType::TSUnknownKeyword(_) => Ok(Type::Unknown),
-            TSType::TSVoidKeyword(_) => Ok(Type::Void),
-            TSType::TSThisType(_) => Ok(Type::This),
             TSType::TSArrayType(a) => self.convert_array_type(a),
-            TSType::TSConditionalType(c) => self.convert_conditional_type(c),
-            TSType::TSConstructorType(c) => self.convert_fn_or_ctor(&c.params, &c.return_type),
-            TSType::TSFunctionType(f) => self.convert_fn_or_ctor(&f.params, &f.return_type),
-            TSType::TSIndexedAccessType(i) => self.convert_indexed_access_type(i),
-            TSType::TSInferType(i) => Ok(Type::Infer { name: i.type_parameter.name.to_string() }),
-            TSType::TSIntersectionType(i) => self.convert_intersection_type(i),
-            TSType::TSMappedType(m) => self.convert_mapped_type(m),
-            TSType::TSOptionalType(o) => self.convert_optional_type(o),
-            TSType::TSParenthesizedType(p) => self.convert_ts_type(&p.type_annotation),
-            TSType::TSQualifiedName(_) => Ok(Type::Unknown),
-            TSType::TSRecordType(r) => self.convert_record_type(r),
-            TSType::TSReferenceType(r) => self.convert_reference_type(r),
-            TSType::TSRestType(r) => self.convert_ts_type(&r.type_annotation),
-            TSType::TSTemplateLiteralType(t) => self.convert_template_literal_type(t),
-            TSType::TSTypeLiteralType(l) => self.convert_type_literal(l),
-            TSType::TSTypeOperatorType(t) => self.convert_type_operator(t),
-            TSType::TSTypeQueryType(q) => Ok(Type::Query { expr: q.expr_name.to_string() }),
-            TSType::TSUnionType(u) => self.convert_union_type(u),
+            TSType::TSConditionalType(c) | TSType::TSIntersectionType(i) | TSType::TSUnionType(u) => self.convert_multi(c, i, u),
+            TSType::TSConstructorType(c) | TSType::TSFunctionType(f) => self.convert_fn(&c.params, &c.return_type),
+            TSType::TSIndexedAccessType(i) | TSType::TSMappedType(m) => self.convert_index_mapped(ts_type),
+            TSType::TSInferType(infer) | TSType::TSTypeQueryType(query) => self.convert_query_like(infer, query),
+            TSType::TSOptionalType(o) | TSType::TSParenthesizedType(p) | TSType::TSRestType(r) => self.convert_passthrough(ts_type),
+            TSType::TSRecordType(r) | TSType::TSTypeLiteralType(l) | TSType::TSTemplateLiteralType(t) | TSType::TSTypeOperatorType(o) | TSType::TSReferenceType(r2) => self.convert_ref_or_obj(ts_type),
             _ => Ok(Type::Unknown),
         }
     }
 
-    fn convert_fn_or_ctor(&self, params: &[TSTypeParameter], ret: &TSType) -> Result<Type> {
+    fn convert_ref_or_obj(&self, ts_type: &TSType) -> Result<Type> {
+        match ts_type {
+            TSType::TSRecordType(r) | TSType::TSTypeLiteralType(l) | TSType::TSTemplateLiteralType(t) | TSType::TSTypeOperatorType(o) => self.convert_object_like(ts_type),
+            TSType::TSReferenceType(r) => self.convert_reference(r),
+            _ => Ok(Type::Unknown),
+        }
+    }
+
+    fn convert_multi(&self, cond: Option<&TSConditionalType>, inter: Option<&TSIntersectionType>, union: Option<&TSUnionType>) -> Result<Type> {
+        if let Some(c) = cond {
+            let check = self.convert_ts_type(&c.check_type)?;
+            let extends = self.convert_ts_type(&c.extends_type)?;
+            let true_type = self.convert_ts_type(&c.true_type)?;
+            let false_type = self.convert_ts_type(&c.false_type)?;
+            return Ok(Type::Conditional { check: Box::new(check), extends: Box::new(extends), true_type: Box::new(true_type), false_type: Box::new(false_type) });
+        }
+        if let Some(i) = inter {
+            let types = i.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
+            return Ok(Type::Intersection { types });
+        }
+        if let Some(u) = union {
+            let types = u.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
+            return Ok(Type::Union { types });
+        }
+        Ok(Type::Unknown)
+    }
+
+    fn convert_query_like(&self, infer: Option<&TSInferType>, query: Option<&TSTypeQueryType>) -> Result<Type> {
+        if let Some(i) = infer {
+            Ok(Type::Infer { name: i.type_parameter.name.to_string() })
+        } else if let Some(q) = query {
+            Ok(Type::Query { expr: q.expr_name.to_string() })
+        } else {
+            Ok(Type::Unknown)
+        }
+    }
+
+    fn convert_fn(&self, params: &[TSTypeParameter], ret: &TSType) -> Result<Type> {
+        let params = params.iter().filter_map(|p| self.convert_param_type(p)).collect();
+        let ret = self.convert_ts_type(ret)?;
+        Ok(Type::Function { params, ret: Box::new(ret) })
+    }
+
+    fn convert_index_mapped(&self, ts_type: &TSType) -> Result<Type> {
+        match ts_type {
+            TSType::TSIndexedAccessType(i) => self.convert_indexed_access(i),
+            TSType::TSMappedType(m) => self.convert_mapped(m),
+            _ => Ok(Type::Unknown),
+        }
+    }
+
+    fn convert_multi(&self, inter: Option<&TSIntersectionType>, union: Option<&TSUnionType>) -> Result<Type> {
+        if let Some(i) = inter {
+            let types = i.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
+            Ok(Type::Intersection { types })
+        } else if let Some(u) = union {
+            let types = u.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
+            Ok(Type::Union { types })
+        } else {
+            Ok(Type::Unknown)
+        }
+    }
+
+    fn convert_passthrough(&self, ts_type: &TSType) -> Result<Type> {
+        match ts_type {
+            TSType::TSOptionalType(o) => self.convert_optional(o),
+            TSType::TSParenthesizedType(p) => self.convert_ts_type(&p.type_annotation),
+            TSType::TSRestType(r) => self.convert_ts_type(&r.type_annotation),
+            _ => Ok(Type::Unknown),
+        }
+    }
+
+    fn convert_object_like(&self, ts_type: &TSType) -> Result<Type> {
+        match ts_type {
+            TSType::TSRecordType(r) => self.convert_record(r),
+            TSType::TSTypeLiteralType(l) => self.convert_literal(l),
+            _ => Ok(Type::Unknown),
+        }
+    }
+
+    fn convert_simple_prim(&self, ts_type: &TSType) -> Result<Type> {
+        Ok(Self::prim_to_hir(ts_type))
+    }
+
+    fn prim_to_hir(ts_type: &TSType) -> Type {
+        use TSType::*;
+        match ts_type {
+            TSAnyKeyword(_) | TSUnknownKeyword(_) => Type::Any,
+            TSBigIntKeyword(_) | TSNumberKeyword(_) => Type::BigInt,
+            TSBooleanKeyword(_) => Type::Boolean,
+            TSNeverKeyword(_) | TSNullKeyword(_) | TSUndefinedKeyword(_) | TSQualifiedName(_) | TSVoidKeyword(_) | TSSymbolKeyword(_) => Type::Never,
+            TSObjectKeyword(_) => Type::Object { members: vec![] },
+            TSStringKeyword(_) => Type::String,
+            TSThisType(_) => Type::This,
+            _ => Type::Unknown,
+        }
+    }
+
+    // --- Primitive type converters ---
+    fn convert_fn_type(&self, params: &[TSTypeParameter], ret: &TSType) -> Result<Type> {
         let params = params.iter().filter_map(|p| self.convert_param_type(p)).collect();
         let ret = self.convert_ts_type(ret)?;
         Ok(Type::Function { params, ret: Box::new(ret) })
@@ -90,109 +164,102 @@ impl TypeParser {
         })
     }
 
-    fn convert_indexed_access_type(&self, i: &TSIndexedAccessType) -> Result<Type> {
+    fn convert_indexed_access(&self, i: &TSIndexedAccessType) -> Result<Type> {
         let obj = self.convert_ts_type(&i.object_type)?;
         let index = self.convert_ts_type(&i.index_type)?;
-        Ok(Type::Index {
-            obj: Box::new(obj),
-            index: Box::new(index),
-        })
+        Ok(Type::Index { obj: Box::new(obj), index: Box::new(index) })
     }
 
-    fn convert_intersection_type(&self, i: &TSIntersectionType) -> Result<Type> {
+    fn convert_intersection(&self, i: &TSIntersectionType) -> Result<Type> {
         let types = i.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
         Ok(Type::Intersection { types })
     }
 
-    fn convert_mapped_type(&self, m: &TSMappedType) -> Result<Type> {
+    fn convert_mapped(&self, m: &TSMappedType) -> Result<Type> {
         let from = self.convert_ts_type(&m.type_annotation)?;
         let to = self.convert_ts_type(&m.template_type)?;
-        Ok(Type::Mapped {
-            from: Box::new(from),
-            to: Box::new(to),
-        })
+        Ok(Type::Mapped { from: Box::new(from), to: Box::new(to) })
     }
 
-    fn convert_optional_type(&self, o: &TSOptionalType) -> Result<Type> {
+    fn convert_optional(&self, o: &TSOptionalType) -> Result<Type> {
         self.convert_ts_type(&o.type_annotation)
     }
 
-    fn convert_record_type(&self, r: &TSRecordType) -> Result<Type> {
+    fn convert_record(&self, r: &TSRecordType) -> Result<Type> {
         let key = self.convert_ts_type(&r.index_type)?;
         let value = self.convert_ts_type(&r.body_type)?;
-        Ok(Type::Record {
-            key: Box::new(key),
-            value: Box::new(value),
-        })
+        Ok(Type::Record { key: Box::new(key), value: Box::new(value) })
     }
 
-    fn convert_reference_type(&self, r: &TSReferenceType) -> Result<Type> {
-        let name = if let Some(id) = &r.type_name.get_identifier() {
-            id.name.to_string()
-        } else if let Some(qual) = r.type_name.getQualifiedName() {
-            qual.to_string()
-        } else {
-            "Unknown".to_string()
-        };
+    fn convert_reference(&self, r: &TSReferenceType) -> Result<Type> {
+        let name = Self::get_ref_name(&r.type_name);
         let generics = r.type_parameters.as_ref().map_or(vec![], |tp| {
             tp.params.iter().filter_map(|p| self.convert_ts_type(p).ok()).collect()
         });
         Ok(Type::Ref { name, generics })
     }
 
-    fn convert_template_literal_type(&self, t: &TSTemplateLiteralType) -> Result<Type> {
-        let mut parts = Vec::new();
-        let mut values = Vec::new();
-
-        for quasi in &t.quasis {
-            parts.push(TemplatePart::String { value: quasi.value.raw.to_string()) };
+    fn get_ref_name(type_name: &TSTypeName) -> String {
+        if let Some(id) = type_name.get_identifier() {
+            id.name.to_string()
+        } else if let Some(qual) = type_name.getQualifiedName() {
+            qual.to_string()
+        } else {
+            "Unknown".to_string()
         }
+    }
 
-        for type_ in &t.types {
-            let ty = self.convert_ts_type(type_)?;
-            values.push(ty);
-        }
-
+    fn convert_template(&self, t: &TSTemplateLiteralType) -> Result<Type> {
+        let parts = t.quasis.iter()
+            .map(|q| TemplatePart::String { value: q.value.raw.to_string() })
+            .collect();
+        let values = t.types.iter().filter_map(|tp| self.convert_ts_type(tp).ok()).collect();
         Ok(Type::Template { parts, values })
     }
 
-    fn convert_type_literal(&self, l: &TSTypeLiteralType) -> Result<Type> {
+    fn convert_literal(&self, l: &TSTypeLiteralType) -> Result<Type> {
         let members = l.members.iter().filter_map(|m| self.convert_type_member(m)).collect();
         Ok(Type::Object { members })
     }
 
-    fn convert_type_operator(&self, t: &TSTypeOperatorType) -> Result<Type> {
+    fn convert_operator(&self, t: &TSTypeOperatorType) -> Result<Type> {
         match t.operator.kind {
-            TSTypeOperatorKeyword::Keyof => {
+            TSTypeOperatorKeyword::Keyof | TSTypeOperatorKeyword::Readonly => {
                 let inner = self.convert_ts_type(&t.type_annotation)?;
-                Ok(Type::KeyOf { inner: Box::new(inner) })
-            }
-            TSTypeOperatorKeyword::Readonly => {
-                let inner = self.convert_ts_type(&t.type_annotation)?;
-                Ok(Type::Readonly { inner: Box::new(inner) })
+                let type_name = match t.operator.kind {
+                    TSTypeOperatorKeyword::Keyof => Type::KeyOf { inner: Box::new(inner) },
+                    TSTypeOperatorKeyword::Readonly => Type::Readonly { inner: Box::new(inner) },
+                    _ => return Ok(Type::Unknown),
+                };
+                Ok(type_name)
             }
             TSTypeOperatorKeyword::Unique => Ok(Type::Symbol),
             _ => Ok(Type::Unknown),
         }
     }
 
-    fn convert_union_type(&self, u: &TSUnionType) -> Result<Type> {
+    fn convert_union(&self, u: &TSUnionType) -> Result<Type> {
         let types = u.types.iter().map(|t| self.convert_ts_type(t)).collect::<Result<Vec<_>>>()?;
         Ok(Type::Union { types })
     }
 
+    // --- Type member converters ---
     fn convert_type_member(&self, member: &TSTypeMember) -> Option<TypeMember> {
         match member {
-            TSTypeMember::TSCallSignatureDeclaration(c) => self.convert_call_signature(c),
-            TSTypeMember::TSConstructSignatureDeclaration(_) => self.convert_construct_signature(),
-            TSTypeMember::TSPropertySignature(p) => self.convert_property_signature(p),
-            TSTypeMember::TSMethodSignature(m) => self.convert_method_signature(m),
-            TSTypeMember::TSIndexSignature(i) => self.convert_index_signature(i),
+            TSTypeMember::TSCallSignatureDeclaration(c) => self.convert_call_sig(c),
+            TSTypeMember::TSConstructSignatureDeclaration(_) => Some(self.new_member("__construct")),
+            TSTypeMember::TSPropertySignature(p) => self.convert_prop(p),
+            TSTypeMember::TSMethodSignature(m) => self.convert_method(m),
+            TSTypeMember::TSIndexSignature(i) => self.convert_index(i),
             _ => None,
         }
     }
 
-    fn convert_call_signature(&self, c: &TSCallSignatureDeclaration) -> Option<TypeMember> {
+    fn new_member(key: &str) -> TypeMember {
+        TypeMember { key: key.to_string(), type_: Type::Object { members: vec![] }, optional: false, readonly: false }
+    }
+
+    fn convert_call_sig(&self, c: &TSCallSignatureDeclaration) -> Option<TypeMember> {
         let params = c.params.iter().filter_map(|p| self.convert_param_type(p)).collect();
         let ret = self.convert_ts_type(&c.return_type).ok()?;
         Some(TypeMember {
@@ -203,28 +270,14 @@ impl TypeParser {
         })
     }
 
-    fn convert_construct_signature(&self) -> Option<TypeMember> {
-        Some(TypeMember {
-            key: "__construct".to_string(),
-            type_: Type::Object { members: vec![] },
-            optional: false,
-            readonly: false,
-        })
-    }
-
-    fn convert_property_signature(&self, p: &TSPropertySignature) -> Option<TypeMember> {
-        let key = self.get_property_key(&p.key)?;
+    fn convert_prop(&self, p: &TSPropertySignature) -> Option<TypeMember> {
+        let key = self.get_key(&p.key)?;
         let type_ = self.convert_ts_type(&p.type_annotation).ok()?;
-        Some(TypeMember {
-            key,
-            type_,
-            optional: p.optional,
-            readonly: p.readonly,
-        })
+        Some(TypeMember { key, type_, optional: p.optional, readonly: p.readonly })
     }
 
-    fn convert_method_signature(&self, m: &TSMethodSignature) -> Option<TypeMember> {
-        let key = self.get_property_key(&m.key)?;
+    fn convert_method(&self, m: &TSMethodSignature) -> Option<TypeMember> {
+        let key = self.get_key(&m.key)?;
         let params = m.params.iter().filter_map(|p| self.convert_param_type(p)).collect();
         let ret = self.convert_ts_type(&m.return_type).ok()?;
         Some(TypeMember {
@@ -235,21 +288,18 @@ impl TypeParser {
         })
     }
 
-    fn convert_index_signature(&self, i: &TSIndexSignature) -> Option<TypeMember> {
+    fn convert_index(&self, i: &TSIndexSignature) -> Option<TypeMember> {
         let key_type = self.convert_ts_type(&i.key_type).ok()?;
         let value_type = self.convert_ts_type(&i.value_type).ok()?;
         Some(TypeMember {
             key: "__index".to_string(),
-            type_: Type::Index {
-                obj: Box::new(key_type),
-                index: Box::new(value_type),
-            },
+            type_: Type::Index { obj: Box::new(key_type), index: Box::new(value_type) },
             optional: false,
             readonly: false,
         })
     }
 
-    fn get_property_key(&self, key: &PropertyKey) -> Option<String> {
+    fn get_key(&self, key: &PropertyKey) -> Option<String> {
         match key {
             PropertyKey::StaticIdentifier(i) => Some(i.name.to_string()),
             PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
@@ -276,12 +326,8 @@ pub fn convert_type_alias(alias: &TSTypeAliasDeclaration) -> Result<TypeDecl> {
     let generics = alias.generics.iter().map(|g| {
         GenericParam {
             name: g.name.to_string(),
-            constraint: g.constraint.as_ref().and_then(|c| {
-                type_parser.convert_ts_type(c).ok()
-            }),
-            default: g.default.as_ref().and_then(|d| {
-                type_parser.convert_ts_type(d).ok()
-            }),
+            constraint: g.constraint.as_ref().and_then(|c| type_parser.convert_ts_type(c).ok()),
+            default: g.default.as_ref().and_then(|d| type_parser.convert_ts_type(d).ok()),
         }
     }).collect();
 

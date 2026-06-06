@@ -114,7 +114,7 @@ fn color_by_name(s: &str) -> Color {
     ];
     for (name, color) in PAIRS {
         if *name == s {
-            return *color;
+            return (*color).clone();
         }
     }
     Color::Default
@@ -354,7 +354,6 @@ fn install_functions<'js>(ctx: Ctx<'js>, runts_ink: &Object<'js>) -> JsResult<()
     let render_fn = make_render_fn(ctx.clone())?;
     runts_ink.set("render_to_string", render_fn)
 }
-}
 
 // Helper functions below wrap the closures in named
 // functions so the rquickjs HRTB lifetime is
@@ -477,11 +476,11 @@ fn extract_string_content(content: rquickjs::Value<'_>) -> String {
 }
 
 fn apply_text_styles(props: &Object<'_>, t: &mut InkText) {
-    if let Ok(true) = props.get::<_, bool>("bold") { *t = t.bold(); }
-    if let Ok(true) = props.get::<_, bool>("italic") { *t = t.italic(); }
-    if let Ok(true) = props.get::<_, bool>("underline") { *t = t.underline(); }
-    if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { *t = t.color(parse_color(&c)); } }
-    if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { *t = t.background_color(parse_color(&c)); } }
+    if let Ok(true) = props.get::<_, bool>("bold") { *t = t.clone().bold(); }
+    if let Ok(true) = props.get::<_, bool>("italic") { *t = t.clone().italic(); }
+    if let Ok(true) = props.get::<_, bool>("underline") { *t = t.clone().underline(); }
+    if let Ok(c) = props.get::<_, String>("color") { if !c.is_empty() { *t = t.clone().color(parse_color(&c)); } }
+    if let Ok(c) = props.get::<_, String>("bgColor") { if !c.is_empty() { *t = t.clone().background_color(parse_color(&c)); } }
 }
 
 /// Build `runts_ink.newline() -> VNode object`.

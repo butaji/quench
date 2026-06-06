@@ -256,7 +256,14 @@ struct BraceState {
 
 impl BraceState {
     fn new() -> Self {
-        Self { depth: 0, in_str: false, in_char: false, esc: false, after_excl: false, prev_was_excl: false }
+        Self {
+            depth: 0,
+            in_str: false,
+            in_char: false,
+            esc: false,
+            after_excl: false,
+            prev_was_excl: false,
+        }
     }
 
     fn handle_char(&mut self, ch: char) -> bool {
@@ -268,26 +275,47 @@ impl BraceState {
                 return false;
             }
         }
-        
+
         if self.in_str {
-            if self.esc { self.esc = false; }
-            else if ch == '\\' { self.esc = true; }
-            else if ch == '"' { self.in_str = false; }
+            if self.esc {
+                self.esc = false;
+            } else if ch == '\\' {
+                self.esc = true;
+            } else if ch == '"' {
+                self.in_str = false;
+            }
             self.prev_was_excl = false;
             return false;
         }
         if self.in_char {
-            if self.esc { self.esc = false; }
-            else if ch == '\\' { self.esc = true; }
-            else if ch == '\'' { self.in_char = false; }
+            if self.esc {
+                self.esc = false;
+            } else if ch == '\\' {
+                self.esc = true;
+            } else if ch == '\'' {
+                self.in_char = false;
+            }
             self.prev_was_excl = false;
             return false;
         }
-        if ch == '"' { self.in_str = true; self.prev_was_excl = false; return false; }
-        if ch == '\'' { self.prev_was_excl = false; return false; }
-        if ch == '!' && !self.prev_was_excl { self.after_excl = true; }
-        if ch == '{' { self.depth += 1; }
-        else if ch == '}' { self.depth -= 1; return self.depth == 0; }
+        if ch == '"' {
+            self.in_str = true;
+            self.prev_was_excl = false;
+            return false;
+        }
+        if ch == '\'' {
+            self.prev_was_excl = false;
+            return false;
+        }
+        if ch == '!' && !self.prev_was_excl {
+            self.after_excl = true;
+        }
+        if ch == '{' {
+            self.depth += 1;
+        } else if ch == '}' {
+            self.depth -= 1;
+            return self.depth == 0;
+        }
         self.prev_was_excl = ch == '!' && !self.prev_was_excl;
         false
     }

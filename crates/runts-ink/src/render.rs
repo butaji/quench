@@ -1101,8 +1101,3 @@ fn count_static_children(children: &[VNode]) -> usize {
 fn count_fragment_children(children: &[VNode]) -> usize {
     children.iter().map(count_vnodes).sum()
 }
-        }
-        _ => {}
-    }
-    count
-}

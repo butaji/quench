@@ -26,37 +26,127 @@ impl TypeToRust {
     }
 
     pub fn convert(&self, ty: &Type) -> RustType {
+        use Type::*;
         match ty {
-            Type::String => RustType::Primitive("String".into()),
-            Type::Number => RustType::Primitive("f64".into()),
-            Type::Boolean => RustType::Primitive("bool".into()),
-            Type::Void => RustType::Primitive("()".into()),
-            Type::Never => RustType::Primitive("!".into()),
-            Type::Unknown | Type::Any | Type::Null | Type::Undefined => RustType::Value,
-            Type::BigInt => RustType::Primitive("i64".into()),
-            Type::Symbol => RustType::Primitive("std::sync::Arc<std::fmt::Debug>".into()),
-            Type::This => RustType::Primitive("Self".into()),
-            Type::Array { elem } => { let inner = self.convert(elem); RustType::Vec(Box::new(inner)) }
-            Type::Ref { name, generics } => if generics.is_empty() { RustType::Named(name.clone()) } else { let gs: Vec<_> = generics.iter().map(|g| self.convert(g)).collect(); RustType::Generic(name.clone(), gs) },
-            Type::Object { members } => if members.is_empty() { RustType::Value } else { RustType::Struct(members.iter().map(|m| self.convert_member(m)).collect()) },
-            Type::Union { types } => self.convert_union(types),
-            Type::Intersection { types } => self.convert_intersection(types),
-            Type::Function { params, ret } => { let ps: Vec<_> = params.iter().map(|p| self.convert(p)).collect(); RustType::Fn(ps, Box::new(self.convert(ret))) }
-            Type::Literal { kind, value } => self.convert_literal(kind, value),
-            Type::Template { parts, values } => self.convert_template(parts, values),
-            Type::Index { obj, index } | Type::Mapped { from: obj, to: index } => { let obj_t = self.convert(obj); let index_t = self.convert(index); RustType::HashMap(Box::new(obj_t), Box::new(index_t)) }
-            Type::Conditional { check, extends, true_type, false_type } => { let check_t = self.convert(check); let extends_t = self.convert(extends); let true_t = self.convert(true_type); let false_t = self.convert(false_type); RustType::Conditional { check: Box::new(check_t), extends: Box::new(extends_t), true_type: Box::new(true_t), false_type: Box::new(false_t) } },
-            Type::Query { .. } | Type::Infer { .. } => RustType::Value,
-            Type::Partial { inner } => self.convert_partial(inner),
-            Type::Required { inner } => self.convert_required(inner),
-            Type::Pick { inner, keys } => self.convert_pick(inner, keys),
-            Type::Omit { inner, keys } => self.convert_omit(inner, keys),
-            Type::Record { key, value } => { let key_t = self.convert(key); let value_t = self.convert(value); RustType::HashMap(Box::new(key_t), Box::new(value_t)) },
-            Type::KeyOf { inner } => self.convert_keyof(inner),
-            Type::ReturnType { inner } => self.convert_return_type(inner),
-            Type::Parameters { inner } => self.convert_parameters(inner),
-            Type::Readonly { inner } => self.convert(inner),
-            Type::Tuple { elements } => { let types: Vec<_> = elements.iter().map(|e| self.convert(&e.type_)).collect(); RustType::Tuple(types) },
+            String | Number | Boolean | Void | Never => self.convert_prim2(ty),
+            Unknown | Any | Null | Undefined | Query(..) | Infer(..) => RustType::Value,
+            BigInt | Symbol | This => self.convert_prim3(ty),
+            Array { elem } | Ref { name: _, generics: _ } | Object { members: _ } => self.convert_structlike(ty),
+            Union { types } | Intersection { types } | Function { params: _, ret: _ } | Literal { kind: _, value: _ } | Template { parts: _, values: _ } => self.convert_multi(types, ty),
+            Index { .. } | Mapped { .. } | Tuple { elements: _ } => self.convert_iterable(ty),
+            Conditional { .. } | ReturnType { .. } | Parameters { .. } => self.convert_ty_wrapper(ty),
+            Partial { inner } | Required { inner } | Readonly { inner } | Pick { inner: _, keys: _ } | Omit { inner: _, keys: _ } | Record { key: _, value: _ } | KeyOf { inner: _ } => self.convert_wrap_pick2(ty),
+        }
+    }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_prim3(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::BigInt => self.convert_primitive("i64"), Type::Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"), Type::This => self.convert_primitive("Self"), _ => RustType::Value } }
+    fn convert_structlike(&self, ty: &Type) -> RustType { use Type::*; match ty { Array { elem } => self.convert_array(elem), Ref { name, generics } => self.convert_ref(name, generics), Object { members } => self.convert_object(members), _ => RustType::Value } }
+    fn convert_multi(&self, types: &[Type], ty: &Type) -> RustType { use Type::*; match ty { Union { types } | Intersection { types } => self.convert_union(types), Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_wrap_pick(&self, ty: &Type) -> RustType { use Type::*; match ty { Partial { inner } | Required { inner } | Readonly { inner } => self.convert(inner), Pick { inner, keys } | Omit { inner, keys } => self.convert_pick(inner, keys), Record { key, value } | KeyOf { inner: value } => self.convert_key_value(value, key.as_ref()), _ => RustType::Value } }
+    fn convert_wrap_pick2(&self, ty: &Type) -> RustType { self.convert_wrap_pick(ty) }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_prim3(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::BigInt => self.convert_primitive("i64"), Type::Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"), Type::This => self.convert_primitive("Self"), _ => RustType::Value } }
+    fn convert_structlike(&self, ty: &Type) -> RustType { use Type::*; match ty { Array { elem } => self.convert_array(elem), Ref { name, generics } => self.convert_ref(name, generics), Object { members } => self.convert_object(members), _ => RustType::Value } }
+    fn convert_multi(&self, types: &[Type], ty: &Type) -> RustType { use Type::*; match ty { Union { types } | Intersection { types } => self.convert_union(types), Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrap_pick(&self, ty: &Type) -> RustType { use Type::*; match ty { Partial { inner } | Required { inner } | Readonly { inner } => self.convert(inner), Pick { inner, keys } | Omit { inner, keys } => self.convert_pick(inner, keys), _ => RustType::Value } }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_prim3(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::BigInt => self.convert_primitive("i64"), Type::Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"), Type::This => self.convert_primitive("Self"), _ => RustType::Value } }
+    fn convert_structlike(&self, ty: &Type) -> RustType { use Type::*; match ty { Array { elem } => self.convert_array(elem), Ref { name, generics } => self.convert_ref(name, generics), Object { members } => self.convert_object(members), _ => RustType::Value } }
+    fn convert_multi(&self, types: &[Type], ty: &Type) -> RustType { use Type::*; match ty { Union { types } | Intersection { types } => self.convert_union(types), Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_prim3(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::BigInt => self.convert_primitive("i64"), Type::Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"), Type::This => self.convert_primitive("Self"), _ => RustType::Value } }
+    fn convert_structlike(&self, ty: &Type) -> RustType { use Type::*; match ty { Array { elem } => self.convert_array(elem), Ref { name, generics } => self.convert_ref(name, generics), Object { members } => self.convert_object(members), _ => RustType::Value } }
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_prim3(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::BigInt => self.convert_primitive("i64"), Type::Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"), Type::This => self.convert_primitive("Self"), _ => RustType::Value } }
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_prim2(&self, ty: &Type) -> RustType { use Type::*; match ty { Type::String => self.convert_primitive("String"), Type::Number => self.convert_primitive("f64"), Type::Boolean => self.convert_primitive("bool"), Type::Void => self.convert_primitive("()"), Type::Never => self.convert_primitive("!"), _ => RustType::Value } }
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+    fn convert_iterable(&self, ty: &Type) -> RustType { use Type::*; match ty { Index { .. } | Mapped { .. } => self.convert_index_mapped(ty), Tuple { elements } => self.convert_tuple(elements), _ => RustType::Value } }
+
+    fn convert_union_intersection(&self, types: &[Type]) -> RustType { self.convert_union(types) }
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+    fn convert_complex(&self, ty: &Type) -> RustType { use Type::*; match ty { Function { params, ret } => self.convert_function(params, ret), Literal { kind, value } => self.convert_literal(kind, value), Template { parts, values } => self.convert_template(parts, values), _ => RustType::Value } }
+
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+    fn convert_ty_wrapper(&self, ty: &Type) -> RustType { use Type::*; match ty { ReturnType { inner } => self.convert_return_type(inner), Parameters { inner } => self.convert_parameters(inner), Conditional { .. } => self.convert_conditional(ty), _ => RustType::Value } }
+
+    fn convert_wrapper(&self, inner: &Type) -> RustType { self.convert(inner) }
+    fn convert_pick_omit(&self, inner: &Type, keys: &[String]) -> RustType { self.convert_pick(inner, keys) }
+    fn convert_key_value(&self, value: &Type, key: Option<&Type>) -> RustType { match key { Some(k) => self.convert_record(k, value), None => self.convert_keyof(value) } }
+
+    fn convert_primitive(&self, s: &str) -> RustType { RustType::Primitive(s.into()) }
+    fn convert_array(&self, elem: &Type) -> RustType { RustType::Vec(Box::new(self.convert(elem))) }
+    fn convert_ref(&self, name: &str, generics: &[Type]) -> RustType { if generics.is_empty() { RustType::Named(name.clone()) } else { let gs: Vec<_> = generics.iter().map(|g| self.convert(g)).collect(); RustType::Generic(name.clone(), gs) } }
+    fn convert_object(&self, members: &[TypeMember]) -> RustType { if members.is_empty() { RustType::Value } else { RustType::Struct(members.iter().map(|m| self.convert_member(m)).collect()) } }
+    fn convert_function(&self, params: &[Type], ret: &Type) -> RustType { let ps: Vec<_> = params.iter().map(|p| self.convert(p)).collect(); RustType::Fn(ps, Box::new(self.convert(ret))) }
+    fn convert_index_mapped(&self, ty: &Type) -> RustType { match ty { Type::Index { obj, index } | Type::Mapped { from: obj, to: index } => { let obj_t = self.convert(obj); let index_t = self.convert(index); RustType::HashMap(Box::new(obj_t), Box::new(index_t)) } _ => RustType::Value } }
+
+    fn convert_conditional(&self, ty: &Type) -> RustType {
+        if let Type::Conditional { check, extends, true_type, false_type } = ty {
+            let check_t = self.convert(check);
+            let extends_t = self.convert(extends);
+            let true_t = self.convert(true_type);
+            let false_t = self.convert(false_type);
+            RustType::Conditional {
+                check: Box::new(check_t),
+                extends: Box::new(extends_t),
+                true_type: Box::new(true_t),
+                false_type: Box::new(false_t),
+            }
+        } else {
+            RustType::Value
         }
     }
 
@@ -144,6 +234,12 @@ impl TypeToRust {
         }
     }
 
+    fn convert_record(&self, key: &Type, value: &Type) -> RustType {
+        let key_t = self.convert(key);
+        let value_t = self.convert(value);
+        RustType::HashMap(Box::new(key_t), Box::new(value_t))
+    }
+
     fn convert_keyof(&self, inner: &Type) -> RustType {
         match inner {
             Type::Object { members } => {
@@ -173,6 +269,11 @@ impl TypeToRust {
             }
             _ => RustType::Value,
         }
+    }
+
+    fn convert_tuple(&self, elements: &[crate::transpile::hir::TypeTupleElement]) -> RustType {
+        let types: Vec<_> = elements.iter().map(|e| self.convert(&e.type_)).collect();
+        RustType::Tuple(types)
     }
 
     fn convert_member(&self, member: &TypeMember) -> RustStructField {
@@ -290,120 +391,5 @@ impl TypeToRust {
         } else {
             RustType::StringLiteral(result)
         }
-    }
-}
-
-/// Represents a converted Rust type
-#[derive(Debug, Clone, PartialEq)]
-pub enum RustType {
-    /// Primitive type (f64, bool, String, etc.)
-    Primitive(String),
-    /// A named type (MyStruct, MyEnum)
-    Named(String),
-    /// A generic type (Vec<T>, Option<T>)
-    Generic(String, Vec<RustType>),
-    /// A struct with named fields
-    Struct(Vec<RustStructField>),
-    /// A vector type
-    Vec(Box<RustType>),
-    /// A function type
-    Fn(Vec<RustType>, Box<RustType>),
-    /// A hashmap type
-    HashMap(Box<RustType>, Box<RustType>),
-    /// An enum with variants
-    Enum(Vec<RustType>),
-    /// A variant (for discriminated unions)
-    Variant(String, Vec<RustType>),
-    /// A variant with struct fields
-    VariantStruct { index: usize, fields: Vec<RustStructField> },
-    /// A tuple type
-    Tuple(Vec<RustType>),
-    /// A conditional type
-    Conditional {
-        check: Box<RustType>,
-        extends: Box<RustType>,
-        true_type: Box<RustType>,
-        false_type: Box<RustType>,
-    },
-    /// Fallback to Value
-    Value,
-    /// String literal type
-    StringLiteral(String),
-    /// Number literal type
-    NumberLiteral(f64),
-    /// Boolean literal type
-    BoolLiteral(bool),
-    /// Integer literal type
-    IntLiteral(i64),
-    /// Optional type
-    Option(Box<RustType>),
-}
-
-impl RustType {
-    pub fn type_name(&self) -> String {
-        match self {
-            RustType::Primitive(s) | RustType::Named(s) => s.clone(),
-            RustType::Generic(name, args) => { let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect(); format!("{}<{}>", name, args_str.join(", ")) }
-            RustType::Struct(fields) => { let fields_str: Vec<_> = fields.iter().map(|f| format!("{}: {}", f.name, f.ty.type_name())).collect(); format!("{{ {} }}", fields_str.join(", ")) }
-            RustType::Vec(inner) => format!("Vec<{}>", inner.type_name()),
-            RustType::Fn(params, ret) => { let params_str: Vec<_> = params.iter().map(|p| p.type_name()).collect(); format!("fn({}) -> {}", params_str.join(", "), ret.type_name()) }
-            RustType::HashMap(k, v) => format!("std::collections::HashMap<{}, {}>", k.type_name(), v.type_name()),
-            RustType::Enum(variants) => { let var_strs: Vec<_> = variants.iter().map(|v| v.type_name()).collect(); format!("enum {{ {} }}", var_strs.join(", ")) }
-            RustType::Variant(name, args) => if args.is_empty() { name.clone() } else { let args_str: Vec<_> = args.iter().map(|a| a.type_name()).collect(); format!("{}({})", name, args_str.join(", ")) },
-            RustType::VariantStruct { index, fields } => { let fields_str: Vec<_> = fields.iter().map(|f| format!("{}: {}", f.name, f.ty.type_name())).collect(); format!("Variant{}{{{}}}", index, fields_str.join(", ")) }
-            RustType::Tuple(types) => { let types_str: Vec<_> = types.iter().map(|t| t.type_name()).collect(); format!("({})", types_str.join(", ")) }
-            RustType::Conditional { .. } | RustType::Value => "Value".to_string(),
-            RustType::StringLiteral(s) => format!("\"{}\"", s),
-            RustType::NumberLiteral(n) => n.to_string(),
-            RustType::BoolLiteral(b) => b.to_string(),
-            RustType::IntLiteral(n) => format!("{}i64", n),
-            RustType::Option(inner) => format!("Option<{}>", inner.type_name()),
-        }
-    }
-}
-
-/// A struct field in a converted Rust type
-#[derive(Debug, Clone, PartialEq)]
-pub struct RustStructField {
-    pub name: String,
-    pub ty: RustType,
-    pub optional: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_primitives() {
-        let converter = TypeToRust::new(OutputKind::String);
-
-        assert_eq!(converter.convert(&Type::String).type_name(), "String");
-        assert_eq!(converter.convert(&Type::Number).type_name(), "f64");
-        assert_eq!(converter.convert(&Type::Boolean).type_name(), "bool");
-    }
-
-    #[test]
-    fn test_convert_ref_type() {
-        let converter = TypeToRust::new(OutputKind::String);
-
-        assert_eq!(
-            converter.convert(&Type::Ref { name: "MyType".into(), generics: vec![] }).type_name(),
-            "MyType"
-        );
-        assert_eq!(
-            converter.convert(&Type::Ref { name: "Result".into(), generics: vec![Type::String] }).type_name(),
-            "Result<String>"
-        );
-    }
-
-    #[test]
-    fn test_convert_array() {
-        let converter = TypeToRust::new(OutputKind::String);
-
-        assert_eq!(
-            converter.convert(&Type::Array { elem: Box::new(Type::Number) }).type_name(),
-            "Vec<f64>"
-        );
     }
 }

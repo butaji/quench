@@ -946,13 +946,55 @@ async fn main() {{
     /// shape `{"kind": "Return", "arg": ...}`.
     fn find_jsx_in_stmt(&self, stmt: &serde_json::Value) -> Option<serde_json::Value> {
         let obj = stmt.as_object()?;
-        let (variant, inner) = if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) { (kind.to_string(), stmt.clone()) } else { let (k, v) = obj.iter().next()?; (k.clone(), v.clone()) };
+        let (variant, inner) = if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
+            (kind.to_string(), stmt.clone())
+        } else {
+            let (k, v) = obj.iter().next()?;
+            (k.clone(), v.clone())
+        };
         match variant.as_str() {
-            "Return" => { let arg = inner.get("arg")?; if self.is_jsx_expr(arg) { return Some(arg.clone()); } self.find_jsx_in_expr(arg) }
-            "Expr" => { let expr = inner.get("expr")?; if self.is_jsx_expr(expr) { return Some(expr.clone()); } self.find_jsx_in_expr(expr) }
-            "Block" => { if let Some(stmts) = inner.get("stmts").and_then(|s| s.as_array()) { for s in stmts { if let Some(jsx) = self.find_jsx_in_stmt(s) { return Some(jsx); } } } }
-            "If" => { if let Some(cons) = inner.get("consequent") { if let Some(jsx) = self.find_jsx_in_stmt(cons) { return Some(jsx); } } if let Some(alt) = inner.get("alternate") { return self.find_jsx_in_stmt(alt); } }
-            _ => {}
+            "Return" => self.find_jsx_in_return(&inner),
+            "Expr" => self.find_jsx_in_expr_stmt(&inner),
+            "Block" => self.find_jsx_in_block(&inner),
+            "If" => self.find_jsx_in_if(&inner),
+            _ => None,
+        }
+    }
+
+    fn find_jsx_in_return(&self, inner: &serde_json::Value) -> Option<serde_json::Value> {
+        let arg = inner.get("arg")?;
+        if self.is_jsx_expr(arg) {
+            return Some(arg.clone());
+        }
+        self.find_jsx_in_expr(arg)
+    }
+
+    fn find_jsx_in_expr_stmt(&self, inner: &serde_json::Value) -> Option<serde_json::Value> {
+        let expr = inner.get("expr")?;
+        if self.is_jsx_expr(expr) {
+            return Some(expr.clone());
+        }
+        self.find_jsx_in_expr(expr)
+    }
+
+    fn find_jsx_in_block(&self, inner: &serde_json::Value) -> Option<serde_json::Value> {
+        let stmts = inner.get("stmts")?.as_array()?;
+        for s in stmts {
+            if let Some(jsx) = self.find_jsx_in_stmt(s) {
+                return Some(jsx);
+            }
+        }
+        None
+    }
+
+    fn find_jsx_in_if(&self, inner: &serde_json::Value) -> Option<serde_json::Value> {
+        if let Some(cons) = inner.get("consequent") {
+            if let Some(jsx) = self.find_jsx_in_stmt(cons) {
+                return Some(jsx);
+            }
+        }
+        if let Some(alt) = inner.get("alternate") {
+            return self.find_jsx_in_stmt(alt);
         }
         None
     }
@@ -1051,40 +1093,50 @@ async fn main() {{
     fn jsx_attr_value_to_tokenstream(&self, val: &serde_json::Value) -> Option<TokenStream> {
         match val {
             serde_json::Value::Null => None,
-            serde_json::Value::String(s) => {
-                let lit = proc_macro2::Literal::string(s);
-                Some(quote::quote! { #lit })
-            }
-            serde_json::Value::Object(obj) => {
-                // Handle actual HIR format: { "String": "value" }
-                if let Some(s) = obj.get("String")?.as_str() {
-                    let lit = proc_macro2::Literal::string(s);
-                    return Some(quote::quote! { #lit });
-                }
-                // Expression value: { "Expr": <expr> }
-                if let Some(expr_val) = obj.get("Expr") {
-                    let kind = expr_val.get("kind")?.as_str()?;
-                    match kind {
-                        "Ident" => {
-                            let name = expr_val.get("name")?.as_str()?;
-                            Some(quote::quote! { #name })
-                        }
-                        "String" => {
-                            let s = expr_val.get("String")?.as_str()?;
-                            Some(quote::quote! { #s })
-                        }
-                        "Number" => {
-                            let n = expr_val.get("0")?.as_f64()?;
-                            Some(quote::quote! { #n })
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
+            serde_json::Value::String(s) => Some(self.attr_string_to_tokens(s)),
+            serde_json::Value::Object(obj) => self.attr_object_to_tokens(obj),
             _ => None,
         }
+    }
+
+    fn attr_string_to_tokens(&self, s: &str) -> TokenStream {
+        let lit = proc_macro2::Literal::string(s);
+        quote::quote! { #lit }
+    }
+
+    fn attr_object_to_tokens(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Option<TokenStream> {
+        if let Some(s) = obj.get("String")?.as_str() {
+            return Some(self.attr_string_to_tokens(s));
+        }
+        if let Some(expr_val) = obj.get("Expr") {
+            return self.attr_expr_to_tokens(expr_val);
+        }
+        None
+    }
+
+    fn attr_expr_to_tokens(&self, expr_val: &serde_json::Value) -> Option<TokenStream> {
+        let kind = expr_val.get("kind")?.as_str()?;
+        match kind {
+            "Ident" => self.attr_ident_to_token(expr_val),
+            "String" => self.attr_stringlit_to_token(expr_val),
+            "Number" => self.attr_number_to_token(expr_val),
+            _ => None,
+        }
+    }
+
+    fn attr_ident_to_token(&self, expr_val: &serde_json::Value) -> Option<TokenStream> {
+        let name = expr_val.get("name")?.as_str()?;
+        Some(quote::quote! { #name })
+    }
+
+    fn attr_stringlit_to_token(&self, expr_val: &serde_json::Value) -> Option<TokenStream> {
+        let s = expr_val.get("String")?.as_str()?;
+        Some(quote::quote! { #s })
+    }
+
+    fn attr_number_to_token(&self, expr_val: &serde_json::Value) -> Option<TokenStream> {
+        let n = expr_val.get("0")?.as_f64()?;
+        Some(quote::quote! { #n })
     }
 
     /// Extract children from JSX element.
@@ -1109,23 +1161,85 @@ async fn main() {{
 
     /// Convert a JSX child to TokenStream.
     fn jsx_child_to_tokenstream(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
-        if let Some(text) = child.as_str() { return Some(Some(jsx_text(text))); }
-        if let Some(text) = child.get("Text").and_then(|v| v.as_str()) { return Some(Some(jsx_text(text))); }
-        if child.get("JSX").is_some() { return self.generate_jsx_vnode_code(child.get("JSX")?.clone()).map(Some); }
-        if child.get("Fragment").is_some() { let children = self.extract_jsx_children(child.get("Fragment")?.get("children")?)?; return Some(Some(jsx_fragment(children))); }
-        if child.get("Expr").is_some() { let ts = self.jsx_expr_to_tokenstream(child.get("Expr")?)?; return Some(ts); }
-        if child.get("Spread").is_some() { return Some(None); }
-        if let Some(kind) = child.get("kind").and_then(|v| v.as_str()) { match kind { "Text" => Some(Some(jsx_text(child.get("Text")?.as_str()?))), "JSX" => self.generate_jsx_vnode_code(child.get("JSX")?.clone()).map(Some), "Fragment" => { let children = self.extract_jsx_children(child.get("Fragment")?.get("children")?)?; Some(Some(jsx_fragment(children))) } "Expr" => self.jsx_expr_to_tokenstream(child.get("Expr")?), "Spread" => Some(None), _ => Some(None) } } else { Some(None) }
+        if let Some(text) = child.as_str() {
+            return Some(Some(jsx_text(text)));
+        }
+        if let Some(text) = child.get("Text").and_then(|v| v.as_str()) {
+            return Some(Some(jsx_text(text)));
+        }
+        if let Some(jsx) = child.get("JSX") {
+            return self.generate_jsx_vnode_code(jsx.clone()).map(Some);
+        }
+        if let Some(frag) = child.get("Fragment") {
+            let children = self.extract_jsx_children(frag.get("children")?)?;
+            return Some(Some(jsx_fragment(children)));
+        }
+        if let Some(expr) = child.get("Expr") {
+            return self.jsx_expr_to_tokenstream(expr);
+        }
+        if child.get("Spread").is_some() {
+            return Some(None);
+        }
+        self.jsx_child_by_kind(child)
+    }
+
+    fn jsx_child_by_kind(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let kind = child.get("kind")?.as_str()?;
+        match kind {
+            "Text" => Some(Some(jsx_text(child.get("Text")?.as_str()?))),
+            "JSX" => self.generate_jsx_vnode_code(child.get("JSX")?.clone()).map(Some),
+            "Fragment" => self.child_fragment(child),
+            "Expr" => self.jsx_expr_to_tokenstream(child.get("Expr")?),
+            _ => Some(None),
+        }
+    }
+
+    fn child_fragment(&self, child: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let children = self.extract_jsx_children(child.get("Fragment")?.get("children")?)?;
+        Some(Some(jsx_fragment(children)))
     }
 
     /// Convert JSX expression to TokenStream.
     fn jsx_expr_to_tokenstream(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
-        if let Some(name) = expr.get("Ident")?.as_str() { return Some(Some(jsx_expr(quote::quote! { #name }))); }
-        if let Some(s) = expr.get("String")?.as_str() { return Some(Some(jsx_text(s))); }
-        if let Some(n) = expr.get("Number")?.as_f64() { return Some(Some(jsx_expr(quote::quote! { #n }))); }
-        if let Some(b) = expr.get("Boolean")?.as_bool() { return Some(Some(jsx_expr(quote::quote! { #b }))); }
-        if let Some(kind) = expr.get("kind")?.as_str() { match kind { "Ident" => { let name = expr.get("name")?.as_str()?; return Some(Some(jsx_expr(quote::quote! { #name }))); } "String" => { return Some(Some(jsx_text(expr.get("String")?.as_str()?))); } "Number" => { let n = expr.get("0")?.as_f64()?; return Some(Some(jsx_expr(quote::quote! { #n }))); } "Boolean" => { let b = expr.get("0")?.as_bool()?; return Some(Some(jsx_expr(quote::quote! { #b }))); } _ => return Some(None), } }
-        Some(None)
+        if let Some(name) = expr.get("Ident")?.as_str() {
+            return Some(Some(jsx_expr(quote::quote! { #name })));
+        }
+        if let Some(s) = expr.get("String")?.as_str() {
+            return Some(Some(jsx_text(s)));
+        }
+        if let Some(n) = expr.get("Number")?.as_f64() {
+            return Some(Some(jsx_expr(quote::quote! { #n })));
+        }
+        if let Some(b) = expr.get("Boolean")?.as_bool() {
+            return Some(Some(jsx_expr(quote::quote! { #b })));
+        }
+        self.jsx_expr_by_kind(expr)
+    }
+
+    fn jsx_expr_by_kind(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let kind = expr.get("kind")?.as_str()?;
+        match kind {
+            "Ident" => self.expr_ident(expr),
+            "String" => Some(Some(jsx_text(expr.get("String")?.as_str()?))),
+            "Number" => self.expr_number(expr),
+            "Boolean" => self.expr_boolean(expr),
+            _ => Some(None),
+        }
+    }
+
+    fn expr_ident(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let name = expr.get("name")?.as_str()?;
+        Some(Some(jsx_expr(quote::quote! { #name })))
+    }
+
+    fn expr_number(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let n = expr.get("0")?.as_f64()?;
+        Some(Some(jsx_expr(quote::quote! { #n })))
+    }
+
+    fn expr_boolean(&self, expr: &serde_json::Value) -> Option<Option<TokenStream>> {
+        let b = expr.get("0")?.as_bool()?;
+        Some(Some(jsx_expr(quote::quote! { #b })))
     }
 
     /// Wrap page component code in a module.
@@ -1178,7 +1292,7 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_attributes() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Home", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [{"Attr": {"name": "class", "value": "home"}}], "self_closing": false}, "children": [{"Text": "Welcome"}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Home", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": {"Ident": "div"}, "attrs": [{"Attr": {"name": "class", "value": "home"}}], "self_closing": false}, "children": [{"Text": "Welcome"}], "closing": {"name": {"Ident": "div"}}}}}}]}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         assert!(result.is_some(), "Should generate code for JSX with attrs");
@@ -1221,7 +1335,7 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_nested_elements() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Outer", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"JSX": {"opening": {"name": { "Ident": "span" }, "attrs": [], "self_closing": false}, "children": [{"Text": "nested"}], "closing": {"name": { "Ident": "span" }}}}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Outer", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": {"Ident": "div"}, "attrs": [], "self_closing": false}, "children": [{"JSX": {"opening": {"name": {"Ident": "span"}, "attrs": [], "self_closing": false}, "children": [{"Text": "nested"}], "closing": {"name": {"Ident": "span"}}}}], "closing": {"name": {"Ident": "div"}}}}}}]}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         eprintln!("Result: {:?}", result);
@@ -1235,7 +1349,7 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_expr_child() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "WithExpr", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Expr": {"expr": {"Ident": { "name": "name" }}}}], "closing": {"name": { "Ident": "div" }}}}}}]}}}}}]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "WithExpr", "body": {"stmts": [{"Return": {"arg": {"JSX": {"opening": {"name": {"Ident": "div"}, "attrs": [], "self_closing": false}, "children": [{"Expr": {"kind": "Ident", "name": "count"}}], "closing": {"name": {"Ident": "div"}}}}}}]}}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         assert!(result.is_some(), "Should generate code for JSX with expression child");
@@ -1614,7 +1728,7 @@ mod tests {
     #[test]
     fn test_try_codegen_jsx_with_internally_tagged_stmt() {
         let plugin = FreshPlugin;
-        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Counter", "body": [{"kind": "Return", "arg": {"JSX": {"opening": {"name": { "Ident": "div" }, "attrs": [], "self_closing": false}, "children": [{"Text": "Count: 0"}], "closing": {"name": { "Ident": "div" }}}}}]}}}]]);
+        let items_json = serde_json::json!([{"Decl": {"Function": {"name": "Counter", "body": [{"kind": "Return", "arg": {"JSX": {"opening": {"name": {"Ident": "div"}, "attrs": [], "self_closing": false}, "children": [{"Text": "Count: 0"}], "closing": {"name": {"Ident": "div"}}}}}]}}}]);
         let hir = runts_plugin::hir::Module::new();
         let result = plugin.try_codegen_jsx(&items_json, &hir);
         assert!(result.is_some(), "Should generate code for JSX inside a Stmt::Return (the actual HIR shape)");

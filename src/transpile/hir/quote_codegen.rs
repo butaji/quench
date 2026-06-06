@@ -531,33 +531,133 @@ impl QuoteCodegen {
     pub(crate) fn gen_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
-            S::Empty => Some(quote! {}),
-            S::Expr { expr } => Some(self.gen_expr_stmt(expr)),
-            S::Return { arg } => Some(self.gen_return(arg)),
-            S::If { test, consequent, alternate } => {
-                let alt_stmt = alternate.as_ref().map(|b| b.as_ref());
-                Some(self.gen_if(test, consequent, alt_stmt))
-            }
-            S::Switch { discriminant, cases } => Some(self.gen_switch(discriminant, cases)),
-            S::For { init, test, update, body } => Some(self.gen_for(init, test, update, body)),
-            S::ForIn { left, right, body, .. } => Some(self.gen_for_in(left, right, body)),
-            S::ForOf { left, right, body, is_await } => Some(self.gen_for_of(left, right, body, *is_await)),
-            S::While { test, body } => Some(self.gen_while(test, body)),
-            S::DoWhile { body, test } => Some(self.gen_do_while(body, test)),
-            S::Break { label } => Some(self.gen_break(label)),
-            S::Continue { label } => Some(self.gen_continue(label)),
-            S::Throw { arg } => Some(self.gen_throw(arg)),
-            S::Try { block, handler, finalizer } => Some(self.gen_try(block, handler, finalizer)),
             S::Block { stmts } => Some(self.gen_block(stmts)),
-            S::Labeled { label, body } => Some(self.gen_labeled(label, body)),
-            S::With { obj, body } => Some(self.gen_with(obj, body)),
+            S::Expr { expr } | S::Return { arg: _ } => self.gen_expr_return(stmt),
+            S::If { test, consequent, alternate } => self.gen_if_stmt(test, consequent, alternate.as_deref()),
+            S::Switch { discriminant, cases } | S::Try { block: discriminant, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
+            S::For { init, test, update, body } | S::While { test: _, body: _ } | S::DoWhile { body: _, test: _ } => self.gen_loop_stmt(stmt),
+            S::Break { .. } | S::Continue { .. } | S::Throw { .. } | S::Labeled { label, body } | S::With { obj: label, body } => self.gen_jump_labeled(stmt),
+            S::FunctionDecl(func) | S::Variable(VarDecl { kind: _, decls: _ }) => self.gen_decl_stmt(stmt),
+            _ => self.gen_catchall_stmt(stmt),
+        }
+    }
+
+    fn gen_jump_labeled(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
+            S::Break { .. } | S::Continue { .. } | S::Throw { .. } => Some(self.gen_jump(stmt)),
+            S::Labeled { label, body } | S::With { obj: label, body } => Some(self.gen_labeled_body(label, body)),
+            _ => None,
+        }
+    }
+
+    fn gen_catchall_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
+            S::Empty => Some(quote! {}),
+            S::ForIn { left, right, body, .. } | S::ForOf { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
+            S::Class(_) => None,
+            S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)),
+            S::ExportDefault { expr } => Some(self.gen_export_default(expr)),
+            S::ImportNamed { source, specifiers } | S::ImportDefault { source: _, local: _ } => self.gen_import_stmt(source, specifiers.as_deref()),
+            _ => None,
+        }
+    }
+
+    fn gen_import_stmt(&self, source: &super::Str, specifiers: Option<&[super::ImportSpecifier]>) -> Option<TokenStream> {
+        match specifiers { Some(specs) => Some(self.gen_import_named(source, specs)), None => None }
+    }
+
+    fn gen_if_stmt(&self, test: &Expr, consequent: &Stmt, alternate: Option<&Stmt>) -> Option<TokenStream> {
+        Some(self.gen_if(test, consequent, alternate))
+    }
+
+    fn gen_expr_return(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt { S::Expr { expr } => Some(self.gen_expr_stmt(expr)), S::Return { arg } => Some(self.gen_return(arg)), _ => None }
+    }
+
+    fn gen_switch_try(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt { S::Switch { discriminant, cases } => self.gen_switch(discriminant, cases), S::Try { block, handler, finalizer } => self.gen_try(block, handler, finalizer), _ => None }
+    }
+
+    fn gen_loop_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt { S::For { init, test, update, body } => self.gen_for(init, test, update, body), S::While { test, body } => Some(self.gen_while(test, body)), S::DoWhile { body, test } => Some(self.gen_while(test, body)), _ => None }
+    }
+
+    fn gen_decl_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt { S::FunctionDecl(func) => Some(self.gen_fn(func)), S::Variable(var) => self.gen_var_decl(var), _ => None }
+    }
+
+    fn gen_module_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt { S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)), S::ExportDefault { expr } => Some(self.gen_export_default(expr)), S::ImportNamed { source, specifiers } => Some(self.gen_import_named(source, specifiers)), S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)), _ => None }
+    }
+
+    fn gen_decl_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
             S::FunctionDecl(func) => Some(self.gen_fn(func)),
-            S::Class(_) => None, // Class codegen not yet implemented
             S::Variable(var) => self.gen_var_decl(var),
+            _ => None,
+        }
+    }
+
+    fn gen_switch_try(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
+            S::Switch { discriminant, cases } => self.gen_switch(discriminant, cases),
+            S::Try { block, handler, finalizer } => self.gen_try(block, handler, finalizer),
+            _ => None,
+        }
+    }
+
+    fn gen_iter_loop(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
+            S::ForIn { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
+            S::ForOf { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
+            S::While { test, body } => Some(self.gen_while(test, body)),
+            _ => None,
+        }
+    }
+
+    fn gen_labeled_body(&self, label: &super::Ident, body: &Stmt) -> TokenStream {
+        let inner = self.gen_stmt(body).unwrap_or(quote! {});
+        quote! { #label: #inner }
+    }
+
+    fn gen_module_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
+        use super::Stmt as S;
+        match stmt {
             S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)),
             S::ExportDefault { expr } => Some(self.gen_export_default(expr)),
             S::ImportNamed { source, specifiers } => Some(self.gen_import_named(source, specifiers)),
             S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)),
+            _ => None,
+        }
+    }
+
+    fn gen_for_in_out(&self, left: &Pat, right: &Expr, body: &Stmt) -> TokenStream {
+        quote! { for #left in #right { #body } }
+    }
+
+    fn gen_jump(&self, stmt: &Stmt) -> TokenStream {
+        use super::Stmt as S;
+        match stmt {
+            S::Break { label } => Self::gen_labeled_jump("break", label.as_deref()),
+            S::Continue { label } => Self::gen_labeled_jump("continue", label.as_deref()),
+            _ => quote! {},
+        }
+    }
+
+    fn gen_labeled_jump(kw: &str, label: Option<&str>) -> TokenStream {
+        match label {
+            Some(l) => quote! { #kw #l; },
+            None => quote! { #kw; },
         }
     }
 
@@ -1276,29 +1376,8 @@ impl QuoteCodegen {
         if let Expr::Ident { name: obj_name } = obj {
             let obj_name_str: &str = obj_name.as_str();
             match obj_name_str {
-                "Number" => {
-                    return match property {
-                        "NaN" => quote! { f64::NAN },
-                        "POSITIVE_INFINITY" | "Infinity" => quote! { f64::INFINITY },
-                        "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
-                        "MAX_VALUE" => quote! { f64::MAX },
-                        "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
-                        _ => { let prop = syn::Ident::new(property, proc_macro2::Span::call_site()); quote! { #obj_name.#prop } }
-                    };
-                }
-                "Math" => {
-                    return match property {
-                        "PI" => quote! { std::f64::consts::PI },
-                        "E" => quote! { std::f64::consts::E },
-                        "SQRT2" => quote! { std::f64::consts::SQRT2 },
-                        "SQRT1_2" => quote! { std::f64::consts::FRAC_1_SQRT_2 },
-                        "LN2" => quote! { std::f64::consts::LN_2 },
-                        "LN10" => quote! { std::f64::consts::LN_10 },
-                        "LOG2E" => quote! { std::f64::consts::LOG2_E },
-                        "LOG10E" => quote! { std::f64::consts::LOG10_E },
-                        _ => { let prop = syn::Ident::new(property, proc_macro2::Span::call_site()); quote! { #obj_name.#prop } }
-                    };
-                }
+                "Number" => return Self::gen_number_const(property),
+                "Math" => return Self::gen_math_const(property),
                 _ => {}
             }
         }
@@ -1309,37 +1388,36 @@ impl QuoteCodegen {
 
     fn gen_member_expr_full(&self, obj: &Expr, property: &Expr, computed: bool) -> TokenStream {
         if let Expr::Ident { name: obj_name } = obj {
-            if obj_name == "Number" {
-                if let Expr::Ident { name: prop_name } = property {
-                    return match prop_name.as_str() {
-                        "NaN" => quote! { f64::NAN },
-                        "POSITIVE_INFINITY" | "Infinity" => quote! { f64::INFINITY },
-                        "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
-                        "MAX_VALUE" => quote! { f64::MAX },
-                        "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
-                        _ => { let prop = self.gen_expr(property); quote! { #obj_name.#prop } }
-                    };
-                }
-            }
-            if obj_name == "Math" {
-                if let Expr::Ident { name: prop_name } = property {
-                    return match prop_name.as_str() {
-                        "PI" => quote! { std::f64::consts::PI },
-                        "E" => quote! { std::f64::consts::E },
-                        "SQRT2" => quote! { std::f64::consts::SQRT2 },
-                        "SQRT1_2" => quote! { std::f64::consts::FRAC_1_SQRT_2 },
-                        "LN2" => quote! { std::f64::consts::LN_2 },
-                        "LN10" => quote! { std::f64::consts::LN_10 },
-                        "LOG2E" => quote! { std::f64::consts::LOG2_E },
-                        "LOG10E" => quote! { std::f64::consts::LOG10_E },
-                        _ => { let prop = self.gen_expr(property); quote! { #obj_name.#prop } }
-                    };
-                }
+            let obj_name_str: &str = obj_name.as_str();
+            if let Expr::Ident { name: prop_name } = property {
+                let prop_str = prop_name.as_str();
+                if obj_name_str == "Number" { return Self::gen_number_const(prop_str); }
+                if obj_name_str == "Math" { return Self::gen_math_const(prop_str); }
             }
         }
         let obj = self.gen_expr(obj);
         let prop = self.gen_expr(property);
         if computed { quote! { #obj[#prop] } } else { quote! { #obj.#prop } }
+    }
+
+    fn gen_number_const(prop: &str) -> TokenStream {
+        match prop {
+            "NaN" => quote! { f64::NAN },
+            "POSITIVE_INFINITY" | "Infinity" => quote! { f64::INFINITY },
+            "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
+            "MAX_VALUE" => quote! { f64::MAX },
+            "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
+            _ => { let id = syn::Ident::new(prop, proc_macro2::Span::call_site()); quote! { Number.#id } }
+        }
+    }
+
+    fn gen_math_const(prop: &str) -> TokenStream {
+        let c = match prop {
+            "PI" | "E" | "SQRT2" | "LN2" | "LN10" | "LOG2E" | "LOG10E" => prop,
+            "SQRT1_2" => "FRAC_1_SQRT_2",
+            _ => return { let id = syn::Ident::new(prop, proc_macro2::Span::call_site()); quote! { Math.#id } }
+        };
+        quote! { std::f64::consts::#c }
     }
 
     fn gen_unary_expr(&self, op: &super::UnaryOp, arg: &Expr, _prefix: bool) -> TokenStream {
@@ -1698,29 +1776,45 @@ impl QuoteCodegen {
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
         if let Expr::Ident { name } = callee {
-            if name == "fetch" { let url = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() }); return quote! { reqwest::get(#url).await? }; }
-            if name == "setTimeout" { let duration = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); return quote! { tokio::time::sleep(std::time::Duration::from_millis(#duration as u64)).await }; }
-            if name == "setInterval" { let duration = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); return quote! { tokio::time::interval(std::time::Duration::from_millis(#duration as u64)) }; }
+            if let Some(rust_code) = self.gen_global_fn(name, arguments) {
+                return rust_code;
+            }
         }
         if let Expr::StaticMember { obj, property } = callee {
-            if let Expr::Ident { name } = obj.as_ref() {
-                if name == "console" {
-                    let is_error = property == "error" || property == "warn";
-                    if property == "log" || property == "error" || property == "info" || property == "table" || property == "warn" || property == "assert" {
-                        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-                        if property == "assert" {
-                            return if arguments.len() >= 2 { let cond = args.first().unwrap(); let msg = args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } } else if arguments.len() == 1 { quote! { assert!(#(args.first().unwrap())) } } else { quote! { () } };
-                        }
-                        if arguments.len() == 1 { return if is_error { syn::parse_quote! { eprintln!("{}", #(#args),*) } } else { syn::parse_quote! { println!("{}", #(#args),*) } }; }
-                        let format_args: Vec<_> = arguments.iter().map(|_| quote! { "{}" }).collect();
-                        return if is_error { syn::parse_quote! { eprintln!(#(#format_args),*, #(#args),*) } } else { syn::parse_quote! { println!(#(#format_args),*, #(#args),*) } };
-                    }
-                }
+            if let Some(code) = self.gen_console_call(obj.as_ref(), property, arguments) {
+                return code;
             }
         }
         let callee = self.gen_expr(callee);
         let args: Vec<_> = arguments.iter().map(|a| { let arg = self.gen_expr(a); if matches!(a, Expr::String(_)) { quote! { #arg.to_string() } } else { arg } }).collect();
         quote! { #callee(#(#args),*) }
+    }
+
+    fn gen_global_fn(&self, name: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        match name {
+            "fetch" => { let url = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() }); Some(quote! { reqwest::get(#url).await? }) }
+            "setTimeout" => { let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); Some(quote! { tokio::time::sleep(std::time::Duration::from_millis(#dur as u64)).await }) }
+            "setInterval" => { let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); Some(quote! { tokio::time::interval(std::time::Duration::from_millis(#dur as u64)) }) }
+            _ => None,
+        }
+    }
+
+    fn gen_console_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        if let Expr::Ident { name } = obj { if name != "console" { return None; } } else { return None; }
+        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
+    }
+
+    fn gen_console_output(&self, method: &str, args: &[Expr]) -> TokenStream {
+        let is_err = method == "error" || method == "warn";
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() == 1 { if is_err { syn::parse_quote! { eprintln!("{}", #(#gen_args),*) } } else { syn::parse_quote! { println!("{}", #(#gen_args),*) } } }
+        else { let fmts: Vec<_> = args.iter().map(|_| quote! { "{}" }).collect(); if is_err { syn::parse_quote! { eprintln!(#(#fmts),*, #(#gen_args),*) } } else { syn::parse_quote! { println!(#(#fmts),*, #(#gen_args),*) } } }
+    }
+
+    fn gen_console_assert(&self, args: &[Expr]) -> TokenStream {
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() >= 2 { let cond = gen_args.first().unwrap(); let msg = gen_args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } }
+        else if args.len() == 1 { quote! { assert!(#(gen_args.first().unwrap())) } } else { quote! { () } }
     }
 
     fn gen_assign_expr(&self, op: &super::AssignOp, left: &Expr, right: &Expr) -> TokenStream {
@@ -1740,34 +1834,25 @@ impl QuoteCodegen {
     fn bin_op(&self, op: &super::BinaryOp) -> TokenStream {
         use super::BinaryOp as B;
         match op {
-            B::Add => quote! { + },
-            B::Sub => quote! { - },
-            B::Mul => quote! { * },
-            B::Div => quote! { / },
-            B::Mod => quote! { % },
-            B::Exp => quote! { powf() },
-            B::DivStrict => quote! { / },
-            B::BitXor => quote! { ^ },
-            B::BitAnd => quote! { & },
-            B::BitOr => quote! { | },
-            B::Shl => quote! { << },
-            B::Shr => quote! { >> },
-            B::UShr => quote! { >>> },
-            B::Eq => quote! { == },
-            B::StrictEq => quote! { === },
-            B::Neq => quote! { != },
-            B::StrictNeq => quote! { !== },
-            B::Lt => quote! { < },
-            B::Lte => quote! { <= },
-            B::Gt => quote! { > },
-            B::Gte => quote! { >= },
-            B::Instanceof => quote! { instanceof },
-            B::In => quote! { in },
-            B::LogicalAnd => quote! { && },
-            B::LogicalOr => quote! { || },
-            B::NullishCoalescing => quote! { ?? },
+            B::Add | B::Sub | B::Mul => Self::bin_arith(op),
+            B::Div | B::DivStrict | B::Mod | B::Exp => Self::bin_mul(op),
+            B::BitXor | B::BitAnd | B::BitOr => Self::bin_bit(op),
+            B::Shl | B::Shr | B::UShr => Self::bin_shift(op),
+            B::Eq | B::StrictEq | B::Neq | B::StrictNeq => Self::bin_eq(op),
+            B::Lt | B::Lte | B::Gt | B::Gte => Self::bin_cmp(op),
+            B::Instanceof | B::In => Self::bin_js_op(op),
+            B::LogicalAnd | B::LogicalOr | B::NullishCoalescing => Self::bin_logical(op),
         }
     }
+
+    fn bin_arith(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Add => quote! { + }, B::Sub => quote! { - }, B::Mul => quote! { * }, _ => quote! { 0 } } }
+    fn bin_mul(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Div | B::DivStrict => quote! { / }, B::Mod => quote! { % }, B::Exp => quote! { powf() }, _ => quote! { 1 } } }
+    fn bin_bit(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::BitXor => quote! { ^ }, B::BitAnd => quote! { & }, B::BitOr => quote! { | }, _ => quote! { 0 } } }
+    fn bin_shift(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Shl => quote! { << }, B::Shr => quote! { >> }, B::UShr => quote! { >>> }, _ => quote! { 0 } } }
+    fn bin_eq(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Eq => quote! { == }, B::StrictEq => quote! { === }, B::Neq => quote! { != }, B::StrictNeq => quote! { !== }, _ => quote! { false } } }
+    fn bin_cmp(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Lt => quote! { < }, B::Lte => quote! { <= }, B::Gt => quote! { > }, B::Gte => quote! { >= }, _ => quote! { false } } }
+    fn bin_js_op(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Instanceof => quote! { instanceof }, B::In => quote! { in }, _ => quote! { 0 } } }
+    fn bin_logical(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::LogicalAnd => quote! { && }, B::LogicalOr => quote! { || }, B::NullishCoalescing => quote! { ?? }, _ => quote! { false } } }
 }
 
 impl Default for QuoteCodegen {
