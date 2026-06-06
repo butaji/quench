@@ -113,8 +113,7 @@ fn has_target_stmt(stmt: &Stmt, target: &str) -> bool {
             "continue" => matches!(s, Stmt::Continue { .. }),
             _ => false,
         })
-            }
-        }
-        _ => false,
+    } else {
+        false
     }
 }

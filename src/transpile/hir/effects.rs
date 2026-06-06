@@ -90,16 +90,15 @@ impl EffectAnalyzer {
     fn analyze_control_flow(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
-            S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
-            S::While { test, body } | S::DoWhile { body, test } => self.analyze_cf_while(stmt),
-            S::For { .. } | S::ForIn { .. } | S::ForOf { .. } => self.analyze_cf_loop(stmt),
-            S::Return { .. } | S::Throw { .. } => self.analyze_cf_control(stmt),
-            S::Try { .. } | S::Switch { .. } => self.analyze_cf_complex(stmt),
-            S::Break { .. } | S::Continue { .. } | S::Labeled { .. } | S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
-            | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
-            S::With { obj, body } => self.analyze_with(obj, body),
-            S::Block { stmts } => self.analyze_cf_block(stmt),
-            S::Expr { expr: _ } => self.analyze_cf_block(stmt),
+            S::If{test,consequent,alternate}=>self.analyze_if(test,consequent,alternate),
+            S::While{test,body}|S::DoWhile{body,test}=>self.analyze_cf_while(stmt),
+            S::For{..}|S::ForIn{..}|S::ForOf{..}=>self.analyze_cf_loop(stmt),
+            S::Return{..}|S::Throw{..}=>self.analyze_cf_control(stmt),
+            S::Try{..}|S::Switch{..}=>self.analyze_cf_complex(stmt),
+            S::Break{..}|S::Continue{..}|S::Labeled{..}|S::Empty|S::FunctionDecl(_)|S::Class(_)|S::Variable(_)|S::ExportNamed{..}|S::ExportDefault{..}|S::ImportNamed{..}|S::ImportDefault{..}=>{}
+            S::With{obj,body}=>self.analyze_with(obj,body),
+            S::Block{stmts:_}=>self.analyze_cf_block(stmt),
+            S::Expr{expr:_}=>self.analyze_cf_block(stmt),
         }
     }
 
@@ -130,15 +129,6 @@ impl EffectAnalyzer {
             _ => {}
         }
     }
-    
-    fn analyze_switch_try(&mut self, stmt: &Stmt) {
-        use Stmt as S;
-        match stmt {
-            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
-            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
-            _ => {}
-        }
-    }
 
     fn analyze_cf_block(&mut self, stmt: &Stmt) {
         use Stmt as S;
@@ -146,15 +136,6 @@ impl EffectAnalyzer {
             S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             _ => {}
-        }
-    }
-    
-    fn analyze_expr_block(&mut self, stmt: &Stmt) {
-        if let Stmt::Expr { expr } = stmt {
-            self.analyze_expr(expr);
-        }
-        if let Stmt::Block { stmts } = stmt {
-            self.analyze_block(stmts);
         }
     }
 
@@ -329,18 +310,17 @@ impl EffectAnalyzer {
 
     fn analyze_binary_expr(&mut self, expr: &Expr) {
         if let Expr::Bin { left, right, .. } = expr {
-            self.analyze_bin(left, right);
+            self.analyze_expr(left);
+            self.analyze_expr(right);
         }
         if let Expr::Logical { left, right, .. } = expr {
-            self.analyze_logical(left, right);
+            self.analyze_expr(left);
+            self.analyze_expr(right);
         }
-        if let Expr::Cond {
-            test,
-            consequent,
-            alternate,
-        } = expr
-        {
-            self.analyze_cond(test, consequent, alternate);
+        if let Expr::Cond { test, consequent, alternate } = expr {
+            self.analyze_expr(test);
+            self.analyze_expr(consequent);
+            self.analyze_expr(alternate);
         }
     }
 
@@ -398,19 +378,6 @@ impl EffectAnalyzer {
         }
     }
 
-    fn analyze_bin(&mut self, l: &Expr, r: &Expr) {
-        self.analyze_expr(l);
-        self.analyze_expr(r);
-    }
-    fn analyze_logical(&mut self, l: &Expr, r: &Expr) {
-        self.analyze_expr(l);
-        self.analyze_expr(r);
-    }
-    fn analyze_cond(&mut self, t: &Expr, c: &Expr, a: &Expr) {
-        self.analyze_expr(t);
-        self.analyze_expr(c);
-        self.analyze_expr(a);
-    }
     fn analyze_array(&mut self, elems: &[Option<Expr>]) {
         for e in elems {
             if let Some(x) = e {
@@ -432,11 +399,6 @@ impl EffectAnalyzer {
     fn analyze_assign(&mut self, l: &Expr, r: &Expr) {
         self.analyze_expr(l);
         self.analyze_expr(r);
-    }
-    fn analyze_seq(&mut self, exprs: &[Expr]) {
-        for e in exprs {
-            self.analyze_expr(e);
-        }
     }
 
     fn infer_type_from_expr(&self, expr: &Expr) -> Type {
