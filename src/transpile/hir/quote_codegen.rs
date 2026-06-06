@@ -171,7 +171,8 @@ impl QuoteCodegen {
     fn gen_type_helper(&self, ty: &Type) -> TokenStream {
         use super::Type as T;
         match ty {
-            T::Array { elem } | T::Ref { name: _, generics: _ } => self.gen_array_type(elem),
+            T::Array { elem } => self.gen_array_type(elem),
+            T::Ref { name: _, generics: _ } => self.gen_type_helper(&Type::Array { elem: Box::new(Type::Unknown) }),
             T::Object { .. } | T::Union { .. } | T::Intersection { .. } | T::Literal { .. } | T::Template { .. } => self.gen_obj_union_literal_template(ty),
             T::Function { .. } | T::Record { .. } | T::KeyOf { .. } => self.gen_fn_record_keyof(ty),
             T::Index { obj, index } => self.gen_index_type(obj, index),
@@ -215,7 +216,7 @@ impl QuoteCodegen {
         }
     }
 
-    fn gen_tuple_type(&self, elements: &[TypeTupleElement]) -> TokenStream {
+    fn gen_tuple_type(&self, elements: &[super::TupleElement]) -> TokenStream {
         let types: Vec<_> = elements.iter().map(|e| self.gen_type(&e.type_)).collect();
         quote! { (#(#types),*) }
     }
@@ -532,12 +533,25 @@ impl QuoteCodegen {
         use super::Stmt as S;
         match stmt {
             S::Block { stmts } => Some(self.gen_block(stmts)),
-            S::Expr { expr } | S::Return { arg: _ } => self.gen_expr_return(stmt),
+            S::Expr { expr } => self.gen_expr_return(stmt),
+            S::Return { arg: _ } => self.gen_expr_return(stmt),
             S::If { test, consequent, alternate } => self.gen_if_stmt(test, consequent, alternate.as_deref()),
-            S::Switch { discriminant, cases } | S::Try { block: discriminant, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
-            S::For { init, test, update, body } | S::While { test: _, body: _ } | S::DoWhile { body: _, test: _ } => self.gen_loop_stmt(stmt),
-            S::Break { .. } | S::Continue { .. } | S::Throw { .. } | S::Labeled { label, body } | S::With { obj: label, body } => self.gen_jump_labeled(stmt),
-            S::FunctionDecl(func) | S::Variable(VarDecl { kind: _, decls: _ }) => self.gen_decl_stmt(stmt),
+            S::Switch { discriminant, cases } => self.gen_switch_try(stmt),
+            S::Try { block: discriminant, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
+            S::For { init, test, update, body } => self.gen_loop_stmt(stmt),
+            S::While { test: _, body: _ } => self.gen_loop_stmt(stmt),
+            S::DoWhile { body: _, test: _ } => self.gen_loop_stmt(stmt),
+            S::Break { .. } => Some(self.gen_jump(stmt)),
+            S::Continue { .. } => Some(self.gen_jump(stmt)),
+            S::Throw { .. } => Some(self.gen_jump(stmt)),
+            S::Labeled { label, body } => Some(self.gen_labeled_body(label, body)),
+            S::With { obj, body } => {
+                let obj_ts = self.gen_expr(obj);
+                let body_ts = self.gen_block_stmt(body);
+                Some(quote! { { let __with_obj = #obj_ts; #body_ts } })
+            },
+            S::FunctionDecl(func) => self.gen_decl_stmt(stmt),
+            S::Variable(super::VariableDecl { kind: _, init: _, .. }) => self.gen_decl_stmt(stmt),
             _ => self.gen_catchall_stmt(stmt),
         }
     }
@@ -546,7 +560,12 @@ impl QuoteCodegen {
         use super::Stmt as S;
         match stmt {
             S::Break { .. } | S::Continue { .. } | S::Throw { .. } => Some(self.gen_jump(stmt)),
-            S::Labeled { label, body } | S::With { obj: label, body } => Some(self.gen_labeled_body(label, body)),
+            S::Labeled { label, body } => Some(self.gen_labeled_body(label, body)),
+            S::With { obj, body } => {
+                let obj_ts = self.gen_expr(obj);
+                let body_ts = self.gen_block_stmt(body);
+                Some(quote! { { let __with_obj = #obj_ts; #body_ts } })
+            },
             _ => None,
         }
     }
@@ -555,20 +574,22 @@ impl QuoteCodegen {
         use super::Stmt as S;
         match stmt {
             S::Empty => Some(quote! {}),
-            S::ForIn { left, right, body, .. } | S::ForOf { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
+            S::ForIn { left, right, body, .. } => Some(self.gen_for_in(left, right, body)),
+            S::ForOf { left, right, body, .. } => Some(self.gen_for_of(left, right, body, false)),
             S::Class(_) => None,
             S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)),
             S::ExportDefault { expr } => Some(self.gen_export_default(expr)),
-            S::ImportNamed { source, specifiers } | S::ImportDefault { source: _, local: _ } => self.gen_import_stmt(source, specifiers.as_deref()),
+            S::ImportNamed { source, specifiers } => self.gen_import_stmt(source, Some(specifiers)),
+            S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)),
             _ => None,
         }
     }
 
-    fn gen_import_stmt(&self, source: &super::Str, specifiers: Option<&[super::ImportSpecifier]>) -> Option<TokenStream> {
+    fn gen_import_stmt(&self, source: &String, specifiers: Option<&[super::ImportSpecifier]>) -> Option<TokenStream> {
         match specifiers { Some(specs) => Some(self.gen_import_named(source, specs)), None => None }
     }
 
-    fn gen_if_stmt(&self, test: &Expr, consequent: &Stmt, alternate: Option<&Stmt>) -> Option<TokenStream> {
+    fn gen_if_stmt(&self, test: &Expr, consequent: &Box<Stmt>, alternate: Option<&Stmt>) -> Option<TokenStream> {
         Some(self.gen_if(test, consequent, alternate))
     }
 
@@ -579,22 +600,12 @@ impl QuoteCodegen {
 
     fn gen_switch_try(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
-        match stmt { S::Switch { discriminant, cases } => self.gen_switch(discriminant, cases), S::Try { block, handler, finalizer } => self.gen_try(block, handler, finalizer), _ => None }
+        match stmt { S::Switch { discriminant, cases } => Some(self.gen_switch(discriminant, cases)), S::Try { block, handler, finalizer } => Some(self.gen_try(block, handler, finalizer)), _ => None }
     }
 
     fn gen_loop_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
-        match stmt { S::For { init, test, update, body } => self.gen_for(init, test, update, body), S::While { test, body } => Some(self.gen_while(test, body)), S::DoWhile { body, test } => Some(self.gen_while(test, body)), _ => None }
-    }
-
-    fn gen_decl_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
-        use super::Stmt as S;
-        match stmt { S::FunctionDecl(func) => Some(self.gen_fn(func)), S::Variable(var) => self.gen_var_decl(var), _ => None }
-    }
-
-    fn gen_module_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
-        use super::Stmt as S;
-        match stmt { S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)), S::ExportDefault { expr } => Some(self.gen_export_default(expr)), S::ImportNamed { source, specifiers } => Some(self.gen_import_named(source, specifiers)), S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)), _ => None }
+        match stmt { S::For { init, test, update, body } => Some(self.gen_for(init, test, update, body)), S::While { test, body } => Some(self.gen_while(test, body)), S::DoWhile { body, test } => Some(self.gen_while(test, body)), _ => None }
     }
 
     fn gen_decl_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
@@ -606,43 +617,26 @@ impl QuoteCodegen {
         }
     }
 
-    fn gen_switch_try(&self, stmt: &Stmt) -> Option<TokenStream> {
-        use super::Stmt as S;
-        match stmt {
-            S::Switch { discriminant, cases } => self.gen_switch(discriminant, cases),
-            S::Try { block, handler, finalizer } => self.gen_try(block, handler, finalizer),
-            _ => None,
-        }
-    }
-
     fn gen_iter_loop(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
-            S::ForIn { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
-            S::ForOf { left, right, body, .. } => Some(self.gen_for_in_out(left, right, body)),
+            S::ForIn { left, right, body, .. } => Some(self.gen_for_in(left, right, body)),
+            S::ForOf { left, right, body, .. } => Some(self.gen_for_of(left, right, body, false)),
             S::While { test, body } => Some(self.gen_while(test, body)),
             _ => None,
         }
     }
 
-    fn gen_labeled_body(&self, label: &super::Ident, body: &Stmt) -> TokenStream {
+    fn gen_labeled_body(&self, label: &String, body: &Stmt) -> TokenStream {
         let inner = self.gen_stmt(body).unwrap_or(quote! {});
         quote! { #label: #inner }
     }
 
-    fn gen_module_stmt(&self, stmt: &Stmt) -> Option<TokenStream> {
-        use super::Stmt as S;
-        match stmt {
-            S::ExportNamed { specifiers } => Some(self.gen_export_named(specifiers)),
-            S::ExportDefault { expr } => Some(self.gen_export_default(expr)),
-            S::ImportNamed { source, specifiers } => Some(self.gen_import_named(source, specifiers)),
-            S::ImportDefault { source, local } => Some(self.gen_import_default(source, local)),
-            _ => None,
-        }
-    }
-
     fn gen_for_in_out(&self, left: &Pat, right: &Expr, body: &Stmt) -> TokenStream {
-        quote! { for #left in #right { #body } }
+        let left_ts = self.gen_for_init(&Some(super::ForInit::Variable(super::VariableKind::Let, vec![("__item".to_string(), None)])));
+        let right_ts = self.gen_expr(right);
+        let body_ts = self.gen_block_stmt(body);
+        quote! { for #left_ts in #right_ts { #body_ts } }
     }
 
     fn gen_jump(&self, stmt: &Stmt) -> TokenStream {
@@ -685,6 +679,11 @@ impl QuoteCodegen {
                 E::ReExport { source, names } => { let mod_path = self.module_path(source); let idents: Vec<_> = names.iter().map(|n| syn::Ident::new(n, proc_macro2::Span::call_site())).collect(); quote! { pub use #mod_path::{#(#idents),*}; } }
                 E::All { source } => { let mod_path = self.module_path(source); quote! { pub use #mod_path::*; } }
                 E::Default { expr } => { let val = self.gen_expr(expr); quote! { #val } }
+                E::NamedRenamed { local, exported } => {
+                    let local_ident = syn::Ident::new(local, proc_macro2::Span::call_site());
+                    let exported_ident = syn::Ident::new(exported, proc_macro2::Span::call_site());
+                    quote! { #local_ident as #exported_ident }
+                }
             }
         }).collect();
 
@@ -874,7 +873,7 @@ impl QuoteCodegen {
     fn gen_for_init(&self, init: &Option<super::ForInit>) -> TokenStream {
         match init {
             Some(super::ForInit::Variable(kind, vars)) => {
-                self.gen_for_var_init(kind, vars)
+                self.gen_for_var_init(*kind, vars)
             }
             Some(super::ForInit::Expr(e)) => {
                 self.gen_expr(e)
@@ -1184,8 +1183,8 @@ impl QuoteCodegen {
     pub(crate) fn gen_expr(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
-            E::String(s) | E::Number(n) | E::BigInt(n) => self.gen_lit_expr(expr),
-            E::Boolean(b) | E::Null | E::Undefined => self.gen_bool_null(expr),
+            E::String(_) | E::Number(_) | E::BigInt(_) => self.gen_lit_expr(expr),
+            E::Boolean(_) | E::Null | E::Undefined => self.gen_bool_null(expr),
             E::RegExp { .. } => self.gen_reg_exp(expr),
             E::Super | E::This => self.gen_super_this(expr),
             E::Block(stmts) => self.gen_block_expr(stmts),
@@ -1237,7 +1236,8 @@ impl QuoteCodegen {
             E::Template { .. } | E::Ident { .. } | E::JSX(_) => self.gen_templ_ident_jsx(expr),
             E::Bin { .. } | E::Unary { .. } | E::Update { .. } => self.gen_bin_unary_update(expr),
             E::Logical { .. } | E::Cond { .. } | E::Assign { .. } => self.gen_log_cond_assign(expr),
-            E::Array { .. } | E::Object { .. } => self.gen_array_expr(&expr),
+            E::Array { elems } => self.gen_array_expr(elems),
+            E::Object { members } => self.gen_object_expr(members),
             E::Function(_) | E::ArrowFunction { .. } => self.gen_fn_arrow(expr),
             E::Await { .. } | E::Yield { .. } => self.gen_await_yield(expr),
             E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } => self.gen_call_member_static(expr),
@@ -1298,7 +1298,10 @@ impl QuoteCodegen {
         if let E::Await { arg } = expr {
             self.gen_await_expr(arg)
         } else if let E::Yield { arg, delegate: _ } = expr {
-            self.gen_await_expr(arg.as_ref().map(|a| a.as_ref()))
+            match arg {
+                Some(a) => self.gen_await_expr(a),
+                None => quote! { Value::Null },
+            }
         } else {
             quote! { Value::Null }
         }

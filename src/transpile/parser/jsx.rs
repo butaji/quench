@@ -153,7 +153,7 @@ fn convert_this_super(expr: &JSXExpression) -> Option<hir::Expr> {
     }
 }
 
-fn bigint_literal(b: &BigIntLiteral) -> i64 {
+fn bigint_literal(b: &BigIntLiteral) -> u64 {
     b.raw.as_ref()
         .map(|s| s.to_string())
         .unwrap_or_else(|| b.value.to_string())

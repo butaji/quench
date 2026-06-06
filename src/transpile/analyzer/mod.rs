@@ -209,7 +209,7 @@ impl Analyzer {
         }
     }
 
-    fn analyze_for_loop(&mut self, init: &Option<ForInit>, test: &Option<Box<Expr>>, update: &Option<Box<Expr>>, body: &Box<Stmt>) {
+    fn analyze_for_loop(&mut self, init: &Option<ForInit>, test: &Option<Expr>, update: &Option<Expr>, body: &Box<Stmt>) {
         self.analyze_for_init(init);
         if let Some(t) = test {
             self.validate_expr_type(t, &Type::Boolean);
@@ -259,7 +259,7 @@ impl Analyzer {
         }
     }
 
-    fn analyze_return(&mut self, arg: &Option<Box<Expr>>) {
+    fn analyze_return(&mut self, arg: &Option<Expr>) {
         if let Some(e) = arg {
             self.analyze_expr(e);
         }
@@ -351,7 +351,7 @@ impl Analyzer {
         self.analyze_expr(alternate);
     }
 
-    fn analyze_array(&mut self, elems: &[Option<Box<Expr>>]) {
+    fn analyze_array(&mut self, elems: &[Option<Expr>]) {
         for e in elems {
             if let Some(x) = e {
                 self.analyze_expr(x);

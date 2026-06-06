@@ -81,7 +81,7 @@ fn make_rest_param(name: &str) -> hir::Param {
         type_: None,
         default: None,
         optional: false,
-        pattern: Some(hir::Pat::Rest { arg: Box::new(hir::Pat::Ident { name: name.to_string(), type_: None }) }),
+        pattern: Some(hir::Pat::Rest { arg: Box::new(hir::Pat::Ident { name: name.to_string(), type_: None, optional: false }) }),
         ownership: hir::Ownership::Owned,
     }
 }

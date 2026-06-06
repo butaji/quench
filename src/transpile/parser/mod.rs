@@ -2,6 +2,7 @@
 //!
 
 pub mod expr;
+pub mod expr_ops;
 pub mod jsx;
 pub mod stmt;
 
@@ -36,7 +37,7 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
         .program
         .body
         .iter()
-        .flat_map(stmt::convert_module_item)
+        .flat_map(stmt::convert_statement)
         .collect();
     let mut module = hir::Module {
         source: String::new(),
@@ -185,7 +186,7 @@ fn analyze_block_stmts(stmts: &mut Vec<hir::Stmt>) {
     }
 }
 
-fn analyze_return_stmt(arg: &mut Option<Box<hir::Expr>>) {
+fn analyze_return_stmt(arg: &mut Option<hir::Expr>) {
     if let Some(ref mut a) = arg {
         analyze_expr_passes(a);
     }
@@ -193,8 +194,8 @@ fn analyze_return_stmt(arg: &mut Option<Box<hir::Expr>>) {
 
 fn analyze_for_loop(
     init: &mut Option<hir::ForInit>,
-    test: &mut Option<Box<hir::Expr>>,
-    update: &mut Option<Box<hir::Expr>>,
+    test: &mut Option<hir::Expr>,
+    update: &mut Option<hir::Expr>,
     body: &mut Box<hir::Stmt>,
 ) {
     if let Some(ref mut for_init) = init {
@@ -222,7 +223,7 @@ fn analyze_for_init(for_init: &mut hir::ForInit) {
     }
 }
 
-fn analyze_class_methods(class: &mut hir::Class) {
+fn analyze_class_methods(class: &mut hir::ClassDecl) {
     for method in &mut class.methods {
         hir::infer_method_ownership(method);
         hir::analyze_method_effects(method);

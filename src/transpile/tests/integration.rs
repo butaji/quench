@@ -334,8 +334,8 @@ mod integration_tests {
     fn test_pat_binding_names() {
         let pat = Pat::Object {
             props: vec![
-                ObjectPatProp::Init { key: "a".into(), value: Pat::Ident { name: "x".into(), type_: None } },
-                ObjectPatProp::Rest { arg: Box::new(Pat::Ident { name: "rest".into(), type_: None }) },
+                ObjectPatProp::Init { key: "a".into(), value: Pat::Ident { name: "x".into(), type_: None, optional: false } },
+                ObjectPatProp::Rest { arg: Box::new(Pat::Ident { name: "rest".into(), type_: None, optional: false }) },
             ],
             rest: None,
         };
@@ -347,7 +347,7 @@ mod integration_tests {
     #[test]
     fn test_object_pat_prop_variants() {
         // Test that Spread and Method variants exist
-        let spread_prop = ObjectPatProp::Spread { arg: Box::new(Pat::Ident { name: "rest".into(), type_: None }) };
+        let spread_prop = ObjectPatProp::Spread { arg: Box::new(Pat::Ident { name: "rest".into(), type_: None, optional: false }) };
         let method_prop = ObjectPatProp::Method { key: "handler".into() };
 
         assert!(spread_prop.key_name().is_none(), "Spread should have no key name");

@@ -56,6 +56,7 @@ pub enum ImportKind {
 pub enum Export {
     Named { name: String },
     NamedWithValue { name: String, value: Expr },
+    NamedRenamed { local: String, exported: String },
     Default { expr: Expr },
     ReExport { source: String, names: Vec<String> },
     All { source: String },
@@ -124,7 +125,7 @@ pub enum Decl {
     Class(ClassDecl),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FunctionDecl {
     pub name: String,
     pub generics: Vec<GenericParam>,
@@ -140,7 +141,7 @@ pub struct FunctionDecl {
     pub error_type: Option<Type>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Param {
     pub name: String,
     pub type_: Option<Type>,
@@ -157,7 +158,7 @@ pub struct GenericParam {
     pub default: Option<Type>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct VariableDecl {
     pub name: String,
     pub kind: VariableKind,
@@ -166,8 +167,9 @@ pub struct VariableDecl {
     pub pattern: Option<Pat>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum VariableKind {
+    #[default]
     Var,
     Let,
     Const,

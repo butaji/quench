@@ -37,7 +37,7 @@
     {
       "id": "020",
       "title": "Fix quote_codegen.rs syntax error — unblock the build",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-critical",
       "owner": null,
       "files": ["src/transpile/hir/quote_codegen.rs"],
