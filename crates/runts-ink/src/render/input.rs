@@ -4,7 +4,7 @@ use crossterm::event::{self, Event as CtEvent};
 use crate::events::{InputEvent, ResizeEvent, WindowSize};
 use super::InstanceInner;
 
-pub fn input_loop(
+pub(crate) fn input_loop(
     inner: Arc<Mutex<InstanceInner>>,
     tick: Duration,
     exit_on_q: bool,
