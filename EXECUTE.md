@@ -1,8 +1,8 @@
 # runts-ink: Execution Guide
 
-> **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).  
-> **HIR interpreter:** DELETED. Do not restore.  
-> **Taffy:** Being removed. Yoga is the sole layout engine.  
+> **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).
+> **HIR interpreter:** DELETED. Do not restore.
+> **Taffy:** Being removed. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all 89 Ink examples.
 
 ---
@@ -19,71 +19,85 @@
 
 ---
 
-## Execution Order (Do Not Skip)
+## Workflow
 
-Follow the phases in `tasks/index.json`. Each task blocks the next.
+All work is tracked in `tasks/`. Check `tasks/index.json` for the current task breakdown, priorities, and statuses. Each task has a matching `tasks/xxx-title.md` file with acceptance criteria and implementation notes.
 
-### Phase 0: Unblock (Tasks 020–021)
+**The rule:** Pick one pending task, implement it fully, verify acceptance criteria, commit, push. Do not batch multiple tasks into a single commit.
+
+### Before you start any task
+
+1. Read `tasks/index.json` to find the next pending task.
+2. Read its matching `tasks/xxx-title.md` for acceptance criteria.
+3. Run `cargo build` to confirm the current state.
+
+### After you finish a task
+
+1. Verify acceptance criteria from the task file.
+2. Update `tasks/index.json` to mark the task completed.
+3. `git add -A && git commit -m "brief description"`
+4. `git push origin fresh`
+
+---
+
+## Phases (Conceptual)
+
+These phases describe the overall flow. The exact task files in `tasks/` map to these phases and may be updated as work progresses.
+
+### Phase 0: Unblock
 **Goal:** `cargo build` passes. Linter is enforced.
 
-- **020** — Fix `quote_codegen.rs:609` syntax error. One-line brace fix.
-- **021** — Uncomment `build.rs` linter. Mechanically extract functions until 0 violations (file ≤500 lines, fn ≤40 lines, complexity ≤10).
+- Fix the build syntax error (brace mismatch in codegen).
+- Re-enable the linter in `build.rs` and mechanically fix all violations until the build passes with zero linter errors.
+- The linter limits are non-negotiable: file ≤ 500 lines, function ≤ 40 lines, complexity ≤ 10. Extract, don't negotiate.
 
 **Acceptance:** `cargo build` exits 0. `cargo test --no-run` exits 0.
 
-**Commit after each task.**
-
 ---
 
-### Phase 1: rquickjs + Yoga Engine (Tasks 022–026, 033)
+### Phase 1: rquickjs + Yoga Engine
 **Goal:** `runts dev --once` renders any example identically to deno.
 
-Execute in this exact order:
+Execute in this order:
 
-1. **022** — `rm src/hir_runtime.rs`. Strip all `Interpreter`, `Value`, `render_tsx` references from `src/main.rs`, `src/cli.rs`. **Do not preserve HIR runtime as a fallback.** It is dead code.
-2. **033** — Remove Taffy. Delete `crates/runts-ink/src/flex_layout/taffy.rs`. Make Yoga the default and only feature in `Cargo.toml`. Strip `#[cfg(feature = "taffy")]` conditionals.
-3. **023** — Build `transpile_to_js(source: &str) -> String`. Use `oxc_codegen` (already in deps). Must: (a) desugar JSX to `React.createElement`, (b) erase TS types, (c) rewrite `import { Box, Text } from 'ink'` to bridge globals.
-4. **024** — Wire `runts dev` to: parse `.tsx` → `transpile_to_js` → create rquickjs context → inject `js_bridge.rs` globals → inject React shim → eval bundle → call `renderToString()` → print.
-5. **025** — Complete `js_bridge.rs`. Every prop used in any of the 89 examples must be supported. Use a prop dispatch table, not 300-line match blocks.
-6. **026** — Wire interactive hooks (`useInput`, `useApp`, `useFocus`, etc.) through the bridge. Crossterm events → JS callbacks.
+1. **Delete the HIR runtime.** Remove `src/hir_runtime.rs` and all references (`Interpreter`, `Value`, `render_tsx`, `RuntimeError`) from `src/main.rs`, `src/cli.rs`, and anywhere else. Do not preserve it as a fallback — it is dead code.
+2. **Remove Taffy.** Delete the Taffy module and feature flag. Make Yoga the default and only layout feature in `Cargo.toml`. Strip all `#[cfg(feature = "taffy")]` conditionals.
+3. **Build the TSX→JS transpiler.** Use `oxc_codegen` (already in deps). It must: (a) desugar JSX to `React.createElement`, (b) erase TS type annotations, (c) rewrite `import { Box, Text } from 'ink'` to bridge globals.
+4. **Wire `runts dev` to rquickjs.** The dev command should: parse `.tsx` → transpile to JS → create rquickjs context → inject `js_bridge.rs` globals → inject React shim → eval bundle → call `renderToString()` → print output.
+5. **Complete the JS bridge.** Every prop used in any of the 89 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
+6. **Wire interactive hooks.** `useInput`, `useApp`, `useFocus`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). Crossterm events route to JS callbacks.
 
-**Acceptance per task:**
-- 022/033: `cargo build` passes with zero warnings.
-- 023: `examples/ink-text-props/tui/app.tsx` transpiles to runnable JS.
-- 024: `runts dev --once --plugin ratatui examples/ink-text-props` prints the same text as `deno run -A examples/ink-text-props/main.tsx`.
-- 025: `grep -r 'unsupported prop' tests/` returns nothing.
-- 026: `runts dev --once examples/ink-counter` renders and responds to `q` / arrow keys.
-
-**Commit after each task.**
+**Acceptance per step:**
+- After deletion steps: `cargo build` passes with zero warnings.
+- Transpiler: `examples/ink-text-props/tui/app.tsx` produces runnable JS.
+- Dev command: `runts dev --once --plugin ratatui examples/ink-text-props` prints the same text as `deno run -A examples/ink-text-props/main.tsx`.
+- Bridge: `grep -r 'unsupported prop' tests/` returns nothing.
+- Interactive: `runts dev --once examples/ink-counter` renders and responds to `q` / arrow keys.
 
 ---
 
-### Phase 2: Compile + Verification (Tasks 027–029)
+### Phase 2: Compile + Verification
 **Goal:** `runts build --release` produces working binaries. One parity harness runs all 89 examples.
 
-- **027** — Replace plugin JSON string boundary with typed HIR (`&hir::Module`). Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify `examples/ink-text-props` builds and runs.
-- **028** — Delete all 20+ `test_parity*.sh` scripts. Create ONE `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. Implement per-symbol diff (not just line diff). Output JSON summary.
-- **029** — Generate one Rust test per example in `tests/rq_parity/`. Each test reads `examples/*/tui/app.tsx`, runs it through the rquickjs path, asserts expected substrings in output.
+- **Fix the compile path.** Replace the plugin JSON string boundary with typed HIR transfer. Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify that static examples build and run.
+- **Create one parity harness.** Delete all existing `test_parity*.sh` scripts. Create a single `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. It must implement per-symbol diff and output a JSON summary.
+- **Add per-example unit tests.** Generate one Rust test per example in `tests/rq_parity/`. Each test reads `examples/*/tui/app.tsx`, runs it through the rquickjs path, and asserts expected substrings in output.
 
 **Acceptance:**
-- 027: `./target/release/runts-app` exits 0 and prints expected text.
-- 028: `./scripts/parity.sh --env all` runs 89 examples and produces a JSON report.
-- 029: `cargo test --test rq_parity` passes ≥90% of examples.
-
-**Commit after each task.**
+- Compile path produces a binary that exits 0 and prints expected text.
+- Parity harness runs all 89 examples and produces a JSON report.
+- Unit tests cover ≥90% of examples.
 
 ---
 
-### Phase 3: Cleanup + Future (Tasks 030–032)
+### Phase 3: Cleanup
 **Goal:** Repo is clean. Docs are truthful.
 
-- **030** — Delete `crates/runts-react/`, old scripts, unused imports. Ensure `cargo build` has zero dead-code warnings.
-- **031** — Update `DESIGN.md`, `README.md`, `docs/INK-ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/PERFORMANCE.md`. Remove all HIR interpreter and Taffy references.
-- **032** — Optional spike: evaluate Boa vs rquickjs. Document decision in `docs/ROADMAP.md`.
+- Delete dead code: `crates/runts-react/`, old scripts, unused imports. Ensure `cargo build` has zero dead-code warnings.
+- Update all docs (`DESIGN.md`, `README.md`, `docs/*.md`). Remove all HIR interpreter and Taffy references. Describe rquickjs + Yoga accurately.
+- Optional: evaluate Boa vs rquickjs and document decision.
 
 **Acceptance:** Workspace builds clean. Docs do not mention HIR interpreter or Taffy.
-
-**Commit after each task. Final push.**
 
 ---
 
@@ -117,25 +131,11 @@ The single script (`scripts/parity.sh`) MUST:
 |------|-----|
 | **Do not restore or expand the HIR interpreter.** | It was 3,087 lines of a broken custom JS engine. rquickjs gives 100% JS semantics for ~1MB. |
 | **Do not keep Taffy as a fallback.** | Yoga is the same engine Ink uses. Two layout engines = 2× bug surface. Delete Taffy. |
-| **Do not add new shell scripts.** | 20 scripts already exist. ONE script. Parameterize it. |
+| **Do not add new shell scripts.** | Multiple scripts already exist. ONE script. Parameterize it. |
 | **Do not write hook polyfills in Rust.** | `useState`, `useEffect`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). |
 | **Do not exceed linter limits.** | 500 lines/file, 40 lines/fn, 10 complexity. No exceptions. Extract, don't negotiate. |
-| **Do not commit without `cargo build` passing.** | The build is currently broken (020). Fix first, then iterate. |
-
----
-
-## Task Tracking
-
-Every change MUST be tracked:
-
-1. Pick the next pending task from `tasks/index.json`.
-2. Read `tasks/XXX-title.md` for acceptance criteria.
-3. Implement. Run `cargo build`. Run `cargo test`.
-4. Update `tasks/index.json`: set `"status": "completed"`.
-5. `git add -A && git commit -m "XXX: brief description"`
-6. `git push origin fresh`
-
-**Never batch 3 tasks into one commit.** Small commits are reversible commits.
+| **Do not commit without `cargo build` passing.** | The build may be broken at any time. Fix first, then iterate. |
+| **Do not batch multiple tasks in one commit.** | Small commits are reversible commits. One task = one commit = one push. |
 
 ---
 
@@ -167,4 +167,4 @@ diff /tmp/deno.txt /tmp/rq.txt
 - [ ] No file > 500 lines, no fn > 40 lines, no complexity > 10.
 - [ ] No references to HIR interpreter, Taffy, or `render_tsx` in codebase.
 - [ ] Docs accurately describe rquickjs + Yoga architecture.
-- [ ] All tasks in `tasks/index.json` marked `completed`.
+- [ ] All tasks in `tasks/index.json` marked completed.
