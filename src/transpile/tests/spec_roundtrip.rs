@@ -9,7 +9,7 @@ mod spec_roundtrip_tests {
     use quote::{ToTokens, quote};
 
     use crate::transpile::hir::{
-        Decl, Expr, FunctionDecl, ModuleItem, QuoteCodegen, Stmt, Type,
+        Decl, Expr, FunctionDecl, Module, ModuleItem, QuoteCodegen, Stmt, Type,
     };
     use crate::transpile::parser::TsParser;
 

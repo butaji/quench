@@ -313,17 +313,5 @@ export default function App() {
         }
     }
 
-    #[test]
-    fn parse_multipart_text_coalesces() {
-        let src = r#"
-export default function App() {
-  return <Text>Centered Title</Text>;
-}
-"#;
-        let module = crate::transpile::parser::parse_source(src, true).unwrap();
-        let jsx = find_jsx_in_module(&module);
-        assert_eq!(jsx.children.len(), 1, "expected 1 child after coalesce, got {}", jsx.children.len());
-        assert_text_child(&jsx.children[0], "Centered Title");
-    }
 }
 

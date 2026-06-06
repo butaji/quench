@@ -106,3 +106,5 @@ use super::helpers::*;
             assert_eq!(decl.unwrap().generics.len(), 2);
         }
     
+
+}

@@ -27,19 +27,15 @@ impl<T: Clone> Memoized<T> {
     }
 }
 
-/// use_memo hook - returns memoized value based on dependencies
-///
-/// Only recomputes when deps change.
+/// use_memo hook - returns memoized value based on dependencies.
+/// In SSR without lifecycle, computes fresh each time.
 #[allow(dead_code)]
-pub fn use_memo<T, F, D>(factory: F, deps: &[D]) -> T
+pub fn use_memo<T, F, D>(factory: F, _deps: &[D]) -> T
 where
     T: Clone + 'static,
     F: FnOnce() -> T,
     D: Hash + Sized + 'static,
 {
-    // In SSR without component lifecycle, we compute fresh each time
-    // Real implementation would track deps across renders
-    // For now, compute and return (SSR context)
     factory()
 }
 
