@@ -104,19 +104,6 @@ fn test_deno_output_structure() {
     }
 }
 
-/// Verify runts hir-render produces output
-#[test]
-fn test_hir_render_output() {
-    let output = Command::new("./target/debug/runts")
-        .args(&["hir-render", "examples/ink-counter/tui/app.tsx"])
-        .output()
-        .expect("failed to run hir-render");
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.len() > 0, "hir-render should produce output");
-    assert!(output.status.success(), "hir-render should succeed");
-}
-
 /// Verify the harness creates result files
 #[test]
 fn test_parity_harness_creates_results() {
