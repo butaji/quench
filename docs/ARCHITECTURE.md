@@ -1,5 +1,7 @@
 # Runts Architecture: AST → HIR → Rust / Runtime
 
+> **⚠️ STALE DOCUMENT:** This doc describes the pre-rquickjs architecture where dev mode used a HIR interpreter. The current dev engine is **rquickjs** with **Yoga** layout (see `docs/INK-ARCHITECTURE.md`). The compile path (HIR → Rust codegen → native binary) described here is still accurate. Update in progress — see `tasks/031-update-docs.md`.
+
 ## Pipeline
 
 ```
