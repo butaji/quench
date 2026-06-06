@@ -2,7 +2,7 @@
 
 > **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).
 > **HIR interpreter:** DELETED. Do not restore.
-> **Taffy:** Being removed. Yoga is the sole layout engine.
+> **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all 88 Ink examples.
 
 ---

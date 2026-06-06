@@ -279,9 +279,10 @@ runts is in active development. The core compiler pipeline (oxc_parser → HIR �
 - ✅ Yoga-only layout engine (Taffy removed)
 
 **In progress:**
-- 🔄 Compile path verification (Task 027)
-- 🔄 Single parity harness (Task 028)
 - 🔄 Re-enable disabled test modules (Task 033)
+- 🔄 Fix HIR test failures (Task 034)
+- 🔄 Add missing Ink examples (Task 035)
+- 🔄 Verify js_bridge completeness (Task 036)
 
 **Planned:**
 - [ ] Better generic lowering (conditional types, indexed access)
@@ -299,7 +300,7 @@ cargo test
 RUST_LOG=debug cargo test
 ```
 
-111 tests passing covering parser, codegen, routing, middleware, signals, hooks, error boundaries, route groups, incremental cache, type-directed lowering, and integration.
+`cargo test -p runts-ink` passes 59/59. Compile-path tests (`cargo test --bin runts`) have 113 failures from stale HIR assertions post-refactor — see Task 034.
 
 ## Why Not Just Write Rust?
 

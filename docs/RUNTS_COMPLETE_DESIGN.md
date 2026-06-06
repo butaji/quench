@@ -318,24 +318,23 @@ Hydration strategies: `load` (immediate), `visible` (IntersectionObserver), `idl
 
 ### 2.7 Development Mode: rquickjs (HIR Interpreter REMOVED)
 
-**Core principle:** Parse TS/TSX → HIR → Execute HIR directly. No Rust compilation.
+**Core principle:** TSX → JS bundle → rquickjs eval. No Rust compilation in dev.
 
 **Execution flow:**
 1. File watcher detects changes
-2. Re-parse changed file → HIR
-3. Update interpreter registries (routes, components, islands)
-4. Next request uses updated HIR
+2. Re-parse changed file → oxc_ast
+3. Transpile to JS bundle (`oxc_codegen`: JSX → `React.createElement`, TS erased)
+4. Create rquickjs context + inject Yoga bridge globals
+5. Eval JS bundle → VNode tree → Yoga layout → render
 
-**Interpreter capabilities:**
-- Full expression evaluation (arithmetic, logical, string ops)
-- JSX evaluation to HTML strings
-- Component rendering with hook state
-- Handler execution (`ctx.render()`, `Response`)
-- Middleware pipeline execution
-- Layout composition
-- `_app.tsx` wrapper composition
+**rquickjs capabilities:**
+- Full ES2020 expression evaluation (arithmetic, logical, string ops)
+- Real React hooks (`useState`, `useEffect`, `useMemo`, etc.)
+- JSX evaluation via `React.createElement` → bridge → VNode
+- Component rendering with full hook state
+- Crossterm event routing (`useInput`, `useApp`, etc.)
 
-**Hot reload latency:** < 50ms (typically < 20ms for single-file changes)
+**Hot reload latency:** < 100ms (typically ~50ms for single-file changes)
 
 ### 2.8 Production Mode: Native Compilation
 
@@ -463,7 +462,7 @@ src/
 | **Hot reload latency** | < 50 ms | **< 20 ms** |
 | **Initial dev server start** | < 3 s | **< 2 s** |
 | **HIR parse speed** | > 1k files/s | ~2k files/s |
-| **Interpreter overhead** | < 10x native | ~5-10x |
+| **rquickjs eval overhead** | ~50ms startup | ~50ms |
 
 ### 4.3 Client Runtime (Browser)
 
@@ -491,21 +490,23 @@ src/
 
 ### 5.1 Test Coverage (106 passing)
 
-- Parser: JSX parsing, type annotations, destructuring, async/await
+- `runts-ink`: 59 unit tests passing (bridge props, hooks, VNode serialization)
+- `runts-plugin`: 5 tests passing (typed boundary)
+- Compile path: `tests/compile_path.rs` with 5 ignored integration tests
+- Parser: JSX parsing, type annotations, destructuring, async/await (282 tests, 4 modules disabled)
 - Analyzer: Island detection, route patterns, hook validation
 - Codegen: All TS patterns → Rust, JSX → html!
-- Runtime: Hooks (state, memo, reducer, effects, error boundary), signal reactivity
-- Runtime: Island hydration, middleware pipeline, layout composition
 - Routes: Pattern matching, parameter extraction, route groups
 - Incremental: Cache save/load, hash computation, pruning
 
 ### 5.2 Build Verification
 
 ```bash
-cargo test        # 106 tests pass
-cargo check       # Clean
-cargo build --release  # ~1.5MB binary
-./target/release/my-blog  # Serves on :8000
+cargo test -p runts-ink     # 59 tests pass
+cargo test -p runts-plugin  # 5 tests pass
+cargo check                 # Clean (56 warnings from dead code)
+cargo build --release       # ~1.5MB binary
+./target/release/my-blog    # Serves on :8000
 ```
 
 ### 5.3 Example Blog End-to-End
