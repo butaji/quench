@@ -1,5 +1,5 @@
 {
-  "version": "1.11",
+  "version": "1.12",
   "last_updated": "2026-06-06",
   "project": "runts-ink Full Parity - 3 Environment Testing",
   "tasks": [
@@ -7,7 +7,7 @@
     {"id": "016-02", "title": "Create Parity Test Harness v6", "status": "completed", "priority": "critical", "details": "Created test_parity_v6.sh with macOS-compatible timeout, interactive example detection"},
     {"id": "016-03", "title": "Verify All 88 Examples Parity", "status": "completed", "priority": "high", "details": "All 88 examples pass with 100% Deno-HIR similarity"},
     {"id": "016-04", "title": "Document Project Architecture", "status": "completed", "priority": "medium", "details": "Created comprehensive architecture documentation"},
-    {"id": "016-05", "title": "Commit and Push", "status": "in_progress", "priority": "critical", "details": "Commit all changes and push to repository"}
+    {"id": "016-05", "title": "Commit and Push", "status": "completed", "priority": "critical", "commit": "0ebac4b"}
   ],
   "stats": {
     "total_examples": 88,
@@ -46,7 +46,14 @@
   "goals": [
     "100% Deno-HIR parity (achieved: 88/88 examples)",
     "Enhanced test harness (completed)",
-    "Comprehensive documentation (completed)"
+    "Comprehensive documentation (completed)",
+    "Commit and push (completed)"
   ],
-  "notes": "All 88 Ink examples achieve 100% Deno-HIR parity. The test harness v6 properly detects interactive examples and handles timeouts on macOS."
+  "commit": {
+    "hash": "0ebac4b",
+    "message": "feat(ink): Add comprehensive parity test harness v6",
+    "date": "2026-06-06",
+    "pushed": true
+  },
+  "notes": "All 88 Ink examples achieve 100% Deno-HIR parity. The test harness v6 properly detects interactive examples and handles timeouts on macOS. Pre-existing build issues with codegen duplicate modules need to be resolved separately."
 }
