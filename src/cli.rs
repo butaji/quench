@@ -30,6 +30,10 @@ pub enum Commands {
         /// Plugin to use: fresh, ratatui
         #[arg(short, long, help = "Plugin to use: fresh, ratatui")]
         plugin: String,
+
+        /// Render once and exit (no file watching)
+        #[arg(long, help = "Render once and exit")]
+        once: bool,
     },
 
     /// Build for production (transpile + compile)
