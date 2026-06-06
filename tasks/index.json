@@ -114,10 +114,10 @@
     {
       "id": "029",
       "title": "Add per-example unit tests for all examples",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
-      "files": ["tests/rq_parity/"],
-      "acceptance": "One Rust test per example reading tui/app.tsx, running through rquickjs path, asserting expected strings. Coverage >=90%."
+      "files": ["src/transpile/tests/rq_parity/"],
+      "acceptance": "One Rust test per example reading tui/app.tsx, running through rquickjs path, asserting expected strings. Coverage >=90%. 86/88 tests pass (97.7%), 2 ignored (known issues: ink-background-color bridge gap, ink-bordered uses render pattern directly)."
     },
     {
       "id": "030",
@@ -180,8 +180,8 @@
     "build_errors": 0,
     "linter_violations": 0,
     "examples_total": 88,
-    "examples_with_tests": 0,
-    "test_modules_enabled": 11,
+    "examples_with_tests": 86,
+    "test_modules_enabled": 12,
     "test_modules_disabled": 4,
     "hir_test_failures": 113,
     "test_scripts": 1,
