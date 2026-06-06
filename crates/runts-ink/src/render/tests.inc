@@ -2,7 +2,10 @@
 mod tests {
     use super::*;
     use crate::components::Box as InkBox;
-    use crate::BorderStyle;
+    use crate::render::{AvailableSpace, Layout, RenderOptions, Size, TaffyTree, parse_hex_color, render_tree, render_to_string};
+    use crate::{BorderStyle, Color, Text, VNode};
+    use ratatui::Terminal;
+    use ratatui::layout::Rect;
 
     fn small_area() -> Rect {
         Rect {

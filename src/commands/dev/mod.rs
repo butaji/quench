@@ -174,6 +174,7 @@ fn render_ink_project(project_root: &Path) -> Result<String> {
     let source = std::fs::read_to_string(&app_tsx)
         .with_context(|| format!("Failed to read {}", app_tsx.display()))?;
     let js = crate::transpile::js_bundle::transpile_to_js(&source)?;
+    eprintln!("DEBUG transpiled JS:\n{}", js);
     eval_ink_bundle_and_render(&js)
 }
 
