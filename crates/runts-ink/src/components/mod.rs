@@ -405,5 +405,5 @@ impl Transform {
 
 #[cfg(test)]
 mod tests {
-    include!("components_tests.inc");
+    include!("../components_tests.inc");
 }
