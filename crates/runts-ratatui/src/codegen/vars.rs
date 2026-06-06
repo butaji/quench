@@ -242,56 +242,40 @@ fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
 pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
     let arr = items.as_array()?;
     for item in arr {
-        eprintln!("TRY item: {:?}", item);
         if let Some((jsx, decls)) = extract_jsx_from_function_with_vars(item) {
-            eprintln!("FOUND JSX");
             let code = generate_widget_for_jsx(jsx)?;
             return Some(wrap_ink_main(&code, &decls));
         }
     }
-    eprintln!("NO JSX FOUND");
     None
 }
 
 pub(crate) fn extract_jsx_from_function_with_vars(
     item: &serde_json::Value,
 ) -> Option<(serde_json::Value, Vec<(String, String)>)> {
-    eprintln!("EXTRACT entered");
     let func = item.get("Decl").and_then(|d| d.get("Function"))
         .or_else(|| {
             let stmt = item.get("Stmt")?;
-            eprintln!("STMT kind: {:?}", stmt.get("kind"));
             if stmt.get("kind")?.as_str()? == "Return" {
-                let arg = stmt.get("arg")?;
-                eprintln!("ARG has Function: {:?}", arg.get("Function").is_some());
-                arg.get("Function")
+                stmt.get("arg")?.get("Function")
             } else {
                 None
             }
         })?;
-    eprintln!("GOT FUNC");
     let body = func.get("body")?;
-    eprintln!("GOT BODY: {}", body);
     clear_state_vars();
     let decls = extract_var_declarations(body);
-    eprintln!("DECLS: {}", decls.len());
-    eprintln!("CALLING find_jsx_in_body");
-    let jsx = find_jsx_in_body(body);
-    eprintln!("FIND_JSX_RESULT: {:?}", jsx.is_some());
-    let jsx = jsx?;
-    eprintln!("GOT JSX");
+    let jsx = find_jsx_in_body(body)?;
     Some((jsx, decls))
 }
 
 fn generate_widget_for_jsx(jsx: serde_json::Value) -> Option<String> {
-    eprintln!("GENERATE_WIDGET tag search opening={}", jsx.get("opening").is_some());
     let tag = jsx
         .get("opening")?
         .get("name")?
         .get("Ident")?
         .as_str()
         .unwrap_or("Box");
-    eprintln!("GENERATE_WIDGET tag={}", tag);
     let attrs = extract_jsx_attrs(jsx.get("opening")?.get("attrs")?).unwrap_or_default();
     let children = extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null))
         .unwrap_or_default();
