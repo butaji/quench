@@ -1,7 +1,7 @@
 # runts — Performance Targets & Trade-offs
 
 > **Version:** 0.5.0  
-> **Goal:** Prioritize correctness and Fresh compatibility first, then ruthlessly optimize.
+> **Goal:** Prioritize correctness and Ink parity first, then ruthlessly optimize.
 
 ---
 
@@ -23,10 +23,10 @@
 
 | Metric | Target | v0.5 Status | Methodology |
 |--------|--------|-------------|-------------|
-| **Hot reload latency** | < 50 ms | < 20 ms | Time from `Ctrl+S` to browser visible update |
-| **Initial dev server start** | < 3 s | < 2 s | `runts dev` until first request served |
-| **HIR parse speed** | > 1k files/s | ~2k files/s | Parse all files in `my-blog` example |
-| **Interpreter overhead** | < 10x native | ~5-10x | Same page rendered via interpreter vs native |
+| **Hot reload latency** | < 100 ms | ~50 ms | Time from `Ctrl+S` to visible update |
+| **Initial dev server start** | < 3 s | ~2 s | `runts dev` until first request served |
+| **TSX parse speed** | > 1k files/s | ~2k files/s | Parse all files in example project |
+| **rquickjs startup** | < 100 ms | ~50 ms | Context creation + bundle eval |
 
 ### 1.3 Client Runtime (Browser)
 
@@ -59,8 +59,8 @@ test hook_use_state      ... bench:         120 ns/iter (+/- 5)
 test route_match_static  ... bench:         180 ns/iter (+/- 8)
 test route_match_dynamic ... bench:         420 ns/iter (+/- 15)
 
-// Benchmark: HIR parse (my-blog index.tsx)
-test parse_index_tsx     ... bench:       1,200 ns/iter (+/- 40)
+// Benchmark: TSX parse (simple app.tsx)
+test parse_app_tsx     ... bench:       1,200 ns/iter (+/- 40)
 ```
 
 ### 2.2 Macro-Benchmarks (`examples/my-blog`)
@@ -100,19 +100,32 @@ ps -o rss= -p $(pgrep my-blog)  # 2860 KB
 
 **Decision:** Custom parser for v0.5-v0.8. Migrate to `oxc_parser` for v1.0.
 
-### 3.2 Dev Mode: Interpreter vs Fast Compile
+### 3.2 Dev Mode: rquickjs vs HIR Interpreter vs Cranelift JIT
 
-| Dimension | HIR Interpreter (chosen) | Cranelift JIT |
-|-----------|-------------------------|---------------|
-| **Reload speed** | < 20 ms | ~100-500 ms |
-| **Semantics parity** | 100% (same HIR) | 100% (same codegen) |
-| **Debugging** | HIR-level | Native debugger |
-| **Memory** | Higher (HIR retained) | Lower (machine code) |
-| **Implementation** | ~3k LOC | ~10k LOC + cranelift dep |
+| Dimension | rquickjs (chosen) | HIR Interpreter (removed) | Cranelift JIT |
+|-----------|-------------------|--------------------------|---------------|
+| **Reload speed** | ~50 ms | ~20 ms | ~100-500 ms |
+| **JS parity** | 100% | ~40% (incomplete) | 100% |
+| **Startup** | ~50 ms | ~20 ms | ~200 ms |
+| **Binary size** | +~1MB | +0 | +~5MB |
+| **Maintenance** | Low (upstream) | Infinite (custom JS engine) | Medium |
+| **Interop** | C bindings | Native Rust | Native Rust |
 
-**Decision:** HIR interpreter. Fastest possible reload, zero codegen dependencies in dev.
+**Decision:** rquickjs. HIR interpreter was becoming a custom JS engine (3k LOC, 171 complexity). Removed. rquickjs gives full JS semantics with minimal custom code.
 
-### 3.3 Reactivity: Signals vs VDOM Diffing
+### 3.3 Layout Engine: Yoga vs Taffy
+
+| Dimension | Yoga (chosen) | Taffy (removed) |
+|-----------|--------------|-----------------|
+| **Ink parity** | 100% (same engine) | ~95% (slight differences) |
+| **Language** | C++ | Pure Rust |
+| **Binary size** | +~500KB | +~300KB |
+| **Maintenance** | Low (upstream) | Low (upstream) |
+| **Build complexity** | Medium (bindgen) | Low |
+
+**Decision:** Yoga. Same engine Ink uses internally. Taffy removed to maximize layout parity and reduce divergence surface.
+
+### 3.4 Reactivity: Signals vs VDOM Diffing
 
 | Dimension | Signals (chosen) | Full VDOM Diff |
 |-----------|-----------------|----------------|
@@ -124,7 +137,7 @@ ps -o rss= -p $(pgrep my-blog)  # 2860 KB
 
 **Decision:** Signals for islands, VNode tree for SSR composition. Hybrid gives best of both.
 
-### 3.4 Client Runtime: Vanilla JS vs Preact
+### 3.5 Client Runtime: Vanilla JS vs Preact
 
 | Dimension | Vanilla JS (chosen) | Preact (alt) |
 |-----------|---------------------|--------------|
@@ -136,7 +149,7 @@ ps -o rss= -p $(pgrep my-blog)  # 2860 KB
 
 **Decision:** Vanilla JS. Fresh apps only use a small surface area; we can optimize ruthlessly.
 
-### 3.5 HTTP Server: Axum vs Actix vs Hyper
+### 3.6 HTTP Server: Axum vs Actix vs Hyper
 
 | Dimension | Axum (chosen) | Actix-web | Hyper raw |
 |-----------|--------------|-----------|-----------|
@@ -148,7 +161,7 @@ ps -o rss= -p $(pgrep my-blog)  # 2860 KB
 
 **Decision:** Axum. Tower middleware composability is critical for Fresh middleware emulation.
 
-### 3.6 String Escaping: Per-Char vs Batch
+### 3.7 String Escaping: Per-Char vs Batch
 
 | Dimension | Per-Char (current) | SIMD Batch (future) |
 |-----------|-------------------|---------------------|
@@ -232,11 +245,11 @@ wrk -t12 -c400 -d30s http://localhost:8000/
 | Metric | runts (target) | Fresh (Deno) | Next.js (Node) | Astro (Node) | Leptos (Rust) |
 |--------|---------------|--------------|----------------|--------------|---------------|
 | **Runtime** | Native Rust | Deno | Node.js | Node.js | Native Rust |
-| **JS runtime dep** | None | V8 | V8 | V8 | None |
+| **JS runtime dep** | rquickjs (dev) | V8 | V8 | V8 | None |
 | **Binary size** | < 2 MB | ~80 MB | ~150 MB | ~100 MB | < 1 MB |
 | **Cold start** | < 5 ms | ~50 ms | ~200 ms | ~100 ms | < 5 ms |
-| **SSR throughput** | > 50k | ~5k | ~3k | ~4k | > 80k |
-| **Dev reload** | < 50 ms | < 100 ms | < 200 ms | < 100 ms | < 100 ms |
+| **SSR throughput** | > 50k req/s | ~5k | ~3k | ~4k | > 80k req/s |
+| **Dev reload** | < 100 ms | < 100 ms | < 200 ms | < 100 ms | < 100 ms |
 | **Islands** | Yes | Yes | Partial | Yes | Yes |
 | **TS/TSX source** | Yes | Yes | Yes | Yes | No (Rust DSL) |
 | **Fresh compat** | Full | N/A | No | No | No |
@@ -245,4 +258,4 @@ wrk -t12 -c400 -d30s http://localhost:8000/
 
 ---
 
-*Last updated: 2026-05-27*
+*Last updated: 2026-06-06*
