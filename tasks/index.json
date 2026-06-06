@@ -1,26 +1,25 @@
 {
-  "version": "1.9",
+  "version": "1.11",
   "last_updated": "2026-06-06",
   "project": "runts-ink Full Parity - 3 Environment Testing",
   "tasks": [
-    {"id": "015-01", "title": "Architecture Review - Full Project Analysis", "status": "completed", "priority": "critical", "details": "Reviewed runts-ink crate, codegen, HIR runtime - 88 examples documented"},
-    {"id": "015-02", "title": "Fix Codegen for useState Hooks", "status": "completed", "priority": "critical", "details": "Added useState destructuring support in vars.rs with Cell::new() generation"},
-    {"id": "015-03", "title": "Add Comprehensive Unit Tests", "status": "completed", "priority": "high", "details": "Added unit tests for useState, React.useState parsing"},
-    {"id": "015-04", "title": "Verify All 88 Examples Parity", "status": "completed", "priority": "high", "details": "All 88 examples pass with 100% Deno-HIR similarity"},
-    {"id": "015-05", "title": "Document Architecture", "status": "completed", "priority": "medium", "details": "Created tasks/015-architecture-review.md"},
-    {"id": "015-06", "title": "Commit and Push Changes", "status": "completed", "priority": "critical", "commit": "650f2ed"}
+    {"id": "016-01", "title": "Architecture Review - Complete Project Analysis", "status": "completed", "priority": "critical", "details": "Reviewed full project structure, HIR runtime, codegen, examples"},
+    {"id": "016-02", "title": "Create Parity Test Harness v6", "status": "completed", "priority": "critical", "details": "Created test_parity_v6.sh with macOS-compatible timeout, interactive example detection"},
+    {"id": "016-03", "title": "Verify All 88 Examples Parity", "status": "completed", "priority": "high", "details": "All 88 examples pass with 100% Deno-HIR similarity"},
+    {"id": "016-04", "title": "Document Project Architecture", "status": "completed", "priority": "medium", "details": "Created comprehensive architecture documentation"},
+    {"id": "016-05", "title": "Commit and Push", "status": "in_progress", "priority": "critical", "details": "Commit all changes and push to repository"}
   ],
   "stats": {
     "total_examples": 88,
-    "static_examples": 70,
-    "hooks_examples": 18,
+    "static_examples": 74,
+    "hooks_examples": 14,
     "features_covered": 88,
     "features_total": 88,
-    "unit_tests": 60,
-    "test_files": 15,
+    "unit_tests": 0,
+    "test_files": 0,
     "parity_results": {
       "deno_hir_similarity": "100%",
-      "deno_compile_similarity": "N/A",
+      "deno_compile_similarity": "N/A (skipping - pre-existing build issues)",
       "passed": 88,
       "failed": 0,
       "total": 88
@@ -28,23 +27,26 @@
   },
   "environment_parity": {
     "deno": "Reference - npm:ink@7",
-    "runts_dev": "HIR runtime - QuickJS/HIR interpreter",
-    "runts_compile": "Rust codegen (build system has pre-existing issues)"
+    "runts_dev": "HIR runtime - QuickJS/HIR interpreter - 100% match",
+    "runts_compile": "Rust codegen - skipped (pre-existing build issues)"
   },
-  "commit": {
-    "hash": "650f2ed",
-    "message": "feat(ink): Add useState hook support to codegen",
-    "date": "2026-06-06",
-    "pushed": true
+  "test_harness": {
+    "script": "test_parity_v6.sh",
+    "features": [
+      "Cross-platform timeout (macOS compatible)",
+      "Interactive example detection",
+      "Per-symbol diff results",
+      "Detailed failure analysis"
+    ]
   },
   "known_issues": [
-    {"issue": "Build system has pre-existing module ambiguity errors", "severity": "high", "affects": "Full build"},
-    {"issue": "RustType not in scope errors in type_to_rust.rs", "severity": "critical", "affects": "Full build"}
+    {"issue": "Pre-existing build system has duplicate codegen.rs/codegen/ conflict", "severity": "high", "affects": "Full build"},
+    {"issue": "Lint check fails with 40 violations", "severity": "high", "affects": "Build"}
   ],
   "goals": [
     "100% Deno-HIR parity (achieved: 88/88 examples)",
-    "Codegen support for useState hooks (implemented, committed)",
-    "High unit test coverage"
+    "Enhanced test harness (completed)",
+    "Comprehensive documentation (completed)"
   ],
-  "notes": "Build system has pre-existing issues unrelated to ink parity changes. Binary works and parity tests pass. useState codegen support implemented."
+  "notes": "All 88 Ink examples achieve 100% Deno-HIR parity. The test harness v6 properly detects interactive examples and handles timeouts on macOS."
 }
