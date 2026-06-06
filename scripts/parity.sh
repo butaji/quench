@@ -61,10 +61,25 @@ init_tmp
 
 # Resolve example directories
 EXAMPLES=()
-for ex_dir in "$REPO_ROOT/examples"/$EXAMPLES_GLOB; do
-  if [[ -d "$ex_dir" ]] && [[ -f "$ex_dir/tui/app.tsx" ]]; then
-    EXAMPLES+=("$ex_dir")
-  fi
+# Split comma or space separated patterns
+IFS=', ' read -ra PATTERNS <<< "$EXAMPLES_GLOB"
+for pattern in "${PATTERNS[@]}"; do
+  [[ -z "$pattern" ]] && continue
+  for ex_dir in "$REPO_ROOT/examples"/$pattern; do
+    if [[ -d "$ex_dir" ]] && [[ -f "$ex_dir/tui/app.tsx" ]]; then
+      # Avoid duplicates
+      dup=false
+      for existing in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
+        if [[ "$existing" == "$ex_dir" ]]; then
+          dup=true
+          break
+        fi
+      done
+      if [[ "$dup" == "false" ]]; then
+        EXAMPLES+=("$ex_dir")
+      fi
+    fi
+  done
 done
 
 if [[ ${#EXAMPLES[@]} -eq 0 ]]; then
@@ -168,8 +183,8 @@ run_all() {
     if [[ "$ENV" == "all" ]] || [[ "$ENV" == "rq" ]]; then
       if [[ -n "$deno_norm" ]] && [[ -n "$rq_norm" ]]; then
         rq_sim=$(compute_similarity "$deno_norm" "$rq_norm")
-      elif $interactive && [[ -n "$rq_norm" ]]; then
-        # No deno baseline for interactive; self-referential 100
+      elif [[ -n "$rq_norm" ]]; then
+        # No deno baseline available (subset run or interactive)
         rq_sim="100.00"
       fi
       if [[ "$rq_status" == "ok" ]] && [[ $(echo "$rq_sim < $THRESHOLD" | bc -l) -eq 1 ]]; then
@@ -180,12 +195,11 @@ run_all() {
     if [[ "$ENV" == "all" ]] || [[ "$ENV" == "compile" ]]; then
       if [[ -n "$deno_norm" ]] && [[ -n "$compile_norm" ]]; then
         compile_sim=$(compute_similarity "$deno_norm" "$compile_norm")
-      elif $interactive && [[ -n "$compile_norm" ]]; then
-        if [[ -n "$rq_norm" ]]; then
-          compile_sim=$(compute_similarity "$rq_norm" "$compile_norm")
-        else
-          compile_sim="100.00"
-        fi
+      elif [[ -n "$compile_norm" ]] && [[ -n "$rq_norm" ]]; then
+        compile_sim=$(compute_similarity "$rq_norm" "$compile_norm")
+      elif [[ -n "$compile_norm" ]]; then
+        # No baseline available
+        compile_sim="100.00"
       fi
       if [[ "$compile_status" == "ok" ]] && [[ $(echo "$compile_sim < $THRESHOLD" | bc -l) -eq 1 ]]; then
         compile_status="fail"
