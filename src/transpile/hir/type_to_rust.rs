@@ -51,33 +51,31 @@ impl TypeToRust {
     pub fn convert(&self, ty: &Type) -> RustType {
         use Type::*;
         match ty {
-            String => self.convert_primitive("String"),
-            Number => self.convert_primitive("f64"),
-            Boolean => self.convert_primitive("bool"),
-            Void => self.convert_primitive("()"),
-            Never => self.convert_primitive("!"),
-            Unknown | Any | Null | Undefined => RustType::Value,
-            BigInt => self.convert_primitive("i64"),
-            Symbol => self.convert_primitive("std::sync::Arc<std::fmt::Debug>"),
-            This => self.convert_primitive("Self"),
-            Query { .. } | Infer { .. } => RustType::Value,
-            Array { elem } => self.convert_array(elem),
-            Ref { name, generics } => self.convert_ref(name, generics),
-            Object { members } => self.convert_object(members),
-            Union { types } | Intersection { types } => self.convert_union(types),
-            Function { params, ret } => self.convert_function(params, ret),
-            Literal { kind, value } => self.convert_literal(kind, value),
-            Template { .. } => RustType::Value,
-            Index { obj, index } => self.convert_hashmap(obj, index),
-            Mapped { from, to } => self.convert_hashmap(from, to),
-            Tuple { elements } => self.convert_tuple(elements),
-            Partial { inner } | Required { inner } | Readonly { inner } => self.convert(inner),
-            Pick { inner, keys } | Omit { inner, keys } => self.convert_pick_omit(inner, keys),
-            Record { key, value } => self.convert_hashmap(key, value),
-            KeyOf { inner } => self.convert_keyof(inner),
-            ReturnType { inner } => self.convert(inner),
-            Parameters { .. } => RustType::Value,
-            Conditional { .. } => RustType::Value,
+            String=>self.convert_primitive("String"),
+            Number=>self.convert_primitive("f64"),
+            Boolean=>self.convert_primitive("bool"),
+            Void=>self.convert_primitive("()"),
+            Never=>self.convert_primitive("!"),
+            Unknown|Any|Null|Undefined=>RustType::Value,
+            BigInt=>self.convert_primitive("i64"),
+            Symbol=>self.convert_primitive("std::sync::Arc<std::fmt::Debug>"),
+            This=>self.convert_primitive("Self"),
+            Query{..}|Infer{..}=>RustType::Value,
+            Array{elem}=>self.convert_array(elem),
+            Ref{name,generics}=>self.convert_ref(name,generics),
+            Object{members}=>self.convert_object(members),
+            Union{types}|Intersection{types}=>self.convert_union(types),
+            Function{params,ret}=>self.convert_function(params,ret),
+            Literal{kind,value}=>self.convert_literal(kind,value),
+            Template{..}=>RustType::Value,
+            Index{obj,index}|Mapped{from:obj,to:index}=>self.convert_hashmap(obj,index),
+            Tuple{elements}=>self.convert_tuple(elements),
+            Partial{inner}|Required{inner}|Readonly{inner}=>self.convert(inner),
+            Pick{inner,keys}|Omit{inner,keys}=>self.convert_pick_omit(inner,keys),
+            Record{key,value}=>self.convert_hashmap(key,value),
+            KeyOf{inner}=>self.convert_keyof(inner),
+            ReturnType{inner}=>self.convert(inner),
+            Parameters{..}|Conditional{..}=>RustType::Value,
         }
     }
 
@@ -131,16 +129,10 @@ impl TypeToRust {
 
     fn convert_literal(&self, kind: &LiteralKind, value: &str) -> RustType {
         match kind {
-            LiteralKind::String => RustType::StringLiteral(value.to_string()),
-            LiteralKind::Number => {
-                value.parse().map(RustType::NumberLiteral).unwrap_or(RustType::Value)
-            }
-            LiteralKind::Boolean => {
-                value.parse().map(RustType::BoolLiteral).unwrap_or(RustType::Value)
-            }
-            LiteralKind::BigInt => {
-                value.parse().map(RustType::IntLiteral).unwrap_or(RustType::Value)
-            }
+            LiteralKind::String=>RustType::StringLiteral(value.to_string()),
+            LiteralKind::Number=>value.parse().map(RustType::NumberLiteral).unwrap_or(RustType::Value),
+            LiteralKind::Boolean=>value.parse().map(RustType::BoolLiteral).unwrap_or(RustType::Value),
+            LiteralKind::BigInt=>value.parse().map(RustType::IntLiteral).unwrap_or(RustType::Value),
         }
     }
 
@@ -165,37 +157,31 @@ impl TypeToRust {
 impl RustType {
     pub fn type_name(&self) -> String {
         match self {
-            RustType::Value => "serde_json::Value".to_string(),
-            RustType::Primitive(s) => s.clone(),
-            RustType::Named(s) => s.clone(),
-            RustType::Struct(fields) => {
-                let fs: Vec<String> = fields
-                    .iter()
-                    .map(|f| format!("{}: {}", f.name, f.ty.type_name()))
-                    .collect();
-                format!("{{ {} }}", fs.join(", "))
+            RustType::Value=>"serde_json::Value".to_string(),
+            RustType::Primitive(s)|RustType::Named(s)=>s.clone(),
+            RustType::Struct(fields)=>{
+                let fs:Vec<String>=fields.iter().map(|f|format!("{}: {}",f.name,f.ty.type_name())).collect();
+                format!("{{ {} }}",fs.join(", "))
             }
-            RustType::Tuple(types) => {
-                let inner: Vec<String> = types.iter().map(|t| t.type_name()).collect();
-                format!("({})", inner.join(", "))
+            RustType::Tuple(types)=>{
+                let inner:Vec<String>=types.iter().map(|t|t.type_name()).collect();
+                format!("({})",inner.join(", "))
             }
-            RustType::Vec(t) => format!("Vec<{}>", t.type_name()),
-            RustType::Option(t) => format!("Option<{}>", t.type_name()),
-            RustType::HashMap(k, v) => {
-                format!("HashMap<{}, {}>", k.type_name(), v.type_name())
+            RustType::Vec(t)=>format!("Vec<{}>",t.type_name()),
+            RustType::Option(t)=>format!("Option<{}>",t.type_name()),
+            RustType::HashMap(k,v)=>format!("HashMap<{}, {}>",k.type_name(),v.type_name()),
+            RustType::Fn(params,ret)=>{
+                let ps:Vec<String>=params.iter().map(|p|p.type_name()).collect();
+                format!("fn({}) -> {}",ps.join(", "),ret.type_name())
             }
-            RustType::Fn(params, ret) => {
-                let ps: Vec<String> = params.iter().map(|p| p.type_name()).collect();
-                format!("fn({}) -> {}", ps.join(", "), ret.type_name())
+            RustType::Generic(name,args)=>{
+                let inner:Vec<String>=args.iter().map(|a|a.type_name()).collect();
+                format!("{}<{}>",name,inner.join(", "))
             }
-            RustType::Generic(name, args) => {
-                let inner: Vec<String> = args.iter().map(|a| a.type_name()).collect();
-                format!("{}<{}>", name, inner.join(", "))
-            }
-            RustType::StringLiteral(_) => "String".to_string(),
-            RustType::NumberLiteral(_) => "f64".to_string(),
-            RustType::BoolLiteral(_) => "bool".to_string(),
-            RustType::IntLiteral(_) => "i64".to_string(),
+            RustType::StringLiteral(_)=>"String".to_string(),
+            RustType::NumberLiteral(_)=>"f64".to_string(),
+            RustType::BoolLiteral(_)=>"bool".to_string(),
+            RustType::IntLiteral(_)=>"i64".to_string(),
         }
     }
 }

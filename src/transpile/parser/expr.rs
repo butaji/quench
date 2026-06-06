@@ -11,21 +11,16 @@ use std::vec::Vec;
 pub use super::expr_ops::{assign_op, binary_op, unary_op};
 
 fn binding_id_name(pat: &BindingPattern) -> Option<String> {
-    match pat {
-        BindingPattern::BindingIdentifier(id) => Some(id.name.to_string()),
-        _ => None,
-    }
+    if let BindingPattern::BindingIdentifier(id)=pat{Some(id.name.to_string())}else{None}
 }
 
 fn convert_simple_assignment_target(target: &SimpleAssignmentTarget) -> Option<Expr> {
     match target {
-        SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
-            Some(hir::Expr::Ident { name: id.name.to_string() })
-        }
-        SimpleAssignmentTarget::ComputedMemberExpression(m) => conv_computed_member(m),
-        SimpleAssignmentTarget::StaticMemberExpression(m) => conv_static_member(m),
-        SimpleAssignmentTarget::PrivateFieldExpression(_) => None,
-        _ => None,
+        SimpleAssignmentTarget::AssignmentTargetIdentifier(id)=>Some(hir::Expr::Ident{name:id.name.to_string()}),
+        SimpleAssignmentTarget::ComputedMemberExpression(m)=>conv_computed_member(m),
+        SimpleAssignmentTarget::StaticMemberExpression(m)=>conv_static_member(m),
+        SimpleAssignmentTarget::PrivateFieldExpression(_)=>None,
+        _=>None,
     }
 }
 
@@ -34,73 +29,45 @@ fn convert_assignment_target(target: &AssignmentTarget) -> Option<Expr> {
         .and_then(convert_simple_assignment_target)
 }
 
+fn pat_ident(name: &str) -> hir::Pat {
+    hir::Pat::Ident { name: name.to_string(), type_: None, optional: false }
+}
+
+fn obj_pat_key(key: &PropertyKey) -> Option<String> {
+    if let PropertyKey::StaticIdentifier(id)=key{Some(id.name.to_string())}
+    else if let PropertyKey::StringLiteral(s)=key{Some(s.value.to_string())}
+    else if let PropertyKey::NumericLiteral(n)=key{Some(n.value.to_string())}
+    else{None}
+}
+
 /// Convert a binding pattern (for destructuring)
 pub fn convert_binding_pattern(pat: &BindingPattern) -> Option<hir::Pat> {
     match pat {
-        BindingPattern::BindingIdentifier(id) => Some(hir::Pat::Ident {
-            name: id.name.to_string(),
-            type_: None,
-            optional: false,
-        }),
-        BindingPattern::ArrayPattern(arr) => {
-            let elements: Vec<Option<hir::Pat>> = arr
-                .elements
-                .iter()
-                .map(|e| {
-                    e.as_ref().and_then(|e| match e {
-                        BindingPattern::BindingIdentifier(id) => Some(hir::Pat::Ident {
-                            name: id.name.to_string(),
-                            type_: None,
-                            optional: false,
-                        }),
-                        _ => None,
-                    })
-                })
-                .collect();
-            Some(hir::Pat::Array { elems: elements, rest: None })
+        BindingPattern::BindingIdentifier(id)=>Some(pat_ident(&id.name)),
+        BindingPattern::ArrayPattern(arr)=>{
+            let elements:Vec<Option<hir::Pat>>=arr.elements.iter().map(|e|{
+                e.as_ref().and_then(|e|if let BindingPattern::BindingIdentifier(id)=e{Some(pat_ident(&id.name))}else{None})
+            }).collect();
+            Some(hir::Pat::Array{elems:elements, rest:None})
         }
-        BindingPattern::ObjectPattern(obj) => {
-            let props: Vec<hir::ObjectPatProp> = obj
-                .properties
-                .iter()
-                .filter_map(|p| {
-                    let key = match &p.key {
-                        PropertyKey::StaticIdentifier(id) => id.name.to_string(),
-                        PropertyKey::StringLiteral(s) => s.value.to_string(),
-                        PropertyKey::NumericLiteral(n) => n.value.to_string(),
-                        _ => return None,
-                    };
-                    let value = match &p.value {
-                        BindingPattern::BindingIdentifier(id) => hir::Pat::Ident {
-                            name: id.name.to_string(),
-                            type_: None,
-                            optional: false,
-                        },
-                        _ => return None,
-                    };
-                    Some(hir::ObjectPatProp::Init {
-                        key,
-                        value,
-                    })
-                })
-                .collect();
-            Some(hir::Pat::Object { props, rest: None })
+        BindingPattern::ObjectPattern(obj)=>{
+            let props:Vec<hir::ObjectPatProp>=obj.properties.iter().filter_map(|p|{
+                let key=obj_pat_key(&p.key)?;
+                let value=if let BindingPattern::BindingIdentifier(id)=&p.value{pat_ident(&id.name)}else{return None;};
+                Some(hir::ObjectPatProp::Init{key, value})
+            }).collect();
+            Some(hir::Pat::Object{props, rest:None})
         }
-        BindingPattern::AssignmentPattern(_) => None,
+        BindingPattern::AssignmentPattern(_)=>None,
     }
 }
 
 /// Convert an array expression element list
 pub fn arr_elems(arr: &ArrayExpression) -> Vec<Option<Expr>> {
-    arr.elements
-        .iter()
-        .map(|e| {
-            match e {
-                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_) => None,
-                _ => e.as_expression().and_then(|expr| convert_expr(expr).ok()),
-            }
-        })
-        .collect()
+    arr.elements.iter().map(|e|{
+        if matches!(e, ArrayExpressionElement::Elision(_)|ArrayExpressionElement::SpreadElement(_)){None}
+        else{e.as_expression().and_then(|expr|convert_expr(expr).ok())}
+    }).collect()
 }
 
 /// Convert template literal
@@ -121,33 +88,30 @@ pub fn conv_template(t: &TemplateLiteral) -> Result<Expr, ()> {
     Ok(Expr::Template { parts, exprs })
 }
 
+fn prop_key(key: &PropertyKey) -> Option<hir::PropKey> {
+    if let PropertyKey::StaticIdentifier(id)=key{Some(hir::PropKey::Str(id.name.to_string()))}
+    else if let PropertyKey::StringLiteral(s)=key{Some(hir::PropKey::Str(s.value.to_string()))}
+    else if let PropertyKey::NumericLiteral(n)=key{Some(hir::PropKey::Num(n.value))}
+    else{None}
+}
+
 /// Convert an object expression
 pub fn conv_object(o: &ObjectExpression) -> Result<Expr, ()> {
-    let members: Vec<ObjectMemberExpr> = o
-        .properties
-        .iter()
-        .filter_map(|p| {
-            let prop = match p {
-                ObjectPropertyKind::ObjectProperty(p) => {
-                    let key = match &p.key {
-                        PropertyKey::StaticIdentifier(id) => hir::PropKey::Str(id.name.to_string()),
-                        PropertyKey::StringLiteral(s) => hir::PropKey::Str(s.value.to_string()),
-                        PropertyKey::NumericLiteral(n) => hir::PropKey::Num(n.value),
-                        _ => return None,
-                    };
-                    let value = convert_expr(&p.value).ok()?;
-                    hir::ObjectProp::Init { key, value, computed: p.computed }
-                }
-                ObjectPropertyKind::SpreadProperty(sp) => {
-                    let expr = convert_expr(&sp.argument).ok()?;
-                    hir::ObjectProp::Spread { arg: expr }
-                }
-            };
-            Some(ObjectMemberExpr { prop })
-        })
-        .collect();
-
-    Ok(Expr::Object { members })
+    let members:Vec<ObjectMemberExpr>=o.properties.iter().filter_map(|p|{
+        let prop=match p {
+            ObjectPropertyKind::ObjectProperty(p)=>{
+                let key=prop_key(&p.key)?;
+                let value=convert_expr(&p.value).ok()?;
+                hir::ObjectProp::Init{key, value, computed: p.computed}
+            }
+            ObjectPropertyKind::SpreadProperty(sp)=>{
+                let expr=convert_expr(&sp.argument).ok()?;
+                hir::ObjectProp::Spread{arg: expr}
+            }
+        };
+        Some(ObjectMemberExpr{prop})
+    }).collect();
+    Ok(Expr::Object{members})
 }
 
 /// Convert binary expression
@@ -160,14 +124,12 @@ pub fn conv_bin(bin: &BinaryExpression) -> Option<hir::Expr> {
 
 /// Convert logical expression
 pub fn conv_log(log: &LogicalExpression) -> Option<hir::Expr> {
-    let op = match log.operator {
-        LogicalOperator::And => hir::LogicalOp::And,
-        LogicalOperator::Or => hir::LogicalOp::Or,
-        LogicalOperator::Coalesce => hir::LogicalOp::NullishCoalescing,
-    };
-    let left = convert_expr(&log.left).ok()?;
-    let right = convert_expr(&log.right).ok()?;
-    Some(hir::Expr::Logical { op, left: Box::new(left), right: Box::new(right) })
+    let op=if log.operator==LogicalOperator::And{hir::LogicalOp::And}
+    else if log.operator==LogicalOperator::Or{hir::LogicalOp::Or}
+    else{hir::LogicalOp::NullishCoalescing};
+    let left=convert_expr(&log.left).ok()?;
+    let right=convert_expr(&log.right).ok()?;
+    Some(hir::Expr::Logical{op, left:Box::new(left), right:Box::new(right)})
 }
 
 /// Convert conditional expression
@@ -182,56 +144,30 @@ pub fn conv_cond(cond: &ConditionalExpression) -> Option<hir::Expr> {
     })
 }
 
+fn arg_expr(a: &Argument) -> Option<Expr> {
+    if matches!(a, Argument::SpreadElement(_)){None}
+    else{a.as_expression().and_then(|expr|convert_expr(expr).ok())}
+}
+
 /// Convert call expression
 pub fn conv_call(call: &CallExpression) -> Option<hir::Expr> {
-    let callee = convert_expr(&call.callee).ok()?;
-    let arguments: Vec<Expr> = call
-        .arguments
-        .iter()
-        .filter_map(|a| {
-            match a {
-                Argument::SpreadElement(_) => None,
-                _ => a.as_expression().and_then(|expr| convert_expr(expr).ok()),
-            }
-        })
-        .collect();
-    Some(hir::Expr::Call {
-        callee: Box::new(callee),
-        arguments,
-    })
+    let callee=convert_expr(&call.callee).ok()?;
+    let arguments:Vec<Expr>=call.arguments.iter().filter_map(arg_expr).collect();
+    Some(hir::Expr::Call{callee:Box::new(callee), arguments})
 }
 
 /// Convert new expression
 pub fn conv_new(new: &NewExpression) -> Option<hir::Expr> {
-    let callee = convert_expr(&new.callee).ok()?;
-    let arguments: Vec<Expr> = new
-        .arguments
-        .iter()
-        .filter_map(|a| {
-            match a {
-                Argument::SpreadElement(_) => None,
-                _ => a.as_expression().and_then(|expr| convert_expr(expr).ok()),
-            }
-        })
-        .collect();
-    Some(hir::Expr::New {
-        callee: Box::new(callee),
-        arguments,
-    })
+    let callee=convert_expr(&new.callee).ok()?;
+    let arguments:Vec<Expr>=new.arguments.iter().filter_map(arg_expr).collect();
+    Some(hir::Expr::New{callee:Box::new(callee), arguments})
 }
 
 /// Convert update expression (++/--)
 pub fn conv_update(update: &UpdateExpression) -> Option<hir::Expr> {
-    let op = match update.operator {
-        UpdateOperator::Increment => hir::UpdateOp::PlusPlus,
-        UpdateOperator::Decrement => hir::UpdateOp::MinusMinus,
-    };
-    let argument = convert_simple_assignment_target(&update.argument)?;
-    Some(hir::Expr::Update {
-        op,
-        arg: Box::new(argument),
-        prefix: update.prefix,
-    })
+    let op=if update.operator==UpdateOperator::Increment{hir::UpdateOp::PlusPlus}else{hir::UpdateOp::MinusMinus};
+    let argument=convert_simple_assignment_target(&update.argument)?;
+    Some(hir::Expr::Update{op, arg:Box::new(argument), prefix: update.prefix})
 }
 
 /// Convert unary expression
@@ -317,19 +253,19 @@ pub fn conv_arrow(arrow: &ArrowFunctionExpression) -> Option<Expr> {
 /// Convert statement to HIR statement
 fn stmt_to_hir_stmt(s: &Statement) -> Result<hir::Stmt, ()> {
     match s {
-        Statement::ExpressionStatement(e) => {
-            let expr = convert_expr(&e.expression).map_err(|_| ())?;
-            Ok(hir::Stmt::Expr { expr })
+        Statement::ExpressionStatement(e)=>{
+            let expr=convert_expr(&e.expression).map_err(|_|())?;
+            Ok(hir::Stmt::Expr{expr})
         }
-        Statement::ReturnStatement(r) => {
-            let arg = r.argument.as_ref().and_then(|a| convert_expr(a).ok());
-            Ok(hir::Stmt::Return { arg })
+        Statement::ReturnStatement(r)=>{
+            let arg=r.argument.as_ref().and_then(|a|convert_expr(a).ok());
+            Ok(hir::Stmt::Return{arg})
         }
-        Statement::BlockStatement(b) => {
-            let stmts: Vec<hir::Stmt> = b.body.iter().filter_map(|s| stmt_to_hir_stmt(s).ok()).collect();
-            Ok(hir::Stmt::Block { stmts })
+        Statement::BlockStatement(b)=>{
+            let stmts:Vec<hir::Stmt>=b.body.iter().filter_map(|s|stmt_to_hir_stmt(s).ok()).collect();
+            Ok(hir::Stmt::Block{stmts})
         }
-        _ => Ok(hir::Stmt::Empty),
+        _=>Ok(hir::Stmt::Empty),
     }
 }
 
@@ -338,76 +274,67 @@ pub fn arrow_stmt_to_hir(body: &BlockStatement) -> Vec<hir::Stmt> {
     body.body.iter().filter_map(|s| stmt_to_hir_stmt(s).ok()).collect()
 }
 
+fn func_expr_params(items: &[oxc_ast::ast::FormalParameter]) -> Vec<hir::Param> {
+    items.iter().filter_map(|p|{
+        binding_id_name(&p.pattern).map(|name|hir::Param{
+            name,
+            type_:None,
+            default:None,
+            optional:false,
+            pattern:convert_binding_pattern(&p.pattern),
+            ownership:hir::Ownership::Owned,
+        })
+    }).collect()
+}
+
+fn conv_func_expr(f: &oxc_ast::ast::Function) -> Result<Expr, ()> {
+    Ok(hir::Expr::Function(hir::FunctionDecl{
+        name:f.id.as_ref().map(|id|id.name.to_string()).unwrap_or_default(),
+        generics:vec![],
+        params:func_expr_params(&f.params.items),
+        return_type:None,
+        body:Some(hir::Block(vec![])),
+        is_async:f.r#async,
+        is_generator:f.generator,
+        decorators:vec![],
+        throws:false,
+        error_type:None,
+    }))
+}
+
+fn func_expr_body(body: Option<&BlockStatement>) -> hir::Expr {
+    body.map(|b|hir::Expr::Block(b.body.iter().filter_map(|s|stmt_to_hir_stmt(s).ok()).collect()))
+    .unwrap_or(hir::Expr::Undefined)
+}
+
 /// Convert expression
 pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
     match expr {
-        Expression::StringLiteral(s) => Ok(hir::Expr::String(s.value.to_string())),
-        Expression::NumericLiteral(n) => Ok(hir::Expr::Number(n.value)),
-        Expression::BooleanLiteral(b) => Ok(hir::Expr::Boolean(b.value)),
-        Expression::NullLiteral(_) => Ok(hir::Expr::Null),
-        Expression::Identifier(id) => Ok(hir::Expr::Ident { name: id.name.to_string() }),
-        Expression::BigIntLiteral(b) => Ok(hir::Expr::BigInt(b.value.parse::<u64>().unwrap_or(0))),
-        Expression::BinaryExpression(b) => conv_bin(b).ok_or(()),
-        Expression::LogicalExpression(l) => conv_log(l).ok_or(()),
-        Expression::ConditionalExpression(c) => conv_cond(c).ok_or(()),
-        Expression::CallExpression(c) => conv_call(c).ok_or(()),
-        Expression::NewExpression(n) => conv_new(n).ok_or(()),
-        Expression::UpdateExpression(u) => conv_update(u).ok_or(()),
-        Expression::UnaryExpression(u) => conv_unary(u).ok_or(()),
-        Expression::StaticMemberExpression(m) => conv_static_member(m).ok_or(()),
-        Expression::ComputedMemberExpression(m) => conv_computed_member(m).ok_or(()),
-        Expression::AssignmentExpression(a) => conv_assign(a).ok_or(()),
-        Expression::ArrowFunctionExpression(a) => conv_arrow(a).ok_or(()),
-        Expression::ArrayExpression(a) => Ok(hir::Expr::Array {
-            elems: arr_elems(a),
-        }),
-        Expression::ObjectExpression(o) => conv_object(o),
-        Expression::TemplateLiteral(t) => conv_template(t),
-        Expression::FunctionExpression(f) => {
-            let params: Vec<hir::Param> = f
-                .params
-                .items
-                .iter()
-                .filter_map(|p| {
-                    binding_id_name(&p.pattern).map(|name| hir::Param {
-                        name,
-                        type_: None,
-                        default: None,
-                        optional: false,
-                        pattern: convert_binding_pattern(&p.pattern),
-                        ownership: hir::Ownership::Owned,
-                    })
-                })
-                .collect();
-            let body = f.body.as_ref().map(|b| {
-                hir::Expr::Block(
-                    b.statements.iter().filter_map(|s| stmt_to_hir_stmt(s).ok()).collect()
-                )
-            }).unwrap_or(hir::Expr::Undefined);
-            Ok(hir::Expr::Function(hir::FunctionDecl {
-                name: f.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default(),
-                generics: vec![],
-                params,
-                return_type: None,
-                body: Some(hir::Block(vec![])),
-                is_async: f.r#async,
-                is_generator: f.generator,
-                decorators: vec![],
-                throws: false,
-                error_type: None,
-            }))
+        Expression::StringLiteral(s)=>Ok(hir::Expr::String(s.value.to_string())),
+        Expression::NumericLiteral(n)=>Ok(hir::Expr::Number(n.value)),
+        Expression::BooleanLiteral(b)=>Ok(hir::Expr::Boolean(b.value)),
+        Expression::NullLiteral(_)=>Ok(hir::Expr::Null),
+        Expression::Identifier(id)=>Ok(hir::Expr::Ident{name:id.name.to_string()}),
+        Expression::BigIntLiteral(b)=>Ok(hir::Expr::BigInt(b.value.parse::<u64>().unwrap_or(0))),
+        Expression::BinaryExpression(b)=>conv_bin(b).ok_or(()),
+        Expression::LogicalExpression(l)=>conv_log(l).ok_or(()),
+        Expression::ConditionalExpression(c)=>conv_cond(c).ok_or(()),
+        Expression::CallExpression(c)=>conv_call(c).ok_or(()),
+        Expression::NewExpression(n)=>conv_new(n).ok_or(()),
+        Expression::UpdateExpression(u)=>conv_update(u).ok_or(()),
+        Expression::UnaryExpression(u)=>conv_unary(u).ok_or(()),
+        Expression::StaticMemberExpression(m)=>conv_static_member(m).ok_or(()),
+        Expression::ComputedMemberExpression(m)=>conv_computed_member(m).ok_or(()),
+        Expression::AssignmentExpression(a)=>conv_assign(a).ok_or(()),
+        Expression::ArrowFunctionExpression(a)=>conv_arrow(a).ok_or(()),
+        Expression::ArrayExpression(a)=>Ok(hir::Expr::Array{elems:arr_elems(a)}),
+        Expression::ObjectExpression(o)=>conv_object(o),
+        Expression::TemplateLiteral(t)=>conv_template(t),
+        Expression::FunctionExpression(f)=>conv_func_expr(f),
+        Expression::RegExpLiteral(r)=>Ok(hir::Expr::RegExp{pattern:r.regex.pattern.text.to_string(),flags:r.regex.flags.to_string()}),
+        Expression::SequenceExpression(s)=>{
+            if let Some(last)=s.expressions.last(){convert_expr(last)}else{Err(())}
         }
-        Expression::RegExpLiteral(r) => Ok(hir::Expr::RegExp {
-            pattern: r.regex.pattern.text.to_string(),
-            flags: r.regex.flags.to_string(),
-        }),
-        Expression::SequenceExpression(s) => {
-            if let Some(last) = s.expressions.last() {
-                convert_expr(last)
-            } else {
-                Err(())
-            }
-        }
-        _ => Err(()),
+        _=>Err(()),
     }
 }

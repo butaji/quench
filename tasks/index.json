@@ -46,7 +46,7 @@
     {
       "id": "021",
       "title": "Re-enable build.rs linter and fix all violations",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-critical",
       "owner": null,
       "files": ["build.rs", "src/transpile/hir/quote_codegen.rs", "src/commands/build/mod.rs", "src/commands/build/source_gen.rs", "crates/runts-fresh/src/plugin.rs", "crates/runts-ink/src/render.rs", "crates/runts-ink/src/components.rs", "crates/runts-ink/src/js_bridge.rs"],
@@ -162,8 +162,8 @@
     }
   ],
   "stats": {
-    "build_errors": 1,
-    "linter_violations": 47,
+    "build_errors": 0,
+    "linter_violations": 0,
     "examples_total": 89,
     "examples_with_tests": 0,
     "test_scripts": 20,

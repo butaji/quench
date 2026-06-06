@@ -967,7 +967,7 @@ mod completeness_tests {
         let module = parser.parse_tsx(source).expect("parse failed");
         assert!(!module.items.is_empty(), "Module should have items");
         let cg = QuoteCodegen::default();
-        let all_tokens = gen_all_tokens(&cg, &module);
+        let all_tokens = super::gen_all_tokens(&cg, &module);
         let output = all_tokens.to_string();
         assert!(!output.is_empty(), "Generated Rust code should not be empty");
         let null_count = output.matches("Value::Null").count();
@@ -978,8 +978,8 @@ mod completeness_tests {
     }
 }
 
-fn gen_all_tokens(cg: &QuoteCodegen, module: &Module) -> TokenStream {
-    use crate::transpile::hir::quote_codegen::ModuleItem;
+fn gen_all_tokens(cg: &crate::transpile::hir::QuoteCodegen, module: &crate::transpile::hir::Module) -> proc_macro2::TokenStream {
+    use crate::transpile::hir::ModuleItem;
     use crate::transpile::hir::Decl;
     let mut all_tokens = TokenStream::new();
     for item in &module.items {
