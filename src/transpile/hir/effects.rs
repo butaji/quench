@@ -98,7 +98,8 @@ impl EffectAnalyzer {
             S::Break { .. } | S::Continue { .. } | S::Labeled { .. } | S::Empty | S::FunctionDecl(_) | S::Class(_) | S::Variable(_) | S::ExportNamed { .. }
             | S::ExportDefault { .. } | S::ImportNamed { .. } | S::ImportDefault { .. } => {}
             S::With { obj, body } => self.analyze_with(obj, body),
-            S::Block { stmts } | S::Expr { expr: _ } => self.analyze_cf_block(stmt),
+            S::Block { stmts } => self.analyze_cf_block(stmt),
+            S::Expr { expr: _ } => self.analyze_cf_block(stmt),
         }
     }
 
@@ -129,6 +130,15 @@ impl EffectAnalyzer {
             _ => {}
         }
     }
+    
+    fn analyze_switch_try(&mut self, stmt: &Stmt) {
+        use Stmt as S;
+        match stmt {
+            S::Switch { discriminant, cases } => self.analyze_switch(discriminant, cases),
+            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
+            _ => {}
+        }
+    }
 
     fn analyze_cf_block(&mut self, stmt: &Stmt) {
         use Stmt as S;
@@ -136,6 +146,15 @@ impl EffectAnalyzer {
             S::Block { stmts } => self.analyze_block(stmts),
             S::Expr { expr } => self.analyze_expr(expr),
             _ => {}
+        }
+    }
+    
+    fn analyze_expr_block(&mut self, stmt: &Stmt) {
+        if let Stmt::Expr { expr } = stmt {
+            self.analyze_expr(expr);
+        }
+        if let Stmt::Block { stmts } = stmt {
+            self.analyze_block(stmts);
         }
     }
 
@@ -148,13 +167,13 @@ impl EffectAnalyzer {
         }
     }
 
-    fn analyze_forin(&mut self, left: &super::ForInitLeft, right: &Expr, body: &Box<Stmt>) {
+    fn analyze_forin(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>) {
         self.analyze_for_init(Some(left));
         self.analyze_expr(right);
         self.analyze_stmt(body);
     }
 
-    fn analyze_forof(&mut self, left: &super::ForInitLeft, right: &Expr, body: &Box<Stmt>, is_await: bool) {
+    fn analyze_forof(&mut self, left: &super::ForInit, right: &Expr, body: &Box<Stmt>, is_await: bool) {
         self.analyze_for_init(Some(left));
         self.analyze_expr(right);
         if is_await {
@@ -430,7 +449,7 @@ impl EffectAnalyzer {
                 name: name.clone(),
                 generics: vec![],
             },
-            Expr::StaticMember { property, .. } => self.infer_error_type(property),
+            Expr::StaticMember { property, .. } => self.infer_error_type_from_property(property),
             Expr::String(s) => Type::Literal {
                 kind: super::LiteralKind::String,
                 value: s.clone(),
@@ -447,10 +466,10 @@ impl EffectAnalyzer {
         }
     }
 
-    fn infer_error_type(&self, property: &str) -> Type {
+    fn infer_error_type_from_property(&self, property: &str) -> Type {
         if property == "TypeError" || property == "Error" || property == "RangeError" {
             Type::Ref {
-                name: property.clone(),
+                name: property.to_string(),
                 generics: vec![],
             }
         } else {

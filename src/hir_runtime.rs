@@ -1637,11 +1637,11 @@ fn value_to_string(val: &Value) -> String {
         Value::VNode(v) => vnode_to_string(v),
         Value::Array(arr) => array_to_string(arr),
         Value::Object(_) | Value::Function { .. } => String::new(),
-        Value::HookState { idx } | Value::HookSetter { idx } => hook_idx_to_string(val, idx),
+        Value::HookState { idx } | Value::HookSetter { idx } => hook_idx_to_string(val, *idx),
     }
 }
 
-fn hook_idx_to_string(val: &Value, idx: &str) -> String {
+fn hook_idx_to_string(val: &Value, idx: usize) -> String {
     match val {
         Value::HookState { .. } => format!("<hook state #{idx}>"),
         Value::HookSetter { .. } => format!("<hook setter #{idx}>"),

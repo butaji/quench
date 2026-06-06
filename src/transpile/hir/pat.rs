@@ -10,6 +10,7 @@ pub enum Pat {
     Ident {
         name: String,
         type_: Option<super::Type>,
+        optional: bool,
     },
     Array {
         elems: Vec<Option<Pat>>,
@@ -68,7 +69,7 @@ impl Pat {
         }
     }
 
-    fn binding_names_array(&self, elems: &[Option<Box<Pat>>], rest: &Option<Box<Pat>>) -> Vec<String> {
+    fn binding_names_array(&self, elems: &[Option<Pat>], rest: &Option<Box<Pat>>) -> Vec<String> {
         let mut names = Vec::new();
         for elem in elems {
             if let Some(p) = elem {

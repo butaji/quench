@@ -71,14 +71,16 @@ impl OwnershipAnalyzer {
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         use Stmt as S;
         match stmt {
-            S::Expr { expr } | S::Block { stmts: _ } => self.analyze_expr_block(stmt),
+            S::Expr { expr } => self.analyze_expr_block(stmt),
+            S::Block { stmts: _ } => self.analyze_expr_block(stmt),
             S::If { test, consequent, alternate } => self.analyze_if(test, consequent, alternate),
-            S::While { test, body } | S::DoWhile { body, test } => self.analyze_while_do(test, body),
+            S::While { test, body } => self.analyze_while_do(test, body),
+            S::DoWhile { body, test } => self.analyze_while_do(test, body),
             S::For { .. } | S::ForIn { .. } | S::ForOf { .. } => self.analyze_stmt_for(stmt),
-            S::Return { arg } | S::Throw { arg } => self.analyze_return_throw(arg.as_deref()),
-            S::Switch { discriminant, cases } | S::Try { block: _, handler: _, finalizer: _ } => {
-                self.analyze_switch_try(stmt)
-            }
+            S::Return { arg } => self.analyze_return_throw(arg.as_ref()),
+            S::Throw { arg } => self.analyze_return_throw(Some(arg)),
+            S::Switch { discriminant, cases } => self.analyze_switch_try(stmt),
+            S::Try { block, handler, finalizer } => self.analyze_try(block, handler, finalizer),
             S::Break { .. } | S::Continue { .. } | S::Labeled { .. } | S::With { .. } => {}
             _ => {}
         }
@@ -402,16 +404,23 @@ impl OwnershipAnalyzer {
     }
 
     fn mark_member_mutated(&mut self, expr: &Expr) {
-        let (obj, property) = match expr {
-            Expr::Member { obj, property, .. } => (obj, property),
-            Expr::StaticMember { obj, property, .. } => (obj, property),
-            _ => return,
-        };
-        self.mark_as_mutated(obj);
-        let prop_name = self.extract_property_name(property);
-        if let Expr::Ident { name } = &**obj {
-            let nested_key = format!("{}.{}", name, prop_name);
-            self.mut_vars.insert(nested_key);
+        match expr {
+            Expr::Member { obj, property, .. } => {
+                self.mark_as_mutated(obj);
+                let prop_name = self.extract_property_name(property);
+                if let Expr::Ident { name } = &**obj {
+                    let nested_key = format!("{}.{}", name, prop_name);
+                    self.mut_vars.insert(nested_key);
+                }
+            }
+            Expr::StaticMember { obj, property, .. } => {
+                self.mark_as_mutated(obj);
+                if let Expr::Ident { name } = &**obj {
+                    let nested_key = format!("{}.{}", name, property);
+                    self.mut_vars.insert(nested_key);
+                }
+            }
+            _ => {}
         }
     }
 
