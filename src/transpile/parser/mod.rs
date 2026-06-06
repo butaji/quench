@@ -13,6 +13,45 @@ use crate::transpile::hir;
 use anyhow::Result;
 use std::path::Path;
 
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+    #[test]
+    fn debug_json() {
+        let src = std::fs::read_to_string("examples/ink-text-props/tui/app.tsx").unwrap();
+        let module = parse_source(&src, true).unwrap();
+        let json = serde_json::to_string_pretty(&module.items).unwrap();
+        panic!("{}", json);
+    }
+
+    #[test]
+    fn debug_raw() {
+        let src = std::fs::read_to_string("examples/ink-text-props/tui/app.tsx").unwrap();
+        use oxc_allocator::Allocator;
+        use oxc_parser::Parser as OxcParser;
+        use oxc_span::SourceType;
+        let allocator = Allocator::default();
+        let source_type = SourceType::default().with_module(true).with_typescript(true).with_jsx(true);
+        let ret = OxcParser::new(&allocator, &src, source_type).parse();
+        let program = ret.program;
+        for stmt in &program.body {
+            if let oxc_ast::ast::Statement::ExportDefaultDeclaration(ed) = stmt {
+                if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) = &ed.declaration {
+                    if let Some(body) = &f.body {
+                        for s in &body.statements {
+                            if let oxc_ast::ast::Statement::ReturnStatement(r) = s {
+                                let arg = r.argument.as_ref();
+                                eprintln!("RETURN ARG: {:?}", arg.map(|a| format!("{:?}", a)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        panic!("done");
+    }
+}
+
 pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
     use oxc_allocator::Allocator;
     use oxc_parser::Parser as OxcParser;
@@ -41,6 +80,8 @@ pub fn parse_source(source: &str, is_tsx: bool) -> Result<hir::Module> {
         .collect();
     let mut module = hir::Module {
         source: String::new(),
+        source_path: None,
+        route_info: None,
         items,
         types: std::collections::HashMap::new(),
     };

@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 doctest = false
 
 [dependencies]
+runts-hir = { path = "../runts-hir" }
 runts-plugin = { path = "../runts-plugin" }
 runts-lib = { path = "../runts-lib" }
 runts-ink = { path = "../runts-ink" }

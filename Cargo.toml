@@ -21,7 +21,7 @@ members = [
     "crates/runts-fresh",
     "crates/runts-ink",
     "crates/runts-ratatui",
-    "crates/runts-react",
+    "crates/runts-hir",
 ]
 # `examples/*` are independent Cargo projects. Each has
 # its own `Cargo.toml` with `path = "../../crates/..."`
@@ -33,6 +33,7 @@ exclude = [
 [dependencies]
 
 # Core
+runts-hir = { path = "crates/runts-hir" }
 runts-ink = { path = "crates/runts-ink" }
 anyhow = "1.0"
 thiserror = "2.0"

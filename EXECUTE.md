@@ -82,15 +82,35 @@ Execute in this order:
 - **Fix the compile path.** Replace the plugin JSON string boundary with typed HIR transfer. Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify that static examples build and run.
 - **Create one parity harness.** Delete all existing `test_parity*.sh` scripts. Create a single `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. It must implement per-symbol diff and output a JSON summary.
 - **Add per-example unit tests.** Generate one Rust test per example in `tests/rq_parity/`. Each test reads `examples/*/tui/app.tsx`, runs it through the rquickjs path, and asserts expected substrings in output.
+- **Fix HIR test failures.** `cargo test --bin runts` currently has 113 failures in compile-path tests. Categorize each: fix if compile path needs it, `#[ignore]` if out of scope, delete if testing removed subsystems.
 
 **Acceptance:**
 - Compile path produces a binary that exits 0 and prints expected text.
 - Parity harness runs all 89 examples and produces a JSON report.
 - Unit tests cover ≥90% of examples.
+- `cargo test --bin runts` exits 0 (or only expected ignored failures).
 
 ---
 
-### Phase 3: Cleanup
+### Phase 3: Coverage Gaps
+**Goal:** No feature is untested or unexercised.
+
+- **Re-enable disabled spec tests.** Four test modules are commented out in `src/transpile/tests/mod.rs`: `spec_control_flow`, `spec_data_structures`, `spec_vars_functions`, `spec_jsx`. These cover large swaths of the TS/TSX subset. Uncomment them, fix helper visibility issues (likely `runts_hir::*` imports), and get them compiling.
+- **Add missing Ink examples.** Several features are implemented in `js_bridge.rs` but never exercised by an example:
+  - `useAnimation` — add `examples/ink-animation/`
+  - `usePaste` — add `examples/ink-paste/`
+  - `measureElement` / `useBoxMetrics` — add `examples/ink-measure/`
+  - `minWidth`, `maxWidth`, `zIndex`, `flexShrink`, `alignSelf` — add `examples/ink-advanced-layout/`
+- **Verify bridge completeness.** Generate a prop-coverage matrix: for every prop used in every example, confirm it is handled in `js_bridge.rs` and has a unit test.
+
+**Acceptance:**
+- Zero commented-out test modules.
+- All Ink hooks and layout props are exercised by at least one example.
+- Prop coverage matrix shows 100% coverage.
+
+---
+
+### Phase 4: Cleanup
 **Goal:** Repo is clean. Docs are truthful.
 
 - Delete dead code: `crates/runts-react/`, old scripts, unused imports. Ensure `cargo build` has zero dead-code warnings.
@@ -98,6 +118,48 @@ Execute in this order:
 - Optional: evaluate Boa vs rquickjs and document decision.
 
 **Acceptance:** Workspace builds clean. Docs do not mention HIR interpreter or Taffy.
+
+---
+
+## Known Coverage Gaps (Current State)
+
+### Disabled Test Modules
+Four comprehensive test modules are commented out in `src/transpile/tests/mod.rs`:
+
+| Module | Coverage |
+|--------|----------|
+| `spec_control_flow` | `if`/`else`, `switch`, `for`, `while`, `do-while`, `try`/`catch`, `break`/`continue`, ternary |
+| `spec_data_structures` | Arrays, objects, destructuring, pattern coverage |
+| `spec_vars_functions` | Variables, arrow functions, async functions, function params, bindings |
+| `spec_jsx` | JSX elements, attributes, children, fragments, inline styles, event handlers |
+
+Without these, there is **zero automated coverage** for control flow, data structures, variables/functions, and JSX in the compile path.
+
+### Stale HIR Test Failures
+`cargo test --bin runts` has **113 failures** in enabled modules. Root causes:
+- Tests expect old HIR shapes from before `crates/runts-hir` refactor.
+- `quote_codegen` panics on `Expr::Invalid` for `do-while`, `throw`, labeled statements, `Math.PI`, `Date.now()`.
+- Parser converter intentionally skips features (JSX, optional chaining, class expressions) but tests expect them to work.
+
+These are **compile-path only** — the dev path bypasses HIR entirely.
+
+### Missing Ink Example Coverage
+Features implemented in `js_bridge.rs` but **not exercised by any example**:
+
+| Feature | Where Used |
+|---------|-----------|
+| `useAnimation` | No example |
+| `usePaste` | No example |
+| `measureElement` / `useBoxMetrics` | No example |
+| `useRef` | No example |
+| `minWidth` / `minHeight` | No example |
+| `maxWidth` / `maxHeight` | No example |
+| `zIndex` | No example |
+| `flexBasis` | No example |
+| `flexShrink` | No example |
+| `alignSelf` | No example |
+| `alignContent` | No example |
+| `columnGap` / `rowGap` | No example |
 
 ---
 
@@ -136,6 +198,8 @@ The single script (`scripts/parity.sh`) MUST:
 | **Do not exceed linter limits.** | 500 lines/file, 40 lines/fn, 10 complexity. No exceptions. Extract, don't negotiate. |
 | **Do not commit without `cargo build` passing.** | The build may be broken at any time. Fix first, then iterate. |
 | **Do not batch multiple tasks in one commit.** | Small commits are reversible commits. One task = one commit = one push. |
+| **Do not leave test modules commented out.** | Disabled tests are invisible decay. Fix or delete, but don't hide them. |
+| **Do not add examples that require Rust code.** | Examples are pure TS/TSX only. Any Rust goes in crates/, not `examples/`. |
 
 ---
 
@@ -153,7 +217,11 @@ diff /tmp/deno.txt /tmp/rq.txt
 # 3. Run parity harness
 ./scripts/parity.sh --env rq --examples ink-text-props --verbose
 
-# 4. Check linter
+# 4. Check test coverage gaps
+cargo test --bin runts 2>&1 | grep "FAILED" | wc -l
+grep "^//" src/transpile/tests/mod.rs
+
+# 5. Check linter
 # (build.rs runs automatically during cargo build)
 ```
 
@@ -164,7 +232,10 @@ diff /tmp/deno.txt /tmp/rq.txt
 - [ ] `cargo build` passes with 0 errors, 0 warnings.
 - [ ] `scripts/parity.sh --env all` passes 89/89 examples (≥95% similarity).
 - [ ] `cargo test --test rq_parity` passes ≥90% of examples.
+- [ ] `cargo test --bin runts` exits 0 (or only expected ignored failures).
+- [ ] Zero commented-out test modules in `src/transpile/tests/mod.rs`.
 - [ ] No file > 500 lines, no fn > 40 lines, no complexity > 10.
 - [ ] No references to HIR interpreter, Taffy, or `render_tsx` in codebase.
+- [ ] All Ink hooks and layout props exercised by at least one example.
 - [ ] Docs accurately describe rquickjs + Yoga architecture.
 - [ ] All tasks in `tasks/index.json` marked completed.
