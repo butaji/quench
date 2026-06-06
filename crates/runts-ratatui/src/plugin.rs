@@ -2,7 +2,6 @@
 //!
 //! Parses TSX HIR JSON and converts JSX elements to Ratatui widget code.
 
-use std::io::Write;
 use quote::quote;
 
 use runts_plugin::{
@@ -39,35 +38,6 @@ impl RatatuiPlugin {
             Err(e) => {
                 eprintln!("HIR render: read {} failed: {e}", module_path.display());
                 Err(DevAction::Continue)
-            }
-        }
-    }
-
-    /// Run hir-render command and output result.
-    fn run_hir_render(source: &str) -> Result<DevAction, PluginError> {
-        let tmp = std::env::temp_dir().join("runts-hir-render.tsx");
-        if let Err(e) = std::fs::write(&tmp, source.as_bytes()) {
-            eprintln!("hir-render: write failed: {e}");
-            return Ok(DevAction::Continue);
-        }
-        let runts_bin = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("runts"));
-        match std::process::Command::new(&runts_bin)
-            .arg("hir-render")
-            .arg(&tmp)
-            .output()
-        {
-            Ok(out) => {
-                let _ = std::io::stdout().write_all(&out.stdout);
-                let _ = std::io::stdout().flush();
-                if !out.stderr.is_empty() {
-                    eprint!("{}", String::from_utf8_lossy(&out.stderr));
-                }
-                Ok(DevAction::Continue)
-            }
-            Err(e) => {
-                eprintln!("hir-render failed: {e}");
-                Ok(DevAction::Continue)
             }
         }
     }
@@ -228,11 +198,14 @@ impl Plugin for RatatuiPlugin {
             return Ok(DevAction::Continue);
         };
 
-        let source = match Self::read_source(std::path::Path::new(&module_path)) {
+        let _source = match Self::read_source(std::path::Path::new(&module_path)) {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        Self::run_hir_render(&source)
+        // TODO(task-024): Wire rquickjs dev path here.
+        // The HIR interpreter has been removed; dev rendering will
+        // transpile TSX -> JS and eval through rquickjs + bridge.
+        Ok(DevAction::Continue)
     }
 
     fn dev_reload(&self, _ctx: &mut DevContext, state: &mut dyn DevState) -> Result<(), PluginError> {

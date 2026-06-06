@@ -5,7 +5,6 @@
 mod cli;
 mod commands;
 mod config;
-mod hir_runtime;
 mod plugin;
 mod runtime;
 mod transpile;
@@ -44,8 +43,6 @@ fn run_simple_cmd(cmd: &cli::Commands) -> Result<()> {
     match cmd {
         cli::Commands::Eval { expr } => run_eval(expr),
         cli::Commands::Init { name } => run_init(name.clone()),
-        cli::Commands::HirRender { path } => run_hir_render(path.clone()),
-        cli::Commands::InspectHir { path } => run_inspect_hir(path.clone()),
         _ => Ok(()),
     }
 }
@@ -68,23 +65,6 @@ fn run_complex_cmd(cmd: &cli::Commands) -> Result<()> {
 fn run_init(name: String) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(commands::run_init(name, None))
-}
-
-fn run_hir_render(path: PathBuf) -> Result<()> {
-    let source = std::fs::read_to_string(&path)?;
-    // Read terminal size from environment variables
-    let cols: u16 = std::env::var("COLS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(80);
-    let lines: u16 = std::env::var("LINES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(24);
-    let output = hir_runtime::render_tsx(&source, cols, lines)
-        .map_err(|e| anyhow::anyhow!("HIR render error: {e:?}"))?;
-    print!("{output}");
-    Ok(())
 }
 
 fn run_dev(path: PathBuf, plugin_name: &str) -> Result<()> {
@@ -193,23 +173,6 @@ fn run_eval(expr: &str) -> Result<()> {
         }
         Err(e) => Err(anyhow::anyhow!("Failed to evaluate '{}': {}", expr, e)),
     }
-}
-
-/// Parse a single .tsx/.ts file and dump the HIR as
-/// pretty-printed JSON. Used by the JSX codegen work
-/// to verify what the parser emits — we used to
-/// discover the JSON shape only by reading the
-/// parser source.
-fn run_inspect_hir(path: PathBuf) -> Result<()> {
-    let source = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("read error for {}: {e}", path.display()))?;
-    let is_tsx = path.extension().is_some_and(|e| e == "tsx" || e == "ts");
-    let module = transpile::parser::parse_source(&source, is_tsx)
-        .map_err(|e| anyhow::anyhow!("parse error: {e}"))?;
-    let json = serde_json::to_string_pretty(&module)
-        .map_err(|e| anyhow::anyhow!("serialize error: {e}"))?;
-    println!("{json}");
-    Ok(())
 }
 
 fn print_result(result: &str) {

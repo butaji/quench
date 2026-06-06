@@ -32,36 +32,32 @@ fn run_ink_dev_bordered_example() {
 }
 
 #[test]
-fn hir_render_bordered_example() {
-    // ATOMIC TEST: HIR runtime renders the
+fn dev_render_bordered_example() {
+    // ATOMIC TEST: rquickjs dev path renders the
     // bordered example through the full pipeline.
-    // Note: Uses direct Rust call to render function
-    // instead of invoking binary (which would give test binary path).
     let src = include_str!("../../../examples/ink-bordered/tui/app.tsx");
     let transformed = crate::dev_jsx::transform(src);
     let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
     let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
-    assert!(result.is_ok(), "hir render failed: {:?}", result);
+    assert!(result.is_ok(), "dev render failed: {:?}", result);
     let output = result.unwrap();
     assert!(output.contains("Bordered Example"),
-        "hir-render output missing title: {output:?}");
+        "dev render output missing title: {output:?}");
 }
 
 #[test]
-fn hir_render_aligned_example() {
-    // ATOMIC TEST: HIR runtime renders the
+fn dev_render_aligned_example() {
+    // ATOMIC TEST: rquickjs dev path renders the
     // aligned example correctly.
-    // Note: Uses direct Rust call to render function
-    // instead of invoking binary (which would give test binary path).
     let src = include_str!("../../../examples/ink-aligned/tui/app.tsx");
     let transformed = crate::dev_jsx::transform(src);
     let program = crate::plugin::dev_eval_program_with_lowered(src, &transformed.js);
     let result = crate::plugin::run_ink_dev_with_program(&transformed.js, &program);
-    assert!(result.is_ok(), "hir render failed: {:?}", result);
+    assert!(result.is_ok(), "dev render failed: {:?}", result);
     let output = result.unwrap();
     // Look for "Centered" in the output - the example has a centered title
     assert!(output.contains("Centered") || output.contains("centered"),
-        "hir-render output missing 'Centered': {output:?}");
+        "dev render output missing 'Centered': {output:?}");
 }
 
 // =============================================================================

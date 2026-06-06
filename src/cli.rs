@@ -21,13 +21,6 @@ pub enum Commands {
         name: String,
     },
 
-    /// Render TSX through the HIR runtime (internal,
-    /// used by runts dev plugin).
-    HirRender {
-        /// Path to .tsx file
-        path: PathBuf,
-    },
-
     /// Start development server with hot reload
     Dev {
         /// Project path
@@ -73,13 +66,6 @@ pub enum Commands {
     Eval {
         /// The expression to evaluate
         expr: String,
-    },
-
-    /// Dump the HIR JSON for a single .tsx file.
-    /// Used for debugging the JSX codegen.
-    InspectHir {
-        /// Source file
-        path: PathBuf,
     },
 
     /// Generate Rust code from TypeScript using QuoteCodegen (in-memory)

@@ -55,7 +55,7 @@
     {
       "id": "022",
       "title": "DELETE src/hir_runtime.rs and all HIR interpreter code",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-critical",
       "owner": null,
       "files": ["src/hir_runtime.rs", "src/main.rs", "src/cli.rs"],
