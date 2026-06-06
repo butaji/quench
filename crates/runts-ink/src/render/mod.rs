@@ -1,4 +1,4 @@
-//! The `render()` entry point — boots the Taffy tree,
+//! The `render()` entry point — boots the Yoga tree,
 //! runs the JS reconciler in rquickjs, polls crossterm
 //! events, and draws the result to Ratatui each frame.
 //!
@@ -6,7 +6,7 @@
 //! Architecture:
 //!
 //! 1. **Setup** — `enable_raw_mode`, alternate screen,
-//!    build a Taffy tree, create a Terminal.
+//!    build a Yoga tree, create a Terminal.
 //! 2. **Reconciler** — the user's `.tsx` was compiled by
 //!    runts to a Rust binary that calls
 //!    `runts_ink::render(root_fn, props, options)`.
@@ -15,7 +15,7 @@
 //!    invoke the user's React component, which the JS
 //!    reconciler turns into tree ops.
 //! 3. **Loop** — every tick, call `root_fn` to get the
-//!    current VNode, build the Taffy tree, compute
+//!    current VNode, build the Yoga tree, compute
 //!    layout, draw to Ratatui, poll for key events, and
 //!    route them back to the JS `useInput` handlers.
 //! 4. **Teardown** — when `unmount` is called, restore
@@ -162,7 +162,7 @@ impl Instance {
     /// Re-render the current root. The user calls this
     /// from their main loop after mutating state.
     /// The `RootFn` is invoked to get a fresh
-    /// `VNode`, Taffy recomputes the layout, and the
+    /// `VNode`, Yoga recomputes the layout, and the
     /// new tree is drawn to the terminal.
     pub fn redraw(&mut self, root: &mut RootFn) -> Result<()> {
         let size = self.inner.lock().unwrap().last_size;
@@ -174,8 +174,8 @@ impl Instance {
         };
         let tree = root(Props::new());
         let mut layout = Layout::new();
-        let taffy = TaffyTree::from_vnode(&tree, &mut layout);
-        taffy.compute(
+        let yoga = YogaTree::from_vnode(&tree, &mut layout);
+        yoga.compute(
             &mut layout,
             Size {
                 width: AvailableSpace::Definite(area.width as f32),
@@ -224,7 +224,7 @@ pub type RootFn = std::boxed::Box<dyn FnMut(Props) -> VNode>;
 
 /// Mount a root component and return an `Instance`.
 ///
-/// Boots the Taffy tree, runs the render + input loop in
+/// Boots the Yoga tree, runs the render + input loop in
 /// a background thread, and returns a handle the caller
 /// can use to inspect or tear down the session.
 ///
@@ -258,13 +258,13 @@ pub fn render(
     // 2. Run the root once to get the initial tree.
     let initial_tree = root(initial_props);
 
-    // 3. Build a Taffy tree from the VNode tree. Taffy
+    // 3. Build a Yoga tree from the VNode tree. Yoga
     // computes layout in `compute_layout`. We keep a
-    // mapping from VNode index -> Taffy node id so the
+    // mapping from VNode index -> Yoga node id so the
     // renderer can look up the computed rect for each
     // node.
     let mut layout = Layout::new();
-    let tree = TaffyTree::from_vnode(&initial_tree, &mut layout);
+    let tree = YogaTree::from_vnode(&initial_tree, &mut layout);
 
     // 4. Compute the initial layout.
     tree.compute(
@@ -324,7 +324,7 @@ pub fn render(
 /// Render a VNode tree to a Ratatui `Frame`.
 ///
 /// The function walks the VNode tree, looks up each node
-/// in the Taffy `Layout` to get its computed rectangle,
+/// in the Yoga `Layout` to get its computed rectangle,
 /// and draws the corresponding Ratatui widget.
 pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     // Use terminal size from options, default to 80x24
@@ -333,7 +333,7 @@ pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     let backend = ratatui::backend::TestBackend::new(cols, rows);
     let mut terminal = Terminal::new(backend).context("create test terminal")?;
     let mut layout = Layout::new();
-    let tree = TaffyTree::from_vnode(&root, &mut layout);
+    let tree = YogaTree::from_vnode(&root, &mut layout);
     let area = Rect { x: 0, y: 0, width: cols, height: rows };
     tree.compute(
         &mut layout,
@@ -372,7 +372,7 @@ pub mod layout;
 pub mod measure;
 pub mod tree;
 pub use color::{color_to_ratatui, parse_hex_color};
-pub use layout::{AvailableSpace, Layout, Size, TaffyTree};
+pub use layout::{AvailableSpace, Layout, Size, YogaTree};
 pub use tree::render_tree;
 
 #[cfg(test)]

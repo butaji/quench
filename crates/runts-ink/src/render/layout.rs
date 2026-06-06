@@ -30,7 +30,7 @@ pub struct Layout {
     /// index N in `walk`'s `depth` counter lines
     /// up with index N here.
     pub rects: Vec<(u16, u16, u16, u16)>,
-    /// The root VNode, stored so `TaffyTree::compute`
+    /// The root VNode, stored so `YogaTree::compute`
     /// can re-walk it with the viewport size.
     pub root_vnode: Option<VNode>,
 }
@@ -54,14 +54,14 @@ impl Layout {
 /// The Yoga-based layout tree built from a VNode tree.
 ///
 /// This is a thin wrapper around `flex_layout::compute`.
-pub struct TaffyTree {
+pub struct YogaTree {
     /// Placeholder for API compatibility.
     pub root: (),
 }
 
-impl TaffyTree {
+impl YogaTree {
     /// Build a layout tree from a VNode tree. The
-    /// result is a `TaffyTree` whose only job is
+    /// result is a `YogaTree` whose only job is
     /// to populate `layout.rects` via the yoga-based
     /// flexbox engine.
     pub fn from_vnode(root: &VNode, layout: &mut Layout) -> Self {

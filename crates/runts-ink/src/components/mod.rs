@@ -11,8 +11,8 @@
 //! 1. **Container / layout** fields (only on `Box`).
 //!    These are the full set of Ink flexbox props plus
 //!    position / overflow / border / background. They
-//!    flow through the `taffy_bridge::style_for_box`
-//!    function to Taffy.
+//!    flow through the `yoga_bridge::style_for_box`
+//!    function to Yoga.
 //! 2. **Leaf** fields on `Text` (colour, modifiers) and
 //!    the spacer / static / transform types. The leaf
 //!    types don't carry layout data; the renderer
