@@ -1,64 +1,169 @@
 {
-  "version": "1.14",
+  "version": "2.0",
   "last_updated": "2026-06-06",
-  "project": "runts-ink Comprehensive Parity - Complete Feature Coverage + Unit Tests",
+  "project": "runts-ink 100% Parity — Architecture & Implementation Roadmap",
+  "goal": "100% look&feel parity across deno, runts dev (HIR), and runts compile for all 89 Ink examples",
+  "phases": [
+    {
+      "name": "Phase 0: Unblock",
+      "description": "Fix the one thing preventing every path from running",
+      "tasks": ["020"]
+    },
+    {
+      "name": "Phase 1: Structural Integrity",
+      "description": "Re-enable self-linting and split god files so the codebase can grow without collapsing",
+      "tasks": ["021", "022", "023"]
+    },
+    {
+      "name": "Phase 2: HIR Runtime — The Core Engine",
+      "description": "Implement every missing Ink feature in the HIR interpreter; this is where 100% parity lives or dies",
+      "tasks": ["024", "025", "026", "027"]
+    },
+    {
+      "name": "Phase 3: Compile Path",
+      "description": "Fix the plugin boundary and make runts build produce faithful native binaries",
+      "tasks": ["028", "029"]
+    },
+    {
+      "name": "Phase 4: Verification & Hardening",
+      "description": "One harness, per-symbol diffs, and unit tests for every example",
+      "tasks": ["030", "031", "032"]
+    }
+  ],
   "tasks": [
-    {"id": "017-01", "title": "Architecture Review - Ink Features Analysis", "status": "completed", "priority": "critical", "details": "Reviewed Ink npm package features, identified 89 examples covering all major features"},
-    {"id": "017-02", "title": "Create Comprehensive Ink Feature Examples", "status": "completed", "priority": "high", "details": "89 examples covering all Ink features - verified existing coverage"},
-    {"id": "017-03", "title": "Enhance Parity Test Harness - Full 3-Environment Support", "status": "completed", "priority": "critical", "details": "Created test_parity_v7.sh with per-symbol diff, all 3 environments, cross-platform timeout"},
-    {"id": "017-04", "title": "Add Unit Tests for Complex HIR Runtime Sections", "status": "completed", "priority": "high", "details": "Created hir_runtime_jsx_tests.rs, hir_runtime_hooks_tests.rs, hir_runtime_expr_tests.rs with 100+ tests"},
-    {"id": "017-05", "title": "Run Parity Tests Across All 3 Environments", "status": "completed", "priority": "critical", "details": "Static examples: 100% parity. Interactive examples: raw mode expected. useEffect timing differences noted."},
-    {"id": "017-06", "title": "Fix Any Remaining Issues", "status": "pending", "priority": "high", "details": "Address any failing examples or runtime differences"},
-    {"id": "017-07", "title": "Final Verification and Documentation", "status": "pending", "priority": "high", "details": "Confirm all examples pass, document known differences"},
-    {"id": "017-08", "title": "Commit and Push", "status": "in_progress", "priority": "critical", "details": "Commit all changes with comprehensive message"}
+    {
+      "id": "020",
+      "title": "Fix quote_codegen.rs syntax error — unblock the build",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["src/transpile/hir/quote_codegen.rs"],
+      "acceptance": "cargo build passes with zero errors"
+    },
+    {
+      "id": "021",
+      "title": "Re-enable build.rs linter and mechanically fix all 47 violations",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["build.rs", "src/hir_runtime.rs", "src/transpile/hir/quote_codegen.rs", "src/commands/build/mod.rs", "src/commands/build/source_gen.rs", "crates/runts-fresh/src/plugin.rs", "crates/runts-ink/src/render.rs", "crates/runts-ink/src/components.rs", "crates/runts-ink/src/js_bridge.rs"],
+      "acceptance": "build.rs uncommented, cargo build passes, linter reports 0 violations"
+    },
+    {
+      "id": "022",
+      "title": "Split hir_runtime.rs into a proper interpreter crate",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["src/hir_runtime.rs"],
+      "acceptance": "No file >500 lines; eval_expr, eval_jsx, apply_box_prop each in own module; all existing tests pass"
+    },
+    {
+      "id": "023",
+      "title": "Consolidate 20+ shell scripts into ONE canonical parity harness",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["test_parity*.sh", "run_parity_tests*.sh", "test_ink_parity*.sh"],
+      "acceptance": "Exactly one script (test_parity.sh) remains; parameterized for --env, --examples, --no-compile; old scripts deleted"
+    },
+    {
+      "id": "024",
+      "title": "Implement useState functional updater + useReducer in HIR runtime",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["src/hir_runtime.rs"],
+      "acceptance": "ink-counter example renders initial state with correct count value; setCount(c => c + 1) evaluates the arrow function"
+    },
+    {
+      "id": "025",
+      "title": "Implement real useInput / useApp / useStdin / useFocus stubs in HIR runtime",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["src/hir_runtime.rs"],
+      "acceptance": "All interactive examples render their initial static frame without crashing; useInput returns a no-op function instead of Undefined"
+    },
+    {
+      "id": "026",
+      "title": "Refactor apply_box_prop into a dispatch table or macro",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["src/hir_runtime.rs"],
+      "acceptance": "apply_box_prop reduced to ≤40 lines; all 89 examples still render correctly; complexity ≤10"
+    },
+    {
+      "id": "027",
+      "title": "Extract string/array stdlib polyfills into a reusable HIR stdlib module",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["src/hir_runtime.rs"],
+      "acceptance": "call_string_method and call_array_method live in src/interpreter/stdlib.rs; unit tests for every method (.map, .filter, .reduce, .slice, .trim, .toUpperCase, etc.)"
+    },
+    {
+      "id": "028",
+      "title": "Replace plugin JSON string boundary with typed HIR transfer",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["crates/runts-plugin/src/lib.rs", "src/commands/build/mod.rs"],
+      "acceptance": "Plugin::codegen_module takes &hir::Module instead of &str; zero serde_json round-trips inside the build pipeline"
+    },
+    {
+      "id": "029",
+      "title": "Make runts compile produce working binaries for every static example",
+      "status": "pending",
+      "priority": "P1-high",
+      "owner": null,
+      "files": ["src/commands/build/mod.rs", "crates/runts-ratatui/src/plugin.rs"],
+      "acceptance": "runts build --release on any static example produces a binary that exits 0 and prints the expected text to stdout"
+    },
+    {
+      "id": "030",
+      "title": "Add per-example HIR runtime unit tests for all 89 examples",
+      "status": "pending",
+      "priority": "P2-medium",
+      "owner": null,
+      "files": ["tests/hir_parity/"],
+      "acceptance": "One Rust test per example that reads examples/*/tui/app.tsx, runs render_tsx, and asserts output contains expected strings; coverage ≥90%"
+    },
+    {
+      "id": "031",
+      "title": "Fix hardcoded 80×24 terminal dimensions in tests and HIR runtime",
+      "status": "pending",
+      "priority": "P2-medium",
+      "owner": null,
+      "files": ["src/hir_runtime.rs", "tests/"],
+      "acceptance": "TERMINAL_DEFAULT constant defined once; useWindowSize reads actual terminal size via crossterm or env var fallback"
+    },
+    {
+      "id": "032",
+      "title": "Delete dead code: runts-react crate, disabled imports, unused test script graveyard",
+      "status": "pending",
+      "priority": "P2-medium",
+      "owner": null,
+      "files": ["crates/runts-react/", "Cargo.toml", "test_*.sh"],
+      "acceptance": "cargo build passes; no #[allow(dead_code)] required for deleted modules; workspace members only include compiling crates"
+    }
   ],
   "stats": {
-    "total_examples": 89,
-    "features_to_cover": {
-      "components": ["Box", "Text", "Spacer", "Newline", "Static", "Transform"],
-      "hooks": ["useState", "useEffect", "useContext", "useCallback", "useMemo", "useInput", "useFocus", "useStdin", "useStdout", "useStderr", "useWindowSize", "useApp"],
-      "styles": ["colors", "border", "spacing", "flexbox", "positioning", "display"],
-      "advanced": ["custom components", "fragments", "conditional rendering", "list rendering"]
-    },
-    "unit_tests": 150,
-    "test_files": 3,
-    "test_coverage_target": "100%",
-    "parity_results": {
-      "deno_hir_similarity": "100%",
-      "deno_compile_similarity": "pending",
-      "hir_compile_similarity": "pending",
-      "passed": 0,
-      "failed": 0,
-      "total": 89
-    }
+    "build_errors": 1,
+    "linter_violations": 47,
+    "examples_total": 89,
+    "examples_tested_inline": 15,
+    "test_scripts": 20,
+    "target_test_scripts": 1,
+    "hir_runtime_lines": 3087,
+    "target_max_file_lines": 500
   },
-  "environment_parity": {
-    "deno": "Reference - npm:ink@5",
-    "runts_dev": "HIR runtime - QuickJS/HIR interpreter - verified",
-    "runts_compile": "Rust codegen - pending"
-  },
-  "test_harness": {
-    "script": "test_parity_v7.sh",
-    "features": [
-      "Cross-platform timeout (macOS compatible)",
-      "Per-symbol diff results",
-      "Detailed failure analysis",
-      "All 3 environments (deno, runts dev, runts compile)",
-      "Unit test coverage reporting"
-    ]
-  },
-  "known_issues": [
-    {"issue": "Pre-existing build system has duplicate codegen.rs/codegen/ conflict", "severity": "high", "affects": "Full build"},
-    {"issue": "Lint check fails with 40 violations", "severity": "high", "affects": "Build"},
-    {"issue": "Interactive examples have raw mode error in deno (expected in non-terminal)", "severity": "low", "affects": "Test harness"},
-    {"issue": "useEffect cleanup timing differs between deno and HIR", "severity": "low", "affects": "Examples"}
-  ],
-  "goals": [
-    "100% Ink feature coverage across examples",
-    "100% Deno-HIR parity for static examples",
-    "100% Deno-Compile parity (target: 89/89 examples)",
-    "100% HIR-Compile parity (target: 89/89 examples)",
-    "High unit test coverage for HIR runtime",
-    "Comprehensive test harness"
+  "known_blockers": [
+    "quote_codegen.rs:609 unexpected closing delimiter — prevents cargo build",
+    "hir_runtime.rs eval_expr 356 lines / complexity 171 — cannot add features safely",
+    "apply_box_prop 309 lines / complexity 147 — adding any new CSS prop is copy-paste hell",
+    "useState functional updater not implemented — breaks ink-counter and any stateful example",
+    "20 shell scripts — violates EXECUTE.md 'single script' requirement"
   ]
 }
