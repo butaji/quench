@@ -1,11 +1,11 @@
 //! Route handling code
 
 pub struct RouteHandler<'a> {
-    modules: &'a [runts_plugin::hir::Module],
+    modules: &'a [runts_hir::Module],
 }
 
 impl<'a> RouteHandler<'a> {
-    pub fn new(modules: &'a [runts_plugin::hir::Module]) -> Self {
+    pub fn new(modules: &'a [runts_hir::Module]) -> Self {
         Self { modules }
     }
 
@@ -14,7 +14,7 @@ impl<'a> RouteHandler<'a> {
         let mut handlers = String::new();
         let mut router_calls = String::new();
 
-        let module_by_path: std::collections::HashMap<String, &runts_plugin::hir::Module> =
+        let module_by_path: std::collections::HashMap<String, &runts_hir::Module> =
             self.modules.iter().filter_map(|m| m.source_path.clone().map(|p| (p, m))).collect();
 
         for route in routes {
@@ -63,12 +63,14 @@ impl<'a> RouteHandler<'a> {
         format!("async fn {safe_name}_handler(Path{bind}: Path<({types})>) -> axum::response::Html<String> {{ {render_call} }}\n")
     }
 
-    fn get_route_methods(&self, route: &runts_plugin::RouteInfo, module_by_path: &std::collections::HashMap<String, &runts_plugin::hir::Module>) -> Vec<String> {
+    fn get_route_methods(&self, route: &runts_plugin::RouteInfo, module_by_path: &std::collections::HashMap<String, &runts_hir::Module>) -> Vec<String> {
         let route_file = route.file_path.as_str();
         module_by_path.get(route_file).cloned()
             .or_else(|| module_by_path.values().find(|m| m.source_path.as_deref().map(|p| p.contains(route_file) || route_file.contains(p)).unwrap_or(false)).cloned())
-            .and_then(|m| m.items_json.as_ref())
-            .map(Self::extract_handler_methods)
+            .map(|m| {
+                let items_json = serde_json::to_value(&m.items).ok();
+                items_json.map(|v| Self::extract_handler_methods(&v)).unwrap_or_default()
+            })
             .unwrap_or_default()
     }
 

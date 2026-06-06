@@ -92,12 +92,17 @@ fn test_ratatui_plugin_help() {
 #[test]
 fn test_codegen_module_returns_valid_rust() {
     let plugin = ratatui_plugin();
-    // Opaque JSON that's not a valid HIR (wrong
-    // shape) — exercises the codegen-stub fallback
-    // path. The fallback emits a `Hello from
-    // Ratatui!` placeholder wrapped in the runts
+    // Empty HIR module — exercises the codegen-stub fallback
+    // path. The fallback emits a placeholder wrapped in the runts
     // Ink codegen module wrapper.
-    let result = plugin.codegen_module(r#"{"type":"Text","props":{"text":"hi"}}"#);
+    let module = runts_hir::Module {
+        source: String::new(),
+        source_path: None,
+        route_info: None,
+        items: vec![],
+        types: std::collections::HashMap::new(),
+    };
+    let result = plugin.codegen_module(&module);
     assert!(result.is_ok());
     let code = result.unwrap();
     assert!(code.contains("fn main"));

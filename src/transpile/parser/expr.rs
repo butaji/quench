@@ -331,6 +331,9 @@ pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
         Expression::ObjectExpression(o)=>conv_object(o),
         Expression::TemplateLiteral(t)=>conv_template(t),
         Expression::FunctionExpression(f)=>conv_func_expr(f),
+        Expression::JSXElement(elem)=>Ok(hir::Expr::JSX(super::jsx::convert_jsx_element(elem))),
+        Expression::JSXFragment(frag)=>Ok(hir::Expr::JSX(super::jsx::convert_jsx_fragment(frag))),
+        Expression::ParenthesizedExpression(p)=>convert_expr(&p.expression),
         Expression::RegExpLiteral(r)=>Ok(hir::Expr::RegExp{pattern:r.regex.pattern.text.to_string(),flags:r.regex.flags.to_string()}),
         Expression::SequenceExpression(s)=>{
             if let Some(last)=s.expressions.last(){convert_expr(last)}else{Err(())}

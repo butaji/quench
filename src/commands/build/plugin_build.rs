@@ -11,7 +11,6 @@ use crate::config::Config;
 use crate::plugin::get_plugin;
 use crate::transpile::hir;
 use crate::transpile::parser::parse_source;
-use runts_plugin::hir::Module as PluginModule;
 use runts_plugin::RouteInfo;
 
 use super::{build_dir, find_ts_files, resolve_project_root, BuildResult};
@@ -51,7 +50,7 @@ pub async fn run_plugin_build(
     let route_map = scan_routes_for_plugin(&routes_dir, &routes_dir);
     info!("Found {} routes", route_map.len());
 
-    let parsed: Vec<(PathBuf, runts_plugin::hir::Module)> = {
+    let mut parsed: Vec<(PathBuf, runts_hir::Module)> = {
         use crate::transpile::parallel::FileToParse;
         let inputs: Vec<FileToParse> = ts_files
             .iter()
@@ -69,51 +68,34 @@ pub async fn run_plugin_build(
             })
             .collect();
         let results = crate::transpile::parallel::parse_files_parallel(inputs);
-        let mut out: Vec<(PathBuf, runts_plugin::hir::Module)> =
-            Vec::with_capacity(ts_files.len());
+        let mut out = Vec::with_capacity(ts_files.len());
         for (path, result) in ts_files.iter().cloned().zip(results.into_iter()) {
-            let base = result.with_context(|| format!("failed to parse {path:?}"))?;
-            let value = serde_json::to_value(&base)
-                .with_context(|| format!("failed to serialise parsed module for {path:?}"))?;
-            let hir: runts_plugin::hir::Module = serde_json::from_value(value)
-                .with_context(|| format!("failed to deserialise parsed module for {path:?}"))?;
-            out.push((path, hir));
+            let mut module = result.with_context(|| format!("failed to parse {path:?}"))?;
+            let rel_path = path
+                .strip_prefix(&project_root)
+                .with_context(|| format!("Failed to get relative path for {:?}", path))?;
+            let rel_path_str = rel_path.to_string_lossy().to_string();
+
+            let route_key = rel_path
+                .strip_prefix(Path::new("routes"))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| rel_path_str.clone());
+            let route_info = route_map.get(&route_key).cloned();
+
+            module.source_path = Some(rel_path_str);
+            module.route_info = route_info;
+            out.push((path, module));
         }
         out
     };
 
-    let mut plugin_modules: Vec<PluginModule> = Vec::new();
-    for (file, hir_module) in &parsed {
+    let mut plugin_modules: Vec<runts_hir::Module> = Vec::new();
+    for (file, module) in &mut parsed {
+        let rust_code = plugin.codegen_module(module)?;
+
         let rel_path = file
             .strip_prefix(&project_root)
             .with_context(|| format!("Failed to get relative path for {:?}", file))?;
-        let rel_path_str = rel_path.to_string_lossy().to_string();
-
-        let route_key = rel_path
-            .strip_prefix(Path::new("routes"))
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| rel_path_str.clone());
-        let route_info = route_map.get(&route_key).cloned();
-
-        let hir_json = serde_json::to_string(&hir_module)
-            .with_context(|| format!("Failed to serialize HIR for {:?}", file))?;
-        let mut hir_value: serde_json::Value = serde_json::from_str(&hir_json)?;
-        if let Some(obj) = hir_value.as_object_mut() {
-            obj.insert("source_path".to_string(), serde_json::json!(rel_path_str));
-            if let Some(ref ri) = route_info {
-                obj.insert(
-                    "route_info".to_string(),
-                    serde_json::json!({
-                        "path": ri.path,
-                        "methods": ri.methods,
-                        "file_path": ri.file_path
-                    }),
-                );
-            }
-        }
-        let hir_with_plugin_data = serde_json::to_string(&hir_value)?;
-        let rust_code = plugin.codegen_module(&hir_with_plugin_data)?;
-
         let rel_path_stripped = rel_path.strip_prefix(Path::new("routes/")).unwrap_or(rel_path);
         let file_path: String = rel_path_stripped
             .components()
@@ -133,15 +115,7 @@ pub async fn run_plugin_build(
         }
         fs::write(&out_path, rust_code)?;
 
-        let items_json = hir_value
-            .get("items_json")
-            .or_else(|| hir_value.get("items"))
-            .cloned();
-        let pm = PluginModule::new()
-            .with_source_path(rel_path_str)
-            .with_route_info(route_info.clone())
-            .with_items_json(items_json);
-        plugin_modules.push(pm);
+        plugin_modules.push(std::mem::take(module));
     }
 
     let entry_code = plugin.codegen_entry(&plugin_modules)?;
@@ -258,40 +232,9 @@ fn format_one_dep(dep: &runts_plugin::CargoDep) -> Option<String> {
 }
 
 /// Find runts-lib path - returns absolute path
-fn find_runts_lib_path(project_root: &Path) -> PathBuf {
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidate = exe_dir.join("crates/runts-lib");
-            if candidate.exists() {
-                return candidate.canonicalize().unwrap_or(candidate);
-            }
-            for ancestor in exe_dir.ancestors() {
-                let candidate = ancestor.join("crates/runts-lib");
-                if candidate.exists() {
-                    return candidate.canonicalize().unwrap_or(candidate);
-                }
-            }
-        }
-    }
-
-    let candidate = project_root.join("crates/runts-lib");
-    if candidate.exists() {
-        return candidate.canonicalize().unwrap_or(candidate);
-    }
-
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let manifest_path = PathBuf::from(manifest_dir);
-    let runts_lib_from_manifest = manifest_path
-        .parent()
-        .map(|p| p.join("runts-lib"))
-        .unwrap_or_else(|| manifest_path.join("runts-lib"));
-    if runts_lib_from_manifest.exists() {
-        return runts_lib_from_manifest
-            .canonicalize()
-            .unwrap_or(runts_lib_from_manifest);
-    }
-
-    PathBuf::from("crates/runts-lib")
+fn find_runts_lib_path(_project_root: &Path) -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest.join("crates/runts-lib")
 }
 
 /// Parse TypeScript source to HIR module

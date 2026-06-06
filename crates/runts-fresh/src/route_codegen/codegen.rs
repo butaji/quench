@@ -22,7 +22,7 @@ impl FreshCodegen {
         leaf == "_middleware.ts" || leaf == "_middleware.tsx"
     }
 
-    pub fn codegen_middleware_module(&self, _hir: &runts_plugin::hir::Module) -> Result<String, runts_plugin::PluginError> {
+    pub fn codegen_middleware_module(&self, _hir: &runts_hir::Module) -> Result<String, runts_plugin::PluginError> {
         let safe_name = self.source_path
             .rsplit_once('/').map(|(_, l)| l).unwrap_or(&self.source_path)
             .replace(".ts", "").replace(".tsx", "");

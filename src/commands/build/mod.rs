@@ -19,7 +19,6 @@ use crate::config::Config;
 use crate::plugin::get_plugin;
 use crate::transpile::hir;
 use crate::transpile::parser::parse_source;
-use runts_plugin::hir::Module as PluginModule;
 use runts_plugin::RouteInfo;
 use serde::{Deserialize, Serialize};
 

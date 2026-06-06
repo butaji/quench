@@ -75,12 +75,11 @@ impl RatatuiPlugin {
     }
 
     /// Try lowering the first module's HIR to a real runts-ink expression.
-    fn first_ink_codegen(modules: &[runts_plugin::hir::Module]) -> Option<String> {
+    fn first_ink_codegen(modules: &[runts_hir::Module]) -> Option<String> {
         for module in modules {
-            if let Some(items_json) = &module.items_json {
-                if let Some(code) = codegen::try_codegen_jsx(items_json) {
-                    return Some(code);
-                }
+            let items_json = serde_json::to_value(&module.items).ok()?;
+            if let Some(code) = codegen::try_codegen_jsx(&items_json) {
+                return Some(code);
             }
         }
         None
@@ -96,15 +95,13 @@ impl Plugin for RatatuiPlugin {
         "Ratatui TUI framework"
     }
 
-    fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError> {
-        let hir: runts_plugin::hir::Module = serde_json::from_str(hir_str).map_err(|e| {
-            PluginError::codegen("ratatui", "unknown", format!("failed to parse HIR: {e}"))
+    fn codegen_module(&self, module: &runts_hir::Module) -> Result<String, PluginError> {
+        let source_path = module.source_path.as_deref().unwrap_or("unknown");
+        let items_json = serde_json::to_value(&module.items).map_err(|e| {
+            PluginError::codegen("ratatui", source_path, format!("failed to serialize HIR items: {e}"))
         })?;
-        let source_path = hir.source_path.as_deref().unwrap_or("unknown");
-        if let Some(items_json) = &hir.items_json {
-            if let Some(code) = Self::try_codegen_jsx(items_json) {
-                return Ok(code);
-            }
+        if let Some(code) = Self::try_codegen_jsx(&items_json) {
+            return Ok(code);
         }
         Self::codegen_stub_with_source(source_path)
     }
@@ -138,7 +135,7 @@ impl Plugin for RatatuiPlugin {
         ]
     }
 
-    fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
+    fn codegen_entry(&self, modules: &[runts_hir::Module]) -> Result<String, PluginError> {
         // Try the new runts-ink JSX codegen first.
         if let Some(code) = Self::first_ink_codegen(modules) {
             return Ok(code);
@@ -151,7 +148,7 @@ impl Plugin for RatatuiPlugin {
         for module in modules {
             if let Some(source_path) = &module.source_path {
                 if source_path.ends_with(".tsx") || source_path.ends_with(".rs") {
-                    if module.items_json.is_some() {
+                    if !module.items.is_empty() {
                         has_widgets = true;
                         widget_count += 1;
                     }
@@ -235,30 +232,6 @@ impl DevState for RatatuiDevState {
 
 /// Locate the `runts-ink` crate on disk.
 fn find_runts_ink_path() -> std::path::PathBuf {
-    let rel = "crates/runts-ink";
-    // 1. Walk up from the runts exe dir.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(hit) = find_ancestor_with(&exe, rel) {
-            return hit;
-        }
-    }
-    // 2. Walk up from the current working directory.
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(hit) = find_ancestor_with(&cwd, rel) {
-            return hit;
-        }
-    }
-    // 3. Fallback: leave as relative path.
-    std::path::PathBuf::from(rel)
-}
-
-/// Walk `start`'s ancestors, return the canonicalized `dir.join(rel)` whose `Cargo.toml` exists.
-fn find_ancestor_with(start: &std::path::Path, rel: &str) -> Option<std::path::PathBuf> {
-    for dir in start.ancestors() {
-        let candidate = dir.join(rel);
-        if candidate.join("Cargo.toml").exists() {
-            return Some(candidate.canonicalize().unwrap_or(candidate));
-        }
-    }
-    None
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest.parent().map(|p| p.join("runts-ink")).unwrap_or_else(|| manifest.join("runts-ink"))
 }
