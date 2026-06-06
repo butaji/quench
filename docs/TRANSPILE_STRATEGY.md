@@ -1013,7 +1013,7 @@ function Counter(props) {
 
 ## 8. Dev Mode vs Production Mode
 
-### Dev Mode (HIR Interpreter)
+### Dev Mode (rquickjs — HIR Interpreter REMOVED)
 
 ```
 Request ──▶ Axum ──▶ Route match ──▶ Load HIR ──▶ Eval component

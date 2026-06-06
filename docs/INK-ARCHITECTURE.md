@@ -412,35 +412,28 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
 7. **Add `<Transform>`** by routing through rquickjs
    in the reconciler bridge.
 
-## Current State (v0.1)
+## Current State (v4.1)
 
 The `runts-ink` crate is in the workspace. It has:
 - Component types (`Box`, `Text`, `Newline`, `Spacer`,
-  `Static`, `Transform`).
-- VNode tree.
-- Props (JSON-bag).
-- `render()` entry point that boots a Ratatui terminal
-  and runs a render loop.
-- Yoga-based flexbox layout (same engine Ink uses).
-- Ink keyboard flags (`Key::from_crossterm`).
-- 49 unit tests passing.
+  `Static`, `Transform`, `Fragment`).
+- VNode tree with Yoga layout.
+- Full `js_bridge.rs` — Box props, Text props, hook dispatch.
+- rquickjs dev path: TSX → oxc_parser → JS bundle → rquickjs
+  eval with bridge globals → VNode → Yoga → Ratatui.
+- Interactive hooks: `useInput`, `useApp`, `useStdin`,
+  `useStdout`, `useStderr`, `useWindowSize`, `useFocus`,
+  `useFocusManager`, `useCursor`, `useAnimation`.
+- Crossterm event routing to JS callbacks.
+- 59 unit tests passing (`cargo test -p runts-ink`).
 
 **What is missing:**
 
-- `render_ink_tree()` reads Yoga-computed rects from
-  `yoga::Node::get_layout()` to position children. **The current
-  walker (`render.rs::walk`) falls back to equal-stacking
-  and ignores padding/margin.** This is the next gap to
-  close.
-- The hook list (`useApp`, `useStdin`, `useStdout`,
-  `useStderr`, `useWindowSize`, `useFocus`,
-  `useFocusManager`, `useCursor`, `useAnimation`) is
-  not yet implemented. Only `useInput` is partially
-  covered by the keyboard event types.
-- The rquickjs JS runtime is not fully wired up — the
-  current path is pure-Rust component trees.
-- The runts-ratatui plugin recognises Ink JSX tags
-  (`<Box>`, `<Text>`, `<Newline>`, `<Spacer>`,
-  `<Static>`, `<Transform>`) but the recursive
-  child-layout codegen for `<Box>` is sketched, not
-  exercised.
+- `measureElement` / `useBoxMetrics` — bridge stubs exist but
+  not wired to Yoga layout readback.
+- `usePaste` — bracketed paste mode not enabled in crossterm loop.
+- `useRef` — not implemented in bridge.
+- 100% parity verification against all 88 Ink examples
+  (pending `scripts/parity.sh`).
+- Compile path (`runts build --release`) produces binaries but
+  integration tests are incomplete.

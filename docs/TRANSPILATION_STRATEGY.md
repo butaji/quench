@@ -1,5 +1,7 @@
 # runts Transpilation & Runtime Strategy
 
+> **⚠️ STALE DOCUMENT:** This doc describes the pre-rquickjs architecture (HIR interpreter, custom parser, Axum dev server). The current dev engine is **rquickjs** with **Yoga** layout. Update in progress — see `tasks/031-update-docs.md`.
+>
 > **Version:** 0.5.0  
 > **Core principle:** TS/TSX → HIR → In-memory Rust codegen → Native binary. Zero JS runtime.
 
@@ -247,7 +249,7 @@ pub fn counter(props: CounterProps) -> VNode {
 
 ## 5. Runtime Architecture
 
-### 5.1 Development Mode: HIR Interpreter
+### 5.1 Development Mode: rquickjs (HIR Interpreter REMOVED)
 
 ```
 File change ──▶ Parse to HIR ──▶ Update module registry ──▶ Re-render
