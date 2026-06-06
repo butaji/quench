@@ -662,14 +662,21 @@ fn color_to_ratatui(c: &Color) -> ratatui::style::Color {
 
 fn ansi_to_ratatui(c: &Color) -> Option<ratatui::style::Color> {
     use ratatui::style::Color as R;
-    match c {
-        Color::Black | Color::Red => Some(R::Black),
-        Color::Green | Color::Yellow => Some(R::Green),
-        Color::Blue | Color::Magenta => Some(R::Blue),
-        Color::Cyan | Color::White => Some(R::Cyan),
-        Color::Gray => Some(R::DarkGray),
-        _ => None,
-    }
+    // Map Ink Color enum variants to Ratatui Color variants
+    // Returns None for colors that don't have a direct Ratatui mapping
+    let rat_color = match c {
+        Color::Black => R::Black,
+        Color::Red => R::Red,
+        Color::Green => R::Green,
+        Color::Yellow => R::Yellow,
+        Color::Blue => R::Blue,
+        Color::Magenta => R::Magenta,
+        Color::Cyan => R::Cyan,
+        Color::White => R::White,
+        Color::Gray => R::DarkGray,
+        _ => return None,
+    };
+    Some(rat_color)
 }
 
 fn parse_hex_color(s: &str) -> Option<ratatui::style::Color> {
