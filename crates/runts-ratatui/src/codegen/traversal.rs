@@ -2,9 +2,7 @@
 
 /// Find JSX expression in a body
 pub(crate) fn find_jsx_in_body(body: &serde_json::Value) -> Option<serde_json::Value> {
-    eprintln!("FIND_JSX_IN_BODY: is_array={}", body.is_array());
     if let Some(stmts) = body.as_array() {
-        eprintln!("FIND_JSX_IN_BODY: stmts len={}", stmts.len());
         return find_jsx_in_stmts(stmts);
     }
     if is_jsx_expr(body) {
@@ -24,7 +22,6 @@ pub(crate) fn find_jsx_in_stmts(stmts: &[serde_json::Value]) -> Option<serde_jso
 
 pub(crate) fn find_jsx_in_stmt(stmt: &serde_json::Value) -> Option<serde_json::Value> {
     let kind = stmt.get("kind")?.as_str()?;
-    eprintln!("FIND_JSX_IN_STMT kind={}", kind);
     match kind {
         "Return" => find_jsx_in_return(stmt),
         "Expr" => find_jsx_in_expr_stmt(stmt),
@@ -36,14 +33,10 @@ pub(crate) fn find_jsx_in_stmt(stmt: &serde_json::Value) -> Option<serde_json::V
 
 fn find_jsx_in_return(stmt: &serde_json::Value) -> Option<serde_json::Value> {
     let arg = stmt.get("arg")?;
-    eprintln!("FIND_JSX_IN_RETURN arg_kind={:?}", arg.as_object().and_then(|o| o.keys().next()));
     let unwrapped = unwrap_jsx(arg);
-    eprintln!("UNWRAPPED has opening={}", unwrapped.get("opening").is_some());
     if is_jsx_expr(&unwrapped) {
-        eprintln!("IS_JSX_EXPR true, returning Some");
         return Some(unwrapped);
     }
-    eprintln!("IS_JSX_EXPR false");
     find_jsx_in_expr(&unwrapped)
 }
 
@@ -91,7 +84,7 @@ fn find_jsx_in_cond(expr: &serde_json::Value) -> Option<serde_json::Value> {
 }
 
 fn is_jsx_expr(expr: &serde_json::Value) -> bool {
-    expr.get("JSX").is_some()
+    expr.get("JSX").is_some() || expr.get("opening").is_some()
 }
 
 fn unwrap_jsx(expr: &serde_json::Value) -> serde_json::Value {
