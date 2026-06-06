@@ -91,10 +91,10 @@
     {
       "id": "026",
       "title": "Implement interactive hooks in js_bridge.rs + crossterm event loop",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "owner": null,
-      "files": ["crates/runts-ink/src/js_bridge.rs", "crates/runts-ink/src/render.rs"],
+      "files": ["crates/runts-ink/src/js_bridge/hooks.rs", "crates/runts-ink/src/js_bridge/mod.rs", "src/transpile/js_bundle.rs", "src/commands/dev/ink.rs", "src/commands/dev/mod.rs"],
       "acceptance": "useInput, useApp, useStdin, useStdout, useStderr, useWindowSize, useFocus, useCursor, useAnimation wired through bridge. crossterm events routed to JS callbacks. Interactive examples work."
     },
     {

@@ -72,6 +72,6 @@ pub use events::{
     FocusId, InputEvent, Key, MouseEvent, PasteEvent, ResizeEvent, WindowSize,
 };
 pub use props::Props;
-pub use render::{render, render_to_string, Instance, RenderOptions, RootFn};
+pub use render::{draw_vnode, render, render_to_string, Instance, RenderOptions, RootFn};
 pub use style::{BorderStyle, Borders, Display, Overflow, Position, Wrap};
 pub use vnode::{VNode, VNodeContent};

@@ -25,6 +25,7 @@
 //! complexity at the cost of one extra conversion
 //! per build. For v0.1 the simplicity wins.
 
+pub mod hooks;
 mod box_props;
 mod parsers;
 mod text_props;
@@ -140,7 +141,7 @@ fn vnode_to_js_children<'js>(
 /* JS object -> VNode                                                         */
 /* -------------------------------------------------------------------------- */
 
-fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
+pub fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
     let obj = v.as_object().ok_or_else(|| rquickjs::Error::FromJs {
         from: "value",
         to: "VNode",
@@ -157,6 +158,15 @@ fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
     }
     if obj.get::<_, Object>("Spacer").is_ok() {
         return Ok(VNode::from(Spacer::new()));
+    }
+    if let Ok(inner) = obj.get::<_, Object>("Static") {
+        return vnode_from_js_static(ctx, &inner);
+    }
+    if let Ok(inner) = obj.get::<_, Object>("Transform") {
+        return vnode_from_js_transform(ctx, &inner);
+    }
+    if let Ok(inner) = obj.get::<_, Object>("Fragment") {
+        return vnode_from_js_fragment(ctx, &inner);
     }
     Err(rquickjs::Error::FromJs {
         from: "object",
@@ -194,6 +204,51 @@ fn vnode_from_js_text(inner: &Object<'_>) -> JsResult<VNode> {
     Ok(VNode::from(t))
 }
 
+fn vnode_from_js_static<'js>(
+    ctx: &Ctx<'js>,
+    inner: &Object<'js>,
+) -> JsResult<VNode> {
+    let children: Object = inner
+        .get("__children")
+        .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
+    let mut s = crate::components::Static::new();
+    for i in 0..children.len() {
+        if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) {
+            if let Ok(c) = vnode_from_js(ctx, &child) {
+                s = s.child(c);
+            }
+        }
+    }
+    Ok(VNode::from(s))
+}
+
+fn vnode_from_js_transform<'js>(
+    ctx: &Ctx<'js>,
+    inner: &Object<'js>,
+) -> JsResult<VNode> {
+    let child: Value = inner.get("__child")?;
+    let c = vnode_from_js(ctx, &child)?;
+    Ok(VNode::from(crate::components::Transform::new(c)))
+}
+
+fn vnode_from_js_fragment<'js>(
+    ctx: &Ctx<'js>,
+    inner: &Object<'js>,
+) -> JsResult<VNode> {
+    let children: Object = inner
+        .get("__children")
+        .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
+    let mut vnodes = Vec::new();
+    for i in 0..children.len() {
+        if let Ok(child) = children.get::<_, Value>(i.to_string().as_str()) {
+            if let Ok(c) = vnode_from_js(ctx, &child) {
+                vnodes.push(c);
+            }
+        }
+    }
+    Ok(VNode::from(VNodeContent::Fragment(vnodes)))
+}
+
 /* -------------------------------------------------------------------------- */
 /* Bridge installation                                                        */
 /* -------------------------------------------------------------------------- */
@@ -205,7 +260,8 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     let globals = ctx.globals();
     let runts_ink = Object::new(ctx.clone())?;
     install_functions(ctx.clone(), &runts_ink)?;
-    globals.set("runts_ink", runts_ink)
+    globals.set("runts_ink", runts_ink)?;
+    hooks::install(ctx)
 }
 
 fn install_functions<'js>(ctx: Ctx<'js>, runts_ink: &Object<'js>) -> JsResult<()> {

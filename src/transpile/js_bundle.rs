@@ -67,15 +67,16 @@ fn postprocess_bundle(js: &str) -> String {
     let js = rewrite_ink_imports(&js);
     let js = strip_react_import(&js);
     let js = strip_remaining_imports(&js);
-    let mut out = String::with_capacity(js.len() + REACT_SHIM.len() + 64);
+    let mut out = String::with_capacity(js.len() + REACT_SHIM.len() + 256);
     out.push_str(REACT_SHIM);
     out.push('\n');
     out.push_str(&js);
     if let Some(name) = default_name {
-        out.push_str("\nvar __runts_default = ");
+        out.push_str("\nvar __runts_default = React._withHooks(");
         out.push_str(&name);
-        out.push(';');
+        out.push_str(");");
     }
+    out.push_str(POST_SHIM);
     out
 }
 
@@ -166,13 +167,29 @@ fn rewrite_ink_imports(js: &str) -> String {
     .to_string()
 }
 
+static INK_HOOKS: &[&str] = &[
+    "useInput",
+    "useApp",
+    "useStdin",
+    "useStdout",
+    "useStderr",
+    "useWindowSize",
+    "useFocus",
+    "useFocusManager",
+    "useCursor",
+    "useAnimation",
+];
+
 fn ink_import_to_const(spec: &str) -> String {
-    if let Some(pos) = spec.find(" as ") {
-        let orig = spec[..pos].trim();
-        let alias = spec[pos + 4..].trim();
-        format!(r#"const {} = "{}";"#, alias, orig)
+    let (orig, alias) = if let Some(pos) = spec.find(" as ") {
+        (spec[..pos].trim(), spec[pos + 4..].trim())
     } else {
-        format!(r#"const {} = "{}";"#, spec, spec)
+        (spec, spec)
+    };
+    if INK_HOOKS.contains(&orig) {
+        format!(r#"const {} = runts_ink_hooks.{};"#, alias, orig)
+    } else {
+        format!(r#"const {} = "{}";"#, alias, orig)
     }
 }
 
@@ -189,26 +206,156 @@ fn strip_remaining_imports(js: &str) -> String {
     re.replace_all(js, "").to_string()
 }
 
-const REACT_SHIM: &str = r#"var React = {
-    createElement: function(type, props, ...children) {
+const REACT_SHIM: &str = r#"var React = (function() {
+    var currentHooks = null;
+    var currentIdx = 0;
+
+    function useState(initial) {
+        var idx = currentIdx++;
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = typeof initial === 'function' ? initial() : initial;
+        }
+        var val = currentHooks[idx];
+        function setState(v) {
+            currentHooks[idx] = v;
+        }
+        return [val, setState];
+    }
+
+    function useEffect(fn, deps) {
+        var idx = currentIdx++;
+        var old = currentHooks[idx];
+        if (!old || !depsEqual(old.deps, deps)) {
+            currentHooks[idx] = { deps: deps };
+            __runts_effects.push(fn);
+            __runts_has_effects = true;
+        }
+    }
+
+    function useCallback(fn, deps) {
+        var idx = currentIdx++;
+        var old = currentHooks[idx];
+        if (!old || !depsEqual(old.deps, deps)) {
+            currentHooks[idx] = { deps: deps, cb: fn };
+        }
+        return currentHooks[idx].cb;
+    }
+
+    function useMemo(fn, deps) {
+        var idx = currentIdx++;
+        var old = currentHooks[idx];
+        if (!old || !depsEqual(old.deps, deps)) {
+            currentHooks[idx] = { deps: deps, value: fn() };
+        }
+        return currentHooks[idx].value;
+    }
+
+    function createContext(defaultValue) {
+        return { _defaultValue: defaultValue, Provider: function(p) { return p.children; } };
+    }
+
+    function useContext(ctx) {
+        return ctx._defaultValue;
+    }
+
+    function depsEqual(a, b) {
+        if (!a || !b || a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+        return true;
+    }
+
+    function withHooks(fn) {
+        if (fn.__withHooks) return fn.__withHooks;
+        var hooks = [];
+        var wrapped = function(props) {
+            currentHooks = hooks;
+            currentIdx = 0;
+            return fn(props);
+        };
+        fn.__withHooks = wrapped;
+        wrapped.__withHooks = wrapped;
+        return wrapped;
+    }
+
+    function flatten(arr) {
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+            if (Array.isArray(arr[i])) {
+                out.push.apply(out, flatten(arr[i]));
+            } else if (arr[i] != null) {
+                out.push(arr[i]);
+            }
+        }
+        return out;
+    }
+
+    function createElement(type, props, ...children) {
         props = props || {};
-        if (children.length > 0) {
+        children = flatten(children);
+        if (children.length === 1) {
+            props.children = children[0];
+        } else if (children.length > 1) {
             props.children = children;
         }
         if (typeof type === 'function') {
-            return type(props);
+            if (!type.__withHooks) type.__withHooks = withHooks(type);
+            return type.__withHooks(props);
         }
         if (type === 'Box') return runts_ink.box(props);
         if (type === 'Text') {
-            var content = children.length > 0 ? String(children[0]) : '';
+            var parts = [];
+            for (var i = 0; i < children.length; i++) {
+                var c = children[i];
+                if (typeof c === 'string' || typeof c === 'number') parts.push(String(c));
+            }
             delete props.children;
-            return runts_ink.text(content, props);
+            return runts_ink.text(parts.join(''), props);
         }
         if (type === 'Newline') return runts_ink.newline();
         if (type === 'Spacer') return runts_ink.spacer();
+        if (type === 'Fragment') return { Fragment: { __children: children } };
         return runts_ink.box(props);
     }
-};"#;
+
+    return {
+        createElement: createElement,
+        useState: useState,
+        useEffect: useEffect,
+        useCallback: useCallback,
+        useMemo: useMemo,
+        createContext: createContext,
+        useContext: useContext,
+        Fragment: 'Fragment',
+        _withHooks: withHooks
+    };
+})();
+
+var useState = React.useState;
+var useEffect = React.useEffect;
+var useCallback = React.useCallback;
+var useMemo = React.useMemo;
+var createContext = React.createContext;
+var useContext = React.useContext;"#;
+
+const POST_SHIM: &str = r#"
+var process = process || { exit: function(code) { __runts_exit = true; __runts_exit_code = code || 0; } };
+var __runts_effects = [];
+var __runts_has_effects = false;
+function __runts_render_with_effects(props) {
+    var vnode = __runts_default(props || {});
+    var guard = 0;
+    while (__runts_has_effects && guard < 10) {
+        __runts_has_effects = false;
+        var effects = __runts_effects;
+        __runts_effects = [];
+        for (var i = 0; i < effects.length; i++) {
+            if (typeof effects[i] === 'function') effects[i]();
+        }
+        vnode = __runts_default(props || {});
+        guard++;
+    }
+    return vnode;
+}"#;
 
 #[cfg(test)]
 mod tests {
@@ -230,7 +377,7 @@ export default function App() {
         assert!(js.contains("React.createElement"));
         assert!(js.contains(r#"const Box = "Box";"#));
         assert!(js.contains(r#"const Text = "Text";"#));
-        assert!(js.contains("var __runts_default = App;"));
+        assert!(js.contains("var __runts_default = React._withHooks(App);"));
         assert!(!js.contains("import "));
     }
 

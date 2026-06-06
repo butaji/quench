@@ -326,6 +326,30 @@ pub fn render(
 /// The function walks the VNode tree, looks up each node
 /// in the Yoga `Layout` to get its computed rectangle,
 /// and draws the corresponding Ratatui widget.
+/// Draw a `VNode` tree to any `ratatui::Backend`.
+///
+/// Builds the Yoga tree, computes layout, and draws the
+/// result to the supplied terminal in a single frame.
+pub fn draw_vnode<B: ratatui::backend::Backend>(
+    vnode: &VNode,
+    terminal: &mut Terminal<B>,
+    area: Rect,
+) -> Result<()> {
+    let mut layout = Layout::new();
+    let tree = YogaTree::from_vnode(vnode, &mut layout);
+    tree.compute(
+        &mut layout,
+        Size {
+            width: AvailableSpace::Definite(area.width as f32),
+            height: AvailableSpace::Definite(area.height as f32),
+        },
+    );
+    terminal
+        .draw(|frame| tree::render_tree(vnode, &layout, frame, area))
+        .context("draw vnode")?;
+    Ok(())
+}
+
 pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     // Use terminal size from options, default to 80x24
     let cols = options.columns.max(1);
