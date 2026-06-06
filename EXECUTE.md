@@ -3,7 +3,7 @@
 > **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).
 > **HIR interpreter:** DELETED. Do not restore.
 > **Taffy:** Being removed. Yoga is the sole layout engine.
-> **Goal:** 100% look&feel parity across 3 environments for all 89 Ink examples.
+> **Goal:** 100% look&feel parity across 3 environments for all 88 Ink examples.
 
 ---
 
@@ -64,7 +64,7 @@ Execute in this order:
 2. **Remove Taffy.** Delete the Taffy module and feature flag. Make Yoga the default and only layout feature in `Cargo.toml`. Strip all `#[cfg(feature = "taffy")]` conditionals.
 3. **Build the TSX→JS transpiler.** Use `oxc_codegen` (already in deps). It must: (a) desugar JSX to `React.createElement`, (b) erase TS type annotations, (c) rewrite `import { Box, Text } from 'ink'` to bridge globals.
 4. **Wire `runts dev` to rquickjs.** The dev command should: parse `.tsx` → transpile to JS → create rquickjs context → inject `js_bridge.rs` globals → inject React shim → eval bundle → call `renderToString()` → print output.
-5. **Complete the JS bridge.** Every prop used in any of the 89 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
+5. **Complete the JS bridge.** Every prop used in any of the 88 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
 6. **Wire interactive hooks.** `useInput`, `useApp`, `useFocus`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). Crossterm events route to JS callbacks.
 
 **Acceptance per step:**
@@ -77,7 +77,7 @@ Execute in this order:
 ---
 
 ### Phase 2: Compile + Verification
-**Goal:** `runts build --release` produces working binaries. One parity harness runs all 89 examples.
+**Goal:** `runts build --release` produces working binaries. One parity harness runs all 88 examples.
 
 - **Fix the compile path.** Replace the plugin JSON string boundary with typed HIR transfer. Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify that static examples build and run.
 - **Create one parity harness.** Delete all existing `test_parity*.sh` scripts. Create a single `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. It must implement per-symbol diff and output a JSON summary.
@@ -86,7 +86,7 @@ Execute in this order:
 
 **Acceptance:**
 - Compile path produces a binary that exits 0 and prints expected text.
-- Parity harness runs all 89 examples and produces a JSON report.
+- Parity harness runs all 88 examples and produces a JSON report.
 - Unit tests cover ≥90% of examples.
 - `cargo test --bin runts` exits 0 (or only expected ignored failures).
 
@@ -230,7 +230,7 @@ grep "^//" src/transpile/tests/mod.rs
 ## Success Criteria (Final Checklist)
 
 - [ ] `cargo build` passes with 0 errors, 0 warnings.
-- [ ] `scripts/parity.sh --env all` passes 89/89 examples (≥95% similarity).
+- [ ] `scripts/parity.sh --env all` passes 88/88 examples (≥95% similarity).
 - [ ] `cargo test --test rq_parity` passes ≥90% of examples.
 - [ ] `cargo test --bin runts` exits 0 (or only expected ignored failures).
 - [ ] Zero commented-out test modules in `src/transpile/tests/mod.rs`.

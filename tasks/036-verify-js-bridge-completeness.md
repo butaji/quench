@@ -6,7 +6,7 @@
 
 ## Problem
 
-`js_bridge.rs` appears comprehensive but has **never been systematically verified** against every prop used across all 89+ examples. A prop could be silently ignored, mapped to the wrong Yoga style, or crash on an unexpected value type.
+`js_bridge.rs` appears comprehensive but has **never been systematically verified** against every prop used across all 88 examples. A prop could be silently ignored, mapped to the wrong Yoga style, or crash on an unexpected value type.
 
 ## Extract All Props from Examples
 
@@ -71,7 +71,7 @@ For hooks in `hooks.rs`:
 
 3. For any prop with `bridge>0` but no unit test: add a test.
 
-4. Run all 89 examples through `runts dev --once` and capture any bridge errors.
+4. Run all 88 examples through `runts dev --once` and capture any bridge errors.
 
 ## Acceptance Criteria
 

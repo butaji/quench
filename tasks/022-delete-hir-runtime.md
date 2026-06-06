@@ -21,7 +21,7 @@
 
 ## Acceptance Criteria
 
-- [ ] `src/hir_runtime.rs` does not exist.
-- [ ] `cargo build` passes.
-- [ ] No references to HIR interpreter in source code.
-- [ ] `runts` CLI no longer has `hir-render` or `inspect-hir` commands.
+- [x] `src/hir_runtime.rs` does not exist.
+- [x] `cargo build` passes.
+- [x] No references to HIR interpreter in source code.
+- [x] `runts` CLI no longer has `hir-render` or `inspect-hir` commands.

@@ -6,7 +6,7 @@
 
 ## Problem
 
-89 examples exist but several Ink features are **not exercised by any example**. This means the js_bridge.rs supports them but they are never verified in parity tests.
+88 examples exist but several Ink features are **not exercised by any example**. This means the js_bridge.rs supports them but they are never verified in parity tests.
 
 | Feature | Example Needed | Why |
 |---------|---------------|-----|

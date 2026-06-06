@@ -21,6 +21,6 @@ Only ~15 examples have inline tests. 74 have zero coverage.
 
 ## Acceptance Criteria
 
-- [ ] 89 tests, one per example.
+- [ ] 88 tests, one per example.
 - [ ] `cargo test` passes.
 - [ ] Coverage >= 90%.

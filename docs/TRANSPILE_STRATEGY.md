@@ -1,5 +1,7 @@
 # runts Transpilation Strategy
 
+> **⚠️ STALE DOCUMENT:** This doc describes the pre-rquickjs architecture where dev mode used a HIR interpreter. Several sections (especially §8 and §12.6/12.7) still reference the interpreter. The current dev engine is **rquickjs** with **Yoga** layout. The compile path described here remains accurate. Update in progress — see `tasks/031-update-docs.md`.
+>
 > How TypeScript/TSX becomes native Rust — from source text to binary.
 
 ---

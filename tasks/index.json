@@ -2,7 +2,7 @@
   "version": "4.2",
   "last_updated": "2026-06-06",
   "project": "runts-ink 100% Parity — rquickjs + Yoga Only",
-  "goal": "100% look&feel parity across deno, runts dev (rquickjs), and runts compile for all 89 Ink examples with minimum custom code and Yoga layout engine",
+  "goal": "100% look&feel parity across deno, runts dev (rquickjs), and runts compile for all 88 Ink examples with minimum custom code and Yoga layout engine",
   "architecture_decision": {
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga",
@@ -106,7 +106,7 @@
     {
       "id": "028",
       "title": "Create single canonical parity harness (deno vs rquickjs vs compile)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": ["scripts/parity.sh"],
       "acceptance": "Exactly one script. --env deno|rq|compile|all. Per-symbol diff. JSON summary. All 20+ old scripts deleted."
@@ -184,7 +184,7 @@
     "test_modules_enabled": 11,
     "test_modules_disabled": 4,
     "hir_test_failures": 113,
-    "test_scripts": 10,
+    "test_scripts": 1,
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga"

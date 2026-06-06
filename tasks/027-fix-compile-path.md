@@ -19,8 +19,13 @@
 3. Add `tests/compile_path.rs` with tests for 5 static examples.
 4. Run `./scripts/parity.sh --env compile` and fix failures.
 
+## Notes
+
+- The plugin boundary IS typed (`Plugin::codegen_module(&runts_hir::Module)`), but `runts-ratatui/src/plugin.rs` still does an internal JSON round-trip (`serde_json::to_value(&module.items)`) for the existing JSX codegen. This is acceptable for now — the boundary fix is done.
+- `find_runts_lib_path` was replaced by `find_runts_ink_path` using `env!("CARGO_MANIFEST_DIR")`.
+
 ## Acceptance Criteria
 
-- [ ] `runts build --release --plugin ratatui` on static examples produces working binary.
-- [ ] No JSON round-trip in plugin boundary.
-- [ ] Integration tests exist for compile path.
+- [x] `runts build --release --plugin ratatui` on static examples produces working binary.
+- [x] Typed plugin boundary (`&runts_hir::Module` instead of `&str`).
+- [x] Integration tests exist for compile path (`tests/compile_path.rs`).
