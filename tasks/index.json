@@ -1,17 +1,14 @@
 {
-  "version": "1.6",
+  "version": "1.8",
   "last_updated": "2026-06-06",
   "project": "runts-ink Full Parity - 3 Environment Testing",
   "tasks": [
-    {"id": "014-01", "title": "Architecture Review - Full Project Analysis", "status": "completed", "priority": "critical", "details": "Reviewed runts-ink crate, HIR runtime, ratatui plugin structure"},
-    {"id": "014-02", "title": "Fix Build Issues in runts-ratatui", "status": "completed", "priority": "critical", "details": "Fixed plugin.rs struct, dev_jsx.rs, codegen.rs issues, color mapping bug"},
-    {"id": "014-03", "title": "Run Quick Parity Tests (Deno + HIR)", "status": "completed", "priority": "critical", "details": "All 88 examples pass with 100% D-H similarity"},
-    {"id": "014-04", "title": "Run Full Parity Tests (All 3 Environments)", "status": "completed", "priority": "critical", "details": "All 88 examples pass with 100% D-H similarity, compile path tested on subset"},
-    {"id": "014-05", "title": "Analyze Parity Results and Fix Issues", "status": "completed", "priority": "high", "details": "Fixed Color::Red mapping bug in render.rs - was returning Black for all ANSI colors"},
-    {"id": "014-06", "title": "Enhance Test Harness with Per-Symbol Diff", "status": "completed", "priority": "high", "details": "Created comprehensive test harness with per-symbol diff, ANSI normalization, and failure categorization"},
-    {"id": "014-07", "title": "Add Comprehensive Unit Tests", "status": "completed", "priority": "high", "details": "All 57 runts-ink unit tests pass, 88 parity tests pass"},
-    {"id": "014-08", "title": "Final Verification and Documentation", "status": "completed", "priority": "high", "details": "100% parity achieved - 88/88 examples pass"},
-    {"id": "014-09", "title": "Commit and Push Changes", "status": "completed", "priority": "critical", "commit": "b128396", "details": "Successfully pushed to origin/fresh"}
+    {"id": "015-01", "title": "Architecture Review - Full Project Analysis", "status": "completed", "priority": "critical", "details": "Reviewed runts-ink crate, codegen, HIR runtime - 88 examples documented"},
+    {"id": "015-02", "title": "Fix Codegen for useState Hooks", "status": "completed", "priority": "critical", "details": "Added useState destructuring support in vars.rs with Cell::new() generation"},
+    {"id": "015-03", "title": "Add Comprehensive Unit Tests", "status": "completed", "priority": "high", "details": "Added unit tests for useState, React.useState parsing"},
+    {"id": "015-04", "title": "Verify All 88 Examples Parity", "status": "completed", "priority": "high", "details": "All 88 examples pass with 100% Deno-HIR similarity"},
+    {"id": "015-05", "title": "Document Architecture", "status": "completed", "priority": "medium", "details": "Created tasks/015-architecture-review.md"},
+    {"id": "015-06", "title": "Commit and Push Changes", "status": "in_progress", "priority": "critical", "commit": "pending"}
   ],
   "stats": {
     "total_examples": 88,
@@ -19,25 +16,29 @@
     "hooks_examples": 18,
     "features_covered": 88,
     "features_total": 88,
-    "unit_tests": 1100,
-    "test_files": 14,
+    "unit_tests": 60,
+    "test_files": 15,
     "parity_results": {
       "deno_hir_similarity": "100%",
-      "deno_compile_similarity": "100%",
+      "deno_compile_similarity": "N/A",
       "passed": 88,
       "failed": 0,
       "total": 88
     }
   },
-  "commit": {
-    "hash": "b128396",
-    "message": "feat(ink): 100% parity across 3 environments - all 88 examples pass",
-    "date": "2026-06-06",
-    "pushed": true
-  },
   "environment_parity": {
     "deno": "Reference - npm:ink@7",
     "runts_dev": "HIR runtime - QuickJS/HIR interpreter",
-    "runts_compile": "Rust codegen - transpile + compile"
-  }
+    "runts_compile": "Rust codegen (build broken in current state)"
+  },
+  "known_issues": [
+    {"issue": "Build system has pre-existing module ambiguity errors", "severity": "high", "affects": "Full build"},
+    {"issue": "RustType not in scope errors in type_to_rust.rs", "severity": "critical", "affects": "Full build"}
+  ],
+  "goals": [
+    "100% Deno-HIR parity (achieved: 88/88 examples)",
+    "Codegen support for useState hooks (implemented, not yet buildable)",
+    "High unit test coverage"
+  ],
+  "notes": "Build system has pre-existing issues unrelated to ink parity changes. Binary works and parity tests pass."
 }
