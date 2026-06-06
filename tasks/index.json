@@ -82,10 +82,10 @@
     {
       "id": "025",
       "title": "Complete js_bridge.rs for all 89 Ink features",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "owner": null,
-      "files": ["crates/runts-ink/src/js_bridge.rs"],
+      "files": ["crates/runts-ink/src/js_bridge/box_props.rs", "crates/runts-ink/src/js_bridge/text_props.rs", "crates/runts-ink/src/js_bridge/mod.rs", "crates/runts-ink/tests/js_bridge_props.rs"],
       "acceptance": "Bridge exports: Box, Text, Newline, Spacer, Static, Transform with ALL props (flexbox, borders, colors, positioning, overflow, gaps, min/max size, zIndex). Unit tests for every prop."
     },
     {
@@ -177,9 +177,6 @@
     "minimum_custom_code": true
   },
   "known_blockers": [
-    "quote_codegen.rs:609 unexpected closing delimiter — prevents cargo build",
-    "No TSX->JS transpile pipeline — rquickjs cannot consume raw TSX",
-    "js_bridge.rs missing many Ink props (minWidth, maxWidth, zIndex, overflow, etc.)",
     "20 shell scripts — violates EXECUTE.md 'single script' requirement",
     "Plugin boundary uses JSON string round-trip — type safety destroyed",
     "Taffy code still present despite Yoga being default — dead code to remove"

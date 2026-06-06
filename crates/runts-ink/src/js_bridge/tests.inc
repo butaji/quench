@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::js_bridge::install;
     use rquickjs::context::intrinsic;
-    use rquickjs::{Context, Runtime};
+    use rquickjs::{Context, Function, Object, Runtime};
 
     fn fresh_ctx() -> Context {
         let runtime = Runtime::new().unwrap();

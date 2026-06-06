@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Box, Color, FlexDirection, Static, Text, Transform};
 
     #[test]
     fn box_default_is_row_with_no_children() {
