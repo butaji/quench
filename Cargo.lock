@@ -1918,6 +1918,7 @@ dependencies = [
  "regex",
  "rquickjs",
  "runts-fresh",
+ "runts-hir",
  "runts-ink",
  "runts-macros",
  "runts-plugin",
@@ -1947,10 +1948,19 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "runts-hir",
  "runts-lib",
  "runts-plugin",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "runts-hir"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "serde",
 ]
 
 [[package]]
@@ -1999,6 +2009,7 @@ dependencies = [
 name = "runts-plugin"
 version = "0.1.0"
 dependencies = [
+ "runts-hir",
  "serde",
  "serde_json",
  "thiserror",
@@ -2012,17 +2023,9 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rquickjs",
+ "runts-hir",
  "runts-ink",
  "runts-lib",
- "runts-plugin",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "runts-react"
-version = "0.1.0"
-dependencies = [
  "runts-plugin",
  "serde",
  "serde_json",

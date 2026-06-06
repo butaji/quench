@@ -18,14 +18,11 @@ impl Plugin for FreshPlugin {
     fn name(&self) -> &str { "fresh" }
     fn help_text(&self) -> &str { "Fresh/Preact web framework" }
 
-    fn codegen_module(&self, hir_str: &str) -> Result<String, PluginError> {
-        let hir: runts_plugin::hir::Module = serde_json::from_str(hir_str)
-            .map_err(|e| PluginError::codegen("fresh", "unknown", format!("failed to parse HIR: {e}")))?;
-
-        if let Some(jsx_code) = self.try_jsx_codegen(&hir) {
+    fn codegen_module(&self, module: &runts_hir::Module) -> Result<String, PluginError> {
+        if let Some(jsx_code) = self.try_jsx_codegen(module) {
             return Ok(jsx_code);
         }
-        self.codegen_fallback_module(&hir)
+        self.codegen_fallback_module(module)
     }
 
     fn cargo_deps(&self) -> Vec<CargoDep> {
@@ -37,7 +34,7 @@ impl Plugin for FreshPlugin {
         ]
     }
 
-    fn codegen_entry(&self, modules: &[runts_plugin::hir::Module]) -> Result<String, PluginError> {
+    fn codegen_entry(&self, modules: &[runts_hir::Module]) -> Result<String, PluginError> {
         let routes = self.collect_routes(modules);
         let (imports, handlers, router_calls) = self.generate_route_code(&routes, modules);
         self.format_main_rs(&imports, &handlers, &router_calls)
@@ -68,13 +65,13 @@ impl Plugin for FreshPlugin {
 }
 
 impl FreshPlugin {
-    fn try_jsx_codegen(&self, hir: &runts_plugin::hir::Module) -> Option<String> {
-        let items_json = hir.items_json.as_ref()?;
+    fn try_jsx_codegen(&self, hir: &runts_hir::Module) -> Option<String> {
+        let items_json = serde_json::to_value(&hir.items).ok()?;
         let handler = JsxHandler::new();
-        handler.try_codegen_jsx(items_json, hir)
+        handler.try_codegen_jsx(&items_json, hir)
     }
 
-    fn codegen_fallback_module(&self, hir: &runts_plugin::hir::Module) -> Result<String, PluginError> {
+    fn codegen_fallback_module(&self, hir: &runts_hir::Module) -> Result<String, PluginError> {
         let source_path = hir.source_path.as_deref().unwrap_or("");
         let route_info = hir.route_info.as_ref();
         let codegen = FreshCodegen::new(source_path);
@@ -92,13 +89,13 @@ impl FreshPlugin {
         }
     }
 
-    fn collect_routes<'a>(&self, modules: &'a [runts_plugin::hir::Module]) -> Vec<&'a RouteInfo> {
+    fn collect_routes<'a>(&self, modules: &'a [runts_hir::Module]) -> Vec<&'a RouteInfo> {
         let mut routes: Vec<&RouteInfo> = modules.iter().filter_map(|m| m.route_info.as_ref()).collect();
         routes.sort_by(|a, b| a.path.cmp(&b.path));
         routes
     }
 
-    fn generate_route_code(&self, routes: &[&RouteInfo], modules: &[runts_plugin::hir::Module]) -> (String, String, String) {
+    fn generate_route_code(&self, routes: &[&RouteInfo], modules: &[runts_hir::Module]) -> (String, String, String) {
         let handler = RouteHandler::new(modules);
         handler.generate_route_code(routes)
     }

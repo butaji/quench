@@ -222,6 +222,8 @@ mod tests {
     fn module_with_items(items: Vec<ModuleItem>) -> Module {
         Module {
             source: String::new(),
+            source_path: None,
+            route_info: None,
             items,
             types: std::collections::HashMap::new(),
         }

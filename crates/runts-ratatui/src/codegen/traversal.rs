@@ -111,8 +111,9 @@ pub(crate) fn extract_jsx_attrs(attrs_val: &serde_json::Value) -> Option<Vec<(St
     let arr = attrs_val.as_array()?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let name = item.get("key").and_then(|k| k.get("value")).and_then(|v| v.as_str())?.to_string();
-        let value = item.get("value")?.clone();
+        let attr = item.get("Attr")?;
+        let name = attr.get("name")?.as_str()?.to_string();
+        let value = attr.get("value")?.clone();
         out.push((name, value));
     }
     Some(out)

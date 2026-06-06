@@ -7,7 +7,7 @@ pub struct JsxHandler;
 impl JsxHandler {
     pub fn new() -> Self { Self }
 
-    pub fn try_codegen_jsx(&self, items: &serde_json::Value, _hir: &runts_plugin::hir::Module) -> Option<String> {
+    pub fn try_codegen_jsx(&self, items: &serde_json::Value, _hir: &runts_hir::Module) -> Option<String> {
         let items_arr = items.as_array()?;
         for item in items_arr {
             if let Some(code) = self.try_codegen_jsx_item(item) { return Some(code); }

@@ -106,7 +106,14 @@ fn test_nested_element_codegen() {
 fn test_fresh_plugin_returns_string() {
     // Verify the plugin API works (returns a string)
     let plugin = runts_fresh::FreshPlugin;
-    let result = plugin.codegen_module("{}");
+    let module = runts_hir::Module {
+        source: String::new(),
+        source_path: None,
+        route_info: None,
+        items: vec![],
+        types: std::collections::HashMap::new(),
+    };
+    let result = plugin.codegen_module(&module);
     assert!(result.is_ok(), "codegen_module should return Ok");
     let code = result.unwrap();
     assert!(!code.is_empty(), "codegen_module should return non-empty string");
