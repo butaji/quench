@@ -154,7 +154,7 @@
     {
       "id": "033",
       "title": "Remove Taffy layout engine — make Yoga the sole backend",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-critical",
       "owner": null,
       "files": ["crates/runts-ink/Cargo.toml", "crates/runts-ink/src/flex_layout/mod.rs", "crates/runts-ink/src/flex_layout/taffy.rs", "crates/runts-ink/src/render.rs"],

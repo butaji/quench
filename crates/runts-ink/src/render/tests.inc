@@ -2,7 +2,7 @@
 mod tests {
     use super::*;
     use crate::components::Box as InkBox;
-    use crate::render::{AvailableSpace, Layout, RenderOptions, Size, TaffyTree, parse_hex_color, render_tree, render_to_string};
+    use crate::render::{AvailableSpace, Layout, RenderOptions, Size, YogaTree, parse_hex_color, render_tree, render_to_string};
     use crate::{BorderStyle, Color, Text, VNode};
     use ratatui::Terminal;
     use ratatui::layout::Rect;
@@ -21,7 +21,7 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(20, 4);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut layout = Layout::new();
-        let tree = TaffyTree::from_vnode(
+        let tree = YogaTree::from_vnode(
             &VNode::from(Text::new("hi")),
             &mut layout,
         );
@@ -49,8 +49,8 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let tree = VNode::from(Text::new("red").color(Color::Red));
         let mut layout = Layout::new();
-        let taffy_tree = TaffyTree::from_vnode(&tree, &mut layout);
-        taffy_tree.compute(
+        let yoga_tree = YogaTree::from_vnode(&tree, &mut layout);
+        yoga_tree.compute(
             &mut layout,
             Size {
                 width: AvailableSpace::Definite(20.0),
@@ -78,8 +78,8 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let tree = VNode::from(InkBox::column().padding(1).child(Text::new("x")).child(Text::new("y")));
         let mut layout = Layout::new();
-        let taffy_tree = TaffyTree::from_vnode(&tree, &mut layout);
-        taffy_tree.compute(&mut layout, Size { width: AvailableSpace::Definite(20.0), height: AvailableSpace::Definite(4.0) });
+        let yoga_tree = YogaTree::from_vnode(&tree, &mut layout);
+        yoga_tree.compute(&mut layout, Size { width: AvailableSpace::Definite(20.0), height: AvailableSpace::Definite(4.0) });
         terminal.draw(|frame| render_tree(&tree, &layout, frame, small_area())).unwrap();
         let buffer = terminal.backend().buffer().clone();
         let mut has_x = false; let mut has_y = false;
@@ -122,10 +122,10 @@ mod tests {
 
     /// Nested boxes: a column Box with one child Box
     /// that itself contains two Text children. With
-    /// the Taffy-rect-aware walker, the inner Box gets
+    /// the Yoga-rect-aware walker, the inner Box gets
     /// a non-zero rect and the Texts land inside it.
     #[test]
-    fn render_nested_boxes_via_taffy_layout() {
+    fn render_nested_boxes_via_yoga_layout() {
         let inner = InkBox::column()
             .child(Text::new("inner-a"))
             .child(Text::new("inner-b"));
@@ -137,10 +137,10 @@ mod tests {
 
     /// A `<Box flexDirection="row">` should lay its
     /// two text children side-by-side on a single
-    /// line. With the Taffy-rect-aware walker the
+    /// line. With the Yoga-rect-aware walker the
     /// second child's `x` is non-zero.
     #[test]
-    fn render_row_uses_horizontal_taffy_layout() {
+    fn render_row_uses_horizontal_yoga_layout() {
         let root: VNode = InkBox::row()
             .child(Text::new("L"))
             .child(Text::new("R"))
