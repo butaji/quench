@@ -69,18 +69,24 @@ TypeScript Source (TS/TSX)
 ┌─────────┐  ┌──────────────┐      ┌─────────────┐
 │ Dev Mode│  │ HIR Cache    │      │ Production  │
 │         │  │ (incremental)│      │             │
-│ HIR     │  │              │      │ Rust Codegen│
-│Interp   │  │ File Watcher │      │             │
-│+Axum    │  │ SSE HMR      │      │ cargo build │
-│         │  │ < 50ms       │      │ --release   │
+│ rquickjs│  │              │      │ Rust Codegen│
+│ + Yoga  │  │ File Watcher │      │             │
+│ bridge  │  │ Hot Reload   │      │ cargo build │
+│ <100ms  │  │ <100ms       │      │ --release   │
 └─────────┘  └──────────────┘      └─────────────┘
 ```
+
+### Dev Mode (`runts dev`)
+TSX → oxc_parser → oxc_codegen → JS bundle → rquickjs + Yoga bridge → render. Full JS semantics. Real hooks. ~100ms reload.
+
+### Production (`runts build --release`)
+TSX → HIR → Rust codegen → cargo build --release → native binary.
 
 ## Runtime Comparison
 
 | Feature | Node.js | Deno | Bun | runts |
 |---------|---------|------|-----|-------|
-| Engine | V8 | V8 | JavaScriptCore | None (native) |
+| Engine | V8 | V8 | JavaScriptCore | rquickjs (dev) / native (prod) |
 | GC pauses | Yes | Yes | Yes | **None** |
 | Cold start | 100-500ms | ~50ms | ~20ms | **< 10ms** |
 | Memory (idle) | 30MB | 15MB | 5MB | **2MB** |
@@ -98,7 +104,7 @@ cargo install --path .
 runts init my-app
 cd my-app
 
-# Development mode (instant hot-reload, no Rust recompilation)
+# Development mode (instant hot-reload via rquickjs + Yoga)
 runts dev
 
 # Production build (native binary)
@@ -156,24 +162,33 @@ pub async fn handle_get(_req: Request, c: HandlerContext) -> Response {
 }
 ```
 
-## Example: Preact Island
+## Example: Ink TUI Component
 
 ```typescript
-// islands/Counter.tsx
-import { useState } from "preact/hooks";
+// tui/app.tsx
+import React, { useState } from 'react';
+import { Box, Text, useInput } from 'ink';
 
-export default function Counter({ initial = 0 }: { initial?: number }) {
-  const [count, setCount] = useState(initial);
+export default function Counter() {
+  const [count, setCount] = useState(0);
+
+  useInput((input, key) => {
+    if (input === 'q') process.exit(0);
+    if (key.upArrow) setCount(c => c + 1);
+    if (key.downArrow) setCount(c => c - 1);
+  });
+
   return (
-    <button onClick={() => setCount(count + 1)}>
-      Count: {count}
-    </button>
+    <Box flexDirection="column" padding={1}>
+      <Text bold color="cyan">Ink Counter</Text>
+      <Text bold>Count: {count}</Text>
+    </Box>
   );
 }
 ```
 
-**Server-side:** Renders to HTML strings (zero JS shipped).
-**Client-side:** Hydrates with Preact signals (~4KB, not a full VDOM).
+**Dev mode:** `runts dev` transpiles to JS, executes in rquickjs with Yoga layout — identical behavior to deno.
+**Production:** Compiles to native Rust binary with Yoga + Ratatui.
 
 ## Node.js Compatibility (Three-Tier Strategy)
 
@@ -222,14 +237,16 @@ my-app/
 ## Development vs Production
 
 ### Development (`runts dev`)
-- Parses TS/TSX to HIR via **oxc_parser** and executes directly via interpreter
-- File watcher with SSE hot-reload (< 50ms)
-- Full SSR, islands, layouts, and middleware
+- Parses TS/TSX to AST via **oxc_parser**
+- Transpiles to JS bundle via **oxc_codegen**
+- Executes in **rquickjs** with Yoga layout bridge
+- File watcher with hot-reload (< 100ms)
+- Full JS semantics, real hooks, real events
 - **No Rust compilation required in dev**
 
 ### Production (`runts build --release`)
 1. Incremental transpilation — SHA-256 content-hash cache skips unchanged files
-2. Transpiles TS/TSX → Rust source (`.runts/build/`)
+2. Transpiles TS/TSX → HIR → Rust source (`.runts/build/`)
 3. Generates route table, island manifest, and entry points
 4. `cargo build --release` → single static binary
 5. Axum server with native SSR throughput
@@ -239,7 +256,8 @@ my-app/
 | Document | Description |
 |----------|-------------|
 | [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) | Framework-agnostic design rationale — what runts is and isn't |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline: oxc_parser → HIR → Rust codegen / interpreter |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline: oxc_parser → HIR → Rust codegen / rquickjs dev |
+| [docs/INK-ARCHITECTURE.md](docs/INK-ARCHITECTURE.md) | Ink/ratatui plugin: rquickjs + Yoga + Ratatui stack |
 | [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) | Precise TS/TSX subset specification |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Roadmap — MVP → Feature Complete → Production |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance targets, benchmarks, and trade-offs |
@@ -254,6 +272,11 @@ runts is in active development. The core compiler pipeline (oxc_parser → HIR �
 - ✅ String literal unions → Rust enums (type-directed lowering)
 - ✅ Async/await → tokio futures
 - ✅ Incremental builds with content-hash cache
+
+**In progress:**
+- 🔄 rquickjs dev engine for Ink TUI parity (Task 022-026)
+- 🔄 Yoga-only layout engine (Task 033)
+- 🔄 TSX→JS transpile pipeline (Task 023)
 
 **Planned:**
 - [ ] Better generic lowering (conditional types, indexed access)
@@ -285,4 +308,4 @@ MIT OR Apache-2.0
 
 ---
 
-*Built with Rust. Zero JS runtimes harmed.*
+*Built with Rust. rquickjs + Yoga for dev. Native codegen for prod.*

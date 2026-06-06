@@ -11,7 +11,7 @@ It compiles TypeScript/TSX source to native Rust binaries, period.
 ## What Runts Is
 
 - A **compiler**: TS/TSX → HIR → Rust source → native binary
-- A **runtime**: Dev server with hot-reload (HIR interpreter) + production server (compiled native)
+- A **runtime**: Dev server with hot-reload (rquickjs + Yoga) + production server (compiled native)
 - A **language subset**: The parts of TS/TSX that map cleanly to Rust semantics
 
 ## What Runts Is NOT
@@ -65,7 +65,7 @@ All produce the same HIR. The analyzer only affects:
 The runtime provides:
 - HTTP server (axum)
 - Static file serving
-- HIR interpreter (dev mode)
+- rquickjs dev engine (TSX → JS → QuickJS + Yoga bridge)
 - Hot-reload file watcher
 
 It does NOT provide:
@@ -189,9 +189,9 @@ The **analyzer** detects these conventions. The **compiler** just compiles TS/TS
 
 ### Dev Mode
 ```
-TS/TSX source → oxc_parser → HIR → HIR Interpreter → HTTP response
-                    ↑                    ↑
-                    └── File watcher ────┘ (hot-reload)
+TS/TSX source → oxc_parser → oxc_codegen → JS bundle → rquickjs + Yoga bridge → render
+                    ↑                                              ↑
+                    └──────────── File watcher ────────────────────┘ (hot-reload)
 ```
 
 No Rust compilation. Changes reflected in <100ms.
@@ -211,7 +211,7 @@ Single `runts build` command. Output is a native binary in `.runts/build/target/
 | Routing | `routes/` convention | ✅ Analyzer detects, codegen emits |
 | Islands | Client hydration | ✅ Analyzer detects, codegen emits bundles |
 | Middleware | `c.next()`, `app.use()` | ✅ Compiled from user source |
-| JSX | `<Component />` | ✅ Transformed to Rust VNode/
+| JSX | `<Component />` | ✅ Transformed to Rust VNode/ |
 | Runtime | Fresh server, Hono app | ✅ Generic axum-based runtime |
 | Dev Server | `deno task start` | ✅ `runts dev` |
 | Production | Deploy to Deno Deploy | ✅ Native binary |

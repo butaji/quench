@@ -3,22 +3,22 @@
 This document describes the full Ink-compatible
 crate-plugin for runts. The user-facing surface is
 TSX with Ink-style JSX (`<Box>`, `<Text>`, etc.); the
-runtime stack is **Taffy** (flexbox layout) +
+runtime stack is **rquickjs** (JS engine) +
+**Yoga** (flexbox layout, same engine Ink uses) +
 **Ratatui** (rendering) + **crossterm** (events).
-A future step will add **rquickjs** as the JS
-runtime so users can write Ink components in
-TypeScript; the current `runts-ink` is the
-*reference implementation* that the plugin's
-emitted code matches.
+The user's `.tsx` is transpiled to JS and executed
+in rquickjs with a thin Rust bridge. The layout
+engine is Yoga (Facebook's C++ flexbox) for
+maximum parity with Ink's internal behavior.
 
 ## Why these crates
 
 | Crate | Role | Why |
 |---|---|---|
-| Taffy | CSS flexbox/grid layout | Rust-native; used by Bevy, Dioxus, Zed. Implements the same flexbox spec as Yoga (which Ink uses in JS). |
+| rquickjs | JS engine (dev mode) | Embeds QuickJS. Executes transpiled JS bundles. Provides full ES2020 + hook semantics. |
+| Yoga | Flexbox layout | Facebook's C++ engine, identical to what Ink uses internally. Maximum layout parity. |
 | Ratatui | Immediate-mode TUI rendering | De-facto Rust TUI library. `Span` / `Line` / `Paragraph` / `Block` map cleanly to Ink's `Text` / `Box` primitives. |
 | crossterm | Terminal control + events | Cross-platform, used by Ratatui. Provides raw mode, alternate screen, mouse, kitty keyboard, bracketed paste, focus events. |
-| rquickjs | JS runtime (future) | Embeds QuickJS so the user's `.tsx` runs without a Node dep. |
 
 ## Component Mapping
 
@@ -40,24 +40,24 @@ emitted code matches.
 | `wrap="truncate"` | Manual truncation before creating `Span` |
 | `wrap="truncate-middle"` | `..."..."` truncation logic |
 
-`<Text>` is a Taffy **leaf** with `width: auto`,
-`height: auto`. After Taffy layout, render a
+`<Text>` is a Yoga **leaf** with `width: auto`,
+`height: auto`. After Yoga layout, render a
 `Paragraph` constrained to the computed rect. Nested
 `<Text>` merges into a single `Line` with multiple
 `Span`s.
 
-### `<Box>` → Taffy node + `Block` wrapper
+### `<Box>` → Yoga node + `Block` wrapper
 
-| Ink prop | Taffy style | Ratatui render |
+| Ink prop | Yoga style | Ratatui render |
 |---|---|---|
-| `width` / `height` | `taffy::Size { width: px/%, height: px/% }` | `Block` sized to computed rect |
-| `minWidth` / `minHeight` | `min_size` | — |
-| `maxWidth` / `maxHeight` | `max_size` | — |
-| `paddingTop/Bottom/Left/Right` | `padding` (Rect) | `Block` inner margin |
+| `width` / `height` | `yoga::Style::dimension(...)` | `Block` sized to computed rect |
+| `minWidth` / `minHeight` | `min_dimension` | — |
+| `maxWidth` / `maxHeight` | `max_dimension` | — |
+| `paddingTop/Bottom/Left/Right` | `padding` (Edge) | `Block` inner margin |
 | `paddingX` / `paddingY` / `padding` | shorthand expanded | — |
-| `marginTop/Bottom/Left/Right` | `margin` (Rect) | Taffy handles spacing |
+| `marginTop/Bottom/Left/Right` | `margin` (Edge) | Yoga handles spacing |
 | `marginX` / `marginY` / `margin` | shorthand expanded | — |
-| `gap` / `columnGap` / `rowGap` | `gap` (Size) | — |
+| `gap` / `columnGap` / `rowGap` | `gap` (Gutter) | — |
 | `flexGrow` | `flex_grow: f32` | — |
 | `flexShrink` | `flex_shrink: f32` | — |
 | `flexBasis` | `flex_basis` | — |
@@ -66,10 +66,10 @@ emitted code matches.
 | `alignItems` | `align_items: FlexStart/Center/FlexEnd/Stretch/Baseline` | — |
 | `alignSelf` | `align_self` | — |
 | `alignContent` | `align_content` | — |
-| `justifyContent` | `justify_content` | — |
-| `position="absolute"` | `position: Absolute` + `inset` | Place widget at computed coords |
-| `top/right/bottom/left` | `inset` (Rect) | — |
-| `display="none"` | Skip node in Taffy tree | Don't render |
+| `justifyContent` | `justify_content: FlexStart/FlexEnd/Center/SpaceBetween/SpaceAround/SpaceEvenly` | — |
+| `position="absolute"` | `position_type: Absolute` + `position` edges | Place widget at computed coords |
+| `top/right/bottom/left` | `position` edges | — |
+| `display="none"` | `display: None` | Don't render |
 | `overflowX/Y="hidden"` | Clip children to computed rect | `Paragraph` with wrap + width constraint |
 
 **Borders (on `<Box>`):**
@@ -95,9 +95,9 @@ Insert `\n` into the parent `<Text>` string, or split
 the `Line` vector. `<Newline count={n}>` appends `n`
 newline chars to the preceding text node.
 
-### `<Spacer>` → Taffy node with `flex_grow: 1.0`
+### `<Spacer>` → Yoga node with `flex_grow: 1.0`
 
-Taffy leaf with `flex_grow: 1.0`, `flex_shrink: 1.0`,
+Yoga leaf with `flex_grow: 1.0`, `flex_shrink: 1.0`,
 no render output. Occupies remaining space along the
 flex axis.
 
@@ -174,15 +174,15 @@ cursor position or use `terminal.insert_before()` if
 Ratatui supports it. In practice: queue a `Print(data)`
 command before the Ratatui draw.
 
-### `measureElement(ref)` / `useBoxMetrics(ref)` → Taffy layout read
+### `measureElement(ref)` / `useBoxMetrics(ref)` → Yoga layout read
 
 ```rust
-let layout = taffy.layout(node_id)?;
+let layout = yoga_node.get_layout();
 InkMetrics {
-    width: layout.size.width as u16,
-    height: layout.size.height as u16,
-    left: layout.location.x as u16,
-    top: layout.location.y as u16,
+    width: layout.width() as u16,
+    height: layout.height() as u16,
+    left: layout.left() as u16,
+    top: layout.top() as u16,
 }
 ```
 
@@ -265,7 +265,7 @@ loop {
 
 1. Create a `Buffer` with `options.columns` width and
    arbitrary height.
-2. Build Taffy tree with fixed width constraint.
+2. Build Yoga tree with fixed width constraint.
 3. Compute layout.
 4. Render widgets to `Buffer` (no `Terminal`, no
    backend).
@@ -300,9 +300,10 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
     ctx.eval(RECONCILER_BRIDGE)?; // JS reconciler that calls __rust_bridge.*
     ctx.eval(&js_bundle)?;
 
-    // 3. Setup Taffy
-    let mut taffy = Taffy::new();
-    let root_id = taffy.new_leaf(Style::default())?;
+    // 3. Setup Yoga
+    let mut yoga = yoga::Node::new();
+    yoga.set_width(yoga::StyleUnit::Point(options.columns as f32));
+    yoga.set_height(yoga::StyleUnit::Point(options.rows as f32));
 
     // 4. Setup event channels
     let (exit_tx, exit_rx) = oneshot::channel();
@@ -317,7 +318,7 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
     loop {
         // Handle tree ops from JS reconciler
         while let Ok(op) = render_rx.try_recv() {
-            apply_tree_op(&mut taffy, op);
+            apply_tree_op(&mut yoga, op);
         }
 
         // Handle crossterm events
@@ -331,14 +332,11 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
         }
 
         // Compute layout
-        taffy.compute_layout(root_id, Size {
-            width: AvailableSpace::Definite(last_size.0 as f32),
-            height: AvailableSpace::Definite(last_size.1 as f32),
-        })?;
+        yoga.calculate_layout(last_size.0 as f32, last_size.1 as f32, yoga::Direction::LTR);
 
         // Render
         terminal.draw(|frame| {
-            render_ink_tree(frame, &taffy, root_id);
+            render_ink_tree(frame, &yoga);
         })?;
 
         // Check exit
@@ -352,28 +350,29 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
 
 ## Gotchas & Decisions
 
-1. **Yoga vs. Taffy.** Taffy supports every CSS flexbox
-   property Ink uses. The mapping is nearly 1:1. Taffy
-   returns `f32` pixel positions; cast to `u16` for
-   Ratatui rects.
+1. **Yoga.** Yoga is the same C++ flexbox engine Ink
+   uses internally. The mapping is 1:1. Yoga returns
+   `f32` pixel positions; cast to `u16` for Ratatui
+   rects. Taffy was evaluated and removed — Yoga gives
+   better parity.
 
 2. **Text measurement.** Ink uses `string-width` for
    Unicode width. Ratatui's `Span` uses `unicode-width`
    (same algorithm). Don't pre-measure in the JS
-   reconciler; let Taffy + Ratatui handle it.
+   reconciler; let Yoga + Ratatui handle it.
 
 3. **ANSI in `<Transform>`.** If transforms strip ANSI,
    use `strip-ansi` in JS before passing to Rust.
    Ratatui doesn't use ANSI strings internally.
 
 4. **Borders and padding.** Ratatui `Block` borders
-   consume space *inside* the widget area. Taffy
+   consume space *inside* the widget area. Yoga
    padding should account for this, or render borders
    as a separate overlay layer.
 
-5. **Performance.** Taffy layout is fast but not free.
+5. **Performance.** Yoga layout is fast but not free.
    For `maxFps` and `incrementalRendering`, only
-   recompute Taffy layout when the tree changes, not
+   recompute Yoga layout when the tree changes, not
    every frame.
 
 6. **Refs.** `useRef` and `measureElement` need stable
@@ -382,13 +381,13 @@ fn run_app(js_bundle: String, options: RenderOptions) -> Result<()> {
 
 7. **Hot reload.** On file change, destroy the rquickjs
    context, create a new one, re-evaluate the bundle.
-   Taffy tree rebuilds from scratch. State is lost
+   Yoga tree rebuilds from scratch. State is lost
    (acceptable for v1).
 
 ## Implementation Order
 
 1. **Start with `render_ink_tree()`** — the function
-   that takes a Taffy-computed tree and draws Ratatui
+   that takes a Yoga-computed tree and draws Ratatui
    widgets. Once `<Box borderStyle="round"><Text
    color="green">Hello</Text></Box>` renders correctly,
    the rest is incremental.
@@ -422,14 +421,14 @@ The `runts-ink` crate is in the workspace. It has:
 - Props (JSON-bag).
 - `render()` entry point that boots a Ratatui terminal
   and runs a render loop.
-- Taffy-based flexbox layout.
+- Yoga-based flexbox layout (same engine Ink uses).
 - Ink keyboard flags (`Key::from_crossterm`).
 - 49 unit tests passing.
 
 **What is missing:**
 
-- `render_ink_tree()` reads Taffy-computed rects from
-  `Layout::rects` to position children. **The current
+- `render_ink_tree()` reads Yoga-computed rects from
+  `yoga::Node::get_layout()` to position children. **The current
   walker (`render.rs::walk`) falls back to equal-stacking
   and ignores padding/margin.** This is the next gap to
   close.
@@ -438,7 +437,7 @@ The `runts-ink` crate is in the workspace. It has:
   `useFocusManager`, `useCursor`, `useAnimation`) is
   not yet implemented. Only `useInput` is partially
   covered by the keyboard event types.
-- The rquickjs JS runtime is not wired up — the
+- The rquickjs JS runtime is not fully wired up — the
   current path is pure-Rust component trees.
 - The runts-ratatui plugin recognises Ink JSX tags
   (`<Box>`, `<Text>`, `<Newline>`, `<Spacer>`,

@@ -1,32 +1,35 @@
 {
-  "version": "2.0",
+  "version": "4.1",
   "last_updated": "2026-06-06",
-  "project": "runts-ink 100% Parity — Architecture & Implementation Roadmap",
-  "goal": "100% look&feel parity across deno, runts dev (HIR), and runts compile for all 89 Ink examples",
+  "project": "runts-ink 100% Parity — rquickjs + Yoga Only",
+  "goal": "100% look&feel parity across deno, runts dev (rquickjs), and runts compile for all 89 Ink examples with minimum custom code and Yoga layout engine",
+  "architecture_decision": {
+    "dev_engine": "rquickjs",
+    "layout_engine": "Yoga",
+    "rationale": "HIR interpreter removed entirely. Taffy removed entirely. Yoga is the same engine Ink uses internally, giving maximum layout parity. rquickjs is battle-tested ES2020. Minimum custom code = thin JS bridge + oxc/swc transpile + Yoga layout.",
+    "dev_pipeline": "TSX source -> oxc_parser -> oxc_codegen/swc -> JS bundle -> rquickjs context + js_bridge.rs -> VNode tree -> Yoga -> Ratatui",
+    "compile_pipeline": "TSX source -> HIR -> Rust codegen -> cargo build -> native binary (unchanged)",
+    "deleted": ["src/hir_runtime.rs", "HIR interpreter", "Taffy layout engine", "all HIR hook polyfills", "all HIR stdlib polyfills"]
+  },
   "phases": [
     {
       "name": "Phase 0: Unblock",
-      "description": "Fix the one thing preventing every path from running",
-      "tasks": ["020"]
+      "description": "Fix build. Re-enable linter. Split remaining god files.",
+      "tasks": ["020", "021"]
     },
     {
-      "name": "Phase 1: Structural Integrity",
-      "description": "Re-enable self-linting and split god files so the codebase can grow without collapsing",
-      "tasks": ["021", "022", "023"]
+      "name": "Phase 1: rquickjs + Yoga Engine",
+      "description": "Delete HIR runtime and Taffy. Wire rquickjs as sole dev engine. TSX->JS pipeline. Complete bridge.",
+      "tasks": ["022", "023", "024", "025", "026", "033"]
     },
     {
-      "name": "Phase 2: HIR Runtime — The Core Engine",
-      "description": "Implement every missing Ink feature in the HIR interpreter; this is where 100% parity lives or dies",
-      "tasks": ["024", "025", "026", "027"]
+      "name": "Phase 2: Compile + Verification",
+      "description": "Fix compile path. One parity harness. Per-example tests.",
+      "tasks": ["027", "028", "029"]
     },
     {
-      "name": "Phase 3: Compile Path",
-      "description": "Fix the plugin boundary and make runts build produce faithful native binaries",
-      "tasks": ["028", "029"]
-    },
-    {
-      "name": "Phase 4: Verification & Hardening",
-      "description": "One harness, per-symbol diffs, and unit tests for every example",
+      "name": "Phase 3: Cleanup + Future",
+      "description": "Delete dead code. Update docs. Evaluate Boa.",
       "tasks": ["030", "031", "032"]
     }
   ],
@@ -42,128 +45,143 @@
     },
     {
       "id": "021",
-      "title": "Re-enable build.rs linter and mechanically fix all 47 violations",
+      "title": "Re-enable build.rs linter and fix all violations",
       "status": "pending",
       "priority": "P0-critical",
       "owner": null,
-      "files": ["build.rs", "src/hir_runtime.rs", "src/transpile/hir/quote_codegen.rs", "src/commands/build/mod.rs", "src/commands/build/source_gen.rs", "crates/runts-fresh/src/plugin.rs", "crates/runts-ink/src/render.rs", "crates/runts-ink/src/components.rs", "crates/runts-ink/src/js_bridge.rs"],
-      "acceptance": "build.rs uncommented, cargo build passes, linter reports 0 violations"
+      "files": ["build.rs", "src/transpile/hir/quote_codegen.rs", "src/commands/build/mod.rs", "src/commands/build/source_gen.rs", "crates/runts-fresh/src/plugin.rs", "crates/runts-ink/src/render.rs", "crates/runts-ink/src/components.rs", "crates/runts-ink/src/js_bridge.rs"],
+      "acceptance": "build.rs uncommented, cargo build passes, linter reports 0 violations, no file >500 lines, no fn >40 lines, no fn complexity >10"
     },
     {
       "id": "022",
-      "title": "Split hir_runtime.rs into a proper interpreter crate",
+      "title": "DELETE src/hir_runtime.rs and all HIR interpreter code",
       "status": "pending",
       "priority": "P0-critical",
       "owner": null,
-      "files": ["src/hir_runtime.rs"],
-      "acceptance": "No file >500 lines; eval_expr, eval_jsx, apply_box_prop each in own module; all existing tests pass"
+      "files": ["src/hir_runtime.rs", "src/main.rs", "src/cli.rs"],
+      "acceptance": "src/hir_runtime.rs deleted. All references to Interpreter, Value, render_tsx, RuntimeError removed. cargo build passes."
     },
     {
       "id": "023",
-      "title": "Consolidate 20+ shell scripts into ONE canonical parity harness",
-      "status": "pending",
-      "priority": "P1-high",
-      "owner": null,
-      "files": ["test_parity*.sh", "run_parity_tests*.sh", "test_ink_parity*.sh"],
-      "acceptance": "Exactly one script (test_parity.sh) remains; parameterized for --env, --examples, --no-compile; old scripts deleted"
-    },
-    {
-      "id": "024",
-      "title": "Implement useState functional updater + useReducer in HIR runtime",
+      "title": "Build TSX->JS transpile pipeline using oxc_codegen or swc",
       "status": "pending",
       "priority": "P0-critical",
       "owner": null,
-      "files": ["src/hir_runtime.rs"],
-      "acceptance": "ink-counter example renders initial state with correct count value; setCount(c => c + 1) evaluates the arrow function"
+      "files": ["src/transpile/js_codegen/", "src/commands/dev/mod.rs", "Cargo.toml"],
+      "acceptance": "Given .tsx, emit JS bundle: JSX -> React.createElement, TS types erased, 'ink' imports resolved to bridge globals. Bundle evals in rquickjs without errors."
+    },
+    {
+      "id": "024",
+      "title": "Wire runts dev to execute JS bundle in rquickjs + render to string",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["src/commands/dev/mod.rs", "src/runtime/quickjs.rs", "crates/runts-ink/src/js_bridge.rs"],
+      "acceptance": "runts dev --once --plugin ratatui <example> transpiles TSX to JS, evals in rquickjs with bridge, prints rendered output matching deno."
     },
     {
       "id": "025",
-      "title": "Implement real useInput / useApp / useStdin / useFocus stubs in HIR runtime",
+      "title": "Complete js_bridge.rs for all 89 Ink features",
       "status": "pending",
       "priority": "P1-high",
       "owner": null,
-      "files": ["src/hir_runtime.rs"],
-      "acceptance": "All interactive examples render their initial static frame without crashing; useInput returns a no-op function instead of Undefined"
+      "files": ["crates/runts-ink/src/js_bridge.rs"],
+      "acceptance": "Bridge exports: Box, Text, Newline, Spacer, Static, Transform with ALL props (flexbox, borders, colors, positioning, overflow, gaps, min/max size, zIndex). Unit tests for every prop."
     },
     {
       "id": "026",
-      "title": "Refactor apply_box_prop into a dispatch table or macro",
+      "title": "Implement interactive hooks in js_bridge.rs + crossterm event loop",
       "status": "pending",
       "priority": "P1-high",
       "owner": null,
-      "files": ["src/hir_runtime.rs"],
-      "acceptance": "apply_box_prop reduced to ≤40 lines; all 89 examples still render correctly; complexity ≤10"
+      "files": ["crates/runts-ink/src/js_bridge.rs", "crates/runts-ink/src/render.rs"],
+      "acceptance": "useInput, useApp, useStdin, useStdout, useStderr, useWindowSize, useFocus, useCursor, useAnimation wired through bridge. crossterm events routed to JS callbacks. Interactive examples work."
     },
     {
       "id": "027",
-      "title": "Extract string/array stdlib polyfills into a reusable HIR stdlib module",
+      "title": "Fix compile path: typed plugin boundary + working binaries",
       "status": "pending",
       "priority": "P1-high",
       "owner": null,
-      "files": ["src/hir_runtime.rs"],
-      "acceptance": "call_string_method and call_array_method live in src/interpreter/stdlib.rs; unit tests for every method (.map, .filter, .reduce, .slice, .trim, .toUpperCase, etc.)"
+      "files": ["crates/runts-plugin/src/lib.rs", "src/commands/build/mod.rs", "crates/runts-ratatui/src/plugin.rs"],
+      "acceptance": "Plugin::codegen_module takes typed HIR. runts build --release on static examples produces working binary with expected output."
     },
     {
       "id": "028",
-      "title": "Replace plugin JSON string boundary with typed HIR transfer",
+      "title": "Create single canonical parity harness (deno vs rquickjs vs compile)",
       "status": "pending",
       "priority": "P1-high",
       "owner": null,
-      "files": ["crates/runts-plugin/src/lib.rs", "src/commands/build/mod.rs"],
-      "acceptance": "Plugin::codegen_module takes &hir::Module instead of &str; zero serde_json round-trips inside the build pipeline"
+      "files": ["scripts/parity.sh"],
+      "acceptance": "Exactly one script. --env deno|rq|compile|all. Per-symbol diff. JSON summary. All 20+ old scripts deleted."
     },
     {
       "id": "029",
-      "title": "Make runts compile produce working binaries for every static example",
+      "title": "Add per-example unit tests for all 89 examples",
       "status": "pending",
-      "priority": "P1-high",
+      "priority": "P2-medium",
       "owner": null,
-      "files": ["src/commands/build/mod.rs", "crates/runts-ratatui/src/plugin.rs"],
-      "acceptance": "runts build --release on any static example produces a binary that exits 0 and prints the expected text to stdout"
+      "files": ["tests/rq_parity/"],
+      "acceptance": "One Rust test per example reading tui/app.tsx, running through rquickjs path, asserting expected strings. Coverage >=90%."
     },
     {
       "id": "030",
-      "title": "Add per-example HIR runtime unit tests for all 89 examples",
+      "title": "Delete dead code: runts-react, old scripts, HIR runtime, Taffy engine",
       "status": "pending",
       "priority": "P2-medium",
       "owner": null,
-      "files": ["tests/hir_parity/"],
-      "acceptance": "One Rust test per example that reads examples/*/tui/app.tsx, runs render_tsx, and asserts output contains expected strings; coverage ≥90%"
+      "files": ["crates/runts-react/", "test_*.sh", "Cargo.toml", "crates/runts-ink/src/flex_layout/taffy.rs", "crates/runts-ink/src/flex_layout/mod.rs"],
+      "acceptance": "cargo build passes with zero dead-code warnings. Taffy feature and dep removed. Workspace clean. Yoga is sole layout engine."
     },
     {
       "id": "031",
-      "title": "Fix hardcoded 80×24 terminal dimensions in tests and HIR runtime",
+      "title": "Update all docs to reflect rquickjs + Yoga-only architecture",
       "status": "pending",
       "priority": "P2-medium",
       "owner": null,
-      "files": ["src/hir_runtime.rs", "tests/"],
-      "acceptance": "TERMINAL_DEFAULT constant defined once; useWindowSize reads actual terminal size via crossterm or env var fallback"
+      "files": ["docs/INK-ARCHITECTURE.md", "docs/PHILOSOPHY.md", "docs/PERFORMANCE.md", "docs/ARCHITECTURE.md", "DESIGN.md", "README.md"],
+      "acceptance": "All docs: HIR interpreter and Taffy removed. rquickjs is dev engine. Yoga is layout engine. Dev pipeline = TSX->JS->rquickjs->bridge->Yoga->Ratatui."
     },
     {
       "id": "032",
-      "title": "Delete dead code: runts-react crate, disabled imports, unused test script graveyard",
+      "title": "Evaluate Boa as long-term pure-Rust replacement for rquickjs",
       "status": "pending",
-      "priority": "P2-medium",
+      "priority": "P3-low",
       "owner": null,
-      "files": ["crates/runts-react/", "Cargo.toml", "test_*.sh"],
-      "acceptance": "cargo build passes; no #[allow(dead_code)] required for deleted modules; workspace members only include compiling crates"
+      "files": ["docs/ROADMAP.md"],
+      "acceptance": "Spike branch with Boa. Report on binary size, startup time, interop, WASM feasibility. Decision documented."
+    },
+    {
+      "id": "033",
+      "title": "Remove Taffy layout engine — make Yoga the sole backend",
+      "status": "pending",
+      "priority": "P0-critical",
+      "owner": null,
+      "files": ["crates/runts-ink/Cargo.toml", "crates/runts-ink/src/flex_layout/mod.rs", "crates/runts-ink/src/flex_layout/taffy.rs", "crates/runts-ink/src/render.rs"],
+      "acceptance": "Taffy feature and dependency removed from Cargo.toml. Taffy module deleted. render.rs uses YogaTree only. No conditional compilation for layout engine. cargo build passes."
     }
   ],
   "stats": {
     "build_errors": 1,
     "linter_violations": 47,
     "examples_total": 89,
-    "examples_tested_inline": 15,
+    "examples_with_tests": 0,
     "test_scripts": 20,
     "target_test_scripts": 1,
-    "hir_runtime_lines": 3087,
-    "target_max_file_lines": 500
+    "hir_runtime_lines_deleted": 3087,
+    "taffy_lines_deleted": 0,
+    "target_max_file_lines": 500,
+    "dev_engine": "rquickjs",
+    "layout_engine": "Yoga",
+    "custom_js_engine": false,
+    "minimum_custom_code": true
   },
   "known_blockers": [
     "quote_codegen.rs:609 unexpected closing delimiter — prevents cargo build",
-    "hir_runtime.rs eval_expr 356 lines / complexity 171 — cannot add features safely",
-    "apply_box_prop 309 lines / complexity 147 — adding any new CSS prop is copy-paste hell",
-    "useState functional updater not implemented — breaks ink-counter and any stateful example",
-    "20 shell scripts — violates EXECUTE.md 'single script' requirement"
+    "No TSX->JS transpile pipeline — rquickjs cannot consume raw TSX",
+    "js_bridge.rs missing many Ink props (minWidth, maxWidth, zIndex, overflow, etc.)",
+    "20 shell scripts — violates EXECUTE.md 'single script' requirement",
+    "Plugin boundary uses JSON string round-trip — type safety destroyed",
+    "Taffy code still present despite Yoga being default — dead code to remove"
   ]
 }

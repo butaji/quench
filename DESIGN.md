@@ -1,7 +1,7 @@
 # runts — Design Document
 
 > **Status:** v0.5.0 — MVP complete. All core subsystems implemented, tested, and producing working binaries.
-> **Last updated:** 2026-05-27
+> **Last updated:** 2026-06-06
 
 ---
 
@@ -24,7 +24,7 @@ runts compiles a **minimal but sufficient** subset of TypeScript + TSX that cove
 | Interfaces | ✅ | Maps to `#[derive(Serialize, Deserialize)]` structs |
 | Type aliases | ✅ | Erased; used for struct naming |
 | Optional properties (`?`) | ✅ | Maps to `Option<T>` |
-| Union types (`A | B`) | ✅ | Simple unions only; complex unions → `serde_json::Value` |
+| Union types (`A \| B`) | ✅ | Simple unions only; complex unions → `serde_json::Value` |
 | Generics (`<T>`) | ✅ | Basic generic structs/functions |
 | `any` / `unknown` | ✅ | Maps to `serde_json::Value` |
 | `void` | ✅ | Maps to `()` |
@@ -160,8 +160,8 @@ TS/TSX Source
     │
     ▼
 ┌─────────────────┐
-│  Parser         │  Recursive descent, zero dependencies
-│  (TSX → HIR)    │  ~3,500 LOC, handles 95%+ of Fresh code
+│  Parser         │  oxc_parser (battle-tested, full TS/TSX)
+│  (TSX → HIR)    │  ~3,500 LOC of converters, handles 95%+ of Fresh code
 └─────────────────┘
     │
     ▼
@@ -185,17 +185,19 @@ TS/TSX Source
 
 ### 2.2 Parser (TSX → HIR)
 
-**Design decision:** Custom recursive descent parser instead of SWC/Babel.
+**Design decision:** oxc_parser instead of a custom recursive descent parser.
 
-- **Zero dependencies:** No 200MB parser crate. The entire parser is ~3,500 LOC.
-- **TSX-native:** JSX is preserved as first-class `JSXExpr` nodes, not desugared to `React.createElement`.
-- **Normalized output:** `var` → `let`, destructuring expanded, defaults inlined.
+- **Battle-tested:** OXC is a production-grade TS/TSX parser used by Rspack, Rolldown, and Biome.
+- **Full spec coverage:** Handles all TS/TSX syntax, not just a subset.
+- **Fast:** Written in Rust with zero-copy AST.
+- **Maintainable:** Active upstream development; we only write converters.
 
 **Parsing pipeline:**
-1. Tokenize (identifiers, literals, operators, JSX tokens)
-2. Parse module → `Vec<ModuleItem>`
-3. Extract imports/exports, function declarations, type definitions
-4. Build `Module` with typed AST nodes
+1. Tokenize with oxc_parser (identifiers, literals, operators, JSX tokens)
+2. Parse module → `oxc_ast::Program`
+3. Traverse AST → `hir::Module` via visit pattern
+4. Extract imports/exports, function declarations, type definitions
+5. Build `Module` with typed AST nodes
 
 ### 2.3 HIR (High-Level IR)
 
@@ -342,37 +344,40 @@ Client hydration:
   4. Hydrate: parse props, render island, attach signals
 ```
 
-### 2.7 Development Mode: HIR Interpreter
+### 2.7 Development Mode: rquickjs + Yoga
 
-**Philosophy:** Zero compilation. Pure runtime execution with <100ms hot reload.
+**Philosophy:** Full JS semantics in dev. TSX transpiled to JS and executed in rquickjs with a thin Yoga bridge. ~100ms hot reload.
 
 ```
 File change (notify crate)
     │
     ▼
-Invalidate HIR cache entry
+Transpile TSX → JS (oxc_codegen)
     │
     ▼
-Re-parse changed file → HIR
+Create rquickjs context + inject Yoga bridge
     │
     ▼
-Broadcast SSE event to browser
+Eval JS bundle → VNode tree → Yoga layout → Ratatui render
     │
     ▼
-Browser reloads page (full page refresh)
+Output rendered text (TUI) or SSE event (web)
 ```
 
-Why full page refresh instead of HMR?
-- **Correctness:** Interpreter state is fully reset; no stale closures or hooks.
-- **Simplicity:** No module hot-swapping or React Fast Refresh equivalent.
-- **Speed:** <50ms end-to-end means full refresh is acceptable.
+Why rquickjs instead of a custom interpreter?
+- **Correctness:** Real JS engine means 100% hook/event semantics.
+- **Simplicity:** No need to reimplement closures, prototypes, or async.
+- **Speed:** ~50ms transpile + eval is acceptable for dev.
 
-**Interpreter capabilities:**
-- Full route execution (handlers + component rendering)
-- Middleware pipeline execution
-- Island rendering with hydration markers
-- Layout nesting and composition
-- Error page fallback (404/500)
+**Dev path for Ink TUI:**
+1. Parse `.tsx` with oxc_parser
+2. Transpile to JS with oxc_codegen (JSX → React.createElement, TS erased)
+3. Resolve `import { Box, Text } from 'ink'` to bridge globals
+4. Create rquickjs context
+5. Inject `__runts_ink_bridge__` with VNode builders
+6. Inject React shim (`createElement` → bridge call)
+7. Eval user bundle
+8. Call `renderToString()` → Yoga layout → Ratatui → stdout
 
 ### 2.8 Production Mode: Native Compilation
 
@@ -411,7 +416,7 @@ src/
 ## 3. Roadmap: MVP → Full Fresh Coverage
 
 ### Phase 0: Foundation ✅ COMPLETE
-- Parser, HIR, Analyzer, Codegen
+- Parser (oxc), HIR, Analyzer, Codegen
 - Signal system, Hooks, VDOM
 - Islands architecture, File-based routing
 - Dev server, Build command, Init command
@@ -475,7 +480,7 @@ src/
 
 | Metric | Target | v0.5 Status | Methodology |
 |--------|--------|-------------|-------------|
-| **Hot reload** | < 100 ms | ~40 ms | File change → browser refresh |
+| **Hot reload** | < 100 ms | ~50 ms | File change → render output |
 | **Cold start (dev)** | < 500 ms | ~300 ms | `runts dev` startup |
 | **Memory (dev)** | < 50 MB | ~35 MB | `ps -o rss` |
 
@@ -483,7 +488,7 @@ src/
 
 | Metric | Target | v0.5 Status | Methodology |
 |--------|--------|-------------|-------------|
-| **Client runtime size** | < 5 KB gzipped | ~4.2 KB | `gzip -c runtime.ts | wc -c` |
+| **Client runtime size** | < 5 KB gzipped | ~4.2 KB | `gzip -c runtime.ts \| wc -c` |
 | **Hydration start delay** | < 16 ms | < 10 ms | `requestAnimationFrame` to first hydrate |
 | **Visible island TTI** | < 50 ms | < 30 ms | IntersectionObserver → interactive |
 
@@ -491,12 +496,12 @@ src/
 
 | Decision | Trade-off | Rationale |
 |----------|-----------|-----------|
-| Custom parser vs SWC | ~2 weeks dev time vs 200MB dep | Binary size and build time critical |
-| HIR interpreter in dev | No native speed | Sub-100ms reload acceptable; correctness paramount |
+| oxc_parser vs custom | ~200KB dep vs years of maintenance | OXC is production-grade; we write converters only |
+| rquickjs in dev | ~1MB binary overhead | Full JS semantics, real hooks, no custom engine |
+| Yoga layout | C++ dependency | Same engine Ink uses internally; maximum parity |
 | Full compilation in prod | ~30s build time | Native performance worth the wait |
 | VDOM for SSR, signals for islands | Two rendering paths | SSR benefits from VDOM tree; islands need fine-grained updates |
-| No JS runtime | Limited dynamic evaluation | Fresh apps don't need `eval` |
-| Full page refresh in dev | Slower than HMR | Prevents entire class of state bugs |
+| Full page refresh in dev | Slower than HMR | Correctness paramount; rquickjs eval is fast enough |
 | `f64` for all numbers | No integer overflow protection | Matches JS semantics exactly |
 | Thread-local hooks | No multi-threaded rendering | Preact hooks are single-threaded by design |
 
@@ -511,8 +516,8 @@ src/
 
 ### Build Verification
 ```bash
-# Dev mode
-cargo run -- dev
+# Dev mode (rquickjs + Yoga)
+cargo run -- dev --plugin ratatui
 
 # Production build
 cargo run -- build --release
@@ -526,4 +531,4 @@ cd examples/my-blog && cargo build --release
 
 ---
 
-*runts is designed to prove that framework-level Fresh/Preact compatibility can be achieved with zero external JS runtimes, compiling to efficient native binaries through a well-defined subset of TypeScript + TSX.*
+*runts is designed to prove that framework-level Fresh/Preact compatibility can be achieved with minimal custom code, compiling to efficient native binaries through a well-defined subset of TypeScript + TSX.*
