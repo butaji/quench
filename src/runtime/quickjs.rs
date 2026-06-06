@@ -68,7 +68,7 @@ fn eval_inner(ctx: rquickjs::Context, code: &str) -> Result<String, JsError> {
     })
 }
 
-fn eval_js_code(ctx: &rquickjs::Ctx, code: &str) -> Result<Value, JsError> {
+fn eval_js_code<'a>(ctx: &rquickjs::Ctx<'a>, code: &str) -> Result<Value<'a>, JsError> {
     match ctx.eval(code) {
         Ok(v) => Ok(v),
         Err(rquickjs::Error::Exception) => {
@@ -80,7 +80,7 @@ fn eval_js_code(ctx: &rquickjs::Ctx, code: &str) -> Result<Value, JsError> {
     }
 }
 
-fn convert_value_to_string(ctx: rquickjs::Ctx, value: Value) -> Result<String, JsError> {
+fn convert_value_to_string<'a>(ctx: rquickjs::Ctx<'a>, value: Value<'a>) -> Result<String, JsError> {
     let typ = value.type_name();
     if typ == "array" || typ == "object" {
         let json_result = json_stringify_result(ctx.clone(), value.clone());
@@ -215,7 +215,12 @@ fn simple_type_str(typ: &str, value: Value<'_>) -> String {
     static BOOL_TYPES: &[&str] = &["bool", "boolean"];
 
     if UNWRAP_TYPES.contains(&typ) { return typ.to_string(); }
-    if typ == "string" { return value.as_string().and_then(|s| s.to_string()).unwrap_or_default(); }
+    if typ == "string" {
+        if let Some(s) = value.as_string() {
+            return s.to_string().unwrap_or_default();
+        }
+        return String::new();
+    }
     if INT_TYPES.contains(&typ) { return value.as_int().map(|n| n.to_string()).unwrap_or_default(); }
     if FLOAT_TYPES.contains(&typ) { return value.as_float().map(|n| n.to_string()).unwrap_or_default(); }
     if BOOL_TYPES.contains(&typ) { return value.as_bool().map(|b| b.to_string()).unwrap_or_default(); }

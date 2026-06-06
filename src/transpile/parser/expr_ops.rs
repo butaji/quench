@@ -1,12 +1,12 @@
 //! Operator conversion utilities
 
 use crate::transpile::hir;
-use oxc_ast::ast::*;
+use oxc_syntax::operator::*;
 
 pub fn unary_op(op: &UnaryOperator) -> hir::UnaryOp {
     match op {
-        UnaryOperator::Minus => hir::UnaryOp::Minus,
-        UnaryOperator::Plus => hir::UnaryOp::Plus,
+        UnaryOperator::UnaryNegation => hir::UnaryOp::Minus,
+        UnaryOperator::UnaryPlus => hir::UnaryOp::Plus,
         UnaryOperator::LogicalNot => hir::UnaryOp::Not,
         UnaryOperator::BitwiseNot => hir::UnaryOp::BitNot,
         UnaryOperator::Typeof => hir::UnaryOp::Typeof,
@@ -28,7 +28,7 @@ fn arith_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
         BinaryOperator::Multiplication => Some(Mul),
         BinaryOperator::Division => Some(Div),
         BinaryOperator::Remainder => Some(Mod),
-        BinaryOperator::Exponentiation => Some(Exp),
+        BinaryOperator::Exponential => Some(Exp),
         _ => None,
     }
 }
@@ -36,9 +36,9 @@ fn arith_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
 fn shift_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
     use hir::BinaryOp::*;
     match op {
-        BinaryOperator::LeftShift => Some(Shl),
-        BinaryOperator::RightShift => Some(Shr),
-        BinaryOperator::UnsignedRightShift => Some(UShr),
+        BinaryOperator::ShiftLeft => Some(Shl),
+        BinaryOperator::ShiftRight => Some(Shr),
+        BinaryOperator::ShiftRightZeroFill => Some(UShr),
         _ => None,
     }
 }
@@ -48,8 +48,8 @@ fn cmp_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
     match op {
         BinaryOperator::LessThan => Some(Lt),
         BinaryOperator::GreaterThan => Some(Gt),
-        BinaryOperator::LessThanOrEqual => Some(Lte),
-        BinaryOperator::GreaterThanOrEqual => Some(Gte),
+        BinaryOperator::LessEqualThan => Some(Lte),
+        BinaryOperator::GreaterEqualThan => Some(Gte),
         _ => None,
     }
 }
@@ -69,8 +69,8 @@ fn bit_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
     use hir::BinaryOp::*;
     match op {
         BinaryOperator::BitwiseAnd => Some(BitAnd),
-        BinaryOperator::BitwiseXor => Some(BitXor),
-        BinaryOperator::BitwiseOr => Some(BitOr),
+        BinaryOperator::BitwiseXOR => Some(BitXor),
+        BinaryOperator::BitwiseOR => Some(BitOr),
         _ => None,
     }
 }
@@ -92,13 +92,13 @@ pub fn assign_op(op: &AssignmentOperator) -> Option<hir::AssignOp> {
 fn arith_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
     use hir::AssignOp::*;
     match op {
-        AssignmentOperator::Equal => Some(Assign),
-        AssignmentOperator::Plus => Some(AddAssign),
-        AssignmentOperator::Minus => Some(SubAssign),
-        AssignmentOperator::Mul => Some(MulAssign),
-        AssignmentOperator::Div => Some(DivAssign),
+        AssignmentOperator::Assign => Some(Assign),
+        AssignmentOperator::Addition => Some(AddAssign),
+        AssignmentOperator::Subtraction => Some(SubAssign),
+        AssignmentOperator::Multiplication => Some(MulAssign),
+        AssignmentOperator::Division => Some(DivAssign),
         AssignmentOperator::Remainder => Some(ModAssign),
-        AssignmentOperator::Exponent => Some(ExpAssign),
+        AssignmentOperator::Exponential => Some(ExpAssign),
         _ => None,
     }
 }
@@ -106,9 +106,9 @@ fn arith_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
 fn shift_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
     use hir::AssignOp::*;
     match op {
-        AssignmentOperator::LeftShift => Some(ShlAssign),
-        AssignmentOperator::RightShift => Some(ShrAssign),
-        AssignmentOperator::UnsignedRightShift => Some(UShrAssign),
+        AssignmentOperator::ShiftLeft => Some(ShlAssign),
+        AssignmentOperator::ShiftRight => Some(ShrAssign),
+        AssignmentOperator::ShiftRightZeroFill => Some(UShrAssign),
         _ => None,
     }
 }
@@ -117,8 +117,8 @@ fn bit_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
     use hir::AssignOp::*;
     match op {
         AssignmentOperator::BitwiseAnd => Some(BitAndAssign),
-        AssignmentOperator::BitwiseXor => Some(BitXorAssign),
-        AssignmentOperator::BitwiseOr => Some(BitOrAssign),
+        AssignmentOperator::BitwiseXOR => Some(BitXorAssign),
+        AssignmentOperator::BitwiseOR => Some(BitOrAssign),
         _ => None,
     }
 }

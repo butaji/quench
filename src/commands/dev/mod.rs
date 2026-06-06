@@ -23,7 +23,7 @@ pub async fn run_dev_server(
     let has_tsx = modules.iter().any(|m| m.ends_with(".tsx"));
     let mut ctx = DevContext { root: project_root.clone(), modules };
 
-    run_initial_build(_config, &project_root, has_tsx, &plugin_name)?;
+    run_initial_build(_config, &project_root, has_tsx, &plugin_name).await?;
 
     let mut state = plugin.dev_init(&mut ctx)?;
     let (_watcher, tx, rx) = setup_file_watcher(&project_root)?;
@@ -39,7 +39,7 @@ fn resolve_project_root(path: &PathBuf) -> Result<PathBuf> {
     }
 }
 
-fn run_initial_build(
+async fn run_initial_build(
     _config: &Config,
     project_root: &PathBuf,
     has_tsx: bool,
