@@ -98,7 +98,7 @@
     {
       "id": "027",
       "title": "Fix compile path: typed plugin boundary + working binaries",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": ["crates/runts-plugin/src/lib.rs", "src/commands/build/mod.rs", "crates/runts-ratatui/src/plugin.rs"],
       "acceptance": "Plugin::codegen_module takes typed HIR. runts build --release on static examples produces working binary with expected output."
