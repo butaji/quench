@@ -981,7 +981,7 @@ mod completeness_tests {
 fn gen_all_tokens(cg: &crate::transpile::hir::QuoteCodegen, module: &crate::transpile::hir::Module) -> proc_macro2::TokenStream {
     use crate::transpile::hir::ModuleItem;
     use crate::transpile::hir::Decl;
-    let mut all_tokens = TokenStream::new();
+    let mut all_tokens = proc_macro2::TokenStream::new();
     for item in &module.items {
         match item {
             ModuleItem::Decl(Decl::Function(func)) => { all_tokens.extend(cg.gen_fn(func)); }
