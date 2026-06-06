@@ -36,7 +36,7 @@
 We use an intermediate representation instead of direct TS→Rust string manipulation because:
 
 1. **Semantic analysis** needs a typed tree to detect islands, hooks, route patterns
-2. **Dev mode** executes HIR directly — same IR, two backends (interpreter vs codegen)
+2. **Dev mode** transpiles TSX → JS bundle → rquickjs eval. Compile path uses HIR → Rust codegen. Same parser, different backends.
 3. **Future optimizations** (dead code elimination, constant folding) operate on HIR
 4. **Error messages** can reference source positions through the HIR
 

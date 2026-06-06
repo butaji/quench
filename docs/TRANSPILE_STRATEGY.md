@@ -34,7 +34,7 @@ TS/TSX Source
 ```
 
 **Two execution paths:**
-- **Development**: Source → Parser → HIR → **Interpreter** (no codegen)
+- **Development**: Source → Parser → JS bundle → **rquickjs** (no Rust codegen)
 - **Production**: Source → Parser → HIR → Analyzer → **Codegen** → Rust → cargo build
 
 ---
@@ -202,7 +202,7 @@ On parse error, the parser:
 
 ## 4. HIR (High-level IR)
 
-HIR is the universal representation used by both the interpreter and code generator.
+HIR is the universal representation used by the code generator. (A previous HIR interpreter was used for dev mode; it was removed in favor of rquickjs.)
 
 ### Design goals:
 
@@ -1080,7 +1080,7 @@ pub fn home_page(props: HomeProps) -> VNode {
 }
 ```
 
-For development mode, the interpreter maintains a mapping from HIR nodes to source spans and includes source locations in error stack traces.
+For development mode, source locations are preserved through the transpiler for error stack traces.
 
 ---
 
@@ -1174,14 +1174,12 @@ A suite of real Fresh projects are transpiled and verified:
 3. **HIR**: Add AST node variant
 4. **Analyzer**: Add validation rules
 5. **Codegen**: Add Rust generation
-6. **Interpreter**: Add evaluation logic (if needed for dev mode)
-7. **Tests**: Add parser + codegen + round-trip tests
+6. **Tests**: Add parser + codegen + round-trip tests
 
 ### Adding a new standard library method:
 
 1. **Codegen**: Add case in `generate_array_method` or `generate_string_method`
-2. **Interpreter**: Add case in `eval_call`
-3. **Tests**: Add test case
+2. **Tests**: Add test case
 
 ### Adding a new hook:
 

@@ -42,11 +42,11 @@ TS/TSX Source (.ts, .tsx)
 
 ## Design Principles
 
-1. **HIR is the contract**: Both codegen and interpreter consume the same HIR. No AST leaking into codegen/interpreter.
+1. **HIR is the contract**: Codegen consumes HIR. No AST leaking into codegen. (A prior HIR interpreter was removed; dev now uses rquickjs.)
 2. **Single-pass HIR builder**: oxc AST → HIR in one visit traversal. Semantic info (route/island/hook detection) collected during traversal.
 3. **Serializable HIR**: HIR modules can be cached to disk (JSON/bincode) for incremental builds.
 4. **Dev = interpret HIR, Build = codegen HIR**: Same source of truth, different consumers.
-5. **Type erasure in HIR**: TypeScript types are preserved in HIR for codegen but are semantically erased at runtime (dev interpreter ignores them).
+5. **Type erasure in HIR**: TypeScript types are preserved in HIR for codegen but are semantically erased at runtime.
 
 ## HIR Design
 
@@ -475,68 +475,9 @@ impl RustCodegen {
 }
 ```
 
-## Dev Path: HIR → Interpreter
+## Dev Path: TSX → JS → rquickjs (HIR Interpreter REMOVED)
 
-```rust
-pub struct HIRInterpreter {
-    modules: HashMap<String, Module>,
-    components: HashMap<String, FunctionDecl>,
-    islands: HashMap<String, IslandDef>,
-    hooks: HookRegistry,
-}
-
-impl HIRInterpreter {
-    pub async fn execute_route(&self, route: &str, method: &str, request: Request) -> Response {
-        let module = self.modules.get(route).unwrap();
-        let handler = module.semantic.handlers.iter()
-            .find(|h| h.method == method)
-            .unwrap();
-        
-        let mut ctx = EvalContext::new(request);
-        let result = self.eval_expr(&handler.handler, &mut ctx);
-        
-        match result {
-            Value::VNode(vnode) => Response::html(vnode.render_to_html()),
-            Value::Response(resp) => resp,
-            other => Response::json(other),
-        }
-    }
-    
-    fn eval_expr(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
-        match expr {
-            Expr::Call { callee, args } => {
-                let callee_val = self.eval_expr(callee, ctx);
-                let arg_vals: Vec<Value> = args.iter()
-                    .map(|a| self.eval_expr(a, ctx))
-                    .collect();
-                self.call_function(callee_val, arg_vals, ctx)
-            }
-            Expr::JSX(jsx) => {
-                Value::VNode(self.eval_jsx(jsx, ctx))
-            }
-            // ... etc
-        }
-    }
-    
-    fn eval_jsx(&self, jsx: &JSXExpr, ctx: &mut EvalContext) -> VNode {
-        if jsx.is_fragment {
-            VNode::Fragment(
-                jsx.children.iter()
-                    .map(|c| self.eval_jsx_child(c, ctx))
-                    .collect()
-            )
-        } else {
-            VNode::Element {
-                tag: self.jsx_name_to_string(&jsx.name),
-                attrs: self.eval_jsx_attrs(&jsx.attrs, ctx),
-                children: jsx.children.iter()
-                    .map(|c| self.eval_jsx_child(c, ctx))
-                    .collect(),
-            }
-        }
-    }
-}
-```
+> **REMOVED:** The HIR interpreter (~3,000 LOC) was deleted. Dev mode now transpiles TSX to JS via `oxc_codegen` and executes the bundle in `rquickjs` with a thin Rust bridge (`js_bridge.rs`). See `docs/INK-ARCHITECTURE.md` for the current dev path.
 
 ## Hot Reload Architecture
 
@@ -556,8 +497,8 @@ File change detected
     │
     ▼
 ┌──────────────┐
-│ Update       │  ← swap module in interpreter state
-│ interpreter  │
+│ Update       │  ← swap JS bundle in rquickjs context
+│ rquickjs     │
 └──────────────┘
     │
     ▼
@@ -640,6 +581,6 @@ fn detect_islands(module: &Module) -> Vec<IslandDef> {
 
 1. **Correctness**: oxc_parser handles all TS/TSX edge cases (UTF-8, template literals, type annotations, etc.)
 2. **Performance**: Single-pass HIR builder, cached HIR for incremental builds
-3. **Simplicity**: Interpreter works on HIR directly, no Rust compilation in dev
+3. **Simplicity**: rquickjs gives full JS semantics without a custom interpreter, no Rust compilation in dev
 4. **Flexibility**: HIR can be serialized, transformed, analyzed independently
-5. **Type safety**: TypeScript types preserved in HIR for codegen, but semantically erased for interpreter
+5. **Type safety**: TypeScript types preserved in HIR for codegen, but semantically erased at runtime
