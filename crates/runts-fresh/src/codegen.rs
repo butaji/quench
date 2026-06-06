@@ -41,16 +41,8 @@ pub fn jsx_element(
 
 /// Transform JSX text into VNode::Text
 pub fn jsx_text(text: &str) -> TokenStream {
-    let escaped = text
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;");
-    let s = Literal::string(&escaped);
-    quote! {
-        runts_lib::runtime::vdom::VNode::Text { value: #s.to_string() }
-    }
+    let s = Literal::string(&text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;"));
+    quote! { runts_lib::runtime::vdom::VNode::Text { value: #s.to_string() } }
 }
 
 /// Transform JSX expression (interpolated value) into VNode::Text
