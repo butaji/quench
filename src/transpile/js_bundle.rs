@@ -192,9 +192,7 @@ fn strip_remaining_imports(js: &str) -> String {
 const REACT_SHIM: &str = r#"var React = {
     createElement: function(type, props, ...children) {
         props = props || {};
-        if (children.length === 1) {
-            props.children = children[0];
-        } else if (children.length > 1) {
+        if (children.length > 0) {
             props.children = children;
         }
         if (typeof type === 'function') {

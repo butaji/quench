@@ -73,7 +73,7 @@
     {
       "id": "024",
       "title": "Wire runts dev to execute JS bundle in rquickjs + render to string",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-critical",
       "owner": null,
       "files": ["src/commands/dev/mod.rs", "src/runtime/quickjs.rs", "crates/runts-ink/src/js_bridge.rs"],

@@ -26,6 +26,7 @@ fn main() -> Result<()> {
 
 fn init_logging() {
     let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_max_level(tracing::Level::INFO)
         .with_target(false)
         .with_thread_ids(false)
@@ -50,7 +51,7 @@ fn run_simple_cmd(cmd: &cli::Commands) -> Result<()> {
 fn run_complex_cmd(cmd: &cli::Commands) -> Result<()> {
     match cmd {
         cli::Commands::Codegen { source, expr } => run_codegen(source.clone(), expr.clone()),
-        cli::Commands::Dev { path, plugin } => run_dev(path.clone(), plugin),
+        cli::Commands::Dev { path, plugin, once } => run_dev(path.clone(), plugin, *once),
         cli::Commands::Build { path, plugin, release, no_compile } => {
             run_build(path.clone(), plugin.clone(), *release, *no_compile)
         }
@@ -67,11 +68,11 @@ fn run_init(name: String) -> Result<()> {
     rt.block_on(commands::run_init(name, None))
 }
 
-fn run_dev(path: PathBuf, plugin_name: &str) -> Result<()> {
+fn run_dev(path: PathBuf, plugin_name: &str, once: bool) -> Result<()> {
     info!("Starting development server with plugin: {}", plugin_name);
     let config = config::Config::load_from_path(&path)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(commands::run_dev_server(&config, path, plugin_name.to_string()))
+    rt.block_on(commands::run_dev_server(&config, path, plugin_name.to_string(), once))
 }
 
 fn run_build(path: PathBuf, plugin: Option<String>, release: bool, no_compile: bool) -> Result<()> {
