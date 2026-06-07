@@ -798,10 +798,12 @@
     {
       "id": "074",
       "title": "Add decorators to HIR + parser (type erasure)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-low",
       "files": [
-        "src/transpile/parser/stmt.rs"
+        "crates/runts-hir/src/base.rs",
+        "src/transpile/parser/stmt_class.rs",
+        "src/transpile/tests/spec_classes.rs"
       ],
       "acceptance": "Decorators parse into HIR without producing Invalid. Codegen erases decorators. Tests added."
     },
@@ -1331,8 +1333,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 43,
-    "completed_tasks": 58
+    "pending_tasks": 42,
+    "completed_tasks": 59
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],

@@ -249,6 +249,7 @@ pub struct ClassDecl {
     pub members: Vec<ClassMember>,
     pub generics: Vec<GenericParam>,
     pub methods: Vec<ClassMethod>,
+    pub decorators: Vec<Decorator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -257,6 +258,7 @@ pub struct ClassMethod {
     pub params: Vec<Param>,
     pub body: Expr,
     pub kind: MethodKind,
+    pub decorators: Vec<Decorator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -274,6 +276,7 @@ pub struct ClassMember {
     pub is_static: bool,
     pub is_async: bool,
     pub is_private: bool,
+    pub decorators: Vec<Decorator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

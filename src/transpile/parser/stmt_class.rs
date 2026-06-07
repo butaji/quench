@@ -5,6 +5,17 @@ use crate::transpile::parser::expr::{convert_binding_pattern, convert_expr};
 
 use oxc_ast::ast::*;
 
+/// Convert oxc decorators to HIR decorators
+fn convert_decorators(decorators: &[Decorator]) -> Vec<hir::Decorator> {
+    decorators.iter().filter_map(|d| convert_decorator_expr(d)).collect()
+}
+
+/// Convert a single decorator expression to HIR
+fn convert_decorator_expr(d: &Decorator) -> Option<hir::Decorator> {
+    let expr = convert_expr(&d.expression).ok()?;
+    Some(hir::Decorator { expr })
+}
+
 pub fn class_to_hir(c: &Class) -> hir::Decl {
     let mut members: Vec<hir::ClassMember> = Vec::new();
     let mut methods: Vec<hir::ClassMethod> = Vec::new();
@@ -30,6 +41,7 @@ pub fn class_to_hir(c: &Class) -> hir::Decl {
         members,
         generics: vec![],
         methods,
+        decorators: convert_decorators(&c.decorators),
     })
 }
 
@@ -43,7 +55,13 @@ fn convert_method_def(def: &MethodDefinition) -> Option<hir::ClassMethod> {
     let body = extract_method_body(func);
     let params = convert_func_params(func);
     let kind = if name == "constructor" { hir::MethodKind::Constructor } else { hir::MethodKind::Method };
-    Some(hir::ClassMethod { name, params, body, kind })
+    Some(hir::ClassMethod {
+        name,
+        params,
+        body,
+        kind,
+        decorators: convert_decorators(&def.decorators),
+    })
 }
 
 fn extract_method_body(func: &Function) -> hir::Expr {
@@ -91,5 +109,12 @@ fn convert_prop_def(prop: &PropertyDefinition) -> Option<hir::ClassMember> {
         PropertyKey::NumericLiteral(n) => (n.value.to_string(), false),
         _ => return None,
     };
-    Some(hir::ClassMember { name, type_: None, is_static: prop.r#static, is_async: false, is_private })
+    Some(hir::ClassMember {
+        name,
+        type_: None,
+        is_static: prop.r#static,
+        is_async: false,
+        is_private,
+        decorators: convert_decorators(&prop.decorators),
+    })
 }
