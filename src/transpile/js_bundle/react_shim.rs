@@ -43,6 +43,16 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         }
     }
 
+    function useLayoutEffect(fn, deps) {
+        var idx = currentIdx++;
+        var old = currentHooks[idx];
+        if (!old || !depsEqual(old.deps, deps)) {
+            currentHooks[idx] = { deps: deps };
+            __runts_layout_effects.push(fn);
+            __runts_has_layout_effects = true;
+        }
+    }
+
     function useCallback(fn, deps) {
         var idx = currentIdx++;
         var old = currentHooks[idx];
@@ -192,7 +202,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     }
 
     return {
-        createElement, useState, useReducer, useEffect, useCallback, useMemo, useRef,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef,
         createContext, useContext, memo, forwardRef, Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
@@ -200,6 +210,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
 var useState = React.useState;
 var useReducer = React.useReducer;
 var useEffect = React.useEffect;
+var useLayoutEffect = React.useLayoutEffect;
 var useCallback = React.useCallback;
 var useMemo = React.useMemo;
 var useRef = React.useRef;
@@ -214,10 +225,40 @@ pub const POST_SHIM: &str = r#"
 var process = process || { exit: function(code) { __runts_exit = true; __runts_exit_code = code || 0; } };
 var __runts_effects = [];
 var __runts_has_effects = false;
+var __runts_layout_effects = [];
+var __runts_has_layout_effects = false;
 function __runts_render_with_effects(props) {
+    var vnode;
+    
     // Reset per-render state so context values don't bleed between renders.
     if (typeof __ctxStack !== 'undefined') __ctxStack.length = 0;
-    var vnode;
+    
+    // Render the component first
+    if (typeof __runts_default === 'function') {
+        vnode = __runts_default(props || {});
+    } else if (typeof __runts_app !== 'undefined') {
+        vnode = __runts_app;
+    } else {
+        throw new Error('No app found: use export default or render(<App />)');
+    }
+    
+    // Run layout effects (synchronous, after render, before paint)
+    // Layout effects can trigger state changes, so we may need to re-render
+    var guard = 0;
+    while (__runts_has_layout_effects && guard < 10) {
+        __runts_has_layout_effects = false;
+        if (typeof __ctxStack !== 'undefined') __ctxStack.length = 0;
+        var layoutEffects = __runts_layout_effects;
+        __runts_layout_effects = [];
+        for (var i = 0; i < layoutEffects.length; i++) {
+            if (typeof layoutEffects[i] === 'function') layoutEffects[i]();
+        }
+        // Re-render after layout effects if state changed
+        if (typeof __runts_default === 'function') {
+            vnode = __runts_default(props || {});
+        }
+        guard++;
+    }
     if (typeof __runts_default === 'function') {
         vnode = __runts_default(props || {});
     } else if (typeof __runts_app !== 'undefined') {
