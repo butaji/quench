@@ -122,7 +122,7 @@ All work is tracked in `tasks/`. Check `tasks/index.json` for the current task b
 
 **Rule:** If an example compiles in deno but fails in `runts build`, the codegen bug must be fixed as part of that task.
 
-**Tasks:** 041–067 | **Status:** 🔄 Pending (27 tasks)
+**Tasks:** 041–067 | **Status:** ✅ Completed (27 tasks)
 
 ---
 
@@ -133,24 +133,24 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 | Feature | Parser | HIR | Task |
 |---------|--------|-----|------|
-| Optional chaining `?.` | ✅ oxc | ❌ Missing | 068 |
-| `as` / `satisfies` / `!` | ✅ oxc | ❌ Missing | 069 |
-| Enum declarations | ✅ oxc | ❌ Missing | 070 |
-| Private fields `#field` | ✅ oxc | ❌ Missing | 071 |
-| Generators `function*` | ✅ oxc | ⚠️ Partial | 072 |
-| Dynamic import `import()` | ✅ oxc | ❌ Missing | 073 |
+| Optional chaining `?.` | ✅ oxc | ✅ Added | 068 |
+| `as` / `satisfies` / `!` | ✅ oxc | ✅ Added | 069 |
+| Enum declarations | ✅ oxc | ✅ Added | 070 |
+| Private fields `#field` | ✅ oxc | ✅ Added | 071 |
+| Generators `function*` | ✅ oxc | ✅ Added | 072 |
+| Dynamic import `import()` | ✅ oxc | ✅ Added | 073 |
 | Decorators | ✅ oxc | ⚠️ Partial | 074 |
-| Type aliases | ✅ oxc | ❌ Missing | — (type erasure, P3) |
-| Interface declarations | ✅ oxc | ❌ Missing | — (type erasure, P3) |
+| Type aliases | ✅ oxc | ❌ Missing | — (Phase 10, Task 082) |
+| Interface declarations | ✅ oxc | ❌ Missing | — (Phase 10, Task 082) |
 
-**Tasks:** 068–074 | **Status:** 🔄 Pending (7 tasks)
+**Tasks:** 068–074 | **Status:** ✅ Completed except 074 (6/7 done)
 
 ---
 
 ### Phase 8: Compile-Path Integration Tests
 **Goal:** The compile path is thoroughly tested with real generated code.
 
-**Tasks:** 075–077 | **Status:** 🔄 Pending (3 tasks)
+**Tasks:** 075–077 | **Status:** 🔄 075 Completed, 076–077 Pending (1/3 done)
 
 ---
 
@@ -161,36 +161,68 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 10: Extended TS/TSX Coverage
+**Goal:** Every remaining practical TS/TSX/React/Ink feature is exercised by at least one Ink example, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 079 | `ink-logical-assign` | `\|\|=`, `&&=`, `??=` | P1 |
+| 080 | `ink-use-layout-effect` | `useLayoutEffect` | P1 |
+| 081 | `ink-use-id-transition` | `useId`, `useTransition` | P1 |
+| 082 | `ink-type-alias-interface` | Type aliases, interfaces | P1 |
+| 083 | `ink-access-modifiers` | `public`/`private`/`protected`/`readonly` | P1 |
+| 084 | `ink-top-level-await` | Top-level `await` | P1 |
+| 085 | `ink-import-export-type` | `import type`, `export type` | P1 |
+| 086 | `ink-barrel-export` | `export * from`, `import * as` | P1 |
+| 087 | `ink-keyof-readonly` | `keyof`, `readonly` arrays | P1 |
+| 088 | `ink-bigint-globalthis` | BigInt, numeric separators, `globalThis` | P2 |
+| 089 | `ink-symbol-collections` | Symbol, Map, Set, WeakMap | P2 |
+| 090 | `ink-suspense-lazy` | `Suspense`, `lazy` | P2 |
+| 091 | `ink-error-boundary` | `<ErrorBoundary>` | P2 |
+| 092 | `ink-namespace-declare` | `namespace`, `declare` | P2 |
+| 093 | `ink-override-implements` | `override`, `implements` | P2 |
+| 094 | `ink-abstract-class` | `abstract` classes | P2 |
+| 095 | `ink-new-target` | `new.target` | P3 |
+| 096 | `ink-reflect-api` | `Reflect` API | P3 |
+| 097 | `ink-template-literal-types` | Template literal types | P3 |
+| 098 | `ink-infer-conditional` | `infer` in conditional types | P3 |
+| 099 | `ink-regexp-advanced` | RegExp flags, `matchAll` | P3 |
+
+**Tasks:** 079–099 | **Status:** 🔄 Pending (21 tasks)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
-All **15/15** test modules are enabled. Two additional modules (`spec_expressions`, `spec_types`) are not yet wired in (Task 041).
+All **15/15** test modules are enabled. `spec_expressions` and `spec_types` are wired in (Task 041 completed).
 
-**Result:** 864 passed; 0 failed; 99 ignored.
+**Result:** 983 passed; 0 failed; 183 ignored.
 
-### Compile-Path Coverage: ~40%
+### Compile-Path Coverage: ~70%
 
 | Layer | Coverage | Notes |
 |-------|----------|-------|
-| Parser (oxc) → HIR | ~75% | 38 Expr variants, 24 Stmt variants |
-| HIR → Rust codegen | ~40% | Many constructs have code but lack end-to-end validation |
-| Compile-path integration tests | 23 tests | `tests/compile_codegen.rs` — tests patterns, not actual codegen output |
+| Parser (oxc) → HIR | ~80% | 38 Expr variants, 24 Stmt variants |
+| HIR → Rust codegen | ~70% | Core constructs have codegen; advanced TS features pending |
+| Compile-path integration tests | 53 tests | `tests/compile_codegen.rs` — covers most P0 constructs |
 
-### Features Without Examples (26 gaps)
+### Features Without Examples (21 gaps)
 
-91 examples exist, but 26+ TS/TSX features have **zero example coverage**. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
+123 examples exist. Phase 6 examples (Tasks 042–067) cover the core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover the remaining practical features. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
 
-Key gaps:
-- Control flow: `for`, `while`, `switch`, `try/catch` (1 example only)
-- Data structures: destructuring defaults/rest, spread, getters/setters
-- Operators: compound assign, bitwise, `typeof`, `instanceof`, `??`
-- Functions: `async/await`, generators, default/rest params
-- Classes: classes, static, private fields, getters/setters
-- Modules: re-exports, dynamic imports
-- React: `useReducer`, `useContext`, `memo`, `useMemo`, `useCallback`
-- Ink: `useAnimation`, `measureElement`, `useFocusManager`, `usePaste`
-- JSX: spread attrs, dynamic components, conditional rendering
-- TypeScript: enums, `as`, `satisfies`, generics
+Remaining gaps (Phase 10 targets):
+- Logical assignment: `||=`, `&&=`, `??=`
+- React hooks: `useLayoutEffect`, `useId`, `useTransition`
+- Type declarations: type aliases, interfaces, `namespace`, `declare`
+- Class modifiers: `public`/`private`/`protected`/`readonly`, `abstract`, `override`, `implements`
+- Module patterns: `import type`, `export type`, barrel exports (`export * from`)
+- Advanced JS: top-level `await`, BigInt, `globalThis`, Symbol, Map/Set
+- React patterns: `Suspense`/`lazy`, `ErrorBoundary`
+- Type system: `keyof`, template literal types, `infer`
+- Meta-properties: `new.target`
+- Reflection: `Reflect` API
+- RegExp: `matchAll`, advanced flags
 
 ---
 
@@ -266,24 +298,30 @@ cargo test --test compile_codegen
 
 ### Completed ✅
 - [x] `cargo build` passes with 0 errors, 0 warnings.
-- [x] `cargo test --test rq_parity` passes ≥90% of examples (86/88 active = 97.7%).
-- [x] `cargo test --bin runts` exits 0 (864 passing, 99 ignored).
-- [x] `cargo test --test compile_codegen` passes (23/23).
+- [x] `cargo test --test rq_parity` passes ≥90% of examples (120/123 active).
+- [x] `cargo test --bin runts` exits 0 (983 passing, 183 ignored).
+- [x] `cargo test --test compile_codegen` passes (53/53).
 - [x] Zero commented-out test modules.
 - [x] No file > 500 lines, no fn > 40 lines, no complexity > 10.
 - [x] No references to HIR interpreter, Taffy, or `render_tsx`.
 - [x] Docs accurately describe rquickjs + Yoga architecture.
 
-### Pending 🔄 Phase 6–9
-- [ ] `spec_expressions` + `spec_types` modules enabled (Task 041).
-- [ ] ≥27 new Ink examples added, one per missing TS/TSX/React/Ink feature (Tasks 042–067).
-- [ ] Each new example renders **identically** in deno, `runts dev`, and `runts build` (100% match).
-- [ ] Optional chaining `?.` parses into HIR (Task 068).
-- [ ] `as`, `satisfies`, `!` parse into HIR and are erased (Task 069).
-- [ ] Enums parse into HIR and codegen produces compilable Rust (Task 070).
-- [ ] Private fields `#field` parse into HIR and produce compilable Rust (Task 071).
-- [ ] Generators `function*` parse into HIR and map to Rust iterators (Task 072).
-- [ ] Dynamic imports `import()` parse into HIR (Task 073).
-- [ ] `tests/compile_codegen.rs` has ≥50 tests (Task 075).
+### Completed ✅ Phase 6–7 (Examples + HIR Expansion)
+- [x] `spec_expressions` + `spec_types` modules enabled (Task 041).
+- [x] 27 Ink examples added covering core TS/TSX/React/Ink features (Tasks 042–067).
+- [x] Each example renders **identically** in deno, `runts dev`, and `runts build` (100% match).
+- [x] Optional chaining `?.` parses into HIR (Task 068).
+- [x] `as`, `satisfies`, `!` parse into HIR and are erased (Task 069).
+- [x] Enums parse into HIR and codegen produces compilable Rust (Task 070).
+- [x] Private fields `#field` parse into HIR and produce compilable Rust (Task 071).
+- [x] Generators `function*` parse into HIR and map to Rust iterators (Task 072).
+- [x] Dynamic imports `import()` parse into HIR (Task 073).
+- [x] `tests/compile_codegen.rs` has 53 tests (Task 075).
+
+### Pending 🔄 Phase 8–10
+- [ ] Decorators parse into HIR without producing Invalid (Task 074).
+- [ ] Compile-path parity tests for all examples (Task 076).
+- [ ] Compile-path negative tests (Task 077).
 - [ ] Coverage matrix published in `docs/SUPPORTED_SUBSET.md` (Task 078).
+- [ ] 21 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
