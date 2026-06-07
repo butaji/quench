@@ -219,6 +219,9 @@ pub enum AssignOp {
     ShlAssign,
     ShrAssign,
     UShrAssign,
+    LogicalOrAssign,
+    LogicalAndAssign,
+    NullishCoalescingAssign,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
