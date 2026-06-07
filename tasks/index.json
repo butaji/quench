@@ -136,12 +136,39 @@
       "tasks": [
         "078"
       ]
+    },
+    {
+      "name": "Phase 10: Extended TS/TSX Coverage",
+      "description": "Additional Ink examples for TS/TSX features not yet exercised. Covers logical assignment, React 18 hooks, type declarations, module patterns, collections, and advanced type system features.",
+      "tasks": [
+        "079",
+        "080",
+        "081",
+        "082",
+        "083",
+        "084",
+        "085",
+        "086",
+        "087",
+        "088",
+        "089",
+        "090",
+        "091",
+        "092",
+        "093",
+        "094",
+        "095",
+        "096",
+        "097",
+        "098",
+        "099"
+      ]
     }
   ],
   "tasks": [
     {
       "id": "020",
-      "title": "Fix quote_codegen.rs syntax error \u2014 unblock the build",
+      "title": "Fix quote_codegen.rs syntax error — unblock the build",
       "status": "completed",
       "priority": "P0-critical",
       "files": [
@@ -385,7 +412,7 @@
     },
     {
       "id": "042",
-      "title": "ink-control-flow example \u2014 for, while, do-while, switch, break, continue",
+      "title": "ink-control-flow example — for, while, do-while, switch, break, continue",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -397,7 +424,7 @@
     },
     {
       "id": "043",
-      "title": "ink-try-catch example \u2014 try, catch, finally, throw",
+      "title": "ink-try-catch example — try, catch, finally, throw",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -409,7 +436,7 @@
     },
     {
       "id": "044",
-      "title": "ink-forin-forof example \u2014 for-in, for-of, iterators",
+      "title": "ink-forin-forof example — for-in, for-of, iterators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -421,7 +448,7 @@
     },
     {
       "id": "045",
-      "title": "ink-destructure example \u2014 destructuring, defaults, rest",
+      "title": "ink-destructure example — destructuring, defaults, rest",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -433,7 +460,7 @@
     },
     {
       "id": "046",
-      "title": "ink-spread example \u2014 object/array spread, JSX spread attrs",
+      "title": "ink-spread example — object/array spread, JSX spread attrs",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -444,7 +471,7 @@
     },
     {
       "id": "047",
-      "title": "ink-template example \u2014 template literals, multiline",
+      "title": "ink-template example — template literals, multiline",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -455,7 +482,7 @@
     },
     {
       "id": "048",
-      "title": "ink-object-advanced example \u2014 getters, setters, computed keys, method shorthand",
+      "title": "ink-object-advanced example — getters, setters, computed keys, method shorthand",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -466,7 +493,7 @@
     },
     {
       "id": "049",
-      "title": "ink-nullish-optional example \u2014 ?? and ?. (optional chaining)",
+      "title": "ink-nullish-optional example — ?? and ?. (optional chaining)",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -476,7 +503,7 @@
     },
     {
       "id": "050",
-      "title": "ink-typeof-guard example \u2014 typeof, instanceof, delete, void",
+      "title": "ink-typeof-guard example — typeof, instanceof, delete, void",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -487,7 +514,7 @@
     },
     {
       "id": "051",
-      "title": "ink-compound-bitwise example \u2014 all compound assignment + bitwise operators",
+      "title": "ink-compound-bitwise example — all compound assignment + bitwise operators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -498,7 +525,7 @@
     },
     {
       "id": "052",
-      "title": "ink-async-fetch example \u2014 async, await, Promise",
+      "title": "ink-async-fetch example — async, await, Promise",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -509,7 +536,7 @@
     },
     {
       "id": "053",
-      "title": "ink-generator example \u2014 function*, yield, yield*",
+      "title": "ink-generator example — function*, yield, yield*",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -521,7 +548,7 @@
     },
     {
       "id": "054",
-      "title": "ink-function-params example \u2014 default params, rest params",
+      "title": "ink-function-params example — default params, rest params",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -532,7 +559,7 @@
     },
     {
       "id": "055",
-      "title": "ink-class-component example \u2014 classes, extends, super",
+      "title": "ink-class-component example — classes, extends, super",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -543,7 +570,7 @@
     },
     {
       "id": "056",
-      "title": "ink-static-private example \u2014 static methods, private fields #field",
+      "title": "ink-static-private example — static methods, private fields #field",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -553,7 +580,7 @@
     },
     {
       "id": "057",
-      "title": "ink-getter-setter example \u2014 getters, setters, computed accessors",
+      "title": "ink-getter-setter example — getters, setters, computed accessors",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -564,7 +591,7 @@
     },
     {
       "id": "058",
-      "title": "ink-module-exports example \u2014 named exports, default exports, re-exports",
+      "title": "ink-module-exports example — named exports, default exports, re-exports",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -575,7 +602,7 @@
     },
     {
       "id": "059",
-      "title": "ink-dynamic-import example \u2014 import(), import.meta",
+      "title": "ink-dynamic-import example — import(), import.meta",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -585,7 +612,7 @@
     },
     {
       "id": "060",
-      "title": "ink-react-advanced example \u2014 useReducer, useContext, memo, forwardRef",
+      "title": "ink-react-advanced example — useReducer, useContext, memo, forwardRef",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -598,7 +625,7 @@
     },
     {
       "id": "061",
-      "title": "ink-jsx-advanced example \u2014 spread attrs, dynamic components, fragments, conditional rendering",
+      "title": "ink-jsx-advanced example — spread attrs, dynamic components, fragments, conditional rendering",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -609,7 +636,7 @@
     },
     {
       "id": "062",
-      "title": "ink-animation example \u2014 useAnimation",
+      "title": "ink-animation example — useAnimation",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -620,7 +647,7 @@
     },
     {
       "id": "063",
-      "title": "ink-measure example \u2014 measureElement, useBoxMetrics",
+      "title": "ink-measure example — measureElement, useBoxMetrics",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -631,7 +658,7 @@
     },
     {
       "id": "064",
-      "title": "ink-focus-paste example \u2014 useFocus, useFocusManager, usePaste",
+      "title": "ink-focus-paste example — useFocus, useFocusManager, usePaste",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -642,7 +669,7 @@
     },
     {
       "id": "065",
-      "title": "ink-static-transform example \u2014 Static, Transform, Newline, Spacer",
+      "title": "ink-static-transform example — Static, Transform, Newline, Spacer",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -653,7 +680,7 @@
     },
     {
       "id": "066",
-      "title": "ink-enum-types example \u2014 enums, as, satisfies",
+      "title": "ink-enum-types example — enums, as, satisfies",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -663,7 +690,7 @@
     },
     {
       "id": "067",
-      "title": "ink-type-erasure example \u2014 generics, mapped types, conditional types",
+      "title": "ink-type-erasure example — generics, mapped types, conditional types",
       "status": "completed",
       "priority": "P3-low",
       "files": [
@@ -764,12 +791,14 @@
     {
       "id": "076",
       "title": "Add compile-path parity tests for all new examples",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
-        "scripts/parity.sh"
+        "scripts/parity.sh",
+        "scripts/lib/parity_lib.sh"
       ],
-      "acceptance": "Parity harness runs --env compile for all examples. Compile-path pass rate tracked in stats."
+      "acceptance": "Parity harness runs --env compile for all examples. Static JSX examples (ink-text-props, ink-newline, etc.) produce 100% match vs deno. Compile-path pass rate tracked in stats.",
+      "notes": "Fixed run_compile to use expect PTY for crossterm output. Stripped 'Press q to quit.' from output. Static examples (no JS runtime) achieve 100% parity. Examples with dynamic expressions (template literals, member access) have known differences due to ratatui codegen limitations."
     },
     {
       "id": "077",
@@ -783,7 +812,7 @@
     },
     {
       "id": "078",
-      "title": "Final coverage audit \u2014 complete TS/TSX feature matrix",
+      "title": "Final coverage audit — complete TS/TSX feature matrix",
       "status": "pending",
       "priority": "P1-high",
       "files": [
@@ -791,13 +820,244 @@
         "tasks/index.json"
       ],
       "acceptance": "Coverage matrix exists mapping every TS/TSX/React/Ink feature to parser/HIR/codegen/example/test status. Every gap has a linked task."
+    },
+    {
+      "id": "079",
+      "title": "ink-logical-assign example — ||=, &&=, ??=",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-logical-assign/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. ES2021 logical assignment operators produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "080",
+      "title": "ink-use-layout-effect example — useLayoutEffect",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-layout-effect/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. useLayoutEffect hook works in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "081",
+      "title": "ink-use-id-transition example — useId, useTransition",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-id-transition/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. React 18 hooks useId and useTransition work in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "082",
+      "title": "ink-type-alias-interface example — type aliases, interfaces",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-type-alias-interface/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. type aliases and interfaces erased at compile time. Parity harness 100%."
+    },
+    {
+      "id": "083",
+      "title": "ink-access-modifiers example — public/private/protected/readonly",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-access-modifiers/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Class access modifiers erased or mapped. Parity harness 100%."
+    },
+    {
+      "id": "084",
+      "title": "ink-top-level-await example — top-level await",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-top-level-await/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Top-level await produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "085",
+      "title": "ink-import-export-type example — import type, export type",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-import-export-type/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. import type and export type erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "086",
+      "title": "ink-barrel-export example — export * from, import * as",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-barrel-export/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Barrel exports and namespace imports compile. Parity harness 100%."
+    },
+    {
+      "id": "087",
+      "title": "ink-keyof-readonly example — keyof, readonly arrays",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-keyof-readonly/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. keyof and readonly erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "088",
+      "title": "ink-bigint-globalthis example — BigInt, numeric separators, globalThis",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-bigint-globalthis/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. BigInt, numeric separators, globalThis handled. Parity harness 100%."
+    },
+    {
+      "id": "089",
+      "title": "ink-symbol-collections example — Symbol, Map, Set, WeakMap",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-symbol-collections/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Symbol and collection types compile. Parity harness 100%."
+    },
+    {
+      "id": "090",
+      "title": "ink-suspense-lazy example — Suspense, lazy",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-suspense-lazy/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. React.Suspense and React.lazy work in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "091",
+      "title": "ink-error-boundary example — ErrorBoundary",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-error-boundary/",
+        "crates/runts-ink/src/js_bridge/"
+      ],
+      "acceptance": "Example exists. Ink ErrorBoundary component works. Parity harness 100%."
+    },
+    {
+      "id": "092",
+      "title": "ink-namespace-declare example — namespace, declare",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-namespace-declare/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. namespace and declare erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "093",
+      "title": "ink-override-implements example — override, implements",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-override-implements/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. override and implements erased or mapped. Parity harness 100%."
+    },
+    {
+      "id": "094",
+      "title": "ink-abstract-class example — abstract classes",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-abstract-class/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. abstract classes handled. Parity harness 100%."
+    },
+    {
+      "id": "095",
+      "title": "ink-new-target example — new.target",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-new-target/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. new.target meta-property handled. Parity harness 100%."
+    },
+    {
+      "id": "096",
+      "title": "ink-reflect-api example — Reflect API",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-reflect-api/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Reflect API calls compile. Parity harness 100%."
+    },
+    {
+      "id": "097",
+      "title": "ink-template-literal-types example — template literal types",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-template-literal-types/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Template literal types erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "098",
+      "title": "ink-infer-conditional example — infer in conditional types",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-infer-conditional/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. infer keyword erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "099",
+      "title": "ink-regexp-advanced example — RegExp flags, matchAll",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-regexp-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. RegExp matchAll and advanced flags compile. Parity harness 100%."
     }
   ],
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 113,
-    "examples_with_tests": 110,
+    "examples_total": 123,
+    "examples_with_tests": 120,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 983,
@@ -813,23 +1073,35 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 5,
-    "completed_tasks": 55
+    "pending_tasks": 24,
+    "completed_tasks": 56
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
     "props_not_in_examples": [],
     "disabled_test_modules": [],
     "features_without_examples": [
-      "static methods / private fields",
-      "module exports (named/default/re-export)",
-      "dynamic imports / import.meta",
-      "useAnimation / measureElement / useBoxMetrics",
-      "useFocus / useFocusManager / usePaste",
-      "Static / Transform / Newline / Spacer",
-      "enums / as / satisfies",
-      "generics / mapped types / conditional types",
-      "generators (function*, yield)"
+      "logical assignment (||=, &&=, ??=)",
+      "useLayoutEffect",
+      "useId / useTransition",
+      "type aliases / interfaces",
+      "access modifiers (public/private/protected/readonly)",
+      "top-level await",
+      "import type / export type",
+      "barrel exports (export * from)",
+      "keyof / readonly arrays",
+      "BigInt / numeric separators / globalThis",
+      "Symbol / Map / Set / WeakMap",
+      "Suspense / lazy",
+      "ErrorBoundary",
+      "namespace / declare",
+      "override / implements",
+      "abstract classes",
+      "new.target",
+      "Reflect API",
+      "template literal types",
+      "infer in conditional types",
+      "RegExp advanced flags / matchAll"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

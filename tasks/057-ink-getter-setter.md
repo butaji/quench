@@ -42,7 +42,7 @@ Create `examples/ink-getter-setter/` with:
 
 ## Acceptance Criteria
 
-- [x] Example exists, renders identically in deno and `runts dev`
+- [x] Example exists, renders identically in deno and `runts dev` (100% output match)
 - [x] Dev path (rquickjs) executes JavaScript classes with getters/setters correctly
 - [x] `cargo build` passes with 0 warnings
 

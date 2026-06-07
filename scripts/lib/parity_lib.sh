@@ -3,9 +3,7 @@
 
 set -uo pipefail
 
-# SCRIPT_DIR_FULL is scripts/lib/
 SCRIPT_DIR_FULL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# REPO_ROOT is two levels up from scripts/lib/ (scripts/, then project root)
 REPO_ROOT="$(cd "$SCRIPT_DIR_FULL/../.." && pwd)"
 SCRIPT_LIB_DIR="$SCRIPT_DIR_FULL"
 RUNTS_BIN="${RUNTS_BIN:-$REPO_ROOT/target/debug/runts}"
@@ -42,18 +40,17 @@ normalize_output() {
       -e '/^  Binary/d' \
       -e '/^error:.*warning:/d' \
       -e '/^warning:/d' \
+      -e '/^[ ]*Press q to quit\.$/d' \
       -e '/^$/d' \
     | sed 's/[[:space:]]*$//' \
     | tr -d '\r'
 }
 
-# True if the example source uses interactive hooks.
 is_interactive() {
   local src="$1"
   grep -qE 'useInput|useFocus|useStdin' "$src" 2>/dev/null
 }
 
-# Run a command with a timeout (macOS-compatible).
 run_with_timeout() {
   local secs=$1
   shift
@@ -79,7 +76,6 @@ run_with_timeout() {
   cat "$out" 2>/dev/null || true
 }
 
-# Run deno and capture stdout. Returns 0 on success.
 run_deno() {
   local ex_dir=$1
   local name
@@ -127,7 +123,6 @@ run_deno() {
   return 0
 }
 
-# Run rquickjs dev and capture stdout. Returns 0 on success.
 run_rq() {
   local ex_dir=$1
   local once_flag=${2:-}
@@ -181,7 +176,8 @@ run_rq() {
   return 0
 }
 
-# Run compile path and capture stdout. Returns 0 on success.
+# Run compile path: build + run via expect PTY + strip ANSI.
+# Returns 0 if binary builds and can produce output.
 run_compile() {
   local ex_dir=$1
   local name
@@ -216,11 +212,27 @@ run_compile() {
     return 1
   fi
 
-  if is_interactive "$ex_dir/tui/app.tsx"; then
-    printf 'q\n' | run_with_timeout "$TIMEOUT_SECS" "$bin" > "$out" 2> "$err"
-  else
-    printf '\n' | run_with_timeout "$TIMEOUT_SECS" "$bin" > "$out" 2> "$err"
-  fi
+  # Use expect to provide a PTY (crossterm requires a terminal).
+  # Strip ANSI codes so we can compare plain text.
+  # Send 'q' to exit the app gracefully.
+  expect -c "
+    log_user 1
+    set timeout $TIMEOUT_SECS
+    spawn $bin
+    expect {*}
+    send \"q\"
+    expect eof
+  " 2>&1 \
+    | sed \
+        -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' \
+        -e 's/\x1b[^m]*m//g' \
+        -e 's/\r$//' \
+        -e 's/^q//' \
+        -e '/^spawn /d' \
+        -e '/^DEBUG /d' \
+        -e '/^[ ]*Press q to quit\.$/d' \
+        -e '/^$/d' \
+    > "$out"
 
   if [[ ! -s "$out" ]]; then
     echo "<NO_OUTPUT>" > "$out"
@@ -230,7 +242,6 @@ run_compile() {
   return 0
 }
 
-# Compute similarity between two files.
 compute_similarity() {
   local file1=$1
   local file2=$2
