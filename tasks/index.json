@@ -163,6 +163,33 @@
         "098",
         "099"
       ]
+    },
+    {
+      "name": "Phase 11: Type System + Runtime API Deep Coverage",
+      "description": "Additional Ink examples for utility types, modern runtime APIs, React patterns, and advanced type system features not yet exercised.",
+      "tasks": [
+        "100",
+        "101",
+        "102",
+        "103",
+        "104",
+        "105",
+        "106",
+        "107",
+        "108",
+        "109",
+        "110",
+        "111",
+        "112",
+        "113",
+        "114",
+        "115",
+        "116",
+        "117",
+        "118",
+        "119",
+        "120"
+      ]
     }
   ],
   "tasks": [
@@ -835,7 +862,7 @@
     {
       "id": "080",
       "title": "ink-use-layout-effect example — useLayoutEffect",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-use-layout-effect/",
@@ -1051,6 +1078,237 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. RegExp matchAll and advanced flags compile. Parity harness 100%."
+    },
+    {
+      "id": "100",
+      "title": "ink-utility-types example — Partial, Required, Pick, Omit, Record, ReturnType",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-utility-types/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. All built-in utility types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "101",
+      "title": "ink-as-const example — as const, literal types, tuple types",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-as-const/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. as const and literal types erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "102",
+      "title": "ink-index-intersection example — index signatures, intersection types",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-index-intersection/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Index signatures and intersections erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "103",
+      "title": "ink-unknown-never example — unknown, never, user-defined type guards",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-unknown-never/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. unknown, never, and type guards erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "104",
+      "title": "ink-array-modern example — flat, flatMap, at, toSorted, toReversed, includes, findLast",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-modern/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Modern array methods produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "105",
+      "title": "ink-object-modern example — fromEntries, hasOwn, getOwnPropertyDescriptors",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-object-modern/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Modern object methods produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "106",
+      "title": "ink-use-imperative-handle example — useImperativeHandle, forwardRef",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-imperative-handle/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. useImperativeHandle works in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "107",
+      "title": "ink-use-sync-external-store example — useSyncExternalStore, useDeferredValue",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-sync-external-store/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. React 18 concurrent hooks work in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "108",
+      "title": "ink-context-advanced example — Context displayName, defaultValue, multiple providers",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-context-advanced/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. Advanced Context patterns work. Parity harness 100%."
+    },
+    {
+      "id": "109",
+      "title": "ink-discriminated-unions example — discriminated unions, exhaustive checks",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-discriminated-unions/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Discriminated unions and exhaustive checks erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "110",
+      "title": "ink-mapped-types example — mapped types, keyof, in",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-mapped-types/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Mapped types erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "111",
+      "title": "ink-proxy example — Proxy handler",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-proxy/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Proxy produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "112",
+      "title": "ink-weakref example — WeakRef, FinalizationRegistry",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-weakref/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. WeakRef and FinalizationRegistry produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "113",
+      "title": "ink-string-modern example — padStart, padEnd, replaceAll, trimStart, trimEnd, at",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-string-modern/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Modern string methods produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "114",
+      "title": "ink-promise-advanced example — allSettled, any, race, withResolvers",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-promise-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Advanced Promise methods produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "115",
+      "title": "ink-this-parameter example — this parameter, this types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-this-parameter/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. this parameters erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "116",
+      "title": "ink-unique-symbol example — unique symbol, branded types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-unique-symbol/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. unique symbol and branded types erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "117",
+      "title": "ink-react-children example — Children API, cloneElement, isValidElement",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-react-children/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. Children API works in rquickjs. Parity harness 100%."
+    },
+    {
+      "id": "118",
+      "title": "ink-date-math example — Date, Math, Intl",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-date-math/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Date, Math, Intl produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "119",
+      "title": "ink-export-equal example — export =, import = require()",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-export-equal/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. export = and import = require() handled. Parity harness 100%."
+    },
+    {
+      "id": "120",
+      "title": "ink-global-augmentation example — global augmentation, module augmentation",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-global-augmentation/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Augmentations erased without runtime impact. Parity harness 100%."
     }
   ],
   "stats": {
@@ -1073,14 +1331,15 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 24,
-    "completed_tasks": 56
+    "pending_tasks": 43,
+    "completed_tasks": 58
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
     "props_not_in_examples": [],
     "disabled_test_modules": [],
     "features_without_examples": [
+      "decorators",
       "logical assignment (||=, &&=, ??=)",
       "useLayoutEffect",
       "useId / useTransition",
@@ -1101,7 +1360,28 @@
       "Reflect API",
       "template literal types",
       "infer in conditional types",
-      "RegExp advanced flags / matchAll"
+      "RegExp advanced flags / matchAll",
+      "utility types (Partial, Required, Pick, Omit, Record)",
+      "as const / literal types / tuple types",
+      "index signatures / intersection types",
+      "unknown / never / user-defined type guards",
+      "modern array methods (flat, flatMap, at, toSorted)",
+      "modern object methods (fromEntries, hasOwn)",
+      "useImperativeHandle",
+      "useSyncExternalStore / useDeferredValue",
+      "Context displayName / defaultValue / multiple providers",
+      "discriminated unions",
+      "mapped types",
+      "Proxy",
+      "WeakRef / FinalizationRegistry",
+      "modern string methods (padStart, padEnd, replaceAll)",
+      "Promise.allSettled / any / race",
+      "this parameter / this types",
+      "unique symbol / branded types",
+      "Children API / cloneElement / isValidElement",
+      "Date / Math / Intl",
+      "export = / import = require()",
+      "global / module augmentation"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
