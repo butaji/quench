@@ -1,7 +1,7 @@
 # Task: Verify js_bridge.rs Completeness Against All Used Props
 
 **Priority:** P1-High  
-**Phase:** 1 — rquickjs + Yoga Engine  
+**Phase:** 3 — Coverage Gaps  
 **Depends on:** 025, 035
 
 ## Problem

@@ -11,33 +11,34 @@ Several docs still describe the HIR interpreter as the dev engine or contain sta
 
 ## Doc Audit Results
 
-| Document | Status | What Needs Fixing |
-|----------|--------|-----------------|
-| `README.md` | ✅ Mostly current | Minor: ensure "89" → "88" examples count |
-| `DESIGN.md` | ✅ Current | Mentions rquickjs correctly; check for stale claims |
-| `docs/INK-ARCHITECTURE.md` | ✅ Updated | Current State section was updated in prior commit |
+| Document | Status | What Was Fixed |
+|----------|--------|----------------|
+| `README.md` | ✅ Current | "89" → "88" examples count; In-progress list updated |
+| `DESIGN.md` | ✅ Current | Mentions rquickjs correctly |
+| `docs/INK-ARCHITECTURE.md` | ✅ Current | Current State section updated to v4.1 |
 | `docs/PHILOSOPHY.md` | ✅ Current | Already describes rquickjs + Yoga accurately |
-| `docs/PERFORMANCE.md` | ⚠️ Partially stale | §3.2 compares rquickjs vs HIR interpreter vs Cranelift — add note that HIR interpreter was removed |
-| `docs/ARCHITECTURE.md` | ❌ Completely stale | Entire doc assumes HIR interpreter dev path. **Needs full rewrite or major banner.** |
-| `docs/TRANSPILATION_STRATEGY.md` | ❌ Completely stale | Same — every section references interpreter. **Needs full rewrite or major banner.** |
-| `docs/TRANSPILE_STRATEGY.md` | ⚠️ Partially stale | §8 and §12.6/12.7 reference interpreter; compile path is accurate. |
-| `docs/RUNTS_COMPLETE_DESIGN.md` | ⚠️ Partially stale | §2.7 title was updated but body still describes interpreter capabilities. |
-| `docs/ROADMAP.md` | ✅ Updated | Decision log updated in prior commit |
+| `docs/PERFORMANCE.md` | ✅ Current | §3.2 table already notes "HIR Interpreter (removed)" |
+| `docs/ARCHITECTURE.md` | ✅ Fixed | Added stale banner; replaced "Dev Path: HIR → Interpreter" with "Dev Path: TSX → JS → rquickjs (HIR Interpreter REMOVED)"; fixed inline false claims |
+| `docs/TRANSPILATION_STRATEGY.md` | ✅ Fixed | Banner added; ASCII diagram updated; §5.1 body rewritten for rquickjs; §9 table updated |
+| `docs/TRANSPILE_STRATEGY.md` | ✅ Fixed | §1 pipeline updated to rquickjs; §8 title updated; §12 extensibility no longer lists interpreter |
+| `docs/RUNTS_COMPLETE_DESIGN.md` | ✅ Fixed | §2.7 body rewritten to describe rquickjs; §4.2 table fixed; §5.1 test counts updated |
+| `docs/ROADMAP.md` | ✅ Updated | Decision log notes HIR interpreter removed |
+| `docs/TECHNICAL_SPEC.md` | ✅ Fixed | Stale banner added noting pre-rquickjs draft status |
 
 ## Steps
 
-1. **README.md**: Verify no stale counts or claims. Already done — confirm.
-2. **docs/PERFORMANCE.md**: Add "(removed)" note to HIR interpreter column in comparison table.
-3. **docs/ARCHITECTURE.md**: Either full rewrite (TSX→JS→rquickjs dev path) or add prominent stale banner and delete interpreter sections. **Recommended: add banner + delete dev path sections, keep compile path.**
-4. **docs/TRANSPILATION_STRATEGY.md**: Same treatment as ARCHITECTURE.md.
-5. **docs/TRANSPILE_STRATEGY.md**: Fix §8 dev mode description, remove §12.6/12.7 interpreter references.
-6. **docs/RUNTS_COMPLETE_DESIGN.md**: Rewrite §2.7 body to describe rquickjs, not interpreter.
-7. Run `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` and verify zero misleading references.
+1. **docs/TRANSPILATION_STRATEGY.md**: Fix remaining misleading references:
+   - ASCII diagram: replace "HIR → Interpreter" with "JS bundle → rquickjs"
+   - §5.1 body: replace interpreter execution description with rquickjs dev path
+   - §9 table: replace "Dev (Interpreter)" with "Dev (rquickjs)"
+2. **docs/TECHNICAL_SPEC.md**: Add prominent stale banner noting it is a pre-rquickjs draft.
+3. Run `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` and verify zero misleading references.
 
 ## Acceptance Criteria
 
-- [ ] `docs/ARCHITECTURE.md` has stale banner or is fully rewritten.
-- [ ] `docs/TRANSPILATION_STRATEGY.md` has stale banner or is fully rewritten.
+- [x] `docs/ARCHITECTURE.md` has stale banner and dev path sections rewritten.
+- [ ] `docs/TRANSPILATION_STRATEGY.md` ASCII diagram and §5.1/§9 no longer present interpreter as current.
+- [ ] `docs/TECHNICAL_SPEC.md` has stale banner.
 - [ ] Zero docs present HIR interpreter as the current dev engine.
 - [ ] All architecture diagrams show rquickjs for dev mode.
 - [ ] `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` returns only historical/contextual mentions (with "removed" or "was").

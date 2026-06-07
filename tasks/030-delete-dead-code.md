@@ -7,18 +7,18 @@
 
 ## The Problem
 
-Dead code accumulates: disabled crates, 10 old scripts, HIR runtime remnants, unused imports.
+Dead code accumulates: disabled `crates/runts-react/`, unused imports producing warnings, HIR runtime remnants. The 10 old `test_*.sh` parity scripts were already deleted in Task 028.
 
 ## Steps
 
-1. Delete `crates/runts-react/` directory AND remove from workspace.
-2. Delete all 10 old `test_*.sh` parity scripts from repo root.
-3. Verify `src/hir_runtime.rs` is deleted and no references remain (Task 022).
-4. Remove `#[allow(dead_code)]` and fix warnings by deleting unused code.
-5. Run `cargo build` and ensure zero warnings.
+1. Delete `crates/runts-react/` directory AND remove from workspace (`Cargo.toml`).
+2. Verify `src/hir_runtime.rs` is deleted and no references remain (Task 022).
+3. Remove `#[allow(dead_code)]` and fix warnings by deleting unused code.
+4. Run `cargo build` and ensure zero dead-code warnings.
 
 ## Acceptance Criteria
 
 - [ ] `cargo build` passes with zero dead-code warnings.
 - [ ] `crates/runts-react/` directory does not exist.
+- [ ] `runts-react` is not listed in workspace members (`Cargo.toml`).
 - [ ] `scripts/` contains only `parity.sh` and `lib/`.

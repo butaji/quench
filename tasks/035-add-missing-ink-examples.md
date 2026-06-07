@@ -1,7 +1,7 @@
 # Task: Add Missing Ink Examples for Full Feature Coverage
 
 **Priority:** P1-High  
-**Phase:** 1 — rquickjs + Yoga Engine  
+**Phase:** 3 — Coverage Gaps  
 **Depends on:** 024, 025
 
 ## Problem

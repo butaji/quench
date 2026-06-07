@@ -3,8 +3,9 @@
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 
-use crate::transpile::hir::*;
-use crate::transpile::parser::TsParser;
+pub use crate::transpile::hir::*;
+pub use crate::transpile::parser::TsParser;
+pub use crate::transpile::hir::QuoteCodegen;
 
 /// Parse a statement and return the first statement
 pub fn parse_first_stmt(source: &str) -> Stmt {
