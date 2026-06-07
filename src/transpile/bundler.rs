@@ -313,7 +313,8 @@ fn is_ink_import(line: &str) -> bool {
 const INK_HOOKS: &[&str] = &[
     "useInput", "useApp", "useStdin", "useStdout", "useStderr",
     "useWindowSize", "useFocus", "useFocusManager", "useCursor",
-    "useAnimation", "usePaste", "render",
+    "useAnimation", "usePaste", "useBoxMetrics", "useRef",
+    "render", "measureElement",
 ];
 
 fn ink_import_to_const(spec: &str) -> String {

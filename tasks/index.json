@@ -1,14 +1,14 @@
 {
-  "version": "4.2",
-  "last_updated": "2026-06-07T11:32:06Z",
-  "project": "runts-ink 100% Parity — rquickjs + Yoga Only",
-  "goal": "100% look&feel parity across deno, runts dev (rquickjs), and runts compile for all 91 Ink examples with minimum custom code and Yoga layout engine",
+  "version": "4.5",
+  "last_updated": "2026-06-07T12:00:00Z",
+  "project": "runts-ink: Maximize TS/TSX Coverage in HIR + Compile Path",
+  "goal": "100% of practical TS/TSX constructs supported in HIR representation and compile-path codegen, validated by Ink examples across all 3 environments (deno, runts dev, runts build) with 100% output match",
   "architecture_decision": {
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga",
     "rationale": "HIR interpreter removed entirely. Taffy removed entirely. Yoga is the same engine Ink uses internally, giving maximum layout parity. rquickjs is battle-tested ES2020. Minimum custom code = thin JS bridge + oxc/swc transpile + Yoga layout.",
     "dev_pipeline": "TSX source -> oxc_parser -> oxc_codegen/swc -> JS bundle -> rquickjs context + js_bridge.rs -> VNode tree -> Yoga -> Ratatui",
-    "compile_pipeline": "TSX source -> HIR -> Rust codegen -> cargo build -> native binary (unchanged)",
+    "compile_pipeline": "TSX source -> HIR -> Rust codegen -> cargo build -> native binary",
     "deleted": ["src/hir_runtime.rs", "HIR interpreter", "Taffy layout engine", "all HIR hook polyfills", "all HIR stdlib polyfills"]
   },
   "phases": [
@@ -39,8 +39,28 @@
     },
     {
       "name": "Phase 5: Compile Path Hardening",
-      "description": "Fix quote_codegen to emit compilable Rust for all HIR constructs. Add compile-path tests that run cargo build.",
+      "description": "Fix quote_codegen to emit compilable Rust for core HIR constructs. Add compile-path tests.",
       "tasks": ["037", "038", "039", "040"]
+    },
+    {
+      "name": "Phase 6: Example-Driven Feature Coverage",
+      "description": "Create Ink examples for every missing TS/TSX/React/Ink feature. Each example validates all 3 environments via parity harness with 100% output match.",
+      "tasks": ["041", "042", "043", "044", "045", "046", "047", "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061", "062", "063", "064", "065", "066", "067"]
+    },
+    {
+      "name": "Phase 7: HIR & Parser Expansion",
+      "description": "Add missing HIR variants for TS features not yet represented. Update parser and codegen.",
+      "tasks": ["068", "069", "070", "071", "072", "073", "074"]
+    },
+    {
+      "name": "Phase 8: Compile-Path Integration Tests",
+      "description": "Expand compile_codegen.rs to 50+ tests. Add compile-path parity tests. Add negative tests.",
+      "tasks": ["075", "076", "077"]
+    },
+    {
+      "name": "Phase 9: Final Audit",
+      "description": "Build complete coverage matrix. Verify all P0 features work end-to-end. Document remaining gaps.",
+      "tasks": ["078"]
     }
   ],
   "tasks": [
@@ -215,17 +235,313 @@
     {
       "id": "041",
       "title": "Enable spec_expressions and spec_types test modules",
-      "status": "completed",
+      "status": "pending",
       "priority": "P1-high",
       "files": ["src/transpile/tests/mod.rs", "src/transpile/tests/spec_expressions/", "src/transpile/tests/spec_types/"],
       "acceptance": "Both modules compile and run with cargo test --bin runts. Every failing test is fixed or has #[ignore] with documented reason."
+    },
+    {
+      "id": "042",
+      "title": "ink-control-flow example — for, while, do-while, switch, break, continue",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-control-flow/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. for/while/do-while/switch/break/continue all produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "043",
+      "title": "ink-try-catch example — try, catch, finally, throw",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-try-catch/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. try/catch/finally/throw produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "044",
+      "title": "ink-forin-forof example — for-in, for-of, iterators",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-forin-forof/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. for-in and for-of produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "045",
+      "title": "ink-destructure example — destructuring, defaults, rest",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-destructure/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. Object/array destructuring with defaults and rest produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "046",
+      "title": "ink-spread example — object/array spread, JSX spread attrs",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-spread/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. Object/array spread and JSX spread attributes produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "047",
+      "title": "ink-template example — template literals, multiline",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-template/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. Template literals with multiple interpolations produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "048",
+      "title": "ink-object-advanced example — getters, setters, computed keys, method shorthand",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-object-advanced/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. Getters/setters/computed keys/method shorthand produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "049",
+      "title": "ink-nullish-optional example — ?? and ?. (optional chaining)",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-nullish-optional/"],
+      "acceptance": "Example exists. Optional chaining parses into HIR (Task 068). ?? and ?. codegen produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "050",
+      "title": "ink-typeof-guard example — typeof, instanceof, delete, void",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-typeof-guard/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. typeof constant-folds for literals. instanceof/delete/void produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "051",
+      "title": "ink-compound-bitwise example — all compound assignment + bitwise operators",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-compound-bitwise/", "src/transpile/hir/quote_codegen.rs"],
+      "acceptance": "Example exists. All 13 assignment operators (= + 12 compound) and all bitwise operators produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "052",
+      "title": "ink-async-fetch example — async, await, Promise",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-async-fetch/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. async/await codegen produces compilable Rust with Future support. Parity harness 100%."
+    },
+    {
+      "id": "053",
+      "title": "ink-generator example — function*, yield, yield*",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-generator/"],
+      "acceptance": "Example exists. Generator functions parse into HIR (Task 072). yield/yield* produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "054",
+      "title": "ink-function-params example — default params, rest params",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-function-params/", "src/transpile/parser/expr.rs"],
+      "acceptance": "Example exists. Default and rest parameters produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "055",
+      "title": "ink-class-component example — classes, extends, super",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-class-component/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. Stmt::Class codegen produces compilable Rust (not None). Constructor and methods valid. Parity harness 100%."
+    },
+    {
+      "id": "056",
+      "title": "ink-static-private example — static methods, private fields #field",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-static-private/"],
+      "acceptance": "Example exists. Static methods and private fields #field produce compilable Rust (Task 071). Parity harness 100%."
+    },
+    {
+      "id": "057",
+      "title": "ink-getter-setter example — getters, setters, computed accessors",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-getter-setter/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Example exists. Getters and setters produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "058",
+      "title": "ink-module-exports example — named exports, default exports, re-exports",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["examples/ink-module-exports/", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Multi-file example exists. All module patterns produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "059",
+      "title": "ink-dynamic-import example — import(), import.meta",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-dynamic-import/"],
+      "acceptance": "Example exists. Dynamic import parses into HIR (Task 073). Dev path works. Parity harness 100%."
+    },
+    {
+      "id": "060",
+      "title": "ink-react-advanced example — useReducer, useContext, memo, forwardRef",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-react-advanced/", "src/transpile/js_bundle.rs"],
+      "acceptance": "Example exists. useReducer, useContext, memo, forwardRef all work in rquickjs. Compile path supports all hooks used. Parity harness 100%."
+    },
+    {
+      "id": "061",
+      "title": "ink-jsx-advanced example — spread attrs, dynamic components, fragments, conditional rendering",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-jsx-advanced/", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Example exists. JSX spread attrs, dynamic components, fragments, conditional rendering produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "062",
+      "title": "ink-animation example — useAnimation",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-animation/", "crates/runts-ink/src/js_bridge/"],
+      "acceptance": "Example exists. useAnimation exercised. Parity harness 100%."
+    },
+    {
+      "id": "063",
+      "title": "ink-measure example — measureElement, useBoxMetrics",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-measure/", "crates/runts-ink/src/js_bridge/"],
+      "acceptance": "Example exists. measureElement exercised. Parity harness 100%."
+    },
+    {
+      "id": "064",
+      "title": "ink-focus-paste example — useFocus, useFocusManager, usePaste",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-focus-paste/", "crates/runts-ink/src/js_bridge/"],
+      "acceptance": "Example exists. useFocus, useFocusManager, usePaste exercised. Parity harness 100%."
+    },
+    {
+      "id": "065",
+      "title": "ink-static-transform example — Static, Transform, Newline, Spacer",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-static-transform/", "crates/runts-ink/src/js_bridge/"],
+      "acceptance": "Example exists. Static, Transform, Newline, Spacer all exercised. Parity harness 100%."
+    },
+    {
+      "id": "066",
+      "title": "ink-enum-types example — enums, as, satisfies",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["examples/ink-enum-types/"],
+      "acceptance": "Example exists. Enums parse into HIR (Task 070). as/satisfies erased. Parity harness 100%."
+    },
+    {
+      "id": "067",
+      "title": "ink-type-erasure example — generics, mapped types, conditional types",
+      "status": "pending",
+      "priority": "P3-low",
+      "files": ["examples/ink-type-erasure/"],
+      "acceptance": "Example exists. Type-level features are erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "068",
+      "title": "Add optional chaining ?. to HIR + parser + codegen",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["crates/runts-hir/src/expr.rs", "src/transpile/parser/expr.rs", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "obj?.prop, obj?.[key], fn?.() all parse into HIR. Codegen produces compilable Rust. Parser and codegen tests added."
+    },
+    {
+      "id": "069",
+      "title": "Add as/satisfies/non-null to HIR + parser (type erasure)",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["crates/runts-hir/src/expr.rs", "src/transpile/parser/expr.rs"],
+      "acceptance": "expr as Type, expr satisfies Type, expr! all parse into HIR. Codegen erases all three. Tests added."
+    },
+    {
+      "id": "070",
+      "title": "Add enum declarations to HIR + parser + codegen",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["crates/runts-hir/src/stmt.rs", "src/transpile/parser/stmt.rs", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "Numeric and string enums parse into HIR and codegen produces compilable Rust. Const enums inlined. Tests added."
+    },
+    {
+      "id": "071",
+      "title": "Add private fields #field to HIR + parser + codegen",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["crates/runts-hir/src/expr.rs", "src/transpile/parser/expr.rs"],
+      "acceptance": "#field declarations and access parse into HIR. Codegen produces compilable Rust with private fields."
+    },
+    {
+      "id": "072",
+      "title": "Add generator function* to HIR + parser + codegen",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["src/transpile/parser/expr.rs", "src/transpile/hir/quote_codegen_stmts.inc"],
+      "acceptance": "function* with yield/yield* parses into HIR. Codegen maps generators to Rust iterators. Tests added."
+    },
+    {
+      "id": "073",
+      "title": "Add dynamic import() to HIR + parser + codegen",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["crates/runts-hir/src/expr.rs", "src/transpile/parser/expr.rs"],
+      "acceptance": "import() and import.meta parse into HIR. Codegen handles both (even if placeholder/error). Tests added."
+    },
+    {
+      "id": "074",
+      "title": "Add decorators to HIR + parser (type erasure)",
+      "status": "pending",
+      "priority": "P3-low",
+      "files": ["src/transpile/parser/stmt.rs"],
+      "acceptance": "Decorators parse into HIR without producing Invalid. Codegen erases decorators. Tests added."
+    },
+    {
+      "id": "075",
+      "title": "Expand tests/compile_codegen.rs to 50+ tests",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["tests/compile_codegen.rs"],
+      "acceptance": "50+ tests generating Rust from TS via QuoteCodegen and running rustc. All pass."
+    },
+    {
+      "id": "076",
+      "title": "Add compile-path parity tests for all new examples",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["scripts/parity.sh"],
+      "acceptance": "Parity harness runs --env compile for all examples. Compile-path pass rate tracked in stats."
+    },
+    {
+      "id": "077",
+      "title": "Add compile-path negative tests (expected failures)",
+      "status": "pending",
+      "priority": "P2-medium",
+      "files": ["tests/compile_codegen_negative.rs"],
+      "acceptance": "Negative test file with >=5 tests asserting compilation fails with expected errors."
+    },
+    {
+      "id": "078",
+      "title": "Final coverage audit — complete TS/TSX feature matrix",
+      "status": "pending",
+      "priority": "P1-high",
+      "files": ["docs/SUPPORTED_SUBSET.md", "tasks/index.json"],
+      "acceptance": "Coverage matrix exists mapping every TS/TSX/React/Ink feature to parser/HIR/codegen/example/test status. Every gap has a linked task."
     }
   ],
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 91,
-    "examples_with_tests": 88,
+    "examples_total": 93,
+    "examples_with_tests": 90,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 956,
@@ -239,15 +555,42 @@
     "compile_path_tests": 23,
     "hir_expr_variants": 38,
     "hir_expr_codegen_handled": 28,
-    "hir_stmt_variants": 22,
-    "hir_stmt_codegen_handled": 16
+    "hir_stmt_variants": 24,
+    "hir_stmt_codegen_handled": 16,
+    "pending_tasks": 38,
+    "completed_tasks": 22
   },
   "coverage_gaps": {
-    "hooks_not_in_examples": ["useBoxMetrics", "measureElement"],
+    "hooks_not_in_examples": [],
     "props_not_in_examples": [],
     "disabled_test_modules": [],
-    "compile_path_broken": [
-      "yield (treated as await)"
+    "features_without_examples": [
+      "for / while / do-while",
+      "switch",
+      "try / catch / throw",
+      "for-in / for-of",
+      "destructuring (defaults, rest)",
+      "object/array spread",
+      "getters / setters / computed keys",
+      "compound assignment + bitwise operators",
+      "typeof / instanceof / delete / void",
+      "nullish coalescing ??",
+      "optional chaining ?.",
+      "async / await",
+      "generators (function*, yield)",
+      "default params / rest params",
+      "classes / extends / super",
+      "static methods / private fields",
+      "getters / setters in classes",
+      "module exports (named/default/re-export)",
+      "dynamic imports / import.meta",
+      "useReducer / useContext / memo / forwardRef",
+      "useAnimation / measureElement / useBoxMetrics",
+      "useFocus / useFocusManager / usePaste",
+      "Static / Transform / Newline / Spacer",
+      "JSX spread attrs / dynamic components / fragments",
+      "enums / as / satisfies",
+      "generics / mapped types / conditional types"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

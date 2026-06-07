@@ -32,6 +32,7 @@ fn add_misc_hooks<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
     add_focus_manager_hook(ctx, hooks)?;
     add_cursor_hook(ctx, hooks)?;
     add_animation_hook(ctx, hooks)?;
+    add_measure_hook(ctx, hooks)?;
     add_paste_hook(ctx, hooks)?;
     Ok(())
 }
@@ -180,16 +181,65 @@ fn add_cursor_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
 }
 
 fn add_animation_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
+    let f = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>, _opts: rquickjs::Value<'js>| -> JsResult<Object<'js>> {
+            let obj = Object::new(ctx.clone())?;
+            // Static values for --once mode: animation starts at frame 0
+            obj.set("frame", 0)?;
+            obj.set("isPlaying", false)?;
+            let noop = Function::new(ctx.clone(), |_ctx: Ctx<'js>| -> JsResult<()> {
+                Ok(())
+            })?;
+            obj.set("start", noop.clone())?;
+            obj.set("stop", noop)?;
+            Ok(obj)
+        },
+    )?;
+    hooks.set("useAnimation", f)
+}
+
+fn add_measure_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
+    add_measure_element_fn(ctx, hooks)?;
+    add_use_box_metrics_hook(ctx, hooks)
+}
+
+fn add_measure_element_fn<'js>(
+    ctx: &Ctx<'js>,
+    hooks: &Object<'js>,
+) -> JsResult<()> {
+    let f = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>, _element: rquickjs::Value<'js>| -> JsResult<Object<'js>> {
+            let dims = Object::new(ctx.clone())?;
+            dims.set("width", 10)?;
+            dims.set("height", 3)?;
+            Ok(dims)
+        },
+    )?;
+    hooks.set("measureElement", f)
+}
+
+fn add_use_box_metrics_hook<'js>(
+    ctx: &Ctx<'js>,
+    hooks: &Object<'js>,
+) -> JsResult<()> {
     let f = Function::new(ctx.clone(), |ctx: Ctx<'js>| -> JsResult<Object<'js>> {
         let obj = Object::new(ctx.clone())?;
-        let noop = Function::new(ctx.clone(), |_ctx: Ctx<'js>| -> JsResult<()> {
-            Ok(())
-        })?;
-        obj.set("start", noop.clone())?;
-        obj.set("stop", noop)?;
+        let measure_fn = Function::new(
+            ctx.clone(),
+            |ctx: Ctx<'js>, _element: rquickjs::Value<'js>| -> JsResult<Object<'js>> {
+                let dims = Object::new(ctx.clone())?;
+                dims.set("width", 10)?;
+                dims.set("height", 3)?;
+                Ok(dims)
+            },
+        )?;
+        obj.set("measureElement", measure_fn)?;
         Ok(obj)
     })?;
-    hooks.set("useAnimation", f)
+    hooks.set("useBoxMetrics", f)?;
+    Ok(())
 }
 
 fn add_paste_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {

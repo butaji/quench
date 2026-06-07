@@ -3,7 +3,8 @@
 > **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).
 > **HIR interpreter:** DELETED. Do not restore.
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
-> **Goal:** 100% look&feel parity across 3 environments for all 91 Ink examples.
+> **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
+> **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
 
 ---
 
@@ -15,7 +16,7 @@
 | 2 | **rq** (runts dev) | TSX → JS (oxc_codegen) → rquickjs + Yoga bridge → render | `runts dev --once --plugin ratatui ./example` |
 | 3 | **compile** (runts build) | TSX → HIR → Rust codegen → `cargo build --release` | `runts build --release --plugin ratatui ./example` |
 
-**Parity means:** The rendered text output (after ANSI normalization) is identical across all 3 environments for every example.
+**Parity means:** The rendered text output (after ANSI normalization) is **identical** across all 3 environments for every example. 100% match. No exceptions.
 
 ---
 
@@ -40,133 +41,156 @@ All work is tracked in `tasks/`. Check `tasks/index.json` for the current task b
 
 ---
 
-## Phases (Conceptual)
-
-These phases describe the overall flow. The exact task files in `tasks/` map to these phases and may be updated as work progresses.
+## Phases
 
 ### Phase 0: Unblock
 **Goal:** `cargo build` passes. Linter is enforced.
 
-- Fix the build syntax error (brace mismatch in codegen).
-- Re-enable the linter in `build.rs` and mechanically fix all violations until the build passes with zero linter errors.
-- The linter limits are non-negotiable: file ≤ 500 lines, function ≤ 40 lines, complexity ≤ 10. Extract, don't negotiate.
-
-**Acceptance:** `cargo build` exits 0. `cargo test --no-run` exits 0.
+**Tasks:** 020, 021 | **Status:** ✅ Completed
 
 ---
 
 ### Phase 1: rquickjs + Yoga Engine
 **Goal:** `runts dev --once` renders any example identically to deno.
 
-Execute in this order:
-
-1. **Delete the HIR runtime.** Remove `src/hir_runtime.rs` and all references (`Interpreter`, `Value`, `render_tsx`, `RuntimeError`) from `src/main.rs`, `src/cli.rs`, and anywhere else. Do not preserve it as a fallback — it is dead code.
-2. **Remove Taffy.** Delete the Taffy module and feature flag. Make Yoga the default and only layout feature in `Cargo.toml`. Strip all `#[cfg(feature = "taffy")]` conditionals.
-3. **Build the TSX→JS transpiler.** Use `oxc_codegen` (already in deps). It must: (a) desugar JSX to `React.createElement`, (b) erase TS type annotations, (c) rewrite `import { Box, Text } from 'ink'` to bridge globals.
-4. **Wire `runts dev` to rquickjs.** The dev command should: parse `.tsx` → transpile to JS → create rquickjs context → inject `js_bridge.rs` globals → inject React shim → eval bundle → call `renderToString()` → print output.
-5. **Complete the JS bridge.** Every prop used in any of the 91 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
-6. **Wire interactive hooks.** `useInput`, `useApp`, `useFocus`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). Crossterm events route to JS callbacks.
-
-**Acceptance per step:**
-- After deletion steps: `cargo build` passes with zero warnings.
-- Transpiler: `examples/ink-text-props/tui/app.tsx` produces runnable JS.
-- Dev command: `runts dev --once --plugin ratatui examples/ink-text-props` prints the same text as `deno run -A examples/ink-text-props/main.tsx`.
-- Bridge: `grep -r 'unsupported prop' tests/` returns nothing.
-- Interactive: `runts dev --once examples/ink-counter` renders and responds to `q` / arrow keys.
+**Tasks:** 022–026 | **Status:** ✅ Completed
 
 ---
 
 ### Phase 2: Compile + Verification
-**Goal:** `runts build --release` produces working binaries. One parity harness runs all 91 examples.
+**Goal:** `runts build --release` produces working binaries. One parity harness.
 
-- **Fix the compile path.** Replace the plugin JSON string boundary with typed HIR transfer. Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify that static examples build and run.
-- **Create one parity harness.** Delete all existing `test_parity*.sh` scripts. Create a single `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. It must implement per-symbol diff and output a JSON summary.
-- **Add per-example unit tests.** Generate one Rust test per example in `tests/rq_parity/`. Each test reads `examples/*/tui/app.tsx`, runs it through the rquickjs path, and asserts expected substrings in output.
-- **Re-enable disabled spec tests.** Uncomment all 15 test modules in `src/transpile/tests/mod.rs`, fix helper visibility, mark unimplemented features with `#[ignore]` instead of disabling modules.
-- **Fix HIR test failures.** Categorize failing tests: fix if compile path needs it, `#[ignore]` if out of scope, delete if testing removed subsystems.
-
-**Acceptance:**
-- Compile path produces a binary that exits 0 and prints expected text.
-- Parity harness runs all 91 examples and produces a JSON report.
-- Unit tests cover ≥90% of examples.
-- `cargo test --bin runts` exits 0 (or only expected ignored failures).
+**Tasks:** 027–029, 034 | **Status:** ✅ Completed
 
 ---
 
 ### Phase 3: Coverage Gaps
 **Goal:** No feature is untested or unexercised.
 
-- **Re-enable disabled spec tests.** All 15 test modules are now enabled in `src/transpile/tests/mod.rs`. 864 tests passing, 0 failures, 99 ignored with documented reasons.
-- **Add missing Ink examples.** Added `examples/ink-paste/` (usePaste), `examples/ink-ref/` (useRef), `examples/ink-flex-shrink/` (flexShrink). Remaining unexercised: `useBoxMetrics`/`measureElement`.
-- **Verify bridge completeness.** Prop-coverage matrix confirms 100% of example-used props are handled in `js_bridge.rs`.
-
-**Acceptance:**
-- Zero commented-out test modules.
-- All Ink hooks and layout props are exercised by at least one example.
-- Prop coverage matrix shows 100% coverage.
+**Tasks:** 033, 035, 036 | **Status:** ✅ Completed
 
 ---
 
-### Phase 4: Cleanup
+### Phase 4: Cleanup + Future
 **Goal:** Repo is clean. Docs are truthful.
 
-- Delete dead code: `crates/runts-react/`, old scripts, unused imports. Ensure `cargo build` has zero dead-code warnings.
-- Update all docs (`DESIGN.md`, `README.md`, `docs/*.md`). Remove all HIR interpreter and Taffy references. Describe rquickjs + Yoga accurately.
-- Optional: evaluate Boa vs rquickjs and document decision.
+**Tasks:** 030–032 | **Status:** ✅ Completed
 
-**Acceptance:** Workspace builds clean. Docs do not mention HIR interpreter or Taffy.
+---
+
+### Phase 5: Compile Path Hardening
+**Goal:** Core codegen bugs fixed. `runts build --release` works for simple static examples.
+
+**Tasks:** 037–040 | **Status:** ✅ Completed
+
+---
+
+### Phase 6: Example-Driven Feature Coverage
+**Goal:** Every practical TS/TSX/React/Ink feature is exercised by at least one Ink example, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+**Strategy:** Create real Ink TUI examples that use specific features. The parity harness automatically validates those features in deno, `runts dev`, and `runts build`.
+
+| Task | Example | Feature | Codegen / HIR Fix |
+|------|---------|---------|-------------------|
+| 041 | — | Enable `spec_expressions` + `spec_types` test modules | Wire test modules |
+| 042 | `ink-control-flow` | `for`, `while`, `do-while`, `switch`, `break`, `continue` | Verify `gen_for`, `gen_while`, `gen_switch` |
+| 043 | `ink-try-catch` | `try`, `catch`, `finally`, `throw` | Verify `gen_try`, `gen_throw` |
+| 044 | `ink-forin-forof` | `for-in`, `for-of`, iterators | Verify `gen_for_in`, `gen_for_of` |
+| 045 | `ink-destructure` | Destructuring, defaults, rest | Fix `Pat::Default`, `Pat::Rest` |
+| 046 | `ink-spread` | Object/array spread, JSX spread | Verify `gen_object_expr`, `gen_array_expr` |
+| 047 | `ink-template` | Template literals, multiline | Verify `gen_template_expr` |
+| 048 | `ink-object-advanced` | Getters, setters, computed keys, methods | Implement `Get`/`Set`/`Method` in `gen_object_expr` |
+| 049 | `ink-nullish-optional` | `??`, `?.` (optional chaining) | Requires Task 068 (HIR `OptionalMember`) |
+| 050 | `ink-typeof-guard` | `typeof`, `instanceof`, `delete`, `void` | Add `typeof` constant folding |
+| 051 | `ink-compound-bitwise` | All compound assignment + bitwise operators | Add 7 missing compound assign + bitwise arms |
+| 052 | `ink-async-fetch` | `async`, `await`, Promise | Verify async closure codegen |
+| 053 | `ink-generator` | `function*`, `yield`, `yield*` | Requires Task 072 (generator body parsing) |
+| 054 | `ink-function-params` | Default params, rest params | Parse defaults/rest in `func_expr_params` |
+| 055 | `ink-class-component` | Classes, `extends`, `super` | Implement `gen_class` (currently `None`) |
+| 056 | `ink-static-private` | Static methods, private fields `#field` | Requires Task 071 (private fields in HIR) |
+| 057 | `ink-getter-setter` | Getters, setters, computed accessors | Implement getter/setter codegen |
+| 058 | `ink-module-exports` | Named/default/re-exports, namespace imports | Verify module codegen |
+| 059 | `ink-dynamic-import` | `import()`, `import.meta` | Requires Task 073 (dynamic import in HIR) |
+| 060 | `ink-react-advanced` | `useReducer`, `useContext`, `memo`, `forwardRef` | Verify React shim |
+| 061 | `ink-jsx-advanced` | Spread attrs, dynamic components, fragments, conditional | Verify JSX codegen |
+| 062 | `ink-animation` | `useAnimation` | Verify bridge hook |
+| 063 | `ink-measure` | `measureElement`, `useBoxMetrics` | Verify bridge hook |
+| 064 | `ink-focus-paste` | `useFocus`, `useFocusManager`, `usePaste` | Verify bridge hooks |
+| 065 | `ink-static-transform` | `Static`, `Transform`, `Newline`, `Spacer` | Verify bridge components |
+| 066 | `ink-enum-types` | Enums, `as`, `satisfies` | Requires Tasks 069–070 |
+| 067 | `ink-type-erasure` | Generics, mapped types, conditional types | Type erasure (no HIR needed) |
+
+**Rule:** If an example compiles in deno but fails in `runts build`, the codegen bug must be fixed as part of that task.
+
+**Tasks:** 041–067 | **Status:** 🔄 Pending (27 tasks)
+
+---
+
+### Phase 7: HIR & Parser Expansion
+**Goal:** HIR can represent 100% of practical TS/TSX constructs.
+
+Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` before reaching HIR:
+
+| Feature | Parser | HIR | Task |
+|---------|--------|-----|------|
+| Optional chaining `?.` | ✅ oxc | ❌ Missing | 068 |
+| `as` / `satisfies` / `!` | ✅ oxc | ❌ Missing | 069 |
+| Enum declarations | ✅ oxc | ❌ Missing | 070 |
+| Private fields `#field` | ✅ oxc | ❌ Missing | 071 |
+| Generators `function*` | ✅ oxc | ⚠️ Partial | 072 |
+| Dynamic import `import()` | ✅ oxc | ❌ Missing | 073 |
+| Decorators | ✅ oxc | ⚠️ Partial | 074 |
+| Type aliases | ✅ oxc | ❌ Missing | — (type erasure, P3) |
+| Interface declarations | ✅ oxc | ❌ Missing | — (type erasure, P3) |
+
+**Tasks:** 068–074 | **Status:** 🔄 Pending (7 tasks)
+
+---
+
+### Phase 8: Compile-Path Integration Tests
+**Goal:** The compile path is thoroughly tested with real generated code.
+
+**Tasks:** 075–077 | **Status:** 🔄 Pending (3 tasks)
+
+---
+
+### Phase 9: Final Audit
+**Goal:** Document the exact coverage matrix. Set v1.0 targets.
+
+**Tasks:** 078 | **Status:** 🔄 Pending (1 task)
 
 ---
 
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
-All **15/15** test modules are enabled in `src/transpile/tests/mod.rs`:
+All **15/15** test modules are enabled. Two additional modules (`spec_expressions`, `spec_types`) are not yet wired in (Task 041).
 
-| Module | Coverage | Status |
-|--------|----------|--------|
-| `analyzer` | Semantic analysis | ✅ passing |
-| `completeness_codegen` | Spread, edge-case codegen | ✅ passing |
-| `completeness_parser` | Parser completeness | ✅ passing |
-| `integration` | Full transpile integration | ✅ passing |
-| `parser` | JSX text coalescing, HIR JSON serialization | ✅ passing |
-| `rq_parity` | Per-example rquickjs parity | ✅ 86 active + 2 ignored |
-| `spec_async_runtime` | `async`/`await` patterns | ✅ 5 ignored (intentional) |
-| `spec_classes` | Class declarations, methods, inheritance | ✅ 3 ignored (intentional) |
-| `spec_control_flow` | `if`/`else`, `switch`, `for`, `while`, `do-while`, `try`/`catch` | ✅ passing |
-| `spec_data_structures` | Arrays, objects, destructuring, patterns | ✅ 6 ignored (intentional) |
-| `spec_jsx` | JSX elements, attributes, children, fragments | ✅ passing |
-| `spec_modules` | Imports, exports, default exports, re-exports | ✅ passing |
-| `spec_roundtrip` | Parse → HIR → codegen roundtrip | ✅ 5 ignored (intentional) |
-| `spec_stdlib` | `Math`, `Date`, `Array`, `String` methods | ✅ passing |
-| `spec_vars_functions` | Variables, arrow functions, async functions, function params | ✅ 7 ignored (intentional) |
+**Result:** 864 passed; 0 failed; 99 ignored.
 
-**Result:** 864 passed; 0 failed; 99 ignored. All ignored tests have documented reasons.
+### Compile-Path Coverage: ~40%
 
-### Compile-Path Test Status
-`cargo test --bin runts` exits 0. **864 tests passing, 0 failures, 99 ignored.**
+| Layer | Coverage | Notes |
+|-------|----------|-------|
+| Parser (oxc) → HIR | ~75% | 38 Expr variants, 24 Stmt variants |
+| HIR → Rust codegen | ~40% | Many constructs have code but lack end-to-end validation |
+| Compile-path integration tests | 23 tests | `tests/compile_codegen.rs` — tests patterns, not actual codegen output |
 
-The 99 ignored tests are compile-path features that are intentionally out of scope (e.g., class methods, async runtime patterns, advanced destructuring) or depend on parser converter features not yet implemented. Every ignored test has a documented reason comment.
+### Features Without Examples (26 gaps)
 
-These are **compile-path only** — the dev path (TSX→JS→rquickjs) bypasses HIR entirely.
+91 examples exist, but 26+ TS/TSX features have **zero example coverage**. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
 
-### Missing Ink Example Coverage
-Features implemented in `js_bridge.rs` but **not exercised by any example**:
-
-| Feature | Status |
-|---------|--------|
-| `usePaste` | ✅ Added: `examples/ink-paste/` |
-| `useRef` | ✅ Added: `examples/ink-ref/` |
-| `flexShrink` | ✅ Added: `examples/ink-flex-shrink/` |
-| `useAnimation` | ⚠️ Still missing |
-| `measureElement` / `useBoxMetrics` | ⚠️ Still missing |
-| `minWidth` / `minHeight` | ✅ Covered by existing examples |
-| `maxWidth` / `maxHeight` | ✅ Covered by existing examples |
-| `zIndex` | ✅ Covered by existing examples |
-| `flexBasis` | ✅ Covered by existing examples |
-| `alignSelf` | ✅ Covered by existing examples |
-| `alignContent` | ✅ Covered by existing examples |
-| `columnGap` / `rowGap` | ✅ Covered by existing examples |
+Key gaps:
+- Control flow: `for`, `while`, `switch`, `try/catch` (1 example only)
+- Data structures: destructuring defaults/rest, spread, getters/setters
+- Operators: compound assign, bitwise, `typeof`, `instanceof`, `??`
+- Functions: `async/await`, generators, default/rest params
+- Classes: classes, static, private fields, getters/setters
+- Modules: re-exports, dynamic imports
+- React: `useReducer`, `useContext`, `memo`, `useMemo`, `useCallback`
+- Ink: `useAnimation`, `measureElement`, `useFocusManager`, `usePaste`
+- JSX: spread attrs, dynamic components, conditional rendering
+- TypeScript: enums, `as`, `satisfies`, generics
 
 ---
 
@@ -179,18 +203,18 @@ The single script (`scripts/parity.sh`) MUST:
    - Strip ANSI escape codes
    - Normalize trailing whitespace
    - Normalize line endings to `\n`
-3. **Compare symbol-by-symbol**, not line-by-line. A "symbol" is a whitespace-separated token or a box-drawing character.
+3. **Compare symbol-by-symbol**, not line-by-line.
 4. **Report per-example:**
    ```json
    {
      "example": "ink-counter",
      "deno": { "status": "ok", "similarity": 100.0 },
-     "rq": { "status": "ok", "similarity": 98.5 },
-     "compile": { "status": "ok", "similarity": 98.5 }
+     "rq": { "status": "ok", "similarity": 100.0 },
+     "compile": { "status": "ok", "similarity": 100.0 }
    }
    ```
-5. **Handle interactive examples:** Detect `useInput`, `useFocus`, `useStdin` in source. For these, capture only the **initial static frame** (pipe `echo "q"` or timeout 2s).
-6. **Exit 0** if all similarities ≥ 95%, else exit 1.
+5. **Handle interactive examples:** Detect `useInput`, `useFocus`, `useStdin` in source. Capture only the **initial static frame**.
+6. **Exit 0** if all similarities = 100%, else exit 1.
 
 ---
 
@@ -199,14 +223,15 @@ The single script (`scripts/parity.sh`) MUST:
 | Trap | Why |
 |------|-----|
 | **Do not restore or expand the HIR interpreter.** | It was 3,087 lines of a broken custom JS engine. rquickjs gives 100% JS semantics for ~1MB. |
-| **Do not keep Taffy as a fallback.** | Yoga is the same engine Ink uses. Two layout engines = 2× bug surface. Delete Taffy. |
+| **Do not keep Taffy as a fallback.** | Yoga is the same engine Ink uses. Two layout engines = 2× bug surface. |
 | **Do not add new shell scripts.** | Multiple scripts already exist. ONE script. Parameterize it. |
-| **Do not write hook polyfills in Rust.** | `useState`, `useEffect`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). |
-| **Do not exceed linter limits.** | 500 lines/file, 40 lines/fn, 10 complexity. No exceptions. Extract, don't negotiate. |
-| **Do not commit without `cargo build` passing.** | The build may be broken at any time. Fix first, then iterate. |
-| **Do not batch multiple tasks in one commit.** | Small commits are reversible commits. One task = one commit = one push. |
-| **Do not leave test modules commented out.** | Disabled tests are invisible decay. Fix or delete, but don't hide them. |
-| **Do not add examples that require Rust code.** | Examples are pure TS/TSX only. Any Rust goes in crates/, not `examples/`. |
+| **Do not write hook polyfills in Rust.** | Hooks run inside rquickjs. The bridge only exposes Rust primitives. |
+| **Do not exceed linter limits.** | 500 lines/file, 40 lines/fn, 10 complexity. Extract, don't negotiate. |
+| **Do not commit without `cargo build` passing.** | Fix first, then iterate. |
+| **Do not batch multiple tasks in one commit.** | One task = one commit = one push. |
+| **Do not leave test modules commented out.** | Disabled tests are invisible decay. Fix or delete. |
+| **Do not add examples that require Rust code.** | Examples are pure TS/TSX only. |
+| **Do not accept < 100% parity.** | The standard is identical output. Fix the bug, not the threshold. |
 
 ---
 
@@ -221,14 +246,17 @@ deno run -A examples/ink-text-props/main.tsx > /tmp/deno.txt
 runts dev --once --plugin ratatui examples/ink-text-props > /tmp/rq.txt
 diff /tmp/deno.txt /tmp/rq.txt
 
-# 3. Run parity harness
-./scripts/parity.sh --env rq --examples ink-text-props --verbose
+# 3. Test compile path
+runts build --release --plugin ratatui examples/ink-text-props
+examples/ink-text-props/target/release/runts-app > /tmp/compile.txt
 
-# 4. Check test coverage gaps
-cargo test --bin runts 2>&1 | grep "FAILED" | wc -l
-grep "^//" src/transpile/tests/mod.rs
+# 4. Run parity harness
+./scripts/parity.sh --env all --examples ink-text-props --verbose
 
-# 5. Check linter
+# 5. Check compile-path tests
+cargo test --test compile_codegen
+
+# 6. Check linter
 # (build.rs runs automatically during cargo build)
 ```
 
@@ -236,13 +264,26 @@ grep "^//" src/transpile/tests/mod.rs
 
 ## Success Criteria (Final Checklist)
 
-- [ ] `cargo build` passes with 0 errors, 0 warnings.
-- [ ] `scripts/parity.sh --env all` passes 91/91 examples (≥95% similarity).
-- [ ] `cargo test --test rq_parity` passes ≥90% of examples.
-- [ ] `cargo test --bin runts` exits 0 (or only expected ignored failures).
-- [ ] Zero commented-out test modules in `src/transpile/tests/mod.rs`.
-- [ ] No file > 500 lines, no fn > 40 lines, no complexity > 10.
-- [x] No references to HIR interpreter, Taffy, or `render_tsx` in codebase.
-- [ ] All Ink hooks and layout props exercised by at least one example.
-- [ ] Docs accurately describe rquickjs + Yoga architecture.
-- [ ] All tasks in `tasks/index.json` marked completed.
+### Completed ✅
+- [x] `cargo build` passes with 0 errors, 0 warnings.
+- [x] `cargo test --test rq_parity` passes ≥90% of examples (86/88 active = 97.7%).
+- [x] `cargo test --bin runts` exits 0 (864 passing, 99 ignored).
+- [x] `cargo test --test compile_codegen` passes (23/23).
+- [x] Zero commented-out test modules.
+- [x] No file > 500 lines, no fn > 40 lines, no complexity > 10.
+- [x] No references to HIR interpreter, Taffy, or `render_tsx`.
+- [x] Docs accurately describe rquickjs + Yoga architecture.
+
+### Pending 🔄 Phase 6–9
+- [ ] `spec_expressions` + `spec_types` modules enabled (Task 041).
+- [ ] ≥27 new Ink examples added, one per missing TS/TSX/React/Ink feature (Tasks 042–067).
+- [ ] Each new example renders **identically** in deno, `runts dev`, and `runts build` (100% match).
+- [ ] Optional chaining `?.` parses into HIR (Task 068).
+- [ ] `as`, `satisfies`, `!` parse into HIR and are erased (Task 069).
+- [ ] Enums parse into HIR and codegen produces compilable Rust (Task 070).
+- [ ] Private fields `#field` parse into HIR and produce compilable Rust (Task 071).
+- [ ] Generators `function*` parse into HIR and map to Rust iterators (Task 072).
+- [ ] Dynamic imports `import()` parse into HIR (Task 073).
+- [ ] `tests/compile_codegen.rs` has ≥50 tests (Task 075).
+- [ ] Coverage matrix published in `docs/SUPPORTED_SUBSET.md` (Task 078).
+- [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
