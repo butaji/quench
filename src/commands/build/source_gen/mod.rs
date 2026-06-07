@@ -2,7 +2,6 @@
 //!
 
 use anyhow::{Context, Result};
-use regex::Regex;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -18,15 +17,6 @@ pub fn is_single_file_build(
     components: &[ComponentEntry],
 ) -> bool {
     ts_files.len() == 1 && routes.is_empty() && islands.is_empty() && components.is_empty()
-}
-
-/// Get the module name from a TS file path
-pub fn ts_file_to_module_name(file: &Path) -> String {
-    file.file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or("app")
-        .replace("-", "_")
-        .replace(".", "_")
 }
 
 /// Scan components directory for component files

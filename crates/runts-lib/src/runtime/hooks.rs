@@ -120,7 +120,6 @@ fn hash_deps<D: Hash>(deps: &[D]) -> usize {
     hasher.finish() as usize
 }
 
-/// Thread-local memo storage for SSR hook memoization
 thread_local! {
     static MEMO_STORAGE: RwLock<Vec<(usize, Option<usize>, Option<Box<dyn std::any::Any + Send + Sync>>)>> = RwLock::new(Vec::new());
 }

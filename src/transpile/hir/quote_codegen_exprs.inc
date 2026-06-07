@@ -23,6 +23,12 @@ impl QuoteCodegen {
         }
     }
 
+    fn gen_seq_expr(&self, left: &Expr, right: &Expr) -> TokenStream {
+        let lhs = self.gen_expr(left);
+        let rhs = self.gen_expr(right);
+        quote! { { #lhs; #rhs } }
+    }
+
     fn gen_templ_ident_jsx(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
@@ -86,15 +92,6 @@ impl QuoteCodegen {
         }
     }
 
-    fn gen_seq_type(&self, expr: &Expr) -> TokenStream {
-        use super::Expr as E;
-        if let E::Seq { left, right } = expr {
-            self.gen_seq_expr(left, right)
-        } else {
-            quote! { Value::Null }
-        }
-    }
-    
     fn gen_string_expr(&self, s: &str) -> TokenStream {
         // String literals in Rust are &str, so we can use them directly
         quote! { #s }
@@ -299,79 +296,6 @@ impl QuoteCodegen {
     fn gen_await_expr(&self, arg: &Expr) -> TokenStream {
         let arg_ts = self.gen_expr(arg);
         quote! { #arg_ts.await }
-    }
-
-    fn gen_yield_expr(&self, arg: &Option<Box<Expr>>, delegate: bool) -> TokenStream {
-        if delegate {
-            if let Some(a) = arg {
-                let a_ts = self.gen_expr(a);
-                quote! { yield* #a_ts }
-            } else {
-                quote! { Value::Null }
-            }
-        } else {
-            if let Some(a) = arg {
-                let a_ts = self.gen_expr(a);
-                quote! { yield #a_ts }
-            } else {
-                quote! { Value::Null }
-            }
-        }
-    }
-
-    fn gen_new_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
-        // Special handling for new Promise() - generate tokio spawn
-        if let Expr::Ident { name } = callee {
-            if name == "Promise" {
-                // new Promise((resolve, reject) => { ... }) -> tokio::spawn with channel
-                return quote! { {
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    tokio::spawn(async move {
-                        if let Err(_) = rx.await {
-                            // Promise was dropped without resolution
-                        }
-                    });
-                    tx
-                } };
-            }
-        }
-
-        let callee_ts = self.gen_expr(callee);
-        let args: Vec<_> = arguments.iter().map(|a| self.gen_expr(a)).collect();
-        quote! { #callee_ts(#(#args),*) }
-    }
-
-    fn gen_seq_expr(&self, left: &Expr, right: &Expr) -> TokenStream {
-        let lhs = self.gen_expr(left);
-        let rhs = self.gen_expr(right);
-        quote! { { #lhs; #rhs } }
-    }
-
-    fn gen_spread_expr(&self, arg: &Expr) -> TokenStream {
-        let arg_ts = self.gen_expr(arg);
-        quote! { {#arg_ts} }
-    }
-
-    /// Generate a class as a Rust struct + impl block
-    pub fn gen_class(&self, class: &super::ClassDecl) -> TokenStream {
-        let name = syn::Ident::new(&class.name, proc_macro2::Span::call_site());
-        if class.extends.is_some() { panic!("class inheritance (extends) is not supported"); }
-        let field_defs: Vec<TokenStream> = class.members.iter().filter(|m| !m.is_static).map(|m| { let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site()); let ty = m.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { pub #field_name: #ty } }).collect();
-        let field_names: Vec<_> = class.members.iter().filter(|m| !m.is_static).map(|m| syn::Ident::new(&m.name, proc_macro2::Span::call_site())).collect();
-        let mut constructor_tokens: Option<TokenStream> = None;
-        let mut method_tokens: Vec<TokenStream> = Vec::new();
-        for method in &class.methods {
-            if method.kind == super::MethodKind::Constructor {
-                let params: Vec<_> = method.params.iter().map(|p| { let pname = syn::Ident::new(&p.name, proc_macro2::Span::call_site()); let ty = p.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { #pname: #ty } }).collect();
-                constructor_tokens = Some(quote! { pub fn new(#(#params),*) -> Self { #name { #(#field_names),* } } });
-            } else {
-                let method_name = syn::Ident::new(&method.name, proc_macro2::Span::call_site());
-                let params_with_self: Vec<TokenStream> = { let mut p = vec![quote! { &self }]; p.extend(method.params.iter().map(|pm| { let pname = syn::Ident::new(&pm.name, proc_macro2::Span::call_site()); let ty = pm.type_.as_ref().map(|t| self.gen_type(t)).unwrap_or_else(|| quote! { f64 }); quote! { #pname: #ty } })); p };
-                method_tokens.push(quote! { pub fn #method_name(#(#params_with_self),*) -> f64 { #(#method_tokens)* } });
-            }
-        }
-        let struct_body: TokenStream = if field_defs.is_empty() { quote! {} } else { let mut combined = quote! {}; for (i, field) in field_defs.iter().enumerate() { combined = if i > 0 { quote! { #combined, #field } } else { quote! { #field } }; } quote! { #combined } };
-        quote! { struct #name { #struct_body } impl #name { #constructor_tokens #(#method_tokens)* } }
     }
 
     fn gen_block_expr(&self, stmts: &[super::Stmt]) -> TokenStream {

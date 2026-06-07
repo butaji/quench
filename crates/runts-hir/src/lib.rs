@@ -15,7 +15,6 @@ pub use effects::*;
 pub use ownership::*;
 pub use stmt::{ForInit, SwitchCase};
 pub use expr::ObjectProp;
-pub use self::expr::*;
 pub use pat::ObjectPatProp;
 pub use arena::{ArenaAllocatable, HirArena};
 pub use type_to_rust::{OutputKind, TypeToRust};

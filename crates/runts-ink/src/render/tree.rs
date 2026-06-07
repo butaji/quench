@@ -56,10 +56,34 @@ fn walk_transform(t: &Transform, layout: &Layout, frame: &mut ratatui::Frame, ar
 
 fn walk_children(children: &[VNode], layout: &Layout, frame: &mut ratatui::Frame, area: Rect, first_child_depth: usize, _parent_flex_dir: FlexDirection, _parent_justify: JustifyContent) {
     for (i, child) in children.iter().enumerate() {
-        let child_depth = super::measure::compute_preorder_index(children, i, first_child_depth);
+        let child_depth = compute_preorder_index(children, i, first_child_depth);
         let child_area = rect_at(&layout.rects, child_depth, area);
         walk(child, layout, frame, child_area, child_depth);
     }
+}
+
+fn compute_preorder_index(children: &[VNode], i: usize, first_child_depth: usize) -> usize {
+    let mut depth = first_child_depth;
+    for (j, child) in children.iter().enumerate() {
+        if j == i { return depth; }
+        depth += subtree_size(child);
+    }
+    depth
+}
+
+fn subtree_size(node: &VNode) -> usize {
+    if let VNodeContent::Box(b) = &node.0 {
+        if matches!(b.display, crate::style::Display::None) { return 0; }
+    }
+    let mut count = 1;
+    match &node.0 {
+        VNodeContent::Box(b) => count += b.children.iter().map(subtree_size).sum::<usize>(),
+        VNodeContent::Static(s) => count += s.children.iter().map(subtree_size).sum::<usize>(),
+        VNodeContent::Fragment(fs) => count += fs.iter().map(subtree_size).sum::<usize>(),
+        VNodeContent::Transform(t) => count += subtree_size(&t.child),
+        _ => {}
+    }
+    count
 }
 
 fn rect_at(rects: &[(u16, u16, u16, u16)], depth: usize, fallback: Rect) -> Rect {

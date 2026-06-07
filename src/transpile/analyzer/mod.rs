@@ -39,6 +39,7 @@ pub struct Analyzer {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TypeMismatch {
     expected: Type,
     actual: Type,
@@ -296,8 +297,8 @@ impl Analyzer {
 
     fn analyze_for_init(&mut self, init: &Option<ForInit>) {
         match init {
-            Some(ForInit::Variable(kind, vars)) => {
-                for (name, init_expr) in vars {
+            Some(ForInit::Variable(_kind, vars)) => {
+                for (_name, init_expr) in vars {
                     if let Some(e) = init_expr {
                         self.analyze_expr(e);
                     }
@@ -417,7 +418,6 @@ impl Analyzer {
 }
 
 mod validate;
-use validate::*;
 
 #[allow(dead_code)]
 impl Analyzer {

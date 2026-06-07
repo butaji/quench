@@ -1,6 +1,6 @@
 //! JSX handling code
 
-use crate::codegen::{jsx_element, jsx_expr, jsx_fragment, jsx_text, page_component};
+use crate::codegen::page_component;
 
 pub struct JsxHandler;
 

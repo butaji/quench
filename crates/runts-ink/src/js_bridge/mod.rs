@@ -31,7 +31,7 @@ mod parsers;
 mod text_props;
 
 use crate::{
-    render_to_string, Box as InkBox, Newline, RenderOptions, Spacer, Text as InkText, VNode,
+    Box as InkBox, Newline, RenderOptions, Spacer, Text as InkText, VNode,
     VNodeContent,
 };
 use rquickjs::{Ctx, Function, Object, Result as JsResult, Value};
@@ -141,6 +141,7 @@ fn vnode_to_js_children<'js>(
 /* JS object -> VNode                                                         */
 /* -------------------------------------------------------------------------- */
 
+/// Convert a rquickjs `Value` to a `VNode`.
 pub fn vnode_from_js<'js>(ctx: &Ctx<'js>, v: &Value<'js>) -> JsResult<VNode> {
     let obj = v.as_object().ok_or_else(|| rquickjs::Error::FromJs {
         from: "value",

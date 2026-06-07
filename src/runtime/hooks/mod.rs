@@ -5,7 +5,6 @@ pub mod effect;
 pub mod memo;
 pub mod state;
 
-pub use state::{use_state, use_state_with, UseStateResult};
 
 #[allow(dead_code)]
 #[derive(Clone)]

@@ -5,7 +5,7 @@
 //! `import { … } from 'ink'` to string-tag constants and injects a
 //! minimal React shim so the bundle evals cleanly in rquickjs.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use oxc_allocator::Allocator;
 use oxc_codegen::Codegen;
 use oxc_parser::Parser;

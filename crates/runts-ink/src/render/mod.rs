@@ -350,6 +350,7 @@ pub fn draw_vnode<B: ratatui::backend::Backend>(
     Ok(())
 }
 
+/// Render a VNode tree to a string (for testing).
 pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
     // Use terminal size from options, default to 80x24
     let cols = options.columns.max(1);
@@ -393,11 +394,8 @@ pub fn render_to_string(root: VNode, options: RenderOptions) -> Result<String> {
 pub mod color;
 pub mod input;
 pub mod layout;
-pub mod measure;
 pub mod tree;
-pub use color::{color_to_ratatui, parse_hex_color};
 pub use layout::{AvailableSpace, Layout, Size, YogaTree};
-pub use tree::render_tree;
 
 #[cfg(test)]
 mod tests {

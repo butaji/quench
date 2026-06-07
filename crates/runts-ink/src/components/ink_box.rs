@@ -2,6 +2,7 @@ use super::{AlignContent, AlignItems, AlignSelf, BorderStyle, Borders, Color, Di
 use crate::vnode::VNode;
 use serde::{Deserialize, Serialize};
 
+/// Ink's `<Box>` — a flexbox container.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Box {
     // ---- Layout: flexbox ----

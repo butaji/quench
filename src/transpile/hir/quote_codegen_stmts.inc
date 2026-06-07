@@ -3,12 +3,12 @@ impl QuoteCodegen {
         use super::Stmt as S;
         match stmt {
             S::Block { stmts } => Some(self.gen_block(stmts)),
-            S::Expr { expr } => self.gen_expr_return(stmt),
+            S::Expr { expr: _ } => self.gen_expr_return(stmt),
             S::Return { arg: _ } => self.gen_expr_return(stmt),
             S::If { test, consequent, alternate } => self.gen_if_stmt(test, consequent, alternate.as_deref()),
-            S::Switch { discriminant, cases } => self.gen_switch_try(stmt),
-            S::Try { block: discriminant, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
-            S::For { init, test, update, body } => self.gen_loop_stmt(stmt),
+            S::Switch { discriminant: _, cases: _ } => self.gen_switch_try(stmt),
+            S::Try { block: _, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
+            S::For { init: _, test: _, update: _, body: _ } => self.gen_loop_stmt(stmt),
             S::While { test: _, body: _ } => self.gen_loop_stmt(stmt),
             S::DoWhile { body: _, test: _ } => self.gen_loop_stmt(stmt),
             S::Break { .. } => Some(self.gen_jump(stmt)),
@@ -20,12 +20,13 @@ impl QuoteCodegen {
                 let body_ts = self.gen_block_stmt(body);
                 Some(quote! { { let __with_obj = #obj_ts; #body_ts } })
             },
-            S::FunctionDecl(func) => self.gen_decl_stmt(stmt),
+            S::FunctionDecl(_) => self.gen_decl_stmt(stmt),
             S::Variable(super::VariableDecl { kind: _, init: _, .. }) => self.gen_decl_stmt(stmt),
             _ => self.gen_catchall_stmt(stmt),
         }
     }
 
+    #[allow(dead_code)]
     fn gen_jump_labeled(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
@@ -87,6 +88,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_iter_loop(&self, stmt: &Stmt) -> Option<TokenStream> {
         use super::Stmt as S;
         match stmt {
@@ -102,7 +104,8 @@ impl QuoteCodegen {
         quote! { #label: #inner }
     }
 
-    fn gen_for_in_out(&self, left: &Pat, right: &Expr, body: &Stmt) -> TokenStream {
+    #[allow(dead_code)]
+    fn gen_for_in_out(&self, _left: &Pat, right: &Expr, body: &Stmt) -> TokenStream {
         let left_ts = self.gen_for_init(&Some(super::ForInit::Variable(super::VariableKind::Let, vec![("__item".to_string(), None)])));
         let right_ts = self.gen_expr(right);
         let body_ts = self.gen_block_stmt(body);
@@ -542,6 +545,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_do_while(&self, body: &Box<Stmt>, test: &Expr) -> TokenStream {
         let body_token = self.gen_block_stmt(body);
         let test_token = self.gen_expr(test);
@@ -553,6 +557,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_break(&self, label: &Option<String>) -> TokenStream {
         match label {
             Some(l) => {
@@ -563,6 +568,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_continue(&self, label: &Option<String>) -> TokenStream {
         match label {
             Some(l) => {
@@ -573,6 +579,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_throw(&self, arg: &Expr) -> TokenStream {
         let expr = self.gen_expr(arg);
         quote! { std::panic::panic_any(#expr); }
@@ -618,6 +625,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_labeled(&self, label: &str, body: &Box<Stmt>) -> TokenStream {
         let body_token = self.gen_block_stmt(body);
         // Rust labels are lifetimes like 'loop:
@@ -627,6 +635,7 @@ impl QuoteCodegen {
         }
     }
 
+    #[allow(dead_code)]
     fn gen_with(&self, obj: &Expr, body: &Box<Stmt>) -> TokenStream {
         let obj_token = self.gen_expr(obj);
         let body_token = self.gen_block_stmt(body);
