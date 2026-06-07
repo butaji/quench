@@ -12,6 +12,8 @@ impl QuoteCodegen {
             E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } | E::PrivateMember { .. } => self.gen_call_member_static(expr),
             E::Spread { .. } => self.gen_spread_expr(expr),
             E::Seq { .. } => self.gen_seq_expr_helper(expr),
+            E::MetaProperty { kind } => self.gen_meta_prop(kind),
+            E::ImportExpression { source } => self.gen_import_expr(source),
             // TypeScript type assertions - erased at runtime, emit inner expr
             E::TypeAssertion { expr, .. } => self.gen_expr(expr),
             E::Satisfies { expr, .. } => self.gen_expr(expr),
@@ -20,6 +22,32 @@ impl QuoteCodegen {
             E::TypeAnnot { .. } => quote! { Value::Null },
             _ => quote! { Value::Null },
         }
+    }
+
+    fn gen_meta_prop(&self, kind: &super::MetaPropKind) -> TokenStream {
+        use super::MetaPropKind;
+        match kind {
+            MetaPropKind::NewTarget => quote! { Value::Null },
+            MetaPropKind::ImportMeta => quote! { Value::Object(std::collections::HashMap::new()) },
+        }
+    }
+
+    fn gen_import_expr(&self, source: &Expr) -> TokenStream {
+        // Dynamic import() - returns a Promise that resolves to the module namespace
+        // For codegen, we emit a placeholder that compiles but returns Null at runtime
+        // (The dev path handles this properly in rquickjs)
+        let source_ts = self.gen_expr(source);
+        quote! { {
+            fn __dynamic_import(path: &str) -> Value {
+                Value::Null
+            }
+            let __module_path = #source_ts;
+            if let Value::String(s) = __module_path {
+                __dynamic_import(&s)
+            } else {
+                Value::Null
+            }
+        } }
     }
 
     fn gen_spread_expr(&self, expr: &Expr) -> TokenStream {

@@ -47,7 +47,7 @@ mod completeness_tests {
                 | Expr::Object { .. } | Expr::Function(_) | Expr::ArrowFunction { .. } | Expr::Await { .. }
                 | Expr::Yield { .. } | Expr::Call { .. } | Expr::New { .. } | Expr::Member { .. }
                 | Expr::Super | Expr::This | Expr::StaticMember { .. } | Expr::PrivateMember { .. }
-                | Expr::MetaProperty { .. } | Expr::TaggedTemplate { .. } | Expr::Seq { .. }
+                | Expr::MetaProperty { .. } | Expr::ImportExpression { .. } | Expr::TaggedTemplate { .. } | Expr::Seq { .. }
                 | Expr::Spread { .. } | Expr::Class { .. } | Expr::TypeAnnot { .. }
                 | Expr::ArrowWithType { .. } | Expr::Block(_) | Expr::Invalid
         );
