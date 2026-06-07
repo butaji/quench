@@ -44,14 +44,60 @@ pub(crate) fn extract_var_declarations(body: &serde_json::Value) -> Vec<(String,
 }
 
 fn collect_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
-    if !matches_kind(stmt, "Block") && !matches_kind(stmt, "Expr") {
-        return;
-    }
+    // Check for Stmt kinds
     if matches_kind(stmt, "Block") {
         collect_from_block(stmt, decls);
-    } else {
+    } else if matches_kind(stmt, "Expr") {
         collect_from_expr(stmt, decls);
     }
+    // Check for VariableDecl (flat format with kind = VariableKind)
+    // The kind field contains "Const", "Let", or "Var"
+    else if matches_kind(stmt, "Const") || matches_kind(stmt, "Let") || matches_kind(stmt, "Var") {
+        collect_from_var_decl(stmt, decls);
+    }
+}
+
+fn collect_from_var_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
+    // Handle flat VariableDecl format: {kind: "Const"|"Let"|"Var", pattern, init, ...}
+    // Extract the variable names from the pattern
+    if let Some(pattern) = stmt.get("pattern") {
+        // Destructuring: const [a, b] = ... or const {a, b} = ...
+        if let Some(elems) = pattern.get("elems").and_then(|e| e.as_array()) {
+            for elem in elems {
+                if let Some(name) = elem.get("name").and_then(|n| n.as_str()) {
+                    if !name.is_empty() {
+                        // Extract init value from the call
+                        let init_val = stmt.get("init")
+                            .and_then(|i| extract_call_arg_value(i))
+                            .unwrap_or_else(|| "0i32".to_string());
+                        decls.push((format!("let {} = {};", name, init_val), name.to_string()));
+                    }
+                }
+            }
+        }
+        // Simple binding: const x = ...
+        else if let Some(name) = pattern.get("name").and_then(|n| n.as_str()) {
+            if !name.is_empty() {
+                let init_val = stmt.get("init")
+                    .and_then(|i| extract_call_arg_value(i))
+                    .unwrap_or_else(|| "0i32".to_string());
+                decls.push((format!("let {} = {};", name, init_val), name.to_string()));
+            }
+        }
+    }
+}
+
+fn extract_call_arg_value(init: &serde_json::Value) -> Option<String> {
+    // Extract value from Call expression arguments
+    if let Some(call) = init.get("Call") {
+        if let Some(args) = call.get("arguments").and_then(|a| a.as_array()) {
+            if let Some(first_arg) = args.first() {
+                return expr_value_to_rust(first_arg);
+            }
+        }
+    }
+    // Fallback for other expression types
+    expr_value_to_rust(init)
 }
 
 fn matches_kind(stmt: &serde_json::Value, kind: &str) -> bool {
@@ -253,8 +299,23 @@ pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
 pub(crate) fn extract_jsx_from_function_with_vars(
     item: &serde_json::Value,
 ) -> Option<(serde_json::Value, Vec<(String, String)>)> {
+    // Try multiple patterns for finding a function:
+    // 1. Decl.Function (direct function declaration)
+    // 2. Stmt with kind=ExportDefault containing expr.Function
+    // 3. Stmt with kind=Return containing arg.Function
     let func = item.get("Decl").and_then(|d| d.get("Function"))
         .or_else(|| {
+            // export default function Name() {...}
+            // The Stmt contains: {kind: "ExportDefault", expr: Function}
+            let stmt = item.get("Stmt")?;
+            if stmt.get("kind")?.as_str()? == "ExportDefault" {
+                stmt.get("expr")?.get("Function")
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            // Function as return value
             let stmt = item.get("Stmt")?;
             if stmt.get("kind")?.as_str()? == "Return" {
                 stmt.get("arg")?.get("Function")

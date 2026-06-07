@@ -39,7 +39,7 @@ rquickjs is the correct choice for this project:
 
 | Milestone | Status | Notes |
 |-----------|--------|-------|
-| Custom TSX parser (recursive descent) | ✅ | Covers full supported subset |
+| oxc_parser (TS/TSX → AST) | ✅ | Production-grade parser, full spec coverage |
 | HIR (High-Level IR) | ✅ | Typed, serializable, stripped |
 | Semantic analyzer | ✅ | Subset validation, hook rules, module classification |
 | Rust code generator | ✅ | HIR → idiomatic Rust source |
@@ -92,14 +92,14 @@ rquickjs is the correct choice for this project:
 | Source maps (dev) | P2 | Medium | Debuggability |
 | Source maps (prod) | P3 | Low | Optional |
 
-### 1.4 Parser Migration (Foundation for v1.0)
+### 1.4 Parser Status (Completed)
 
-| Feature | Priority | Effort | Rationale |
-|---------|----------|--------|-----------|
-| swc/oxc parser integration (opt-in) | P2 | High | Full TS spec compliance |
-| Custom parser deprecation path | P2 | Low | Documentation + warnings |
+The parser migration from custom recursive descent to **oxc_parser** is complete. oxc_parser is now the primary parser for all transpilation paths (dev and production). The custom parser was deprecated and removed.
 
-**Target Release:** Q3 2026
+| Feature | Status | Notes |
+|---------|--------|-------|
+| oxc_parser integration | ✅ Complete | Primary parser for dev + production |
+| Custom parser removal | ✅ Complete | Deprecated and removed |
 
 ---
 

@@ -13,7 +13,7 @@ This guide helps you migrate your Fresh applications to runts.
 | Runtime | Deno | Native Rust |
 | Server | Deno HTTP | Axum |
 | JS Bundle | Full Preact | Minimal (~12KB) |
-| TypeScript | Deno's TS | Custom parser |
+| TypeScript | Deno's TS | oxc_parser |
 | Build | Bytecode | Native binary |
 
 ## Step-by-Step Migration

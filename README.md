@@ -2,7 +2,7 @@
 
 > **runts** compiles TypeScript/TSX to native Rust binaries. Not a transpiler. Not a bundler. A compiler that keeps your types: string unions become Rust enums, interfaces become structs, generics monomorphize, async/await becomes zero-cost futures.
 
-[![Tests](https://img.shields.io/badge/tests-864%2F963%20passing-success)](SPEC.md)
+[![Tests](https://img.shields.io/badge/tests-864%2F963%20passing-success)]()
 [![Rust](https://img.shields.io/badge/rust-1.81%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 
@@ -256,12 +256,12 @@ my-app/
 | Document | Description |
 |----------|-------------|
 | [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) | Framework-agnostic design rationale — what runts is and isn't |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline: oxc_parser → HIR → Rust codegen / rquickjs dev |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HIR design and compile path: oxc_parser → HIR → Rust codegen |
 | [docs/INK-ARCHITECTURE.md](docs/INK-ARCHITECTURE.md) | Ink/ratatui plugin: rquickjs + Yoga + Ratatui stack |
 | [docs/SUPPORTED_SUBSET.md](docs/SUPPORTED_SUBSET.md) | Precise TS/TSX subset specification |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Roadmap — MVP → Feature Complete → Production |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance targets, benchmarks, and trade-offs |
-| [SPEC.md](SPEC.md) | Legacy technical specification (reference) |
+| [DESIGN.md](DESIGN.md) | Current design document — architecture, pipeline, type mappings |
 
 ## Status
 
@@ -277,8 +277,6 @@ runts is in active development. The core compiler pipeline (oxc_parser → HIR �
 - ✅ rquickjs dev engine for Ink TUI parity (Tasks 022-026)
 - ✅ TSX→JS transpile pipeline (Task 023)
 - ✅ Yoga-only layout engine (Taffy removed)
-
-**Completed:**
 - ✅ Re-enable disabled test modules (Task 033) — all 15 modules enabled
 - ✅ Fix HIR test failures (Task 034) — 0 failures, 99 ignored with documented reasons
 - ✅ Add missing Ink examples (Task 035) — ink-paste, ink-ref, ink-flex-shrink added

@@ -16,9 +16,14 @@ use std::time::Duration;
 /// Render a single frame and return it as a string.
 pub fn render_ink_once(project_root: &Path) -> Result<String> {
     let app_tsx = find_app_tsx(project_root)?;
-    let source = std::fs::read_to_string(&app_tsx)
-        .with_context(|| format!("Failed to read {}", app_tsx.display()))?;
-    let js = crate::transpile::js_bundle::transpile_to_js(&source)?;
+    let js = crate::transpile::bundler::transpile_to_js_bundled(&app_tsx)
+        .with_context(|| format!("Failed to transpile {}", app_tsx.display()))?;
+    // Debug: print first 200 lines of generated JS
+    eprintln!("=== Transpiled JS ({} lines) ===", js.lines().count());
+    for (i, line) in js.lines().take(200).enumerate() {
+        eprintln!("{:3}: {}", i + 1, line);
+    }
+    eprintln!("...");
     eval_ink_bundle_and_render(&js)
 }
 
@@ -26,9 +31,7 @@ pub fn render_ink_once(project_root: &Path) -> Result<String> {
 /// to JS callbacks and re-renders each frame.
 pub fn run_ink_interactive(project_root: &Path) -> Result<()> {
     let app_tsx = find_app_tsx(project_root)?;
-    let source = std::fs::read_to_string(&app_tsx)
-        .with_context(|| format!("Failed to read {}", app_tsx.display()))?;
-    let js = crate::transpile::js_bundle::transpile_to_js(&source)?;
+    let js = crate::transpile::bundler::transpile_to_js_bundled(&app_tsx)?;
     run_interactive_loop(&js)
 }
 

@@ -1,10 +1,7 @@
 //! Tests for the Ratatui plugin.
 
-use runts_plugin::Plugin;
-use serde_json::json;
-
-use crate::{codegen, RatatuiPlugin};
-use crate::codegen::jsx::{extract_var_declarations, expr_value_to_rust, extract_jsx_from_function_with_vars};
+use crate::RatatuiPlugin;
+use crate::codegen::vars::{extract_var_declarations, extract_jsx_from_function_with_vars};
 
 fn ratatui_plugin() -> RatatuiPlugin {
     RatatuiPlugin

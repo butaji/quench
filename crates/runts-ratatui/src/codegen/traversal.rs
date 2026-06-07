@@ -1,14 +1,20 @@
 //! JSX traversal helpers - finding JSX in HIR statements
 
-/// Find JSX expression in a body
+/// Find JSX expression in a body.
+/// Handles both direct array format and Block-wrapped format:
+/// - [stmt1, stmt2, ...] (function declaration body)
+/// - {"Block": {"stmts": [stmt1, stmt2, ...]}} (hand-rolled fixture format)
 pub(crate) fn find_jsx_in_body(body: &serde_json::Value) -> Option<serde_json::Value> {
-    if let Some(stmts) = body.as_array() {
-        return find_jsx_in_stmts(stmts);
-    }
-    if is_jsx_expr(body) {
-        return Some(body.clone());
-    }
-    None
+    // Unwrap Block if present to get the statements array
+    let stmts = if let Some(block) = body.get("Block") {
+        block.get("stmts")?.as_array()?
+    } else if let Some(arr) = body.as_array() {
+        arr
+    } else {
+        // Not a Block or array, check if it's directly a JSX expression
+        return if is_jsx_expr(body) { Some(body.clone()) } else { None };
+    };
+    find_jsx_in_stmts(stmts)
 }
 
 pub(crate) fn find_jsx_in_stmts(stmts: &[serde_json::Value]) -> Option<serde_json::Value> {
