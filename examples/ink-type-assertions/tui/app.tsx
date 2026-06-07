@@ -1,8 +1,9 @@
+// ink-type-assertions — demonstrates TypeScript type assertions (as, satisfies, !)
+//
+// Type assertions are erased at runtime. All three environments produce identical output.
+//
 import React from "react";
 import { Box, Text } from "ink";
-
-// TypeScript type assertions are erased at runtime
-// These should all produce identical output
 
 interface User {
   name: string;
