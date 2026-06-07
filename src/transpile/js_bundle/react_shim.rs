@@ -60,6 +60,22 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
 
     function useContext(ctx) { return ctx._defaultValue; }
 
+    function memo(Component) {
+        var cached = null;
+        return function(props) {
+            if (!cached || !depsEqual(Object.keys(props).map(function(k) { return props[k]; }), cached.deps)) {
+                cached = { deps: Object.keys(props).map(function(k) { return props[k]; }), vnode: Component(props) };
+            }
+            return cached.vnode;
+        };
+    }
+
+    function forwardRef(Component) {
+        return function(props) {
+            return Component(Object.assign({}, props, { __forwarded_ref: true }));
+        };
+    }
+
     function depsEqual(a, b) {
         if (!a || !b || a.length !== b.length) return false;
         for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -142,7 +158,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
 
     return {
         createElement, useState, useEffect, useCallback, useMemo, useRef,
-        createContext, useContext, Fragment: 'Fragment', _withHooks: withHooks
+        createContext, useContext, memo, forwardRef, Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
 
@@ -153,6 +169,8 @@ var useMemo = React.useMemo;
 var useRef = React.useRef;
 var createContext = React.createContext;
 var useContext = React.useContext;
+var memo = React.memo;
+var forwardRef = React.forwardRef;
 var __runts_ink_render = function(app) { return app; };"#;
 
 /// Post-shim code - appended after user code.
