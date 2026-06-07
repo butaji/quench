@@ -18,6 +18,21 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return [val, setState];
     }
 
+    function useReducer(reducer, init) {
+        var idx = currentIdx++;
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = { state: typeof init === 'function' ? init() : init };
+        }
+        var val = currentHooks[idx];
+        function dispatch(action) {
+            var next = reducer(val.state, action);
+            if (next !== val.state) {
+                currentHooks[idx] = { state: next };
+            }
+        }
+        return [val.state, dispatch];
+    }
+
     function useEffect(fn, deps) {
         var idx = currentIdx++;
         var old = currentHooks[idx];
@@ -54,19 +69,39 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return currentHooks[idx];
     }
 
+    // Context value stack: keyed by context object reference (===).
+    // Provider pushes on entry, pops on exit.
+    var __ctxStack = [];
     function createContext(defaultValue) {
-        return { _defaultValue: defaultValue, Provider: function(p) { return p.children; } };
+        return {
+            __defaultValue: defaultValue,
+            __id: __ctxId++,
+            Provider: function(p) {
+                __ctxStack.push({ id: __ctxId, value: p.value });
+                // Wrap children in a Box VNode so the bridge renders them.
+                var boxProps = { children: p.children };
+                return runts_ink.box(boxProps);
+            }
+        };
+    }
+    var __ctxId = 0;
+
+    function useContext(ctx) {
+        // Walk the stack from top to find a matching context id.
+        for (var i = __ctxStack.length - 1; i >= 0; i--) {
+            if (__ctxStack[i].id === ctx.__id) return __ctxStack[i].value;
+        }
+        return ctx.__defaultValue;
     }
 
-    function useContext(ctx) { return ctx._defaultValue; }
-
     function memo(Component) {
-        var cached = null;
+        var cache = null;
         return function(props) {
-            if (!cached || !depsEqual(Object.keys(props).map(function(k) { return props[k]; }), cached.deps)) {
-                cached = { deps: Object.keys(props).map(function(k) { return props[k]; }), vnode: Component(props) };
+            var deps = Object.keys(props).map(function(k) { return props[k]; });
+            if (!cache || !depsEqual(deps, cache.deps)) {
+                cache = { deps: deps, vnode: Component(props) };
             }
-            return cached.vnode;
+            return cache.vnode;
         };
     }
 
@@ -157,12 +192,13 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     }
 
     return {
-        createElement, useState, useEffect, useCallback, useMemo, useRef,
+        createElement, useState, useReducer, useEffect, useCallback, useMemo, useRef,
         createContext, useContext, memo, forwardRef, Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
 
 var useState = React.useState;
+var useReducer = React.useReducer;
 var useEffect = React.useEffect;
 var useCallback = React.useCallback;
 var useMemo = React.useMemo;
@@ -179,6 +215,8 @@ var process = process || { exit: function(code) { __runts_exit = true; __runts_e
 var __runts_effects = [];
 var __runts_has_effects = false;
 function __runts_render_with_effects(props) {
+    // Reset per-render state so context values don't bleed between renders.
+    if (typeof __ctxStack !== 'undefined') __ctxStack.length = 0;
     var vnode;
     if (typeof __runts_default === 'function') {
         vnode = __runts_default(props || {});
@@ -190,6 +228,7 @@ function __runts_render_with_effects(props) {
     var guard = 0;
     while (__runts_has_effects && guard < 10) {
         __runts_has_effects = false;
+        if (typeof __ctxStack !== 'undefined') __ctxStack.length = 0;
         var effects = __runts_effects;
         __runts_effects = [];
         for (var i = 0; i < effects.length; i++) {
