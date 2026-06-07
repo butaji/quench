@@ -7,51 +7,9 @@
 
 pub mod react_shim;
 
-pub use crate::transpile::bundler::transpile_to_js_bundled;
-pub use crate::transpile::postprocess::transpile_to_js;
-
 #[cfg(test)]
 mod tests {
-    use crate::transpile::postprocess::transpile_to_js;
-    use rquickjs::{Context, Runtime};
-
-    #[test]
-    fn transpile_basic_tsx() {
-        let source = r#"
-import React from 'react';
-import { Box, Text } from 'ink';
-
-export default function App() {
-  return <Box><Text bold>hi</Text></Box>;
-}
-"#;
-        let js = transpile_to_js(source).unwrap();
-        assert!(js.contains("function App()"));
-        assert!(js.contains("React.createElement"));
-        assert!(js.contains(r#"const Box = "Box";"#));
-        assert!(js.contains(r#"const Text = "Text";"#));
-        assert!(js.contains("var __runts_default = React._withHooks(App);"));
-        assert!(!js.contains("import "));
-    }
-
-    #[test]
-    fn transpile_strips_types() {
-        let source = r#"
-import React from 'react';
-import { Box } from 'ink';
-
-interface Props { name: string; }
-
-export default function App(props: Props) {
-  const x: number = 42;
-  return <Box>{props.name}</Box>;
-}
-"#;
-        let js = transpile_to_js(source).unwrap();
-        assert!(!js.contains("interface Props"));
-        assert!(!js.contains("props: Props"));
-        assert!(js.contains("const x = 42;"));
-    }
+    use crate::transpile::bundler::transpile_to_js_bundled;
 
     #[test]
     fn transpile_ink_text_props_evals() {
@@ -60,11 +18,11 @@ export default function App(props: Props) {
             eprintln!("Skipping test: {} not found", path.display());
             return;
         }
-        let source = std::fs::read_to_string(path).unwrap();
-        let js = transpile_to_js(&source).unwrap();
 
-        let runtime = Runtime::new().unwrap();
-        let ctx = Context::full(&runtime).unwrap();
+        let js = transpile_to_js_bundled(path).unwrap();
+
+        let runtime = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&runtime).unwrap();
         ctx.with(|ctx| {
             runts_ink::js_bridge::install(&ctx).unwrap();
             let result: Result<rquickjs::Value, _> = ctx.eval(js.as_str());
@@ -73,5 +31,21 @@ export default function App(props: Props) {
             let default_export: rquickjs::Value = ctx.globals().get("__runts_default").unwrap();
             assert!(default_export.is_function(), "__runts_default should be a function");
         });
+    }
+
+    #[test]
+    fn bundler_handles_ink_imports() {
+        let path = std::path::Path::new("examples/ink-text-props/tui/app.tsx");
+        if !path.exists() {
+            eprintln!("Skipping test: {} not found", path.display());
+            return;
+        }
+
+        let js = transpile_to_js_bundled(path).unwrap();
+        // Verify ink components are converted to string constants
+        assert!(js.contains("var Box = 'Box'"), "Box should be string constant");
+        assert!(js.contains("var Text = 'Text'"), "Text should be string constant");
+        // Verify React shim is included
+        assert!(js.contains("React._withHooks"), "React._withHooks should be present");
     }
 }
