@@ -24,6 +24,6 @@ Map generators to Rust iterators.
 
 ## Acceptance Criteria
 
-- [ ] `function*` with `yield`/`yield*` parses into HIR with complete bodies
-- [ ] Codegen maps generators to Rust iterators
-- [ ] `ink-generator` example (Task 053) passes with 100% parity
+- [x] `function*` with `yield`/`yield*` parses into HIR with complete bodies
+- [x] Codegen maps generators to Rust iterators
+- [x] `ink-generator` example (Task 053) passes with 100% parity

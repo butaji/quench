@@ -383,12 +383,15 @@ fn func_expr_params(items: &[oxc_ast::ast::FormalParameter]) -> Vec<hir::Param> 
 }
 
 fn conv_func_expr(f: &oxc_ast::ast::Function) -> Result<Expr, ()> {
+    let body = f.body.as_ref().map(|b| {
+        hir::Block(b.statements.iter().filter_map(|s| stmt_to_hir_stmt(s).ok()).collect())
+    });
     Ok(hir::Expr::Function(hir::FunctionDecl{
         name:f.id.as_ref().map(|id|id.name.to_string()).unwrap_or_default(),
         generics:vec![],
         params:func_expr_params(&f.params.items),
         return_type:None,
-        body:Some(hir::Block(vec![])),
+        body,
         is_async:f.r#async,
         is_generator:f.generator,
         decorators:vec![],
