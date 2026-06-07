@@ -440,8 +440,16 @@ pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
         Expression::SequenceExpression(s)=>{
             if let Some(last)=s.expressions.last(){convert_expr(last)}else{Err(())}
         }
+        Expression::YieldExpression(y)=>Ok(conv_yield(y)),
         Expression::TSAsExpression(_) | Expression::TSSatisfiesExpression(_) | Expression::TSNonNullExpression(_)
             => conv_ts_type_assertion(expr),
         _=>Err(()),
+    }
+}
+
+fn conv_yield(y: &oxc_ast::ast::YieldExpression) -> hir::Expr {
+    hir::Expr::Yield {
+        arg: y.argument.as_ref().and_then(|a|convert_expr(a).ok()).map(Box::new),
+        delegate: y.delegate,
     }
 }
