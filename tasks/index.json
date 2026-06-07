@@ -141,7 +141,7 @@
   "tasks": [
     {
       "id": "020",
-      "title": "Fix quote_codegen.rs syntax error \u2014 unblock the build",
+      "title": "Fix quote_codegen.rs syntax error — unblock the build",
       "status": "completed",
       "priority": "P0-critical",
       "files": [
@@ -385,7 +385,7 @@
     },
     {
       "id": "042",
-      "title": "ink-control-flow example \u2014 for, while, do-while, switch, break, continue",
+      "title": "ink-control-flow example — for, while, do-while, switch, break, continue",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -397,7 +397,7 @@
     },
     {
       "id": "043",
-      "title": "ink-try-catch example \u2014 try, catch, finally, throw",
+      "title": "ink-try-catch example — try, catch, finally, throw",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -409,7 +409,7 @@
     },
     {
       "id": "044",
-      "title": "ink-forin-forof example \u2014 for-in, for-of, iterators",
+      "title": "ink-forin-forof example — for-in, for-of, iterators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -421,7 +421,7 @@
     },
     {
       "id": "045",
-      "title": "ink-destructure example \u2014 destructuring, defaults, rest",
+      "title": "ink-destructure example — destructuring, defaults, rest",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -433,7 +433,7 @@
     },
     {
       "id": "046",
-      "title": "ink-spread example \u2014 object/array spread, JSX spread attrs",
+      "title": "ink-spread example — object/array spread, JSX spread attrs",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -444,7 +444,7 @@
     },
     {
       "id": "047",
-      "title": "ink-template example \u2014 template literals, multiline",
+      "title": "ink-template example — template literals, multiline",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -455,7 +455,7 @@
     },
     {
       "id": "048",
-      "title": "ink-object-advanced example \u2014 getters, setters, computed keys, method shorthand",
+      "title": "ink-object-advanced example — getters, setters, computed keys, method shorthand",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -466,7 +466,7 @@
     },
     {
       "id": "049",
-      "title": "ink-nullish-optional example \u2014 ?? and ?. (optional chaining)",
+      "title": "ink-nullish-optional example — ?? and ?. (optional chaining)",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -476,7 +476,7 @@
     },
     {
       "id": "050",
-      "title": "ink-typeof-guard example \u2014 typeof, instanceof, delete, void",
+      "title": "ink-typeof-guard example — typeof, instanceof, delete, void",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -487,7 +487,7 @@
     },
     {
       "id": "051",
-      "title": "ink-compound-bitwise example \u2014 all compound assignment + bitwise operators",
+      "title": "ink-compound-bitwise example — all compound assignment + bitwise operators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -498,7 +498,7 @@
     },
     {
       "id": "052",
-      "title": "ink-async-fetch example \u2014 async, await, Promise",
+      "title": "ink-async-fetch example — async, await, Promise",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -509,7 +509,7 @@
     },
     {
       "id": "053",
-      "title": "ink-generator example \u2014 function*, yield, yield*",
+      "title": "ink-generator example — function*, yield, yield*",
       "status": "pending",
       "priority": "P2-medium",
       "files": [
@@ -519,7 +519,7 @@
     },
     {
       "id": "054",
-      "title": "ink-function-params example \u2014 default params, rest params",
+      "title": "ink-function-params example — default params, rest params",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -530,7 +530,7 @@
     },
     {
       "id": "055",
-      "title": "ink-class-component example \u2014 classes, extends, super",
+      "title": "ink-class-component example — classes, extends, super",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -541,7 +541,7 @@
     },
     {
       "id": "056",
-      "title": "ink-static-private example \u2014 static methods, private fields #field",
+      "title": "ink-static-private example — static methods, private fields #field",
       "status": "pending",
       "priority": "P2-medium",
       "files": [
@@ -551,7 +551,7 @@
     },
     {
       "id": "057",
-      "title": "ink-getter-setter example \u2014 getters, setters, computed accessors",
+      "title": "ink-getter-setter example — getters, setters, computed accessors",
       "status": "pending",
       "priority": "P2-medium",
       "files": [
@@ -562,7 +562,7 @@
     },
     {
       "id": "058",
-      "title": "ink-module-exports example \u2014 named exports, default exports, re-exports",
+      "title": "ink-module-exports example — named exports, default exports, re-exports",
       "status": "pending",
       "priority": "P1-high",
       "files": [
@@ -573,7 +573,7 @@
     },
     {
       "id": "059",
-      "title": "ink-dynamic-import example \u2014 import(), import.meta",
+      "title": "ink-dynamic-import example — import(), import.meta",
       "status": "pending",
       "priority": "P2-medium",
       "files": [
@@ -583,7 +583,7 @@
     },
     {
       "id": "060",
-      "title": "ink-react-advanced example \u2014 useReducer, useContext, memo, forwardRef",
+      "title": "ink-react-advanced example — useReducer, useContext, memo, forwardRef",
       "status": "pending",
       "priority": "P2-medium",
       "files": [
@@ -594,7 +594,7 @@
     },
     {
       "id": "061",
-      "title": "ink-jsx-advanced example \u2014 spread attrs, dynamic components, fragments, conditional rendering",
+      "title": "ink-jsx-advanced example — spread attrs, dynamic components, fragments, conditional rendering",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -605,7 +605,7 @@
     },
     {
       "id": "062",
-      "title": "ink-animation example \u2014 useAnimation",
+      "title": "ink-animation example — useAnimation",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -616,7 +616,7 @@
     },
     {
       "id": "063",
-      "title": "ink-measure example \u2014 measureElement, useBoxMetrics",
+      "title": "ink-measure example — measureElement, useBoxMetrics",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -627,7 +627,7 @@
     },
     {
       "id": "064",
-      "title": "ink-focus-paste example \u2014 useFocus, useFocusManager, usePaste",
+      "title": "ink-focus-paste example — useFocus, useFocusManager, usePaste",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -638,7 +638,7 @@
     },
     {
       "id": "065",
-      "title": "ink-static-transform example \u2014 Static, Transform, Newline, Spacer",
+      "title": "ink-static-transform example — Static, Transform, Newline, Spacer",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -649,7 +649,7 @@
     },
     {
       "id": "066",
-      "title": "ink-enum-types example \u2014 enums, as, satisfies",
+      "title": "ink-enum-types example — enums, as, satisfies",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -659,7 +659,7 @@
     },
     {
       "id": "067",
-      "title": "ink-type-erasure example \u2014 generics, mapped types, conditional types",
+      "title": "ink-type-erasure example — generics, mapped types, conditional types",
       "status": "completed",
       "priority": "P3-low",
       "files": [
@@ -682,7 +682,7 @@
     {
       "id": "069",
       "title": "Add as/satisfies/non-null to HIR + parser (type erasure)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "crates/runts-hir/src/expr.rs",
@@ -777,7 +777,7 @@
     },
     {
       "id": "078",
-      "title": "Final coverage audit \u2014 complete TS/TSX feature matrix",
+      "title": "Final coverage audit — complete TS/TSX feature matrix",
       "status": "pending",
       "priority": "P1-high",
       "files": [
@@ -807,8 +807,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 13,
-    "completed_tasks": 47
+    "pending_tasks": 12,
+    "completed_tasks": 48
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],

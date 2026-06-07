@@ -78,6 +78,66 @@ use super::helpers::*;
             let name = type_to_rust_name(&decl.type_);
             println!("Shape discriminated union: {}", name);
         }
+
+        #[test]
+        fn test_roundtrip_ts_as_expression() {
+            // Parse a const declaration with as expression
+            let source = "const x = (y as string);";
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
+                    if let Some(init) = &v.init {
+                        // Either the expression is the inner ident (erased)
+                        // or it's wrapped in TypeAssertion
+                        let valid = !matches!(*init, Expr::Invalid);
+                        assert!(valid, "TSAsExpression should not parse to Invalid");
+                        // If it's TypeAssertion, verify inner is ident 'y'
+                        if let Expr::TypeAssertion { expr, .. } = init {
+                            // expr is Box<Expr>, use matches! directly
+                            let expr_str = format!("{:?}", expr);
+                            assert!(expr_str.contains("Ident"), "Inner should be Ident: {}", expr_str);
+                        }
+                        return;
+                    }
+                }
+            }
+            panic!("expected variable declaration");
+        }
+
+        #[test]
+        fn test_roundtrip_ts_satisfies_expression() {
+            let source = "const x = (y satisfies number);";
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
+                    if let Some(init) = &v.init {
+                        let valid = !matches!(*init, Expr::Invalid);
+                        assert!(valid, "TSSatisfiesExpression should not parse to Invalid");
+                        return;
+                    }
+                }
+            }
+            panic!("expected variable declaration");
+        }
+
+        #[test]
+        fn test_roundtrip_ts_non_null_expression() {
+            let source = "const x = (y!);";
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Decl(Decl::Variable(ref v)) = item {
+                    if let Some(init) = &v.init {
+                        let valid = !matches!(*init, Expr::Invalid);
+                        assert!(valid, "TSNonNullExpression should not parse to Invalid");
+                        return;
+                    }
+                }
+            }
+            panic!("expected variable declaration");
+        }
     
 
 }

@@ -12,6 +12,11 @@ impl QuoteCodegen {
             E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } | E::PrivateMember { .. } => self.gen_call_member_static(expr),
             E::Spread { .. } => self.gen_spread_expr(expr),
             E::Seq { .. } => self.gen_seq_expr_helper(expr),
+            // TypeScript type assertions - erased at runtime, emit inner expr
+            E::TypeAssertion { expr, .. } => self.gen_expr(expr),
+            E::Satisfies { expr, .. } => self.gen_expr(expr),
+            E::NonNull { expr } => self.gen_expr(expr),
+            // TypeAnnot only has type info, no inner expr - emit Null
             E::TypeAnnot { .. } => quote! { Value::Null },
             _ => quote! { Value::Null },
         }

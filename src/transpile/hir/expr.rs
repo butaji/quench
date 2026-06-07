@@ -123,6 +123,20 @@ pub enum Expr {
         return_type: Option<Type>,
         is_async: bool,
     },
+    /// Type assertion: expr as Type
+    TypeAssertion {
+        expr: Box<Expr>,
+        type_: Box<Type>,
+    },
+    /// Satisfies: expr satisfies Type
+    Satisfies {
+        expr: Box<Expr>,
+        type_: Box<Type>,
+    },
+    /// Non-null assertion: expr!
+    NonNull {
+        expr: Box<Expr>,
+    },
     Block(Vec<Stmt>),
     Invalid,
 }
