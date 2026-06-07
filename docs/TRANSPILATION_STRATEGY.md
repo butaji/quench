@@ -26,7 +26,7 @@
 │                                                             Native Binary   │
 │                                                                              │
 │  Dev Mode Shortcut:                                                          │
-│  TS/TSX ──▶ HIR ──▶ Interpreter ──▶ HTML (no Rust compilation)              │
+│  TS/TSX ──▶ JS bundle ──▶ rquickjs + Yoga bridge ──▶ render              │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -252,26 +252,17 @@ pub fn counter(props: CounterProps) -> VNode {
 ### 5.1 Development Mode: rquickjs (HIR Interpreter REMOVED)
 
 ```
-File change ──▶ Parse to HIR ──▶ Update module registry ──▶ Re-render
-          (<10ms)              (<5ms)                      (<30ms)
+File change ──▶ oxc_parse ──▶ JS bundle ──▶ rquickjs eval ──▶ VNode tree ──▶ render
+          (<10ms)           (<5ms)          (<20ms)          (<10ms)
 ```
 
 - **No Rust compilation** in dev mode
-- **Instant hot reload** (<50ms total)
-- Interpreter executes HIR `Expr`/`Stmt` directly against a `Value` enum
-- JSX is evaluated to HTML strings via `VNode::to_html_string()`
-- Islands produce hydration markers (`<div data-island="...">`)
+- **Hot reload** via file watcher + re-transpile + re-eval
+- rquickjs executes JS bundle with `js_bridge.rs` globals (`Box`, `Text`, hooks)
+- JSX is desugared to `React.createElement` in the bundle
+- Yoga layout engine computes flex box geometry
 
-#### Interpreter Value Model
-
-```rust
-pub enum Value {
-    Undefined, Null, Bool(bool), Number(f64), String(String),
-    Array(Vec<Value>),
-    Object(HashMap<String, Value>),
-    Function(String), // Named function reference
-}
-```
+**Note:** HIR interpreter was removed. See `docs/PERFORMANCE.md` §3.2 for rationale.
 
 ### 5.2 Production Mode: Native Binary
 
@@ -484,13 +475,13 @@ pub fn compile_rust(project_root: &Path, release: bool) -> Result<()> {
 
 ## 9. Dev/Production Parity Guarantees
 
-| Feature | Dev (Interpreter) | Production (Native) | Parity |
-|---------|-------------------|---------------------|--------|
-| JSX rendering | HIR → HTML strings | `html!` macro → HTML | ✅ Identical output |
+| Feature | Dev (rquickjs) | Production (Native) | Parity |
+|---------|----------------|---------------------|--------|
+| JSX rendering | JS bundle → React.createElement → VNode | `html!` macro → HTML | ✅ Identical output |
 | Route matching | Regex table | Axum router | ✅ Same patterns |
-| Middleware | Sequential HIR exec | Tower layers | ✅ Semantics match |
-| Hooks | Simulated (no re-render) | Full signal graph | ⚠️ Dev doesn't re-render; production does |
+| Middleware | Sequential JS exec | Tower layers | ✅ Semantics match |
+| Hooks | Real React hooks in rquickjs | Full signal graph | ✅ Same hook semantics |
 | Islands | SSR markers + static JS | SSR markers + bundled JS | ✅ Same markers |
 
-**Known divergence:** Dev mode does not re-render components on state changes (no signal graph in interpreter). This is acceptable because dev mode is for content/layout iteration; interactivity is tested in production builds or via browser DevTools.
+**Note:** The prior HIR interpreter had known divergence (no re-rendering on state changes). rquickjs eliminates that divergence by running real React hooks.
 

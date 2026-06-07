@@ -1,8 +1,10 @@
 # runts Technical Specification
 
+> **⚠️ STALE DOCUMENT:** This is a pre-rquickjs implementation draft from 2025-05-26. It describes a custom recursive descent parser and a HIR interpreter for dev mode, both of which were removed. The current architecture uses `oxc_parser`, `oxc_codegen`, and `rquickjs` for dev mode. The compile path (HIR → Rust codegen → native binary) remains conceptually similar. Update in progress — see `tasks/031-update-docs.md`.
+
 ## Version 0.2.0 — Implementation Blueprint
 
-**Status:** Implementation Draft  
+**Status:** Implementation Draft (STALE — pre-rquickjs)  
 **Last Updated:** 2025-05-26
 
 ---
@@ -982,7 +984,7 @@ export async function hydrateIsland(id: string): Promise<void> {
 │                              │                                       │
 │                              ▼                                       │
 │  ┌──────────────────────────────────────────────────────────────┐    │
-│  │ TypeScript Interpreter (Rust-based)                        │    │
+│  │ TypeScript Interpreter (Rust-based) [REMOVED]            │    │
 │  │ • Execute HIR with JS-like semantics                       │    │
 │  │ • Hook context management                                  │    │
 │  │ • Signal tracking                                          │    │
