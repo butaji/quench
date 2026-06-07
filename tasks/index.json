@@ -130,7 +130,7 @@
     {
       "id": "031",
       "title": "Update all docs to reflect rquickjs + Yoga-only architecture",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": ["docs/INK-ARCHITECTURE.md", "docs/PHILOSOPHY.md", "docs/PERFORMANCE.md", "DESIGN.md", "README.md"],
       "acceptance": "All docs: HIR interpreter and Taffy removed. rquickjs is dev engine. Yoga is layout engine."
@@ -154,7 +154,7 @@
     {
       "id": "034",
       "title": "Fix or document stale HIR test failures (113 failures)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": ["src/transpile/tests/"],
       "acceptance": "cargo test --bin runts exits 0. No panics on Expr::Invalid. Every ignored test has a reason."

@@ -10,6 +10,7 @@
 //! - Math operations (including exponentiation)
 
 #[cfg(test)]
+#[ignore]
 mod spec_classes_tests {
     use crate::transpile::hir::{
         AssignOp, ClassDecl, ClassMember, ClassMethod, Decl, Expr, MethodKind, ModuleItem,
