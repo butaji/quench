@@ -87,24 +87,28 @@ fn format_var_decl(name: &str, value: &str, type_hint: Option<&str>) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn collect_for(stmt: &Value, decls: &mut Vec<(String, String)>) {
     if let Some(body) = stmt.get("body") {
         collect_stmt(body, decls);
     }
 }
 
+#[allow(dead_code)]
 fn collect_while(stmt: &Value, decls: &mut Vec<(String, String)>) {
     if let Some(body) = stmt.get("body") {
         collect_stmt(body, decls);
     }
 }
 
+#[allow(dead_code)]
 fn collect_do_while(stmt: &Value, decls: &mut Vec<(String, String)>) {
     if let Some(body) = stmt.get("body") {
         collect_stmt(body, decls);
     }
 }
 
+#[allow(dead_code)]
 fn collect_if(stmt: &Value, decls: &mut Vec<(String, String)>) {
     if let Some(consequent) = stmt.get("consequent") {
         collect_stmt(consequent, decls);
@@ -114,6 +118,7 @@ fn collect_if(stmt: &Value, decls: &mut Vec<(String, String)>) {
     }
 }
 
+#[allow(dead_code)]
 fn collect_switch(stmt: &Value, decls: &mut Vec<(String, String)>) {
     if let Some(cases) = stmt.get("cases").and_then(|c| c.as_array()) {
         for case in cases {

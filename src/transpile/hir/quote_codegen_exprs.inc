@@ -193,6 +193,7 @@ impl QuoteCodegen {
         quote! { #obj.#prop }
     }
 
+    #[allow(dead_code)]
     fn gen_member_expr_full(&self, obj: &Expr, property: &Expr, computed: bool) -> TokenStream {
         if let Expr::Ident { name: obj_name } = obj {
             let obj_name_str: &str = obj_name.as_str();

@@ -1,7 +1,7 @@
 //! Variable extraction and codegen
 
 use super::ink_widget::tag_to_ink;
-use super::stmt_collect::{collect_stmt, try_extract_assign, extract_call_arg_value_with_type};
+use super::stmt_collect::collect_stmt;
 use super::traversal::{extract_jsx_attrs, extract_jsx_children, find_jsx_in_body};
 use once_cell::sync::Lazy;
 use serde_json::Value;
