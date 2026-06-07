@@ -146,6 +146,29 @@ pub enum Decl {
     Variable(VariableDecl),
     Type(TypeDecl),
     Class(ClassDecl),
+    Enum(EnumDecl),
+}
+
+/// Enum declaration - TypeScript enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnumDecl {
+    pub name: String,
+    pub members: Vec<EnumMember>,
+    pub is_const: bool,
+}
+
+/// Enum member - a single enum value
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnumMember {
+    pub key: String,
+    pub value: Option<EnumValue>,
+}
+
+/// Enum member value - numeric or string literal
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum EnumValue {
+    Number(f64),
+    String(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

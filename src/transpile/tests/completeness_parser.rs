@@ -36,6 +36,7 @@ mod completeness_parser_tests {
                 methods: vec![],
             }),
             ModuleItem::Decl(Decl::Type(_)) => Stmt::Empty,
+            ModuleItem::Decl(Decl::Enum(e)) => Stmt::Enum(e.clone()),
             ModuleItem::Import(_) => Stmt::Empty,
             ModuleItem::Export(_) => Stmt::Empty,
         }

@@ -84,7 +84,27 @@ impl QuoteCodegen {
         match stmt {
             S::FunctionDecl(func) => Some(self.gen_fn(func)),
             S::Variable(var) => self.gen_var_decl(var),
+            S::Enum(e) => Some(self.gen_enum(e)),
             _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn gen_enum(&self, e: &super::EnumDecl) -> TokenStream {
+        let name = syn::Ident::new(&e.name, proc_macro2::Span::call_site());
+        let variants: Vec<TokenStream> = e.members.iter().map(|m| {
+            let variant_name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+            match &m.value {
+                Some(super::EnumValue::Number(n)) => quote! { #variant_name = #n },
+                Some(super::EnumValue::String(s)) => quote! { #variant_name = #s },
+                None => quote! { #variant_name },
+            }
+        }).collect();
+
+        if e.is_const {
+            quote! { const enum #name { #(#variants),* } }
+        } else {
+            quote! { enum #name { #(#variants),* } }
         }
     }
 

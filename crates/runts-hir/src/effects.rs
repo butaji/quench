@@ -95,7 +95,7 @@ impl EffectAnalyzer {
             S::For{..}|S::ForIn{..}|S::ForOf{..}=>self.analyze_cf_loop(stmt),
             S::Return{..}|S::Throw{..}=>self.analyze_cf_control(stmt),
             S::Try{..}|S::Switch{..}=>self.analyze_cf_complex(stmt),
-            S::Break{..}|S::Continue{..}|S::Labeled{..}|S::Empty|S::FunctionDecl(_)|S::Class(_)|S::Variable(_)|S::ExportNamed{..}|S::ExportDefault{..}|S::ImportNamed{..}|S::ImportDefault{..}=>{}
+            S::Break{..}|S::Continue{..}|S::Labeled{..}|S::Empty|S::FunctionDecl(_)|S::Class(_)|S::Variable(_)|S::Enum(_)|S::ExportNamed{..}|S::ExportDefault{..}|S::ImportNamed{..}|S::ImportDefault{..}=>{}
             S::With{obj,body}=>self.analyze_with(obj,body),
             S::Block{stmts:_}=>self.analyze_cf_block(stmt),
             S::Expr{expr:_}=>self.analyze_cf_block(stmt),

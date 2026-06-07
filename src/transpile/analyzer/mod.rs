@@ -154,6 +154,10 @@ impl Analyzer {
             Decl::Variable(v) => {
                 self.validate_variable_decl(v);
             }
+            Decl::Enum(e) => {
+                self.types.insert(e.name.clone());
+                // Enum members are constants
+            }
         }
     }
 
