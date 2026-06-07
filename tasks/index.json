@@ -565,7 +565,7 @@
     {
       "id": "058",
       "title": "ink-module-exports example — named exports, default exports, re-exports",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-module-exports/",
