@@ -143,9 +143,9 @@ run_all() {
       fi
     fi
 
-    # Run rq
+    # Run rq (always use --once since we're running non-interactively)
     if [[ "$ENV" == "all" ]] || [[ "$ENV" == "rq" ]]; then
-      if run_rq "$ex_dir" "$ONCE_FLAG"; then
+      if run_rq "$ex_dir" "--once"; then
         rq_status="ok"
       else
         rq_status="err"
