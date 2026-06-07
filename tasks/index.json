@@ -606,7 +606,7 @@
     {
       "id": "062",
       "title": "ink-animation example \u2014 useAnimation",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-animation/",
@@ -650,7 +650,7 @@
     {
       "id": "066",
       "title": "ink-enum-types example \u2014 enums, as, satisfies",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-enum-types/"
@@ -660,7 +660,7 @@
     {
       "id": "067",
       "title": "ink-type-erasure example \u2014 generics, mapped types, conditional types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-low",
       "files": [
         "examples/ink-type-erasure/"
@@ -790,8 +790,8 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 106,
-    "examples_with_tests": 103,
+    "examples_total": 108,
+    "examples_with_tests": 105,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 956,
@@ -807,8 +807,8 @@
     "hir_expr_codegen_handled": 28,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 22,
-    "completed_tasks": 38
+    "pending_tasks": 19,
+    "completed_tasks": 41
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
