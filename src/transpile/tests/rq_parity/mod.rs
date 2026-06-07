@@ -278,3 +278,4 @@ ink_example_smoke_test!(test_ink_switch, "ink-switch");
 // ═══════════════════════════════════════════════════════════════════
 
 ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");
+ink_example_smoke_test!(test_ink_generator, "ink-generator");
