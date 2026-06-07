@@ -87,6 +87,41 @@ use super::helpers::*;
             let output = tokens.to_string();
             assert!(output.contains("value"), "NonNull should emit inner expr");
         }
+
+        #[test]
+        fn test_enum_codegen() {
+            // Test enum codegen
+            let e = EnumDecl {
+                name: "Color".into(),
+                members: vec![
+                    EnumMember { key: "Red".into(), value: Some(EnumValue::Number(1.0)) },
+                    EnumMember { key: "Green".into(), value: Some(EnumValue::Number(2.0)) },
+                    EnumMember { key: "Blue".into(), value: None },
+                ],
+                is_const: false,
+            };
+            let tokens = QuoteCodegen::default().gen_enum(&e);
+            let output = tokens.to_string();
+            assert!(output.contains("Color"), "Enum should contain name");
+            assert!(output.contains("Red"), "Enum should contain Red");
+            assert!(output.contains("Green"), "Enum should contain Green");
+            assert!(output.contains("Blue"), "Enum should contain Blue");
+        }
+
+        #[test]
+        fn test_const_enum_codegen() {
+            // Test const enum codegen
+            let e = EnumDecl {
+                name: "ConstEnum".into(),
+                members: vec![
+                    EnumMember { key: "A".into(), value: Some(EnumValue::Number(1.0)) },
+                ],
+                is_const: true,
+            };
+            let tokens = QuoteCodegen::default().gen_enum(&e);
+            let output = tokens.to_string();
+            assert!(output.contains("const enum"), "Const enum should contain 'const enum'");
+        }
     
 
 }
