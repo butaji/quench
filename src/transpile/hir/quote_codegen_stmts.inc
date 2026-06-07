@@ -516,7 +516,21 @@ impl QuoteCodegen {
     fn gen_var_decl_simple(&self, kind: VariableKind, name: &str, init_expr: &TokenStream) -> Option<TokenStream> {
         let id = syn::Ident::new(name, proc_macro2::Span::call_site());
         let keyword = self.var_keyword(kind);
-        Some(quote! { #keyword #id = #init_expr; })
+        
+        // Add type annotation for arrays and objects to help type inference
+        let init_str = init_expr.to_string();
+        let type_annotation = if init_str.contains("Vec::<") 
+            || init_str.contains("vec![")
+            || init_str.contains("::std::vec::Vec")
+            || init_str.contains("::serde_json::map::Map")
+            || init_str.contains("serde_json::map::Map")
+            || init_str.contains("serde_json::Value::Object") {
+            quote! { : Vec<Value> }
+        } else {
+            TokenStream::new()
+        };
+        
+        Some(quote! { #keyword #id #type_annotation = #init_expr; })
     }
 
     fn var_keyword(&self, kind: VariableKind) -> TokenStream {
