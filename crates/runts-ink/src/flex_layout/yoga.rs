@@ -30,7 +30,7 @@ struct LayoutEntry {
 }
 
 /// Compute the layout for a VNode tree within the given viewport.
-pub fn compute(root: &VNode, viewport_w: u16, viewport_h: u16) -> Layout {
+pub fn compute(root: &VNode, viewport_w: u16, _viewport_h: u16) -> Layout {
     let mut entries: Vec<LayoutEntry> = Vec::new();
     let mut nodes: Vec<yoga::Node> = Vec::new();
 
@@ -404,19 +404,6 @@ fn compute_absolute(
         }
     }
 }
-
-/* -------------------------------------------------------------------------- */
-/* Public compatibility stubs                                                 */
-/* -------------------------------------------------------------------------- */
-
-/// Stub kept for API compatibility with the old layout bridge.
-pub fn style_for_box(_b: &InkBox) {}
-
-/// Stub kept for API compatibility with the old layout bridge.
-pub fn style_for_text() {}
-
-/// Stub kept for API compatibility with the old layout bridge.
-pub fn style_for_spacer(_g: f32) {}
 
 #[cfg(test)]
 mod tests {

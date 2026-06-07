@@ -90,7 +90,6 @@ runts-macros = { path = "crates/runts-macros" }
 # Plugins
 runts-fresh = { path = "crates/runts-fresh" }
 runts-ratatui = { path = "crates/runts-ratatui" }
-# runts-react = { path = "crates/runts-react" }  # TEMPORARILY DISABLED - has pre-existing bugs
 runts-plugin = { path = "crates/runts-plugin" }
 
 # TUI rendering (for dev interactive mode)

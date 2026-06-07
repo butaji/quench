@@ -16,7 +16,7 @@ pub fn unary_op(op: &UnaryOperator) -> hir::UnaryOp {
 }
 
 pub fn binary_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
-    use hir::BinaryOp::*;
+    
     arith_op(op).or_else(|| shift_op(op)).or_else(|| cmp_op(op)).or_else(|| eq_op(op)).or_else(|| bit_op(op)).or_else(|| rel_op(op))
 }
 
@@ -85,7 +85,7 @@ fn rel_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
 }
 
 pub fn assign_op(op: &AssignmentOperator) -> Option<hir::AssignOp> {
-    use hir::AssignOp::*;
+    
     arith_assign(op).or_else(|| shift_assign(op)).or_else(|| bit_assign(op))
 }
 

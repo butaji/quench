@@ -16,9 +16,6 @@ pub mod integration;
 pub mod parser;
 
 #[cfg(test)]
-pub mod routegen;
-
-#[cfg(test)]
 pub mod spec_async_runtime;
 
 #[cfg(test)]

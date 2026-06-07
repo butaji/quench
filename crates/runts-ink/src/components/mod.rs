@@ -98,9 +98,13 @@ pub enum AlignSelf {
     Auto,
     /// See `AlignItems`.
     FlexStart,
+    /// Pack at the centre of the cross axis.
     Center,
+    /// Pack at the end of the cross axis.
     FlexEnd,
+    /// Stretch to fill the cross axis.
     Stretch,
+    /// Align by baseline (text).
     Baseline,
 }
 

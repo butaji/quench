@@ -9,11 +9,9 @@ use tracing::info;
 
 use crate::config::Config;
 use crate::plugin::get_plugin;
-use crate::transpile::hir;
-use crate::transpile::parser::parse_source;
 use runts_plugin::RouteInfo;
 
-use super::{build_dir, find_ts_files, resolve_project_root, BuildResult};
+use super::{find_ts_files, resolve_project_root, BuildResult};
 
 /// Run build using plugin system with ephemeral temp directories
 pub async fn run_plugin_build(
@@ -235,11 +233,6 @@ fn format_one_dep(dep: &runts_plugin::CargoDep) -> Option<String> {
 fn find_runts_lib_path(_project_root: &Path) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest.join("crates/runts-lib")
-}
-
-/// Parse TypeScript source to HIR module
-fn parse_to_hir(source: &str, is_tsx: bool) -> Result<hir::Module> {
-    parse_source(source, is_tsx)
 }
 
 /// Scan routes directory and build a map of file paths to RouteInfo

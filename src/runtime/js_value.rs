@@ -6,8 +6,8 @@ pub enum JsValue {
     Bool(bool),
     Number(f64),
     String(String),
-    Object(Vec<(String, JsValue)>),
-    Array(Vec<JsValue>),
+    Object(()),
+    Array(()),
 }
 
 #[allow(dead_code)]
@@ -32,12 +32,12 @@ impl JsValue {
         JsValue::Bool(b)
     }
 
-    pub fn object(props: Vec<(String, JsValue)>) -> Self {
-        JsValue::Object(props)
+    pub fn object(_props: Vec<(String, JsValue)>) -> Self {
+        JsValue::Object(())
     }
 
-    pub fn array(values: Vec<JsValue>) -> Self {
-        JsValue::Array(values)
+    pub fn array(_values: Vec<JsValue>) -> Self {
+        JsValue::Array(())
     }
 
     pub fn is_null(&self) -> bool {

@@ -1,4 +1,4 @@
-use crate::transpile::hir::{QuoteCodegen, Stmt};
+use crate::transpile::hir::QuoteCodegen;
 
 pub(crate) fn generate_function_string(
     codegen: &QuoteCodegen,
@@ -131,7 +131,7 @@ pub(crate) fn generate_body_string(
     body: &Option<crate::transpile::hir::Block>,
     ret_type: &str,
 ) -> String {
-    use crate::transpile::hir::Stmt;
+    
 
     let body = match body {
         Some(b) => b,

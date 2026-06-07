@@ -22,7 +22,7 @@ impl<'a> RouteHandler<'a> {
             let axum_path = self.to_axum_path(&route.path);
             imports.push_str(&format!("mod {};\n", safe_name));
 
-            let (render_arg, handler_sig) = self.make_handler_sig(&safe_name, &axum_path);
+            let (_render_arg, handler_sig) = self.make_handler_sig(&safe_name, &axum_path);
             handlers.push_str(&handler_sig);
 
             let route_methods = self.get_route_methods(route, &module_by_path);

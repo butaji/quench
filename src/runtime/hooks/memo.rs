@@ -1,17 +1,7 @@
 //! Memo hooks
 
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
 use std::sync::RwLock;
-
-/// Compute hash of dependencies for memo comparison
-fn hash_deps<D: Hash>(deps: &[D]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    for dep in deps {
-        dep.hash(&mut hasher);
-    }
-    hasher.finish()
-}
 
 /// Memoized value with dependency tracking
 #[allow(dead_code)]

@@ -122,7 +122,7 @@
     {
       "id": "030",
       "title": "Delete dead code: runts-react, old scripts, HIR runtime, Taffy engine",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": ["crates/runts-react/", "test_*.sh", "Cargo.toml"],
       "acceptance": "cargo build passes with zero dead-code warnings. Taffy feature and dep removed. Workspace clean. Yoga is sole layout engine."

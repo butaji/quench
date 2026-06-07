@@ -2,7 +2,7 @@ use crate::{
     components::{AlignContent, AlignItems, AlignSelf, FlexWrap, JustifyContent},
     BorderStyle, Color, Display, FlexDirection, Overflow, Position, Wrap,
 };
-use rquickjs::{Result as JsResult, Value};
+use rquickjs::Value;
 
 /// Parse a flex-direction string. The bridge accepts
 /// the Ink JS API names: "row", "column", "row-reverse",

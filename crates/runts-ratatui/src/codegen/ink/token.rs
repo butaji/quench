@@ -85,16 +85,6 @@ pub fn parse_padding_value(value: &serde_json::Value) -> Option<u16> {
     None
 }
 
-/// Convert a JSON value to a string.
-pub fn json_value_to_string(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    }
-}
-
 /// Check if a value is truthy.
 pub fn truthy(value: &serde_json::Value) -> bool {
     match value {

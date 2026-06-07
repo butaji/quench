@@ -95,38 +95,12 @@ impl QuoteCodegen {
         }
     }
 
-    fn gen_required_type(&self, inner: &Box<Type>) -> TokenStream {
-        self.gen_type(inner)
-    }
-
     fn gen_pick_type(&self, inner: &Box<Type>, keys: &[String]) -> TokenStream {
         use super::Type as T;
         match inner.as_ref() {
             T::Object { members } => {
                 let fields: Vec<_> = members.iter()
                     .filter(|m| keys.contains(&m.key))
-                    .map(|m| {
-                        let name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
-                        let ty = self.gen_type(&m.type_);
-                        quote! { pub #name: #ty }
-                    })
-                    .collect();
-                if fields.is_empty() {
-                    quote! { Value }
-                } else {
-                    quote! { { #(#fields);* } }
-                }
-            }
-            _ => quote! { Value },
-        }
-    }
-
-    fn gen_omit_type(&self, inner: &Box<Type>, keys: &[String]) -> TokenStream {
-        use super::Type as T;
-        match inner.as_ref() {
-            T::Object { members } => {
-                let fields: Vec<_> = members.iter()
-                    .filter(|m| !keys.contains(&m.key))
                     .map(|m| {
                         let name = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
                         let ty = self.gen_type(&m.type_);
@@ -163,19 +137,6 @@ impl QuoteCodegen {
         use super::Type as T;
         match inner.as_ref() {
             T::Function { params: _, ret } => self.gen_type(ret),
-            _ => quote! { Value },
-        }
-    }
-
-    fn gen_parameters_type(&self, inner: &Box<Type>) -> TokenStream {
-        use super::Type as T;
-        match inner.as_ref() {
-            T::Function { params, ret: _ } => {
-                let param_types: Vec<_> = params.iter()
-                    .map(|p| self.gen_type(p))
-                    .collect();
-                quote! { (#(#param_types),*) }
-            }
             _ => quote! { Value },
         }
     }
@@ -222,33 +183,6 @@ impl QuoteCodegen {
                 let variant_ident = syn::Ident::new(&format!("Variant{}", index), proc_macro2::Span::call_site());
                 quote! { #variant_ident }
             }
-        }
-    }
-
-    fn gen_intersection_type(&self, types: &[Type]) -> TokenStream {
-        if types.is_empty() {
-            return quote! { Value };
-        }
-        let all_fields: Vec<TokenStream> = types.iter()
-            .filter_map(|t| {
-                if let super::Type::Object { members } = t {
-                    Some(members.iter().map(|m| {
-                        let key = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
-                        let ty = self.gen_type(&m.type_);
-                        quote! { pub #key: #ty }
-                    }).collect::<Vec<_>>())
-                } else {
-                    None
-                }
-            })
-            .flatten()
-            .collect();
-
-        if all_fields.is_empty() {
-            let type_strs: Vec<_> = types.iter().map(|t| self.gen_type(t)).collect();
-            quote! { (#(#type_strs),*) }
-        } else {
-            quote! { struct { #(#all_fields);* } }
         }
     }
 
@@ -334,16 +268,6 @@ impl QuoteCodegen {
     fn gen_array_type(&self, elem: &Box<Type>) -> TokenStream {
         let inner = self.gen_type(elem);
         quote! { Vec<#inner> }
-    }
-    
-    fn gen_ref_type(&self, name: &str, generics: &[Type]) -> TokenStream {
-        let name = syn::Ident::new(name, proc_macro2::Span::call_site());
-        if generics.is_empty() {
-            quote! { #name }
-        } else {
-            let generics: Vec<_> = generics.iter().map(|g| self.gen_type(g)).collect();
-            quote! { #name<#(#generics),*> }
-        }
     }
     
     fn gen_object_type(&self, members: &[super::TypeMember]) -> TokenStream {

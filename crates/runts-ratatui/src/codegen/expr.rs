@@ -83,28 +83,3 @@ fn text_token_from_child(raw: &serde_json::Value) -> Option<TokenStream> {
         .or_else(|| raw.get("text").and_then(|t| t.as_str()))?;
     if !s.chars().all(|c| c.is_whitespace()) { Some(quote! { #s }) } else { None }
 }
-
-pub(crate) fn collect_text_from_children(children: &[serde_json::Value]) -> String {
-    let mut out = String::new();
-    for raw in children {
-        collect_text_into_string(&mut out, raw);
-    }
-    out
-}
-
-fn collect_text_into_string(out: &mut String, raw: &serde_json::Value) {
-    if let Some(text) = raw.get("text").and_then(|t| t.as_str()) {
-        if !out.is_empty() { out.push(' '); }
-        out.push_str(text);
-    } else if let Some(jsx) = raw.get("jsx") {
-        let nested = super::traversal::extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null)).unwrap_or_default();
-        for child in nested { collect_text_into_string(out, &child); }
-    } else if let Some(expr) = raw.get("Expr") {
-        if let Some(s) = parse_expr_inner(expr) { out.push_str(&s); }
-    }
-}
-
-fn parse_expr_inner(expr: &serde_json::Value) -> Option<String> {
-    expr.get("String").and_then(|v| v.as_str()).map(|s| s.to_string())
-        .or_else(|| expr.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
-}

@@ -269,11 +269,6 @@ fn stmt_to_hir_stmt(s: &Statement) -> Result<hir::Stmt, ()> {
     }
 }
 
-/// Convert arrow function statement body
-pub fn arrow_stmt_to_hir(body: &BlockStatement) -> Vec<hir::Stmt> {
-    body.body.iter().filter_map(|s| stmt_to_hir_stmt(s).ok()).collect()
-}
-
 fn func_expr_params(items: &[oxc_ast::ast::FormalParameter]) -> Vec<hir::Param> {
     items.iter().filter_map(|p|{
         binding_id_name(&p.pattern).map(|name|hir::Param{
@@ -300,11 +295,6 @@ fn conv_func_expr(f: &oxc_ast::ast::Function) -> Result<Expr, ()> {
         throws:false,
         error_type:None,
     }))
-}
-
-fn func_expr_body(body: Option<&BlockStatement>) -> hir::Expr {
-    body.map(|b|hir::Expr::Block(b.body.iter().filter_map(|s|stmt_to_hir_stmt(s).ok()).collect()))
-    .unwrap_or(hir::Expr::Undefined)
 }
 
 /// Convert expression
