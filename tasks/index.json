@@ -906,7 +906,7 @@
     {
       "id": "084",
       "title": "ink-top-level-await example — top-level await",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-top-level-await/",
