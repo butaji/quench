@@ -1,4 +1,4 @@
-# Task 029: Add Per-Example Unit Tests for All 88 Examples
+# Task 029: Add Per-Example Unit Tests for All 91 Examples
 
 **Priority:** P2-Medium  
 **Phase:** 2 — Compile + Verification  
@@ -21,6 +21,6 @@ Only ~15 examples have inline tests. 74 have zero coverage.
 
 ## Acceptance Criteria
 
-- [x] 88 test slots, one per example (`src/transpile/tests/rq_parity/mod.rs`).
-- [x] 86 active tests pass; 2 ignored (`ink-background-color`: bridge gap; `ink-bordered`: uses `render(<App />)` directly, not supported in rquickjs path).
-- [x] Coverage >= 90% (86/88 = 97.7%).
+- [x] 88 test slots across 91 examples (`src/transpile/tests/rq_parity/mod.rs`). 86 active smoke tests + 2 ignored tests.
+- [x] 3 examples currently lack tests.
+- [x] Coverage >= 90% (88/91 = 96.7%).

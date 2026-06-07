@@ -3,7 +3,7 @@
 > **Architecture:** rquickjs (dev engine) + Yoga (layout) + Ratatui (render).
 > **HIR interpreter:** DELETED. Do not restore.
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
-> **Goal:** 100% look&feel parity across 3 environments for all 88 Ink examples.
+> **Goal:** 100% look&feel parity across 3 environments for all 91 Ink examples.
 
 ---
 
@@ -64,7 +64,7 @@ Execute in this order:
 2. **Remove Taffy.** Delete the Taffy module and feature flag. Make Yoga the default and only layout feature in `Cargo.toml`. Strip all `#[cfg(feature = "taffy")]` conditionals.
 3. **Build the TSX→JS transpiler.** Use `oxc_codegen` (already in deps). It must: (a) desugar JSX to `React.createElement`, (b) erase TS type annotations, (c) rewrite `import { Box, Text } from 'ink'` to bridge globals.
 4. **Wire `runts dev` to rquickjs.** The dev command should: parse `.tsx` → transpile to JS → create rquickjs context → inject `js_bridge.rs` globals → inject React shim → eval bundle → call `renderToString()` → print output.
-5. **Complete the JS bridge.** Every prop used in any of the 88 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
+5. **Complete the JS bridge.** Every prop used in any of the 91 examples must be supported in `js_bridge.rs`. Use a prop dispatch table or macro — do not write 300-line match blocks.
 6. **Wire interactive hooks.** `useInput`, `useApp`, `useFocus`, etc. run inside rquickjs. The bridge only exposes Rust primitives (VNode builders, event sources). Crossterm events route to JS callbacks.
 
 **Acceptance per step:**
@@ -77,16 +77,16 @@ Execute in this order:
 ---
 
 ### Phase 2: Compile + Verification
-**Goal:** `runts build --release` produces working binaries. One parity harness runs all 88 examples.
+**Goal:** `runts build --release` produces working binaries. One parity harness runs all 91 examples.
 
 - **Fix the compile path.** Replace the plugin JSON string boundary with typed HIR transfer. Fix `find_runts_lib_path` to use `env!("CARGO_MANIFEST_DIR")`. Verify that static examples build and run.
 - **Create one parity harness.** Delete all existing `test_parity*.sh` scripts. Create a single `scripts/parity.sh` with `--env deno|rq|compile|all`, `--examples GLOB`, `--once`. It must implement per-symbol diff and output a JSON summary.
 - **Add per-example unit tests.** Generate one Rust test per example in `tests/rq_parity/`. Each test reads `examples/*/tui/app.tsx`, runs it through the rquickjs path, and asserts expected substrings in output.
-- **Fix HIR test failures.** `cargo test --bin runts` currently has 113 failures in compile-path tests. Categorize each: fix if compile path needs it, `#[ignore]` if out of scope, delete if testing removed subsystems.
+- **Fix HIR test failures.** `cargo test --bin runts` has 231 known failures across the transpile test suite, but 11 of 15 test modules are currently disabled. First complete Task 033 (re-enable modules), then categorize and fix: fix if compile path needs it, `#[ignore]` if out of scope, delete if testing removed subsystems.
 
 **Acceptance:**
 - Compile path produces a binary that exits 0 and prints expected text.
-- Parity harness runs all 88 examples and produces a JSON report.
+- Parity harness runs all 91 examples and produces a JSON report.
 - Unit tests cover ≥90% of examples.
 - `cargo test --bin runts` exits 0 (or only expected ignored failures).
 
@@ -95,7 +95,7 @@ Execute in this order:
 ### Phase 3: Coverage Gaps
 **Goal:** No feature is untested or unexercised.
 
-- **Re-enable disabled spec tests.** Four test modules are commented out in `src/transpile/tests/mod.rs`: `spec_control_flow`, `spec_data_structures`, `spec_vars_functions`, `spec_jsx`. These cover large swaths of the TS/TSX subset. Uncomment them, fix helper visibility issues (likely `runts_hir::*` imports), and get them compiling.
+- **Re-enable disabled spec tests.** 11 of 15 test modules are commented out in `src/transpile/tests/mod.rs`: `completeness_codegen`, `parser`, `spec_async_runtime`, `spec_control_flow`, `spec_data_structures`, `spec_modules`, `spec_vars_functions`, `spec_roundtrip`, `spec_jsx`, `spec_classes`, `spec_stdlib`. These cover large swaths of the TS/TSX subset. Uncomment them, fix helper visibility issues (likely `runts_hir::*` imports), and get them compiling.
 - **Add missing Ink examples.** Several features are implemented in `js_bridge.rs` but never exercised by an example:
   - `useAnimation` — add `examples/ink-animation/`
   - `usePaste` — add `examples/ink-paste/`
@@ -124,19 +124,28 @@ Execute in this order:
 ## Known Coverage Gaps (Current State)
 
 ### Disabled Test Modules
-Four comprehensive test modules are commented out in `src/transpile/tests/mod.rs`:
+**11 of 15** test modules are commented out in `src/transpile/tests/mod.rs`:
 
-| Module | Coverage |
-|--------|----------|
-| `spec_control_flow` | `if`/`else`, `switch`, `for`, `while`, `do-while`, `try`/`catch`, `break`/`continue`, ternary |
-| `spec_data_structures` | Arrays, objects, destructuring, pattern coverage |
-| `spec_vars_functions` | Variables, arrow functions, async functions, function params, bindings |
-| `spec_jsx` | JSX elements, attributes, children, fragments, inline styles, event handlers |
+| Module | Coverage | Disabled Reason |
+|--------|----------|-----------------|
+| `completeness_codegen` | Spread, edge-case codegen | codegen completeness issues |
+| `parser` | JSX text coalescing, HIR JSON serialization | parser tests have known issues |
+| `spec_async_runtime` | `async`/`await` patterns | async patterns not fully implemented |
+| `spec_control_flow` | `if`/`else`, `switch`, `for`, `while`, `do-while`, `try`/`catch`, `break`/`continue`, ternary | control flow patterns not fully implemented |
+| `spec_data_structures` | Arrays, objects, destructuring, patterns | data structure handling not fully implemented |
+| `spec_modules` | Imports, exports, default exports, re-exports | module handling not fully implemented |
+| `spec_vars_functions` | Variables, arrow functions, async functions, function params, bindings | variable and function handling not fully implemented |
+| `spec_roundtrip` | Parse → HIR → codegen roundtrip | roundtrip tests have known issues |
+| `spec_jsx` | JSX elements, attributes, children, fragments, inline styles, event handlers | JSX parsing not implemented |
+| `spec_classes` | Class declarations, methods, inheritance | class support not fully implemented |
+| `spec_stdlib` | `Math`, `Date`, `Array`, `String` methods | stdlib tests have known issues |
 
-Without these, there is **zero automated coverage** for control flow, data structures, variables/functions, and JSX in the compile path.
+Only 4 modules are currently enabled: `analyzer`, `completeness_parser`, `integration`, `rq_parity`.
+
+Without the disabled modules, there is **zero automated coverage** for control flow, data structures, variables/functions, JSX, modules, classes, stdlib, and roundtrip behavior in the compile path.
 
 ### Stale HIR Test Failures
-`cargo test --bin runts` has **113 failures** in enabled modules. Root causes:
+`cargo test --bin runts` has **231 failures** across the transpile test suite. Most of the affected modules are currently disabled; the last known count from enabled modules was 113. Root causes:
 - Tests expect old HIR shapes from before `crates/runts-hir` refactor.
 - `quote_codegen` panics on `Expr::Invalid` for `do-while`, `throw`, labeled statements, `Math.PI`, `Date.now()`.
 - Parser converter intentionally skips features (JSX, optional chaining, class expressions) but tests expect them to work.
@@ -230,7 +239,7 @@ grep "^//" src/transpile/tests/mod.rs
 ## Success Criteria (Final Checklist)
 
 - [ ] `cargo build` passes with 0 errors, 0 warnings.
-- [ ] `scripts/parity.sh --env all` passes 88/88 examples (≥95% similarity).
+- [ ] `scripts/parity.sh --env all` passes 91/91 examples (≥95% similarity).
 - [ ] `cargo test --test rq_parity` passes ≥90% of examples.
 - [ ] `cargo test --bin runts` exits 0 (or only expected ignored failures).
 - [ ] Zero commented-out test modules in `src/transpile/tests/mod.rs`.

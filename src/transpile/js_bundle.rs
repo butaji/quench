@@ -178,6 +178,7 @@ static INK_HOOKS: &[&str] = &[
     "useFocusManager",
     "useCursor",
     "useAnimation",
+    "usePaste",
 ];
 
 fn ink_import_to_const(spec: &str) -> String {
@@ -248,6 +249,14 @@ const REACT_SHIM: &str = r#"var React = (function() {
             currentHooks[idx] = { deps: deps, value: fn() };
         }
         return currentHooks[idx].value;
+    }
+
+    function useRef(initial) {
+        var idx = currentIdx++;
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = { current: typeof initial === 'function' ? initial() : initial };
+        }
+        return currentHooks[idx];
     }
 
     function createContext(defaultValue) {
@@ -323,6 +332,7 @@ const REACT_SHIM: &str = r#"var React = (function() {
         useEffect: useEffect,
         useCallback: useCallback,
         useMemo: useMemo,
+        useRef: useRef,
         createContext: createContext,
         useContext: useContext,
         Fragment: 'Fragment',
@@ -334,6 +344,7 @@ var useState = React.useState;
 var useEffect = React.useEffect;
 var useCallback = React.useCallback;
 var useMemo = React.useMemo;
+var useRef = React.useRef;
 var createContext = React.createContext;
 var useContext = React.useContext;"#;
 

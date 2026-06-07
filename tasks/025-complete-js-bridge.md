@@ -20,7 +20,7 @@
 
 ## Steps
 
-### Step 1: Audit all props used across 88 examples
+### Step 1: Audit all props used across 91 examples
 
 ```bash
 grep -rhoE '\b[a-z][a-zA-Z]+=\{' examples/*/tui/app.tsx | sort | uniq -c | sort -rn
@@ -81,6 +81,6 @@ One test per prop.
 
 ## Acceptance Criteria
 
-- [ ] Every prop used in any of the 88 examples is supported.
+- [x] Every prop used in any of the 91 examples is supported.
 - [ ] `grep -r 'unsupported prop' tests/` returns nothing.
 - [ ] Unit test coverage for every prop setter.

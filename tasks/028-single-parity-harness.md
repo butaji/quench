@@ -24,7 +24,7 @@ Multiple old shell scripts existed in repo root. EXECUTE.md demands exactly ONE 
 ## Acceptance Criteria
 
 - [x] Exactly one script: `scripts/parity.sh`.
-- [x] `--env all` runs against all 88 examples.
+- [x] `--env all` runs against all 91 examples.
 - [x] Per-symbol diff + JSON summary.
 - [x] Exit code 0 if all pass, else 1.
 - [x] No old `test_parity*.sh` or `test_ink_parity*.sh` scripts remain.

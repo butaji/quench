@@ -13,7 +13,7 @@ Several docs still describe the HIR interpreter as the dev engine or contain sta
 
 | Document | Status | What Was Fixed |
 |----------|--------|----------------|
-| `README.md` | ✅ Current | "89" → "88" examples count; In-progress list updated |
+| `README.md` | ✅ Current | examples count updated; In-progress list updated |
 | `DESIGN.md` | ✅ Current | Mentions rquickjs correctly |
 | `docs/INK-ARCHITECTURE.md` | ✅ Current | Current State section updated to v4.1 |
 | `docs/PHILOSOPHY.md` | ✅ Current | Already describes rquickjs + Yoga accurately |

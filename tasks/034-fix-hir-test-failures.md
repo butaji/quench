@@ -6,7 +6,31 @@
 
 ## Problem
 
-`cargo test --bin runts` currently has **113 failures** in enabled test modules:
+`cargo test --bin runts` has **231 failures** reported across the transpile test suite. However, most of the modules containing these failures are currently disabled in `src/transpile/tests/mod.rs` (see Task 033). The last known count from enabled modules was **113 failures**:
+
+## Current State
+
+As of the latest run, 11 of 15 test modules are commented out. Failures are distributed across:
+
+| Module | Status | Failures | Root Cause |
+|--------|--------|----------|------------|
+| `spec_modules` | disabled | 24 (last known) | Tests expect old `ModuleItem::Decl` / `ModuleItem::Export` shape from before `crates/runts-hir` refactor |
+| `spec_stdlib` | disabled | 12 (last known) | `Math.PI`, `Date.now()`, `array.length` parse to `Expr::StaticMember` but quote_codegen panics on `Expr::Invalid` |
+| `completeness_parser` | disabled | 22 (last known) | JSX, optional chaining, class expr, meta props, sequences return `Stmt::Empty` / `Expr::Invalid` — parser converter not implemented |
+| `completeness_codegen` | disabled | 1 (last known) | Spread expression edge case |
+| `integration` | enabled | 3 | Type-to-rust failures, full transpile failures |
+| `parser` (jsx) | disabled | 7 (last known) | JSX text coalescing, HIR JSON serialization |
+| `quote_codegen` | enabled | 4 | Panic on `do-while`, `throw`, labeled statements, intersection types |
+
+**Total known failures:** 231 (with disabled modules included) / 113 (enabled modules only, outdated).
+
+## Blocker
+
+This task is **blocked on Task 033**. We cannot categorize and fix failures while the modules containing them are disabled.
+
+## Decision Matrix
+
+For each failing test, apply ONE of:
 
 | Module | Failures | Root Cause |
 |--------|----------|------------|
@@ -41,6 +65,7 @@ For each failing test, apply ONE of:
 
 ## Acceptance Criteria
 
+- [ ] Task 033 completed (all 15 modules enabled).
 - [ ] `cargo test --bin runts` exits 0.
 - [ ] No panics on `Expr::Invalid` in quote_codegen.
 - [ ] Every `#[ignore]`d test has a reason comment.
