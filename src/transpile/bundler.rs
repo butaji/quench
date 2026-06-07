@@ -325,11 +325,33 @@ fn extract_function_export(line: &str) -> Option<String> {
 
 fn prefix_declarations(js: &str, prefix: &str) -> String {
     let mut output = String::new();
+    let mut brace_depth = 0;
     for line in js.lines() {
-        output.push_str(&prefix_line(line, prefix));
+        let trimmed = line.trim();
+        // Track brace depth to know if we're inside a function
+        brace_depth += trimmed.matches('{').count() as i32;
+        brace_depth -= trimmed.matches('}').count() as i32;
+        // Only prefix var declarations at module level (brace_depth == 0)
+        // Skip const/let as they define module-level variables used in JSX
+        if brace_depth == 0 {
+            output.push_str(&prefix_var_at_module_level(line, prefix));
+        } else {
+            output.push_str(line);
+        }
         output.push('\n');
     }
     output
+}
+
+fn prefix_var_at_module_level(line: &str, prefix: &str) -> String {
+    let trimmed = line.trim();
+    // Only handle var declarations at module level (not const/let)
+    if trimmed.starts_with("var ") {
+        if let Some(prefixed) = prefix_var_decl(trimmed, "var ", prefix) {
+            return line.replacen("var ", &prefixed.replacen("var ", "var ", 1), 1);
+        }
+    }
+    line.to_string()
 }
 
 fn prefix_line(line: &str, prefix: &str) -> String {
@@ -373,6 +395,10 @@ fn prefix_var_decl(trimmed: &str, kw: &str, prefix: &str) -> Option<String> {
     }
     // Skip hook declarations (var useXxx = runts_ink_hooks.xxx) - these are global
     if after_kw.contains("runts_ink_hooks") {
+        return None;
+    }
+    // Skip React hook calls (const counterRef = useRef(0)) - these are local vars
+    if after_kw.contains("= use") || after_kw.contains("=React.") {
         return None;
     }
     let rest = &after_kw[name_end..];
