@@ -179,6 +179,7 @@ static INK_HOOKS: &[&str] = &[
     "useCursor",
     "useAnimation",
     "usePaste",
+    "render",
 ];
 
 fn ink_import_to_const(spec: &str) -> String {
@@ -355,7 +356,15 @@ var process = process || { exit: function(code) { __runts_exit = true; __runts_e
 var __runts_effects = [];
 var __runts_has_effects = false;
 function __runts_render_with_effects(props) {
-    var vnode = __runts_default(props || {});
+    // Support both export default and render(<App />) patterns
+    var vnode;
+    if (typeof __runts_default === 'function') {
+        vnode = __runts_default(props || {});
+    } else if (typeof __runts_app !== 'undefined') {
+        vnode = __runts_app;
+    } else {
+        throw new Error('No app found: use export default or render(<App />)');
+    }
     var guard = 0;
     while (__runts_has_effects && guard < 10) {
         __runts_has_effects = false;
@@ -364,7 +373,9 @@ function __runts_render_with_effects(props) {
         for (var i = 0; i < effects.length; i++) {
             if (typeof effects[i] === 'function') effects[i]();
         }
-        vnode = __runts_default(props || {});
+        if (typeof __runts_default === 'function') {
+            vnode = __runts_default(props || {});
+        }
         guard++;
     }
     return vnode;
