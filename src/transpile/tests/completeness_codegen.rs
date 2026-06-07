@@ -404,6 +404,7 @@ mod completeness_tests {
         let expr = Expr::Call {
             callee: Box::new(Expr::Ident { name: "foo".into() }),
             arguments: vec![Expr::Number(1.0)],
+            optional: false,
         };
         let tokens = QuoteCodegen::default().gen_expr(&expr);
         assert!(
@@ -418,6 +419,7 @@ mod completeness_tests {
         let expr = Expr::New {
             callee: Box::new(Expr::Ident { name: "Object".into() }),
             arguments: vec![],
+            optional: false,
         };
         let tokens = QuoteCodegen::default().gen_expr(&expr);
         assert!(
@@ -432,6 +434,7 @@ mod completeness_tests {
         let expr = Expr::StaticMember {
             obj: Box::new(Expr::Ident { name: "console".into() }),
             property: "log".into(),
+            optional: false,
         };
         let tokens = QuoteCodegen::default().gen_expr(&expr);
         assert!(

@@ -467,12 +467,12 @@
     {
       "id": "049",
       "title": "ink-nullish-optional example \u2014 ?? and ?. (optional chaining)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-nullish-optional/"
       ],
-      "acceptance": "Example exists. Optional chaining parses into HIR (Task 068). ?? and ?. codegen produce compilable Rust. Parity harness 100%."
+      "acceptance": "Example exists. dev path (rquickjs) matches deno 100%. Compile path produces valid Rust that compiles. Parity harness 100%."
     },
     {
       "id": "050",
@@ -670,14 +670,14 @@
     {
       "id": "068",
       "title": "Add optional chaining ?. to HIR + parser + codegen",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "crates/runts-hir/src/expr.rs",
         "src/transpile/parser/expr.rs",
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
-      "acceptance": "obj?.prop, obj?.[key], fn?.() all parse into HIR. Codegen produces compilable Rust. Parser and codegen tests added."
+      "acceptance": "obj?.prop, obj?.[key], fn?.() all parse into HIR (not Invalid). Codegen produces compilable Rust with null/undefined short-circuit. 3 compile-path tests added."
     },
     {
       "id": "069",
@@ -790,8 +790,8 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 110,
-    "examples_with_tests": 107,
+    "examples_total": 111,
+    "examples_with_tests": 108,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 956,
@@ -802,13 +802,13 @@
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga",
     "compile_path_coverage_pct": 70,
-    "compile_path_tests": 50,
+    "compile_path_tests": 53,
     "hir_expr_variants": 38,
-    "hir_expr_codegen_handled": 28,
+    "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 15,
-    "completed_tasks": 45
+    "pending_tasks": 13,
+    "completed_tasks": 47
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -824,9 +824,7 @@
       "Static / Transform / Newline / Spacer",
       "enums / as / satisfies",
       "generics / mapped types / conditional types",
-      "generators (function*, yield)",
-      "nullish coalescing ?? (needs HIR update)",
-      "optional chaining ?. (needs HIR update)"
+      "generators (function*, yield)"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

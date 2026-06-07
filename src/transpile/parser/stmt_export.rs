@@ -64,13 +64,14 @@ fn convert_call_expr(c: &CallExpression) -> Option<hir::Expr> {
     let args: Vec<hir::Expr> = c.arguments.iter()
         .filter_map(|a| a.as_expression().and_then(|e| convert_expr(e).ok()))
         .collect();
-    Some(hir::Expr::Call { callee, arguments: args })
+    Some(hir::Expr::Call { callee, arguments: args, optional: false })
 }
 
 fn convert_static_member(m: &StaticMemberExpression) -> Option<hir::Expr> {
     Some(hir::Expr::StaticMember {
         obj: Box::new(convert_expr(&m.object).ok()?),
         property: m.property.name.to_string(),
+        optional: m.optional,
     })
 }
 
@@ -79,6 +80,7 @@ fn convert_computed_member(m: &ComputedMemberExpression) -> Option<hir::Expr> {
         obj: Box::new(convert_expr(&m.object).ok()?),
         property: Box::new(convert_expr(&m.expression).ok()?),
         computed: true,
+        optional: m.optional,
     })
 }
 

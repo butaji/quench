@@ -274,7 +274,7 @@ impl EffectAnalyzer {
     }
 
     fn analyze_call_expr(&mut self, expr: &Expr) {
-        if let Expr::Call { callee, arguments } = expr {
+        if let Expr::Call { callee, arguments, .. } = expr {
             // Check if this function is known to throw
             if let Expr::Ident { name } = callee.as_ref() {
                 if self.known_throw_funcs.contains(name) {
@@ -287,7 +287,7 @@ impl EffectAnalyzer {
             }
             self.analyze_call(callee, arguments);
         }
-        if let Expr::New { callee, arguments } = expr {
+        if let Expr::New { callee, arguments, .. } = expr {
             self.analyze_new(callee, arguments);
         }
     }

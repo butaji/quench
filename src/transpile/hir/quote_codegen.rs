@@ -381,7 +381,7 @@ impl QuoteCodegen {
                 return rust_code;
             }
         }
-        if let Expr::StaticMember { obj, property } = callee {
+        if let Expr::StaticMember { obj, property, .. } = callee {
             if let Some(code) = self.gen_console_call(obj.as_ref(), property, arguments) {
                 return code;
             }

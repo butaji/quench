@@ -272,3 +272,9 @@ ink_example_smoke_test!(test_ink_multiple_colors, "ink-multiple-colors");
 // ═══════════════════════════════════════════════════════════════════
 
 ink_example_smoke_test!(test_ink_switch, "ink-switch");
+
+// ═══════════════════════════════════════════════════════════════════
+// Operators & expressions (smoke tests)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");

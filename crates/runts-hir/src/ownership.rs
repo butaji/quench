@@ -234,10 +234,10 @@ impl OwnershipAnalyzer {
         if let Expr::StaticMember { obj, .. } = expr {
             self.analyze_expr(obj);
         }
-        if let Expr::Call { callee, arguments } = expr {
+        if let Expr::Call { callee, arguments, .. } = expr {
             self.analyze_call(callee, arguments);
         }
-        if let Expr::New { callee, arguments } = expr {
+        if let Expr::New { callee, arguments, .. } = expr {
             self.analyze_expr(callee);
             for a in arguments {
                 self.analyze_expr(a);

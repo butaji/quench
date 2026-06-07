@@ -174,14 +174,14 @@ fn arg_expr(a: &Argument) -> Option<Expr> {
 pub fn conv_call(call: &CallExpression) -> Option<hir::Expr> {
     let callee=convert_expr(&call.callee).ok()?;
     let arguments:Vec<Expr>=call.arguments.iter().filter_map(arg_expr).collect();
-    Some(hir::Expr::Call{callee:Box::new(callee), arguments})
+    Some(hir::Expr::Call{callee:Box::new(callee), arguments, optional: call.optional})
 }
 
 /// Convert new expression
 pub fn conv_new(new: &NewExpression) -> Option<hir::Expr> {
     let callee=convert_expr(&new.callee).ok()?;
     let arguments:Vec<Expr>=new.arguments.iter().filter_map(arg_expr).collect();
-    Some(hir::Expr::New{callee:Box::new(callee), arguments})
+    Some(hir::Expr::New{callee:Box::new(callee), arguments, optional: false})
 }
 
 /// Convert update expression (++/--)
@@ -208,6 +208,7 @@ pub fn conv_static_member(m: &StaticMemberExpression) -> Option<hir::Expr> {
     Some(hir::Expr::StaticMember {
         obj: Box::new(obj),
         property: m.property.name.to_string(),
+        optional: m.optional,
     })
 }
 
@@ -219,7 +220,85 @@ pub fn conv_computed_member(m: &ComputedMemberExpression) -> Option<hir::Expr> {
         obj: Box::new(obj),
         property: Box::new(property),
         computed: true,
+        optional: m.optional,
     })
+}
+
+/// Convert private field expression (obj.#field)
+pub fn conv_private_field(m: &PrivateFieldExpression) -> Option<hir::Expr> {
+    let obj = convert_expr(&m.object).ok()?;
+    Some(hir::Expr::PrivateMember {
+        obj: Box::new(obj),
+        property: m.field.name.to_string(),
+        optional: m.optional,
+    })
+}
+
+/// Convert chain expression (a?.b, a?.b.c, a?.(), etc.)
+/// Flattens the chain into nested HIR exprs, preserving optional flags.
+pub fn conv_chain(chain: &ChainExpression) -> Option<hir::Expr> {
+    conv_chain_element(&chain.expression)
+}
+
+fn conv_chain_element(elem: &ChainElement) -> Option<hir::Expr> {
+    match elem {
+        ChainElement::StaticMemberExpression(m) => conv_chain_static(m),
+        ChainElement::ComputedMemberExpression(m) => conv_chain_computed(m),
+        ChainElement::PrivateFieldExpression(m) => conv_chain_private(m),
+        ChainElement::CallExpression(c) => conv_chain_call(c),
+        ChainElement::TSNonNullExpression(inner) => conv_chain_element_inner(&inner.expression),
+    }
+}
+
+fn conv_chain_static(m: &StaticMemberExpression) -> Option<hir::Expr> {
+    let obj = conv_chain_element_inner(&m.object)?;
+    Some(hir::Expr::StaticMember {
+        obj: Box::new(obj),
+        property: m.property.name.to_string(),
+        optional: m.optional,
+    })
+}
+
+fn conv_chain_computed(m: &ComputedMemberExpression) -> Option<hir::Expr> {
+    let obj = conv_chain_element_inner(&m.object)?;
+    let property = convert_expr(&m.expression).ok()?;
+    Some(hir::Expr::Member {
+        obj: Box::new(obj),
+        property: Box::new(property),
+        computed: true,
+        optional: m.optional,
+    })
+}
+
+fn conv_chain_private(m: &PrivateFieldExpression) -> Option<hir::Expr> {
+    let obj = conv_chain_element_inner(&m.object)?;
+    Some(hir::Expr::PrivateMember {
+        obj: Box::new(obj),
+        property: m.field.name.to_string(),
+        optional: m.optional,
+    })
+}
+
+fn conv_chain_call(c: &CallExpression) -> Option<hir::Expr> {
+    let callee = conv_chain_element_inner(&c.callee)?;
+    let arguments: Vec<Expr> = c.arguments.iter().filter_map(arg_expr).collect();
+    Some(hir::Expr::Call {
+        callee: Box::new(callee),
+        arguments,
+        optional: c.optional,
+    })
+}
+
+/// Convert expression inside a chain (may be another chain element or a base expr)
+fn conv_chain_element_inner(expr: &Expression) -> Option<hir::Expr> {
+    match expr {
+        Expression::ChainExpression(chain) => conv_chain(chain),
+        Expression::StaticMemberExpression(m) => conv_static_member(m),
+        Expression::ComputedMemberExpression(m) => conv_computed_member(m),
+        Expression::PrivateFieldExpression(m) => conv_private_field(m),
+        Expression::CallExpression(c) => conv_call(c),
+        _ => convert_expr(expr).ok(),
+    }
 }
 
 /// Convert assignment expression
@@ -336,6 +415,8 @@ pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
         Expression::UnaryExpression(u)=>conv_unary(u).ok_or(()),
         Expression::StaticMemberExpression(m)=>conv_static_member(m).ok_or(()),
         Expression::ComputedMemberExpression(m)=>conv_computed_member(m).ok_or(()),
+        Expression::PrivateFieldExpression(m)=>conv_private_field(m).ok_or(()),
+        Expression::ChainExpression(chain)=>conv_chain(chain).ok_or(()),
         Expression::AssignmentExpression(a)=>conv_assign(a).ok_or(()),
         Expression::ArrowFunctionExpression(a)=>conv_arrow(a).ok_or(()),
         Expression::ArrayExpression(a)=>Ok(hir::Expr::Array{elems:arr_elems(a)}),
