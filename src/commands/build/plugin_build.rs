@@ -98,15 +98,26 @@ pub async fn run_plugin_build(
         let file_path: String = rel_path_stripped
             .components()
             .map(|c| {
-                c.as_os_str()
-                    .to_string_lossy()
-                    .replace("[", "")
-                    .replace("]", "")
-                    .replace(".tsx", "")
-                    .replace(".ts", "")
+                // Use same naming scheme as routes.rs: module_name_from_path
+                let s = c.as_os_str().to_string_lossy();
+                // Remove extension first (tsx before ts to avoid leaving 'x')
+                let s = s.replace(".tsx", "").replace(".ts", "");
+                // Extract content from brackets
+                let mut result = String::new();
+                let mut capturing = false;
+                for ch in s.chars() {
+                    match ch {
+                        '[' => capturing = true,
+                        ']' => capturing = false,
+                        '_' | 'a'..='z' | 'A'..='Z' | '0'..='9' if !capturing => result.push(ch),
+                        'a'..='z' | 'A'..='Z' | '0'..='9' => result.push(ch),
+                        _ => {}
+                    }
+                }
+                result
             })
             .collect::<Vec<_>>()
-            .join("__");
+            .join("_");
         let out_path = src_dir.join(file_path).with_extension("rs");
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)?;
