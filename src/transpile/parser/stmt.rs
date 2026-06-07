@@ -148,7 +148,41 @@ pub fn stmt_to_hir_stmt(s: &Statement) -> Result<Stmt, ()> {
         Statement::VariableDeclaration(v)=>stmt_var(v),
         Statement::FunctionDeclaration(f)=>stmt_func(f),
         Statement::ClassDeclaration(c)=>stmt_class(c),
+        Statement::TSEnumDeclaration(e)=>Ok(hir::Stmt::Enum(conv_enum(e))),
         _=>Ok(hir::Stmt::Empty),
+    }
+}
+
+/// Convert TypeScript enum declaration
+fn conv_enum(e: &TSEnumDeclaration) -> hir::EnumDecl {
+    use super::expr::convert_expr;
+    use oxc_ast::ast::TSEnumMemberName;
+    
+    let members: Vec<hir::EnumMember> = e.body.members.iter().filter_map(|m| {
+        let key = match &m.id {
+            TSEnumMemberName::Identifier(id) => id.name.to_string(),
+            TSEnumMemberName::String(s) => s.value.to_string(),
+            _ => return None, // Computed names not supported
+        };
+        let value = m.initializer.as_ref().and_then(|init| {
+            // Try to convert the initializer expression to a literal value
+            if let Ok(expr) = convert_expr(init) {
+                match expr {
+                    hir::Expr::Number(n) => Some(hir::EnumValue::Number(n)),
+                    hir::Expr::String(s) => Some(hir::EnumValue::String(s)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        });
+        Some(hir::EnumMember { key, value })
+    }).collect();
+
+    hir::EnumDecl {
+        name: e.id.name.to_string(),
+        members,
+        is_const: e.r#const,
     }
 }
 

@@ -87,6 +87,7 @@ mod completeness_tests {
             | Stmt::FunctionDecl(_)
             | Stmt::Class(_)
             | Stmt::Variable(_)
+            | Stmt::Enum(_)
             | Stmt::ExportNamed { .. }
             | Stmt::ExportDefault { .. }
             | Stmt::ImportNamed { .. }

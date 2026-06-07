@@ -1,7 +1,7 @@
 //! Statement types
 
 use super::{
-    Block, CatchClause, ClassDecl, Export, Expr, FunctionDecl, ImportSpecifier,
+    Block, CatchClause, ClassDecl, EnumDecl, Export, Expr, FunctionDecl, ImportSpecifier,
     VariableDecl,
 };
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,7 @@ pub enum Stmt {
     FunctionDecl(FunctionDecl),
     Class(ClassDecl),
     Variable(VariableDecl),
+    Enum(EnumDecl),
     ExportNamed {
         specifiers: Vec<Export>,
     },

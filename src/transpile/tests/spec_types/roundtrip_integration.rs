@@ -138,6 +138,54 @@ use super::helpers::*;
             }
             panic!("expected variable declaration");
         }
+
+        #[test]
+        fn test_parse_enum_numeric() {
+            let source = "enum Color { Red = 1, Green = 2, Blue = 3 }";
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Stmt(Stmt::Enum(e)) = item {
+                    assert_eq!(e.name, "Color");
+                    assert!(!e.is_const);
+                    assert_eq!(e.members.len(), 3);
+                    assert_eq!(e.members[0].key, "Red");
+                    assert!(e.members[0].value.is_some());
+                    return;
+                }
+            }
+            panic!("expected enum declaration");
+        }
+
+        #[test]
+        fn test_parse_enum_string() {
+            let source = r#"enum Status { Active = "active", Inactive = "inactive" }"#;
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Stmt(Stmt::Enum(e)) = item {
+                    assert_eq!(e.name, "Status");
+                    assert_eq!(e.members.len(), 2);
+                    return;
+                }
+            }
+            panic!("expected enum declaration");
+        }
+
+        #[test]
+        fn test_parse_enum_const() {
+            let source = "const enum ConstEnum { A = 1, B = 2 }";
+            let parser = TsParser::new();
+            let result = parser.parse_source(source).expect("parse failed");
+            for item in &result.items {
+                if let ModuleItem::Stmt(Stmt::Enum(e)) = item {
+                    assert_eq!(e.name, "ConstEnum");
+                    assert!(e.is_const);
+                    return;
+                }
+            }
+            panic!("expected const enum declaration");
+        }
     
 
 }

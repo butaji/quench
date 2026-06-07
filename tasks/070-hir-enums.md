@@ -3,6 +3,7 @@
 **Priority:** P2-Medium
 **Phase:** 7 — HIR & Parser Expansion
 **Depends on:** 069
+**Status:** COMPLETED
 
 ## Problem
 
@@ -10,30 +11,44 @@ TypeScript `enum` declarations are not represented in HIR.
 
 ## Work
 
-### 1. Add HIR variant
+### 1. Add HIR variants ✅
 
+Added to `crates/runts-hir/src/base.rs`:
 ```rust
-Enum {
-    id: String,
+EnumDecl {
+    name: String,
     members: Vec<EnumMember>,
     is_const: bool,
 }
+EnumMember {
+    key: String,
+    value: Option<EnumValue>,
+}
+EnumValue {
+    Number(f64),
+    String(String),
+}
 ```
 
-### 2. Update parser
+Also added `Stmt::Enum(EnumDecl)` to Stmt enum.
 
-Handle `Statement::TSEnumDeclaration`.
+### 2. Update parser ✅
 
-### 3. Update codegen
+Handle `Statement::TSEnumDeclaration` in `src/transpile/parser/stmt.rs`.
 
-- **Numeric enums:** `#[repr(i32)] enum Name { A = 1, B }`
-- **String enums:** Module with `const` strings + reverse lookup
-- **Const enums:** Inline values at usage sites
+### 3. Update codegen ✅
+
+Added `gen_enum()` in `src/transpile/hir/quote_codegen_stmts.inc`.
+
+### 4. Tests added ✅
+
+- `spec_types/roundtrip_integration.rs`: Tests for numeric, string, and const enums
+- `spec_types/codegen_verification.rs`: Tests for enum codegen output
 
 ## Acceptance Criteria
 
-- [ ] Numeric enums parse into HIR and codegen produces compilable Rust
-- [ ] String enums parse into HIR and codegen produces compilable Rust
-- [ ] Const enums are inlined (no runtime code)
-- [ ] Parser and codegen tests added
-- [ ] `ink-enum-types` example (Task 066) passes with 100% parity
+- [x] Numeric enums parse into HIR and codegen produces compilable Rust
+- [x] String enums parse into HIR and codegen produces compilable Rust
+- [x] Const enums are inlined (no runtime code)
+- [x] Parser and codegen tests added
+- [x] `ink-enum-types` example (Task 066) passes with 100% parity

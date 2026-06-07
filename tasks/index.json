@@ -693,7 +693,7 @@
     {
       "id": "070",
       "title": "Add enum declarations to HIR + parser + codegen",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "crates/runts-hir/src/stmt.rs",
@@ -807,8 +807,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 12,
-    "completed_tasks": 48
+    "pending_tasks": 11,
+    "completed_tasks": 49
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
