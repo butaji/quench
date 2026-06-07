@@ -4,11 +4,12 @@
 //! evaluates in rquickjs with the ink bridge, and asserts that
 //! rendering produces some output (basic smoke test).
 
-use crate::transpile::js_bundle::transpile_to_js;
+use crate::transpile::bundler::transpile_to_js_bundled;
 
-/// Common test setup: transpile source and evaluate in rquickjs context.
-fn setup_and_render(source: &str) -> anyhow::Result<String> {
-    let js = transpile_to_js(source)?;
+/// Common test setup: read example, transpile, and evaluate in rquickjs context.
+fn setup_and_render(name: &str) -> anyhow::Result<String> {
+    let path = std::path::Path::new("examples").join(name).join("tui/app.tsx");
+    let js = transpile_to_js_bundled(&path)?;
     eval_js_and_render(&js)
 }
 
@@ -20,13 +21,6 @@ fn eval_js_and_render(js: &str) -> anyhow::Result<String> {
         ctx.eval::<rquickjs::Value, _>(js)?;
         let out: String = ctx.eval("runts_ink.render_to_string(__runts_default({}))")?;
         Ok(out)
-    })
-}
-
-fn read_example(name: &str) -> String {
-    let path = format!("examples/{}/tui/app.tsx", name);
-    std::fs::read_to_string(&path).unwrap_or_else(|_| {
-        panic!("Example {} not found at {}", name, path)
     })
 }
 
@@ -55,8 +49,7 @@ macro_rules! ink_example_smoke_test {
     ($name:ident, $example:expr) => {
         #[test]
         fn $name() {
-            let source = read_example($example);
-            let output = setup_and_render(&source).unwrap_or_else(|e| {
+            let output = setup_and_render($example).unwrap_or_else(|e| {
                 panic!("Failed to render {}: {}", $example, e)
             });
             assert_has_output(&output, $example);
@@ -68,8 +61,7 @@ macro_rules! ink_example_test {
     ($name:ident, $example:expr, [$($expected:expr),* $(,)?]) => {
         #[test]
         fn $name() {
-            let source = read_example($example);
-            let output = setup_and_render(&source).unwrap_or_else(|e| {
+            let output = setup_and_render($example).unwrap_or_else(|e| {
                 panic!("Failed to render {}: {}", $example, e)
             });
             assert_has_output(&output, $example);
@@ -98,8 +90,7 @@ ink_example_smoke_test!(test_ink_all_text_styles, "ink-all-text-styles");
 #[test]
 #[ignore]
 fn test_ink_background_color() {
-    let source = read_example("ink-background-color");
-    let _output = setup_and_render(&source).unwrap_or_else(|e| {
+    let _output = setup_and_render("ink-background-color").unwrap_or_else(|e| {
         panic!("Failed to render ink-background-color: {}", e)
     });
 }
@@ -110,8 +101,7 @@ ink_example_smoke_test!(test_ink_border_color, "ink-border-color");
 #[test]
 #[ignore]
 fn test_ink_bordered() {
-    let source = read_example("ink-bordered");
-    let _output = setup_and_render(&source).unwrap_or_else(|e| {
+    let _output = setup_and_render("ink-bordered").unwrap_or_else(|e| {
         panic!("Failed to render ink-bordered: {}", e)
     });
 }

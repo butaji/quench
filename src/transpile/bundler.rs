@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use oxc_allocator::Allocator;
-use oxc_codegen::Codegen;
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
@@ -352,28 +351,6 @@ fn prefix_var_at_module_level(line: &str, prefix: &str) -> String {
         }
     }
     line.to_string()
-}
-
-fn prefix_line(line: &str, prefix: &str) -> String {
-    let trimmed = line.trim();
-    if let Some(prefixed) = prefix_function(trimmed, prefix) {
-        return line.replacen("function ", &prefixed, 1);
-    }
-    for kw in &["const ", "let ", "var "] {
-        if let Some(prefixed) = prefix_var_decl(trimmed, kw, prefix) {
-            return prefixed;
-        }
-    }
-    line.to_string()
-}
-
-fn prefix_function(trimmed: &str, prefix: &str) -> Option<String> {
-    if !trimmed.starts_with("function ") { return None; }
-    let after_fn = trimmed.strip_prefix("function ")?;
-    let name_end = after_fn.find('(').unwrap_or(after_fn.len());
-    let name = &after_fn[..name_end];
-    if name.starts_with("__m") { return None; }
-    Some(format!("function {}{}", prefix, name))
 }
 
 fn prefix_var_decl(trimmed: &str, kw: &str, prefix: &str) -> Option<String> {
