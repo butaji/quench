@@ -369,7 +369,7 @@ mod integration_tests {
             return_type: Some(Type::Number),
             body: Some(Block(vec![Stmt::For {
                 init: Some(ForInit::Variable(VariableKind::Let, vec![("i".to_string(), Some(Expr::Number(0.0)))])),
-                test: Some(Expr::Bin { op: BinaryOp::Lt, left: Box::new(Expr::Ident { name: "i".into() }), right: Box::new(Expr::Member { obj: Box::new(Expr::Ident { name: "arr".into() }), property: Box::new(Expr::Ident { name: "length".into() }), computed: false }) }),
+                test: Some(Expr::Bin { op: BinaryOp::Lt, left: Box::new(Expr::Ident { name: "i".into() }), right: Box::new(Expr::Member { obj: Box::new(Expr::Ident { name: "arr".into() }), property: Box::new(Expr::Ident { name: "length".into() }), computed: false, optional: false }) }),
                 update: Some(Expr::Update { op: UpdateOp::PlusPlus, arg: Box::new(Expr::Ident { name: "i".into() }), prefix: true }),
                 body: Box::new(Stmt::Block { stmts: vec![] }),
             }])),

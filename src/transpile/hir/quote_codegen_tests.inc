@@ -243,8 +243,10 @@ mod tests {
             callee: Box::new(Expr::StaticMember {
                 obj: Box::new(Expr::Ident { name: "console".into() }),
                 property: "log".into(),
+                optional: false,
             }),
             arguments: vec![Expr::String("hello".into())],
+            optional: false,
         };
         let tokens = cg.gen_expr(&expr);
         let s = tokens.to_string();

@@ -189,8 +189,8 @@ mod spec_classes_tests {
                         Param { name: "y".to_string(), type_: Some(Type::Number), default: None, optional: false, pattern: None, ownership: Ownership::Owned },
                     ],
                     body: Expr::Block(vec![
-                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "x".to_string() }), computed: false }), right: Box::new(Expr::Ident { name: "x".to_string() }) } },
-                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "y".to_string() }), computed: false }), right: Box::new(Expr::Ident { name: "y".to_string() }) } },
+                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "x".to_string() }), computed: false, optional: false }), right: Box::new(Expr::Ident { name: "x".to_string() }) } },
+                        Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "y".to_string() }), computed: false, optional: false }), right: Box::new(Expr::Ident { name: "y".to_string() }) } },
                     ]),
                     kind: MethodKind::Constructor,
                 }],

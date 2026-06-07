@@ -75,25 +75,30 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         arguments: Vec<Expr>,
+        optional: bool,
     },
     New {
         callee: Box<Expr>,
         arguments: Vec<Expr>,
+        optional: bool,
     },
     Member {
         obj: Box<Expr>,
         property: Box<Expr>,
         computed: bool,
+        optional: bool,
     },
     Super,
     This,
     StaticMember {
         obj: Box<Expr>,
         property: String,
+        optional: bool,
     },
     PrivateMember {
         obj: Box<Expr>,
         property: String,
+        optional: bool,
     },
     MetaProperty {
         kind: MetaPropKind,
