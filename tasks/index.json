@@ -235,7 +235,7 @@
     {
       "id": "041",
       "title": "Enable spec_expressions and spec_types test modules",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": ["src/transpile/tests/mod.rs", "src/transpile/tests/spec_expressions/", "src/transpile/tests/spec_types/"],
       "acceptance": "Both modules compile and run with cargo test --bin runts. Every failing test is fixed or has #[ignore] with documented reason."
@@ -557,8 +557,8 @@
     "hir_expr_codegen_handled": 28,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 38,
-    "completed_tasks": 22
+    "pending_tasks": 37,
+    "completed_tasks": 23
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
