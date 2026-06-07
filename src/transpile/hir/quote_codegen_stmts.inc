@@ -10,7 +10,7 @@ impl QuoteCodegen {
             S::Try { block: _, handler: _, finalizer: _ } => self.gen_switch_try(stmt),
             S::For { init: _, test: _, update: _, body: _ } => self.gen_loop_stmt(stmt),
             S::While { test: _, body: _ } => self.gen_loop_stmt(stmt),
-            S::DoWhile { body: _, test: _ } => self.gen_loop_stmt(stmt),
+            S::DoWhile { body, test } => Some(self.gen_do_while(body, test)),
             S::Break { .. } => Some(self.gen_jump(stmt)),
             S::Continue { .. } => Some(self.gen_jump(stmt)),
             S::Throw { .. } => Some(self.gen_jump(stmt)),
@@ -101,7 +101,8 @@ impl QuoteCodegen {
 
     fn gen_labeled_body(&self, label: &String, body: &Stmt) -> TokenStream {
         let inner = self.gen_stmt(body).unwrap_or(quote! {});
-        quote! { #label: #inner }
+        let lifetime = syn::Lifetime::new(&format!("'{}", label), proc_macro2::Span::call_site());
+        quote! { #lifetime: #inner }
     }
 
     #[allow(dead_code)]
@@ -117,6 +118,7 @@ impl QuoteCodegen {
         match stmt {
             S::Break { label } => Self::gen_labeled_jump("break", label.as_deref()),
             S::Continue { label } => Self::gen_labeled_jump("continue", label.as_deref()),
+            S::Throw { arg } => self.gen_throw(arg),
             _ => quote! {},
         }
     }

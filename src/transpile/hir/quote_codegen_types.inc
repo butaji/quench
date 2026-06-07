@@ -30,7 +30,8 @@ impl QuoteCodegen {
         use super::Type as T;
         match ty {
             T::Object { members } => self.gen_object_type(members),
-            T::Union { types } | T::Intersection { types } => self.gen_union_type(types),
+            T::Union { types } => self.gen_union_type(types),
+            T::Intersection { types } => self.gen_intersection_type(types),
             T::Literal { kind, value } => self.gen_literal_type(kind, value),
             T::Template { parts, values } => self.gen_template_type(parts, values),
             _ => quote! { Value },
@@ -150,6 +151,27 @@ impl QuoteCodegen {
             .map(|(i, t)| self.gen_union_variant(i, t))
             .collect();
         quote! { enum { #(#variants),* } }
+    }
+
+    fn gen_intersection_type(&self, types: &[Type]) -> TokenStream {
+        if types.is_empty() {
+            return quote! { () };
+        }
+        let mut all_fields: Vec<TokenStream> = Vec::new();
+        for ty in types {
+            if let Type::Object { members } = ty {
+                for m in members {
+                    let key = syn::Ident::new(&m.key, proc_macro2::Span::call_site());
+                    let field_type = self.gen_type(&m.type_);
+                    all_fields.push(quote! { #key: #field_type });
+                }
+            } else {
+                // Non-object types in intersection: embed as a field
+                let embedded = self.gen_type(ty);
+                all_fields.push(quote! { __embedded: #embedded });
+            }
+        }
+        quote! { struct { #(#all_fields),* } }
     }
 
     fn gen_union_variant(&self, index: usize, ty: &Type) -> TokenStream {

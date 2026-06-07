@@ -7,7 +7,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::{Expr, FunctionDecl, ObjectPatProp, Ownership, Pat, Stmt, Type, VariableDecl, VariableKind};
+use super::{ClassDecl, Expr, FunctionDecl, ObjectPatProp, Ownership, Pat, Stmt, Type, VariableDecl, VariableKind};
 
 /// Quote-based code generator
 #[allow(dead_code)]
@@ -174,6 +174,42 @@ include!("quote_codegen_stmts.inc");
 include!("quote_codegen_exprs.inc");
 
 impl QuoteCodegen {
+    /// Generate Rust struct for a class declaration
+    #[allow(dead_code)]
+    pub fn gen_class(&self, class: &ClassDecl) -> TokenStream {
+        let name = syn::Ident::new(&class.name, proc_macro2::Span::call_site());
+        
+        // Generate fields as struct members
+        let fields: Vec<TokenStream> = class.members.iter().map(|m| {
+            let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site());
+            let ty = m.type_.as_ref()
+                .map(|t| self.gen_type(t))
+                .unwrap_or_else(|| quote! { Value });
+            quote! { pub #field_name: #ty }
+        }).collect();
+        
+        // Generate methods
+        let methods: Vec<TokenStream> = class.methods.iter().map(|method| {
+            let method_name = syn::Ident::new(&method.name, proc_macro2::Span::call_site());
+            let params = self.gen_params(&method.params);
+            let body = self.gen_expr(&method.body);
+            let fn_token = match method.kind {
+                super::MethodKind::Constructor => quote! { fn #method_name },
+                _ => quote! { fn #method_name },
+            };
+            quote! { #fn_token(#params) { #body } }
+        }).collect();
+        
+        quote! {
+            pub struct #name {
+                #(#fields),*
+            }
+            impl #name {
+                #(#methods)*
+            }
+        }
+    }
+
     fn gen_jsx_expr(&self, jsx: &super::JSXExpr) -> TokenStream {
         use super::JSXName;
 
