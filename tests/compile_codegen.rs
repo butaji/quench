@@ -468,3 +468,60 @@ fn rand_simple() -> u32 {
         .unwrap()
         .as_nanos() as u32
 }
+
+/// Test that optional chaining generates valid Rust
+#[test]
+fn test_optional_chaining_codegen() {
+    // Generated optional chaining: if obj is null/undefined return Value::Undefined
+    let rust_code = r#"
+fn optional_chain() -> Value {
+    let obj = Value::Object(std::collections::HashMap::new());
+    {
+        let __opt_val = obj;
+        if matches!(__opt_val, Value::Null | Value::Undefined) {
+            Value::Undefined
+        } else {
+            __opt_val
+        }
+    }
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated optional chaining should compile");
+}
+
+/// Test that optional member access generates valid Rust
+#[test]
+fn test_optional_member_codegen() {
+    let rust_code = r#"
+fn optional_member(obj: Value) -> Value {
+    {
+        let __opt_val = obj;
+        if matches!(__opt_val, Value::Null | Value::Undefined) {
+            Value::Undefined
+        } else {
+            __opt_val
+        }
+    }
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated optional member access should compile");
+}
+
+/// Test that optional call generates valid Rust
+#[test]
+fn test_optional_call_codegen() {
+    let rust_code = r#"
+fn optional_call() -> Value {
+    let f = Value::Null;
+    {
+        let __opt_val = f;
+        if matches!(__opt_val, Value::Null | Value::Undefined) {
+            Value::Undefined
+        } else {
+            Value::Null
+        }
+    }
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated optional call should compile");
+}

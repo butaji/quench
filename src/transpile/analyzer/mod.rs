@@ -313,8 +313,8 @@ impl Analyzer {
 
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Call { callee, arguments } => self.analyze_call(callee, arguments),
-            Expr::New { callee, arguments } => self.analyze_new(callee, arguments),
+            Expr::Call { callee, arguments, .. } => self.analyze_call(callee, arguments),
+            Expr::New { callee, arguments, .. } => self.analyze_new(callee, arguments),
             Expr::Bin { left, right, .. } | Expr::Logical { left, right, .. } | Expr::Assign { left, right, .. } | Expr::Seq { left, right } => {
                 self.analyze_bin(left, right)
             }

@@ -9,7 +9,7 @@ impl QuoteCodegen {
             E::Object { members } => self.gen_object_expr(members),
             E::Function(_) | E::ArrowFunction { .. } => self.gen_fn_arrow(expr),
             E::Await { .. } | E::Yield { .. } => self.gen_await_yield(expr),
-            E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } => self.gen_call_member_static(expr),
+            E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } | E::PrivateMember { .. } => self.gen_call_member_static(expr),
             E::Spread { .. } => self.gen_spread_expr(expr),
             E::Seq { .. } => self.gen_seq_expr_helper(expr),
             E::TypeAnnot { .. } => quote! { Value::Null },
@@ -108,9 +108,12 @@ impl QuoteCodegen {
     fn gen_call_member_static(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         match expr {
-            E::Call { callee, arguments } | E::New { callee, arguments } => self.gen_call_expr(callee, arguments),
-            E::Member { obj, property, computed } => self.gen_member_expr_full(obj, property, *computed),
-            E::StaticMember { obj, property } => self.gen_static_member_expr(obj, property),
+            E::Call { callee, arguments, optional: false } | E::New { callee, arguments, optional: false } => self.gen_call_expr(callee, arguments),
+            E::Call { callee, arguments, optional: true } | E::New { callee, arguments, optional: true } => self.gen_optional_call(callee, arguments),
+            E::Member { obj, property, computed, optional } => self.gen_member_expr_full_opt(obj, property, *computed, *optional),
+            E::StaticMember { obj, property, optional: false } => self.gen_static_member_expr(obj, property),
+            E::StaticMember { obj, property, optional: true } => self.gen_static_member_expr_opt(obj, property),
+            E::PrivateMember { obj, property, optional } => self.gen_private_member_expr_opt(obj, property, *optional),
             _ => quote! { Value::Null },
         }
     }
@@ -421,5 +424,90 @@ impl QuoteCodegen {
             .filter_map(|s| self.gen_stmt(s))
             .collect();
         quote! { { #(#inner)* } }
+    }
+
+    // Optional chaining codegen helpers
+    fn gen_optional_call(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        let args: Vec<_> = arguments.iter().map(|a| {
+            let arg = self.gen_expr(a);
+            if matches!(a, Expr::String(_)) { quote! { #arg.to_string() } } else { arg }
+        }).collect();
+        let callee_ts = self.gen_expr(callee);
+        quote! {
+            {
+                let __opt_val = #callee_ts;
+                if matches!(__opt_val, Value::Null | Value::Undefined) {
+                    Value::Undefined
+                } else {
+                    #callee_ts(#(#args),*)
+                }
+            }
+        }
+    }
+
+    fn gen_static_member_expr_opt(&self, obj: &Expr, property: &str) -> TokenStream {
+        let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
+        let obj_ts = self.gen_expr(obj);
+        quote! {
+            {
+                let __opt_val = #obj_ts;
+                if matches!(__opt_val, Value::Null | Value::Undefined) {
+                    Value::Undefined
+                } else {
+                    __opt_val.#prop
+                }
+            }
+        }
+    }
+
+    fn gen_member_expr_full_opt(&self, obj: &Expr, property: &Expr, computed: bool, optional: bool) -> TokenStream {
+        let prop = self.gen_expr(property);
+        let obj_ts = self.gen_expr(obj);
+        if optional {
+            if computed {
+                quote! {
+                    {
+                        let __opt_val = #obj_ts;
+                        if matches!(__opt_val, Value::Null | Value::Undefined) {
+                            Value::Undefined
+                        } else {
+                            __opt_val[#prop]
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    {
+                        let __opt_val = #obj_ts;
+                        if matches!(__opt_val, Value::Null | Value::Undefined) {
+                            Value::Undefined
+                        } else {
+                            __opt_val.#prop
+                        }
+                    }
+                }
+            }
+        } else {
+            if computed { quote! { #obj_ts[#prop] } } else { quote! { #obj_ts.#prop } }
+        }
+    }
+
+    fn gen_private_member_expr_opt(&self, obj: &Expr, property: &str, optional: bool) -> TokenStream {
+        let prop = syn::Ident::new(property, proc_macro2::Span::call_site());
+        let obj_ts = self.gen_expr(obj);
+        if optional {
+            quote! {
+                {
+                    let __opt_val = #obj_ts;
+                    if matches!(__opt_val, Value::Null | Value::Undefined) {
+                        Value::Undefined
+                    } else {
+                        __opt_val.#prop
+                    }
+                }
+            }
+        } else {
+            quote! { #obj_ts.#prop }
+        }
     }
 }
