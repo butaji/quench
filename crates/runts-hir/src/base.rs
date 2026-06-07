@@ -273,6 +273,7 @@ pub struct ClassMember {
     pub type_: Option<Type>,
     pub is_static: bool,
     pub is_async: bool,
+    pub is_private: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

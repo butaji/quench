@@ -153,12 +153,14 @@ mod spec_classes_tests {
                         type_: Some(Type::Number),
                         is_static: false,
                         is_async: false,
+                        is_private: false,
                     },
                     ClassMember {
                         name: "y".to_string(),
                         type_: Some(Type::Number),
                         is_static: false,
                         is_async: false,
+                        is_private: false,
                     },
                 ],
                 generics: vec![],
@@ -178,8 +180,8 @@ mod spec_classes_tests {
             let class = ClassDecl {
                 name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
-                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
                 ],
                 generics: vec![],
                 methods: vec![ClassMethod {
@@ -207,8 +209,8 @@ mod spec_classes_tests {
             let class = ClassDecl {
                 name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
-                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
                 ],
                 generics: vec![],
                 methods: vec![ClassMethod {
