@@ -1,8 +1,10 @@
 //! Variable extraction and codegen
 
 use super::ink_widget::tag_to_ink;
+use super::stmt_collect::{collect_stmt, try_extract_assign, extract_call_arg_value_with_type};
 use super::traversal::{extract_jsx_attrs, extract_jsx_children, find_jsx_in_body};
 use once_cell::sync::Lazy;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -25,159 +27,26 @@ pub(crate) fn get_state_vars() -> Vec<String> {
 // Main variable extraction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn extract_var_declarations(body: &serde_json::Value) -> Vec<(String, String)> {
+pub(crate) fn extract_var_declarations(body: &Value) -> Vec<(String, String)> {
     let mut decls = Vec::new();
-    if let Some(arr) = body.as_array() {
-        for s in arr {
-            collect_decl(s, &mut decls);
-        }
-    } else if let Some(arr) = body
-        .get("Block")
-        .and_then(|b| b.get("stmts"))
-        .and_then(|s| s.as_array())
-    {
-        for s in arr {
-            collect_decl(s, &mut decls);
-        }
+    let stmts = if let Some(arr) = body.as_array() {
+        arr.clone()
+    } else if let Some(arr) = body.get("Block").and_then(|b| b.get("stmts")).and_then(|s| s.as_array()) {
+        arr.clone()
+    } else {
+        return decls;
+    };
+    for s in &stmts {
+        collect_stmt(s, &mut decls);
     }
     decls
 }
 
-fn collect_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
-    // Check for Stmt kinds
-    if matches_kind(stmt, "Block") {
-        collect_from_block(stmt, decls);
-    } else if matches_kind(stmt, "Expr") {
-        collect_from_expr(stmt, decls);
-    }
-    // Check for VariableDecl (flat format with kind = VariableKind)
-    // The kind field contains "Const", "Let", or "Var"
-    else if matches_kind(stmt, "Const") || matches_kind(stmt, "Let") || matches_kind(stmt, "Var") {
-        collect_from_var_decl(stmt, decls);
-    }
-}
-
-fn collect_from_var_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
-    // Handle flat VariableDecl format: {kind: "Const"|"Let"|"Var", pattern, init, ...}
-    if let Some(pattern) = stmt.get("pattern") {
-        let init = stmt.get("init");
-        // Destructuring: const [a, b] = ...
-        if let Some(elems) = pattern.get("elems").and_then(|e| e.as_array()) {
-            collect_array_destructure(elems, init, decls);
-        }
-        // Simple binding: const x = ...
-        else if let Some(name) = pattern.get("name").and_then(|n| n.as_str()) {
-            collect_simple_binding(name, init, decls);
-        }
-    }
-}
-
-fn collect_array_destructure(
-    elems: &[serde_json::Value],
-    init: Option<&serde_json::Value>,
-    decls: &mut Vec<(String, String)>,
-) {
-    for elem in elems {
-        if let Some(name) = elem.get("name").and_then(|n| n.as_str()) {
-            if !name.is_empty() {
-                let default_val = "0i32".to_string();
-                let (value, type_hint) = init
-                    .and_then(|i| extract_call_arg_value_with_type(i))
-                    .unwrap_or_else(|| (default_val, None));
-                let decl = format_var_decl(name, &value, type_hint.as_deref());
-                decls.push((decl, name.to_string()));
-            }
-        }
-    }
-}
-
-fn collect_simple_binding(
-    name: &str,
-    init: Option<&serde_json::Value>,
-    decls: &mut Vec<(String, String)>,
-) {
-    if name.is_empty() {
-        return;
-    }
-    let default_val = "0i32".to_string();
-    let (value, type_hint) = init
-        .and_then(|i| extract_call_arg_value_with_type(i))
-        .unwrap_or_else(|| (default_val, None));
-    let decl = format_var_decl(name, &value, type_hint.as_deref());
-    decls.push((decl, name.to_string()));
-}
-
-fn format_var_decl(name: &str, value: &str, type_hint: Option<&str>) -> String {
-    if let Some(ty) = type_hint {
-        format!("let {}: {} = {};", name, ty, value)
-    } else {
-        format!("let {} = {};", name, value)
-    }
-}
-
-/// Extract the call argument value and return (rust_value, type_hint)
-fn extract_call_arg_value_with_type(init: &serde_json::Value) -> Option<(String, Option<String>)> {
-    // Check for array initializer
-    if let Some(arr) = init.get("Array") {
-        let rust_val = try_array_to_rust(arr)?;
-        return Some((rust_val, Some("Vec<Value>".to_string())));
-    }
-    // Check for object initializer
-    if init.get("Object").is_some() {
-        let rust_val = serde_json::to_string(init).ok()?;
-        return Some((format!("serde_json::json!({})", rust_val), Some("serde_json::Value".to_string())));
-    }
-    // For other expressions, use the existing logic
-    extract_call_arg_value(init).map(|v| (v, None))
-}
-
-fn extract_call_arg_value(init: &serde_json::Value) -> Option<String> {
-    // Extract value from Call expression arguments
-    if let Some(call) = init.get("Call") {
-        if let Some(args) = call.get("arguments").and_then(|a| a.as_array()) {
-            if let Some(first_arg) = args.first() {
-                return expr_value_to_rust(first_arg);
-            }
-        }
-    }
-    // Fallback for other expression types
-    expr_value_to_rust(init)
-}
-
-fn matches_kind(stmt: &serde_json::Value, kind: &str) -> bool {
-    stmt.get("kind").and_then(|k| k.as_str()) == Some(kind)
-}
-
-fn collect_from_block(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
-    if let Some(arr) = stmt.get("stmts").and_then(|s| s.as_array()) {
-        for s in arr {
-            collect_decl(s, decls);
-        }
-    }
-}
-
-fn collect_from_expr(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
-    if let Some(expr) = stmt.get("expr") {
-        if let Some(d) = try_extract_assign(expr) {
-            decls.push(d);
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Assignment extraction
+// Hook destructuring (from stmt_collect re-export)
 // ---------------------------------------------------------------------------
 
-fn try_extract_assign(expr: &serde_json::Value) -> Option<(String, String)> {
-    let assign = expr.get("Assign")?;
-    let left = assign.get("left")?;
-    if left.get("Array").is_some() {
-        return try_hook_destructuring(assign);
-    }
-    simple_var_decl(assign)
-}
-
-fn simple_var_decl(assign: &serde_json::Value) -> Option<(String, String)> {
+pub(crate) fn simple_var_decl(assign: &Value) -> Option<(String, String)> {
     let name = left_ident_name(assign.get("left")?)?;
     let value = assign.get("right")?;
     let rust_val = expr_value_to_rust(value)?;
@@ -189,22 +58,18 @@ fn simple_var_decl(assign: &serde_json::Value) -> Option<(String, String)> {
     Some((format!("{} {} = {};", kw, name, rust_val), name))
 }
 
-fn left_ident_name(left: &serde_json::Value) -> Option<String> {
+fn left_ident_name(left: &Value) -> Option<String> {
     left.get("Ident")?.get("name")?.as_str().map(String::from)
 }
 
-// ---------------------------------------------------------------------------
-// Hook destructuring
-// ---------------------------------------------------------------------------
-
-fn try_hook_destructuring(assign: &serde_json::Value) -> Option<(String, String)> {
+pub(crate) fn try_hook_destructuring(assign: &Value) -> Option<(String, String)> {
     let state_name = extract_first_ident(assign.get("left")?)?;
     let init = try_use_state_init(assign.get("right")?)?;
     add_state_var(&state_name);
     Some((format!("let {} = std::cell::Cell::new({});", state_name, init), state_name))
 }
 
-fn extract_first_ident(left: &serde_json::Value) -> Option<String> {
+fn extract_first_ident(left: &Value) -> Option<String> {
     left.get("Array")?
         .get("elems")?
         .as_array()?
@@ -215,7 +80,7 @@ fn extract_first_ident(left: &serde_json::Value) -> Option<String> {
         .map(String::from)
 }
 
-fn try_use_state_init(call: &serde_json::Value) -> Option<String> {
+fn try_use_state_init(call: &Value) -> Option<String> {
     let call_expr = call.get("Call")?;
     let callee = call_expr.get("callee")?;
     if !is_use_state_callee(callee) {
@@ -226,7 +91,7 @@ fn try_use_state_init(call: &serde_json::Value) -> Option<String> {
     extract_init_value(first)
 }
 
-fn is_use_state_callee(callee: &serde_json::Value) -> bool {
+fn is_use_state_callee(callee: &Value) -> bool {
     if let Some(member) = callee.get("Member") {
         if let Some(prop) = member.get("property") {
             if let Some(name) = prop.get("name") {
@@ -276,7 +141,7 @@ fn escape_str(s: &str) -> String {
 // Expression to Rust
 // ---------------------------------------------------------------------------
 
-pub(crate) fn expr_value_to_rust(value: &serde_json::Value) -> Option<String> {
+pub(crate) fn expr_value_to_rust(value: &Value) -> Option<String> {
     if let Some(n) = value.as_f64() {
         return Some(num_to_rust(n));
     }
@@ -312,20 +177,18 @@ fn try_simple_literal(map: &serde_json::Map<String, serde_json::Value>) -> Optio
         .or_else(|| map.get("Ident")?.get("name")?.as_str().map(String::from))
 }
 
-fn try_cond_to_rust(cond: &serde_json::Value) -> Option<String> {
+fn try_cond_to_rust(cond: &Value) -> Option<String> {
     let test = expr_value_to_rust(cond.get("test")?)?;
     let cons = expr_value_to_rust(cond.get("consequent")?)?;
     let alt = expr_value_to_rust(cond.get("alternate")?)?;
-    // Rust requires if/else, not ternary operator
     Some(format!("if {} {{ {} }} else {{ {} }}", test, cons, alt))
 }
 
-fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
+fn try_array_to_rust(arr: &Value) -> Option<String> {
     let elems = arr.get("elems")?.as_array()?;
     let parts: Vec<String> = elems.iter().filter_map(|e| {
         expr_value_to_rust(e).map(|v| format!("{}.into()", v))
     }).collect();
-    // Use vec! macro to avoid type inference issues with empty arrays
     if parts.is_empty() {
         Some("vec![]".to_string())
     } else {
@@ -337,7 +200,7 @@ fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
 // Main codegen
 // ---------------------------------------------------------------------------
 
-pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
+pub(crate) fn try_codegen_jsx(items: &Value) -> Option<String> {
     let arr = items.as_array()?;
     for item in arr {
         if let Some((jsx, decls)) = extract_jsx_from_function_with_vars(item) {
@@ -349,16 +212,10 @@ pub(crate) fn try_codegen_jsx(items: &serde_json::Value) -> Option<String> {
 }
 
 pub(crate) fn extract_jsx_from_function_with_vars(
-    item: &serde_json::Value,
-) -> Option<(serde_json::Value, Vec<(String, String)>)> {
-    // Try multiple patterns for finding a function:
-    // 1. Decl.Function (direct function declaration)
-    // 2. Stmt with kind=ExportDefault containing expr.Function
-    // 3. Stmt with kind=Return containing arg.Function
+    item: &Value,
+) -> Option<(Value, Vec<(String, String)>)> {
     let func = item.get("Decl").and_then(|d| d.get("Function"))
         .or_else(|| {
-            // export default function Name() {...}
-            // The Stmt contains: {kind: "ExportDefault", expr: Function}
             let stmt = item.get("Stmt")?;
             if stmt.get("kind")?.as_str()? == "ExportDefault" {
                 stmt.get("expr")?.get("Function")
@@ -367,7 +224,6 @@ pub(crate) fn extract_jsx_from_function_with_vars(
             }
         })
         .or_else(|| {
-            // Function as return value
             let stmt = item.get("Stmt")?;
             if stmt.get("kind")?.as_str()? == "Return" {
                 stmt.get("arg")?.get("Function")
@@ -382,7 +238,7 @@ pub(crate) fn extract_jsx_from_function_with_vars(
     Some((jsx, decls))
 }
 
-fn generate_widget_for_jsx(jsx: serde_json::Value) -> Option<String> {
+fn generate_widget_for_jsx(jsx: Value) -> Option<String> {
     let tag = jsx
         .get("opening")?
         .get("name")?
@@ -390,7 +246,7 @@ fn generate_widget_for_jsx(jsx: serde_json::Value) -> Option<String> {
         .as_str()
         .unwrap_or("Box");
     let attrs = extract_jsx_attrs(jsx.get("opening")?.get("attrs")?).unwrap_or_default();
-    let children = extract_jsx_children(jsx.get("children").unwrap_or(&serde_json::Value::Null))
+    let children = extract_jsx_children(jsx.get("children").unwrap_or(&Value::Null))
         .unwrap_or_default();
     Some(tag_to_ink(tag, attrs, children).to_string())
 }
@@ -407,12 +263,10 @@ fn wrap_ink_main(vnode_expr: &str, decls: &[(String, String)]) -> String {
             .join("\n")
             + "\n"
     };
-    // Build use section with necessary imports
     let mut use_items = Vec::new();
     if !state_vars.is_empty() || !decls.is_empty() {
         use_items.push("use std::cell::Cell;");
     }
-    // Check if any decl uses Vec<Value>
     let has_vec_value = decls.iter().any(|(code, _)| code.contains("Vec<Value>"));
     if has_vec_value {
         use_items.push("use serde_json::Value;");

@@ -3,6 +3,7 @@
 pub mod app;
 pub mod ink;
 pub mod ink_widget;
+pub mod stmt_collect;
 pub mod traversal;
 pub mod expr;
 pub mod vars;
