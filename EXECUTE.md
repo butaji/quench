@@ -192,6 +192,37 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 11: Type System + Runtime API Deep Coverage
+**Goal:** Every remaining practical TS/TSX/React/Ink feature is exercised by at least one Ink example, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 100 | `ink-utility-types` | `Partial`, `Required`, `Pick`, `Omit`, `Record`, `ReturnType` | P1 |
+| 101 | `ink-as-const` | `as const`, literal types, tuple types | P1 |
+| 102 | `ink-index-intersection` | Index signatures, intersection types (`A & B`) | P1 |
+| 103 | `ink-unknown-never` | `unknown`, `never`, user-defined type guards | P1 |
+| 104 | `ink-array-modern` | `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast` | P1 |
+| 105 | `ink-object-modern` | `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors` | P1 |
+| 106 | `ink-use-imperative-handle` | `useImperativeHandle`, `forwardRef` | P1 |
+| 107 | `ink-use-sync-external-store` | `useSyncExternalStore`, `useDeferredValue` | P1 |
+| 108 | `ink-context-advanced` | Context `displayName`, `defaultValue`, multiple providers | P1 |
+| 109 | `ink-discriminated-unions` | Discriminated unions, exhaustive checks | P1 |
+| 110 | `ink-mapped-types` | Mapped types `{ [K in T]: V }` | P1 |
+| 111 | `ink-proxy` | `Proxy` handler | P2 |
+| 112 | `ink-weakref` | `WeakRef`, `FinalizationRegistry` | P2 |
+| 113 | `ink-string-modern` | `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at` | P2 |
+| 114 | `ink-promise-advanced` | `allSettled`, `any`, `race`, `withResolvers` | P2 |
+| 115 | `ink-this-parameter` | `this` parameter, `this` types | P2 |
+| 116 | `ink-unique-symbol` | `unique symbol`, branded types | P2 |
+| 117 | `ink-react-children` | `Children` API, `cloneElement`, `isValidElement` | P2 |
+| 118 | `ink-date-math` | `Date`, `Math`, `Intl` | P2 |
+| 119 | `ink-export-equal` | `export =`, `import = require()` | P3 |
+| 120 | `ink-global-augmentation` | `declare global`, `declare module` | P3 |
+
+**Tasks:** 100–120 | **Status:** 🔄 Pending (21 tasks)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
@@ -207,22 +238,28 @@ All **15/15** test modules are enabled. `spec_expressions` and `spec_types` are 
 | HIR → Rust codegen | ~70% | Core constructs have codegen; advanced TS features pending |
 | Compile-path integration tests | 53 tests | `tests/compile_codegen.rs` — covers most P0 constructs |
 
-### Features Without Examples (21 gaps)
+### Features Without Examples (43 gaps)
 
-123 examples exist. Phase 6 examples (Tasks 042–067) cover the core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover the remaining practical features. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
+124 examples exist. Phase 6 examples (Tasks 042–067) cover the core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
 
-Remaining gaps (Phase 10 targets):
+Remaining gaps (Phase 10–11 targets):
 - Logical assignment: `||=`, `&&=`, `??=`
-- React hooks: `useLayoutEffect`, `useId`, `useTransition`
+- React hooks: `useLayoutEffect`, `useId`, `useTransition`, `useImperativeHandle`, `useSyncExternalStore`, `useDeferredValue`
 - Type declarations: type aliases, interfaces, `namespace`, `declare`
 - Class modifiers: `public`/`private`/`protected`/`readonly`, `abstract`, `override`, `implements`
-- Module patterns: `import type`, `export type`, barrel exports (`export * from`)
-- Advanced JS: top-level `await`, BigInt, `globalThis`, Symbol, Map/Set
-- React patterns: `Suspense`/`lazy`, `ErrorBoundary`
-- Type system: `keyof`, template literal types, `infer`
+- Module patterns: `import type`, `export type`, barrel exports (`export * from`), `export =`, `import = require()`
+- Advanced JS: top-level `await`, BigInt, `globalThis`, Symbol, Map/Set, Proxy, WeakRef
+- React patterns: `Suspense`/`lazy`, `ErrorBoundary`, `Children` API, `cloneElement`, `isValidElement`
+- Context advanced: `displayName`, `defaultValue`, multiple providers
+- Type system: `keyof`, template literal types, `infer`, utility types (`Partial`, `Required`, `Pick`, `Omit`, `Record`), `as const`, mapped types, discriminated unions, index signatures, intersection types, `unknown`, `never`, type guards, `unique symbol`, branded types, `this` parameter, global/module augmentation
 - Meta-properties: `new.target`
 - Reflection: `Reflect` API
 - RegExp: `matchAll`, advanced flags
+- Modern array methods: `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast`
+- Modern object methods: `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors`
+- Modern string methods: `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at`
+- Promise advanced: `allSettled`, `any`, `race`, `withResolvers`
+- Globals: `Date`, `Math`, `Intl`
 
 ---
 
@@ -318,10 +355,11 @@ cargo test --test compile_codegen
 - [x] Dynamic imports `import()` parse into HIR (Task 073).
 - [x] `tests/compile_codegen.rs` has 53 tests (Task 075).
 
-### Pending 🔄 Phase 8–10
+### Pending 🔄 Phase 8–11
 - [ ] Decorators parse into HIR without producing Invalid (Task 074).
 - [ ] Compile-path parity tests for all examples (Task 076).
 - [ ] Compile-path negative tests (Task 077).
 - [ ] Coverage matrix published in `docs/SUPPORTED_SUBSET.md` (Task 078).
 - [ ] 21 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
+- [ ] 21 additional Ink examples for type system + runtime API deep coverage (Tasks 100–120).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.

@@ -13,7 +13,7 @@
 #[ignore]
 mod spec_classes_tests {
     use crate::transpile::hir::{
-        AssignOp, ClassDecl, ClassMember, ClassMethod, Decl, Expr, MethodKind, ModuleItem,
+        AssignOp, ClassDecl, ClassMember, ClassMethod, Decl, Decorator, Expr, MethodKind, ModuleItem,
         Param, QuoteCodegen, Stmt, Type, Ownership,
     };
     use proc_macro2::TokenStream;
@@ -132,6 +132,57 @@ mod spec_classes_tests {
             let has_static_origin = class.methods.iter().any(|m| m.name == "origin");
             assert!(has_static_origin, "should have static origin method");
         }
+
+        #[test]
+        fn class_with_decorator() {
+            let source = r#"
+                @sealed
+                class Point {
+                    x: number;
+                }
+            "#;
+            let class = find_class(source);
+            assert_eq!(class.name, "Point");
+            // Should have decorator
+            assert!(!class.decorators.is_empty(), "should have decorator");
+            assert_eq!(class.decorators.len(), 1, "should have exactly one decorator");
+        }
+
+        #[test]
+        fn class_with_method_decorator() {
+            let source = r#"
+                class Point {
+                    @logged
+                    x: number;
+                }
+            "#;
+            let class = find_class(source);
+            assert_eq!(class.name, "Point");
+            // Should have member with decorator
+            assert!(!class.members.is_empty(), "should have members");
+            let member = &class.members[0];
+            assert_eq!(member.name, "x");
+            assert!(!member.decorators.is_empty(), "member should have decorator");
+        }
+
+        #[test]
+        fn class_with_call_decorator() {
+            let source = r#"
+                @sealed
+                class Point {
+                    @format("YYYY-MM-DD")
+                    date: string;
+                }
+            "#;
+            let class = find_class(source);
+            assert_eq!(class.name, "Point");
+            // Should have class decorator
+            assert_eq!(class.decorators.len(), 1, "should have class decorator");
+            // Should have member decorator
+            assert!(!class.members.is_empty(), "should have members");
+            let member = &class.members[0];
+            assert!(!member.decorators.is_empty(), "member should have decorator");
+        }
     }
 
     // =============================================================================
@@ -154,6 +205,7 @@ mod spec_classes_tests {
                         is_static: false,
                         is_async: false,
                         is_private: false,
+                        decorators: vec![],
                     },
                     ClassMember {
                         name: "y".to_string(),
@@ -161,10 +213,12 @@ mod spec_classes_tests {
                         is_static: false,
                         is_async: false,
                         is_private: false,
+                        decorators: vec![],
                     },
                 ],
                 generics: vec![],
                 methods: vec![],
+                decorators: vec![],
             };
 
             let tokens = codegen_class(&class);
@@ -180,8 +234,8 @@ mod spec_classes_tests {
             let class = ClassDecl {
                 name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
-                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false, decorators: vec![] },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false, decorators: vec![] },
                 ],
                 generics: vec![],
                 methods: vec![ClassMethod {
@@ -195,7 +249,9 @@ mod spec_classes_tests {
                         Stmt::Expr { expr: Expr::Assign { op: AssignOp::Assign, left: Box::new(Expr::Member { obj: Box::new(Expr::This), property: Box::new(Expr::Ident { name: "y".to_string() }), computed: false, optional: false }), right: Box::new(Expr::Ident { name: "y".to_string() }) } },
                     ]),
                     kind: MethodKind::Constructor,
+                    decorators: vec![],
                 }],
+                decorators: vec![],
             };
             let tokens = codegen_class(&class);
             let s = normalize_ws(&tokens.to_string());
@@ -209,15 +265,17 @@ mod spec_classes_tests {
             let class = ClassDecl {
                 name: "Point".to_string(), extends: None,
                 members: vec![
-                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
-                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false },
+                    ClassMember { name: "x".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false, decorators: vec![] },
+                    ClassMember { name: "y".to_string(), type_: Some(Type::Number), is_static: false, is_async: false, is_private: false, decorators: vec![] },
                 ],
                 generics: vec![],
                 methods: vec![ClassMethod {
                     name: "distance".to_string(),
                     params: vec![Param { name: "other".to_string(), type_: None, default: None, optional: false, pattern: None, ownership: Ownership::Borrow }],
                     body: Expr::Number(0.0), kind: MethodKind::Method,
+                    decorators: vec![],
                 }],
+                decorators: vec![],
             };
             let tokens = codegen_class(&class);
             let s = normalize_ws(&tokens.to_string());
@@ -239,8 +297,10 @@ mod spec_classes_tests {
                         params: vec![],
                         body: Expr::Number(0.0),
                         kind: MethodKind::Method,
+                        decorators: vec![],
                     },
                 ],
+                decorators: vec![],
             };
 
             let tokens = codegen_class(&class);
