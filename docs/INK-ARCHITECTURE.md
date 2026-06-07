@@ -433,7 +433,7 @@ The `runts-ink` crate is in the workspace. It has:
   not wired to Yoga layout readback.
 - `usePaste` — bracketed paste mode not enabled in crossterm loop.
 - `useRef` — not implemented in bridge.
-- 100% parity verification against all 88 Ink examples
+- 100% parity verification against all 91 Ink examples
   (pending `scripts/parity.sh`).
 - Compile path (`runts build --release`) produces binaries but
   integration tests are incomplete.

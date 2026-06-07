@@ -157,7 +157,7 @@ run_rq() {
       wait "$pid" 2>/dev/null || true
     fi
   else
-    if ! "$RUNTS_BIN" dev --plugin ratatui "${extra_args[@]}" "$ex_dir" > "$out" 2> "$err"; then
+    if ! "$RUNTS_BIN" dev --plugin ratatui ${extra_args:+"${extra_args[@]}"} "$ex_dir" > "$out" 2> "$err"; then
       if [[ ! -s "$out" ]]; then
         echo "<ERROR>" > "$out"
         return 1

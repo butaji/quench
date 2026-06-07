@@ -2,7 +2,7 @@
 
 > **runts** compiles TypeScript/TSX to native Rust binaries. Not a transpiler. Not a bundler. A compiler that keeps your types: string unions become Rust enums, interfaces become structs, generics monomorphize, async/await becomes zero-cost futures.
 
-[![Tests](https://img.shields.io/badge/tests-111%2F111%20passing-success)](SPEC.md)
+[![Tests](https://img.shields.io/badge/tests-720%2F951%20passing-yellow)](SPEC.md)
 [![Rust](https://img.shields.io/badge/rust-1.81%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 
@@ -279,8 +279,8 @@ runts is in active development. The core compiler pipeline (oxc_parser → HIR �
 - ✅ Yoga-only layout engine (Taffy removed)
 
 **In progress:**
-- 🔄 Re-enable disabled test modules (Task 033)
-- 🔄 Fix HIR test failures (Task 034)
+- 🔄 Re-enable disabled test modules (Task 033) — 11 of 15 modules currently disabled
+- 🔄 Fix HIR test failures (Task 034) — blocked on 033, 231 known failures
 - 🔄 Add missing Ink examples (Task 035)
 - 🔄 Verify js_bridge completeness (Task 036)
 
@@ -300,7 +300,7 @@ cargo test
 RUST_LOG=debug cargo test
 ```
 
-`cargo test -p runts-ink` passes 59/59. Compile-path tests (`cargo test --bin runts`) have 113 failures from stale HIR assertions post-refactor — see Task 034.
+`cargo test -p runts-ink` passes 59/59. `cargo test --bin runts` currently has most spec modules disabled; the last known failure count was 231 — see Tasks 033 and 034.
 
 ## Why Not Just Write Rust?
 

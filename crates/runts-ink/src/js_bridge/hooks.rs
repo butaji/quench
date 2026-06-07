@@ -31,6 +31,7 @@ fn add_misc_hooks<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
     add_focus_manager_hook(ctx, hooks)?;
     add_cursor_hook(ctx, hooks)?;
     add_animation_hook(ctx, hooks)?;
+    add_paste_hook(ctx, hooks)?;
     Ok(())
 }
 
@@ -175,4 +176,22 @@ fn add_animation_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> 
         Ok(obj)
     })?;
     hooks.set("useAnimation", f)
+}
+
+fn add_paste_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
+    // Simplified: just register the handler (paste events not routed in --once mode)
+    let f = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>, handler: Function<'js>| -> JsResult<()> {
+            let globals = ctx.globals();
+            let arr: Object = globals
+                .get("__runts_paste_handlers")
+                .unwrap_or_else(|_| Object::new(ctx.clone()).unwrap());
+            let len = arr.len();
+            arr.set(len.to_string(), handler)?;
+            globals.set("__runts_paste_handlers", arr)?;
+            Ok(())
+        },
+    )?;
+    hooks.set("usePaste", f)
 }
