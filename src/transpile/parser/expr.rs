@@ -42,23 +42,44 @@ fn obj_pat_key(key: &PropertyKey) -> Option<String> {
 
 /// Convert a binding pattern (for destructuring)
 pub fn convert_binding_pattern(pat: &BindingPattern) -> Option<hir::Pat> {
+    convert_binding_pattern_inner(pat)
+}
+
+fn convert_binding_pattern_inner(pat: &BindingPattern) -> Option<hir::Pat> {
     match pat {
         BindingPattern::BindingIdentifier(id)=>Some(pat_ident(&id.name)),
         BindingPattern::ArrayPattern(arr)=>{
             let elements:Vec<Option<hir::Pat>>=arr.elements.iter().map(|e|{
-                e.as_ref().and_then(|e|if let BindingPattern::BindingIdentifier(id)=e{Some(pat_ident(&id.name))}else{None})
+                e.as_ref().and_then(|e|convert_binding_pattern_inner(e))
             }).collect();
-            Some(hir::Pat::Array{elems:elements, rest:None})
+            let rest = arr.rest.as_ref().and_then(|r| convert_binding_pattern_inner(&r.argument));
+            Some(hir::Pat::Array{elems:elements, rest:rest.map(Box::new)})
         }
         BindingPattern::ObjectPattern(obj)=>{
-            let props:Vec<hir::ObjectPatProp>=obj.properties.iter().filter_map(|p|{
-                let key=obj_pat_key(&p.key)?;
-                let value=if let BindingPattern::BindingIdentifier(id)=&p.value{pat_ident(&id.name)}else{return None;};
-                Some(hir::ObjectPatProp::Init{key, value})
-            }).collect();
-            Some(hir::Pat::Object{props, rest:None})
+            let mut props:Vec<hir::ObjectPatProp>=Vec::new();
+            let mut rest: Option<hir::Pat> = None;
+            for p in &obj.properties {
+                // Check if this is a rest element
+                if let BindingPattern::BindingIdentifier(id) = &p.value {
+                    if let Some(key) = obj_pat_key(&p.key) {
+                        props.push(hir::ObjectPatProp::Init{key, value: pat_ident(&id.name)});
+                    }
+                }
+            }
+            // Object rest pattern: const { x, ...rest } = obj
+            // This is handled separately as it's part of ObjectPattern structure
+            if obj.rest.is_some() {
+                if let Some(r) = &obj.rest {
+                    rest = convert_binding_pattern_inner(&r.argument);
+                }
+            }
+            Some(hir::Pat::Object{props, rest: rest.map(Box::new)})
         }
-        BindingPattern::AssignmentPattern(_)=>None,
+        BindingPattern::AssignmentPattern(assign)=>{
+            let left = convert_binding_pattern_inner(&assign.left)?;
+            let right = convert_expr(&assign.right).ok()?;
+            Some(hir::Pat::Assign{left: Box::new(left), right: Box::new(right)})
+        }
     }
 }
 

@@ -6,49 +6,54 @@ use crate::transpile::parser::expr::{arr_elems, convert_binding_pattern, convert
 use oxc_ast::ast::*;
 
 pub fn stmt_to_hir_stmt(s: &Statement) -> hir::Stmt {
+    // Try expression statement first
     if let Statement::ExpressionStatement(e) = s { return convert_expr_stmt(e); }
-    if let Statement::IfStatement(stmt) = s { return convert_if_stmt(stmt); }
-    if let Statement::LoopStatement(stmt) = s { return convert_loop_stmt(stmt); }
-    stmt_to_hir_stmt_impl(s)
-}
-
-fn stmt_to_hir_stmt_impl(s: &Statement) -> hir::Stmt {
-    if let Statement::SwitchStatement(stmt) = s { return convert_switch_stmt(stmt); }
-    if let Statement::TryStatement(stmt) = s { return convert_try_stmt(stmt); }
-    stmt_to_hir_stmt_impl2(s)
-}
-
-fn stmt_to_hir_stmt_impl2(s: &Statement) -> hir::Stmt {
-    if let Statement::LabeledStatement(stmt) = s { return convert_labeled_stmt(stmt); }
-    if let Statement::ReturnStatement(r) = s { return convert_return_stmt(r); }
-    if let Statement::JumpStatement(stmt) = s { return convert_jump_stmt(stmt); }
-    if let Statement::BlockStatement(b) = s { return hir::Stmt::Block { stmts: b.body.iter().map(stmt_to_hir_stmt).collect() }; }
-    stmt_to_hir_stmt_impl3(s)
-}
-
-fn stmt_to_hir_stmt_impl3(s: &Statement) -> hir::Stmt {
-    if let Statement::VariableDeclaration(v) = s { return convert_var_stmt(v); }
-    if let Statement::ClassDeclaration(c) = s { return convert_class_decl_stmt(c); }
-    if let Statement::FunctionDeclaration(f) = s { return convert_func_decl_stmt(f); }
-    if let Statement::ThrowStatement(stmt) = s { return convert_throw_stmt(stmt); }
+    // Try control flow statements
+    if let Some(stmt) = try_control_flow(s) { return stmt; }
+    // Try loop statements
+    if let Some(stmt) = try_loop_stmt(s) { return stmt; }
+    // Try declarations
+    if let Some(stmt) = try_decl_stmt(s) { return stmt; }
+    // Try remaining statements
+    if let Some(stmt) = try_misc_stmt(s) { return stmt; }
     hir::Stmt::Empty
 }
 
-fn convert_loop_stmt(stmt: &LoopStatement) -> hir::Stmt {
-    match stmt {
-        LoopStatement::ForStatement(s) => convert_for_stmt(s),
-        LoopStatement::ForInStatement(s) => convert_for_in_stmt(s),
-        LoopStatement::ForOfStatement(s) => convert_for_of_stmt(s),
-        LoopStatement::WhileStatement(s) => convert_while_stmt(s),
-        LoopStatement::DoWhileStatement(s) => convert_do_while_stmt(s),
-    }
+fn try_control_flow(s: &Statement) -> Option<hir::Stmt> {
+    use Statement::*;
+    if let IfStatement(stmt) = s { return Some(convert_if_stmt(stmt)); }
+    if let SwitchStatement(stmt) = s { return Some(convert_switch_stmt(stmt)); }
+    if let LabeledStatement(stmt) = s { return Some(convert_labeled_stmt(stmt)); }
+    if let ReturnStatement(r) = s { return Some(convert_return_stmt(r)); }
+    if let BreakStatement(_) = s { return Some(hir::Stmt::Break { label: None }); }
+    if let ContinueStatement(_) = s { return Some(hir::Stmt::Continue { label: None }); }
+    None
 }
 
-fn convert_jump_stmt(stmt: &JumpStatement) -> hir::Stmt {
-    match stmt {
-        JumpStatement::BreakStatement(_) => hir::Stmt::Break { label: None },
-        JumpStatement::ContinueStatement(_) => hir::Stmt::Continue { label: None },
-    }
+fn try_loop_stmt(s: &Statement) -> Option<hir::Stmt> {
+    use Statement::*;
+    if let ForStatement(stmt) = s { return Some(convert_for_stmt(stmt)); }
+    if let ForInStatement(stmt) = s { return Some(convert_for_in_stmt(stmt)); }
+    if let ForOfStatement(stmt) = s { return Some(convert_for_of_stmt(stmt)); }
+    if let WhileStatement(stmt) = s { return Some(convert_while_stmt(stmt)); }
+    if let DoWhileStatement(stmt) = s { return Some(convert_do_while_stmt(stmt)); }
+    None
+}
+
+fn try_decl_stmt(s: &Statement) -> Option<hir::Stmt> {
+    use Statement::*;
+    if let BlockStatement(b) = s { return Some(hir::Stmt::Block { stmts: b.body.iter().map(stmt_to_hir_stmt).collect() }); }
+    if let VariableDeclaration(v) = s { return Some(convert_var_stmt(v)); }
+    if let ClassDeclaration(c) = s { return Some(convert_class_decl_stmt(c)); }
+    if let FunctionDeclaration(f) = s { return Some(convert_func_decl_stmt(f)); }
+    None
+}
+
+fn try_misc_stmt(s: &Statement) -> Option<hir::Stmt> {
+    use Statement::*;
+    if let TryStatement(stmt) = s { return Some(convert_try_stmt(stmt)); }
+    if let ThrowStatement(stmt) = s { return Some(convert_throw_stmt(stmt)); }
+    None
 }
 
 fn convert_expr_stmt(e: &ExpressionStatement) -> hir::Stmt {
