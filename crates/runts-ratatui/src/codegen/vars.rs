@@ -322,7 +322,9 @@ fn try_cond_to_rust(cond: &serde_json::Value) -> Option<String> {
 
 fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
     let elems = arr.get("elems")?.as_array()?;
-    let parts: Vec<String> = elems.iter().filter_map(expr_value_to_rust).collect();
+    let parts: Vec<String> = elems.iter().filter_map(|e| {
+        expr_value_to_rust(e).map(|v| format!("{}.into()", v))
+    }).collect();
     // Use vec! macro to avoid type inference issues with empty arrays
     if parts.is_empty() {
         Some("vec![]".to_string())
