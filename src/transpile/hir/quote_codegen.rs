@@ -428,7 +428,14 @@ impl QuoteCodegen {
             A::SubAssign => quote! { { let __v = #lhs - #rhs; #lhs = __v; __v } },
             A::MulAssign => quote! { { let __v = #lhs * #rhs; #lhs = __v; __v } },
             A::DivAssign => quote! { { let __v = #lhs / #rhs; #lhs = __v; __v } },
-            _ => quote! { { let __v = #rhs; #lhs = __v; __v } },
+            A::ModAssign => quote! { { let __v = #lhs % #rhs; #lhs = __v; __v } },
+            A::BitXorAssign => quote! { { let __v = #lhs ^ #rhs; #lhs = __v; __v } },
+            A::BitAndAssign => quote! { { let __v = #lhs & #rhs; #lhs = __v; __v } },
+            A::BitOrAssign => quote! { { let __v = #lhs | #rhs; #lhs = __v; __v } },
+            A::ShlAssign => quote! { { let __v = #lhs << #rhs; #lhs = __v; __v } },
+            A::ShrAssign => quote! { { let __v = #lhs >> #rhs; #lhs = __v; __v } },
+            A::UShrAssign => quote! { { let __v = (#lhs as u32) >> #rhs; #lhs = __v as f64; __v as f64 } },
+            A::ExpAssign => quote! { { let __v = #lhs.powf(#rhs); #lhs = __v; __v } },
         }
     }
 
