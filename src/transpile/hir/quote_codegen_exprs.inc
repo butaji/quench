@@ -10,11 +10,34 @@ impl QuoteCodegen {
             E::Function(_) | E::ArrowFunction { .. } => self.gen_fn_arrow(expr),
             E::Await { .. } | E::Yield { .. } => self.gen_await_yield(expr),
             E::Call { .. } | E::New { .. } | E::Member { .. } | E::StaticMember { .. } => self.gen_call_member_static(expr),
-            E::Seq { .. } | E::Spread { .. } | E::TypeAnnot { .. } | _ => self.gen_seq_type_or_null(expr),
+            E::Spread { .. } => self.gen_spread_expr(expr),
+            E::Seq { .. } => self.gen_seq_expr_helper(expr),
+            E::TypeAnnot { .. } => quote! { Value::Null },
+            _ => quote! { Value::Null },
         }
     }
 
-    fn gen_seq_type_or_null(&self, expr: &Expr) -> TokenStream {
+    fn gen_spread_expr(&self, expr: &Expr) -> TokenStream {
+        use super::Expr as E;
+        if let E::Spread { arg } = expr {
+            let arg_ts = self.gen_expr(arg);
+            // Spread in array context: expand the iterable
+            // In Rust, we need to handle this differently depending on context
+            // For now, use into_iter() if it's a vec, or collect into vec
+            quote! { {
+                let __spread_arg = #arg_ts;
+                match __spread_arg {
+                    Value::Array(arr) => arr,
+                    Value::Object(map) => map.values().cloned().collect::<Vec<_>>(),
+                    _ => vec![__spread_arg],
+                }
+            } }
+        } else {
+            quote! { Value::Null }
+        }
+    }
+
+    fn gen_seq_expr_helper(&self, expr: &Expr) -> TokenStream {
         use super::Expr as E;
         if let E::Seq { left, right } = expr {
             self.gen_seq_expr(left, right)
@@ -106,33 +129,40 @@ impl QuoteCodegen {
     }
 
     fn gen_template_expr(&self, parts: &[super::TemplatePart], exprs: &[Expr]) -> TokenStream {
-        let mut result = TokenStream::new();
+        // Convert JS template literal to format!() macro
+        // `Hello ${name}!` -> format!("Hello {}!", name)
+        let mut format_str = String::new();
+        let mut args: Vec<TokenStream> = Vec::new();
         let mut expr_idx = 0;
         
         for part in parts {
             match part {
                 super::TemplatePart::String { value: s } => {
-                    let s = s.to_string();
-                    result.extend(quote! { #s.to_string() });
+                    // Escape {} in the string part for format!
+                    let escaped = s.replace("{", "{{}").replace("}", "{}}");
+                    format_str.push_str(&escaped);
                 }
                 super::TemplatePart::Type { value: _ } => {
-                    // This shouldn't happen in expression context, but handle it
-                    result.extend(quote! { String::new() });
+                    format_str.push_str("{{}}");
                 }
             }
             
             if expr_idx < exprs.len() {
                 let expr = &exprs[expr_idx];
                 let expr_ts = self.gen_expr(expr);
-                result.extend(quote! { + &#expr_ts.to_string() });
+                args.push(expr_ts);
+                format_str.push_str("{}");
                 expr_idx += 1;
             }
         }
         
-        if result.is_empty() {
-            quote! { String::new() }
+        if args.is_empty() {
+            // Static string, no interpolation
+            let s = format_str.replace("{{" , "{").replace("}}", "}");
+            quote! { #s.to_string() }
         } else {
-            result
+            // Has interpolation - use format!
+            quote! { format!(#format_str, #(#args),*) }
         }
     }
 
@@ -225,12 +255,23 @@ impl QuoteCodegen {
     fn gen_logical_expr(&self, op: &super::LogicalOp, left: &Expr, right: &Expr) -> TokenStream {
         let lhs = self.gen_expr(left);
         let rhs = self.gen_expr(right);
-        let op_str = match op {
-            super::LogicalOp::And => "&&",
-            super::LogicalOp::Or => "||",
-            super::LogicalOp::NullishCoalescing => "??",
-        };
-        quote! { #lhs #op_str #rhs }
+        match op {
+            super::LogicalOp::And => quote! { #lhs && #rhs },
+            super::LogicalOp::Or => quote! { #lhs || #rhs },
+            super::LogicalOp::NullishCoalescing => {
+                // JS ?? operator: nullish coalescing
+                // x ?? y -> if x is null/undefined then y else x
+                // We use Option pattern: x.unwrap_or_else(|| y)
+                quote! { {
+                    let __lhs = #lhs;
+                    if __lhs.is_null() || __lhs.is_undefined() {
+                        #rhs
+                    } else {
+                        __lhs
+                    }
+                } }
+            }
+        }
     }
 
     fn gen_cond_expr(&self, test: &Expr, consequent: &Expr, alternate: &Expr) -> TokenStream {
@@ -241,15 +282,80 @@ impl QuoteCodegen {
     }
 
     fn gen_array_expr(&self, elems: &[Option<Expr>]) -> TokenStream {
-        let items: Vec<_> = elems.iter()
-            .map(|e| e.as_ref().map(|e| self.gen_expr(e)).unwrap_or_else(|| quote! { Value::Null }))
-            .collect();
-        quote! { vec![#(#items),*] }
+        // Handle arrays with spread: [a, ...b, c] -> concatenate vectors
+        let mut concat_parts: Vec<TokenStream> = Vec::new();
+        let mut current_vec: Vec<TokenStream> = Vec::new();
+        
+        for elem in elems {
+            match elem {
+                Some(Expr::Spread { arg }) => {
+                    // Finish current vec if non-empty
+                    if !current_vec.is_empty() {
+                        concat_parts.push(quote! { vec![#(#current_vec),*] });
+                        current_vec.clear();
+                    }
+                    // Add spread arg
+                    let arg_ts = self.gen_expr(arg);
+                    concat_parts.push(quote! { {
+                        let __spread_arg = #arg_ts;
+                        match __spread_arg {
+                            Value::Array(arr) => arr,
+                            _ => vec![__spread_arg],
+                        }
+                    } });
+                }
+                Some(expr) => {
+                    current_vec.push(self.gen_expr(expr));
+                }
+                None => {
+                    current_vec.push(quote! { Value::Null });
+                }
+            }
+        }
+        
+        // Add any remaining items
+        if !current_vec.is_empty() {
+            concat_parts.push(quote! { vec![#(#current_vec),*] });
+        }
+        
+        // Combine all parts
+        if concat_parts.is_empty() {
+            quote! { Vec::<Value>::new() }
+        } else if concat_parts.len() == 1 {
+            concat_parts.pop().unwrap()
+        } else {
+            quote! { {
+                let mut __result = Vec::new();
+                #( __result.extend(#concat_parts); )*
+                __result
+            } }
+        }
     }
 
     fn gen_object_expr(&self, members: &[super::ObjectMemberExpr]) -> TokenStream {
-        let entries: Vec<TokenStream> = members.iter().filter_map(|m| {
+        // Handle objects with spread: { a, ...b, c }
+        let mut entries: Vec<TokenStream> = Vec::new();
+        let mut concat_parts: Vec<TokenStream> = Vec::new();
+        let mut current_map: Vec<TokenStream> = Vec::new();
+        
+        for m in members {
             match &m.prop {
+                super::ObjectProp::Spread { arg } => {
+                    // Finish current map if non-empty
+                    if !current_map.is_empty() {
+                        entries.push(quote! { std::collections::HashMap::from([#(#current_map),*]) });
+                        current_map.clear();
+                    }
+                    // Add spread arg
+                    let arg_ts = self.gen_expr(arg);
+                    concat_parts.push(quote! { {
+                        let __spread_arg = #arg_ts;
+                        match __spread_arg {
+                            Value::Object(map) => map,
+                            _ => std::collections::HashMap::new(),
+                        }
+                    } });
+                }
                 super::ObjectProp::Init { key, value, computed: _ } => {
                     let key_ts = match key {
                         super::PropKey::Str(s) => {
@@ -266,16 +372,28 @@ impl QuoteCodegen {
                         }
                     };
                     let value_ts = self.gen_expr(value);
-                    Some(quote! { (#key_ts, #value_ts) })
+                    current_map.push(quote! { (#key_ts, #value_ts) });
                 }
-                _ => None, // Get, Set, Method, Spread not yet supported
+                _ => { /* Get, Set, Method - skip for now */ }
             }
-        }).collect();
+        }
         
+        // Add remaining entries
+        if !current_map.is_empty() {
+            entries.push(quote! { std::collections::HashMap::from([#(#current_map),*]) });
+        }
+        
+        // Combine all parts
         if entries.is_empty() {
             quote! { std::collections::HashMap::new() }
+        } else if entries.len() == 1 {
+            entries.pop().unwrap()
         } else {
-            quote! { std::collections::HashMap::from([#(#entries),*]) }
+            quote! { {
+                let mut __result = std::collections::HashMap::new();
+                #( for (k, v) in #entries { __result.insert(k, v); } )*
+                __result
+            } }
         }
     }
 

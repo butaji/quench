@@ -36,6 +36,11 @@
       "name": "Phase 4: Cleanup + Future",
       "description": "Delete dead code. Update docs. Evaluate Boa.",
       "tasks": ["030", "031", "032"]
+    },
+    {
+      "name": "Phase 5: Compile Path Hardening",
+      "description": "Fix quote_codegen to emit compilable Rust for all HIR constructs. Add compile-path tests that run cargo build.",
+      "tasks": ["037", "038", "039", "040"]
     }
   ],
   "tasks": [
@@ -174,6 +179,38 @@
       "priority": "P1-high",
       "files": ["crates/runts-ink/src/js_bridge/"],
       "acceptance": "All example-used props are in bridge. useRef and usePaste hooks implemented. All 91 examples pass rquickjs parity tests."
+    },
+    {
+      "id": "037",
+      "title": "Fix compile-path codegen for control flow (for, switch, try/catch, throw, break/continue)",
+      "status": "completed",
+      "priority": "P1-high",
+      "files": ["src/transpile/hir/quote_codegen_stmts.inc", "crates/runts-hir/src/effects.rs"],
+      "acceptance": "for loops, switch, try/catch, throw, break/continue all produce compilable Rust. At least 5 compile-path integration tests added."
+    },
+    {
+      "id": "038",
+      "title": "Fix compile-path codegen for expressions (template literals, logical ops, compound assign, spread, typeof)",
+      "status": "completed",
+      "priority": "P1-high",
+      "files": ["src/transpile/hir/quote_codegen_exprs.inc", "src/transpile/hir/quote_codegen.rs"],
+      "acceptance": "Template literals, logical ops, all 12 compound assign ops, array spread, typeof constant-folding all produce compilable Rust. At least 5 compile-path tests added."
+    },
+    {
+      "id": "039",
+      "title": "Add compile-path integration tests that actually run cargo build",
+      "status": "completed",
+      "priority": "P1-high",
+      "files": ["tests/compile_codegen.rs"],
+      "acceptance": "tests/compile_codegen.rs exists with >=5 tests that run rustc --crate-type=lib on generated Rust. All tests pass."
+    },
+    {
+      "id": "040",
+      "title": "Fix compile-path codegen for data structures (destructuring, object spread, rest, multi-declarators)",
+      "status": "completed",
+      "priority": "P1-high",
+      "files": ["src/transpile/hir/quote_codegen_stmts.inc", "src/transpile/hir/quote_codegen_exprs.inc"],
+      "acceptance": "Object/array destructuring with defaults and rest, object spread, multiple variable declarators, for-of with destructuring LHS all produce compilable Rust. At least 5 compile-path tests added."
     }
   ],
   "stats": {
@@ -189,12 +226,21 @@
     "test_scripts": 1,
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
-    "layout_engine": "Yoga"
+    "layout_engine": "Yoga",
+    "compile_path_coverage_pct": 60,
+    "compile_path_tests": 23,
+    "hir_expr_variants": 38,
+    "hir_expr_codegen_handled": 28,
+    "hir_stmt_variants": 22,
+    "hir_stmt_codegen_handled": 16
   },
   "coverage_gaps": {
     "hooks_not_in_examples": ["useBoxMetrics", "measureElement"],
     "props_not_in_examples": [],
     "disabled_test_modules": [],
+    "compile_path_broken": [
+      "yield (treated as await)"
+    ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
       "Async runtime features (for-await, Promise)",
