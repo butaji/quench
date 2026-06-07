@@ -39,7 +39,7 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists, renders identically in deno and `runts dev`
+- [ ] Example exists, renders identically in deno and `runts dev` (100% output match)
 - [ ] `import()` parses into HIR (not `Invalid`)
 - [ ] `import.meta` parses into HIR (not `Invalid`)
-- [ ] Dev path works (compile path may emit descriptive error)
+- [ ] Dev path works with 100% output match vs deno

@@ -17,5 +17,6 @@ The parity harness supports `--env compile` but most new examples won't compile 
 ## Acceptance Criteria
 
 - [ ] Parity harness can run `--env compile` for all examples
+- [ ] Every example that compiles in the compile path produces output with 100% match vs deno
 - [ ] Compile-path pass rate tracked in stats
 - [ ] Each example that passes compile path is documented
