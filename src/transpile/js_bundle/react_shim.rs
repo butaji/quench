@@ -79,6 +79,32 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return currentHooks[idx];
     }
 
+    // useId - generates a unique ID for accessibility
+    var __reactId = 0;
+    function useId() {
+        var idx = currentIdx++;
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = ':r' + (__reactId++) + ':';
+        }
+        return currentHooks[idx];
+    }
+
+    // useTransition - marks state updates as non-blocking transitions
+    function useTransition() {
+        var idx = currentIdx++;
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = { isPending: false };
+        }
+        var hook = currentHooks[idx];
+        function startTransition(fn) {
+            hook.isPending = true;
+            // Execute the transition synchronously in our simplified model
+            fn();
+            hook.isPending = false;
+        }
+        return [hook.isPending, startTransition];
+    }
+
     // Context value stack: keyed by context object reference (===).
     // Provider pushes on entry, pops on exit.
     var __ctxStack = [];
@@ -202,7 +228,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     }
 
     return {
-        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition,
         createContext, useContext, memo, forwardRef, Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
@@ -214,6 +240,8 @@ var useLayoutEffect = React.useLayoutEffect;
 var useCallback = React.useCallback;
 var useMemo = React.useMemo;
 var useRef = React.useRef;
+var useId = React.useId;
+var useTransition = React.useTransition;
 var createContext = React.createContext;
 var useContext = React.useContext;
 var memo = React.memo;
