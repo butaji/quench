@@ -917,7 +917,7 @@
     {
       "id": "085",
       "title": "ink-import-export-type example — import type, export type",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-import-export-type/",
