@@ -8,38 +8,32 @@
 
 ## The Problem
 
-Several docs still describe the HIR interpreter as the dev engine or contain stale architecture diagrams. These mislead new contributors.
+Several docs still described the HIR interpreter as the dev engine or contained stale architecture diagrams. These misled new contributors.
 
 ## Doc Audit Results
 
-| Document | Status | What Was Fixed |
-|----------|--------|----------------|
-| `README.md` | ✅ Current | examples count updated; In-progress list updated |
-| `DESIGN.md` | ✅ Current | Mentions rquickjs correctly |
-| `docs/INK-ARCHITECTURE.md` | ✅ Current | Current State section updated to v4.1 |
-| `docs/PHILOSOPHY.md` | ✅ Current | Already describes rquickjs + Yoga accurately |
-| `docs/PERFORMANCE.md` | ✅ Current | §3.2 table already notes "HIR Interpreter (removed)" |
-| `docs/ARCHITECTURE.md` | ✅ Fixed | Added stale banner; replaced "Dev Path: HIR → Interpreter" with "Dev Path: TSX → JS → rquickjs (HIR Interpreter REMOVED)"; fixed inline false claims |
-| `docs/TRANSPILATION_STRATEGY.md` | ✅ Fixed | Banner added; ASCII diagram updated; §5.1 body rewritten for rquickjs; §9 table updated |
-| `docs/TRANSPILE_STRATEGY.md` | ✅ Fixed | §1 pipeline updated to rquickjs; §8 title updated; §12 extensibility no longer lists interpreter |
-| `docs/RUNTS_COMPLETE_DESIGN.md` | ✅ Fixed | §2.7 body rewritten to describe rquickjs; §4.2 table fixed; §5.1 test counts updated |
-| `docs/ROADMAP.md` | ✅ Updated | Decision log notes HIR interpreter removed |
-| `docs/TECHNICAL_SPEC.md` | ✅ Fixed | Stale banner added noting pre-rquickjs draft status |
-
-## Steps
-
-1. **docs/TRANSPILATION_STRATEGY.md**: Fix remaining misleading references:
-   - ASCII diagram: replace "HIR → Interpreter" with "JS bundle → rquickjs"
-   - §5.1 body: replace interpreter execution description with rquickjs dev path
-   - §9 table: replace "Dev (Interpreter)" with "Dev (rquickjs)"
-2. **docs/TECHNICAL_SPEC.md**: Add prominent stale banner noting it is a pre-rquickjs draft.
-3. Run `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` and verify zero misleading references.
+| Document | Action | Status |
+|----------|--------|--------|
+| `README.md` | Updated example counts, test badge, completed tasks list | ✅ Current |
+| `DESIGN.md` | Already described rquickjs correctly | ✅ Current |
+| `docs/INK-ARCHITECTURE.md` | Already current | ✅ Current |
+| `docs/PHILOSOPHY.md` | Already described rquickjs + Yoga accurately | ✅ Current |
+| `docs/PERFORMANCE.md` | Already noted "HIR Interpreter (removed)" | ✅ Current |
+| `docs/ARCHITECTURE.md` | Removed stale banner; fixed pipeline diagram ("Dev Interp" → "rquickjs"); rewrote dev path section | ✅ Fixed |
+| `docs/RUNTS_COMPLETE_DESIGN.md` | Removed incorrect stale banner (content was already current) | ✅ Fixed |
+| `docs/ROADMAP.md` | Fixed "Custom TSX parser" → "oxc_parser"; updated parser status section | ✅ Updated |
+| `docs/MIGRATION.md` | Fixed "Custom parser" → "oxc_parser" | ✅ Fixed |
+| `docs/TRANSPILATION_STRATEGY.md` | **DELETED** — entirely pre-rquickjs architecture | ✅ Removed |
+| `docs/TRANSPILE_STRATEGY.md` | **DELETED** — entirely pre-rquickjs with custom recursive descent parser | ✅ Removed |
+| `docs/TECHNICAL_SPEC.md` | **DELETED** — pre-rquickjs implementation draft | ✅ Removed |
+| `SPEC.md` | **DELETED** — pre-rquickjs draft presenting HIR interpreter as dev engine | ✅ Removed |
+| `docs/SPEC.md` | **DELETED** — pre-rquickjs spec with custom parser claims | ✅ Removed |
+| `docs/DELIVERABLES.md` | **DELETED** — pre-rquickjs deliverables doc | ✅ Removed |
 
 ## Acceptance Criteria
 
-- [x] `docs/ARCHITECTURE.md` has stale banner and dev path sections rewritten.
-- [x] `docs/TRANSPILATION_STRATEGY.md` ASCII diagram and §5.1/§9 no longer present interpreter as current.
-- [x] `docs/TECHNICAL_SPEC.md` has stale banner.
+- [x] `docs/ARCHITECTURE.md` dev path shows rquickjs (not HIR interpreter).
 - [x] Zero docs present HIR interpreter as the current dev engine.
-- [x] All architecture diagrams show rquickjs for dev mode.
+- [x] All stale pre-rquickjs docs deleted (not just bannered).
+- [x] README documentation table updated to remove deleted docs.
 - [x] `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` returns only historical/contextual mentions (with "removed" or "was").

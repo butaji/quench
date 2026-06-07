@@ -1,7 +1,5 @@
 # Runts Architecture: AST → HIR → Rust / Runtime
 
-> **⚠️ STALE DOCUMENT:** This doc describes the pre-rquickjs architecture where dev mode used a HIR interpreter. The current dev engine is **rquickjs** with **Yoga** layout (see `docs/INK-ARCHITECTURE.md`). The compile path (HIR → Rust codegen → native binary) described here is still accurate. Update in progress — see `tasks/031-update-docs.md`.
-
 ## Pipeline
 
 ```
@@ -26,12 +24,12 @@ TS/TSX Source (.ts, .tsx)
     ▼               ▼               ▼
 ┌─────────┐   ┌─────────┐   ┌─────────┐
 │ Build   │   │ Dev     │   │ Cache   │
-│ Codegen │   │ Interp  │   │ (HIR)   │
+│ Codegen │   │ rquickjs│   │ (HIR)   │
 └─────────┘   └─────────┘   └─────────┘
     │               │               │
     ▼               ▼               ▼
- .rs files      HTTP server    .runts/cache/
- .runts/build/  + hot-reload   (json/bincode)
+ .rs files      JS bundle      .runts/cache/
+ .runts/build/  + Yoga bridge  (json/bincode)
     │
     ▼
  cargo build
@@ -45,7 +43,7 @@ TS/TSX Source (.ts, .tsx)
 1. **HIR is the contract**: Codegen consumes HIR. No AST leaking into codegen. (A prior HIR interpreter was removed; dev now uses rquickjs.)
 2. **Single-pass HIR builder**: oxc AST → HIR in one visit traversal. Semantic info (route/island/hook detection) collected during traversal.
 3. **Serializable HIR**: HIR modules can be cached to disk (JSON/bincode) for incremental builds.
-4. **Dev = interpret HIR, Build = codegen HIR**: Same source of truth, different consumers.
+4. **Dev = rquickjs + Yoga bridge, Build = codegen HIR**: Same parser, different backends.
 5. **Type erasure in HIR**: TypeScript types are preserved in HIR for codegen but are semantically erased at runtime.
 
 ## HIR Design
@@ -475,9 +473,9 @@ impl RustCodegen {
 }
 ```
 
-## Dev Path: TSX → JS → rquickjs (HIR Interpreter REMOVED)
+## Dev Path: TSX → JS → rquickjs + Yoga
 
-> **REMOVED:** The HIR interpreter (~3,000 LOC) was deleted. Dev mode now transpiles TSX to JS via `oxc_codegen` and executes the bundle in `rquickjs` with a thin Rust bridge (`js_bridge.rs`). See `docs/INK-ARCHITECTURE.md` for the current dev path.
+Dev mode transpiles TSX to JS via `oxc_codegen` and executes the bundle in `rquickjs` with a thin Rust bridge (`js_bridge.rs`). See `docs/INK-ARCHITECTURE.md` for details.
 
 ## Hot Reload Architecture
 

@@ -1,9 +1,8 @@
 # runts — Complete Design Document
 
 > **Version:** 0.5.1  
-> **Date:** 2026-05-27  
-> **Status:** MVP Complete → Feature Complete In Progress  
-> **Constraint:** Zero external JS runtimes (no V8, no Deno, no WebAssembly JS)
+> **Date:** 2026-06-06  
+> **Status:** MVP Complete → Feature Complete In Progress
 
 ---
 
@@ -378,7 +377,7 @@ src/
 
 | Milestone | Status |
 |-----------|--------|
-| Custom TSX parser (recursive descent) | ✅ |
+| oxc_parser (TS/TSX → HIR) | ✅ | Production-grade parser, full spec coverage |
 | HIR (High-Level IR) | ✅ |
 | Semantic analyzer | ✅ |
 | Rust code generator | ✅ |
