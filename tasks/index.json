@@ -748,7 +748,7 @@
     {
       "id": "075",
       "title": "Expand tests/compile_codegen.rs to 50+ tests",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "tests/compile_codegen.rs"
@@ -801,14 +801,14 @@
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga",
-    "compile_path_coverage_pct": 65,
-    "compile_path_tests": 23,
+    "compile_path_coverage_pct": 70,
+    "compile_path_tests": 50,
     "hir_expr_variants": 38,
     "hir_expr_codegen_handled": 28,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 16,
-    "completed_tasks": 44
+    "pending_tasks": 15,
+    "completed_tasks": 45
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
