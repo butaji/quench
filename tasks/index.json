@@ -803,7 +803,7 @@
     {
       "id": "077",
       "title": "Add compile-path negative tests (expected failures)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "tests/compile_codegen_negative.rs"
