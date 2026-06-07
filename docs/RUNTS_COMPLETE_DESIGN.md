@@ -493,7 +493,7 @@ src/
 - `runts-ink`: 59 unit tests passing (bridge props, hooks, VNode serialization)
 - `runts-plugin`: 5 tests passing (typed boundary)
 - Compile path: `tests/compile_path.rs` with 5 ignored integration tests
-- Parser: JSX parsing, type annotations, destructuring, async/await (282 tests, 4 modules disabled)
+- Transpile tests: 864 tests passing, 0 failures, 99 ignored (all 15 modules enabled)
 - Analyzer: Island detection, route patterns, hook validation
 - Codegen: All TS patterns → Rust, JSX → html!
 - Routes: Pattern matching, parameter extraction, route groups

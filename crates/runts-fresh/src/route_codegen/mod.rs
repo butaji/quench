@@ -114,8 +114,8 @@ async fn main() {{
     let app = Router::new()
 {router_calls}
         .layer(tower_http::cors::CorsLayer::permissive());
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Fresh server running on http://localhost:3000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+    println!("Fresh server running on http://localhost:8000");
     axum::serve(listener, app).await;
 }}
 "#))
