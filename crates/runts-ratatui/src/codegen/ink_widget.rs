@@ -20,11 +20,11 @@ pub(crate) fn tag_to_ink(tag: &str, attrs: Vec<(String, serde_json::Value)>, chi
 }
 
 fn widget_ink_newline() -> TokenStream {
-    quote! { runts_ink::Newline::new().into() }
+    quote! { <runts_ink::Newline as Into<runts_ink::VNode>>::into(runts_ink::Newline::new()) }
 }
 
 fn widget_ink_spacer() -> TokenStream {
-    quote! { runts_ink::Spacer::new().into() }
+    quote! { <runts_ink::Spacer as Into<runts_ink::VNode>>::into(runts_ink::Spacer::new()) }
 }
 
 fn widget_ink_box(attrs: Vec<(String, serde_json::Value)>, children: Vec<serde_json::Value>) -> TokenStream {
