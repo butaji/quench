@@ -39,12 +39,7 @@ fn check_and_collect(path: &Path, violations: &mut Vec<String>, files_checked: &
         *files_checked += 1;
         return;
     }
-    // Temporarily skip hir_runtime.rs — will be deleted in task 022
-    let path_str = path.to_string_lossy();
-    if path_str.ends_with("/src/hir_runtime.rs") || path_str == "src/hir_runtime.rs" {
-        *files_checked += 1;
-        return;
-    }
+    // hir_runtime.rs was deleted in Phase 1
     if let Some(v) = check_file(path) {
         violations.extend(v);
     }
