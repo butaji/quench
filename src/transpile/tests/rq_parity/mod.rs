@@ -250,6 +250,20 @@ ink_example_smoke_test!(test_ink_use_memo, "ink-use-memo");
 ink_example_smoke_test!(test_ink_use_callback, "ink-use-callback");
 ink_example_smoke_test!(test_ink_rerender, "ink-rerender");
 
+// ink-react-advanced: useReducer, useContext, memo, forwardRef
+ink_example_test!(
+    test_ink_react_advanced,
+    "ink-react-advanced",
+    [
+        "React Hooks Demo",
+        "Theme: cyan",
+        "Initial: 5, step: 2",
+        "Value: 7",
+        "After 2 increments: 9",
+        "useReducer, useContext, memo, forwardRef all work."
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // Combined examples (smoke tests)
 // ═══════════════════════════════════════════════════════════════════
