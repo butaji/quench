@@ -5,6 +5,10 @@ pub mod effect;
 pub mod memo;
 pub mod state;
 
+// Re-export state functions for convenience (used in tests)
+#[cfg(test)]
+pub use state::{use_state, use_state_with, UseStateResult, reset_hook_index, flush_effects};
+
 
 #[allow(dead_code)]
 #[derive(Clone)]
