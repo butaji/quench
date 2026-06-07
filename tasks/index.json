@@ -884,7 +884,7 @@
     {
       "id": "082",
       "title": "ink-type-alias-interface example — type aliases, interfaces",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-type-alias-interface/",
