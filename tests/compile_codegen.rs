@@ -525,3 +525,60 @@ fn optional_call() -> Value {
 "#;
     assert!(rust_code_compiles(rust_code), "Generated optional call should compile");
 }
+
+/// Test logical OR assignment (||=) generates valid Rust
+#[test]
+fn test_logical_or_assign_codegen() {
+    let rust_code = r#"
+fn __js_is_falsy(v: &Value) -> bool {
+    match v {
+        Value::Null | Value::Undefined => true,
+        Value::Number(n) => *n == 0.0 || n.is_nan(),
+        Value::String(s) => s.is_empty(),
+        Value::Boolean(false) => true,
+        _ => false,
+    }
+}
+fn test() {
+    let mut x = Value::Number(0.0);
+    { let __lhs = x.clone(); if __js_is_falsy(&__lhs) { x = Value::from("assigned"); } __lhs };
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated ||= should compile");
+}
+
+/// Test logical AND assignment (&&=) generates valid Rust
+#[test]
+fn test_logical_and_assign_codegen() {
+    let rust_code = r#"
+fn __js_is_falsy(v: &Value) -> bool {
+    match v {
+        Value::Null | Value::Undefined => true,
+        Value::Number(n) => *n == 0.0 || n.is_nan(),
+        Value::String(s) => s.is_empty(),
+        Value::Boolean(false) => true,
+        _ => false,
+    }
+}
+fn test() {
+    let mut x = Value::Number(5.0);
+    { let __lhs = x.clone(); if !__js_is_falsy(&__lhs) { x = Value::from("assigned"); } __lhs };
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated &&= should compile");
+}
+
+/// Test nullish coalescing assignment (??=) generates valid Rust
+#[test]
+fn test_nullish_coalescing_assign_codegen() {
+    let rust_code = r#"
+fn __js_is_nullish(v: &Value) -> bool {
+    matches!(v, Value::Null | Value::Undefined)
+}
+fn test() {
+    let mut x = Value::Null;
+    { let __lhs = x.clone(); if __js_is_nullish(&__lhs) { x = Value::from("default"); } __lhs };
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated ??= should compile");
+}
