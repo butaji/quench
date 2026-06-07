@@ -928,7 +928,7 @@
     {
       "id": "086",
       "title": "ink-barrel-export example — export * from, import * as",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-barrel-export/",
