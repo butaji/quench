@@ -18,7 +18,8 @@ fn expr_cond_to_rust(cond: &serde_json::Value) -> Option<TokenStream> {
     let test = expr_to_rust(cond.get("test")?)?;
     let consequent = expr_to_rust(cond.get("consequent")?)?;
     let alternate = expr_to_rust(cond.get("alternate")?)?;
-    Some(quote! { (#test ? #consequent : #alternate) })
+    // Rust uses if/else instead of ternary operator
+    Some(quote! { if #test { #consequent } else { #alternate } })
 }
 
 fn expr_array_to_rust(arr: &serde_json::Value) -> Option<TokenStream> {
@@ -30,7 +31,7 @@ fn expr_array_to_rust(arr: &serde_json::Value) -> Option<TokenStream> {
 fn simple_literal_to_rust(map: &serde_json::Map<String, serde_json::Value>) -> Option<TokenStream> {
     if let Some(s) = map.get("String").and_then(|v| v.as_str()) { return Some(quote! { #s }); }
     if let Some(n) = map.get("Number").and_then(|v| v.as_f64()) { return Some(quote! { #n }); }
-    if let Some(b) = map.get("Bool").and_then(|v| v.as_bool()) { return Some(quote! { #b }); }
+    if let Some(b) = map.get("Boolean").and_then(|v| v.as_bool()) { return Some(quote! { #b }); }
     if let Some(name) = map.get("Ident").and_then(|v| v.as_object()).and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
         let ident = quote::format_ident!("{}", name);
         return Some(quote! { #ident });
@@ -42,7 +43,7 @@ fn kind_to_rust(map: &serde_json::Map<String, serde_json::Value>, kind: &str) ->
     let v0 = map.get("0")?;
     if kind == "String" { return v0.as_str().map(|s| quote! { #s }); }
     if kind == "Number" { return v0.as_f64().map(|n| quote! { #n }); }
-    if kind == "Bool" { return v0.as_bool().map(|b| quote! { #b }); }
+    if kind == "Boolean" { return v0.as_bool().map(|b| quote! { #b }); }
     if kind == "Ident" {
         if let Some(name) = v0.as_object()?.get("name")?.as_str() {
             return Some(quote! { #name });

@@ -264,7 +264,7 @@ fn try_simple_literal(map: &serde_json::Map<String, serde_json::Value>) -> Optio
                 .and_then(|v| v.as_f64())
                 .map(num_to_rust)
         })
-        .or_else(|| map.get("Bool").and_then(|v| v.as_bool()).map(|b| b.to_string()))
+        .or_else(|| map.get("Boolean").and_then(|v| v.as_bool()).map(|b| b.to_string()))
         .or_else(|| map.get("Ident")?.get("name")?.as_str().map(String::from))
 }
 
@@ -272,7 +272,8 @@ fn try_cond_to_rust(cond: &serde_json::Value) -> Option<String> {
     let test = expr_value_to_rust(cond.get("test")?)?;
     let cons = expr_value_to_rust(cond.get("consequent")?)?;
     let alt = expr_value_to_rust(cond.get("alternate")?)?;
-    Some(format!("({} ? {} : {})", test, cons, alt))
+    // Rust requires if/else, not ternary operator
+    Some(format!("if {} {{ {} }} else {{ {} }}", test, cons, alt))
 }
 
 fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
