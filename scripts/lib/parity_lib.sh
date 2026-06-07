@@ -3,8 +3,11 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SCRIPT_DIR_FULL is scripts/lib/
+SCRIPT_DIR_FULL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# REPO_ROOT is two levels up from scripts/lib/ (scripts/, then project root)
+REPO_ROOT="$(cd "$SCRIPT_DIR_FULL/../.." && pwd)"
+SCRIPT_LIB_DIR="$SCRIPT_DIR_FULL"
 RUNTS_BIN="${RUNTS_BIN:-$REPO_ROOT/target/debug/runts}"
 PYTHON_DIFF="$SCRIPT_LIB_DIR/symbol_diff.py"
 
