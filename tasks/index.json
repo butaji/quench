@@ -398,7 +398,7 @@
     {
       "id": "043",
       "title": "ink-try-catch example \u2014 try, catch, finally, throw",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-try-catch/",
@@ -410,7 +410,7 @@
     {
       "id": "044",
       "title": "ink-forin-forof example \u2014 for-in, for-of, iterators",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-forin-forof/",
@@ -434,7 +434,7 @@
     {
       "id": "046",
       "title": "ink-spread example \u2014 object/array spread, JSX spread attrs",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-spread/",
@@ -445,7 +445,7 @@
     {
       "id": "047",
       "title": "ink-template example \u2014 template literals, multiline",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-template/",
@@ -456,7 +456,7 @@
     {
       "id": "048",
       "title": "ink-object-advanced example \u2014 getters, setters, computed keys, method shorthand",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-object-advanced/",
@@ -477,7 +477,7 @@
     {
       "id": "050",
       "title": "ink-typeof-guard example \u2014 typeof, instanceof, delete, void",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-typeof-guard/",
@@ -488,7 +488,7 @@
     {
       "id": "051",
       "title": "ink-compound-bitwise example \u2014 all compound assignment + bitwise operators",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-compound-bitwise/",
@@ -499,7 +499,7 @@
     {
       "id": "052",
       "title": "ink-async-fetch example \u2014 async, await, Promise",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-async-fetch/",
@@ -520,7 +520,7 @@
     {
       "id": "054",
       "title": "ink-function-params example \u2014 default params, rest params",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": [
         "examples/ink-function-params/",
@@ -531,7 +531,7 @@
     {
       "id": "055",
       "title": "ink-class-component example \u2014 classes, extends, super",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-class-component/",
@@ -595,7 +595,7 @@
     {
       "id": "061",
       "title": "ink-jsx-advanced example \u2014 spread attrs, dynamic components, fragments, conditional rendering",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-jsx-advanced/",
@@ -790,8 +790,8 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 93,
-    "examples_with_tests": 90,
+    "examples_total": 106,
+    "examples_with_tests": 103,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 956,
@@ -801,46 +801,32 @@
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
     "layout_engine": "Yoga",
-    "compile_path_coverage_pct": 60,
+    "compile_path_coverage_pct": 65,
     "compile_path_tests": 23,
     "hir_expr_variants": 38,
     "hir_expr_codegen_handled": 28,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 33,
-    "completed_tasks": 27
+    "pending_tasks": 22,
+    "completed_tasks": 38
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
     "props_not_in_examples": [],
     "disabled_test_modules": [],
     "features_without_examples": [
-      "for / while / do-while",
-      "switch",
-      "try / catch / throw",
-      "for-in / for-of",
-      "destructuring (defaults, rest)",
-      "object/array spread",
-      "getters / setters / computed keys",
-      "compound assignment + bitwise operators",
-      "typeof / instanceof / delete / void",
-      "nullish coalescing ??",
-      "optional chaining ?.",
-      "async / await",
-      "generators (function*, yield)",
-      "default params / rest params",
-      "classes / extends / super",
       "static methods / private fields",
-      "getters / setters in classes",
       "module exports (named/default/re-export)",
       "dynamic imports / import.meta",
       "useReducer / useContext / memo / forwardRef",
       "useAnimation / measureElement / useBoxMetrics",
       "useFocus / useFocusManager / usePaste",
       "Static / Transform / Newline / Spacer",
-      "JSX spread attrs / dynamic components / fragments",
       "enums / as / satisfies",
-      "generics / mapped types / conditional types"
+      "generics / mapped types / conditional types",
+      "generators (function*, yield)",
+      "nullish coalescing ?? (needs HIR update)",
+      "optional chaining ?. (needs HIR update)"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
