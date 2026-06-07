@@ -895,7 +895,7 @@
     {
       "id": "083",
       "title": "ink-access-modifiers example — public/private/protected/readonly",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-access-modifiers/",
