@@ -244,12 +244,12 @@ fn detect_and_parse(
         let contents = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read source file '{}': {}", input, e))?;
         if input.ends_with(".tsx") || input.ends_with(".jsx") {
-            return parser.parse_tsx(&contents).map_err(Into::into);
+            return parser.parse_tsx(&contents);
         }
-        return parser.parse_source(&contents).map_err(Into::into);
+        return parser.parse_source(&contents);
     }
     // Inline expression / snippet: no JSX support by default.
-    parser.parse_source(input).map_err(Into::into)
+    parser.parse_source(input)
 }
 
 fn run_add(
