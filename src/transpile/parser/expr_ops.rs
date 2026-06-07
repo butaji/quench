@@ -86,7 +86,10 @@ fn rel_op(op: &BinaryOperator) -> Option<hir::BinaryOp> {
 
 pub fn assign_op(op: &AssignmentOperator) -> Option<hir::AssignOp> {
     
-    arith_assign(op).or_else(|| shift_assign(op)).or_else(|| bit_assign(op))
+    arith_assign(op)
+        .or_else(|| shift_assign(op))
+        .or_else(|| bit_assign(op))
+        .or_else(|| logical_assign(op))
 }
 
 fn arith_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
@@ -119,6 +122,16 @@ fn bit_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
         AssignmentOperator::BitwiseAnd => Some(BitAndAssign),
         AssignmentOperator::BitwiseXOR => Some(BitXorAssign),
         AssignmentOperator::BitwiseOR => Some(BitOrAssign),
+        _ => None,
+    }
+}
+
+fn logical_assign(op: &AssignmentOperator) -> Option<hir::AssignOp> {
+    use hir::AssignOp::*;
+    match op {
+        AssignmentOperator::LogicalOr => Some(LogicalOrAssign),
+        AssignmentOperator::LogicalAnd => Some(LogicalAndAssign),
+        AssignmentOperator::LogicalNullish => Some(NullishCoalescingAssign),
         _ => None,
     }
 }

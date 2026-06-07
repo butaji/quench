@@ -23,6 +23,7 @@ impl QuoteCodegen {
             .collect();
         
         quote! {
+            include!("quote_codegen_helpers.rs");
             #(#items)*
         }
     }
@@ -442,6 +443,18 @@ impl QuoteCodegen {
             A::ShrAssign => quote! { { let __v = #lhs >> #rhs; #lhs = __v; __v } },
             A::UShrAssign => quote! { { let __v = (#lhs as u32) >> #rhs; #lhs = __v as f64; __v as f64 } },
             A::ExpAssign => quote! { { let __v = #lhs.powf(#rhs); #lhs = __v; __v } },
+            // Logical assignment: x ||= y means x = x || y (if x is falsy, assign y)
+            A::LogicalOrAssign => quote! {
+                { let __lhs = #lhs; if __js_is_falsy(&__lhs) { #lhs = #rhs; } __lhs }
+            },
+            // Logical AND assignment: x &&= y means x = x && y (if x is truthy, assign y)
+            A::LogicalAndAssign => quote! {
+                { let __lhs = #lhs; if !__js_is_falsy(&__lhs) { #lhs = #rhs; } __lhs }
+            },
+            // Nullish coalescing: x ??= y means x = x ?? y (if x is nullish, assign y)
+            A::NullishCoalescingAssign => quote! {
+                { let __lhs = #lhs; if __js_is_nullish(&__lhs) { #lhs = #rhs; } __lhs }
+            },
         }
     }
 
