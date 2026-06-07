@@ -138,10 +138,10 @@
     {
       "id": "032",
       "title": "Evaluate Boa as long-term pure-Rust replacement for rquickjs",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-low",
-      "files": ["docs/ROADMAP.md"],
-      "acceptance": "Spike branch with Boa. Report on binary size, startup time, interop, WASM feasibility. Decision documented."
+      "files": ["docs/ROADMAP.md", "crates/runts-lib/src/js_runtime/"],
+      "acceptance": "Spike branch spike/boa with Boa. Report on binary size, startup time, interop, WASM feasibility. Decision documented in docs/ROADMAP.md."
     },
     {
       "id": "033",
