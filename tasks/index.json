@@ -211,6 +211,14 @@
       "priority": "P1-high",
       "files": ["src/transpile/hir/quote_codegen_stmts.inc", "src/transpile/hir/quote_codegen_exprs.inc"],
       "acceptance": "Object/array destructuring with defaults and rest, object spread, multiple variable declarators, for-of with destructuring LHS all produce compilable Rust. At least 5 compile-path tests added."
+    },
+    {
+      "id": "041",
+      "title": "Enable spec_expressions and spec_types test modules",
+      "status": "completed",
+      "priority": "P1-high",
+      "files": ["src/transpile/tests/mod.rs", "src/transpile/tests/spec_expressions/", "src/transpile/tests/spec_types/"],
+      "acceptance": "Both modules compile and run with cargo test --bin runts. Every failing test is fixed or has #[ignore] with documented reason."
     }
   ],
   "stats": {
@@ -220,9 +228,9 @@
     "examples_with_tests": 88,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 864,
+    "tests_passing": 956,
     "tests_failing": 0,
-    "tests_ignored": 99,
+    "tests_ignored": 181,
     "test_scripts": 1,
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
