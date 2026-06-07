@@ -84,12 +84,12 @@ fn convert_func_params(func: &Function) -> Vec<hir::Param> {
 }
 
 fn convert_prop_def(prop: &PropertyDefinition) -> Option<hir::ClassMember> {
-    let name = match &prop.key {
-        PropertyKey::StaticIdentifier(i) => i.name.to_string(),
-        PropertyKey::PrivateIdentifier(i) => format!("#{}", i.name),
-        PropertyKey::StringLiteral(s) => s.value.to_string(),
-        PropertyKey::NumericLiteral(n) => n.value.to_string(),
+    let (name, is_private) = match &prop.key {
+        PropertyKey::StaticIdentifier(i) => (i.name.to_string(), false),
+        PropertyKey::PrivateIdentifier(i) => (format!("#{}", i.name), true),
+        PropertyKey::StringLiteral(s) => (s.value.to_string(), false),
+        PropertyKey::NumericLiteral(n) => (n.value.to_string(), false),
         _ => return None,
     };
-    Some(hir::ClassMember { name, type_: None, is_static: prop.r#static, is_async: false })
+    Some(hir::ClassMember { name, type_: None, is_static: prop.r#static, is_async: false, is_private })
 }

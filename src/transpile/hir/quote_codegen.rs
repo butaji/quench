@@ -180,12 +180,18 @@ impl QuoteCodegen {
         let name = syn::Ident::new(&class.name, proc_macro2::Span::call_site());
         
         // Generate fields as struct members
+        // Public fields: pub field_name: Type
+        // Private fields (#field): field_name: Type (no pub)
         let fields: Vec<TokenStream> = class.members.iter().map(|m| {
             let field_name = syn::Ident::new(&m.name, proc_macro2::Span::call_site());
             let ty = m.type_.as_ref()
                 .map(|t| self.gen_type(t))
                 .unwrap_or_else(|| quote! { Value });
-            quote! { pub #field_name: #ty }
+            if m.is_private {
+                quote! { #field_name: #ty }
+            } else {
+                quote! { pub #field_name: #ty }
+            }
         }).collect();
         
         // Generate methods
