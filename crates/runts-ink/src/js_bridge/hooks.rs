@@ -26,6 +26,7 @@ fn add_input_hooks<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
 }
 
 fn add_misc_hooks<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
+    add_render_hook(ctx, hooks)?;
     add_window_size_hook(ctx, hooks)?;
     add_focus_hook(ctx, hooks)?;
     add_focus_manager_hook(ctx, hooks)?;
@@ -50,6 +51,19 @@ fn add_input_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
         },
     )?;
     hooks.set("useInput", f)
+}
+
+fn add_render_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
+    // render() shim: stores the app element for later rendering.
+    // The dev path calls render_to_string on this stored element.
+    let f = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>, app: rquickjs::Value<'js>| -> JsResult<rquickjs::Value<'js>> {
+            ctx.globals().set("__runts_app", app.clone())?;
+            Ok(app)
+        },
+    )?;
+    hooks.set("render", f)
 }
 
 fn add_app_hook<'js>(ctx: &Ctx<'js>, hooks: &Object<'js>) -> JsResult<()> {
