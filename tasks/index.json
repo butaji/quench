@@ -510,12 +510,14 @@
     {
       "id": "053",
       "title": "ink-generator example — function*, yield, yield*",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
-        "examples/ink-generator/"
+        "examples/ink-generator/",
+        "src/transpile/parser/expr.rs",
+        "src/transpile/tests/mod.rs"
       ],
-      "acceptance": "Example exists. Generator functions parse into HIR (Task 072). yield/yield* produce compilable Rust. Parity harness 100%."
+      "acceptance": "Example exists. Generator functions parse into HIR (YieldExpression handled). yield/yield* produce compilable Rust. Parity harness 100%."
     },
     {
       "id": "054",
@@ -790,13 +792,13 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 111,
-    "examples_with_tests": 108,
+    "examples_total": 112,
+    "examples_with_tests": 109,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 956,
+    "tests_passing": 968,
     "tests_failing": 0,
-    "tests_ignored": 181,
+    "tests_ignored": 183,
     "test_scripts": 1,
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
@@ -807,8 +809,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 11,
-    "completed_tasks": 49
+    "pending_tasks": 10,
+    "completed_tasks": 50
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
