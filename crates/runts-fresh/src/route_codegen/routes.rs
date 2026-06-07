@@ -166,7 +166,8 @@ impl<'a> RouteHandler<'a> {
                     let name = path.rsplit_once('/').map(|(_, l)| l).unwrap_or(path)
                         .replace(".ts", "").replace(".tsx", "");
                     imports.push_str(&format!("mod {};\n", name));
-                    router_calls.push_str(&format!("        .layer(axum::middleware::from_fn({}::{}_middleware))\n", name, name));
+                    // Function name is same as safe_name (not safe_name_middleware)
+                    router_calls.push_str(&format!("        .layer(axum::middleware::from_fn({}::{}))\n", name, name));
                 }
             }
         }
@@ -178,7 +179,27 @@ impl<'a> RouteHandler<'a> {
     }
 
     fn module_name_from_path(&self, path: &str) -> String {
-        path.replace('/', "_").replace(".ts", "").replace(".tsx", "")
+        // Remove file extension first (tsx before ts to avoid leaving 'x')
+        let no_ext = path.replace(".tsx", "").replace(".ts", "");
+        // Replace path separators with underscores
+        let with_underscores = no_ext.replace('/', "_");
+        // Extract content from brackets
+        Self::extract_bracket_content(&with_underscores)
+    }
+
+    fn extract_bracket_content(s: &str) -> String {
+        let mut result = String::new();
+        let mut capturing = false;
+        for c in s.chars() {
+            match c {
+                '[' => capturing = true,
+                ']' => capturing = false,
+                '_' | 'a'..='z' | 'A'..='Z' | '0'..='9' if !capturing => result.push(c),
+                'a'..='z' | 'A'..='Z' | '0'..='9' => result.push(c),
+                _ => {}
+            }
+        }
+        result.split('_').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("_")
     }
 
     fn to_axum_path(&self, path: &str) -> String {

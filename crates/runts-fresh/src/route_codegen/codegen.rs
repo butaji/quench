@@ -39,10 +39,12 @@ pub async fn {safe_name}(
     let start = Instant::now();
     let mut resp = next.run(req).await;
     let elapsed_ms = start.elapsed().as_millis();
-    let _ = resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("x-response-time"),
-        axum::http::HeaderValue::from_str(&format!("{{elapsed_ms}}ms")).unwrap_or_default(),
-    );
+    if let Ok(val) = axum::http::HeaderValue::from_str(&format!("{{elapsed_ms}}ms")) {{
+        resp.headers_mut().insert(
+            axum::http::HeaderName::from_static("x-response-time"),
+            val,
+        );
+    }}
     resp
 }}
 "#, safe_name = safe_name, path = self.source_path))
