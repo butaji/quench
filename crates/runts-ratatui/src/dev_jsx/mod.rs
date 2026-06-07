@@ -13,7 +13,7 @@ pub mod attrs;
 pub mod comments;
 pub mod lower;
 
-use comments::{strip_comments, strip_imports};
+use comments::{strip_comments, transform_imports};
 use lower::lower_jsx_element;
 
 /// Result of the JSX transform: a JS string ready
@@ -34,7 +34,7 @@ pub fn transform(src: &str) -> Transformed {
 
 fn lower_jsx(src: &str) -> String {
     let src = strip_comments(src);
-    let src = strip_imports(&src);
+    let src = transform_imports(&src);
     let chars: Vec<char> = src.chars().collect();
     let mut out = String::new();
     let mut i = 0;
