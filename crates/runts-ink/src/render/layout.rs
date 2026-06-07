@@ -1,14 +1,11 @@
 use crate::components::Box as InkBox;
 use crate::flex_layout;
-use crate::vnode::{VNode, VNodeContent};
+use crate::vnode::VNode;
 
+/// Available space for Yoga layout computation.
 pub enum AvailableSpace {
     /// A definite size in points.
     Definite(f32),
-    /// An indefinite size (let the content determine the size).
-    Indefinite,
-    /// The maximum possible size.
-    MaxContent,
 }
 
 /// A 2D size with available-space semantics.
@@ -55,8 +52,7 @@ impl Layout {
 ///
 /// This is a thin wrapper around `flex_layout::compute`.
 pub struct YogaTree {
-    /// Placeholder for API compatibility.
-    pub root: (),
+    _priv: (),
 }
 
 impl YogaTree {
@@ -72,7 +68,7 @@ impl YogaTree {
         // The values are filled in by `compute`.
         let node_count = count_vnodes(root);
         layout.rects = vec![(0, 0, 0, 0); node_count];
-        Self { root: () }
+        Self { _priv: () }
     }
 
     /// Compute the layout with the given viewport.
@@ -85,19 +81,19 @@ impl YogaTree {
     ) {
         let w = match viewport.width {
             AvailableSpace::Definite(v) => v,
-            _ => 80.0,
         };
         let h = match viewport.height {
             AvailableSpace::Definite(v) => v,
-            _ => 24.0,
         };
         // Recompute the layout using Yoga.
-        if let Some(root) = layout.root_vnode.as_ref() {
-            let yoga_layout = flex_layout::compute(root, w as u16, h as u16);
+        if let Some(root_node) = layout.root_vnode.as_ref() {
+            let yoga_layout = flex_layout::compute(root_node, w as u16, h as u16);
             layout.rects = yoga_layout.rects.iter()
                 .map(|r| (r.0, r.1, r.2, r.3))
                 .collect();
         }
+        // Suppress unused warnings (viewport is informational).
+        let _ = (w, h);
     }
 }
 

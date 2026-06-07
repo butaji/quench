@@ -101,20 +101,6 @@ fn simple_style_method(name: &str) -> Option<proc_macro2::TokenStream> {
     }
 }
 
-fn style_method_token(name: &str) -> Option<proc_macro2::TokenStream> {
-    use quote::quote;
-    match name {
-        "bold" => Some(quote! { bold }),
-        "italic" => Some(quote! { italic }),
-        "underline" => Some(quote! { underline }),
-        "strikethrough" => Some(quote! { strikethrough }),
-        "dimColor" | "dimcolor" => Some(quote! { dim }),
-        "inverse" => Some(quote! { inverse }),
-        "wrap" => None, // handled specially
-        _ => None,
-    }
-}
-
 fn apply_color_style(builder: &TokenStream, value: &serde_json::Value) -> TokenStream {
     color_token(value).map(|tok| quote! { #builder.color(#tok) }).unwrap_or_else(|| builder.clone())
 }

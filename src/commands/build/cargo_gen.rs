@@ -55,32 +55,6 @@ fn get_runts_lib_path() -> anyhow::Result<PathBuf> {
     )
 }
 
-/// Find runts-lib path given project root (for workspace support)
-pub fn find_runts_lib_in_workspace(project_root: &Path) -> Option<PathBuf> {
-    // Check project_root/crates/runts-lib
-    let candidate = project_root.join("crates").join("runts-lib");
-    if candidate.exists() {
-        return Some(candidate);
-    }
-
-    // Check workspace root (parent of project root if project is a workspace member)
-    if let Ok(content) = std::fs::read_to_string(project_root.join("Cargo.toml")) {
-        // Check if this is a workspace member by looking for [workspace] section
-        // and try to find runts-lib in workspace root
-        if content.contains("[workspace]") {
-            // Try workspace root's crates/runts-lib
-            if let Some(parent) = project_root.parent() {
-                let ws_candidate = parent.join("crates").join("runts-lib");
-                if ws_candidate.exists() {
-                    return Some(ws_candidate);
-                }
-            }
-        }
-    }
-
-    None
-}
-
 fn build_cargo_toml(app_name: &str, runts_lib_path: &Path) -> String {
     format!(
         r#"[package]

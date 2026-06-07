@@ -175,7 +175,7 @@ include!("quote_codegen_exprs.inc");
 
 impl QuoteCodegen {
     fn gen_jsx_expr(&self, jsx: &super::JSXExpr) -> TokenStream {
-        use super::{JSXName, JSXChild, JSXAttr, JSXAttrValue};
+        use super::JSXName;
 
         if matches!(jsx.opening.name, JSXName::Fragment) {
             let children = self.gen_jsx_children(&jsx.children);
@@ -206,13 +206,13 @@ impl QuoteCodegen {
     }
 
     fn gen_jsx_element(&self, tag: &str, attrs: &[super::JSXAttr], children: &[super::JSXChild], _self_closing: bool) -> TokenStream {
-        use super::JSXAttrValue;
+        
         let mut attr_calls: Vec<TokenStream> = Vec::new();
         for attr in attrs {
             match attr {
                 super::JSXAttr::Attr { name, value } => self.gen_jsx_attr_call(name, value, &mut attr_calls),
                 super::JSXAttr::Spread { expr } => {
-                    let expr_tokens = self.gen_expr(expr);
+                    let _expr_tokens = self.gen_expr(expr);
                     attr_calls.push(quote! { /* spread: #expr_tokens */ });
                 }
             }
@@ -252,7 +252,7 @@ impl QuoteCodegen {
                     self.gen_jsx_attr_value(&key, value, &mut props_fields);
                 }
                 super::JSXAttr::Spread { expr } => {
-                    let expr_tokens = self.gen_expr(expr);
+                    let _expr_tokens = self.gen_expr(expr);
                     props_fields.push(quote! { /* spread: #expr_tokens */ });
                 }
             }
@@ -301,7 +301,7 @@ impl QuoteCodegen {
                     Some(quote! { VNode::fragment(vec![#(#inner),*]) })
                 }
                 JSXChild::Spread { expr } => {
-                    let expr_tokens = self.gen_expr(expr);
+                    let _expr_tokens = self.gen_expr(expr);
                     Some(quote! { /* spread: #expr_tokens */ })
                 }
             }

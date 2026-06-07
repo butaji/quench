@@ -62,6 +62,7 @@ pub fn parse_files_parallel(
 /// for tests and for environments where rayon is
 /// undesirable (single-threaded CI, reproducible-build
 /// harnesses, etc.). Returns results in input order.
+#[cfg(test)]
 pub fn parse_files_serial(
     files: Vec<FileToParse>,
 ) -> Vec<Result<hir::Module, anyhow::Error>> {

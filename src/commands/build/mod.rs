@@ -11,15 +11,10 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::TempDir;
 use tracing::info;
 use walkdir::WalkDir;
 
 use crate::config::Config;
-use crate::plugin::get_plugin;
-use crate::transpile::hir;
-use crate::transpile::parser::parse_source;
-use runts_plugin::RouteInfo;
 use serde::{Deserialize, Serialize};
 
 /// Hidden build directory
@@ -166,24 +161,7 @@ fn is_excluded_subpath(project_root: &Path, path: &Path) -> bool {
     })
 }
 
-/// Directories that should never be walked as project source. This is
-/// conservative — when in doubt, skip the directory. The user is
-/// expected to put their `routes/`, `islands/`, and `components/` at
-/// the project root or under a non-excluded subdir.
-fn is_excluded_dir(path: &Path) -> bool {
-    path.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy();
-        if s == "." || s == ".." {
-            return false;
-        }
-        is_excluded_name(&s)
-    })
-}
 
-/// Single-component name check used by the project-root-aware
-/// `is_excluded_subpath` and the legacy `is_excluded_dir` (which is
-/// kept for direct callers; `find_ts_files` uses `is_excluded_subpath`
-/// instead).
 fn is_excluded_name(name: &str) -> bool {
     const EXCLUDED: &[&str] = &[
         // build / target dirs

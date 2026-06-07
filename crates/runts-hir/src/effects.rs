@@ -91,7 +91,7 @@ impl EffectAnalyzer {
         use Stmt as S;
         match stmt {
             S::If{test,consequent,alternate}=>self.analyze_if(test,consequent,alternate),
-            S::While{test,body}|S::DoWhile{body,test}=>self.analyze_cf_while(stmt),
+            S::While{test: _,body: _}|S::DoWhile{body: _,test: _}=>self.analyze_cf_while(stmt),
             S::For{..}|S::ForIn{..}|S::ForOf{..}=>self.analyze_cf_loop(stmt),
             S::Return{..}|S::Throw{..}=>self.analyze_cf_control(stmt),
             S::Try{..}|S::Switch{..}=>self.analyze_cf_complex(stmt),
@@ -463,7 +463,7 @@ pub fn analyze_effects(func: &FunctionDecl) -> (bool, Option<Type>) {
 /// Analyze a class method for effects
 /// For now, we conservatively assume methods don't throw
 #[allow(dead_code)]
-pub fn analyze_method_effects(method: &ClassMethod) -> (bool, Option<Type>) {
+pub fn analyze_method_effects(_method: &ClassMethod) -> (bool, Option<Type>) {
     // For now, conservatively assume no effects
     (false, None)
 }

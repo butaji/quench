@@ -1,7 +1,5 @@
-use super::*;
 use std::sync::{Arc, RwLock};
 
-/// Hook state storage - persists across renders within same component tree
 thread_local! {
     static HOOK_STATES: RwLock<Vec<Box<dyn std::any::Any + Send + Sync>>> = RwLock::new(Vec::new());
 }

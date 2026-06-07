@@ -77,7 +77,7 @@ impl OwnershipAnalyzer {
             S::For{..}|S::ForIn{..}|S::ForOf{..}=>self.analyze_stmt_for(stmt),
             S::Return{arg}=>self.analyze_return_throw(arg.as_ref()),
             S::Throw{arg}=>self.analyze_return_throw(Some(arg)),
-            S::Switch{discriminant,cases}=>self.analyze_switch_try(stmt),
+            S::Switch{discriminant: _,cases: _}=>self.analyze_switch_try(stmt),
             S::Try{block,handler,finalizer}=>self.analyze_try(block,handler,finalizer),
             S::Break{..}|S::Continue{..}|S::Labeled{..}|S::With{..}|_=>{},
         }
@@ -121,10 +121,6 @@ impl OwnershipAnalyzer {
         }
     }
 
-    fn analyze_with_stmt(&mut self, obj: &Expr, body: &Box<Stmt>) {
-        self.analyze_expr(obj);
-        self.analyze_stmt(body);
-    }
     fn analyze_block(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             self.analyze_stmt(s);
@@ -140,10 +136,6 @@ impl OwnershipAnalyzer {
     fn analyze_while(&mut self, test: &Expr, body: &Box<Stmt>) {
         self.analyze_expr(test);
         self.analyze_stmt(body);
-    }
-    fn analyze_do_while(&mut self, body: &Box<Stmt>, test: &Expr) {
-        self.analyze_stmt(body);
-        self.analyze_expr(test);
     }
     fn analyze_for(
         &mut self,
@@ -177,11 +169,6 @@ impl OwnershipAnalyzer {
             for s in &case.consequent {
                 self.analyze_stmt(s);
             }
-        }
-    }
-    fn analyze_return(&mut self, arg: &Option<Expr>) {
-        if let Some(e) = arg {
-            self.analyze_expr(e);
         }
     }
     fn analyze_try(&mut self, block: &super::Block, handler: &Option<super::CatchClause>, finalizer: &Option<super::Block>) {
@@ -408,13 +395,6 @@ impl OwnershipAnalyzer {
         else{"".to_string()}
     }
 
-    /// Track that a variable may be aliased to another
-    fn track_alias(&mut self, to: &str, from: &str) {
-        self.aliases
-            .entry(to.to_string())
-            .or_default()
-            .insert(from.to_string());
-    }
 }
 
 /// Infer ownership annotations for all function parameters

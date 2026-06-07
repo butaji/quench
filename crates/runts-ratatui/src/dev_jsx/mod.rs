@@ -13,9 +13,8 @@ pub mod attrs;
 pub mod comments;
 pub mod lower;
 
-use comments::{is_block_comment_start, is_line_comment, is_string_start, skip_block_comment, skip_line_comment, strip_comments, strip_imports, copy_string_literal, copy_template_literal};
-use attrs::parse_attrs;
-use lower::{lower_box, lower_children, lower_jsx_element, lower_text};
+use comments::{strip_comments, strip_imports};
+use lower::lower_jsx_element;
 
 /// Result of the JSX transform: a JS string ready
 /// to feed into rquickjs, plus the names of any
@@ -104,7 +103,7 @@ fn find_jsx_tag_end(chars: &[char], j: usize) -> (usize, bool) {
     (k, false)
 }
 
-fn find_jsx_closing(chars: &[char], i: usize, tag: &str, k: usize) -> Option<(usize, String)> {
+fn find_jsx_closing(chars: &[char], _i: usize, tag: &str, k: usize) -> Option<(usize, String)> {
     let close_chars: Vec<char> = format!("</{tag}>").chars().collect();
     let open_chars: Vec<char> = format!("<{tag}").chars().collect();
     let mut depth = 1;
