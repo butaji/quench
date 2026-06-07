@@ -42,7 +42,7 @@ fn export_default_kind_to_expr_impl3(kind: &ExportDefaultDeclarationKind) -> Opt
     None
 }
 
-fn convert_class_expr(c: &ClassExpression) -> Option<hir::Expr> {
+fn convert_class_expr(c: &Class) -> Option<hir::Expr> {
     Some(hir::Expr::Class {
         id: c.id.as_ref().map(|i| i.name.to_string()),
         super_class: c.super_class.as_ref().and_then(|s| convert_expr(s).ok()).map(Box::new),
@@ -50,7 +50,7 @@ fn convert_class_expr(c: &ClassExpression) -> Option<hir::Expr> {
     })
 }
 
-fn convert_func_expr(f: &FunctionExpression) -> Option<hir::Expr> {
+fn convert_func_expr(f: &Function) -> Option<hir::Expr> {
     let decl = func_to_decl(f);
     if let hir::Decl::Function(func_decl) = decl {
         Some(hir::Expr::Function(func_decl))
@@ -336,21 +336,21 @@ fn convert_export_decl_or_type(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleI
     }
 }
 
-fn export_func_decl(f: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::FunctionDeclaration>>) -> Vec<hir::ModuleItem> {
-    vec![hir::ModuleItem::Decl(func_to_decl(f))]
-}
-
-fn export_class_decl(c: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ClassDeclaration>>) -> Vec<hir::ModuleItem> {
-    vec![hir::ModuleItem::Decl(class_to_hir(c))]
-}
-
-fn convert_arrow_export(a: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ArrowFunctionExpression>>) -> Vec<hir::ModuleItem> {
-    if let Some(expr) = conv_arrow(a) {
-        vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
-    } else {
-        vec![hir::ModuleItem::Stmt(hir::Stmt::Empty)]
-    }
-}
+// These functions reference ts_interface which is not available
+// Commenting them out until ts_interface is properly integrated
+// fn export_func_decl(f: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::FunctionDeclaration>>) -> Vec<hir::ModuleItem> {
+//     vec![hir::ModuleItem::Decl(func_to_decl(f))]
+// }
+// fn export_class_decl(c: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ClassDeclaration>>) -> Vec<hir::ModuleItem> {
+//     vec![hir::ModuleItem::Decl(class_to_hir(c))]
+// }
+// fn convert_arrow_export(a: &oxc_index::IndexNewtype<ts_interface::OxcHandle<ts_interface::ast::ArrowFunctionExpression>>) -> Vec<hir::ModuleItem> {
+//     if let Some(expr) = conv_arrow(a) {
+//         vec![hir::ModuleItem::Stmt(hir::Stmt::ExportDefault { expr })]
+//     } else {
+//         vec![hir::ModuleItem::Stmt(hir::Stmt::Empty)]
+//     }
+// }
 
 fn convert_default_kind(e: &ExportDefaultDeclaration) -> Vec<hir::ModuleItem> {
     let expr = export_default_kind_to_expr(&e.declaration).unwrap_or(hir::Expr::Undefined);

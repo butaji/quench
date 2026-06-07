@@ -669,7 +669,7 @@ impl QuoteCodegen {
             E::RegExp { .. } => self.gen_reg_exp(expr),
             E::Super | E::This => self.gen_super_this(expr),
             E::Block(stmts) => self.gen_block_expr(stmts),
-            E::Invalid => panic!("codegen for Invalid expression"),
+            E::Invalid => quote! { Value::Null },
             _ => self.gen_expr_helper(expr),
         }
     }

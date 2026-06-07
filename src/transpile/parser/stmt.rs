@@ -5,6 +5,8 @@
 
 use crate::transpile::hir::{self, Expr, Stmt, VariableKind, ForInit, SwitchCase};
 use super::expr::{convert_expr, convert_binding_pattern};
+use super::stmt_decl::var_to_decl;
+use super::stmt_class::class_to_hir;
 use oxc_ast::ast::*;
 
 /// Convert statement to HIR
@@ -13,19 +15,32 @@ pub fn convert_statement(s: &Statement) -> Option<hir::ModuleItem> {
         Statement::ImportDeclaration(i)=>Some(hir::ModuleItem::Import(import_to_hir(i))),
         Statement::ExportNamedDeclaration(e)=>convert_export_named(e),
         Statement::ExportDefaultDeclaration(e)=>{
-            let expr=export_default_kind_to_expr(&e.declaration)?;
-            Some(hir::ModuleItem::Stmt(hir::Stmt::Return{arg:Some(expr)}))
+            if let Some(expr)=export_default_kind_to_expr(&e.declaration){
+                Some(hir::ModuleItem::Stmt(hir::Stmt::ExportDefault{expr}))
+            } else {
+                None
+            }
         }
-        Statement::ExportAllDeclaration(_)=>None,
+        Statement::ExportAllDeclaration(e)=>{
+            Some(hir::ModuleItem::Stmt(hir::Stmt::ExportNamed{
+                specifiers: vec![hir::Export::All{ source: e.source.value.to_string() }]
+            }))
+        }
         Statement::TSExportAssignment(_)=>None,
         Statement::TSNamespaceExportDeclaration(_)=>None,
         Statement::FunctionDeclaration(f)=>{
-            let decl=func_to_decl(f)?;
-            Some(hir::ModuleItem::Decl(hir::Decl::Function(decl)))
+            if let Some(decl)=func_to_decl(f){
+                Some(hir::ModuleItem::Decl(hir::Decl::Function(decl)))
+            } else {
+                None
+            }
         }
         Statement::ClassDeclaration(c)=>{
-            let decl=class_to_hir(c)?;
-            Some(hir::ModuleItem::Decl(decl))
+            Some(hir::ModuleItem::Decl(class_to_hir(c)))
+        }
+        Statement::VariableDeclaration(v)=>{
+            // Module-level variable declarations become Decl::Variable
+            decl_var(v).map(hir::ModuleItem::Decl)
         }
         _=>Some(hir::ModuleItem::Stmt(stmt_to_hir_stmt(s).ok()?)),
     }
@@ -34,16 +49,22 @@ pub fn convert_statement(s: &Statement) -> Option<hir::ModuleItem> {
 fn export_default_kind_to_expr(kind: &ExportDefaultDeclarationKind) -> Option<Expr> {
     match kind {
         ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-            let decl = func_to_decl(f)?;
-            Some(Expr::Function(decl))
+            if let Some(decl) = func_to_decl(f) {
+                Some(Expr::Function(decl))
+            } else {
+                None
+            }
         }
         ExportDefaultDeclarationKind::ClassDeclaration(_) => {
             None
         }
         ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => None,
         _ => {
-            let expr = kind.as_expression()?;
-            convert_expr(expr).ok()
+            if let Some(expr) = kind.as_expression() {
+                convert_expr(expr).ok()
+            } else {
+                None
+            }
         }
     }
 }
@@ -57,22 +78,52 @@ fn export_name_str(name: &ModuleExportName) -> String {
 
 fn convert_export_named(e: &ExportNamedDeclaration) -> Option<hir::ModuleItem> {
     if let Some(source)=&e.source {
-        let names: Vec<String>=e.specifiers.iter().map(|s|export_name_str(&s.local)).collect();
-        Some(hir::ModuleItem::Export(hir::Export::ReExport{
-            source: source.value.to_string(),
-            names,
+        return convert_reexport(source, &e.specifiers);
+    }
+    if let Some(declaration)=&e.declaration {
+        return convert_export_decl(&declaration).map(|items| {
+            items.into_iter().next().unwrap_or(hir::ModuleItem::Stmt(hir::Stmt::Empty))
+        });
+    }
+    convert_named_exports(&e.specifiers)
+}
+
+fn convert_reexport(source: &StringLiteral, specifiers: &[ExportSpecifier]) -> Option<hir::ModuleItem> {
+    if specifiers.is_empty() {
+        Some(hir::ModuleItem::Stmt(hir::Stmt::ExportNamed{
+            specifiers: vec![hir::Export::All{ source: source.value.to_string() }]
         }))
     } else {
-        let specifiers: Vec<hir::Export>=e.specifiers.iter().map(|s|{
-            let local=export_name_str(&s.local);
-            let exported=export_name_str(&s.exported);
-            if local==exported{
-                hir::Export::Named{name: local}
-            } else {
-                hir::Export::NamedRenamed{local, exported}
-            }
-        }).collect();
-        Some(hir::ModuleItem::Stmt(hir::Stmt::ExportNamed{specifiers}))
+        let names: Vec<String>=specifiers.iter().map(|s|export_name_str(&s.local)).collect();
+        Some(hir::ModuleItem::Stmt(hir::Stmt::ExportNamed{
+            specifiers: vec![hir::Export::ReExport{ source: source.value.to_string(), names }]
+        }))
+    }
+}
+
+fn convert_named_exports(specifiers: &[ExportSpecifier]) -> Option<hir::ModuleItem> {
+    let exports: Vec<hir::Export>=specifiers.iter().map(|s|{
+        let local=export_name_str(&s.local);
+        let exported=export_name_str(&s.exported);
+        if local==exported{ hir::Export::Named{name: local} }
+        else { hir::Export::NamedRenamed{local, exported} }
+    }).collect();
+    if exports.is_empty() { None } else { Some(hir::ModuleItem::Stmt(hir::Stmt::ExportNamed{specifiers: exports})) }
+}
+
+/// Convert an export declaration to HIR module items
+fn convert_export_decl(declaration: &oxc_ast::ast::Declaration) -> Option<Vec<hir::ModuleItem>> {
+    match declaration {
+        oxc_ast::ast::Declaration::VariableDeclaration(v) => {
+            Some(var_to_decl(v).into_iter().map(hir::ModuleItem::Decl).collect())
+        }
+        oxc_ast::ast::Declaration::FunctionDeclaration(f) => {
+            func_to_decl(f).map(|decl| vec![hir::ModuleItem::Decl(hir::Decl::Function(decl))])
+        }
+        oxc_ast::ast::Declaration::ClassDeclaration(c) => {
+            Some(vec![hir::ModuleItem::Decl(class_to_hir(c))])
+        }
+        _ => None,
     }
 }
 
@@ -136,7 +187,8 @@ fn stmt_try(t: &TryStatement) -> Result<Stmt, ()> {
         param:catch_param(h),
         body:Box::new(hir::Block(h.body.body.iter().filter_map(|s|stmt_to_hir_stmt(s).ok()).collect())),
     });
-    Ok(hir::Stmt::Try{block, handler, finalizer:None})
+    let finalizer=t.finalizer.as_ref().map(|f|hir::Block(f.body.iter().filter_map(|s|stmt_to_hir_stmt(s).ok()).collect()));
+    Ok(hir::Stmt::Try{block, handler, finalizer})
 }
 
 fn catch_param(h: &CatchClause) -> String {
@@ -228,17 +280,30 @@ fn stmt_var(v: &VariableDeclaration) -> Result<Stmt, ()> {
     }
 }
 
+fn decl_var(v: &VariableDeclaration) -> Option<hir::Decl> {
+    let kind=var_kind(v.kind);
+    if let Some(decl)=v.declarations.first(){
+        let name=binding_name(&decl.id);
+        let init=decl.init.as_ref().and_then(|e|convert_expr(e).ok());
+        let pattern=convert_binding_pattern(&decl.id);
+        Some(hir::Decl::Variable(hir::VariableDecl{name, kind, type_:None, init, pattern}))
+    } else {
+        None
+    }
+}
+
 fn stmt_func(f: &Function) -> Result<Stmt, ()> {
     let decl=func_to_decl(f).ok_or(())?;
     Ok(hir::Stmt::FunctionDecl(decl))
 }
 
 fn stmt_class(c: &Class) -> Result<Stmt, ()> {
-    let decl=match class_to_hir(c){
-        Some(hir::Decl::Class(cd))=>cd,
-        _=>return Ok(hir::Stmt::Empty),
-    };
-    Ok(hir::Stmt::Class(decl))
+    let decl=class_to_hir(c);
+    if let hir::Decl::Class(cd)=decl{
+        Ok(hir::Stmt::Class(cd))
+    } else {
+        Ok(hir::Stmt::Empty)
+    }
 }
 
 fn var_kind(k: VariableDeclarationKind) -> VariableKind {
@@ -285,16 +350,6 @@ fn func_to_decl(f: &Function) -> Option<hir::FunctionDecl> {
         throws: false,
         error_type: None,
     })
-}
-
-fn class_to_hir(c: &Class) -> Option<hir::Decl> {
-    Some(hir::Decl::Class(hir::ClassDecl {
-        name: c.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default(),
-        extends: None,
-        members: vec![],
-        generics: vec![],
-        methods: vec![],
-    }))
 }
 
 fn import_to_hir(i: &ImportDeclaration) -> hir::Import {

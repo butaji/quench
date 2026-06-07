@@ -17,7 +17,7 @@ impl TypeParser {
     }
 
     /// Convert oxc TypeAnnotation to HIR Type
-    pub fn convert_type(&self, type_annotation: &TypeAnnotation) -> Result<Type> {
+    pub fn convert_type(&self, type_annotation: &TSTypeAnnotation) -> Result<Type> {
         self.convert_ts_type(&type_annotation.type_annotation)
     }
 }
@@ -29,22 +29,39 @@ impl TypeParser {
 impl TypeParser {
     /// Convert a TSNode to HIR Type
     pub fn convert_ts_type(&self, ts_type: &TSType) -> Result<Type> {
-        match ts_type {
-            TSType::TSArrayType(a) => self.convert_array_type(a),
-            TSType::TSConditionalType(c) | TSType::TSIntersectionType(i) | TSType::TSUnionType(u) => self.convert_multi(c, i, u),
-            TSType::TSConstructorType(c) | TSType::TSFunctionType(f) => self.convert_fn(&c.params, &c.return_type),
-            TSType::TSIndexedAccessType(i) | TSType::TSMappedType(m) => self.convert_index_mapped(ts_type),
-            TSType::TSInferType(infer) | TSType::TSTypeQueryType(query) => self.convert_query_like(infer, query),
-            TSType::TSOptionalType(o) | TSType::TSParenthesizedType(p) | TSType::TSRestType(r) => self.convert_passthrough(ts_type),
-            TSType::TSRecordType(r) | TSType::TSTypeLiteralType(l) | TSType::TSTemplateLiteralType(t) | TSType::TSTypeOperatorType(o) | TSType::TSReferenceType(r2) => self.convert_ref_or_obj(ts_type),
-            _ => Ok(Type::Unknown),
+        use TSType::*;
+        // Simple scalar types
+        if let TSArrayType(a) = ts_type { return self.convert_array_type(a); }
+        if let TSConditionalType(c) = ts_type { return self.convert_multi(Some(c), None, None); }
+        if let TSIntersectionType(i) = ts_type { return self.convert_multi(None, Some(i), None); }
+        if let TSUnionType(u) = ts_type { return self.convert_multi(None, None, Some(u)); }
+        if let TSConstructorType(c) = ts_type { return self.convert_fn(&c.params, &c.return_type); }
+        if let TSFunctionType(f) = ts_type { return self.convert_fn(&f.params, &f.return_type); }
+        // Complex types - delegate to helpers
+        self.convert_ts_type_complex(ts_type)
+    }
+
+    fn convert_ts_type_complex(&self, ts_type: &TSType) -> Result<Type> {
+        use TSType::*;
+        if matches!(ts_type, TSIndexedAccessType(_) | TSMappedType(_)) {
+            return self.convert_index_mapped(ts_type);
         }
+        if let TSInferType(infer) = ts_type { return self.convert_query_like(Some(infer), None); }
+        if let TSTypeQuery(query) = ts_type { return self.convert_query_like(None, Some(query)); }
+        if matches!(ts_type, TSOptionalType(_) | TSParenthesizedType(_) | TSRestType(_)) {
+            return self.convert_passthrough(ts_type);
+        }
+        if matches!(ts_type, TSRecordType(_) | TSTypeLiteralType(_) | TSTemplateLiteralType(_) | TSTypeOperatorType(_) | TSReferenceType(_)) {
+            return self.convert_ref_or_obj(ts_type);
+        }
+        Ok(Type::Unknown)
     }
 
     fn convert_ref_or_obj(&self, ts_type: &TSType) -> Result<Type> {
+        use TSType::*;
         match ts_type {
-            TSType::TSRecordType(r) | TSType::TSTypeLiteralType(l) | TSType::TSTemplateLiteralType(t) | TSType::TSTypeOperatorType(o) => self.convert_object_like(ts_type),
-            TSType::TSReferenceType(r) => self.convert_reference(r),
+            TSRecordType(_) | TSTypeLiteralType(_) | TSTemplateLiteralType(_) | TSTypeOperatorType(_) => self.convert_object_like(ts_type),
+            TSReferenceType(r) => self.convert_reference(r),
             _ => Ok(Type::Unknown),
         }
     }
@@ -68,7 +85,7 @@ impl TypeParser {
         Ok(Type::Unknown)
     }
 
-    fn convert_query_like(&self, infer: Option<&TSInferType>, query: Option<&TSTypeQueryType>) -> Result<Type> {
+    fn convert_query_like(&self, infer: Option<&TSInferType>, query: Option<&TSTypeQuery>) -> Result<Type> {
         if let Some(i) = infer {
             Ok(Type::Infer { name: i.type_parameter.name.to_string() })
         } else if let Some(q) = query {
