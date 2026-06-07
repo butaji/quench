@@ -939,7 +939,7 @@
     {
       "id": "087",
       "title": "ink-keyof-readonly example — keyof, readonly arrays",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-keyof-readonly/",
