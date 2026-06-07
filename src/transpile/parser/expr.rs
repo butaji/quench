@@ -397,6 +397,16 @@ fn conv_func_expr(f: &oxc_ast::ast::Function) -> Result<Expr, ()> {
     }))
 }
 
+/// TypeScript type assertions are erased - just emit inner expression
+fn conv_ts_type_assertion(expr: &Expression) -> Result<Expr, ()> {
+    match expr {
+        Expression::TSAsExpression(e) => convert_expr(&e.expression),
+        Expression::TSSatisfiesExpression(e) => convert_expr(&e.expression),
+        Expression::TSNonNullExpression(e) => convert_expr(&e.expression),
+        _ => Err(()),
+    }
+}
+
 /// Convert expression
 pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
     match expr {
@@ -430,6 +440,8 @@ pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
         Expression::SequenceExpression(s)=>{
             if let Some(last)=s.expressions.last(){convert_expr(last)}else{Err(())}
         }
+        Expression::TSAsExpression(_) | Expression::TSSatisfiesExpression(_) | Expression::TSNonNullExpression(_)
+            => conv_ts_type_assertion(expr),
         _=>Err(()),
     }
 }

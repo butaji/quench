@@ -51,6 +51,42 @@ use super::helpers::*;
                 assert!(!tokens.is_empty(), "Literal type {:?} should produce output", ty);
             }
         }
+
+        #[test]
+        fn test_type_assertion_expr_codegen() {
+            // TypeAssertion { expr, type_ } - should emit inner expr
+            let expr = Expr::TypeAssertion {
+                expr: Box::new(Expr::Ident { name: "x".into() }),
+                type_: Box::new(Type::String),
+            };
+            let tokens = QuoteCodegen::default().gen_expr(&expr);
+            let output = tokens.to_string();
+            // Should contain "x" (the inner ident), not type annotation
+            assert!(output.contains("x"), "TypeAssertion should emit inner expr");
+        }
+
+        #[test]
+        fn test_satisfies_expr_codegen() {
+            // Satisfies { expr, type_ } - should emit inner expr
+            let expr = Expr::Satisfies {
+                expr: Box::new(Expr::Number(42.0)),
+                type_: Box::new(Type::Number),
+            };
+            let tokens = QuoteCodegen::default().gen_expr(&expr);
+            let output = tokens.to_string();
+            assert!(output.contains("42") || output.contains("f64"), "Satisfies should emit inner expr");
+        }
+
+        #[test]
+        fn test_non_null_expr_codegen() {
+            // NonNull { expr } - should emit inner expr
+            let expr = Expr::NonNull {
+                expr: Box::new(Expr::Ident { name: "value".into() }),
+            };
+            let tokens = QuoteCodegen::default().gen_expr(&expr);
+            let output = tokens.to_string();
+            assert!(output.contains("value"), "NonNull should emit inner expr");
+        }
     
 
 }
