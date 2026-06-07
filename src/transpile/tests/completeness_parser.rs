@@ -656,7 +656,6 @@ mod completeness_parser_tests {
     }
 
     #[test]
-    #[ignore] // new.target meta property not yet supported
     fn expr_meta_new_target() {
         let source = "function f() { const x = new.target; }";
         let parser = TsParser::new();
@@ -664,22 +663,14 @@ mod completeness_parser_tests {
         let has_new_target = result.items.iter().any(|item| {
             if let ModuleItem::Decl(Decl::Function(ref f)) = item {
                 if let Some(ref body) = f.body {
-                    // Function body is Block([Block([...])])
+                    // Function body is Block([Variable(VariableDecl { init: MetaProperty })])
                     body.0.iter().any(|s| {
-                        if let Stmt::Block { stmts } = s {
-                            stmts.iter().any(|inner| {
-                                if let Stmt::Expr { expr } = inner {
-                                    if let Expr::Assign { right, .. } = expr {
-                                        if let Expr::MetaProperty { kind: MetaPropKind::NewTarget } = **right {
-                                            return true;
-                                        }
-                                    }
-                                }
-                                false
-                            })
-                        } else {
-                            false
+                        if let Stmt::Variable(ref v) = s {
+                            if let Some(Expr::MetaProperty { kind: MetaPropKind::NewTarget }) = &v.init {
+                                return true;
+                            }
                         }
+                        false
                     })
                 } else {
                     false
@@ -692,7 +683,6 @@ mod completeness_parser_tests {
     }
 
     #[test]
-    #[ignore] // import.meta not yet supported
     fn expr_meta_import_meta() {
         let source = "const x = import.meta;";
         let parser = TsParser::new();
@@ -709,7 +699,6 @@ mod completeness_parser_tests {
     }
 
     #[test]
-    #[ignore] // import() expressions not yet supported
     fn expr_import_expression() {
         assert_not_invalid(r#"const x = import("mod");"#, "import expression");
     }

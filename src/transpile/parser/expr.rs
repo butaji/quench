@@ -446,8 +446,29 @@ pub fn convert_expr(expr: &Expression) -> Result<Expr, ()> {
         Expression::YieldExpression(y)=>Ok(conv_yield(y)),
         Expression::TSAsExpression(_) | Expression::TSSatisfiesExpression(_) | Expression::TSNonNullExpression(_)
             => conv_ts_type_assertion(expr),
+        Expression::MetaProperty(m)=>conv_meta_prop(m),
+        Expression::ImportExpression(i)=>conv_import_expr(i).ok_or(()),
         _=>Err(()),
     }
+}
+
+/// Convert meta property: new.target, import.meta
+fn conv_meta_prop(m: &oxc_ast::ast::MetaProperty) -> Result<Expr, ()> {
+    let meta_name = m.meta.name.to_string();
+    let prop_name = m.property.name.to_string();
+    if meta_name == "new" && prop_name == "target" {
+        Ok(hir::Expr::MetaProperty { kind: hir::MetaPropKind::NewTarget })
+    } else if meta_name == "import" && prop_name == "meta" {
+        Ok(hir::Expr::MetaProperty { kind: hir::MetaPropKind::ImportMeta })
+    } else {
+        Err(())
+    }
+}
+
+/// Convert dynamic import: import("module")
+fn conv_import_expr(imp: &oxc_ast::ast::ImportExpression) -> Option<Expr> {
+    let source = convert_expr(&imp.source).ok()?;
+    Some(hir::Expr::ImportExpression { source: Box::new(source) })
 }
 
 fn conv_yield(y: &oxc_ast::ast::YieldExpression) -> hir::Expr {
