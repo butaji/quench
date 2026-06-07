@@ -617,7 +617,7 @@
     {
       "id": "063",
       "title": "ink-measure example \u2014 measureElement, useBoxMetrics",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-measure/",
@@ -628,7 +628,7 @@
     {
       "id": "064",
       "title": "ink-focus-paste example \u2014 useFocus, useFocusManager, usePaste",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-focus-paste/",
@@ -639,7 +639,7 @@
     {
       "id": "065",
       "title": "ink-static-transform example \u2014 Static, Transform, Newline, Spacer",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-medium",
       "files": [
         "examples/ink-static-transform/",
@@ -790,8 +790,8 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 108,
-    "examples_with_tests": 105,
+    "examples_total": 110,
+    "examples_with_tests": 107,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 956,
@@ -807,8 +807,8 @@
     "hir_expr_codegen_handled": 28,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 19,
-    "completed_tasks": 41
+    "pending_tasks": 16,
+    "completed_tasks": 44
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
