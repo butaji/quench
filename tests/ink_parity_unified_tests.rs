@@ -462,7 +462,7 @@ fn test_ink_examples_with_cursor() {
 /// Test parity harness script exists and is executable
 #[test]
 fn test_parity_harness_exists() {
-    let script = Path::new("./test_ink_parity_unified.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "parity harness should exist");
     
     // Check shebang
@@ -708,7 +708,7 @@ fn test_text_styling_covered() {
 /// Test that parity harness can be executed (dry run)
 #[test]
 fn test_parity_harness_executable() {
-    let script = Path::new("./test_ink_parity_unified.sh");
+    let script = Path::new("./scripts/parity.sh");
     
     // Check that script is readable
     assert!(script.metadata().is_ok(), "script should be readable");
@@ -720,19 +720,12 @@ fn test_parity_harness_executable() {
     assert_eq!(b"#!", &first_bytes, "script should have shebang");
 }
 
-/// Test comprehensive parity harness exists
+/// Test unified parity harness exists (scripts/parity.sh)
 #[test]
 fn test_comprehensive_parity_harness_exists() {
-    let scripts = vec![
-        "./test_ink_parity_comprehensive.sh",
-        "./test_ink_parity.sh",
-        "./test_ink_parity_unified.sh",
-    ];
-    
-    for script in scripts {
-        let path = Path::new(script);
-        assert!(path.exists(), "{} should exist", script);
-    }
+    // Only scripts/parity.sh should exist now
+    let script = Path::new("./scripts/parity.sh");
+    assert!(script.exists(), "scripts/parity.sh should exist");
 }
 
 /// Test ink examples have description comments

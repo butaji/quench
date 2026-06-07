@@ -518,7 +518,7 @@ fn test_new_examples_config_valid() {
 /// Test parity harness script is executable
 #[test]
 fn test_parity_harness_executable() {
-    let script = Path::new("./test_parity_unified.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "parity harness should exist");
     
     let metadata = fs::metadata(script).expect("should get metadata");
@@ -531,16 +531,16 @@ fn test_parity_harness_executable() {
     }
 }
 
-/// Test comprehensive harness exists
+/// Test comprehensive harness exists (now unified at scripts/parity.sh)
 #[test]
 fn test_comprehensive_harness_exists() {
-    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "comprehensive harness should exist");
 }
 
-/// Test quick harness exists
+/// Test quick harness exists (now unified at scripts/parity.sh)
 #[test]
 fn test_quick_harness_exists() {
-    let script = Path::new("./test_ink_parity.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "quick harness should exist");
 }

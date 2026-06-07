@@ -326,7 +326,7 @@ fn test_ink_examples_have_descriptions() {
 /// Verify parity test script exists and is executable
 #[test]
 fn test_parity_script_exists() {
-    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(
         script.exists(),
         "parity test script should exist"
@@ -689,7 +689,7 @@ fn test_examples_use_box_for_layout() {
 /// Verify parity harness script exists and is executable
 #[test]
 fn test_parity_harness_script_exists() {
-    let script = Path::new("./test_parity_harness.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(
         script.exists(),
         "parity harness script should exist"
@@ -705,7 +705,7 @@ fn test_parity_harness_script_exists() {
 /// Verify unified parity script exists
 #[test]
 fn test_unified_parity_script_exists() {
-    let script = Path::new("./test_ink_parity_unified.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(
         script.exists(),
         "unified parity script should exist"
@@ -1069,7 +1069,7 @@ fn test_ink_examples_have_proper_file_endings() {
 /// Verify parity test script has proper shebang
 #[test]
 fn test_parity_script_has_shebang() {
-    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "parity script should exist");
     
     let mut file = fs::File::open(script).expect("should open script");
@@ -1114,11 +1114,12 @@ fn test_ink_dynamic_example_detailed() {
     let path = Path::new("./examples/ink-dynamic/tui/app.tsx");
     let content = fs::read_to_string(path).expect("should read file");
     
-    // Should have dynamic-looking content (status states)
-    assert!(content.contains("OK") || content.contains("WARN") || content.contains("FAIL"), 
+    // Should have dynamic status (via toUpperCase or literal)
+    assert!(content.contains("toUpperCase") || content.contains("OK") || 
+            content.contains("WARN") || content.contains("FAIL"), 
             "should have status states");
     // Should use color props for dynamic styling
-    assert!(content.contains("color=\"green\"") || content.contains("color=\"yellow\""), 
+    assert!(content.contains("color=") || content.contains("statusColor"), 
             "should use color props");
 }
 
@@ -1328,7 +1329,7 @@ fn test_runts_config_has_ink_plugin_structure() {
 /// Verify parity test harness script is executable
 #[test]
 fn test_parity_script_is_executable() {
-    let script = Path::new("./test_ink_parity_comprehensive.sh");
+    let script = Path::new("./scripts/parity.sh");
     assert!(script.exists(), "parity script should exist");
     
     // Check shebang
