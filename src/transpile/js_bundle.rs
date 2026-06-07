@@ -301,10 +301,11 @@ const REACT_SHIM: &str = r#"var React = (function() {
     function createElement(type, props, ...children) {
         props = props || {};
         children = flatten(children);
-        if (children.length === 1) {
-            props.children = children[0];
-        } else if (children.length > 1) {
-            props.children = children;
+        // Always store children as an array for consistent handling in box_add_children
+        props.children = children;
+        // For empty children, use empty array
+        if (children.length === 0) {
+            props.children = [];
         }
         if (typeof type === 'function') {
             if (!type.__withHooks) type.__withHooks = withHooks(type);
@@ -346,7 +347,8 @@ var useCallback = React.useCallback;
 var useMemo = React.useMemo;
 var useRef = React.useRef;
 var createContext = React.createContext;
-var useContext = React.useContext;"#;
+var useContext = React.useContext;
+var __runts_ink_render = function(app) { return app; };"#;
 
 const POST_SHIM: &str = r#"
 var process = process || { exit: function(code) { __runts_exit = true; __runts_exit_code = code || 0; } };

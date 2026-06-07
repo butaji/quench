@@ -73,10 +73,16 @@ fn eval_ink_bundle_and_render(js: &str) -> Result<String> {
 
 fn eval_bundle_in_ctx(ctx: &rquickjs::Ctx, js: &str) -> anyhow::Result<String> {
     setup_ink_ctx(ctx)?;
-    ctx.eval::<rquickjs::Value, _>(js)
-        .map_err(|e| anyhow::anyhow!("Bundle eval failed: {:?}", e))?;
+    if let Err(e) = ctx.eval::<rquickjs::Value, _>(js) {
+        let msg = extract_js_error(&ctx, &e);
+        anyhow::bail!("Bundle eval failed: {}", msg);
+    }
     let render_js = "runts_ink.render_to_string(__runts_render_with_effects({}));";
     eval_render_js(ctx, render_js)
+}
+
+fn extract_js_error(_ctx: &rquickjs::Ctx, e: &rquickjs::Error) -> String {
+    format!("{:?}", e)
 }
 
 fn eval_render_js(ctx: &rquickjs::Ctx, render_js: &str) -> anyhow::Result<String> {
