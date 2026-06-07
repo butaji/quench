@@ -59,32 +59,76 @@ fn collect_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
 
 fn collect_from_var_decl(stmt: &serde_json::Value, decls: &mut Vec<(String, String)>) {
     // Handle flat VariableDecl format: {kind: "Const"|"Let"|"Var", pattern, init, ...}
-    // Extract the variable names from the pattern
     if let Some(pattern) = stmt.get("pattern") {
-        // Destructuring: const [a, b] = ... or const {a, b} = ...
+        let init = stmt.get("init");
+        // Destructuring: const [a, b] = ...
         if let Some(elems) = pattern.get("elems").and_then(|e| e.as_array()) {
-            for elem in elems {
-                if let Some(name) = elem.get("name").and_then(|n| n.as_str()) {
-                    if !name.is_empty() {
-                        // Extract init value from the call
-                        let init_val = stmt.get("init")
-                            .and_then(|i| extract_call_arg_value(i))
-                            .unwrap_or_else(|| "0i32".to_string());
-                        decls.push((format!("let {} = {};", name, init_val), name.to_string()));
-                    }
-                }
-            }
+            collect_array_destructure(elems, init, decls);
         }
         // Simple binding: const x = ...
         else if let Some(name) = pattern.get("name").and_then(|n| n.as_str()) {
+            collect_simple_binding(name, init, decls);
+        }
+    }
+}
+
+fn collect_array_destructure(
+    elems: &[serde_json::Value],
+    init: Option<&serde_json::Value>,
+    decls: &mut Vec<(String, String)>,
+) {
+    for elem in elems {
+        if let Some(name) = elem.get("name").and_then(|n| n.as_str()) {
             if !name.is_empty() {
-                let init_val = stmt.get("init")
-                    .and_then(|i| extract_call_arg_value(i))
-                    .unwrap_or_else(|| "0i32".to_string());
-                decls.push((format!("let {} = {};", name, init_val), name.to_string()));
+                let default_val = "0i32".to_string();
+                let (value, type_hint) = init
+                    .and_then(|i| extract_call_arg_value_with_type(i))
+                    .unwrap_or_else(|| (default_val, None));
+                let decl = format_var_decl(name, &value, type_hint.as_deref());
+                decls.push((decl, name.to_string()));
             }
         }
     }
+}
+
+fn collect_simple_binding(
+    name: &str,
+    init: Option<&serde_json::Value>,
+    decls: &mut Vec<(String, String)>,
+) {
+    if name.is_empty() {
+        return;
+    }
+    let default_val = "0i32".to_string();
+    let (value, type_hint) = init
+        .and_then(|i| extract_call_arg_value_with_type(i))
+        .unwrap_or_else(|| (default_val, None));
+    let decl = format_var_decl(name, &value, type_hint.as_deref());
+    decls.push((decl, name.to_string()));
+}
+
+fn format_var_decl(name: &str, value: &str, type_hint: Option<&str>) -> String {
+    if let Some(ty) = type_hint {
+        format!("let {}: {} = {};", name, ty, value)
+    } else {
+        format!("let {} = {};", name, value)
+    }
+}
+
+/// Extract the call argument value and return (rust_value, type_hint)
+fn extract_call_arg_value_with_type(init: &serde_json::Value) -> Option<(String, Option<String>)> {
+    // Check for array initializer
+    if let Some(arr) = init.get("Array") {
+        let rust_val = try_array_to_rust(arr)?;
+        return Some((rust_val, Some("Vec<Value>".to_string())));
+    }
+    // Check for object initializer
+    if init.get("Object").is_some() {
+        let rust_val = serde_json::to_string(init).ok()?;
+        return Some((format!("serde_json::json!({})", rust_val), Some("serde_json::Value".to_string())));
+    }
+    // For other expressions, use the existing logic
+    extract_call_arg_value(init).map(|v| (v, None))
 }
 
 fn extract_call_arg_value(init: &serde_json::Value) -> Option<String> {
@@ -279,7 +323,12 @@ fn try_cond_to_rust(cond: &serde_json::Value) -> Option<String> {
 fn try_array_to_rust(arr: &serde_json::Value) -> Option<String> {
     let elems = arr.get("elems")?.as_array()?;
     let parts: Vec<String> = elems.iter().filter_map(expr_value_to_rust).collect();
-    Some(format!("[{}]", parts.join(", ")))
+    // Use vec! macro to avoid type inference issues with empty arrays
+    if parts.is_empty() {
+        Some("vec![]".to_string())
+    } else {
+        Some(format!("vec![{}]", parts.join(", ")))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -356,10 +405,20 @@ fn wrap_ink_main(vnode_expr: &str, decls: &[(String, String)]) -> String {
             .join("\n")
             + "\n"
     };
-    let use_section = if !state_vars.is_empty() || !decls.is_empty() {
-        "    use std::cell::Cell;\n".to_string()
-    } else {
+    // Build use section with necessary imports
+    let mut use_items = Vec::new();
+    if !state_vars.is_empty() || !decls.is_empty() {
+        use_items.push("use std::cell::Cell;");
+    }
+    // Check if any decl uses Vec<Value>
+    let has_vec_value = decls.iter().any(|(code, _)| code.contains("Vec<Value>"));
+    if has_vec_value {
+        use_items.push("use serde_json::Value;");
+    }
+    let use_section = if use_items.is_empty() {
         String::new()
+    } else {
+        use_items.iter().map(|u| format!("    {}\n", u)).collect::<String>()
     };
     format!(
         "//! Ink app entry: generated by runts-ratatui 0.1\n\

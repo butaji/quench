@@ -132,6 +132,12 @@ impl Plugin for RatatuiPlugin {
                 path: Some(find_runts_ink_path()),
                 features: vec![],
             },
+            CargoDep {
+                name: "serde_json".to_string(),
+                version: Some("1.0".to_string()),
+                path: None,
+                features: vec![],
+            },
         ]
     }
 
