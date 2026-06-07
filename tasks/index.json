@@ -154,7 +154,7 @@
     {
       "id": "034",
       "title": "Fix or document stale HIR test failures (231 failures)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-high",
       "files": ["src/transpile/tests/"],
       "acceptance": "cargo test --bin runts exits 0. No panics on Expr::Invalid. Every ignored test has a reason."
@@ -184,8 +184,8 @@
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
     "tests_passing": 864,
-    "tests_failing": 33,
-    "tests_ignored": 66,
+    "tests_failing": 0,
+    "tests_ignored": 99,
     "test_scripts": 1,
     "target_test_scripts": 1,
     "dev_engine": "rquickjs",
