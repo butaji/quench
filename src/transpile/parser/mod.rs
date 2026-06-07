@@ -7,7 +7,7 @@ pub mod jsx;
 pub mod stmt;
 pub(crate) mod stmt_decl;
 pub(crate) mod stmt_class;
-pub(crate) mod stmt_convert;
+// stmt_convert.rs removed - stmt_decl.rs now provides all needed functions
 // stmt_export.rs disabled - uses outdated oxc APIs, not currently needed
 // pub(crate) mod stmt_export;
 // types.rs disabled - uses outdated oxc types, not currently needed
