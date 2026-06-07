@@ -13,6 +13,10 @@ use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
 use oxc_transformer::{JsxRuntime, Transformer};
 
+use self::react_shim::{POST_SHIM, REACT_SHIM};
+
+pub mod react_shim;
+
 /// Transpile a TSX source string into a runnable JS bundle.
 ///
 /// The output:
@@ -118,31 +122,23 @@ fn process_export_line(line: &str) -> (String, Option<String>) {
 fn capture_default_function(line: &str) -> Option<String> {
     let rest = line.strip_prefix("export default function")?;
     let name = rest.trim().split(|c: char| c == '(' || c == ' ' || c == '<').next()?;
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(name.to_string())
 }
 
 fn capture_default_const(line: &str) -> Option<String> {
     let rest = line.strip_prefix("export default const")?;
     let name = rest.trim().split(|c: char| c == '=' || c == ' ' || c == ':').next()?;
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(name.to_string())
 }
 
 fn capture_default_expr(line: &str) -> Option<String> {
     let rest = line.strip_prefix("export default")?;
     let rest = rest.trim();
-    if !rest.ends_with(';') {
-        return None;
-    }
+    if !rest.ends_with(';') { return None; }
     let name = rest[..rest.len() - 1].trim();
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(name.to_string())
 }
 
@@ -168,18 +164,9 @@ fn rewrite_ink_imports(js: &str) -> String {
 }
 
 static INK_HOOKS: &[&str] = &[
-    "useInput",
-    "useApp",
-    "useStdin",
-    "useStdout",
-    "useStderr",
-    "useWindowSize",
-    "useFocus",
-    "useFocusManager",
-    "useCursor",
-    "useAnimation",
-    "usePaste",
-    "render",
+    "useInput", "useApp", "useStdin", "useStdout", "useStderr",
+    "useWindowSize", "useFocus", "useFocusManager", "useCursor",
+    "useAnimation", "usePaste", "render",
 ];
 
 fn ink_import_to_const(spec: &str) -> String {
@@ -207,179 +194,6 @@ fn strip_remaining_imports(js: &str) -> String {
     let re = regex::Regex::new(r"(?m)^\s*import\s+.*?;\s*$").expect("valid regex");
     re.replace_all(js, "").to_string()
 }
-
-const REACT_SHIM: &str = r#"var React = (function() {
-    var currentHooks = null;
-    var currentIdx = 0;
-
-    function useState(initial) {
-        var idx = currentIdx++;
-        if (currentHooks[idx] === undefined) {
-            currentHooks[idx] = typeof initial === 'function' ? initial() : initial;
-        }
-        var val = currentHooks[idx];
-        function setState(v) {
-            currentHooks[idx] = v;
-        }
-        return [val, setState];
-    }
-
-    function useEffect(fn, deps) {
-        var idx = currentIdx++;
-        var old = currentHooks[idx];
-        if (!old || !depsEqual(old.deps, deps)) {
-            currentHooks[idx] = { deps: deps };
-            __runts_effects.push(fn);
-            __runts_has_effects = true;
-        }
-    }
-
-    function useCallback(fn, deps) {
-        var idx = currentIdx++;
-        var old = currentHooks[idx];
-        if (!old || !depsEqual(old.deps, deps)) {
-            currentHooks[idx] = { deps: deps, cb: fn };
-        }
-        return currentHooks[idx].cb;
-    }
-
-    function useMemo(fn, deps) {
-        var idx = currentIdx++;
-        var old = currentHooks[idx];
-        if (!old || !depsEqual(old.deps, deps)) {
-            currentHooks[idx] = { deps: deps, value: fn() };
-        }
-        return currentHooks[idx].value;
-    }
-
-    function useRef(initial) {
-        var idx = currentIdx++;
-        if (currentHooks[idx] === undefined) {
-            currentHooks[idx] = { current: typeof initial === 'function' ? initial() : initial };
-        }
-        return currentHooks[idx];
-    }
-
-    function createContext(defaultValue) {
-        return { _defaultValue: defaultValue, Provider: function(p) { return p.children; } };
-    }
-
-    function useContext(ctx) {
-        return ctx._defaultValue;
-    }
-
-    function depsEqual(a, b) {
-        if (!a || !b || a.length !== b.length) return false;
-        for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-        return true;
-    }
-
-    function withHooks(fn) {
-        if (fn.__withHooks) return fn.__withHooks;
-        var hooks = [];
-        var wrapped = function(props) {
-            currentHooks = hooks;
-            currentIdx = 0;
-            return fn(props);
-        };
-        fn.__withHooks = wrapped;
-        wrapped.__withHooks = wrapped;
-        return wrapped;
-    }
-
-    function flatten(arr) {
-        var out = [];
-        for (var i = 0; i < arr.length; i++) {
-            if (Array.isArray(arr[i])) {
-                out.push.apply(out, flatten(arr[i]));
-            } else if (arr[i] != null) {
-                out.push(arr[i]);
-            }
-        }
-        return out;
-    }
-
-    function createElement(type, props, ...children) {
-        props = props || {};
-        children = flatten(children);
-        // Always store children as an array for consistent handling in box_add_children
-        props.children = children;
-        // For empty children, use empty array
-        if (children.length === 0) {
-            props.children = [];
-        }
-        if (typeof type === 'function') {
-            if (!type.__withHooks) type.__withHooks = withHooks(type);
-            return type.__withHooks(props);
-        }
-        if (type === 'Box') return runts_ink.box(props);
-        if (type === 'Text') {
-            var parts = [];
-            for (var i = 0; i < children.length; i++) {
-                var c = children[i];
-                if (typeof c === 'string' || typeof c === 'number') parts.push(String(c));
-            }
-            delete props.children;
-            return runts_ink.text(parts.join(''), props);
-        }
-        if (type === 'Newline') return runts_ink.newline();
-        if (type === 'Spacer') return runts_ink.spacer();
-        if (type === 'Fragment') return { Fragment: { __children: children } };
-        return runts_ink.box(props);
-    }
-
-    return {
-        createElement: createElement,
-        useState: useState,
-        useEffect: useEffect,
-        useCallback: useCallback,
-        useMemo: useMemo,
-        useRef: useRef,
-        createContext: createContext,
-        useContext: useContext,
-        Fragment: 'Fragment',
-        _withHooks: withHooks
-    };
-})();
-
-var useState = React.useState;
-var useEffect = React.useEffect;
-var useCallback = React.useCallback;
-var useMemo = React.useMemo;
-var useRef = React.useRef;
-var createContext = React.createContext;
-var useContext = React.useContext;
-var __runts_ink_render = function(app) { return app; };"#;
-
-const POST_SHIM: &str = r#"
-var process = process || { exit: function(code) { __runts_exit = true; __runts_exit_code = code || 0; } };
-var __runts_effects = [];
-var __runts_has_effects = false;
-function __runts_render_with_effects(props) {
-    // Support both export default and render(<App />) patterns
-    var vnode;
-    if (typeof __runts_default === 'function') {
-        vnode = __runts_default(props || {});
-    } else if (typeof __runts_app !== 'undefined') {
-        vnode = __runts_app;
-    } else {
-        throw new Error('No app found: use export default or render(<App />)');
-    }
-    var guard = 0;
-    while (__runts_has_effects && guard < 10) {
-        __runts_has_effects = false;
-        var effects = __runts_effects;
-        __runts_effects = [];
-        for (var i = 0; i < effects.length; i++) {
-            if (typeof effects[i] === 'function') effects[i]();
-        }
-        if (typeof __runts_default === 'function') {
-            vnode = __runts_default(props || {});
-        }
-        guard++;
-    }
-    return vnode;
-}"#;
 
 #[cfg(test)]
 mod tests {
@@ -442,10 +256,7 @@ export default function App(props: Props) {
             assert!(result.is_ok(), "Eval failed: {:?}", result.err());
 
             let default_export: rquickjs::Value = ctx.globals().get("__runts_default").unwrap();
-            assert!(
-                default_export.is_function(),
-                "__runts_default should be a function"
-            );
+            assert!(default_export.is_function(), "__runts_default should be a function");
         });
     }
 }
