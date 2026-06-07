@@ -103,6 +103,10 @@ pub enum Expr {
     MetaProperty {
         kind: MetaPropKind,
     },
+    /// Dynamic import: import("module")
+    ImportExpression {
+        source: Box<Expr>,
+    },
     TaggedTemplate {
         tag: Box<Expr>,
         template: Box<Expr>,
