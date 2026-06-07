@@ -194,6 +194,10 @@ edition = "2021"
 
 [workspace]
 
+[profile.release]
+lto = false
+codegen-units = 16
+
 [dependencies]
 {}
 runts-lib = {{ path = "{}" }}
@@ -204,8 +208,7 @@ path = "src/main.rs"
 "#,
         deps_str,
         runts_lib_path.display()
-    ))
-}
+    ))}
 
 /// Format cargo dependencies into a string
 fn format_dependencies(deps: &[runts_plugin::CargoDep]) -> String {

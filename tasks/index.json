@@ -153,7 +153,7 @@
     },
     {
       "id": "034",
-      "title": "Fix or document stale HIR test failures (231 failures)",
+      "title": "Fix or document stale HIR test failures",
       "status": "completed",
       "priority": "P1-high",
       "files": ["src/transpile/tests/"],

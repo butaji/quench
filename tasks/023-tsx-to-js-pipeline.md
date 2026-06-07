@@ -2,6 +2,7 @@
 
 **Priority:** P0-Critical  
 **Phase:** 1 — rquickjs Dev Engine  
+**Status:** ✅ COMPLETED
 **ETA:** 4–6 hours  
 **Depends on:** 022
 
@@ -93,8 +94,8 @@ assert!(output.contains("HIGHLIGHTED"));
 
 ## Acceptance Criteria
 
-- [ ] `transpile_to_js` accepts TSX and emits runnable JS.
-- [ ] `import { Box, Text } from 'ink'` resolves to bridge globals.
-- [ ] JSX is desugared to `createElement` calls.
-- [ ] Type annotations are erased.
-- [ ] `examples/ink-text-props/tui/app.tsx` transpiles and evaluates without error.
+- [x] `transpile_to_js` accepts TSX and emits runnable JS.
+- [x] `import { Box, Text } from 'ink'` resolves to bridge globals.
+- [x] JSX is desugared to `createElement` calls.
+- [x] Type annotations are erased.
+- [x] `examples/ink-text-props/tui/app.tsx` transpiles and evaluates without error.

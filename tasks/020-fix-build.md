@@ -2,6 +2,7 @@
 
 **Priority:** P0-Critical  
 **Phase:** 0 — Unblock  
+**Status:** ✅ COMPLETED
 **ETA:** 15 minutes  
 **Blocking:** Every other task
 
@@ -27,6 +28,6 @@ error: unexpected closing delimiter: `}`
 
 ## Acceptance Criteria
 
-- [ ] `cargo build` exits 0.
-- [ ] `cargo test --no-run` exits 0 (tests compile).
-- [ ] No changes to logic — purely syntax fix.
+- [x] `cargo build` exits 0.
+- [x] `cargo test --no-run` exits 0 (tests compile).
+- [x] No changes to logic — purely syntax fix.

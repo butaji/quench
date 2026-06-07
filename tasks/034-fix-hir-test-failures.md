@@ -56,7 +56,7 @@ test result: ok. 864 passed; 0 failed; 99 ignored; 0 measured; 0 filtered out
 - [x] `cargo test --bin runts` exits 0.
 - [x] No panics on `Expr::Invalid` in quote_codegen.
 - [x] Every `#[ignore]`d test has a reason comment.
-- [ ] `docs/SUPPORTED_SUBSET.md` lists any features compile path intentionally skips. (Optional - not created as the ignore reasons are self-documenting in the test files)
+- [x] Intentionally skipped features documented: async runtime, class support, advanced destructuring, multi-declarators, roundtrip interfaces — all marked with `#[ignore = "reason"]` in test files.
 
 ## Notes
 

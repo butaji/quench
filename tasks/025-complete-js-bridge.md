@@ -2,6 +2,7 @@
 
 **Priority:** P1-High  
 **Phase:** 1 — rquickjs Dev Engine  
+**Status:** ✅ COMPLETED
 **ETA:** 6–8 hours  
 **Depends on:** 024
 
@@ -82,5 +83,5 @@ One test per prop.
 ## Acceptance Criteria
 
 - [x] Every prop used in any of the 91 examples is supported.
-- [ ] `grep -r 'unsupported prop' tests/` returns nothing.
-- [ ] Unit test coverage for every prop setter.
+- [x] `grep -r 'unsupported prop' tests/` returns nothing.
+- [x] Unit test coverage for every prop setter.

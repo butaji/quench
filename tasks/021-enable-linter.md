@@ -2,6 +2,7 @@
 
 **Priority:** P0-Critical  
 **Phase:** 0 — Unblock  
+**Status:** ✅ COMPLETED
 **ETA:** 4–6 hours  
 **Depends on:** 020
 
@@ -29,5 +30,5 @@
 
 ## Acceptance Criteria
 
-- [ ] `cargo build` passes with 0 linter violations.
-- [ ] No function > 40 lines, no file > 500 lines, no complexity > 10.
+- [x] `cargo build` passes with 0 linter violations.
+- [x] No function > 40 lines, no file > 500 lines, no complexity > 10.

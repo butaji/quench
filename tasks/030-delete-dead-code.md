@@ -2,6 +2,7 @@
 
 **Priority:** P2-Medium  
 **Phase:** 3 — Cleanup  
+**Status:** ✅ COMPLETED
 **ETA:** 1–2 hours  
 **Depends on:** 022, 028
 
@@ -18,7 +19,7 @@ Dead code accumulates: disabled `crates/runts-react/`, unused imports producing 
 
 ## Acceptance Criteria
 
-- [ ] `cargo build` passes with zero dead-code warnings.
-- [ ] `crates/runts-react/` directory does not exist.
-- [ ] `runts-react` is not listed in workspace members (`Cargo.toml`).
-- [ ] `scripts/` contains only `parity.sh` and `lib/`.
+- [x] `cargo build` passes with zero dead-code warnings.
+- [x] `crates/runts-react/` directory does not exist.
+- [x] `runts-react` is not listed in workspace members (`Cargo.toml`).
+- [x] `scripts/` contains only `parity.sh` and `lib/`.

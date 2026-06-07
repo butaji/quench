@@ -2,6 +2,7 @@
 
 **Priority:** P1-High  
 **Phase:** 1 — rquickjs Dev Engine  
+**Status:** ✅ COMPLETED
 **ETA:** 6–8 hours  
 **Depends on:** 025
 
@@ -81,7 +82,7 @@ Follow the same pattern for each hook. See `docs/INK-ARCHITECTURE.md` for detail
 
 ## Acceptance Criteria
 
-- [ ] `ink-counter` responds to up/down arrows and q in `runts dev`.
-- [ ] `ink-input` accepts keyboard input.
-- [ ] `ink-focus` cycles focus with Tab.
-- [ ] All 14 interactive examples work.
+- [x] `ink-counter` responds to up/down arrows and q in `runts dev`.
+- [x] `ink-input` accepts keyboard input.
+- [x] `ink-focus` cycles focus with Tab.
+- [x] All 14 interactive examples work.

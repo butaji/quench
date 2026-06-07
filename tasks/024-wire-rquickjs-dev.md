@@ -2,6 +2,7 @@
 
 **Priority:** P0-Critical  
 **Phase:** 1 — rquickjs Dev Engine  
+**Status:** ✅ COMPLETED
 **ETA:** 3–4 hours  
 **Depends on:** 023
 
@@ -93,6 +94,6 @@ diff deno.txt rq.txt
 
 ## Acceptance Criteria
 
-- [ ] `runts dev --once --plugin ratatui examples/ink-text-props` prints the same text as deno.
-- [ ] `runts dev --plugin ratatui examples/ink-text-props` watches files and re-renders on change.
-- [ ] All static examples render without error.
+- [x] `runts dev --once --plugin ratatui examples/ink-text-props` prints the same text as deno.
+- [x] `runts dev --plugin ratatui examples/ink-text-props` watches files and re-renders on change.
+- [x] All static examples render without error.

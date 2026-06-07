@@ -2,79 +2,39 @@
 
 **Priority:** P1-High  
 **Phase:** 3 — Coverage Gaps  
+**Status:** ✅ COMPLETED
 **Depends on:** 025, 035
 
 ## Problem
 
-`js_bridge.rs` appears comprehensive but has **never been systematically verified** against every prop used across all 91 examples. A prop could be silently ignored, mapped to the wrong Yoga style, or crash on an unexpected value type.
+`js_bridge.rs` appeared comprehensive but had **never been systematically verified** against every prop used across all 91 examples.
 
-## Extract All Props from Examples
+## Verification Method
+
+Generated a prop coverage matrix by extracting all props from `examples/*/tui/app.tsx` and confirming each is handled in `crates/runts-ink/src/js_bridge/box_props.rs`:
 
 ```bash
 grep -rhoE '\b[a-z][a-zA-Z]+=' examples/*/tui/app.tsx | sed 's/=$//' | sort | uniq -c | sort -rn
 ```
 
-Top props by usage:
-1. `color` (166)
-2. `flexDirection` (126)
-3. `padding` (121)
-4. `borderStyle` (58)
-5. `width` (34)
-6. `marginTop` (28)
-7. `backgroundColor` (19)
-8. `justifyContent` (18)
-9. `paddingX` / `paddingY` (30 combined)
-10. `gap` (8)
-11. `position`, `overflowX`, `overflowY`, `flexWrap`, `flexGrow`, `display` (1-2 each)
+## Results
 
-## Verification Checklist
+**100% coverage:** Every prop used in any example is handled in the bridge.
 
-For each prop, verify in `crates/runts-ink/src/js_bridge/box_props.rs`:
+| Category | Status |
+|----------|--------|
+| Box props (`color`, `flexDirection`, `padding`, `borderStyle`, `width`, `marginTop`, `backgroundColor`, `justifyContent`, `paddingX`, `paddingY`, `gap`, `position`, `overflowX`, `overflowY`, `flexWrap`, `flexGrow`, `display`, `minWidth`, `minHeight`, `maxWidth`, `maxHeight`, `zIndex`, `flexBasis`, `flexShrink`, `alignSelf`, `alignContent`, `columnGap`, `rowGap`) | ✅ All handled |
+| Text props (`bold`, `italic`, `underline`, `strikethrough`, `inverse`, `dimColor`, `color`, `backgroundColor`, `wrap`) | ✅ All handled |
+| Hooks (`useInput`, `useApp`, `useStdin`, `useStdout`, `useStderr`, `useWindowSize`, `useFocus`, `useFocusManager`, `useCursor`, `useAnimation`, `usePaste`, `useRef`) | ✅ All wired |
 
-- [ ] Prop name is handled in `apply_box_props`.
-- [ ] Setter accepts the value types used in examples (string, number, boolean).
-- [ ] Setter maps to the correct `InkBox` field.
-- [ ] Serialize function in `serialize_box_props` round-trips correctly.
-- [ ] Unit test exists in `crates/runts-ink/tests/js_bridge_props.rs` or inline.
+## New Hooks Added During Verification
 
-For text props in `text_props.rs`:
-
-- [ ] `bold`, `italic`, `underline`, `strikethrough`, `inverse`, `dimColor`
-- [ ] `color`, `backgroundColor`
-- [ ] `wrap` (if used)
-
-For hooks in `hooks.rs`:
-
-- [ ] `useInput` — registered, callback receives `(input, key)` shape.
-- [ ] `useApp` — returns `{ exit }`.
-- [ ] `useStdin` — returns `{ isRawModeSupported, setRawMode }`.
-- [ ] `useStdout` / `useStderr` — returns `{ write }`.
-- [ ] `useWindowSize` — returns `{ width, height }` from env or crossterm.
-- [ ] `useFocus` — returns `{ isFocused, focus }`.
-- [ ] `useFocusManager` — returns `{ focusNext, focusPrevious }`.
-- [ ] `useCursor` — returns `{ setCursorPosition }`.
-- [ ] `useAnimation` — returns `{ start, stop, isRunning }`.
-
-## Steps
-
-1. Generate a prop coverage matrix script:
-   ```bash
-   #!/bin/bash
-   for prop in color flexDirection padding borderStyle width marginTop backgroundColor justifyContent paddingX paddingY gap position overflowX overflowY flexWrap flexGrow display; do
-     in_bridge=$(grep -c "\"$prop\"" crates/runts-ink/src/js_bridge/box_props.rs || true)
-     in_examples=$(grep -rhc "$prop=" examples/*/tui/app.tsx | awk '{s+=$1} END{print s}')
-     echo "$prop: bridge=$in_bridge examples=$in_examples"
-   done
-   ```
-
-2. For any prop with `bridge=0` and `examples>0`: **CRITICAL BUG** — implement immediately.
-
-3. For any prop with `bridge>0` but no unit test: add a test.
-
-4. Run all 91 examples through `runts dev --once` and capture any bridge errors.
+- `useRef` — mutable refs outside React state
+- `usePaste` — bracketed paste event handling
 
 ## Acceptance Criteria
 
-- [ ] Prop coverage matrix shows 100% of example-used props are in bridge.
-- [ ] Every bridge setter has a corresponding unit test.
-- [ ] Running all examples through `runts dev --once` produces zero bridge-related errors.
+- [x] Prop coverage matrix shows 100% of example-used props are in bridge.
+- [x] Every bridge setter has a corresponding unit test.
+- [x] Running all 91 examples through `runts dev --once` produces zero bridge-related errors.
+- [x] `useRef` and `usePaste` hooks added to React shim and bridge.

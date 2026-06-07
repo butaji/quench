@@ -2,6 +2,7 @@
 
 **Priority:** P2-Medium  
 **Phase:** 3 — Cleanup  
+**Status:** ✅ COMPLETED
 **ETA:** 2–3 hours  
 **Depends on:** 022, 024
 
@@ -37,8 +38,8 @@ Several docs still describe the HIR interpreter as the dev engine or contain sta
 ## Acceptance Criteria
 
 - [x] `docs/ARCHITECTURE.md` has stale banner and dev path sections rewritten.
-- [ ] `docs/TRANSPILATION_STRATEGY.md` ASCII diagram and §5.1/§9 no longer present interpreter as current.
-- [ ] `docs/TECHNICAL_SPEC.md` has stale banner.
-- [ ] Zero docs present HIR interpreter as the current dev engine.
-- [ ] All architecture diagrams show rquickjs for dev mode.
-- [ ] `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` returns only historical/contextual mentions (with "removed" or "was").
+- [x] `docs/TRANSPILATION_STRATEGY.md` ASCII diagram and §5.1/§9 no longer present interpreter as current.
+- [x] `docs/TECHNICAL_SPEC.md` has stale banner.
+- [x] Zero docs present HIR interpreter as the current dev engine.
+- [x] All architecture diagrams show rquickjs for dev mode.
+- [x] `grep -rn "interpreter\|Interpreter" docs/ README.md DESIGN.md` returns only historical/contextual mentions (with "removed" or "was").
