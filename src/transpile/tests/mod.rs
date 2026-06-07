@@ -46,7 +46,7 @@ pub mod spec_classes; // Ignored: class support not fully implemented
 pub mod spec_stdlib; // Ignored: stdlib tests have known issues
 
 #[cfg(test)]
-pub mod spec_expressions; // Ignored: expression tests have known issues
+pub mod spec_expressions;
 
 #[cfg(test)]
-pub mod spec_types; // Ignored: type tests have known issues
+pub mod spec_types;
