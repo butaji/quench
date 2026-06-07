@@ -92,38 +92,62 @@ impl Bundler {
         for line in js.lines() {
             let trimmed = line.trim();
 
-            if let Some(ink_decls) = handle_import_line(trimmed) {
-                // Ink imports - declarations already formatted by extract_ink_import_declarations
-                for decl in ink_decls {
-                    output_lines.push(decl);
-                }
+            if let Some(processed) = self.process_import_line(trimmed, from_dir) {
+                output_lines.extend(processed);
                 continue;
             }
 
-            if let Some(name) = postprocess::capture_default_function(trimmed) {
-                exports.insert("default".to_string(), name);
-                output_lines.push(line.replacen("export default function", "function __mD", 1));
-                continue;
-            }
-            if let Some(name) = postprocess::capture_default_const(trimmed) {
-                exports.insert("default".to_string(), name);
-                output_lines.push(line.replacen("export default const", "const __mD", 1));
+            if let Some((kind, name, transformed)) = self.process_export_line(trimmed) {
+                exports.insert(kind, name);
+                output_lines.push(transformed);
                 continue;
             }
 
-            if let Some(name) = extract_named_export(trimmed) {
-                exports.insert(name.0, name.1);
-            }
-
-            if let Some((_, resolved, names)) = self.resolve_local_import(trimmed, from_dir)? {
-                let resolved_id = self.get_module_id(&resolved);
-                output_lines.push(rewrite_import_to_global(resolved_id, &names));
-            } else {
-                output_lines.push(line.to_string());
-            }
+            output_lines.push(line.to_string());
         }
 
         Ok((output_lines.join("\n"), exports))
+    }
+
+    fn process_import_line(&self, line: &str, from_dir: &Path) -> Option<Vec<String>> {
+        let trimmed = line.trim();
+        let decls = match handle_import_line(trimmed) {
+            Some(d) => d,
+            None => {
+                if is_local_import(trimmed) {
+                    return self.resolve_local_import_to_global(trimmed, from_dir);
+                }
+                return None;
+            }
+        };
+        if decls.is_empty() && is_local_import(trimmed) {
+            return self.resolve_local_import_to_global(trimmed, from_dir);
+        }
+        Some(decls)
+    }
+
+    fn resolve_local_import_to_global(&self, line: &str, from_dir: &Path) -> Option<Vec<String>> {
+        if let Ok(Some((_, resolved, names))) = self.resolve_local_import(line, from_dir) {
+            let id = self.get_module_id(&resolved);
+            return Some(vec![rewrite_import_to_global(id, &names)]);
+        }
+        None
+    }
+
+    fn process_export_line(&self, line: &str) -> Option<(String, String, String)> {
+        let trimmed = line.trim();
+        if let Some(name) = postprocess::capture_default_function(trimmed) {
+            let transformed = line.replacen("export default function", "function __mD", 1);
+            return Some(("default".to_string(), name, transformed));
+        }
+        if let Some(name) = postprocess::capture_default_const(trimmed) {
+            let transformed = line.replacen("export default const", "const __mD", 1);
+            return Some(("default".to_string(), name, transformed));
+        }
+        if let Some(name) = extract_named_export(trimmed) {
+            return Some((name.0, name.1, line.to_string()));
+        }
+        None
     }
 
     fn resolve_local_import(&self, line: &str, from_dir: &Path) -> Result<Option<(String, PathBuf, Vec<String>)>> {
@@ -137,7 +161,7 @@ impl Bundler {
             let import_spec = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             let from_path = caps.get(2).map(|m| m.as_str()).unwrap_or("");
 
-            if from_path.starts_with('.') || from_path.starts_with("../") {
+            if from_path.starts_with('.') {
                 if let Some(resolved) = self.resolve_import(from_path, from_dir) {
                     return Ok(Some((trimmed.to_string(), resolved, parse_import_names(import_spec))));
                 }
@@ -149,7 +173,6 @@ impl Bundler {
 
     fn resolve_import(&self, import_path: &str, from_dir: &Path) -> Option<PathBuf> {
         let base = from_dir.join(import_path);
-
         if base.exists() { return Some(base); }
 
         for ext in &["tsx", "ts", "jsx", "js"] {
@@ -221,28 +244,69 @@ fn parse_import_names(spec: &str) -> Vec<String> {
 
 fn rewrite_import_to_global(module_id: usize, names: &[String]) -> String {
     names.iter()
-        .map(|name| format!("var {} = __m{}.{};", name, module_id, name))
+        .map(|name| format!("var {} = __m{}_{};", name, module_id, name))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
+fn is_local_import(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("import ") {
+        return false;
+    }
+    // Check for double-quoted local imports
+    if let Some(from_pos) = trimmed.find("from \"") {
+        let path_start = from_pos + 6;
+        let rest = &trimmed[path_start..];
+        if let Some(end) = rest.find('\"') {
+            let path = &rest[..end];
+            return is_relative_path(path);
+        }
+    }
+    // Check for single-quoted local imports
+    if let Some(from_pos) = trimmed.find("from '") {
+        let path_start = from_pos + 6;
+        let rest = &trimmed[path_start..];
+        if let Some(end) = rest.find('\'') {
+            let path = &rest[..end];
+            return is_relative_path(path);
+        }
+    }
+    false
+}
+
+fn is_relative_path(path: &str) -> bool {
+    let starts_dot_slash = path.starts_with("./");
+    let starts_dot_dot = path.starts_with("../");
+    starts_dot_slash || starts_dot_dot
+}
+
 fn handle_import_line(line: &str) -> Option<Vec<String>> {
     let trimmed = line.trim();
-    // Skip React import (handled by shim)
-    if trimmed.starts_with("import React from") || trimmed.starts_with("import React, ") {
+    if !trimmed.starts_with("import ") {
+        return None;
+    }
+    // React import is handled by shim
+    if is_react_import(trimmed) {
         return Some(Vec::new());
     }
-    // Rewrite ink imports to string constants
-    let has_ink_import = trimmed.starts_with("import { ")
-        && (trimmed.contains("from 'ink'") || trimmed.contains("from \"ink\""));
-    if has_ink_import {
+    // Ink imports become string constants
+    if is_ink_import(trimmed) {
         return Some(extract_ink_import_declarations(trimmed));
     }
-    // Skip all other import statements
-    if trimmed.starts_with("import ") {
-        return Some(Vec::new());
+    // Other imports (npm packages, etc.) are skipped
+    Some(Vec::new())
+}
+
+fn is_react_import(line: &str) -> bool {
+    line.starts_with("import React from") || line.starts_with("import React, ")
+}
+
+fn is_ink_import(line: &str) -> bool {
+    if !line.starts_with("import { ") {
+        return false;
     }
-    None
+    line.contains("from 'ink'") || line.contains("from \"ink\"")
 }
 
 // Ink hooks that should reference runts_ink_hooks, not be string constants
@@ -285,41 +349,24 @@ fn extract_ink_import_declarations(line: &str) -> Vec<String> {
 
 fn extract_named_export(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
-    if let Some(name) = extract_const_export(trimmed) {
+    if let Some(name) = extract_const_name(trimmed) {
         return Some((name.clone(), name));
     }
-    if let Some(name) = extract_function_export(trimmed) {
-        return Some((name.clone(), name));
-    }
-    None
+    extract_function_name(trimmed).map(|n| (n.clone(), n))
 }
 
-fn extract_const_export(line: &str) -> Option<String> {
-    if !line.starts_with("export const ") {
-        return None;
-    }
-    let after = line
-        .strip_prefix("export const ")?
-        .split(|c: char| c == '=' || c == ':' || c == ' ')
-        .next()?;
-    if after.is_empty() {
-        return None;
-    }
-    Some(after.to_string())
+fn extract_const_name(line: &str) -> Option<String> {
+    if !line.starts_with("export const ") { return None; }
+    let after = line.strip_prefix("export const ")?
+        .split(|c: char| c == '=' || c == ':' || c == ' ').next()?;
+    if after.is_empty() { None } else { Some(after.into()) }
 }
 
-fn extract_function_export(line: &str) -> Option<String> {
-    if !line.starts_with("export function ") {
-        return None;
-    }
-    let after = line
-        .strip_prefix("export function ")?
-        .split(|c: char| c == '(' || c == ' ' || c == '<')
-        .next()?;
-    if after.is_empty() {
-        return None;
-    }
-    Some(after.to_string())
+fn extract_function_name(line: &str) -> Option<String> {
+    if !line.starts_with("export function ") { return None; }
+    let after = line.strip_prefix("export function ")?
+        .split(|c: char| c == '(' || c == ' ' || c == '<').next()?;
+    if after.is_empty() { None } else { Some(after.into()) }
 }
 
 fn prefix_declarations(js: &str, prefix: &str) -> String {
@@ -376,6 +423,10 @@ fn prefix_var_decl(trimmed: &str, kw: &str, prefix: &str) -> Option<String> {
     }
     // Skip React hook calls (const counterRef = useRef(0)) - these are local vars
     if after_kw.contains("= use") || after_kw.contains("=React.") {
+        return None;
+    }
+    // Skip cross-module references (var Xxx = __mN_Yyy) - these are imports
+    if after_kw.contains("= __m") {
         return None;
     }
     let rest = &after_kw[name_end..];
