@@ -2253,10 +2253,12 @@
     {
       "id": "174",
       "title": "`ink-date-comprehensive` Example \u2014 `getTime`, `getFullYear`, `getMonth`, `getDate`, `toISOString`, `toUTCString`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-date-comprehensive/"
+      ],
+      "acceptance": "Example exists. Date methods (getFullYear, getMonth, getDate, getHours, getMinutes, getSeconds, getMilliseconds, getDay, getUTC*, getTime, toISOString, toDateString) produce 100% parity across deno/rq."
     },
     {
       "id": "175",
