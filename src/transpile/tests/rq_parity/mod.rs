@@ -645,3 +645,9 @@ ink_example_test!(
         "Merged keys: a, b"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// queueMicrotask (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_smoke_test!(test_ink_queue_microtask, "ink-queue-microtask");
