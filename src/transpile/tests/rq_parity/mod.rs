@@ -489,6 +489,20 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// TypeScript global/module augmentation (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_global_augmentation,
+    "ink-global-augmentation",
+    [
+        "TypeScript Augmentation",
+        "Build: development",
+        "Global/Module declarations erased"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // TypeScript unknown, never, type guards (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 

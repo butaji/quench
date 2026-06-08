@@ -1390,11 +1390,11 @@
     {
       "id": "120",
       "title": "ink-global-augmentation example \u2014 global augmentation, module augmentation",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-Low",
       "files": [
         "examples/ink-global-augmentation/",
-        "src/transpile/parser/stmt.rs"
+        "src/transpile/tests/rq_parity/mod.rs"
       ],
       "acceptance": "Example exists. Augmentations erased without runtime impact. Parity harness 100%."
     },
@@ -1963,7 +1963,7 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 56,
+    "pending_tasks": 55,
     "completed_tasks": 103
   },
   "coverage_gaps": {
