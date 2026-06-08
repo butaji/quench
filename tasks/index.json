@@ -962,13 +962,12 @@
     {
       "id": "089",
       "title": "ink-symbol-collections example — Symbol, Map, Set, WeakMap",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
-        "examples/ink-symbol-collections/",
-        "src/transpile/hir/quote_codegen_exprs.inc"
+        "examples/ink-symbol-collections/"
       ],
-      "acceptance": "Example exists. Symbol and collection types compile. Parity harness 100%."
+      "acceptance": "Example exists with Symbol, Map, Set. Parity 100% in rq."
     },
     {
       "id": "090",
@@ -1315,7 +1314,7 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 124,
+    "examples_total": 125,
     "examples_with_tests": 120,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -1332,8 +1331,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 40,
-    "completed_tasks": 61
+    "pending_tasks": 39,
+    "completed_tasks": 62
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
