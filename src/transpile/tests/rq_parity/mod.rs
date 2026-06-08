@@ -281,6 +281,18 @@ ink_example_smoke_test!(test_ink_multi_select, "ink-multi-select");
 ink_example_smoke_test!(test_ink_import, "ink-import");
 ink_example_smoke_test!(test_ink_multiple_colors, "ink-multiple-colors");
 
+ink_example_test!(
+    test_ink_inline_type_import,
+    "ink-inline-type-import",
+    [
+        "Inline Type Import Demo",
+        "User: Alice (30)",
+        "Status: active",
+        "Alt: Bob (25)",
+        "(type imports erased)"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // Utility examples (smoke tests)
 // ═══════════════════════════════════════════════════════════════════

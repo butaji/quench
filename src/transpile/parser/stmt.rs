@@ -386,32 +386,49 @@ fn func_to_decl(f: &Function) -> Option<hir::FunctionDecl> {
     })
 }
 
+fn import_spec_to_hir(s: &ImportDeclarationSpecifier) -> hir::ImportSpecifier {
+    match s {
+        ImportDeclarationSpecifier::ImportSpecifier(s) => {
+            let imported_name = match &s.imported {
+                ModuleExportName::IdentifierName(i) => i.name.to_string(),
+                ModuleExportName::IdentifierReference(i) => i.name.to_string(),
+                ModuleExportName::StringLiteral(s) => s.value.to_string(),
+            };
+            let local_name = s.local.name.to_string();
+            let alias = if imported_name == local_name { None } else { Some(local_name) };
+            hir::ImportSpecifier::Named { name: imported_name, alias }
+        }
+        ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
+            hir::ImportSpecifier::Default { name: s.local.name.to_string() }
+        }
+        ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => {
+            hir::ImportSpecifier::Namespace { name: s.local.name.to_string() }
+        }
+    }
+}
+
+fn is_all_type_only(specs: &[ImportDeclarationSpecifier]) -> bool {
+    use oxc_ast::ast::ImportOrExportKind;
+    !specs.is_empty()
+        && specs.iter().all(|s| {
+            matches!(
+                s,
+                ImportDeclarationSpecifier::ImportSpecifier(s)
+                    if s.import_kind == ImportOrExportKind::Type
+            )
+        })
+}
+
 fn import_to_hir(i: &ImportDeclaration) -> hir::Import {
+    use oxc_ast::ast::ImportOrExportKind;
     let specs = i.specifiers.as_ref().map_or(vec![], |v| {
-        v.iter()
-            .map(|s| match s {
-                ImportDeclarationSpecifier::ImportSpecifier(s) => {
-                    let imported_name = match &s.imported {
-                        ModuleExportName::IdentifierName(i) => i.name.to_string(),
-                        ModuleExportName::IdentifierReference(i) => i.name.to_string(),
-                        ModuleExportName::StringLiteral(s) => s.value.to_string(),
-                    };
-                    let local_name = s.local.name.to_string();
-                    let alias = if imported_name == local_name { None } else { Some(local_name) };
-                    hir::ImportSpecifier::Named { name: imported_name, alias }
-                }
-                ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
-                    hir::ImportSpecifier::Default { name: s.local.name.to_string() }
-                }
-                ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => {
-                    hir::ImportSpecifier::Namespace { name: s.local.name.to_string() }
-                }
-            })
-            .collect()
+        v.iter().map(import_spec_to_hir).collect()
     });
+    let type_only = i.import_kind == ImportOrExportKind::Type
+        || i.specifiers.as_ref().map_or(false, |s| is_all_type_only(s));
     hir::Import {
         source: i.source.value.to_string(),
         specifiers: specs,
-        type_only: false,
+        type_only,
     }
 }
