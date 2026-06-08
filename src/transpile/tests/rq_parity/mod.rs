@@ -349,6 +349,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_reflect_api,
+    "ink-reflect-api",
+    [
+        "Reflect API Demo",
+        "Reflect.get(obj, 'name'): App",
+        "Reflect.has(obj, 'name'): true",
+        "Reflect.has(obj, 'id'): false",
+        "Reflect.ownKeys(obj): name, version, author",
+        "Reflect.deleteProperty(testObj, 'y'): true"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript utility types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
