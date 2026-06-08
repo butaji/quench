@@ -336,6 +336,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_new_target,
+    "ink-new-target",
+    [
+        "new.target Demo",
+        "Circle \"Circle\" with radius 1",
+        "Circle area: 78.54",
+        "Square area: 16",
+        "instanceof Shape: true",
+        "instanceof Circle: true"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript utility types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════

@@ -1044,7 +1044,7 @@
     {
       "id": "095",
       "title": "ink-new-target example \u2014 new.target",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-Low",
       "files": [
         "examples/ink-new-target/",
@@ -1452,11 +1452,11 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 127,
-    "examples_with_tests": 121,
+    "examples_total": 128,
+    "examples_with_tests": 122,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 983,
+    "tests_passing": 984,
     "tests_failing": 0,
     "tests_ignored": 183,
     "test_scripts": 1,
@@ -1469,8 +1469,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 38,
-    "completed_tasks": 74
+    "pending_tasks": 37,
+    "completed_tasks": 75
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1492,7 +1492,6 @@
       "Suspense / lazy",
       "override / implements",
       "abstract classes",
-      "new.target",
       "Reflect API",
       "template literal types",
       "infer in conditional types",
