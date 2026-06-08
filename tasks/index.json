@@ -2200,9 +2200,12 @@
     {
       "id": "169",
       "title": "`ink-import-meta-url` Example \u2014 `import.meta.url`, `import.meta.resolve`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-import-meta-url/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {

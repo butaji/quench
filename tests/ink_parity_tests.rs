@@ -629,6 +629,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-object-entries-values",
         "ink-array-static",
         "ink-parse-global",
+        "ink-import-meta-url",
     ];
     
     for example in new_examples {
@@ -1480,6 +1481,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-object-entries-values",
         "ink-array-static",
         "ink-parse-global",
+        "ink-import-meta-url",
     ];
     
     for example in new_examples {
@@ -1505,6 +1507,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-object-entries-values",
         "ink-array-static",
         "ink-parse-global",
+        "ink-import-meta-url",
     ];
     
     for example in new_examples {
@@ -1530,6 +1533,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-object-entries-values",
         "ink-array-static",
         "ink-parse-global",
+        "ink-import-meta-url",
     ];
     
     for example in new_examples {
@@ -1563,6 +1567,7 @@ fn test_new_examples_export_or_render() {
         "ink-object-entries-values",
         "ink-array-static",
         "ink-parse-global",
+        "ink-import-meta-url",
     ];
     
     for example in new_examples {
