@@ -320,6 +320,17 @@ ink_example_test!(
 // ═══════════════════════════════════════════════════════════════════
 
 ink_example_test!(
+    test_ink_function_overloads,
+    "ink-function-overloads",
+    [
+        "String: HELLO",
+        "Number: Number: 42",
+        "Class string: WORLD",
+        "Class number: Number: 99"
+    ]
+);
+
+ink_example_test!(
     test_ink_namespace_declare,
     "ink-namespace-declare",
     [
