@@ -455,3 +455,20 @@ ink_example_test!(
         "Counter ref: null"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// React useSyncExternalStore & useDeferredValue (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_use_sync_external_store,
+    "ink-use-sync-external-store",
+    [
+        "useSyncExternalStore & useDeferredValue Demo",
+        "Terminal: 80x24",
+        "Counter: 0",
+        "Deferred: initial text",
+        "Apple",
+        "Carrot"
+    ]
+);

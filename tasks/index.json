@@ -1176,7 +1176,7 @@
     {
       "id": "107",
       "title": "ink-use-sync-external-store example \u2014 useSyncExternalStore, useDeferredValue",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-use-sync-external-store/",
