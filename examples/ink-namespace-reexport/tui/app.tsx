@@ -1,3 +1,12 @@
+// ink-namespace-reexport example — demonstrates namespace re-export patterns.
+//
+// This example shows how to re-export modules using namespace syntax.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink) — reference implementation
+//   2. runts dev (rquickjs) — TSX->JS transpile
+//   3. runts build (compile path) — codegen->Rust
+
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Math } from '../utils/index.ts';
