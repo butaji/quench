@@ -140,7 +140,7 @@ impl QuoteCodegen {
 
     fn gen_console_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
         if let Expr::Ident { name } = obj { if name != "console" { return None; } } else { return None; }
-        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
+        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "time" | "timeEnd" => Some(quote! { () }), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
     }
     fn gen_console_output(&self, method: &str, args: &[Expr]) -> TokenStream {
         let is_err = method == "error" || method == "warn";
