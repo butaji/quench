@@ -1066,7 +1066,7 @@
     {
       "id": "097",
       "title": "ink-template-literal-types example \u2014 template literal types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-Low",
       "files": [
         "examples/ink-template-literal-types/",
@@ -1452,11 +1452,11 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 129,
-    "examples_with_tests": 123,
+    "examples_total": 130,
+    "examples_with_tests": 124,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 985,
+    "tests_passing": 986,
     "tests_failing": 0,
     "tests_ignored": 183,
     "test_scripts": 1,
@@ -1469,8 +1469,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 36,
-    "completed_tasks": 76
+    "pending_tasks": 35,
+    "completed_tasks": 77
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1492,7 +1492,6 @@
       "Suspense / lazy",
       "override / implements",
       "abstract classes",
-      "template literal types",
       "infer in conditional types",
       "RegExp advanced flags / matchAll",
       "utility types (Partial, Required, Pick, Omit, Record)",
