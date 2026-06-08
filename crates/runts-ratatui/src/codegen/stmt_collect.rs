@@ -320,6 +320,13 @@ pub fn try_extract_assign(expr: &Value) -> Option<(String, String)> {
 pub fn extract_call_arg_value_with_type(init: Option<&Value>) -> Option<(String, Option<String>)> {
     let init = init?;
     if let Some(arr) = init.get("Array") {
+        let has_nested = arr.get("elems")
+            .and_then(|e| e.as_array())
+            .map_or(false, |es| es.iter().any(|e| e.get("Array").is_some() || e.get("Object").is_some()));
+        if has_nested {
+            let rust_val = serde_json::to_string(arr).ok()?;
+            return Some((format!("serde_json::json!({})", rust_val), Some("serde_json::Value".to_string())));
+        }
         let rust_val = vars::expr_value_to_rust(&serde_json::json!({"Array": arr}))?;
         return Some((rust_val, Some("Vec<Value>".to_string())));
     }
