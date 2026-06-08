@@ -17,3 +17,11 @@ pub fn capture_default_const(line: &str) -> Option<String> {
     if name.is_empty() { return None; }
     Some(name.to_string())
 }
+
+/// Extract the identifier from "export default identifier;"
+pub fn capture_default_identifier(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("export default")?;
+    let name = rest.trim().trim_end_matches(';').split(|c: char| c == ' ').next()?;
+    if name.is_empty() { return None; }
+    Some(name.to_string())
+}
