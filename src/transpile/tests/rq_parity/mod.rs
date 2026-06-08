@@ -623,6 +623,23 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// Higher-Order Components (HOC) pattern (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_hoc,
+    "ink-hoc",
+    [
+        "Higher-Order Components (HOC) Demo",
+        "Functions that enhance components",
+        "withLoading:",
+        "withCounter",
+        "withBorder:",
+        "withColor"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
