@@ -387,3 +387,20 @@ ink_example_test!(
         "Meta entries:"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// TypeScript unknown, never, type guards (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_unknown_never,
+    "ink-unknown-never",
+    [
+        "unknown, never & Type Guards Demo",
+        "Status: Idle",
+        "str: \"HELLO\"",
+        "num: 42.00",
+        "pet: cat",
+        "string: 4"
+    ]
+);
