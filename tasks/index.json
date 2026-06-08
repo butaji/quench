@@ -2063,9 +2063,11 @@
     {
       "id": "156",
       "title": "`ink-arraybuffer` Example — `ArrayBuffer`, `Uint8Array`, `DataView`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-arraybuffer/"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
