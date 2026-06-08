@@ -352,3 +352,21 @@ ink_example_test!(
         "ReturnType: Hello, World!"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// TypeScript as const & literal types (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_as_const,
+    "ink-as-const",
+    [
+        "as const, Literal Types & Tuples Demo",
+        "Colors[0]: red",
+        "Config.title: My App",
+        "Direction: north",
+        "HTTP OK: 200",
+        "Origin: (0, 0)",
+        "Current status: loading"
+    ]
+);
