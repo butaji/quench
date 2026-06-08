@@ -153,4 +153,37 @@ impl QuoteCodegen {
         if args.len() >= 2 { let cond = gen_args.first().unwrap(); let msg = gen_args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } }
         else if args.len() == 1 { quote! { assert!(#(gen_args.first().unwrap())) } } else { quote! { () } }
     }
+
+    fn gen_global_fn(&self, name: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        match name {
+            "fetch" => self.gen_fetch_call(arguments),
+            "setTimeout" => self.gen_set_timeout_call(arguments),
+            "setInterval" => self.gen_set_interval_call(arguments),
+            "encodeURI" | "encodeURIComponent" | "decodeURI" | "decodeURIComponent" => {
+                self.gen_uri_call(name, arguments)
+            }
+            _ => None,
+        }
+    }
+
+    fn gen_fetch_call(&self, arguments: &[Expr]) -> Option<TokenStream> {
+        let url = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() });
+        Some(quote! { reqwest::get(#url).await? })
+    }
+
+    fn gen_set_timeout_call(&self, arguments: &[Expr]) -> Option<TokenStream> {
+        let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 });
+        Some(quote! { tokio::time::sleep(std::time::Duration::from_millis(#dur as u64)).await })
+    }
+
+    fn gen_set_interval_call(&self, arguments: &[Expr]) -> Option<TokenStream> {
+        let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 });
+        Some(quote! { tokio::time::interval(std::time::Duration::from_millis(#dur as u64)) })
+    }
+
+    fn gen_uri_call(&self, name: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        let arg = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() });
+        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+        Some(quote! { runts_ink::#ident(#arg) })
+    }
 }

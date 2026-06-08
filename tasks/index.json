@@ -1845,11 +1845,14 @@
     {
       "id": "145",
       "title": "ink-uri-encoding example \u2014 encodeURI, decodeURI, encodeURIComponent, decodeURIComponent",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-uri-encoding/",
-        "src/transpile/hir/quote_codegen_exprs.inc"
+        "src/transpile/hir/quote_codegen_exprs.inc",
+        "crates/runts-ink/src/js_runtime.rs",
+        "crates/runts-ratatui/src/codegen/vars.rs",
+        "crates/runts-ratatui/src/codegen/expr.rs"
       ],
       "acceptance": "Example exists. URI encoding functions produce compilable Rust. Parity harness 100%."
     },

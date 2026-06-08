@@ -37,6 +37,7 @@ rquickjs = { version = "0.12", features = ["bindgen", "parallel"] }
 # render loop and the input poll can run concurrently.
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "time", "sync", "io-util"] }
 chrono = "0.4"
+urlencoding = "2.1"
 
 [dev-dependencies]
 # `tests/` are the Ink integration tests. We re-use the

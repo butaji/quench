@@ -829,3 +829,19 @@ ink_example_test!(
         "  - console.table"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// URI encoding example
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_uri_encoding,
+    "ink-uri-encoding",
+    [
+        "URI Encoding Demo",
+        "Original: hello world & foo=bar",
+        "Encoded: hello%20world%20%26%20foo%3Dbar",
+        "Decoded: hello world & foo=bar",
+        "URI: https://example.com/path?query=hello%20world"
+    ]
+);

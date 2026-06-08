@@ -180,7 +180,15 @@ fn try_call_to_rust(call: &Value) -> Option<String> {
     
     // Direct function call: fn(arg1, arg2)
     if let Some(fn_name) = extract_ident_name(callee) {
-        return Some(format_fn_call(fn_name, args.iter().filter_map(|a| expr_value_to_rust(a))));
+        let rust_name = map_js_global_fn(fn_name);
+        let is_global = rust_name.starts_with("runts_ink::");
+        return Some(format_fn_call(rust_name, args.iter().filter_map(|a| {
+            if is_global && is_ident_expr(a) {
+                Some(format!("&{}", expr_value_to_rust(a)?))
+            } else {
+                expr_value_to_rust(a)
+            }
+        })));
     }
     
     None
@@ -207,6 +215,23 @@ fn try_method_call_to_rust(static_member: &Value, args: &[Value]) -> Option<Stri
 /// Extract the name from an identifier expression
 fn extract_ident_name(value: &Value) -> Option<&str> {
     value.get("Ident")?.get("name")?.as_str()
+}
+
+/// Check whether a JSON expression value is a simple identifier.
+fn is_ident_expr(value: &Value) -> bool {
+    value.get("Ident").is_some()
+        || value.as_object().map_or(false, |m| m.get("kind").and_then(|k| k.as_str()) == Some("Ident"))
+}
+
+/// Map known JavaScript global functions to their `runts_ink` equivalents.
+fn map_js_global_fn(name: &str) -> &str {
+    match name {
+        "encodeURI" => "runts_ink::encodeURI",
+        "encodeURIComponent" => "runts_ink::encodeURIComponent",
+        "decodeURI" => "runts_ink::decodeURI",
+        "decodeURIComponent" => "runts_ink::decodeURIComponent",
+        _ => name,
+    }
 }
 
 /// Format a function call: fn(arg1, arg2, ...)
