@@ -627,6 +627,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-string-wellformed",
         "ink-for-await-of",
         "ink-object-entries-values",
+        "ink-array-static",
     ];
     
     for example in new_examples {
@@ -1476,6 +1477,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-string-wellformed",
         "ink-for-await-of",
         "ink-object-entries-values",
+        "ink-array-static",
     ];
     
     for example in new_examples {
@@ -1499,6 +1501,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-string-wellformed",
         "ink-for-await-of",
         "ink-object-entries-values",
+        "ink-array-static",
     ];
     
     for example in new_examples {
@@ -1522,6 +1525,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-string-wellformed",
         "ink-for-await-of",
         "ink-object-entries-values",
+        "ink-array-static",
     ];
     
     for example in new_examples {
@@ -1553,6 +1557,7 @@ fn test_new_examples_export_or_render() {
         "ink-string-wellformed",
         "ink-for-await-of",
         "ink-object-entries-values",
+        "ink-array-static",
     ];
     
     for example in new_examples {

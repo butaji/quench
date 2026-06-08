@@ -2178,9 +2178,12 @@
     {
       "id": "167",
       "title": "`ink-array-static` Example \u2014 `Array.from`, `Array.of`, `Array.isArray`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-array-static/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
