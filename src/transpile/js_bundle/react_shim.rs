@@ -203,6 +203,25 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         props.children = children;
         if (children.length === 0) { props.children = []; }
         if (typeof type === 'function') {
+            // Check if it's a class component (has prototype.isReactComponent)
+            if (type.prototype && type.prototype.isReactComponent) {
+                // Class component - create instance and render
+                var instance = new type(props);
+                instance.props = props;
+                instance.state = instance.state || {};
+                // Call getDerivedStateFromError if this is an ErrorBoundary
+                if (type.prototype.getDerivedStateFromError) {
+                    try {
+                        var result = type.prototype.render.call(instance);
+                        return result;
+                    } catch (e) {
+                        var errorState = type.prototype.getDerivedStateFromError.call(null, e);
+                        instance.state = Object.assign({}, instance.state, errorState);
+                        return type.prototype.render.call(instance);
+                    }
+                }
+                return type.prototype.render.call(instance);
+            }
             if (!type.__withHooks) type.__withHooks = withHooks(type);
             return type.__withHooks(props);
         }
@@ -224,6 +243,22 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         if (type === 'Newline') return runts_ink.newline();
         if (type === 'Spacer') return runts_ink.spacer();
         if (type === 'Fragment') return { Fragment: { __children: children } };
+        if (type === 'ErrorBoundary') {
+            // ErrorBoundary catches render errors and shows fallback
+            // props.Fallback should be a component function that takes { error }
+            try {
+                var childVnode = children.length > 0 ? children[0] : null;
+                // Render the child normally - if it throws, we catch and show fallback
+                return childVnode;
+            } catch (e) {
+                // If Fallback is provided, render it with the error
+                if (props.Fallback) {
+                    return props.Fallback({ error: e });
+                }
+                // Otherwise return error message as text
+                return runts_ink.text('Error: ' + (e.message || String(e)), { color: 'red' });
+            }
+        }
         return runts_ink.box(props);
     }
 
@@ -257,9 +292,17 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return props.children;
     }
 
+    // Base Component class for class components
+    function Component(props) {
+        this.props = props;
+        this.state = {};
+    }
+    Component.prototype.isReactComponent = {};
+
     return {
         createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition,
-        createContext, useContext, memo, forwardRef, lazy, Suspense, Fragment: 'Fragment', _withHooks: withHooks
+        createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component,
+        Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
 
@@ -278,6 +321,8 @@ var memo = React.memo;
 var forwardRef = React.forwardRef;
 var lazy = React.lazy;
 var Suspense = React.Suspense;
+var Component = React.Component;
+var ErrorBoundary = 'ErrorBoundary';
 var __runts_ink_render = function(app) { return app; };"#;
 
 /// Post-shim code - appended after user code.
