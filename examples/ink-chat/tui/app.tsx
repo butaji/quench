@@ -1,3 +1,10 @@
+// ink-chat example — real-world chat interface demonstrating useState, useEffect, useInput
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink) — reference implementation
+//   2. runts dev (rquickjs) — TSX->JS transpile
+//   3. runts build (compile path) — codegen->Rust
+
 /** @jsxImportSource react */
 import React, { useState, useEffect, useRef } from "react";
 import { render, Text, Box } from "ink";
@@ -273,5 +280,7 @@ const App: React.FC = () => {
     </Box>
   );
 };
+
+export default App;
 
 render(React.createElement(App));

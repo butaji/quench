@@ -1,3 +1,10 @@
+// ink-weakref example — WeakRef, FinalizationRegistry
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink) — reference implementation
+//   2. runts dev (rquickjs) — TSX->JS transpile
+//   3. runts build (compile path) — codegen->Rust
+
 import React from 'react';
 import { Box, Text } from 'ink';
 

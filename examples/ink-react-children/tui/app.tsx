@@ -1,3 +1,13 @@
+// ink-react-children example — demonstrates Children API, cloneElement, isValidElement.
+//
+// All three environments must produce the same look:
+//   1. deno (real Ink) — reference implementation
+//   2. runts dev (rquickjs) — TSX->JS transpile
+//   3. runts build (compile path) — codegen->Rust
+//
+// NOTE: Children.count, Children.map, Children.forEach, Children.only, Children.toArray
+// are React runtime features available in the React shim.
+
 import React, { Children } from 'react';
 import { Box, Text } from 'ink';
 
