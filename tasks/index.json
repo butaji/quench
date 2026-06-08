@@ -1268,7 +1268,7 @@
     {
       "id": "114",
       "title": "ink-promise-advanced example \u2014 allSettled, any, race, withResolvers",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-promise-advanced/",

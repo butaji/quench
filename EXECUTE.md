@@ -244,6 +244,25 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 13: Real-World Validation (`../tui1` Port)
+**Goal:** The `../tui1` real-world Ink chat example compiles and renders identically in all 3 environments with 100% output match.
+
+| Task | Gap | Priority |
+|------|-----|----------|
+| 132 | Port `../tui1` — comprehensive feature audit | P0 |
+| 133 | `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`) | P0 |
+| 134 | `setInterval` / `clearInterval` | P0 |
+| 135 | `Date` object (`new Date`, `Date.now`, `toLocaleTimeString`) | P0 |
+| 136 | `Array.prototype.splice` | P1 |
+| 137 | React Fragment shorthand `<></>` | P0 |
+| 138 | Dynamic import of node built-ins (`import("node:readline")`) | P0 |
+| 139 | `/** @jsxImportSource react */` pragma | P1 |
+| 140 | Module-level `render()` call | P1 |
+
+**Tasks:** 132–140 | **Status:** 🔄 Pending (9 tasks)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
@@ -287,6 +306,15 @@ Remaining gaps (Phase 10–12 targets):
 - Class: `static {}` blocks, private methods `#method()`, `#field in obj`
 - React: `createRef`, `useDebugValue`
 - Type system: function overloads
+- **Real-world gaps (from `../tui1` audit):**
+  - `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`)
+  - `setInterval` / `clearInterval`
+  - `Date` object (`new Date`, `Date.now`, `toLocaleTimeString`)
+  - `Array.prototype.splice`
+  - React Fragment shorthand `<>...</>`
+  - Dynamic import of node built-ins (`import("node:readline")`)
+  - `/** @jsxImportSource react */` pragma
+  - Module-level `render()` call
 
 ---
 
@@ -390,4 +418,5 @@ cargo test --test compile_codegen
 - [ ] 19 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
 - [ ] 21 additional Ink examples for type system + runtime API deep coverage (Tasks 100–120).
 - [ ] 11 additional Ink examples for runtime API + type system completion (Tasks 121–131).
+- [ ] `../tui1` example compiles and renders identically in all 3 environments (Tasks 132–140).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
