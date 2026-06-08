@@ -404,3 +404,21 @@ ink_example_test!(
         "string: 4"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Modern array methods (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_array_modern,
+    "ink-array-modern",
+    [
+        "Modern Array Methods Demo",
+        "flat(1): [1, 2, 3, 4,5]",
+        "flatMap: [hello, 5, world, 5]",
+        "at(-1): 50",
+        "toSorted: [1, 1, 2, 3, 4, 5, 6, 9]",
+        "includes(20): true",
+        "findLast < 8: 6"
+    ]
+);

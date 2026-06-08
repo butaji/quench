@@ -1143,7 +1143,7 @@
     {
       "id": "104",
       "title": "ink-array-modern example \u2014 flat, flatMap, at, toSorted, toReversed, includes, findLast",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-array-modern/",
