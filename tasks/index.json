@@ -1154,7 +1154,7 @@
     {
       "id": "105",
       "title": "ink-object-modern example \u2014 fromEntries, hasOwn, getOwnPropertyDescriptors",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-object-modern/",

@@ -422,3 +422,20 @@ ink_example_test!(
         "findLast < 8: 6"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Modern object methods (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_object_modern,
+    "ink-object-modern",
+    [
+        "Modern Object Methods Demo",
+        "fromEntries.x: 10",
+        "hasOwn('x'): true",
+        "hasOwn('z'): false",
+        "Object.is(NaN, NaN): true",
+        "create.greeting: hello"
+    ]
+);
