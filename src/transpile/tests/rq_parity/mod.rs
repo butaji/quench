@@ -298,6 +298,7 @@ ink_example_smoke_test!(test_ink_weakref, "ink-weakref");
 ink_example_smoke_test!(test_ink_string_modern, "ink-string-modern");
 ink_example_smoke_test!(test_ink_promise_advanced, "ink-promise-advanced");
 ink_example_smoke_test!(test_ink_this_parameter, "ink-this-parameter");
+ink_example_smoke_test!(test_ink_unique_symbol, "ink-unique-symbol");
 
 ink_example_test!(
     test_ink_regexp_advanced,
