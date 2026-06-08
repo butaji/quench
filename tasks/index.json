@@ -1220,7 +1220,7 @@
     {
       "id": "111",
       "title": "ink-proxy example \u2014 Proxy handler",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-proxy/",
