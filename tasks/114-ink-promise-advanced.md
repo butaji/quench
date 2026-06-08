@@ -35,7 +35,7 @@ export default function App() {
 
     // Promise.withResolvers is ES2024 - optional
     if ('withResolvers' in Promise) {
-      const { resolve } = (Promise as any).withResolvers();
+      const { resolve } = Promise.withResolvers();
       resolve('resolved');
     }
   }, []);

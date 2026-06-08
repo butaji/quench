@@ -18,14 +18,10 @@ import { Box, Text } from 'ink';
 export default function App() {
   const obj = { a: 1, b: 2 };
 
-  // Note: with is not allowed in strict mode.
-  // This example documents the gap and tests parser rejection.
-  const result = (() => {
-    // @ts-ignore
-    with (obj) {
-      return a + b;
-    }
-  })();
+  // @ts-ignore
+  with (obj) {
+    var result = a + b;
+  }
 
   return (
     <Box flexDirection="column">
@@ -38,7 +34,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-with-statement/`
-- [ ] Documents `with` statement behavior
+- [ ] Uses `with` statement
 - [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path either handles `with` or produces clear error
+- [ ] Compile path handles `with` or produces clear error
 - [ ] Parity harness passes with 100% match in all 3 environments

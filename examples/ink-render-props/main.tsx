@@ -1,5 +1,6 @@
-// Main entry point - delegates to tui/app.tsx
+// Main entry point - renders the tui/app.tsx component
+import { render } from 'ink';
 import React from 'react';
 import App from './tui/app.tsx';
 
-export default App;
+render(React.createElement(App));

@@ -1262,22 +1262,33 @@ fn test_ink_examples_jsx_syntax() {
         let content = fs::read_to_string(&app_tsx)
             .expect(&format!("should read {}", name));
         
-        // Check for balanced JSX tags
-        let open_tags = content.matches("<Box").count() + content.matches("<Text").count() + 
-                        content.matches("<Spacer").count() + content.matches("<Newline").count() +
-                        content.matches("<Static").count() + content.matches("<Transform").count();
-        let close_tags = content.matches("</Box>").count() + content.matches("</Text>").count() +
-                         content.matches("</Spacer>").count() + content.matches("</Newline>").count() +
-                         content.matches("</Static>").count() + content.matches("</Transform>").count();
+        // Check for balanced JSX tags using regex
+        let tracked = ["Box", "Text", "Spacer", "Newline", "Static", "Transform"];
+        let mut open_count = 0;
+        let mut close_count = 0;
         
-        // Self-closing tags don't need closing
-        let self_closing = content.matches("/>").count();
-        let adjusted_open = open_tags - self_closing;
+        for tag in &tracked {
+            // Count opening tags (excluding self-closing)
+            let open_pattern = format!("<{}", tag);
+            let self_close_pattern = format!("<{} />", tag);
+            let open_with_attr = format!("<{} ", tag);
+            let open_no_attr = format!("<{}>", tag);
+            
+            // Open tags: all occurrences minus self-closing
+            let all_opens = content.matches(&open_pattern).count();
+            let self_closes = content.matches(&self_close_pattern).count();
+            open_count += all_opens - self_closes;
+            
+            // Close tags
+            let close_pattern = format!("</{}>", tag);
+            close_count += content.matches(&close_pattern).count();
+        }
         
+        // Allow up to 10 variance (for components that use tracked tags as text)
         assert!(
-            close_tags <= adjusted_open + 10, // Allow some variance for self-closing
+            close_count <= open_count + 10,
             "{} should have balanced JSX tags (open: {}, close: {})",
-            name, adjusted_open, close_tags
+            name, open_count, close_count
         );
     }
 }

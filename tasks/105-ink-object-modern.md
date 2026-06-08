@@ -31,7 +31,7 @@ const items = [
 ];
 
 // Object.groupBy is ES2024 - use conditional for compatibility
-const grouped = (Object as any).groupBy ? (Object as any).groupBy(items, (i: any) => i.type) : {};
+const grouped = Object.groupBy(items, (i: any) => i.type);
 
 export default function App() {
   return (

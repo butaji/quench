@@ -4468,8 +4468,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 217,
-    "completed_tasks": 141
+    "pending_tasks": 216,
+    "completed_tasks": 142
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
