@@ -86,16 +86,30 @@ fn static_member_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
 }
 
 fn call_to_rust(call: &serde_json::Value) -> Option<TokenStream> {
-    let callee = expr_to_rust(call.get("callee")?)?;
+    let callee_value = call.get("callee")?;
+    let callee = expr_to_rust(callee_value)?;
     let args = call.get("arguments")?.as_array()?;
     let arg_tokens: Vec<TokenStream> = args.iter().filter_map(expr_to_rust).collect();
-    let callee_str = callee.to_string();
-    let fn_name = if is_js_global_fn(&callee_str) {
-        quote::format_ident!("runts_ink::{}", callee_str)
-    } else {
-        quote::format_ident!("{}", callee_str)
-    };
-    Some(quote! { #fn_name(#(#arg_tokens),*) })
+
+    // For simple identifiers, remap JS globals; otherwise use token stream directly.
+    if let Some(ident_name) = callee_value.get("Ident")
+        .and_then(|i| i.get("name"))
+        .and_then(|n| n.as_str())
+    {
+        let fn_name = if is_js_global_fn(ident_name) {
+            quote::format_ident!("runts_ink::{}", ident_name)
+        } else {
+            quote::format_ident!("{}", ident_name)
+        };
+        return Some(quote! { #fn_name(#(#arg_tokens),*) });
+    }
+
+    // Skip unknown method calls (e.g. .reduce, .join) to avoid emitting invalid Rust.
+    if callee_value.get("StaticMember").is_some() {
+        return None;
+    }
+
+    Some(quote! { #callee(#(#arg_tokens),*) })
 }
 
 fn is_js_global_fn(name: &str) -> bool {
