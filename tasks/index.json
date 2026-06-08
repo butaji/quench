@@ -1279,7 +1279,7 @@
     {
       "id": "115",
       "title": "ink-this-parameter example \u2014 this parameter, this types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-this-parameter/",
@@ -1345,7 +1345,7 @@
     {
       "id": "121",
       "title": "ink-json-api example \u2014 JSON.stringify, JSON.parse",
-      "status": "completed",
+      "status": "pending",
       "priority": "P1-High",
       "files": [
         "examples/ink-json-api/",
@@ -1579,8 +1579,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 27,
-    "completed_tasks": 94
+    "pending_tasks": 25,
+    "completed_tasks": 96
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
