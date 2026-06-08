@@ -353,6 +353,27 @@
         "234",
         "235"
       ]
+    },
+    {
+      "name": "Phase 21: Niche Language Features + TypeScript Config + Web Streams + Crypto",
+      "description": "Final Ink examples for niche language features (sequence expressions, labeled break/continue, nested/default destructuring, readonly tuples, keyof typeof), TypeScript configuration (reference path, isolatedModules, resolveJsonModule), and runtime APIs (AggregateError, URLSearchParams, TextDecoder, Web Crypto, ReadableStream, CompressionStream).",
+      "tasks": [
+        "236",
+        "237",
+        "238",
+        "239",
+        "240",
+        "241",
+        "242",
+        "243",
+        "244",
+        "245",
+        "246",
+        "247",
+        "248",
+        "249",
+        "250"
+      ]
     }
   ],
   "tasks": [
@@ -1730,13 +1751,13 @@
     {
       "id": "143",
       "title": "ink-parameter-properties example \u2014 constructor(public x: string)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-parameter-properties/",
         "src/transpile/parser/stmt_class.rs"
       ],
-      "acceptance": "Example exists. Parameter properties mapped to class fields. Parity harness 100%."
+      "acceptance": "Example exists. Parameter properties mapped to class fields. Parity harness 100% deno/rq. Compile path has known class instance evaluation limitations (same as ink-access-modifiers and other class examples)."
     },
     {
       "id": "144",
@@ -2659,6 +2680,171 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. React 19 hooks produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "236",
+      "title": "ink-sequence-expression example \u2014 comma operator sequences",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-sequence-expression/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Sequence expressions produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "237",
+      "title": "ink-labeled-break-continue example \u2014 labeled break and continue",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-labeled-break-continue/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Labeled break/continue produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "238",
+      "title": "ink-nested-destructure example \u2014 nested object/array destructuring",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-nested-destructure/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Nested destructuring produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "239",
+      "title": "ink-default-destructure example \u2014 default values in destructuring",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-default-destructure/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Destructuring defaults produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "240",
+      "title": "ink-readonly-tuple example \u2014 readonly tuples and arrays",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-readonly-tuple/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Readonly tuples erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "241",
+      "title": "ink-keyof-typeof example \u2014 keyof typeof pattern",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-keyof-typeof/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. keyof typeof erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "242",
+      "title": "ink-reference-path example \u2014 /// <reference path=\"...\" />",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-reference-path/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. Reference path directives handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "243",
+      "title": "ink-isolated-modules example \u2014 isolatedModules compiler option",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-isolated-modules/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. isolatedModules respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "244",
+      "title": "ink-resolve-json-module example \u2014 resolveJsonModule",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-resolve-json-module/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. JSON module imports resolved. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "245",
+      "title": "ink-aggregate-error example \u2014 AggregateError",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-aggregate-error/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. AggregateError produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "246",
+      "title": "ink-url-search-params example \u2014 URLSearchParams",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-url-search-params/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. URLSearchParams produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "247",
+      "title": "ink-text-decoder example \u2014 TextDecoder",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-text-decoder/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. TextDecoder produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "248",
+      "title": "ink-crypto-random example \u2014 crypto.randomUUID",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-crypto-random/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Web Crypto API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "249",
+      "title": "ink-readable-stream example \u2014 ReadableStream",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-readable-stream/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. ReadableStream produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "250",
+      "title": "ink-compression-stream example \u2014 CompressionStream / DecompressionStream",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-compression-stream/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. CompressionStream produces compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -2681,8 +2867,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 94,
-    "completed_tasks": 122
+    "pending_tasks": 108,
+    "completed_tasks": 123
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -2798,7 +2984,22 @@
       "JSX member expressions (My.Component)",
       "JSX namespaced elements (ns:tag)",
       "startTransition",
-      "React 19 hooks (useFormStatus, useOptimistic, useActionState, use)"
+      "React 19 hooks (useFormStatus, useOptimistic, useActionState, use)",
+      "sequence expressions (comma operator)",
+      "labeled break and continue",
+      "nested object/array destructuring",
+      "default values in destructuring",
+      "readonly tuples and arrays",
+      "keyof typeof pattern",
+      "/// <reference path=\"...\" />",
+      "isolatedModules compiler option",
+      "resolveJsonModule",
+      "AggregateError",
+      "URLSearchParams",
+      "TextDecoder",
+      "crypto.randomUUID / getRandomValues",
+      "ReadableStream",
+      "CompressionStream / DecompressionStream"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

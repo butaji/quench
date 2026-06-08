@@ -5,13 +5,28 @@ use quote::quote;
 
 pub(crate) fn expr_to_rust(expr: &serde_json::Value) -> Option<TokenStream> {
     let map = expr.as_object()?;
-    if let Some(cond) = map.get("Cond") { return expr_cond_to_rust(cond); }
-    if let Some(member) = map.get("Member") { return member_expr_to_rust(member); }
-    if let Some(arr) = map.get("Array") { return expr_array_to_rust(arr); }
-    if let Some(tok) = simple_literal_to_rust(map) { return Some(tok); }
-    if let Some(inner) = map.get("Expr") { return expr_to_rust(inner); }
-    if let Some(kind) = map.get("kind").and_then(|k| k.as_str()) { return kind_to_rust(map, kind); }
-    None
+    try_expr_variant(map).or_else(|| simple_literal_to_rust(map))
+}
+
+fn try_expr_variant(map: &serde_json::Map<String, serde_json::Value>) -> Option<TokenStream> {
+    try_key(map, "Cond", expr_cond_to_rust)
+        .or_else(|| try_key(map, "Member", member_expr_to_rust))
+        .or_else(|| try_key(map, "StaticMember", static_member_to_rust))
+        .or_else(|| try_key(map, "Call", call_to_rust))
+        .or_else(|| try_key(map, "New", new_to_rust))
+        .or_else(|| try_key(map, "Array", expr_array_to_rust))
+        .or_else(|| try_key(map, "Expr", expr_to_rust))
+        .or_else(|| try_kind_rust(map))
+}
+
+fn try_key<F>(map: &serde_json::Map<String, serde_json::Value>, key: &str, f: F) -> Option<TokenStream>
+where F: FnOnce(&serde_json::Value) -> Option<TokenStream> {
+    f(map.get(key)?)
+}
+
+fn try_kind_rust(map: &serde_json::Map<String, serde_json::Value>) -> Option<TokenStream> {
+    let kind = map.get("kind")?.as_str()?;
+    kind_to_rust(map, kind)
 }
 
 fn expr_cond_to_rust(cond: &serde_json::Value) -> Option<TokenStream> {
@@ -61,6 +76,27 @@ fn member_expr_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
     } else {
         Some(quote! { #obj . #property })
     }
+}
+
+fn static_member_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
+    let obj = expr_to_rust(member.get("obj")?)?;
+    let property = member.get("property")?.as_str()?;
+    let prop = quote::format_ident!("{}", property);
+    Some(quote! { #obj . #prop })
+}
+
+fn call_to_rust(call: &serde_json::Value) -> Option<TokenStream> {
+    let callee = expr_to_rust(call.get("callee")?)?;
+    let args = call.get("arguments")?.as_array()?;
+    let arg_tokens: Vec<TokenStream> = args.iter().filter_map(expr_to_rust).collect();
+    Some(quote! { #callee(#(#arg_tokens),*) })
+}
+
+fn new_to_rust(new_expr: &serde_json::Value) -> Option<TokenStream> {
+    let callee = expr_to_rust(new_expr.get("callee")?)?;
+    let args = new_expr.get("arguments")?.as_array()?;
+    let arg_tokens: Vec<TokenStream> = args.iter().filter_map(expr_to_rust).collect();
+    Some(quote! { #callee::new(#(#arg_tokens),*) })
 }
 
 pub(crate) fn collect_text_children_tokens(children: &[serde_json::Value]) -> Vec<TokenStream> {

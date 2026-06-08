@@ -794,3 +794,19 @@ ink_example_test!(
         "PI = 3.14"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Parameter properties (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_parameter_properties,
+    "ink-parameter-properties",
+    [
+        "Parameter Properties Demo",
+        "Alice (30) [u-123]",
+        "Name: Alice",
+        "Age: 30",
+        "Role: user"
+    ]
+);
