@@ -281,6 +281,56 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 15: Advanced React Patterns + Deep Runtime Coverage
+**Goal:** Advanced React patterns (render props, HOCs, key/refs) and remaining runtime APIs (Symbol.iterator, ArrayBuffer, performance, structuredClone, arguments, RegExp named groups, string well-formed) exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 149 | `ink-asserts-predicate` | `asserts` type predicate | P1 |
+| 150 | `ink-import-types` | `type T = import("./mod").Type` | P1 |
+| 151 | `ink-reference-directive` | `/// <reference types="..." />` | P2 |
+| 152 | `ink-use-insertion-effect` | `useInsertionEffect` | P1 |
+| 153 | `ink-render-props` | Render props pattern | P1 |
+| 154 | `ink-hoc` | Higher-order components | P1 |
+| 155 | `ink-symbol-iterator` | `Symbol.iterator`, custom iterables | P1 |
+| 156 | `ink-arraybuffer` | `ArrayBuffer`, `Uint8Array`, `DataView` | P2 |
+| 157 | `ink-performance` | `performance.now()`, `performance.mark` | P2 |
+| 158 | `ink-structured-clone` | `structuredClone` | P2 |
+| 159 | `ink-arguments` | `arguments` object | P2 |
+| 160 | `ink-regexp-named-groups` | Named capture groups | P2 |
+| 161 | `ink-string-wellformed` | `isWellFormed`, `toWellFormed` | P2 |
+| 162 | `ink-key-prop` | `key` prop in lists and fragments | P1 |
+| 163 | `ink-ref-callback` | Callback refs, `useRef` with initial value | P1 |
+
+**Tasks:** 149–163 | **Status:** 🔄 Pending (15 tasks)
+
+---
+
+### Phase 16: Operator + Syntax + Runtime API Completion
+**Goal:** Final JavaScript operators, syntax features, and runtime APIs exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 164 | `ink-in-operator` | `in` operator (`prop in obj`) | P1 |
+| 165 | `ink-for-await-of` | `for await...of` async iteration | P1 |
+| 166 | `ink-object-entries-values` | `Object.entries`, `Object.values`, `Object.keys` | P1 |
+| 167 | `ink-array-static` | `Array.from`, `Array.of`, `Array.isArray` | P1 |
+| 168 | `ink-parse-global` | `parseInt`, `parseFloat`, `isNaN`, `isFinite` | P1 |
+| 169 | `ink-import-meta-url` | `import.meta.url` | P1 |
+| 170 | `ink-debugger-labeled` | `debugger`, labeled statements | P2 |
+| 171 | `ink-number-string-proto` | `Number.prototype.toFixed`, `String.prototype.charAt` etc | P1 |
+| 172 | `ink-array-mutators` | `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse` | P1 |
+| 173 | `ink-array-searchers` | `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex` | P1 |
+| 174 | `ink-date-comprehensive` | `getTime`, `getFullYear`, `toISOString`, `toUTCString` | P1 |
+| 175 | `ink-regexp-test-exec` | `RegExp.prototype.test`, `exec` | P1 |
+| 176 | `ink-promise-resolve-reject` | `Promise.resolve`, `Promise.reject` | P1 |
+| 177 | `ink-void-comma-increment` | `void`, comma operator, `++`/`--` | P1 |
+| 178 | `ink-spread-call-destructure` | Spread in calls, destructuring in params/catch/for-of | P1 |
+
+**Tasks:** 164–178 | **Status:** 🔄 Pending (15 tasks)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
@@ -439,4 +489,6 @@ cargo test --test compile_codegen
 - [ ] 11 additional Ink examples for runtime API + type system completion (Tasks 121–131).
 - [ ] `../tui1` example compiles and renders identically in all 3 environments (Tasks 132–140).
 - [ ] 8 additional Ink examples for final runtime API + module pattern completion (Tasks 141–148).
+- [ ] 15 additional Ink examples for advanced React patterns + deep runtime coverage (Tasks 149–163).
+- [ ] 15 additional Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
