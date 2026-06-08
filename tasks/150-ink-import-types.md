@@ -40,8 +40,18 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-import-types/`
-- [ ] Uses `import("./path").TypeName` syntax
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path erases `import` types without runtime impact
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-import-types/`
+- [x] Uses `import("./path").TypeName` syntax
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path erases `import` types without runtime impact
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created multi-file example demonstrating:
+- `import("../types.ts").TypeName` syntax for importing types
+- Multiple type imports (User, Product, ID, Status, Config)
+- Runtime usage of typed variables
+- Union types, interfaces, and string literal types via import
+
+Added `test_ink_import_types` test to `src/transpile/tests/rq_parity/mod.rs` with expected output assertions.

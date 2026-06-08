@@ -572,6 +572,24 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// TypeScript import() type syntax (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_import_types,
+    "ink-import-types",
+    [
+        "import() Type Syntax Demo",
+        "type T = import(\"./module\").Type",
+        "name: Alice",
+        "age: 30",
+        "id: prod-123",
+        "price: $99.99",
+        "current: active"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 

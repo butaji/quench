@@ -2013,7 +2013,7 @@
     {
       "id": "150",
       "title": "`ink-import-types` Example — `type T = import(\"./mod\").Type`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
