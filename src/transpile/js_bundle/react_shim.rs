@@ -355,10 +355,51 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     }
     Component.prototype.isReactComponent = {};
 
+    // Children API
+    function isValidElement(obj) {
+        return obj && typeof obj === 'object' && (obj.Text || obj.Box || obj.Fragment);
+    }
+
+    function cloneElement(element, props) {
+        if (!isValidElement(element)) return element;
+        var cloned = Object.assign({}, element);
+        if (props) { Object.assign(cloned, props); }
+        return cloned;
+    }
+
+    function toArray(children) {
+        if (!children) return [];
+        if (Array.isArray(children)) {
+            var result = [];
+            for (var i = 0; i < children.length; i++) {
+                if (Array.isArray(children[i])) {
+                    result.push.apply(result, toArray(children[i]));
+                } else if (children[i] != null) {
+                    result.push(children[i]);
+                }
+            }
+            return result;
+        }
+        return [children];
+    }
+
+    var Children = {
+        count: function(c) { return toArray(c).length; },
+        map: function(c, fn) { return toArray(c).map(fn); },
+        forEach: function(c, fn) { toArray(c).forEach(fn); },
+        only: function(c) {
+            var arr = toArray(c);
+            if (arr.length !== 1) throw new Error('Children.only expected to receive a single child');
+            return arr[0];
+        },
+        toArray: toArray
+    };
+
     return {
         createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore,
         createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component,
-        Fragment: 'Fragment', _withHooks: withHooks
+        Fragment: 'Fragment', _withHooks: withHooks,
+        Children: Children, cloneElement: cloneElement, isValidElement: isValidElement
     };
 })();
 
@@ -381,6 +422,9 @@ var forwardRef = React.forwardRef;
 var lazy = React.lazy;
 var Suspense = React.Suspense;
 var Component = React.Component;
+var Children = React.Children;
+var cloneElement = React.cloneElement;
+var isValidElement = React.isValidElement;
 var ErrorBoundary = 'ErrorBoundary';
 var __runts_ink_render = function(app) { return app; };"#;
 
