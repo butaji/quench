@@ -656,6 +656,22 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// key prop in lists and fragments (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_key_prop,
+    "ink-key-prop",
+    [
+        "key Prop Demo",
+        "key helps React identify changed items",
+        "List with stable key (id)",
+        "Nested lists",
+        "List with index key"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
