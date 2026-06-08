@@ -100,4 +100,57 @@ impl QuoteCodegen {
             _ => None
         }
     }
+
+    /// Handle array immutable methods: toSpliced, with
+    fn gen_array_method_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        let obj_ts = self.gen_expr(obj);
+        match property {
+            "toSpliced" => {
+                let start = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0.0 });
+                let delete = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0.0 });
+                let items: Vec<_> = arguments.iter().skip(2).map(|a| self.gen_expr(a)).collect();
+                Some(quote! {
+                    {
+                        let mut __arr = #obj_ts.clone();
+                        let __start = #start as usize;
+                        let __delete = #delete as usize;
+                        let __items = vec![#(#items),*];
+                        __arr.splice(__start..(__start + __delete), __items);
+                        __arr
+                    }
+                })
+            }
+            "with" => {
+                let idx = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0.0 });
+                let val = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { Value::Null });
+                Some(quote! {
+                    {
+                        let mut __arr = #obj_ts.clone();
+                        let __idx = #idx as usize;
+                        if __idx < __arr.len() {
+                            __arr[__idx] = #val;
+                        }
+                        __arr
+                    }
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn gen_console_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        if let Expr::Ident { name } = obj { if name != "console" { return None; } } else { return None; }
+        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
+    }
+    fn gen_console_output(&self, method: &str, args: &[Expr]) -> TokenStream {
+        let is_err = method == "error" || method == "warn";
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() == 1 { if is_err { syn::parse_quote! { eprintln!("{}", #(#gen_args),*) } } else { syn::parse_quote! { println!("{}", #(#gen_args),*) } } }
+        else { let fmts: Vec<_> = args.iter().map(|_| quote! { "{}" }).collect(); if is_err { syn::parse_quote! { eprintln!(#(#fmts),*, #(#gen_args),*) } } else { syn::parse_quote! { println!(#(#fmts),*, #(#gen_args),*) } } }
+    }
+    fn gen_console_assert(&self, args: &[Expr]) -> TokenStream {
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() >= 2 { let cond = gen_args.first().unwrap(); let msg = gen_args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } }
+        else if args.len() == 1 { quote! { assert!(#(gen_args.first().unwrap())) } } else { quote! { () } }
+    }
 }

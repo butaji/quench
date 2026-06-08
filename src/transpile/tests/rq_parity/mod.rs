@@ -537,6 +537,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_array_immutable,
+    "ink-array-immutable",
+    [
+        "Immutable Array Methods Demo",
+        "ES2023 toSpliced and with",
+        "Original: 1, 2, 3, 4, 5",
+        "Spliced: 1, a, b, 4, 5",
+        "Replaced: 1, 2, X, 4, 5",
+        "Unchanged: 1, 2, 3, 4, 5"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // Modern object methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
