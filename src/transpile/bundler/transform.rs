@@ -82,8 +82,13 @@ pub fn rewrite_import_to_global(
     module_id: usize,
     names: &[String],
     all_exports: &HashMap<String, String>,
+    is_namespace: bool,
 ) -> String {
     let _ = module_id;
-    build_namespace_object(names, all_exports)
-        .unwrap_or_else(|| build_named_imports(names, all_exports))
+    if is_namespace {
+        build_namespace_object(names, all_exports)
+            .unwrap_or_else(|| build_named_imports(names, all_exports))
+    } else {
+        build_named_imports(names, all_exports)
+    }
 }

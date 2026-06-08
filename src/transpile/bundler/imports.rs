@@ -2,9 +2,9 @@
 
 use regex::Regex;
 
-/// Find all local imports in a JS source string.
+/// Find all local imports (and re-exports) in a JS source string.
 pub fn find_imports(js: &str) -> Vec<String> {
-    let re = Regex::new(r#"import\s+.*?\s+from\s+['"]([^'"]+)['"]"#).unwrap();
+    let re = Regex::new(r#"(?:import|export)\s+.*?\s+from\s+['"]([^'"]+)['"]"#).unwrap();
     re.captures_iter(js)
         .filter_map(|cap| {
             let path = cap.get(1)?.as_str().to_string();
