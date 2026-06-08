@@ -1198,7 +1198,7 @@
     {
       "id": "109",
       "title": "ink-discriminated-unions example \u2014 discriminated unions, exhaustive checks",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-discriminated-unions/",
@@ -1452,11 +1452,11 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 132,
-    "examples_with_tests": 126,
+    "examples_total": 133,
+    "examples_with_tests": 127,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 988,
+    "tests_passing": 989,
     "tests_failing": 0,
     "tests_ignored": 183,
     "test_scripts": 1,
@@ -1469,8 +1469,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 33,
-    "completed_tasks": 79
+    "pending_tasks": 32,
+    "completed_tasks": 80
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1500,7 +1500,6 @@
       "modern object methods (fromEntries, hasOwn)",
       "useImperativeHandle",
       "useSyncExternalStore / useDeferredValue",
-      "discriminated unions",
       "mapped types",
       "Proxy",
       "WeakRef / FinalizationRegistry",

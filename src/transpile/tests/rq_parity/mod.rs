@@ -419,6 +419,20 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_discriminated_unions,
+    "ink-discriminated-unions",
+    [
+        "Discriminated Unions Demo",
+        "Click at (10, 20)",
+        "Key: Enter",
+        "circle: 78.54",
+        "rect: 12.00",
+        "div(10, 2): 5",
+        "success: data=42"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript as const & literal types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
