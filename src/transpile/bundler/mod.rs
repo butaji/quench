@@ -12,7 +12,8 @@ pub use transform::{prefix_declarations, rename_default_export, rename_module_de
 
 use std::path::Path;
 
-use crate::transpile::js_bundle::react_shim::{POST_SHIM, REACT_SHIM};
+use crate::transpile::js_bundle::react_shim::REACT_SHIM;
+use crate::transpile::js_bundle::runtime_shim::{POST_SHIM, PRE_SHIM};
 
 pub fn transpile_to_js_bundled(entry_path: &Path) -> anyhow::Result<String> {
     let mut bundler = Bundler::new();
@@ -35,6 +36,7 @@ pub fn transpile_to_js_bundled(entry_path: &Path) -> anyhow::Result<String> {
 
 fn build_bundle_output(bundler: &Bundler, entry_canonical: &Path) -> anyhow::Result<String> {
     let mut output = REACT_SHIM.to_string();
+    output.push_str(PRE_SHIM);
     output.push_str("\n// Bundled modules\n");
 
     for module in &bundler.modules {
@@ -45,7 +47,11 @@ fn build_bundle_output(bundler: &Bundler, entry_canonical: &Path) -> anyhow::Res
     let entry_module = bundler.modules.iter().find(|m| m.path == *entry_canonical);
     if let Some(module) = entry_module {
         if let Some(default_fn) = module.exports.get("default") {
-            output.push_str(&format!("\nvar __runts_default = React._withHooks({});", default_fn));
+            let original = default_fn.strip_prefix("__m0_").unwrap_or(default_fn);
+            output.push_str(&format!(
+                "\nvar __runts_default = React._withHooks(typeof {0} !== 'undefined' ? {0} : {1});",
+                default_fn, original
+            ));
         }
     }
 
