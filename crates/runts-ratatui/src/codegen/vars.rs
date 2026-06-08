@@ -161,7 +161,91 @@ pub(crate) fn expr_value_to_rust(value: &Value) -> Option<String> {
     if map.contains_key("Object") {
         return serde_json::to_string(value).ok().map(|j| format!("serde_json::json!({})", j));
     }
+    // Handle Call expressions (function calls)
+    if let Some(call) = map.get("Call") {
+        return try_call_to_rust(call);
+    }
     None
+}
+
+/// Convert a function call expression to Rust
+fn try_call_to_rust(call: &Value) -> Option<String> {
+    let callee = call.get("callee")?;
+    let args = call.get("arguments")?.as_array()?;
+    
+    // Handle method calls: obj.method(args...)
+    if let Some(static_member) = callee.get("StaticMember") {
+        return try_method_call_to_rust(static_member, args);
+    }
+    
+    // Direct function call: fn(arg1, arg2)
+    if let Some(fn_name) = extract_ident_name(callee) {
+        return Some(format_fn_call(fn_name, args.iter().filter_map(|a| expr_value_to_rust(a))));
+    }
+    
+    None
+}
+
+/// Handle method calls like fn.call, fn.apply, fn.bind
+fn try_method_call_to_rust(static_member: &Value, args: &[Value]) -> Option<String> {
+    let obj = static_member.get("obj")?;
+    let property = static_member.get("property")?.as_str()?;
+    let fn_name = extract_ident_name(obj)?;
+    
+    if property == "call" {
+        return Some(format_fn_call(fn_name, args.iter().skip(1).filter_map(|a| expr_value_to_rust(a))));
+    }
+    if property == "apply" {
+        return try_apply_call(fn_name, args);
+    }
+    if property == "bind" {
+        return Some(format_bind_call(fn_name, args.iter().skip(1).filter_map(|a| expr_value_to_rust(a))));
+    }
+    try_regular_method_call(obj, property, args)
+}
+
+/// Extract the name from an identifier expression
+fn extract_ident_name(value: &Value) -> Option<&str> {
+    value.get("Ident")?.get("name")?.as_str()
+}
+
+/// Format a function call: fn(arg1, arg2, ...)
+fn format_fn_call<'a, I>(fn_name: &str, args: I) -> String 
+where I: Iterator<Item = String> {
+    let args_str: Vec<String> = args.collect();
+    if args_str.is_empty() {
+        fn_name.to_string()
+    } else {
+        format!("{}({})", fn_name, args_str.join(", "))
+    }
+}
+
+/// Format a bound function: move || fn(arg1, arg2, ...)
+fn format_bind_call<'a, I>(fn_name: &str, bound_args: I) -> String 
+where I: Iterator<Item = String> {
+    let args_str: Vec<String> = bound_args.collect();
+    if args_str.is_empty() {
+        format!("move || {}", fn_name)
+    } else {
+        format!("move || {}({})", fn_name, args_str.join(", "))
+    }
+}
+
+/// Handle fn.apply(null, [arg1, arg2])
+fn try_apply_call(fn_name: &str, args: &[Value]) -> Option<String> {
+    if args.len() >= 2 {
+        let arr = args[1].get("Array")?;
+        let elems = arr.get("elems")?.as_array()?;
+        let rust_args: Vec<String> = elems.iter().filter_map(|a| expr_value_to_rust(a)).collect();
+        return Some(format_fn_call(fn_name, rust_args.into_iter()));
+    }
+    Some(format_fn_call(fn_name, args.iter().skip(1).filter_map(|a| expr_value_to_rust(a))))
+}
+
+/// Handle regular method calls: obj.method(args)
+fn try_regular_method_call(obj: &Value, property: &str, args: &[Value]) -> Option<String> {
+    let obj_name = extract_ident_name(obj)?;
+    Some(format_fn_call(&format!("{}.{}", obj_name, property), args.iter().filter_map(|a| expr_value_to_rust(a))))
 }
 
 fn try_simple_literal(map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
