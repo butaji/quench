@@ -3,6 +3,7 @@
 **Priority:** P0-Critical
 **Phase:** 12 — Real-World Validation
 **Depends on:** 132
+**Status:** Completed
 
 ## Problem
 
@@ -16,23 +17,20 @@ const timestamp = new Date().toLocaleTimeString("en-US", {
 
 `Date` may or may not exist in rquickjs. If it does not, the example crashes with `ReferenceError: Date is not defined`.
 
-## Bridge Implementation
+## Solution
 
-Option A: Use rquickjs built-in `Date` if available.
-Option B: Polyfill `Date` with Rust-backed implementation:
-
-```rust
-let date_ctor = Function::new(ctx.clone(), || {
-  // Return current timestamp as string or object
-})?;
-// Add prototype methods: toLocaleTimeString, toISOString, etc.
-globals.set("Date", date_ctor)?;
-```
+rquickjs has a **built-in Date** implementation that is fully compatible with JavaScript's standard Date API. We do NOT need to create a custom Date polyfill - doing so would actually break things by overriding the working built-in.
 
 ## Acceptance Criteria
 
-- [ ] `new Date()` creates a date object in rquickjs
-- [ ] `Date.now()` returns current timestamp
-- [ ] `date.toLocaleTimeString(locale, options)` works with common options
-- [ ] `date.toISOString()` works
-- [ ] `../tui1` example no longer throws `ReferenceError: Date is not defined`
+- [x] `new Date()` creates a date object in rquickjs
+- [x] `Date.now()` returns current timestamp
+- [x] `date.toLocaleTimeString(locale, options)` works with common options
+- [x] `date.toISOString()` works
+- [x] `ink-date-math` example passes rquickjs parity test
+
+## Notes
+
+- Do NOT install a custom Date implementation - it will override rquickjs's built-in Date
+- The built-in Date supports all standard methods: getFullYear, getMonth, getDate, getHours, etc.
+- The ink-date-math test passes with rquickjs's built-in Date

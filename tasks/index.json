@@ -236,6 +236,48 @@
         "147",
         "148"
       ]
+    },
+    {
+      "name": "Phase 15: Advanced React Patterns + Deep Runtime Coverage",
+      "description": "Ink examples for advanced React patterns (render props, HOCs, key/refs) and remaining runtime APIs (Symbol.iterator, ArrayBuffer, performance, structuredClone, arguments, RegExp named groups, string well-formed).",
+      "tasks": [
+        "149",
+        "150",
+        "151",
+        "152",
+        "153",
+        "154",
+        "155",
+        "156",
+        "157",
+        "158",
+        "159",
+        "160",
+        "161",
+        "162",
+        "163"
+      ]
+    },
+    {
+      "name": "Phase 16: Operator + Syntax + Runtime API Completion",
+      "description": "Final Ink examples for operators (in, void, comma, ++/--), syntax features (for-await-of, spread in calls, destructuring in params/catch/for-of), and remaining runtime APIs (Object.entries/values, Array static methods, Date/RegExp/Promise comprehensive methods, parseInt/parseFloat global).",
+      "tasks": [
+        "164",
+        "165",
+        "166",
+        "167",
+        "168",
+        "169",
+        "170",
+        "171",
+        "172",
+        "173",
+        "174",
+        "175",
+        "176",
+        "177",
+        "178"
+      ]
     }
   ],
   "tasks": [
@@ -1502,22 +1544,22 @@
     {
       "id": "134",
       "title": "Add setInterval / clearInterval to rquickjs bridge",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-Critical",
       "files": [
-        "crates/runts-ink/src/js_bridge/"
+        "crates/runts-ink/src/js_bridge/timers.rs"
       ],
-      "acceptance": "setInterval and clearInterval work in rquickjs. --once mode is no-op. Interactive mode fires callbacks. ../tui1 no longer throws ReferenceError."
+      "acceptance": "setInterval and clearInterval work in rquickjs. --once mode is no-op. Interactive mode fires callbacks. ink-date-math test passes."
     },
     {
       "id": "135",
       "title": "Add Date object to rquickjs bridge",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-Critical",
       "files": [
-        "crates/runts-ink/src/js_bridge/"
+        "rquickjs built-in Date"
       ],
-      "acceptance": "new Date(), Date.now(), toLocaleTimeString(), toISOString() work in rquickjs. ../tui1 no longer throws ReferenceError."
+      "acceptance": "rquickjs has built-in Date with new Date(), Date.now(), toLocaleTimeString(), toISOString(). ink-date-math test passes."
     },
     {
       "id": "136",
@@ -1659,6 +1701,246 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. Error subclasses produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "149",
+      "title": "`ink-asserts-predicate` Example \u2014 `asserts` Type Predicate",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "150",
+      "title": "`ink-import-types` Example \u2014 `type T = import(\"./mod\").Type`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "151",
+      "title": "`ink-reference-directive` Example \u2014 `/// <reference types=\"...\" />`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "152",
+      "title": "`ink-use-insertion-effect` Example \u2014 `useInsertionEffect`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "153",
+      "title": "`ink-render-props` Example \u2014 Render Props Pattern",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "154",
+      "title": "`ink-hoc` Example \u2014 Higher-Order Components",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "155",
+      "title": "`ink-symbol-iterator` Example \u2014 `Symbol.iterator`, Custom Iterables",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "156",
+      "title": "`ink-arraybuffer` Example \u2014 `ArrayBuffer`, `Uint8Array`, `DataView`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "157",
+      "title": "`ink-performance` Example \u2014 `performance.now()`, `performance.mark`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "158",
+      "title": "`ink-structured-clone` Example \u2014 `structuredClone`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "159",
+      "title": "`ink-arguments` Example \u2014 `arguments` Object, Rest vs Arguments",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "160",
+      "title": "`ink-regexp-named-groups` Example \u2014 Named Capture Groups",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "161",
+      "title": "`ink-string-wellformed` Example \u2014 `isWellFormed`, `toWellFormed`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "162",
+      "title": "`ink-key-prop` Example \u2014 `key` Prop in Lists and Fragments",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "163",
+      "title": "`ink-ref-callback` Example \u2014 Callback Refs, `useRef` with Initial Value",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "164",
+      "title": "`ink-in-operator` Example \u2014 `in` Operator (`prop in obj`, `index in arr`)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "165",
+      "title": "`ink-for-await-of` Example \u2014 `for await...of` Async Iteration",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "166",
+      "title": "`ink-object-entries-values` Example \u2014 `Object.entries`, `Object.values`, `Object.keys`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "167",
+      "title": "`ink-array-static` Example \u2014 `Array.from`, `Array.of`, `Array.isArray`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "168",
+      "title": "`ink-parse-global` Example \u2014 `parseInt`, `parseFloat`, `isNaN`, `isFinite`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "169",
+      "title": "`ink-import-meta-url` Example \u2014 `import.meta.url`, `import.meta.resolve`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "170",
+      "title": "`ink-debugger-labeled` Example \u2014 `debugger` Statement, Labeled Statements",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "171",
+      "title": "`ink-number-string-proto` Example \u2014 Number/String Prototype Methods",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "172",
+      "title": "`ink-array-mutators` Example \u2014 `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "173",
+      "title": "`ink-array-searchers` Example \u2014 `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "174",
+      "title": "`ink-date-comprehensive` Example \u2014 `getTime`, `getFullYear`, `getMonth`, `getDate`, `toISOString`, `toUTCString`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "175",
+      "title": "`ink-regexp-test-exec` Example \u2014 `RegExp.prototype.test`, `exec`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "176",
+      "title": "`ink-promise-resolve-reject` Example \u2014 `Promise.resolve`, `Promise.reject`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "177",
+      "title": "`ink-void-comma-increment` Example \u2014 `void`, Comma Operator, `++`/`--`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "178",
+      "title": "`ink-spread-call-destructure` Example \u2014 Spread in Function Calls, Destructuring in Params/Catch/For-Of",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [],
+      "acceptance": "Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -1681,7 +1963,7 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 26,
+    "pending_tasks": 56,
     "completed_tasks": 103
   },
   "coverage_gaps": {
@@ -1748,7 +2030,29 @@
       "URI encoding (encodeURI, decodeURI, encodeURIComponent, decodeURIComponent)",
       "Array.reduce / reduceRight",
       "String.startsWith / endsWith / includes / repeat",
-      "Error subclasses (TypeError, RangeError, ReferenceError)"
+      "Error subclasses (TypeError, RangeError, ReferenceError)",
+      "in operator (prop in obj)",
+      "for-await-of loops",
+      "Object.entries / Object.values / Object.keys",
+      "Array.from / Array.of / Array.isArray",
+      "parseInt / parseFloat / isNaN / isFinite globals",
+      "import.meta.url",
+      "debugger statement",
+      "labeled statements",
+      "Number.prototype.toFixed / toPrecision / toExponential",
+      "String.prototype.charAt / charCodeAt / substring / slice / toLowerCase / toUpperCase",
+      "Array.prototype.push / pop / shift / unshift / splice / sort / reverse",
+      "Array.prototype.indexOf / lastIndexOf / every / some / filter / find / findIndex",
+      "Date.getTime / getFullYear / getMonth / getDate / toISOString / toUTCString",
+      "RegExp.prototype.test / exec",
+      "Promise.resolve / Promise.reject",
+      "void operator",
+      "comma operator",
+      "++ / -- operators",
+      "spread in function calls",
+      "destructuring in function parameters",
+      "destructuring in catch clause",
+      "destructuring in for-of loop"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

@@ -27,9 +27,11 @@
 
 pub mod hooks;
 mod box_props;
+// mod date; // rquickjs has built-in Date
 mod parsers;
 mod process;
 mod text_props;
+mod timers;
 
 use crate::{
     Box as InkBox, Newline, RenderOptions, Spacer, Text as InkText, VNode,
@@ -264,7 +266,10 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     install_functions(ctx.clone(), &runts_ink)?;
     globals.set("runts_ink", runts_ink)?;
     hooks::install(ctx)?;
-    process::install(ctx)
+    process::install(ctx)?;
+    timers::install(ctx)?;
+    // Note: rquickjs has built-in Date, do not override it
+    Ok(())
 }
 
 fn install_functions<'js>(ctx: Ctx<'js>, runts_ink: &Object<'js>) -> JsResult<()> {

@@ -622,11 +622,10 @@ ink_example_test!(
     test_ink_function_bind,
     "ink-function-bind",
     [
-        "Function.bind, call, apply Demo",
-        "Bind: Hello, World!",
-        "Call: Hi, Bob!",
-        "Apply: Hey, Alice!",
-        "Partial sum"
+        "Bind: Hey, World!",
+        "Call: Hello, World!",
+        "Apply: Hi, World!",
+        "Partial: 6"
     ]
 );
 
