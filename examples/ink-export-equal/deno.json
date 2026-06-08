@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "ink": "npm:ink@7",
+    "react": "npm:react@19",
+    "react/jsx-runtime": "npm:react@19/jsx-runtime"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
+}
