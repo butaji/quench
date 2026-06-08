@@ -89,7 +89,17 @@ fn call_to_rust(call: &serde_json::Value) -> Option<TokenStream> {
     let callee = expr_to_rust(call.get("callee")?)?;
     let args = call.get("arguments")?.as_array()?;
     let arg_tokens: Vec<TokenStream> = args.iter().filter_map(expr_to_rust).collect();
-    Some(quote! { #callee(#(#arg_tokens),*) })
+    let callee_str = callee.to_string();
+    let fn_name = if is_js_global_fn(&callee_str) {
+        quote::format_ident!("runts_ink::{}", callee_str)
+    } else {
+        quote::format_ident!("{}", callee_str)
+    };
+    Some(quote! { #fn_name(#(#arg_tokens),*) })
+}
+
+fn is_js_global_fn(name: &str) -> bool {
+    matches!(name, "encodeURI" | "encodeURIComponent" | "decodeURI" | "decodeURIComponent")
 }
 
 fn new_to_rust(new_expr: &serde_json::Value) -> Option<TokenStream> {

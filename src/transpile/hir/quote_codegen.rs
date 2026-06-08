@@ -409,15 +409,6 @@ impl QuoteCodegen {
         quote! { #callee(#(#args),*) }
     }
 
-    fn gen_global_fn(&self, name: &str, arguments: &[Expr]) -> Option<TokenStream> {
-        match name {
-            "fetch" => { let url = arguments.first().map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { String::new() }); Some(quote! { reqwest::get(#url).await? }) }
-            "setTimeout" => { let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); Some(quote! { tokio::time::sleep(std::time::Duration::from_millis(#dur as u64)).await }) }
-            "setInterval" => { let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); Some(quote! { tokio::time::interval(std::time::Duration::from_millis(#dur as u64)) }) }
-            _ => None,
-        }
-    }
-
     fn gen_assign_expr(&self, op: &super::AssignOp, left: &Expr, right: &Expr) -> TokenStream {
         use super::AssignOp as A;
         let lhs = self.gen_expr(left);

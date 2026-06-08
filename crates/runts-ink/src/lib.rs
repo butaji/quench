@@ -58,6 +58,7 @@ mod components;
 mod events;
 mod flex_layout;
 pub mod js_bridge;
+pub mod js_runtime;
 mod props;
 mod render;
 mod style;
@@ -75,3 +76,6 @@ pub use props::Props;
 pub use render::{draw_vnode, render, render_to_string, Instance, RenderOptions, RootFn};
 pub use style::{BorderStyle, Borders, Display, Overflow, Position, Wrap};
 pub use vnode::{VNode, VNodeContent};
+
+// Re-export JS runtime globals so generated compile-path code can call them.
+pub use js_runtime::{decodeURI, decodeURIComponent, encodeURI, encodeURIComponent};
