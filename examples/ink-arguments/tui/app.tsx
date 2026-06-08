@@ -13,41 +13,43 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-function sumAll(): number {
-  let sum = 0;
-  for (let i = 0; i < arguments.length; i++) {
-    sum += arguments[i];
-  }
-  return sum;
-}
-
-function logArgs(): string {
-  let result = '';
-  for (let i = 0; i < arguments.length; i++) {
-    if (i > 0) result += ', ';
-    result += String(arguments[i]);
-  }
-  return result;
-}
-
-function maxOf(): number {
-  if (arguments.length === 0) return 0;
-  let max = arguments[0];
-  for (let i = 1; i < arguments.length; i++) {
-    if (arguments[i] > max) max = arguments[i];
-  }
-  return max;
-}
-
-function toArray(): string[] {
-  const arr: string[] = [];
-  for (let i = 0; i < arguments.length; i++) {
-    arr.push(String(arguments[i]));
-  }
-  return arr;
-}
-
 export default function ArgumentsDemo() {
+  // Functions using the arguments object
+  // Note: arguments is only available in non-arrow functions
+  function sumAll(): number {
+    let sum = 0;
+    for (let i = 0; i < arguments.length; i++) {
+      sum += arguments[i];
+    }
+    return sum;
+  }
+
+  function logArgs(): string {
+    let result = '';
+    for (let i = 0; i < arguments.length; i++) {
+      if (i > 0) result += ', ';
+      result += String(arguments[i]);
+    }
+    return result;
+  }
+
+  function maxOf(): number {
+    if (arguments.length === 0) return 0;
+    let max = arguments[0];
+    for (let i = 1; i < arguments.length; i++) {
+      if (arguments[i] > max) max = arguments[i];
+    }
+    return max;
+  }
+
+  function toArray(): string[] {
+    const arr: string[] = [];
+    for (let i = 0; i < arguments.length; i++) {
+      arr.push(String(arguments[i]));
+    }
+    return arr;
+  }
+
   const sum1 = sumAll(1, 2, 3);
   const sum2 = sumAll(10, 20, 30, 40, 50);
   const sum3 = sumAll();

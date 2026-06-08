@@ -325,6 +325,20 @@ ink_example_smoke_test!(test_ink_this_parameter, "ink-this-parameter");
 ink_example_smoke_test!(test_ink_unique_symbol, "ink-unique-symbol");
 ink_example_smoke_test!(test_ink_react_children, "ink-react-children");
 
+// arguments object - legacy but still used in some codebases
+ink_example_test!(
+    test_ink_arguments,
+    "ink-arguments",
+    [
+        "Arguments Object Demo",
+        "sumAll(1, 2, 3): 6",
+        "sumAll(10, 20, 30, 40, 50): 150",
+        "logArgs('a', 'b', 'c'): a, b, c",
+        "maxOf(3, 1, 4, 1, 5, 9, 2, 6): 9",
+        "toArray('x', 'y', 'z'): x, y, z"
+    ]
+);
+
 ink_example_test!(
     test_ink_regexp_advanced,
     "ink-regexp-advanced",
