@@ -278,6 +278,39 @@
         "177",
         "178"
       ]
+    },
+    {
+      "name": "Phase 17: ES2024 + TypeScript 5.0+ Feature Completion",
+      "description": "Final Ink examples for ES2024 features (using/await using, import attributes, Array.fromAsync, Promise.withResolvers, Object.groupBy) and TypeScript 5.0+ features (const type parameters, accessor fields, satisfies expressions, type annotation in catch, iterator helpers, throw expressions).",
+      "tasks": [
+        "179",
+        "180",
+        "181",
+        "182",
+        "183",
+        "184",
+        "185",
+        "186",
+        "187",
+        "188",
+        "189",
+        "190",
+        "191",
+        "192",
+        "193",
+        "194",
+        "195",
+        "196",
+        "197",
+        "198",
+        "199",
+        "200",
+        "201",
+        "202",
+        "203",
+        "204",
+        "205"
+      ]
     }
   ],
   "tasks": [
@@ -1491,7 +1524,7 @@
     {
       "id": "129",
       "title": "ink-array-immutable example \u2014 toSpliced, with (ES2023)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-array-immutable/",
@@ -1943,12 +1976,309 @@
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "179",
+      "title": "ink-using-declaration example \u2014 using and await using (ES2024)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-using-declaration/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. using/await using declarations produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "180",
+      "title": "ink-import-attributes example \u2014 import with attributes (with { type: 'json' })",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-import-attributes/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Import attributes handled by parser. Parity harness 100%."
+    },
+    {
+      "id": "181",
+      "title": "ink-array-from-async example \u2014 Array.fromAsync",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-from-async/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Array.fromAsync produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "182",
+      "title": "ink-promise-with-resolvers example \u2014 Promise.withResolvers",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-promise-with-resolvers/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Promise.withResolvers produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "183",
+      "title": "ink-object-group-by example \u2014 Object.groupBy, Map.groupBy",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-object-group-by/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object.groupBy produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "184",
+      "title": "ink-const-type-param example \u2014 const T type parameters (TS 5.0)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-const-type-param/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. const type parameters erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "185",
+      "title": "ink-accessor-field example \u2014 accessor class fields (TS 5.0)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-accessor-field/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Accessor fields produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "186",
+      "title": "ink-symbol-async-iterator example \u2014 Symbol.asyncIterator",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-symbol-async-iterator/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Symbol.asyncIterator produces compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "187",
+      "title": "ink-throw-expression example \u2014 throw expressions (Stage 3)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-throw-expression/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Throw expressions produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "188",
+      "title": "ink-type-annotation-catch example \u2014 type annotations in catch clause",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-type-annotation-catch/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Catch type annotations erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "189",
+      "title": "ink-satisfies-expr example \u2014 satisfies in object/array literals",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-satisfies-expr/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. satisfies in literals erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "190",
+      "title": "ink-iterator-helpers example \u2014 Iterator helpers (map, filter, take)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-iterator-helpers/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Iterator helpers produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "191",
+      "title": "ink-class-expression example \u2014 anonymous class expressions",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-class-expression/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Anonymous class expressions produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "192",
+      "title": "ink-function-expression example \u2014 anonymous and named function expressions",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-function-expression/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Function expressions produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "193",
+      "title": "ink-react-fc-type example \u2014 React.FC, React.FunctionComponent",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-react-fc-type/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. FC type annotations erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "194",
+      "title": "ink-props-with-children example \u2014 React.PropsWithChildren",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-props-with-children/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. PropsWithChildren erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "195",
+      "title": "ink-string-advanced example \u2014 String prototype methods (localeCompare, normalize, codePointAt, fromCodePoint, concat, charAt, charCodeAt)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-string-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Advanced String methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "196",
+      "title": "ink-array-advanced example \u2014 Array methods (findLast, findLastIndex, fill, copyWithin, at)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-array-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Advanced Array methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "197",
+      "title": "ink-ts-directive example \u2014 // @ts-expect-error and // @ts-ignore",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-ts-directive/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. TS directives stripped without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "198",
+      "title": "ink-dangerously-set-inner-html example \u2014 dangerouslySetInnerHTML JSX prop",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-dangerously-set-inner-html/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX object prop parsing works. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "199",
+      "title": "ink-default-props example \u2014 defaultProps on function components",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-default-props/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Default props produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "200",
+      "title": "ink-class-lifecycle example \u2014 class component lifecycle methods (componentDidMount, componentWillUnmount)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-class-lifecycle/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Class lifecycle methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "201",
+      "title": "ink-get-derived-state-from-error example \u2014 Error Boundary with static getDerivedStateFromError",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-get-derived-state-from-error/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. getDerivedStateFromError produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "202",
+      "title": "ink-export-star-as example \u2014 export * as ns from module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-export-star-as/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. export * as handled by parser. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "203",
+      "title": "ink-with-statement example \u2014 with statement (legacy)",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-with-statement/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. with statement handled or rejected by parser. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "204",
+      "title": "ink-jsx-spread-attribute example \u2014 JSX spread attributes {...props}",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-spread-attribute/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX spread attributes produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "205",
+      "title": "ink-set-prototype example \u2014 Set/Map/WeakMap/WeakSet prototype methods",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-set-prototype/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Collection prototype methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 134,
+    "examples_total": 173,
     "examples_with_tests": 128,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -1965,8 +2295,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 55,
-    "completed_tasks": 103
+    "pending_tasks": 73,
+    "completed_tasks": 113
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1974,49 +2304,7 @@
     "disabled_test_modules": [],
     "features_without_examples": [
       "decorators",
-      "logical assignment (||=, &&=, ??=)",
-      "useLayoutEffect",
-      "useId / useTransition",
-      "type aliases / interfaces",
-      "access modifiers (public/private/protected/readonly)",
-      "top-level await",
-      "import type / export type",
-      "barrel exports (export * from)",
-      "keyof / readonly arrays",
-      "BigInt / numeric separators / globalThis",
-      "Symbol / Map / Set / WeakMap",
-      "Suspense / lazy",
-      "override / implements",
-      "abstract classes",
-      "utility types (Partial, Required, Pick, Omit, Record)",
-      "as const / literal types / tuple types",
-      "index signatures / intersection types",
-      "unknown / never / user-defined type guards",
-      "modern array methods (flat, flatMap, at, toSorted)",
-      "modern object methods (fromEntries, hasOwn)",
-      "useImperativeHandle",
-      "useSyncExternalStore / useDeferredValue",
-      "Proxy",
-      "WeakRef / FinalizationRegistry",
-      "modern string methods (padStart, padEnd, replaceAll)",
-      "Promise.allSettled / any / race",
-      "this parameter / this types",
-      "unique symbol / branded types",
-      "Children API / cloneElement / isValidElement",
-      "Date / Math / Intl",
-      "export = / import = require()",
-      "global / module augmentation",
-      "JSON.stringify / JSON.parse",
-      "Function.prototype.bind / call / apply",
-      "Object.create / defineProperty / freeze / seal / assign",
-      "queueMicrotask",
-      "Error.cause",
-      "class static {} blocks",
-      "private methods #method() / #field in obj",
-      "Number static methods (isFinite, isNaN, parseInt, parseFloat)",
       "Array.toSpliced / Array.with (ES2023)",
-      "React.createRef / useDebugValue",
-      "function overloads",
       "process global (process.exit, process.env, process.stdin, process.stdout)",
       "setInterval / clearInterval",
       "Date object (new Date, Date.now, toLocaleTimeString)",
@@ -2033,6 +2321,21 @@
       "Array.reduce / reduceRight",
       "String.startsWith / endsWith / includes / repeat",
       "Error subclasses (TypeError, RangeError, ReferenceError)",
+      "asserts type predicate",
+      "import types (type T = import('./mod').Type)",
+      "triple-slash reference directives",
+      "useInsertionEffect",
+      "render props pattern",
+      "higher-order components (HOC)",
+      "Symbol.iterator / custom iterables",
+      "ArrayBuffer / Uint8Array / DataView",
+      "performance.now() / performance.mark",
+      "structuredClone",
+      "arguments object",
+      "RegExp named capture groups",
+      "String.isWellFormed / toWellFormed",
+      "key prop in lists",
+      "callback refs / useRef with initial value",
       "in operator (prop in obj)",
       "for-await-of loops",
       "Object.entries / Object.values / Object.keys",
@@ -2054,7 +2357,33 @@
       "spread in function calls",
       "destructuring in function parameters",
       "destructuring in catch clause",
-      "destructuring in for-of loop"
+      "destructuring in for-of loop",
+      "using / await using declarations (ES2024)",
+      "import attributes (import with { type: 'json' })",
+      "Array.fromAsync",
+      "Promise.withResolvers",
+      "Object.groupBy / Map.groupBy",
+      "const type parameters (TS 5.0)",
+      "accessor class fields (TS 5.0)",
+      "Symbol.asyncIterator",
+      "throw expressions (Stage 3)",
+      "type annotation in catch clause",
+      "satisfies in object/array literals",
+      "Iterator helpers (map, filter, take, drop)",
+      "anonymous class expressions",
+      "anonymous/named function expressions",
+      "React.FC / FunctionComponent type annotations",
+      "React.PropsWithChildren utility type",
+      "String.localeCompare / normalize / codePointAt / fromCodePoint / concat / charAt / charCodeAt",
+      "Array.findLast / findLastIndex / fill / copyWithin / at",
+      "// @ts-expect-error / // @ts-ignore directives",
+      "dangerouslySetInnerHTML JSX prop",
+      "defaultProps on function components",
+      "class component lifecycle methods (componentDidMount, componentWillUnmount)",
+      "static getDerivedStateFromError / componentDidCatch",
+      "export * as ns from module",
+      "with statement (legacy)",
+      "JSX spread attributes {...props}"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

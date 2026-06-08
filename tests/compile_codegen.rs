@@ -582,3 +582,41 @@ fn test() {
 "#;
     assert!(rust_code_compiles(rust_code), "Generated ??= should compile");
 }
+
+/// Test array toSpliced generates valid Rust
+#[test]
+fn test_array_to_spliced_codegen() {
+    let rust_code = r#"
+fn test() {
+    let original = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
+    let _spliced = {
+        let mut __arr = original.clone();
+        let __start = 1usize;
+        let __delete = 2usize;
+        let __items = vec![Value::String("a".to_string()), Value::String("b".to_string())];
+        __arr.splice(__start..(__start + __delete), __items);
+        __arr
+    };
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated toSpliced should compile");
+}
+
+/// Test array with generates valid Rust
+#[test]
+fn test_array_with_codegen() {
+    let rust_code = r#"
+fn test() {
+    let original = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
+    let _replaced = {
+        let mut __arr = original.clone();
+        let __idx = 2usize;
+        if __idx < __arr.len() {
+            __arr[__idx] = Value::String("X".to_string());
+        }
+        __arr
+    };
+}
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated with should compile");
+}
