@@ -295,6 +295,7 @@ ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");
 ink_example_smoke_test!(test_ink_generator, "ink-generator");
 ink_example_smoke_test!(test_ink_proxy, "ink-proxy");
 ink_example_smoke_test!(test_ink_weakref, "ink-weakref");
+ink_example_smoke_test!(test_ink_string_modern, "ink-string-modern");
 
 ink_example_test!(
     test_ink_regexp_advanced,
