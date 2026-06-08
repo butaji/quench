@@ -2283,10 +2283,12 @@
     {
       "id": "177",
       "title": "`ink-void-comma-increment` Example \u2014 `void`, Comma Operator, `++`/`--`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-void-comma-increment/"
+      ],
+      "acceptance": "Example exists. JavaScript operators (void, comma, ++, --) produce 100% parity across deno/rq/compile."
     },
     {
       "id": "178",
