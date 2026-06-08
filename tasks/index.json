@@ -1290,7 +1290,7 @@
     {
       "id": "116",
       "title": "ink-unique-symbol example \u2014 unique symbol, branded types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-unique-symbol/",
