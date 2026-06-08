@@ -345,7 +345,8 @@ fn var_kind(k: VariableDeclarationKind) -> VariableKind {
         VariableDeclarationKind::Const=>VariableKind::Const,
         VariableDeclarationKind::Let=>VariableKind::Let,
         VariableDeclarationKind::Var=>VariableKind::Var,
-        _=>VariableKind::Let,
+        VariableDeclarationKind::Using=>VariableKind::Using,
+        VariableDeclarationKind::AwaitUsing=>VariableKind::AwaitUsing,
     }
 }
 

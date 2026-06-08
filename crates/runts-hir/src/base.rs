@@ -219,6 +219,10 @@ pub enum VariableKind {
     Var,
     Let,
     Const,
+    /// ES2024 / TS 5.2 explicit resource management
+    Using,
+    /// ES2024 / TS 5.2 async explicit resource management
+    AwaitUsing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
