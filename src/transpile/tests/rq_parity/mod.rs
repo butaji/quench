@@ -439,3 +439,19 @@ ink_example_test!(
         "create.greeting: hello"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// React useImperativeHandle (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_use_imperative_handle,
+    "ink-use-imperative-handle",
+    [
+        "useImperativeHandle & forwardRef Demo",
+        "Count: 0",
+        "Timer: 0 (stopped)",
+        "Test component",
+        "Counter ref: null"
+    ]
+);
