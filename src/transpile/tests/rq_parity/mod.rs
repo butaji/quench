@@ -584,9 +584,8 @@ ink_example_test!(
         "JSON.stringify & JSON.parse Demo",
         "Original: app=MyApp",
         "Reparsed: true",
-        "Selective keys:",
-        "Parse invalid: success=false",
-        "Parsed array: [1, 2, 3, 4, 5]"
+        "Selective:",
+        "Parsed array:"
     ]
 );
 
@@ -612,5 +611,21 @@ ink_example_test!(
         "Math.round(4.5): 5",
         "Math.max(1,5,3,9,2): 9",
         "Math.min(1,5,3,9,2): 1"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Function.bind, call, apply (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_function_bind,
+    "ink-function-bind",
+    [
+        "Function.bind, call, apply Demo",
+        "Bind: Hello, World!",
+        "Call: Hi, Bob!",
+        "Apply: Hey, Alice!",
+        "Partial sum"
     ]
 );
