@@ -375,6 +375,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_infer_conditional,
+    "ink-infer-conditional",
+    [
+        "infer in Conditional Types Demo",
+        "ReturnType extraction:",
+        "greeting: Hello",
+        "age: 30",
+        "user: {",
+        "first: first-element"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript utility types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════

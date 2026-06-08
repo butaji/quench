@@ -1077,7 +1077,7 @@
     {
       "id": "098",
       "title": "ink-infer-conditional example \u2014 infer in conditional types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P3-Low",
       "files": [
         "examples/ink-infer-conditional/",
@@ -1452,11 +1452,11 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 130,
-    "examples_with_tests": 124,
+    "examples_total": 131,
+    "examples_with_tests": 125,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
-    "tests_passing": 986,
+    "tests_passing": 987,
     "tests_failing": 0,
     "tests_ignored": 183,
     "test_scripts": 1,
@@ -1469,8 +1469,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 35,
-    "completed_tasks": 77
+    "pending_tasks": 34,
+    "completed_tasks": 78
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1492,7 +1492,6 @@
       "Suspense / lazy",
       "override / implements",
       "abstract classes",
-      "infer in conditional types",
       "RegExp advanced flags / matchAll",
       "utility types (Partial, Required, Pick, Omit, Record)",
       "as const / literal types / tuple types",
