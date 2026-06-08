@@ -763,6 +763,7 @@ The single script (`scripts/parity.sh`) MUST:
 | **Do not leave test modules commented out.** | Disabled tests are invisible decay. Fix or delete. |
 | **Do not add examples that require Rust code.** | Examples are pure TS/TSX only. |
 | **Do not accept < 100% parity.** | The standard is identical output. Fix the bug, not the threshold. |
+| **Do not simplify examples with fallbacks or polyfills.** | If an API is missing, the parity harness must fail with 100% mismatch. Fix the bridge/runtime, not the example. Examples must call the real API. |
 
 ---
 
