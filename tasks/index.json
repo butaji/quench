@@ -1132,7 +1132,7 @@
     {
       "id": "103",
       "title": "ink-unknown-never example \u2014 unknown, never, user-defined type guards",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-unknown-never/",
