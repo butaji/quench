@@ -23,6 +23,7 @@ pub struct ModuleData {
     pub path: PathBuf,
     pub exports: HashMap<String, String>,
     pub js: String,
+    pub reexports: Vec<(String, PathBuf)>,
 }
 
 impl Bundler {
@@ -39,14 +40,6 @@ impl Bundler {
         let canonical = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
         if self.module_index.contains_key(&canonical) { return Ok(()); }
 
-        self.modules.push(ModuleData {
-            path: canonical.clone(),
-            exports: HashMap::new(),
-            js: String::new(),
-        });
-        let id = self.modules.len() - 1;
-        self.module_index.insert(canonical.clone(), id);
-
         for import_path in imports::find_imports(&source) {
             if import_path.starts_with('.') {
                 if let Some(resolved) = self.resolve_import(&import_path, from_dir) {
@@ -54,6 +47,15 @@ impl Bundler {
                 }
             }
         }
+
+        self.modules.push(ModuleData {
+            path: canonical.clone(),
+            exports: HashMap::new(),
+            js: String::new(),
+            reexports: Vec::new(),
+        });
+        let id = self.modules.len() - 1;
+        self.module_index.insert(canonical.clone(), id);
         Ok(())
     }
 
@@ -63,7 +65,8 @@ impl Bundler {
         let mut program = program;
         let js = transform_and_codegen(&self.allocator, &mut program)?;
 
-        let (raw_js, exports) = self.extract_exports(&js)?;
+        let module_dir = file_path.parent().unwrap_or(Path::new("."));
+        let (raw_js, exports, reexports) = self.extract_exports(&js, module_dir)?;
         let canonical = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
         let id = self.module_index.get(&canonical).copied().unwrap_or(0);
 
@@ -73,18 +76,29 @@ impl Bundler {
         if let Some(module) = self.modules.get_mut(id) {
             module.exports = updated_exports;
             module.js = js;
+            module.reexports = reexports;
         }
         Ok(())
     }
 
-    fn extract_exports(&self, js: &str) -> Result<(String, HashMap<String, String>)> {
+    fn extract_exports(&self, js: &str, module_dir: &Path) -> Result<(String, HashMap<String, String>, Vec<(String, PathBuf)>)> {
         let mut exports = HashMap::new();
         let mut output_lines = Vec::new();
+        let mut reexports = Vec::new();
+        let re = regex::Regex::new(r#"export\s+\*\s+as\s+(\w+)\s+from\s+['\"]([^'\"]+)['\"]"#)?;
 
         for line in js.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("import ") {
                 output_lines.push(line.to_string());
+                continue;
+            }
+            if let Some(caps) = re.captures(trimmed) {
+                let name = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let path = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+                if let Some(resolved) = self.resolve_import(&path, module_dir) {
+                    reexports.push((name, resolved));
+                }
                 continue;
             }
             if let Some((kind, name, transformed)) = self.process_export_line(trimmed) {
@@ -94,7 +108,72 @@ impl Bundler {
             }
             output_lines.push(line.to_string());
         }
-        Ok((output_lines.join("\n"), exports))
+        Ok((output_lines.join("\n"), exports, reexports))
+    }
+
+    pub fn resolve_reexports(&mut self) {
+        let modules_info: Vec<(PathBuf, Vec<(String, PathBuf)>)> = self.modules
+            .iter()
+            .map(|m| {
+                let dir = m.path.parent().unwrap_or(Path::new(".")).to_path_buf();
+                let reexports = m.reexports.clone();
+                (dir, reexports)
+            })
+            .collect();
+
+        for (i, (module_dir, reexports)) in modules_info.iter().enumerate() {
+            let (extra_js, extra_exports) = self.build_reexport_decls(module_dir, reexports);
+            self.apply_reexports(i, extra_js, extra_exports);
+        }
+    }
+
+    fn build_reexport_decls(
+        &self,
+        module_dir: &Path,
+        reexports: &[(String, PathBuf)],
+    ) -> (Vec<String>, HashMap<String, String>) {
+        let mut extra_js = Vec::new();
+        let mut extra_exports = HashMap::new();
+
+        for (name, source_path) in reexports {
+            if let Some(resolved) = self.resolve_import(source_path.to_str().unwrap_or(""), module_dir) {
+                let members = self.collect_source_exports(&resolved);
+                let decl = if members.is_empty() {
+                    format!("var {} = {{}};", name)
+                } else {
+                    format!("var {} = {{{}}};", name, members.join(", "))
+                };
+                extra_js.push(decl);
+                extra_exports.insert(name.clone(), name.clone());
+            }
+        }
+        (extra_js, extra_exports)
+    }
+
+    fn collect_source_exports(&self, resolved: &Path) -> Vec<String> {
+        let canonical = resolved.canonicalize().unwrap_or(resolved.to_path_buf());
+        let source_exports = self.modules.iter()
+            .find(|m| m.path == canonical)
+            .map(|m| m.exports.clone())
+            .unwrap_or_default();
+        source_exports.iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect()
+    }
+
+    fn apply_reexports(
+        &mut self,
+        idx: usize,
+        extra_js: Vec<String>,
+        extra_exports: HashMap<String, String>,
+    ) {
+        if extra_js.is_empty() { return; }
+        if let Some(module) = self.modules.get_mut(idx) {
+            module.js = format!("{}\n{}", extra_js.join("\n"), module.js);
+            for (k, v) in extra_exports {
+                module.exports.insert(k, v);
+            }
+        }
     }
 
     pub fn rewrite_imports(&mut self) {
@@ -132,13 +211,13 @@ impl Bundler {
         if imports::is_ink_import(trimmed) { return Some(imports::extract_ink_import_declarations(trimmed)); }
         if !imports::is_local_import(trimmed) { return None; }
 
-        if let Ok(Some((_, resolved, names))) = self.resolve_local_import(trimmed, from_dir) {
+        if let Ok(Some((_, resolved, names, is_ns))) = self.resolve_local_import(trimmed, from_dir) {
             let id = self.get_module_id(&resolved);
             let all_exports = self.modules.iter()
                 .find(|m| m.path == resolved.canonicalize().unwrap_or(resolved.clone()))
                 .map(|m| m.exports.clone())
                 .unwrap_or_default();
-            return Some(vec![transform::rewrite_import_to_global(id, &names, &all_exports)]);
+            return Some(vec![transform::rewrite_import_to_global(id, &names, &all_exports, is_ns)]);
         }
         None
     }
@@ -156,10 +235,19 @@ impl Bundler {
         if let Some(name) = crate::transpile::postprocess::capture_default_identifier(trimmed) {
             return Some(("default".to_string(), name, "// export default handled".to_string()));
         }
-        imports::extract_named_export(trimmed).map(|(k, n)| (k, n, line.to_string()))
+        imports::extract_named_export(trimmed).map(|(k, n)| {
+            let transformed = if trimmed.starts_with("export const ") {
+                line.replacen("export const ", "const ", 1)
+            } else if trimmed.starts_with("export function ") {
+                line.replacen("export function ", "function ", 1)
+            } else {
+                line.to_string()
+            };
+            (k, n, transformed)
+        })
     }
 
-    fn resolve_local_import(&self, line: &str, from_dir: &Path) -> Result<Option<(String, PathBuf, Vec<String>)>> {
+    fn resolve_local_import(&self, line: &str, from_dir: &Path) -> Result<Option<(String, PathBuf, Vec<String>, bool)>> {
         let trimmed = line.trim();
         if !trimmed.starts_with("import") { return Ok(None); }
 
@@ -167,10 +255,11 @@ impl Bundler {
         if let Some(caps) = re.captures(trimmed) {
             let import_spec = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             let from_path = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            let is_namespace = import_spec.starts_with("* as ");
 
             if from_path.starts_with('.') {
                 if let Some(resolved) = self.resolve_import(from_path, from_dir) {
-                    return Ok(Some((trimmed.to_string(), resolved, imports::parse_import_names(import_spec))));
+                    return Ok(Some((trimmed.to_string(), resolved, imports::parse_import_names(import_spec), is_namespace)));
                 }
             }
         }

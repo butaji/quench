@@ -767,3 +767,18 @@ ink_example_test!(
         "Push overflow: false"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Namespace re-export (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_namespace_reexport,
+    "ink-namespace-reexport",
+    [
+        "Namespace Re-export Demo",
+        "2 + 3 = 5",
+        "4 * 5 = 20",
+        "PI = 3.14"
+    ]
+);

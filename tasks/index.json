@@ -332,6 +332,27 @@
         "219",
         "220"
       ]
+    },
+    {
+      "name": "Phase 20: Advanced Language + Runtime + React Patterns + Compile Infrastructure",
+      "description": "Final Ink examples for advanced language features (eval, super calls, private-in, import.meta.resolve, globalThis, BigInt operations), runtime API deep coverage (Intl, Atomics), compile path infrastructure (source maps, verbatimModuleSyntax), JSX advanced patterns (member expressions, namespaces), and React patterns (startTransition, React 19 hooks).",
+      "tasks": [
+        "221",
+        "222",
+        "223",
+        "224",
+        "225",
+        "226",
+        "227",
+        "228",
+        "229",
+        "230",
+        "231",
+        "232",
+        "233",
+        "234",
+        "235"
+      ]
     }
   ],
   "tasks": [
@@ -1680,11 +1701,15 @@
     {
       "id": "141",
       "title": "ink-namespace-reexport example \u2014 export * as ns from 'mod'",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-namespace-reexport/",
-        "src/transpile/hir/quote_codegen_stmts.inc"
+        "src/transpile/bundler/bundler.rs",
+        "src/transpile/bundler/imports.rs",
+        "src/transpile/bundler/transform.rs",
+        "src/transpile/bundler/mod.rs",
+        "src/transpile/tests/rq_parity/mod.rs"
       ],
       "acceptance": "Example exists. Namespace re-export produces compilable Rust. Parity harness 100% across deno/rq/compile."
     },
@@ -2466,6 +2491,171 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. ES2025 Set methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "221",
+      "title": "ink-eval example \u2014 eval() function",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-eval/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. eval() handled by compile path. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "222",
+      "title": "ink-super-call example \u2014 super() in class constructors",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-super-call/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. super() calls produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "223",
+      "title": "ink-private-in example \u2014 #field in obj (private identifier in in)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-private-in/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Private-in operator produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "224",
+      "title": "ink-import-meta-resolve example \u2014 import.meta.resolve",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-import-meta-resolve/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. import.meta.resolve handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "225",
+      "title": "ink-global-this example \u2014 globalThis",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-global-this/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. globalThis produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "226",
+      "title": "ink-bigint-ops example \u2014 BigInt literals and operations",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-bigint-ops/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. BigInt operations produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "227",
+      "title": "ink-intl-datetime example \u2014 Intl.DateTimeFormat",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-intl-datetime/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Intl.DateTimeFormat produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "228",
+      "title": "ink-intl-number example \u2014 Intl.NumberFormat",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-intl-number/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Intl.NumberFormat produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "229",
+      "title": "ink-atomics example \u2014 Atomics API",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-atomics/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Atomics API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "230",
+      "title": "ink-source-map example \u2014 source map generation for compiled output",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-source-map/",
+        "src/commands/build/source_gen.rs"
+      ],
+      "acceptance": "Example exists. Source maps generated alongside compiled binary. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "231",
+      "title": "ink-verbatim-module-syntax example \u2014 verbatimModuleSyntax (TS 5.0)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-verbatim-module-syntax/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. verbatimModuleSyntax respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "232",
+      "title": "ink-jsx-member example \u2014 JSX member expressions (My.Component)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-member/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX member expressions produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "233",
+      "title": "ink-jsx-namespace example \u2014 JSX namespaced elements (ns:tag)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-jsx-namespace/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX namespace syntax handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "234",
+      "title": "ink-start-transition example \u2014 startTransition",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-start-transition/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. startTransition produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "235",
+      "title": "ink-react-19-hooks example \u2014 useFormStatus, useOptimistic, useActionState, use",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-react-19-hooks/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. React 19 hooks produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -2488,7 +2678,7 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 80,
+    "pending_tasks": 95,
     "completed_tasks": 121
   },
   "coverage_gaps": {
@@ -2591,7 +2781,22 @@
       "moduleResolution modes (node, bundler, classic)",
       "Web APIs (URL, AbortController, TextEncoder, Blob, FormData, Headers)",
       "RegExp.escape (ES2025)",
-      "Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)"
+      "Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)",
+      "eval() function",
+      "super() calls in class constructors",
+      "#field in obj (private identifier in in operator)",
+      "import.meta.resolve",
+      "globalThis",
+      "BigInt literals and operations",
+      "Intl.DateTimeFormat",
+      "Intl.NumberFormat",
+      "Atomics API",
+      "Source map generation",
+      "verbatimModuleSyntax (TS 5.0)",
+      "JSX member expressions (My.Component)",
+      "JSX namespaced elements (ns:tag)",
+      "startTransition",
+      "React 19 hooks (useFormStatus, useOptimistic, useActionState, use)"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

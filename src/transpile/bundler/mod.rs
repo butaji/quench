@@ -22,13 +22,12 @@ pub fn transpile_to_js_bundled(entry_path: &Path) -> anyhow::Result<String> {
     bundler.resolve_modules(entry_path, from_dir)?;
 
     let entry_canonical = entry_path.canonicalize().unwrap_or_else(|_| entry_path.to_path_buf());
-    let mut ordered: Vec<_> = bundler.module_index.keys().cloned().collect();
-    ordered.sort();
-
-    for path in &ordered {
+    let module_paths: Vec<_> = bundler.modules.iter().map(|m| m.path.clone()).collect();
+    for path in &module_paths {
         bundler.transpile_modules(path)?;
     }
 
+    bundler.resolve_reexports();
     bundler.rewrite_imports();
 
     build_bundle_output(&bundler, &entry_canonical)
