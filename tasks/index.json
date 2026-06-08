@@ -207,6 +207,21 @@
         "130",
         "131"
       ]
+    },
+    {
+      "name": "Phase 13: Real-World Validation (../tui1 Port)",
+      "description": "Tasks identified by attempting to compile the ../tui1 real-world Ink chat example. Covers missing bridge globals (process, Date, timers), JSX edge cases (fragments, pragmas), and dynamic import of node built-ins.",
+      "tasks": [
+        "132",
+        "133",
+        "134",
+        "135",
+        "136",
+        "137",
+        "138",
+        "139",
+        "140"
+      ]
     }
   ],
   "tasks": [
@@ -1242,7 +1257,7 @@
     {
       "id": "113",
       "title": "ink-string-modern example \u2014 padStart, padEnd, replaceAll, trimStart, trimEnd, at",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-string-modern/",
@@ -1447,6 +1462,101 @@
         "src/transpile/parser/stmt.rs"
       ],
       "acceptance": "Example exists. Function overloads erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "132",
+      "title": "Port ../tui1 chat example \u2014 real-world feature audit",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "examples/ink-chat/",
+        "../tui1/mod.tsx"
+      ],
+      "acceptance": "All features used by ../tui1 have dedicated tasks. Example compiles in all 3 environments. Parity harness 100%."
+    },
+    {
+      "id": "133",
+      "title": "Add process global to rquickjs bridge",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "crates/runts-ink/src/js_bridge/",
+        "src/commands/dev/ink.rs"
+      ],
+      "acceptance": "process.exit, process.env, process.stdin, process.stdout all available in rquickjs. ../tui1 no longer throws ReferenceError."
+    },
+    {
+      "id": "134",
+      "title": "Add setInterval / clearInterval to rquickjs bridge",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "crates/runts-ink/src/js_bridge/"
+      ],
+      "acceptance": "setInterval and clearInterval work in rquickjs. --once mode is no-op. Interactive mode fires callbacks. ../tui1 no longer throws ReferenceError."
+    },
+    {
+      "id": "135",
+      "title": "Add Date object to rquickjs bridge",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "crates/runts-ink/src/js_bridge/"
+      ],
+      "acceptance": "new Date(), Date.now(), toLocaleTimeString(), toISOString() work in rquickjs. ../tui1 no longer throws ReferenceError."
+    },
+    {
+      "id": "136",
+      "title": "Verify Array.prototype.splice in rquickjs",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "crates/runts-ink/src/js_bridge/"
+      ],
+      "acceptance": "Array.splice works in rquickjs. Returns removed elements. Mutates original. ../tui1 no longer fails on splice."
+    },
+    {
+      "id": "137",
+      "title": "Support React Fragment shorthand <></>",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "src/transpile/js_bundle.rs",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "<>...</> transformed to React.createElement(React.Fragment, null, ...). React.Fragment defined in shim. ../tui1 renders fragments correctly."
+    },
+    {
+      "id": "138",
+      "title": "Handle dynamic import of node built-ins",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "src/transpile/js_bundle.rs",
+        "src/transpile/hir/quote_codegen.rs"
+      ],
+      "acceptance": "import('node:readline') returns rejected Promise or stub in rquickjs. .then/.catch handlers execute. Compile path generates valid Rust. ../tui1 no longer crashes on dynamic import."
+    },
+    {
+      "id": "139",
+      "title": "Handle /** @jsxImportSource react */ pragma",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "JSX pragma comment handled by oxc_transformer. Generated JS uses correct JSX factory. ../tui1 renders correctly with pragma present."
+    },
+    {
+      "id": "140",
+      "title": "Handle render() call inside imported module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "src/transpile/js_bundle.rs",
+        "src/commands/dev/ink.rs"
+      ],
+      "acceptance": "Module-level render() detected and handled (no-op or primary entry). No double-render. ../tui1 renders correctly with module-level render()."
     }
   ],
   "stats": {
@@ -1469,8 +1579,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 31,
-    "completed_tasks": 81
+    "pending_tasks": 27,
+    "completed_tasks": 94
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1520,7 +1630,15 @@
       "Number static methods (isFinite, isNaN, parseInt, parseFloat)",
       "Array.toSpliced / Array.with (ES2023)",
       "React.createRef / useDebugValue",
-      "function overloads"
+      "function overloads",
+      "process global (process.exit, process.env, process.stdin, process.stdout)",
+      "setInterval / clearInterval",
+      "Date object (new Date, Date.now, toLocaleTimeString)",
+      "Array.splice",
+      "React Fragment shorthand <></>",
+      "dynamic import of node built-ins",
+      "JSX pragma /** @jsxImportSource */",
+      "module-level render() call"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
