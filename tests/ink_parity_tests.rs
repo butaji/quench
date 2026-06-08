@@ -631,6 +631,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-parse-global",
         "ink-import-meta-url",
         "ink-debugger-labeled",
+        "ink-number-string-proto",
     ];
     
     for example in new_examples {
@@ -1484,6 +1485,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-parse-global",
         "ink-import-meta-url",
         "ink-debugger-labeled",
+        "ink-number-string-proto",
     ];
     
     for example in new_examples {
@@ -1511,6 +1513,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-parse-global",
         "ink-import-meta-url",
         "ink-debugger-labeled",
+        "ink-number-string-proto",
     ];
     
     for example in new_examples {
@@ -1538,6 +1541,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-parse-global",
         "ink-import-meta-url",
         "ink-debugger-labeled",
+        "ink-number-string-proto",
     ];
     
     for example in new_examples {
@@ -1573,6 +1577,7 @@ fn test_new_examples_export_or_render() {
         "ink-parse-global",
         "ink-import-meta-url",
         "ink-debugger-labeled",
+        "ink-number-string-proto",
     ];
     
     for example in new_examples {

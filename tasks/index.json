@@ -2222,9 +2222,12 @@
     {
       "id": "171",
       "title": "`ink-number-string-proto` Example \u2014 Number/String Prototype Methods",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-number-string-proto/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
