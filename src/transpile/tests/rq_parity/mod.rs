@@ -308,3 +308,16 @@ ink_example_test!(
         "Theme: default"
     ]
 );
+
+ink_example_test!(
+    test_ink_override_implements,
+    "ink-override-implements",
+    [
+        "FancyWidget",
+        "FancyWidget (decorated)",
+        "[fancy]",
+        "SimpleWidget",
+        "base",
+        "Count: 2"
+    ]
+);
