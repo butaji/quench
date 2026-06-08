@@ -2263,10 +2263,12 @@
     {
       "id": "175",
       "title": "`ink-regexp-test-exec` Example \u2014 `RegExp.prototype.test`, `exec`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-regexp-test-exec/"
+      ],
+      "acceptance": "Example exists. RegExp methods (test, exec, match, replace, search, split) produce 100% parity across deno/rq/compile."
     },
     {
       "id": "176",
