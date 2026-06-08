@@ -625,6 +625,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-box",
         "ink-regexp-named-groups",
         "ink-string-wellformed",
+        "ink-for-await-of",
     ];
     
     for example in new_examples {
@@ -1472,6 +1473,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-box",
         "ink-regexp-named-groups",
         "ink-string-wellformed",
+        "ink-for-await-of",
     ];
     
     for example in new_examples {
@@ -1493,6 +1495,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-box",
         "ink-regexp-named-groups",
         "ink-string-wellformed",
+        "ink-for-await-of",
     ];
     
     for example in new_examples {
@@ -1514,6 +1517,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-box",
         "ink-regexp-named-groups",
         "ink-string-wellformed",
+        "ink-for-await-of",
     ];
     
     for example in new_examples {
@@ -1543,6 +1547,7 @@ fn test_new_examples_export_or_render() {
         "ink-box",
         "ink-regexp-named-groups",
         "ink-string-wellformed",
+        "ink-for-await-of",
     ];
     
     for example in new_examples {
