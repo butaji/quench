@@ -2073,9 +2073,12 @@
     {
       "id": "157",
       "title": "`ink-performance` Example — `performance.now()`, `performance.mark`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-performance/",
+        "crates/runts-ink/src/js_bridge/performance.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
