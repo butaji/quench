@@ -1,8 +1,6 @@
 //! Minimal React shim for the rquickjs dev path.
-//!
 //! This shim provides React hooks (useState, useContext, etc.)
 //! and bridges to runts_ink for rendering.
-
 /// React shim source code - injected before user code in the JS bundle.
 pub const REACT_SHIM: &str = r#"var React = (function() {
     var currentHooks = null;
@@ -17,7 +15,6 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         function setState(v) { currentHooks[idx] = v; }
         return [val, setState];
     }
-
     function useReducer(reducer, init) {
         var idx = currentIdx++;
         if (currentHooks[idx] === undefined) {
@@ -79,6 +76,15 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return currentHooks[idx];
     }
 
+    // createRef - class-based ref (returns { current: null })
+    function createRef() {
+        return { current: null };
+    }
+
+    // useDebugValue - DevTools label for custom hooks (no-op in TUI)
+    function useDebugValue(value, formatter) {
+        // No-op: React DevTools integration not applicable in TUI context
+    }
     // useImperativeHandle - customizes the imperative value that is exposed to parent components
     function useImperativeHandle(ref, factory, deps) {
         var idx = currentIdx++;
@@ -396,8 +402,8 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     };
 
     return {
-        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore,
-        createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore, useDebugValue,
+        createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component, createRef,
         Fragment: 'Fragment', _withHooks: withHooks,
         Children: Children, cloneElement: cloneElement, isValidElement: isValidElement
     };
@@ -415,6 +421,8 @@ var useTransition = React.useTransition;
 var useImperativeHandle = React.useImperativeHandle;
 var useDeferredValue = React.useDeferredValue;
 var useSyncExternalStore = React.useSyncExternalStore;
+var useDebugValue = React.useDebugValue;
+var createRef = React.createRef;
 var createContext = React.createContext;
 var useContext = React.useContext;
 var memo = React.memo;
