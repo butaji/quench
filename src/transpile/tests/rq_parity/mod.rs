@@ -665,4 +665,51 @@ ink_example_test!(
 // queueMicrotask (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
-ink_example_smoke_test!(test_ink_queue_microtask, "ink-queue-microtask");
+ink_example_test!(
+    test_ink_queue_microtask,
+    "ink-queue-microtask",
+    [
+        "queueMicrotask Demo",
+        "Synchronous code (module evaluation order)",
+        "1. sync-start",
+        "2. sync-middle",
+        "3. sync-end"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Error.cause (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_error_cause,
+    "ink-error-cause",
+    [
+        "Error.cause Demo",
+        "ES2022 error chaining",
+        "has cause: true",
+        "cause message: Connection refused",
+        "has cause: false",
+        "AggregateError with cause",
+        "Custom error class"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Class static blocks (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_static_block,
+    "ink-static-block",
+    [
+        "Class Static Blocks Demo",
+        "ES2022 static initialization",
+        "DatabaseConfig static block",
+        "ApiConfig static block",
+        "ServiceRegistry static block",
+        "host: localhost",
+        "initialized: true",
+        "services: 2"
+    ]
+);
