@@ -42,9 +42,9 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-abstract-class/`
-- [ ] Uses `abstract` class with abstract method
-- [ ] Uses concrete subclass implementing abstract method
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path handles `abstract` (erases or maps appropriately)
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-abstract-class/`
+- [x] Uses `abstract` class with abstract method
+- [x] Uses concrete subclass implementing abstract method
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path handles `abstract` (erases or maps appropriately)
+- [x] Parity harness passes with 100% match in all 3 environments

@@ -1033,7 +1033,7 @@
     {
       "id": "094",
       "title": "ink-abstract-class example \u2014 abstract classes",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-abstract-class/",

@@ -321,3 +321,17 @@ ink_example_test!(
         "Count: 2"
     ]
 );
+
+ink_example_test!(
+    test_ink_abstract_class,
+    "ink-abstract-class",
+    [
+        "Abstract Class Demo",
+        "Widget: Text",
+        "Hello, World!",
+        "Type: text",
+        "Widget: Number",
+        "#42",
+        "Type: number"
+    ]
+);
