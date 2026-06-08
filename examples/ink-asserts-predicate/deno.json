@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "react": "npm:react@18",
+    "react/jsx-runtime": "npm:react@18/jsx-runtime",
+    "ink": "npm:ink@4"
+  },
+  "tasks": {
+    "dev": "deno run -A main.tsx"
+  }
+}

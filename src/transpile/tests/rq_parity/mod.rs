@@ -555,6 +555,23 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// TypeScript asserts predicate (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_asserts_predicate,
+    "ink-asserts-predicate",
+    [
+        "asserts Type Predicate Demo",
+        "asserts value is Type narrows type after check",
+        "formatUpper(\"hello world\") = HELLO WORLD",
+        "double(42) = 84",
+        "safeLength(\"test\") = 4",
+        "safeLength([1,2,3]) = 3"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 

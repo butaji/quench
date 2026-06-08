@@ -559,7 +559,7 @@
   "tasks": [
     {
       "id": "020",
-      "title": "Fix quote_codegen.rs syntax error \u2014 unblock the build",
+      "title": "Fix quote_codegen.rs syntax error — unblock the build",
       "status": "completed",
       "priority": "P0-critical",
       "files": [
@@ -803,7 +803,7 @@
     },
     {
       "id": "042",
-      "title": "ink-control-flow example \u2014 for, while, do-while, switch, break, continue",
+      "title": "ink-control-flow example — for, while, do-while, switch, break, continue",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -815,7 +815,7 @@
     },
     {
       "id": "043",
-      "title": "ink-try-catch example \u2014 try, catch, finally, throw",
+      "title": "ink-try-catch example — try, catch, finally, throw",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -827,7 +827,7 @@
     },
     {
       "id": "044",
-      "title": "ink-forin-forof example \u2014 for-in, for-of, iterators",
+      "title": "ink-forin-forof example — for-in, for-of, iterators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -839,7 +839,7 @@
     },
     {
       "id": "045",
-      "title": "ink-destructure example \u2014 destructuring, defaults, rest",
+      "title": "ink-destructure example — destructuring, defaults, rest",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -851,7 +851,7 @@
     },
     {
       "id": "046",
-      "title": "ink-spread example \u2014 object/array spread, JSX spread attrs",
+      "title": "ink-spread example — object/array spread, JSX spread attrs",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -862,7 +862,7 @@
     },
     {
       "id": "047",
-      "title": "ink-template example \u2014 template literals, multiline",
+      "title": "ink-template example — template literals, multiline",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -873,7 +873,7 @@
     },
     {
       "id": "048",
-      "title": "ink-object-advanced example \u2014 getters, setters, computed keys, method shorthand",
+      "title": "ink-object-advanced example — getters, setters, computed keys, method shorthand",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -884,7 +884,7 @@
     },
     {
       "id": "049",
-      "title": "ink-nullish-optional example \u2014 ?? and ?. (optional chaining)",
+      "title": "ink-nullish-optional example — ?? and ?. (optional chaining)",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -894,7 +894,7 @@
     },
     {
       "id": "050",
-      "title": "ink-typeof-guard example \u2014 typeof, instanceof, delete, void",
+      "title": "ink-typeof-guard example — typeof, instanceof, delete, void",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -905,7 +905,7 @@
     },
     {
       "id": "051",
-      "title": "ink-compound-bitwise example \u2014 all compound assignment + bitwise operators",
+      "title": "ink-compound-bitwise example — all compound assignment + bitwise operators",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -916,7 +916,7 @@
     },
     {
       "id": "052",
-      "title": "ink-async-fetch example \u2014 async, await, Promise",
+      "title": "ink-async-fetch example — async, await, Promise",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -927,7 +927,7 @@
     },
     {
       "id": "053",
-      "title": "ink-generator example \u2014 function*, yield, yield*",
+      "title": "ink-generator example — function*, yield, yield*",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -939,7 +939,7 @@
     },
     {
       "id": "054",
-      "title": "ink-function-params example \u2014 default params, rest params",
+      "title": "ink-function-params example — default params, rest params",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -950,7 +950,7 @@
     },
     {
       "id": "055",
-      "title": "ink-class-component example \u2014 classes, extends, super",
+      "title": "ink-class-component example — classes, extends, super",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -961,7 +961,7 @@
     },
     {
       "id": "056",
-      "title": "ink-static-private example \u2014 static methods, private fields #field",
+      "title": "ink-static-private example — static methods, private fields #field",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -971,7 +971,7 @@
     },
     {
       "id": "057",
-      "title": "ink-getter-setter example \u2014 getters, setters, computed accessors",
+      "title": "ink-getter-setter example — getters, setters, computed accessors",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -982,7 +982,7 @@
     },
     {
       "id": "058",
-      "title": "ink-module-exports example \u2014 named exports, default exports, re-exports",
+      "title": "ink-module-exports example — named exports, default exports, re-exports",
       "status": "completed",
       "priority": "P1-high",
       "files": [
@@ -993,7 +993,7 @@
     },
     {
       "id": "059",
-      "title": "ink-dynamic-import example \u2014 import(), import.meta",
+      "title": "ink-dynamic-import example — import(), import.meta",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1003,7 +1003,7 @@
     },
     {
       "id": "060",
-      "title": "ink-react-advanced example \u2014 useReducer, useContext, memo, forwardRef",
+      "title": "ink-react-advanced example — useReducer, useContext, memo, forwardRef",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1016,7 +1016,7 @@
     },
     {
       "id": "061",
-      "title": "ink-jsx-advanced example \u2014 spread attrs, dynamic components, fragments, conditional rendering",
+      "title": "ink-jsx-advanced example — spread attrs, dynamic components, fragments, conditional rendering",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1027,7 +1027,7 @@
     },
     {
       "id": "062",
-      "title": "ink-animation example \u2014 useAnimation",
+      "title": "ink-animation example — useAnimation",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1038,7 +1038,7 @@
     },
     {
       "id": "063",
-      "title": "ink-measure example \u2014 measureElement, useBoxMetrics",
+      "title": "ink-measure example — measureElement, useBoxMetrics",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1049,7 +1049,7 @@
     },
     {
       "id": "064",
-      "title": "ink-focus-paste example \u2014 useFocus, useFocusManager, usePaste",
+      "title": "ink-focus-paste example — useFocus, useFocusManager, usePaste",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1060,7 +1060,7 @@
     },
     {
       "id": "065",
-      "title": "ink-static-transform example \u2014 Static, Transform, Newline, Spacer",
+      "title": "ink-static-transform example — Static, Transform, Newline, Spacer",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1071,7 +1071,7 @@
     },
     {
       "id": "066",
-      "title": "ink-enum-types example \u2014 enums, as, satisfies",
+      "title": "ink-enum-types example — enums, as, satisfies",
       "status": "completed",
       "priority": "P2-medium",
       "files": [
@@ -1081,7 +1081,7 @@
     },
     {
       "id": "067",
-      "title": "ink-type-erasure example \u2014 generics, mapped types, conditional types",
+      "title": "ink-type-erasure example — generics, mapped types, conditional types",
       "status": "completed",
       "priority": "P3-low",
       "files": [
@@ -1205,7 +1205,7 @@
     },
     {
       "id": "078",
-      "title": "Final coverage audit \u2014 complete TS/TSX feature matrix",
+      "title": "Final coverage audit — complete TS/TSX feature matrix",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1216,7 +1216,7 @@
     },
     {
       "id": "079",
-      "title": "ink-logical-assign example \u2014 ||=, &&=, ??=",
+      "title": "ink-logical-assign example — ||=, &&=, ??=",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1227,7 +1227,7 @@
     },
     {
       "id": "080",
-      "title": "ink-use-layout-effect example \u2014 useLayoutEffect",
+      "title": "ink-use-layout-effect example — useLayoutEffect",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1238,7 +1238,7 @@
     },
     {
       "id": "081",
-      "title": "ink-use-id-transition example \u2014 useId, useTransition",
+      "title": "ink-use-id-transition example — useId, useTransition",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1249,7 +1249,7 @@
     },
     {
       "id": "082",
-      "title": "ink-type-alias-interface example \u2014 type aliases, interfaces",
+      "title": "ink-type-alias-interface example — type aliases, interfaces",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1260,7 +1260,7 @@
     },
     {
       "id": "083",
-      "title": "ink-access-modifiers example \u2014 public/private/protected/readonly",
+      "title": "ink-access-modifiers example — public/private/protected/readonly",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1271,7 +1271,7 @@
     },
     {
       "id": "084",
-      "title": "ink-top-level-await example \u2014 top-level await",
+      "title": "ink-top-level-await example — top-level await",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1282,7 +1282,7 @@
     },
     {
       "id": "085",
-      "title": "ink-import-export-type example \u2014 import type, export type",
+      "title": "ink-import-export-type example — import type, export type",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1293,7 +1293,7 @@
     },
     {
       "id": "086",
-      "title": "ink-barrel-export example \u2014 export * from, import * as",
+      "title": "ink-barrel-export example — export * from, import * as",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1304,7 +1304,7 @@
     },
     {
       "id": "087",
-      "title": "ink-keyof-readonly example \u2014 keyof, readonly arrays",
+      "title": "ink-keyof-readonly example — keyof, readonly arrays",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1315,7 +1315,7 @@
     },
     {
       "id": "088",
-      "title": "ink-bigint-globalthis example \u2014 BigInt, numeric separators, globalThis",
+      "title": "ink-bigint-globalthis example — BigInt, numeric separators, globalThis",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1325,7 +1325,7 @@
     },
     {
       "id": "089",
-      "title": "ink-symbol-collections example \u2014 Symbol, Map, Set, WeakMap",
+      "title": "ink-symbol-collections example — Symbol, Map, Set, WeakMap",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1335,7 +1335,7 @@
     },
     {
       "id": "090",
-      "title": "ink-suspense-lazy example \u2014 Suspense, lazy",
+      "title": "ink-suspense-lazy example — Suspense, lazy",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1346,7 +1346,7 @@
     },
     {
       "id": "091",
-      "title": "ink-error-boundary example \u2014 ErrorBoundary",
+      "title": "ink-error-boundary example — ErrorBoundary",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1357,7 +1357,7 @@
     },
     {
       "id": "092",
-      "title": "ink-namespace-declare example \u2014 namespace, declare",
+      "title": "ink-namespace-declare example — namespace, declare",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1368,7 +1368,7 @@
     },
     {
       "id": "093",
-      "title": "ink-override-implements example \u2014 override, implements",
+      "title": "ink-override-implements example — override, implements",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1379,7 +1379,7 @@
     },
     {
       "id": "094",
-      "title": "ink-abstract-class example \u2014 abstract classes",
+      "title": "ink-abstract-class example — abstract classes",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1390,7 +1390,7 @@
     },
     {
       "id": "095",
-      "title": "ink-new-target example \u2014 new.target",
+      "title": "ink-new-target example — new.target",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1401,7 +1401,7 @@
     },
     {
       "id": "096",
-      "title": "ink-reflect-api example \u2014 Reflect API",
+      "title": "ink-reflect-api example — Reflect API",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1412,7 +1412,7 @@
     },
     {
       "id": "097",
-      "title": "ink-template-literal-types example \u2014 template literal types",
+      "title": "ink-template-literal-types example — template literal types",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1423,7 +1423,7 @@
     },
     {
       "id": "098",
-      "title": "ink-infer-conditional example \u2014 infer in conditional types",
+      "title": "ink-infer-conditional example — infer in conditional types",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1434,7 +1434,7 @@
     },
     {
       "id": "099",
-      "title": "ink-regexp-advanced example \u2014 RegExp flags, matchAll",
+      "title": "ink-regexp-advanced example — RegExp flags, matchAll",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1445,7 +1445,7 @@
     },
     {
       "id": "100",
-      "title": "ink-utility-types example \u2014 Partial, Required, Pick, Omit, Record, ReturnType",
+      "title": "ink-utility-types example — Partial, Required, Pick, Omit, Record, ReturnType",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1456,7 +1456,7 @@
     },
     {
       "id": "101",
-      "title": "ink-as-const example \u2014 as const, literal types, tuple types",
+      "title": "ink-as-const example — as const, literal types, tuple types",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1467,7 +1467,7 @@
     },
     {
       "id": "102",
-      "title": "ink-index-intersection example \u2014 index signatures, intersection types",
+      "title": "ink-index-intersection example — index signatures, intersection types",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1478,7 +1478,7 @@
     },
     {
       "id": "103",
-      "title": "ink-unknown-never example \u2014 unknown, never, user-defined type guards",
+      "title": "ink-unknown-never example — unknown, never, user-defined type guards",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1489,7 +1489,7 @@
     },
     {
       "id": "104",
-      "title": "ink-array-modern example \u2014 flat, flatMap, at, toSorted, toReversed, includes, findLast",
+      "title": "ink-array-modern example — flat, flatMap, at, toSorted, toReversed, includes, findLast",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1500,7 +1500,7 @@
     },
     {
       "id": "105",
-      "title": "ink-object-modern example \u2014 fromEntries, hasOwn, getOwnPropertyDescriptors",
+      "title": "ink-object-modern example — fromEntries, hasOwn, getOwnPropertyDescriptors",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1511,7 +1511,7 @@
     },
     {
       "id": "106",
-      "title": "ink-use-imperative-handle example \u2014 useImperativeHandle, forwardRef",
+      "title": "ink-use-imperative-handle example — useImperativeHandle, forwardRef",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1522,7 +1522,7 @@
     },
     {
       "id": "107",
-      "title": "ink-use-sync-external-store example \u2014 useSyncExternalStore, useDeferredValue",
+      "title": "ink-use-sync-external-store example — useSyncExternalStore, useDeferredValue",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1533,7 +1533,7 @@
     },
     {
       "id": "108",
-      "title": "ink-context-advanced example \u2014 Context displayName, defaultValue, multiple providers",
+      "title": "ink-context-advanced example — Context displayName, defaultValue, multiple providers",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1544,7 +1544,7 @@
     },
     {
       "id": "109",
-      "title": "ink-discriminated-unions example \u2014 discriminated unions, exhaustive checks",
+      "title": "ink-discriminated-unions example — discriminated unions, exhaustive checks",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1555,7 +1555,7 @@
     },
     {
       "id": "110",
-      "title": "ink-mapped-types example \u2014 mapped types, keyof, in",
+      "title": "ink-mapped-types example — mapped types, keyof, in",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1566,7 +1566,7 @@
     },
     {
       "id": "111",
-      "title": "ink-proxy example \u2014 Proxy handler",
+      "title": "ink-proxy example — Proxy handler",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1577,7 +1577,7 @@
     },
     {
       "id": "112",
-      "title": "ink-weakref example \u2014 WeakRef, FinalizationRegistry",
+      "title": "ink-weakref example — WeakRef, FinalizationRegistry",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1588,7 +1588,7 @@
     },
     {
       "id": "113",
-      "title": "ink-string-modern example \u2014 padStart, padEnd, replaceAll, trimStart, trimEnd, at",
+      "title": "ink-string-modern example — padStart, padEnd, replaceAll, trimStart, trimEnd, at",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1599,7 +1599,7 @@
     },
     {
       "id": "114",
-      "title": "ink-promise-advanced example \u2014 allSettled, any, race, withResolvers",
+      "title": "ink-promise-advanced example — allSettled, any, race, withResolvers",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1610,7 +1610,7 @@
     },
     {
       "id": "115",
-      "title": "ink-this-parameter example \u2014 this parameter, this types",
+      "title": "ink-this-parameter example — this parameter, this types",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1621,7 +1621,7 @@
     },
     {
       "id": "116",
-      "title": "ink-unique-symbol example \u2014 unique symbol, branded types",
+      "title": "ink-unique-symbol example — unique symbol, branded types",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1632,7 +1632,7 @@
     },
     {
       "id": "117",
-      "title": "ink-react-children example \u2014 Children API, cloneElement, isValidElement",
+      "title": "ink-react-children example — Children API, cloneElement, isValidElement",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1643,7 +1643,7 @@
     },
     {
       "id": "118",
-      "title": "ink-date-math example \u2014 Date, Math, Intl",
+      "title": "ink-date-math example — Date, Math, Intl",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1654,7 +1654,7 @@
     },
     {
       "id": "119",
-      "title": "ink-export-equal example \u2014 export =, import = require()",
+      "title": "ink-export-equal example — export =, import = require()",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1665,7 +1665,7 @@
     },
     {
       "id": "120",
-      "title": "ink-global-augmentation example \u2014 global augmentation, module augmentation",
+      "title": "ink-global-augmentation example — global augmentation, module augmentation",
       "status": "completed",
       "priority": "P3-Low",
       "files": [
@@ -1676,7 +1676,7 @@
     },
     {
       "id": "121",
-      "title": "ink-json-api example \u2014 JSON.stringify, JSON.parse",
+      "title": "ink-json-api example — JSON.stringify, JSON.parse",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1687,7 +1687,7 @@
     },
     {
       "id": "122",
-      "title": "ink-function-bind example \u2014 bind, call, apply",
+      "title": "ink-function-bind example — bind, call, apply",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1698,7 +1698,7 @@
     },
     {
       "id": "123",
-      "title": "ink-object-meta example \u2014 create, defineProperty, freeze, seal, assign",
+      "title": "ink-object-meta example — create, defineProperty, freeze, seal, assign",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1710,7 +1710,7 @@
     },
     {
       "id": "124",
-      "title": "ink-queue-microtask example \u2014 queueMicrotask",
+      "title": "ink-queue-microtask example — queueMicrotask",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1721,7 +1721,7 @@
     },
     {
       "id": "125",
-      "title": "ink-error-cause example \u2014 Error with cause",
+      "title": "ink-error-cause example — Error with cause",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1732,7 +1732,7 @@
     },
     {
       "id": "126",
-      "title": "ink-static-block example \u2014 class static {} blocks",
+      "title": "ink-static-block example — class static {} blocks",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1743,7 +1743,7 @@
     },
     {
       "id": "127",
-      "title": "ink-private-methods example \u2014 private methods #method(), #field in obj",
+      "title": "ink-private-methods example — private methods #method(), #field in obj",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1754,7 +1754,7 @@
     },
     {
       "id": "128",
-      "title": "ink-number-static example \u2014 Number.isFinite, isNaN, parseInt, parseFloat, EPSILON",
+      "title": "ink-number-static example — Number.isFinite, isNaN, parseInt, parseFloat, EPSILON",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1766,7 +1766,7 @@
     },
     {
       "id": "129",
-      "title": "ink-array-immutable example \u2014 toSpliced, with (ES2023)",
+      "title": "ink-array-immutable example — toSpliced, with (ES2023)",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1777,7 +1777,7 @@
     },
     {
       "id": "130",
-      "title": "ink-react-refs-debug example \u2014 createRef, useDebugValue",
+      "title": "ink-react-refs-debug example — createRef, useDebugValue",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1789,7 +1789,7 @@
     },
     {
       "id": "131",
-      "title": "ink-function-overloads example \u2014 function overloads",
+      "title": "ink-function-overloads example — function overloads",
       "status": "completed",
       "priority": "P2-Medium",
       "files": [
@@ -1800,7 +1800,7 @@
     },
     {
       "id": "132",
-      "title": "Port ../tui1 chat example \u2014 real-world feature audit",
+      "title": "Port ../tui1 chat example — real-world feature audit",
       "status": "completed",
       "priority": "P0-Critical",
       "files": [
@@ -1901,7 +1901,7 @@
     },
     {
       "id": "141",
-      "title": "ink-namespace-reexport example \u2014 export * as ns from 'mod'",
+      "title": "ink-namespace-reexport example — export * as ns from 'mod'",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1916,7 +1916,7 @@
     },
     {
       "id": "142",
-      "title": "ink-inline-type-import example \u2014 import { type X }, import type * as ns",
+      "title": "ink-inline-type-import example — import { type X }, import type * as ns",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1930,7 +1930,7 @@
     },
     {
       "id": "143",
-      "title": "ink-parameter-properties example \u2014 constructor(public x: string)",
+      "title": "ink-parameter-properties example — constructor(public x: string)",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1941,7 +1941,7 @@
     },
     {
       "id": "144",
-      "title": "ink-console-methods example \u2014 console.log, error, warn, info, time, timeEnd",
+      "title": "ink-console-methods example — console.log, error, warn, info, time, timeEnd",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1953,11 +1953,11 @@
         "scripts/lib/parity_lib.sh"
       ],
       "acceptance": "Example exists. Console methods produce compilable Rust or no-ops. Parity harness 100%.",
-      "notes": "Deno/rq parity: 99.21%. Compile path produces working binary with console methods mapped to println!/eprintln! or no-ops. Compile-path similarity ~30% due to console.table formatting differences and timing precision \u2014 known architectural limitation of static JSX codegen."
+      "notes": "Deno/rq parity: 99.21%. Compile path produces working binary with console methods mapped to println!/eprintln! or no-ops. Compile-path similarity ~30% due to console.table formatting differences and timing precision — known architectural limitation of static JSX codegen."
     },
     {
       "id": "145",
-      "title": "ink-uri-encoding example \u2014 encodeURI, decodeURI, encodeURIComponent, decodeURIComponent",
+      "title": "ink-uri-encoding example — encodeURI, decodeURI, encodeURIComponent, decodeURIComponent",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1971,7 +1971,7 @@
     },
     {
       "id": "146",
-      "title": "ink-array-reduce example \u2014 reduce, reduceRight",
+      "title": "ink-array-reduce example — reduce, reduceRight",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1982,7 +1982,7 @@
     },
     {
       "id": "147",
-      "title": "ink-string-search example \u2014 startsWith, endsWith, includes, repeat",
+      "title": "ink-string-search example — startsWith, endsWith, includes, repeat",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -1993,7 +1993,7 @@
     },
     {
       "id": "148",
-      "title": "ink-error-subclasses example \u2014 TypeError, RangeError, ReferenceError",
+      "title": "ink-error-subclasses example — TypeError, RangeError, ReferenceError",
       "status": "completed",
       "priority": "P1-High",
       "files": [
@@ -2004,15 +2004,15 @@
     },
     {
       "id": "149",
-      "title": "`ink-asserts-predicate` Example \u2014 `asserts` Type Predicate",
-      "status": "pending",
+      "title": "`ink-asserts-predicate` Example — `asserts` Type Predicate",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
       "id": "150",
-      "title": "`ink-import-types` Example \u2014 `type T = import(\"./mod\").Type`",
+      "title": "`ink-import-types` Example — `type T = import(\"./mod\").Type`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2020,7 +2020,7 @@
     },
     {
       "id": "151",
-      "title": "`ink-reference-directive` Example \u2014 `/// <reference types=\"...\" />`",
+      "title": "`ink-reference-directive` Example — `/// <reference types=\"...\" />`",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2028,7 +2028,7 @@
     },
     {
       "id": "152",
-      "title": "`ink-use-insertion-effect` Example \u2014 `useInsertionEffect`",
+      "title": "`ink-use-insertion-effect` Example — `useInsertionEffect`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2036,7 +2036,7 @@
     },
     {
       "id": "153",
-      "title": "`ink-render-props` Example \u2014 Render Props Pattern",
+      "title": "`ink-render-props` Example — Render Props Pattern",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2044,7 +2044,7 @@
     },
     {
       "id": "154",
-      "title": "`ink-hoc` Example \u2014 Higher-Order Components",
+      "title": "`ink-hoc` Example — Higher-Order Components",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2052,7 +2052,7 @@
     },
     {
       "id": "155",
-      "title": "`ink-symbol-iterator` Example \u2014 `Symbol.iterator`, Custom Iterables",
+      "title": "`ink-symbol-iterator` Example — `Symbol.iterator`, Custom Iterables",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2060,7 +2060,7 @@
     },
     {
       "id": "156",
-      "title": "`ink-arraybuffer` Example \u2014 `ArrayBuffer`, `Uint8Array`, `DataView`",
+      "title": "`ink-arraybuffer` Example — `ArrayBuffer`, `Uint8Array`, `DataView`",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2068,7 +2068,7 @@
     },
     {
       "id": "157",
-      "title": "`ink-performance` Example \u2014 `performance.now()`, `performance.mark`",
+      "title": "`ink-performance` Example — `performance.now()`, `performance.mark`",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2076,7 +2076,7 @@
     },
     {
       "id": "158",
-      "title": "`ink-structured-clone` Example \u2014 `structuredClone`",
+      "title": "`ink-structured-clone` Example — `structuredClone`",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2084,7 +2084,7 @@
     },
     {
       "id": "159",
-      "title": "`ink-arguments` Example \u2014 `arguments` Object, Rest vs Arguments",
+      "title": "`ink-arguments` Example — `arguments` Object, Rest vs Arguments",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2092,7 +2092,7 @@
     },
     {
       "id": "160",
-      "title": "`ink-regexp-named-groups` Example \u2014 Named Capture Groups",
+      "title": "`ink-regexp-named-groups` Example — Named Capture Groups",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2100,7 +2100,7 @@
     },
     {
       "id": "161",
-      "title": "`ink-string-wellformed` Example \u2014 `isWellFormed`, `toWellFormed`",
+      "title": "`ink-string-wellformed` Example — `isWellFormed`, `toWellFormed`",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2108,7 +2108,7 @@
     },
     {
       "id": "162",
-      "title": "`ink-key-prop` Example \u2014 `key` Prop in Lists and Fragments",
+      "title": "`ink-key-prop` Example — `key` Prop in Lists and Fragments",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2116,7 +2116,7 @@
     },
     {
       "id": "163",
-      "title": "`ink-ref-callback` Example \u2014 Callback Refs, `useRef` with Initial Value",
+      "title": "`ink-ref-callback` Example — Callback Refs, `useRef` with Initial Value",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2124,7 +2124,7 @@
     },
     {
       "id": "164",
-      "title": "`ink-in-operator` Example \u2014 `in` Operator (`prop in obj`, `index in arr`)",
+      "title": "`ink-in-operator` Example — `in` Operator (`prop in obj`, `index in arr`)",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2132,7 +2132,7 @@
     },
     {
       "id": "165",
-      "title": "`ink-for-await-of` Example \u2014 `for await...of` Async Iteration",
+      "title": "`ink-for-await-of` Example — `for await...of` Async Iteration",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2140,7 +2140,7 @@
     },
     {
       "id": "166",
-      "title": "`ink-object-entries-values` Example \u2014 `Object.entries`, `Object.values`, `Object.keys`",
+      "title": "`ink-object-entries-values` Example — `Object.entries`, `Object.values`, `Object.keys`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2148,7 +2148,7 @@
     },
     {
       "id": "167",
-      "title": "`ink-array-static` Example \u2014 `Array.from`, `Array.of`, `Array.isArray`",
+      "title": "`ink-array-static` Example — `Array.from`, `Array.of`, `Array.isArray`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2156,7 +2156,7 @@
     },
     {
       "id": "168",
-      "title": "`ink-parse-global` Example \u2014 `parseInt`, `parseFloat`, `isNaN`, `isFinite`",
+      "title": "`ink-parse-global` Example — `parseInt`, `parseFloat`, `isNaN`, `isFinite`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2164,7 +2164,7 @@
     },
     {
       "id": "169",
-      "title": "`ink-import-meta-url` Example \u2014 `import.meta.url`, `import.meta.resolve`",
+      "title": "`ink-import-meta-url` Example — `import.meta.url`, `import.meta.resolve`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2172,7 +2172,7 @@
     },
     {
       "id": "170",
-      "title": "`ink-debugger-labeled` Example \u2014 `debugger` Statement, Labeled Statements",
+      "title": "`ink-debugger-labeled` Example — `debugger` Statement, Labeled Statements",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [],
@@ -2180,7 +2180,7 @@
     },
     {
       "id": "171",
-      "title": "`ink-number-string-proto` Example \u2014 Number/String Prototype Methods",
+      "title": "`ink-number-string-proto` Example — Number/String Prototype Methods",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2188,7 +2188,7 @@
     },
     {
       "id": "172",
-      "title": "`ink-array-mutators` Example \u2014 `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`",
+      "title": "`ink-array-mutators` Example — `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2196,7 +2196,7 @@
     },
     {
       "id": "173",
-      "title": "`ink-array-searchers` Example \u2014 `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`",
+      "title": "`ink-array-searchers` Example — `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2204,7 +2204,7 @@
     },
     {
       "id": "174",
-      "title": "`ink-date-comprehensive` Example \u2014 `getTime`, `getFullYear`, `getMonth`, `getDate`, `toISOString`, `toUTCString`",
+      "title": "`ink-date-comprehensive` Example — `getTime`, `getFullYear`, `getMonth`, `getDate`, `toISOString`, `toUTCString`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2212,7 +2212,7 @@
     },
     {
       "id": "175",
-      "title": "`ink-regexp-test-exec` Example \u2014 `RegExp.prototype.test`, `exec`",
+      "title": "`ink-regexp-test-exec` Example — `RegExp.prototype.test`, `exec`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2220,7 +2220,7 @@
     },
     {
       "id": "176",
-      "title": "`ink-promise-resolve-reject` Example \u2014 `Promise.resolve`, `Promise.reject`",
+      "title": "`ink-promise-resolve-reject` Example — `Promise.resolve`, `Promise.reject`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2228,7 +2228,7 @@
     },
     {
       "id": "177",
-      "title": "`ink-void-comma-increment` Example \u2014 `void`, Comma Operator, `++`/`--`",
+      "title": "`ink-void-comma-increment` Example — `void`, Comma Operator, `++`/`--`",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2236,7 +2236,7 @@
     },
     {
       "id": "178",
-      "title": "`ink-spread-call-destructure` Example \u2014 Spread in Function Calls, Destructuring in Params/Catch/For-Of",
+      "title": "`ink-spread-call-destructure` Example — Spread in Function Calls, Destructuring in Params/Catch/For-Of",
       "status": "pending",
       "priority": "P1-High",
       "files": [],
@@ -2244,7 +2244,7 @@
     },
     {
       "id": "179",
-      "title": "ink-using-declaration example \u2014 using and await using (ES2024)",
+      "title": "ink-using-declaration example — using and await using (ES2024)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2255,7 +2255,7 @@
     },
     {
       "id": "180",
-      "title": "ink-import-attributes example \u2014 import with attributes (with { type: 'json' })",
+      "title": "ink-import-attributes example — import with attributes (with { type: 'json' })",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2266,7 +2266,7 @@
     },
     {
       "id": "181",
-      "title": "ink-array-from-async example \u2014 Array.fromAsync",
+      "title": "ink-array-from-async example — Array.fromAsync",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2277,7 +2277,7 @@
     },
     {
       "id": "182",
-      "title": "ink-promise-with-resolvers example \u2014 Promise.withResolvers",
+      "title": "ink-promise-with-resolvers example — Promise.withResolvers",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2288,7 +2288,7 @@
     },
     {
       "id": "183",
-      "title": "ink-object-group-by example \u2014 Object.groupBy, Map.groupBy",
+      "title": "ink-object-group-by example — Object.groupBy, Map.groupBy",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2299,7 +2299,7 @@
     },
     {
       "id": "184",
-      "title": "ink-const-type-param example \u2014 const T type parameters (TS 5.0)",
+      "title": "ink-const-type-param example — const T type parameters (TS 5.0)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2310,7 +2310,7 @@
     },
     {
       "id": "185",
-      "title": "ink-accessor-field example \u2014 accessor class fields (TS 5.0)",
+      "title": "ink-accessor-field example — accessor class fields (TS 5.0)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2321,7 +2321,7 @@
     },
     {
       "id": "186",
-      "title": "ink-symbol-async-iterator example \u2014 Symbol.asyncIterator",
+      "title": "ink-symbol-async-iterator example — Symbol.asyncIterator",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2332,7 +2332,7 @@
     },
     {
       "id": "187",
-      "title": "ink-throw-expression example \u2014 throw expressions (Stage 3)",
+      "title": "ink-throw-expression example — throw expressions (Stage 3)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2343,7 +2343,7 @@
     },
     {
       "id": "188",
-      "title": "ink-type-annotation-catch example \u2014 type annotations in catch clause",
+      "title": "ink-type-annotation-catch example — type annotations in catch clause",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2354,7 +2354,7 @@
     },
     {
       "id": "189",
-      "title": "ink-satisfies-expr example \u2014 satisfies in object/array literals",
+      "title": "ink-satisfies-expr example — satisfies in object/array literals",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2365,7 +2365,7 @@
     },
     {
       "id": "190",
-      "title": "ink-iterator-helpers example \u2014 Iterator helpers (map, filter, take)",
+      "title": "ink-iterator-helpers example — Iterator helpers (map, filter, take)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2376,7 +2376,7 @@
     },
     {
       "id": "191",
-      "title": "ink-class-expression example \u2014 anonymous class expressions",
+      "title": "ink-class-expression example — anonymous class expressions",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2387,7 +2387,7 @@
     },
     {
       "id": "192",
-      "title": "ink-function-expression example \u2014 anonymous and named function expressions",
+      "title": "ink-function-expression example — anonymous and named function expressions",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2398,7 +2398,7 @@
     },
     {
       "id": "193",
-      "title": "ink-react-fc-type example \u2014 React.FC, React.FunctionComponent",
+      "title": "ink-react-fc-type example — React.FC, React.FunctionComponent",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2409,7 +2409,7 @@
     },
     {
       "id": "194",
-      "title": "ink-props-with-children example \u2014 React.PropsWithChildren",
+      "title": "ink-props-with-children example — React.PropsWithChildren",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2420,7 +2420,7 @@
     },
     {
       "id": "195",
-      "title": "ink-string-advanced example \u2014 String prototype methods (localeCompare, normalize, codePointAt, fromCodePoint, concat, charAt, charCodeAt)",
+      "title": "ink-string-advanced example — String prototype methods (localeCompare, normalize, codePointAt, fromCodePoint, concat, charAt, charCodeAt)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2431,7 +2431,7 @@
     },
     {
       "id": "196",
-      "title": "ink-array-advanced example \u2014 Array methods (findLast, findLastIndex, fill, copyWithin, at)",
+      "title": "ink-array-advanced example — Array methods (findLast, findLastIndex, fill, copyWithin, at)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2442,7 +2442,7 @@
     },
     {
       "id": "197",
-      "title": "ink-ts-directive example \u2014 // @ts-expect-error and // @ts-ignore",
+      "title": "ink-ts-directive example — // @ts-expect-error and // @ts-ignore",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2453,7 +2453,7 @@
     },
     {
       "id": "198",
-      "title": "ink-dangerously-set-inner-html example \u2014 dangerouslySetInnerHTML JSX prop",
+      "title": "ink-dangerously-set-inner-html example — dangerouslySetInnerHTML JSX prop",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2464,7 +2464,7 @@
     },
     {
       "id": "199",
-      "title": "ink-default-props example \u2014 defaultProps on function components",
+      "title": "ink-default-props example — defaultProps on function components",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2475,7 +2475,7 @@
     },
     {
       "id": "200",
-      "title": "ink-class-lifecycle example \u2014 class component lifecycle methods (componentDidMount, componentWillUnmount)",
+      "title": "ink-class-lifecycle example — class component lifecycle methods (componentDidMount, componentWillUnmount)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2486,7 +2486,7 @@
     },
     {
       "id": "201",
-      "title": "ink-get-derived-state-from-error example \u2014 Error Boundary with static getDerivedStateFromError",
+      "title": "ink-get-derived-state-from-error example — Error Boundary with static getDerivedStateFromError",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2497,7 +2497,7 @@
     },
     {
       "id": "202",
-      "title": "ink-export-star-as example \u2014 export * as ns from module",
+      "title": "ink-export-star-as example — export * as ns from module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2508,7 +2508,7 @@
     },
     {
       "id": "203",
-      "title": "ink-with-statement example \u2014 with statement (legacy)",
+      "title": "ink-with-statement example — with statement (legacy)",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -2519,7 +2519,7 @@
     },
     {
       "id": "204",
-      "title": "ink-jsx-spread-attribute example \u2014 JSX spread attributes {...props}",
+      "title": "ink-jsx-spread-attribute example — JSX spread attributes {...props}",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2530,7 +2530,7 @@
     },
     {
       "id": "205",
-      "title": "ink-set-prototype example \u2014 Set/Map/WeakMap/WeakSet prototype methods",
+      "title": "ink-set-prototype example — Set/Map/WeakMap/WeakSet prototype methods",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2541,7 +2541,7 @@
     },
     {
       "id": "206",
-      "title": "ink-tagged-template example \u2014 tagged template literals",
+      "title": "ink-tagged-template example — tagged template literals",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2552,7 +2552,7 @@
     },
     {
       "id": "207",
-      "title": "ink-function-constructor example \u2014 Function constructor",
+      "title": "ink-function-constructor example — Function constructor",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2563,7 +2563,7 @@
     },
     {
       "id": "208",
-      "title": "ink-object-prototype example \u2014 Object prototype methods (toString, valueOf, hasOwnProperty, propertyIsEnumerable, isPrototypeOf)",
+      "title": "ink-object-prototype example — Object prototype methods (toString, valueOf, hasOwnProperty, propertyIsEnumerable, isPrototypeOf)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2574,7 +2574,7 @@
     },
     {
       "id": "209",
-      "title": "ink-object-static example \u2014 Object static methods (is, setPrototypeOf, getPrototypeOf, preventExtensions, isExtensible, isFrozen, isSealed, getOwnPropertyNames, getOwnPropertySymbols)",
+      "title": "ink-object-static example — Object static methods (is, setPrototypeOf, getPrototypeOf, preventExtensions, isExtensible, isFrozen, isSealed, getOwnPropertyNames, getOwnPropertySymbols)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2585,7 +2585,7 @@
     },
     {
       "id": "210",
-      "title": "ink-reflect-deep example \u2014 Reflect methods (apply, construct, defineProperty, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, preventExtensions, isExtensible)",
+      "title": "ink-reflect-deep example — Reflect methods (apply, construct, defineProperty, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, preventExtensions, isExtensible)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2596,7 +2596,7 @@
     },
     {
       "id": "211",
-      "title": "ink-tsconfig-paths example \u2014 tsconfig paths mapping",
+      "title": "ink-tsconfig-paths example — tsconfig paths mapping",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2607,7 +2607,7 @@
     },
     {
       "id": "212",
-      "title": "ink-esmodule-interop example \u2014 esModuleInterop and allowSyntheticDefaultImports",
+      "title": "ink-esmodule-interop example — esModuleInterop and allowSyntheticDefaultImports",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2618,7 +2618,7 @@
     },
     {
       "id": "213",
-      "title": "ink-jsx-factory-pragma example \u2014 jsxFactory, jsxFragmentFactory, jsxImportSource pragmas",
+      "title": "ink-jsx-factory-pragma example — jsxFactory, jsxFragmentFactory, jsxImportSource pragmas",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2629,7 +2629,7 @@
     },
     {
       "id": "214",
-      "title": "ink-strict-mode example \u2014 TypeScript strict mode flags",
+      "title": "ink-strict-mode example — TypeScript strict mode flags",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2640,7 +2640,7 @@
     },
     {
       "id": "215",
-      "title": "ink-downlevel-iteration example \u2014 downlevelIteration for ES5 targets",
+      "title": "ink-downlevel-iteration example — downlevelIteration for ES5 targets",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2651,7 +2651,7 @@
     },
     {
       "id": "216",
-      "title": "ink-preserve-const-enum example \u2014 preserveConstEnums behavior",
+      "title": "ink-preserve-const-enum example — preserveConstEnums behavior",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2662,7 +2662,7 @@
     },
     {
       "id": "217",
-      "title": "ink-module-resolution example \u2014 moduleResolution modes (node, bundler, classic)",
+      "title": "ink-module-resolution example — moduleResolution modes (node, bundler, classic)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2673,7 +2673,7 @@
     },
     {
       "id": "218",
-      "title": "ink-web-api example \u2014 Web APIs (URL, AbortController, TextEncoder, Blob, FormData, Headers)",
+      "title": "ink-web-api example — Web APIs (URL, AbortController, TextEncoder, Blob, FormData, Headers)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2684,7 +2684,7 @@
     },
     {
       "id": "219",
-      "title": "ink-regexp-escape example \u2014 RegExp.escape (ES2025)",
+      "title": "ink-regexp-escape example — RegExp.escape (ES2025)",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -2695,7 +2695,7 @@
     },
     {
       "id": "220",
-      "title": "ink-set-es2025 example \u2014 Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)",
+      "title": "ink-set-es2025 example — Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -2706,7 +2706,7 @@
     },
     {
       "id": "221",
-      "title": "ink-eval example \u2014 eval() function",
+      "title": "ink-eval example — eval() function",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2717,7 +2717,7 @@
     },
     {
       "id": "222",
-      "title": "ink-super-call example \u2014 super() in class constructors",
+      "title": "ink-super-call example — super() in class constructors",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2728,7 +2728,7 @@
     },
     {
       "id": "223",
-      "title": "ink-private-in example \u2014 #field in obj (private identifier in in)",
+      "title": "ink-private-in example — #field in obj (private identifier in in)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2739,7 +2739,7 @@
     },
     {
       "id": "224",
-      "title": "ink-import-meta-resolve example \u2014 import.meta.resolve",
+      "title": "ink-import-meta-resolve example — import.meta.resolve",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2750,7 +2750,7 @@
     },
     {
       "id": "225",
-      "title": "ink-global-this example \u2014 globalThis",
+      "title": "ink-global-this example — globalThis",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2761,7 +2761,7 @@
     },
     {
       "id": "226",
-      "title": "ink-bigint-ops example \u2014 BigInt literals and operations",
+      "title": "ink-bigint-ops example — BigInt literals and operations",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2772,7 +2772,7 @@
     },
     {
       "id": "227",
-      "title": "ink-intl-datetime example \u2014 Intl.DateTimeFormat",
+      "title": "ink-intl-datetime example — Intl.DateTimeFormat",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2783,7 +2783,7 @@
     },
     {
       "id": "228",
-      "title": "ink-intl-number example \u2014 Intl.NumberFormat",
+      "title": "ink-intl-number example — Intl.NumberFormat",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2794,7 +2794,7 @@
     },
     {
       "id": "229",
-      "title": "ink-atomics example \u2014 Atomics API",
+      "title": "ink-atomics example — Atomics API",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -2805,7 +2805,7 @@
     },
     {
       "id": "230",
-      "title": "ink-source-map example \u2014 source map generation for compiled output",
+      "title": "ink-source-map example — source map generation for compiled output",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2816,7 +2816,7 @@
     },
     {
       "id": "231",
-      "title": "ink-verbatim-module-syntax example \u2014 verbatimModuleSyntax (TS 5.0)",
+      "title": "ink-verbatim-module-syntax example — verbatimModuleSyntax (TS 5.0)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2827,7 +2827,7 @@
     },
     {
       "id": "232",
-      "title": "ink-jsx-member example \u2014 JSX member expressions (My.Component)",
+      "title": "ink-jsx-member example — JSX member expressions (My.Component)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2838,7 +2838,7 @@
     },
     {
       "id": "233",
-      "title": "ink-jsx-namespace example \u2014 JSX namespaced elements (ns:tag)",
+      "title": "ink-jsx-namespace example — JSX namespaced elements (ns:tag)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2849,7 +2849,7 @@
     },
     {
       "id": "234",
-      "title": "ink-start-transition example \u2014 startTransition",
+      "title": "ink-start-transition example — startTransition",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2860,7 +2860,7 @@
     },
     {
       "id": "235",
-      "title": "ink-react-19-hooks example \u2014 useFormStatus, useOptimistic, useActionState, use",
+      "title": "ink-react-19-hooks example — useFormStatus, useOptimistic, useActionState, use",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -2871,7 +2871,7 @@
     },
     {
       "id": "236",
-      "title": "ink-sequence-expression example \u2014 comma operator sequences",
+      "title": "ink-sequence-expression example — comma operator sequences",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2882,7 +2882,7 @@
     },
     {
       "id": "237",
-      "title": "ink-labeled-break-continue example \u2014 labeled break and continue",
+      "title": "ink-labeled-break-continue example — labeled break and continue",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2893,7 +2893,7 @@
     },
     {
       "id": "238",
-      "title": "ink-nested-destructure example \u2014 nested object/array destructuring",
+      "title": "ink-nested-destructure example — nested object/array destructuring",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2904,7 +2904,7 @@
     },
     {
       "id": "239",
-      "title": "ink-default-destructure example \u2014 default values in destructuring",
+      "title": "ink-default-destructure example — default values in destructuring",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2915,7 +2915,7 @@
     },
     {
       "id": "240",
-      "title": "ink-readonly-tuple example \u2014 readonly tuples and arrays",
+      "title": "ink-readonly-tuple example — readonly tuples and arrays",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2926,7 +2926,7 @@
     },
     {
       "id": "241",
-      "title": "ink-keyof-typeof example \u2014 keyof typeof pattern",
+      "title": "ink-keyof-typeof example — keyof typeof pattern",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2937,7 +2937,7 @@
     },
     {
       "id": "242",
-      "title": "ink-reference-path example \u2014 /// <reference path=\"...\" />",
+      "title": "ink-reference-path example — /// <reference path=\"...\" />",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2948,7 +2948,7 @@
     },
     {
       "id": "243",
-      "title": "ink-isolated-modules example \u2014 isolatedModules compiler option",
+      "title": "ink-isolated-modules example — isolatedModules compiler option",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2959,7 +2959,7 @@
     },
     {
       "id": "244",
-      "title": "ink-resolve-json-module example \u2014 resolveJsonModule",
+      "title": "ink-resolve-json-module example — resolveJsonModule",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -2970,7 +2970,7 @@
     },
     {
       "id": "245",
-      "title": "ink-aggregate-error example \u2014 AggregateError",
+      "title": "ink-aggregate-error example — AggregateError",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2981,7 +2981,7 @@
     },
     {
       "id": "246",
-      "title": "ink-url-search-params example \u2014 URLSearchParams",
+      "title": "ink-url-search-params example — URLSearchParams",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -2992,7 +2992,7 @@
     },
     {
       "id": "247",
-      "title": "ink-text-decoder example \u2014 TextDecoder",
+      "title": "ink-text-decoder example — TextDecoder",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3003,7 +3003,7 @@
     },
     {
       "id": "248",
-      "title": "ink-crypto-random example \u2014 crypto.randomUUID",
+      "title": "ink-crypto-random example — crypto.randomUUID",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3014,7 +3014,7 @@
     },
     {
       "id": "249",
-      "title": "ink-readable-stream example \u2014 ReadableStream",
+      "title": "ink-readable-stream example — ReadableStream",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3025,7 +3025,7 @@
     },
     {
       "id": "250",
-      "title": "ink-compression-stream example \u2014 CompressionStream / DecompressionStream",
+      "title": "ink-compression-stream example — CompressionStream / DecompressionStream",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3036,7 +3036,7 @@
     },
     {
       "id": "251",
-      "title": "ink-websocket example \u2014 WebSocket API",
+      "title": "ink-websocket example — WebSocket API",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3047,7 +3047,7 @@
     },
     {
       "id": "252",
-      "title": "ink-form-data example \u2014 FormData API",
+      "title": "ink-form-data example — FormData API",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3058,7 +3058,7 @@
     },
     {
       "id": "253",
-      "title": "ink-blob example \u2014 Blob and FileReader APIs",
+      "title": "ink-blob example — Blob and FileReader APIs",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3069,7 +3069,7 @@
     },
     {
       "id": "254",
-      "title": "ink-event-target example \u2014 EventTarget and CustomEvent",
+      "title": "ink-event-target example — EventTarget and CustomEvent",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3080,7 +3080,7 @@
     },
     {
       "id": "255",
-      "title": "ink-finalization-registry example \u2014 FinalizationRegistry",
+      "title": "ink-finalization-registry example — FinalizationRegistry",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3091,7 +3091,7 @@
     },
     {
       "id": "256",
-      "title": "ink-shared-array-buffer example \u2014 SharedArrayBuffer",
+      "title": "ink-shared-array-buffer example — SharedArrayBuffer",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3102,7 +3102,7 @@
     },
     {
       "id": "257",
-      "title": "ink-no-implicit-returns example \u2014 noImplicitReturns compiler option",
+      "title": "ink-no-implicit-returns example — noImplicitReturns compiler option",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3113,7 +3113,7 @@
     },
     {
       "id": "258",
-      "title": "ink-no-fallthrough example \u2014 noFallthroughCasesInSwitch compiler option",
+      "title": "ink-no-fallthrough example — noFallthroughCasesInSwitch compiler option",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3124,7 +3124,7 @@
     },
     {
       "id": "259",
-      "title": "ink-no-unchecked-indexed example \u2014 noUncheckedIndexedAccess compiler option",
+      "title": "ink-no-unchecked-indexed example — noUncheckedIndexedAccess compiler option",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3135,7 +3135,7 @@
     },
     {
       "id": "260",
-      "title": "ink-exact-optional example \u2014 exactOptionalPropertyTypes compiler option",
+      "title": "ink-exact-optional example — exactOptionalPropertyTypes compiler option",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3146,7 +3146,7 @@
     },
     {
       "id": "261",
-      "title": "ink-preserve-value-imports example \u2014 preserveValueImports compiler option",
+      "title": "ink-preserve-value-imports example — preserveValueImports compiler option",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3157,7 +3157,7 @@
     },
     {
       "id": "262",
-      "title": "ink-jsx-spread-children example \u2014 spread in JSX children",
+      "title": "ink-jsx-spread-children example — spread in JSX children",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3168,7 +3168,7 @@
     },
     {
       "id": "263",
-      "title": "ink-rest-destructure example \u2014 rest elements in object/array destructuring",
+      "title": "ink-rest-destructure example — rest elements in object/array destructuring",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3179,7 +3179,7 @@
     },
     {
       "id": "264",
-      "title": "ink-named-tuple example \u2014 named tuple members",
+      "title": "ink-named-tuple example — named tuple members",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3190,7 +3190,7 @@
     },
     {
       "id": "265",
-      "title": "ink-const-enum example \u2014 const enum declaration",
+      "title": "ink-const-enum example — const enum declaration",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3201,7 +3201,7 @@
     },
     {
       "id": "266",
-      "title": "ink-ambient-module example \u2014 ambient module declarations",
+      "title": "ink-ambient-module example — ambient module declarations",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3212,7 +3212,7 @@
     },
     {
       "id": "267",
-      "title": "ink-ts-nocheck example \u2014 @ts-nocheck and @ts-check directives",
+      "title": "ink-ts-nocheck example — @ts-nocheck and @ts-check directives",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3223,7 +3223,7 @@
     },
     {
       "id": "268",
-      "title": "ink-jsx-preserve example \u2014 jsx preserve transform",
+      "title": "ink-jsx-preserve example — jsx preserve transform",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3234,7 +3234,7 @@
     },
     {
       "id": "269",
-      "title": "ink-server-component example \u2014 use server / use client directives",
+      "title": "ink-server-component example — use server / use client directives",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3245,7 +3245,7 @@
     },
     {
       "id": "270",
-      "title": "ink-decorator-metadata example \u2014 emitDecoratorMetadata",
+      "title": "ink-decorator-metadata example — emitDecoratorMetadata",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3256,7 +3256,7 @@
     },
     {
       "id": "271",
-      "title": "ink-temporal-api example \u2014 Temporal API",
+      "title": "ink-temporal-api example — Temporal API",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3267,7 +3267,7 @@
     },
     {
       "id": "272",
-      "title": "ink-intl-list example \u2014 Intl.ListFormat, RelativeTimeFormat, PluralRules, Collator",
+      "title": "ink-intl-list example — Intl.ListFormat, RelativeTimeFormat, PluralRules, Collator",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3278,7 +3278,7 @@
     },
     {
       "id": "273",
-      "title": "ink-suppressed-error example \u2014 SuppressedError and Error.isError",
+      "title": "ink-suppressed-error example — SuppressedError and Error.isError",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3289,7 +3289,7 @@
     },
     {
       "id": "274",
-      "title": "ink-string-raw example \u2014 String.raw",
+      "title": "ink-string-raw example — String.raw",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3300,7 +3300,7 @@
     },
     {
       "id": "275",
-      "title": "ink-async-generator example \u2014 async generators",
+      "title": "ink-async-generator example — async generators",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3311,7 +3311,7 @@
     },
     {
       "id": "276",
-      "title": "ink-iterator-from example \u2014 Iterator.from and iterator helpers",
+      "title": "ink-iterator-from example — Iterator.from and iterator helpers",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3322,7 +3322,7 @@
     },
     {
       "id": "277",
-      "title": "ink-disposable-stack example \u2014 DisposableStack and AsyncDisposableStack",
+      "title": "ink-disposable-stack example — DisposableStack and AsyncDisposableStack",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3333,7 +3333,7 @@
     },
     {
       "id": "278",
-      "title": "ink-escape-unescape example \u2014 legacy escape() and unescape()",
+      "title": "ink-escape-unescape example — legacy escape() and unescape()",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3344,7 +3344,7 @@
     },
     {
       "id": "279",
-      "title": "ink-react-profiler example \u2014 React.Profiler",
+      "title": "ink-react-profiler example — React.Profiler",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3355,7 +3355,7 @@
     },
     {
       "id": "280",
-      "title": "ink-react-strict-mode example \u2014 React.StrictMode",
+      "title": "ink-react-strict-mode example — React.StrictMode",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3366,7 +3366,7 @@
     },
     {
       "id": "281",
-      "title": "ink-react-portal example \u2014 ReactDOM.createPortal",
+      "title": "ink-react-portal example — ReactDOM.createPortal",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3377,7 +3377,7 @@
     },
     {
       "id": "282",
-      "title": "ink-package-exports example \u2014 package.json exports and imports",
+      "title": "ink-package-exports example — package.json exports and imports",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3388,7 +3388,7 @@
     },
     {
       "id": "283",
-      "title": "ink-project-references example \u2014 TypeScript project references",
+      "title": "ink-project-references example — TypeScript project references",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3399,7 +3399,7 @@
     },
     {
       "id": "284",
-      "title": "ink-watch-mode example \u2014 watch mode / incremental compilation",
+      "title": "ink-watch-mode example — watch mode / incremental compilation",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3409,7 +3409,7 @@
     },
     {
       "id": "285",
-      "title": "ink-declaration-files example \u2014 .d.ts declaration files",
+      "title": "ink-declaration-files example — .d.ts declaration files",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3431,7 +3431,7 @@
     },
     {
       "id": "287",
-      "title": "ink-recursive-types example \u2014 recursive type aliases and interfaces",
+      "title": "ink-recursive-types example — recursive type aliases and interfaces",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3442,7 +3442,7 @@
     },
     {
       "id": "288",
-      "title": "ink-distributive-conditional example \u2014 distributive conditional types",
+      "title": "ink-distributive-conditional example — distributive conditional types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3453,7 +3453,7 @@
     },
     {
       "id": "289",
-      "title": "ink-variadic-tuple example \u2014 variadic tuple types",
+      "title": "ink-variadic-tuple example — variadic tuple types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3464,7 +3464,7 @@
     },
     {
       "id": "290",
-      "title": "ink-generator-return-throw example \u2014 generator.return() and generator.throw()",
+      "title": "ink-generator-return-throw example — generator.return() and generator.throw()",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3475,7 +3475,7 @@
     },
     {
       "id": "291",
-      "title": "ink-branded-types example \u2014 branded / opaque types",
+      "title": "ink-branded-types example — branded / opaque types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3486,7 +3486,7 @@
     },
     {
       "id": "292",
-      "title": "ink-type-only-import-assertion example \u2014 import type with import attributes",
+      "title": "ink-type-only-import-assertion example — import type with import attributes",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3497,7 +3497,7 @@
     },
     {
       "id": "293",
-      "title": "ink-amd-module example \u2014 /// <reference amd-module name=\"...\" />",
+      "title": "ink-amd-module example — /// <reference amd-module name=\"...\" />",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3508,7 +3508,7 @@
     },
     {
       "id": "294",
-      "title": "ink-satisfies-function example \u2014 satisfies on function expressions",
+      "title": "ink-satisfies-function example — satisfies on function expressions",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3519,7 +3519,7 @@
     },
     {
       "id": "295",
-      "title": "ink-object-pattern-shorthand example \u2014 shorthand properties and method syntax",
+      "title": "ink-object-pattern-shorthand example — shorthand properties and method syntax",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3530,7 +3530,7 @@
     },
     {
       "id": "296",
-      "title": "ink-computed-class-members example \u2014 computed property keys in classes",
+      "title": "ink-computed-class-members example — computed property keys in classes",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3541,7 +3541,7 @@
     },
     {
       "id": "297",
-      "title": "ink-class-fields-init example \u2014 class fields with complex initializers",
+      "title": "ink-class-fields-init example — class fields with complex initializers",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3552,7 +3552,7 @@
     },
     {
       "id": "298",
-      "title": "ink-optional-catch-binding example \u2014 optional catch binding",
+      "title": "ink-optional-catch-binding example — optional catch binding",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3563,7 +3563,7 @@
     },
     {
       "id": "299",
-      "title": "ink-nullish-in-object example \u2014 nullish values in object literals",
+      "title": "ink-nullish-in-object example — nullish values in object literals",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3574,7 +3574,7 @@
     },
     {
       "id": "300",
-      "title": "ink-mixed-destructure example \u2014 mixed array/object destructuring",
+      "title": "ink-mixed-destructure example — mixed array/object destructuring",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3585,7 +3585,7 @@
     },
     {
       "id": "301",
-      "title": "ink-computed-destructure example \u2014 computed keys and renaming in destructuring",
+      "title": "ink-computed-destructure example — computed keys and renaming in destructuring",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3596,7 +3596,7 @@
     },
     {
       "id": "302",
-      "title": "ink-global-object example \u2014 global object",
+      "title": "ink-global-object example — global object",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3607,7 +3607,7 @@
     },
     {
       "id": "303",
-      "title": "ink-buffer example \u2014 Node.js Buffer",
+      "title": "ink-buffer example — Node.js Buffer",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3618,7 +3618,7 @@
     },
     {
       "id": "304",
-      "title": "ink-dirname-filename example \u2014 __dirname and __filename",
+      "title": "ink-dirname-filename example — __dirname and __filename",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3629,7 +3629,7 @@
     },
     {
       "id": "305",
-      "title": "ink-commonjs-interop example \u2014 module.exports, exports, require",
+      "title": "ink-commonjs-interop example — module.exports, exports, require",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3640,7 +3640,7 @@
     },
     {
       "id": "306",
-      "title": "ink-abort-signal example \u2014 AbortSignal and AbortController",
+      "title": "ink-abort-signal example — AbortSignal and AbortController",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3651,7 +3651,7 @@
     },
     {
       "id": "307",
-      "title": "ink-fetch-api example \u2014 fetch, Response, Request",
+      "title": "ink-fetch-api example — fetch, Response, Request",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3662,7 +3662,7 @@
     },
     {
       "id": "308",
-      "title": "ink-performance-observer example \u2014 PerformanceObserver, mark, measure",
+      "title": "ink-performance-observer example — PerformanceObserver, mark, measure",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3673,7 +3673,7 @@
     },
     {
       "id": "309",
-      "title": "ink-set-immediate example \u2014 setImmediate / clearImmediate",
+      "title": "ink-set-immediate example — setImmediate / clearImmediate",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3684,7 +3684,7 @@
     },
     {
       "id": "310",
-      "title": "ink-process-nexttick example \u2014 process.nextTick",
+      "title": "ink-process-nexttick example — process.nextTick",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3695,7 +3695,7 @@
     },
     {
       "id": "311",
-      "title": "ink-events-emitter example \u2014 EventEmitter",
+      "title": "ink-events-emitter example — EventEmitter",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3706,7 +3706,7 @@
     },
     {
       "id": "312",
-      "title": "ink-path-module example \u2014 path module",
+      "title": "ink-path-module example — path module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3717,7 +3717,7 @@
     },
     {
       "id": "313",
-      "title": "ink-os-module example \u2014 os module",
+      "title": "ink-os-module example — os module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3728,7 +3728,7 @@
     },
     {
       "id": "314",
-      "title": "ink-urlpattern example \u2014 URLPattern",
+      "title": "ink-urlpattern example — URLPattern",
       "status": "pending",
       "priority": "P3-Low",
       "files": [
@@ -3739,7 +3739,7 @@
     },
     {
       "id": "315",
-      "title": "ink-node-fs example \u2014 Node.js fs module",
+      "title": "ink-node-fs example — Node.js fs module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3750,7 +3750,7 @@
     },
     {
       "id": "316",
-      "title": "ink-node-crypto example \u2014 Node.js crypto module",
+      "title": "ink-node-crypto example — Node.js crypto module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3761,7 +3761,7 @@
     },
     {
       "id": "317",
-      "title": "ink-node-util example \u2014 Node.js util module",
+      "title": "ink-node-util example — Node.js util module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3772,7 +3772,7 @@
     },
     {
       "id": "318",
-      "title": "ink-node-stream example \u2014 Node.js stream module",
+      "title": "ink-node-stream example — Node.js stream module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3783,7 +3783,7 @@
     },
     {
       "id": "319",
-      "title": "ink-node-readline example \u2014 Node.js readline module",
+      "title": "ink-node-readline example — Node.js readline module",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3794,7 +3794,7 @@
     },
     {
       "id": "320",
-      "title": "ink-node-assert example \u2014 Node.js assert module",
+      "title": "ink-node-assert example — Node.js assert module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3805,7 +3805,7 @@
     },
     {
       "id": "321",
-      "title": "ink-node-child-process example \u2014 Node.js child_process module",
+      "title": "ink-node-child-process example — Node.js child_process module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3816,7 +3816,7 @@
     },
     {
       "id": "322",
-      "title": "ink-node-http example \u2014 Node.js http/https module",
+      "title": "ink-node-http example — Node.js http/https module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3827,7 +3827,7 @@
     },
     {
       "id": "323",
-      "title": "ink-process-props example \u2014 process properties (hrtime, memoryUsage, versions, pid, cwd, chdir)",
+      "title": "ink-process-props example — process properties (hrtime, memoryUsage, versions, pid, cwd, chdir)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3838,7 +3838,7 @@
     },
     {
       "id": "324",
-      "title": "ink-browser-globals example \u2014 window, document, navigator, location",
+      "title": "ink-browser-globals example — window, document, navigator, location",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3849,7 +3849,7 @@
     },
     {
       "id": "325",
-      "title": "ink-web-storage example \u2014 localStorage / sessionStorage",
+      "title": "ink-web-storage example — localStorage / sessionStorage",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3860,7 +3860,7 @@
     },
     {
       "id": "326",
-      "title": "ink-typed-arrays example \u2014 typed arrays and DataView",
+      "title": "ink-typed-arrays example — typed arrays and DataView",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3871,7 +3871,7 @@
     },
     {
       "id": "327",
-      "title": "ink-file-constructor example \u2014 File constructor",
+      "title": "ink-file-constructor example — File constructor",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3882,7 +3882,7 @@
     },
     {
       "id": "328",
-      "title": "ink-promise-chain example \u2014 Promise.prototype.then/catch/finally + Promise.any/race",
+      "title": "ink-promise-chain example — Promise.prototype.then/catch/finally + Promise.any/race",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3893,7 +3893,7 @@
     },
     {
       "id": "329",
-      "title": "ink-math-advanced example \u2014 advanced Math methods and constants",
+      "title": "ink-math-advanced example — advanced Math methods and constants",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3904,7 +3904,7 @@
     },
     {
       "id": "330",
-      "title": "ink-use-effect-cleanup example \u2014 useEffect cleanup functions",
+      "title": "ink-use-effect-cleanup example — useEffect cleanup functions",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3915,7 +3915,7 @@
     },
     {
       "id": "331",
-      "title": "ink-use-callback-deps example \u2014 useCallback with dependencies",
+      "title": "ink-use-callback-deps example — useCallback with dependencies",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3926,7 +3926,7 @@
     },
     {
       "id": "332",
-      "title": "ink-use-memo-deps example \u2014 useMemo with dependencies",
+      "title": "ink-use-memo-deps example — useMemo with dependencies",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3937,7 +3937,7 @@
     },
     {
       "id": "333",
-      "title": "ink-children-only example \u2014 Children.only",
+      "title": "ink-children-only example — Children.only",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3948,7 +3948,7 @@
     },
     {
       "id": "334",
-      "title": "ink-children-toarray example \u2014 Children.toArray",
+      "title": "ink-children-toarray example — Children.toArray",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3959,7 +3959,7 @@
     },
     {
       "id": "335",
-      "title": "ink-react-lazy-fallback example \u2014 React.lazy with Suspense fallback",
+      "title": "ink-react-lazy-fallback example — React.lazy with Suspense fallback",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3970,7 +3970,7 @@
     },
     {
       "id": "336",
-      "title": "ink-generic-function-component example \u2014 generic function components",
+      "title": "ink-generic-function-component example — generic function components",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -3981,7 +3981,7 @@
     },
     {
       "id": "337",
-      "title": "ink-polymorphic-component example \u2014 polymorphic components with as prop",
+      "title": "ink-polymorphic-component example — polymorphic components with as prop",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -3992,7 +3992,7 @@
     },
     {
       "id": "338",
-      "title": "ink-compound-components example \u2014 compound component pattern",
+      "title": "ink-compound-components example — compound component pattern",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4003,7 +4003,7 @@
     },
     {
       "id": "339",
-      "title": "ink-context-reducer example \u2014 Context with useReducer",
+      "title": "ink-context-reducer example — Context with useReducer",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4014,7 +4014,7 @@
     },
     {
       "id": "340",
-      "title": "ink-controlled-uncontrolled example \u2014 controlled vs uncontrolled components",
+      "title": "ink-controlled-uncontrolled example — controlled vs uncontrolled components",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4025,7 +4025,7 @@
     },
     {
       "id": "341",
-      "title": "ink-forward-ref-generic example \u2014 forwardRef with generic components",
+      "title": "ink-forward-ref-generic example — forwardRef with generic components",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4036,7 +4036,7 @@
     },
     {
       "id": "342",
-      "title": "ink-render-props-generic example \u2014 render props with generics",
+      "title": "ink-render-props-generic example — render props with generics",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4047,7 +4047,7 @@
     },
     {
       "id": "343",
-      "title": "ink-hoc-generic example \u2014 higher-order components with generics",
+      "title": "ink-hoc-generic example — higher-order components with generics",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4058,7 +4058,7 @@
     },
     {
       "id": "344",
-      "title": "ink-custom-hook-composition example \u2014 composing multiple custom hooks",
+      "title": "ink-custom-hook-composition example — composing multiple custom hooks",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4069,7 +4069,7 @@
     },
     {
       "id": "345",
-      "title": "ink-optional-call example \u2014 optional call expression (fn?.())",
+      "title": "ink-optional-call example — optional call expression (fn?.())",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4080,7 +4080,7 @@
     },
     {
       "id": "346",
-      "title": "ink-non-null-chain example \u2014 non-null assertion after optional chain",
+      "title": "ink-non-null-chain example — non-null assertion after optional chain",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4091,7 +4091,7 @@
     },
     {
       "id": "347",
-      "title": "ink-type-assertion-jsx example \u2014 type assertions in JSX expressions",
+      "title": "ink-type-assertion-jsx example — type assertions in JSX expressions",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4102,7 +4102,7 @@
     },
     {
       "id": "348",
-      "title": "ink-nullish-jsx-attr example \u2014 nullish coalescing in JSX attributes",
+      "title": "ink-nullish-jsx-attr example — nullish coalescing in JSX attributes",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4113,7 +4113,7 @@
     },
     {
       "id": "349",
-      "title": "ink-optional-chain-jsx example \u2014 optional chaining in JSX attributes",
+      "title": "ink-optional-chain-jsx example — optional chaining in JSX attributes",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4124,7 +4124,7 @@
     },
     {
       "id": "350",
-      "title": "ink-jsx-conditional-render example \u2014 ternary and logical AND returning JSX",
+      "title": "ink-jsx-conditional-render example — ternary and logical AND returning JSX",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4135,7 +4135,7 @@
     },
     {
       "id": "351",
-      "title": "ink-mapped-types-as example \u2014 mapped types with as clause",
+      "title": "ink-mapped-types-as example — mapped types with as clause",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4146,7 +4146,7 @@
     },
     {
       "id": "352",
-      "title": "ink-template-literal-union example \u2014 template literal types with unions",
+      "title": "ink-template-literal-union example — template literal types with unions",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4157,7 +4157,7 @@
     },
     {
       "id": "353",
-      "title": "ink-type-guard-is example \u2014 user-defined type guards (is)",
+      "title": "ink-type-guard-is example — user-defined type guards (is)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4168,7 +4168,7 @@
     },
     {
       "id": "354",
-      "title": "ink-satisfies-union example \u2014 satisfies with union types",
+      "title": "ink-satisfies-union example — satisfies with union types",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4179,7 +4179,7 @@
     },
     {
       "id": "355",
-      "title": "ink-as-const-function example \u2014 as const in function returns",
+      "title": "ink-as-const-function example — as const in function returns",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4190,7 +4190,7 @@
     },
     {
       "id": "356",
-      "title": "ink-utility-extract-exclude example \u2014 Extract, Exclude, NonNullable",
+      "title": "ink-utility-extract-exclude example — Extract, Exclude, NonNullable",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4201,7 +4201,7 @@
     },
     {
       "id": "357",
-      "title": "ink-key-remapping example \u2014 key remapping with mapped types",
+      "title": "ink-key-remapping example — key remapping with mapped types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4212,7 +4212,7 @@
     },
     {
       "id": "358",
-      "title": "ink-readonly-mapped example \u2014 readonly mapped types",
+      "title": "ink-readonly-mapped example — readonly mapped types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4223,7 +4223,7 @@
     },
     {
       "id": "359",
-      "title": "ink-nested-conditional example \u2014 nested conditional types",
+      "title": "ink-nested-conditional example — nested conditional types",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4234,7 +4234,7 @@
     },
     {
       "id": "360",
-      "title": "ink-inline-import-type example \u2014 inline import('...').Type syntax",
+      "title": "ink-inline-import-type example — inline import('...').Type syntax",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4245,7 +4245,7 @@
     },
     {
       "id": "361",
-      "title": "ink-array-flat-flatmap example \u2014 Array.prototype.flat and flatMap",
+      "title": "ink-array-flat-flatmap example — Array.prototype.flat and flatMap",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4256,7 +4256,7 @@
     },
     {
       "id": "362",
-      "title": "ink-object-fromentries example \u2014 Object.fromEntries",
+      "title": "ink-object-fromentries example — Object.fromEntries",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4267,7 +4267,7 @@
     },
     {
       "id": "363",
-      "title": "ink-string-match-search example \u2014 String.prototype.match, search, replace",
+      "title": "ink-string-match-search example — String.prototype.match, search, replace",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4278,7 +4278,7 @@
     },
     {
       "id": "364",
-      "title": "ink-regexp-symbol example \u2014 RegExp well-known symbols",
+      "title": "ink-regexp-symbol example — RegExp well-known symbols",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4289,7 +4289,7 @@
     },
     {
       "id": "365",
-      "title": "ink-number-format example \u2014 Number.prototype.toExponential, toPrecision, toFixed",
+      "title": "ink-number-format example — Number.prototype.toExponential, toPrecision, toFixed",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4300,7 +4300,7 @@
     },
     {
       "id": "366",
-      "title": "ink-date-locale example \u2014 Date locale formatting methods",
+      "title": "ink-date-locale example — Date locale formatting methods",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4311,7 +4311,7 @@
     },
     {
       "id": "367",
-      "title": "ink-console-advanced example \u2014 console.assert, count, group, trace, timeLog",
+      "title": "ink-console-advanced example — console.assert, count, group, trace, timeLog",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4322,7 +4322,7 @@
     },
     {
       "id": "368",
-      "title": "ink-error-stack example \u2014 Error.captureStackTrace and Error.stackTraceLimit",
+      "title": "ink-error-stack example — Error.captureStackTrace and Error.stackTraceLimit",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4333,7 +4333,7 @@
     },
     {
       "id": "369",
-      "title": "ink-symbol-wellknown example \u2014 well-known symbols (toStringTag, toPrimitive, hasInstance, species)",
+      "title": "ink-symbol-wellknown example — well-known symbols (toStringTag, toPrimitive, hasInstance, species)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4344,7 +4344,7 @@
     },
     {
       "id": "370",
-      "title": "ink-import-meta-env example \u2014 import.meta.env (Vite pattern)",
+      "title": "ink-import-meta-env example — import.meta.env (Vite pattern)",
       "status": "pending",
       "priority": "P1-High",
       "files": [
@@ -4355,7 +4355,7 @@
     },
     {
       "id": "371",
-      "title": "ink-process-hrtime example \u2014 process.hrtime / process.hrtime.bigint",
+      "title": "ink-process-hrtime example — process.hrtime / process.hrtime.bigint",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4366,7 +4366,7 @@
     },
     {
       "id": "372",
-      "title": "ink-fs-promises example \u2014 fs/promises module",
+      "title": "ink-fs-promises example — fs/promises module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4377,7 +4377,7 @@
     },
     {
       "id": "373",
-      "title": "ink-stream-web example \u2014 stream/web (ReadableStream, WritableStream, TransformStream)",
+      "title": "ink-stream-web example — stream/web (ReadableStream, WritableStream, TransformStream)",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4388,7 +4388,7 @@
     },
     {
       "id": "374",
-      "title": "ink-timers-promises example \u2014 timers/promises module",
+      "title": "ink-timers-promises example — timers/promises module",
       "status": "pending",
       "priority": "P2-Medium",
       "files": [
@@ -4399,7 +4399,7 @@
     },
     {
       "id": "375",
-      "title": "ink-webassembly example \u2014 WebAssembly API",
+      "title": "ink-webassembly example — WebAssembly API",
       "status": "pending",
       "priority": "P3-Low",
       "files": [

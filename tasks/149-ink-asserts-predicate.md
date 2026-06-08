@@ -45,8 +45,26 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-asserts-predicate/`
-- [ ] Uses `asserts value is Type` type predicate
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path erases `asserts` predicate without runtime impact
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-asserts-predicate/`
+- [x] Uses `asserts value is Type` type predicate
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path erases `asserts` predicate without runtime impact
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- `asserts value is Type` syntax for type narrowing
+- Assert functions that throw on failure
+- Functions using assert predicates to narrow types
+- `assertNonNull<T>` generic assert function
+- `assertIsDefined<T>` for undefined checks
+- `assertIsArray<T>` for array type checks
+
+Example renders with multiple assert operations showing:
+- String operations: `formatUpper("hello world") = HELLO WORLD`
+- Number operations: `double(42) = 84`
+- Safe operations: `safeLength("test") = 4`, `safeLength([1,2,3]) = 3`
+- Defined checks: `after assert: "defined"`
+
+Added `test_ink_asserts_predicate` test to `src/transpile/tests/rq_parity/mod.rs` with expected output assertions.
