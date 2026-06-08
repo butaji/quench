@@ -2167,9 +2167,12 @@
     {
       "id": "166",
       "title": "`ink-object-entries-values` Example \u2014 `Object.entries`, `Object.values`, `Object.keys`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-object-entries-values/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
