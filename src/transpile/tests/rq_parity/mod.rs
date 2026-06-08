@@ -433,6 +433,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_mapped_types,
+    "ink-mapped-types",
+    [
+        "Mapped Types Demo",
+        "name: Alice",
+        "age: 30",
+        "active: true",
+        "name, age, active",
+        "admin: read, write, delete"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript as const & literal types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
