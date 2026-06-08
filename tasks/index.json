@@ -1099,7 +1099,7 @@
     {
       "id": "100",
       "title": "ink-utility-types example \u2014 Partial, Required, Pick, Omit, Record, ReturnType",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-utility-types/",

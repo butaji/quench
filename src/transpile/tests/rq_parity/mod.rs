@@ -335,3 +335,20 @@ ink_example_test!(
         "Type: number"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// TypeScript utility types (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_utility_types,
+    "ink-utility-types",
+    [
+        "TypeScript Utility Types Demo",
+        "PartialUser.name: Alice",
+        "UserPreview: Carol, 30",
+        "statusLabels.done: Complete",
+        "GreetParams: [World, 42]",
+        "ReturnType: Hello, World!"
+    ]
+);
