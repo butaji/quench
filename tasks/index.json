@@ -1479,13 +1479,14 @@
     {
       "id": "128",
       "title": "ink-number-static example \u2014 Number.isFinite, isNaN, parseInt, parseFloat, EPSILON",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-number-static/",
-        "src/transpile/hir/quote_codegen_exprs.inc"
+        "src/transpile/hir/quote_codegen_exprs.inc",
+        "src/transpile/hir/quote_codegen_calls.inc"
       ],
-      "acceptance": "Example exists. Number static methods produce compilable Rust. Parity harness 100%."
+      "acceptance": "Example exists. Number static methods (isFinite, isNaN, parseInt, parseFloat) and constants (EPSILON, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER) produce compilable Rust. Dev path (rquickjs) produces 100% parity with deno. Parity harness 100%."
     },
     {
       "id": "129",

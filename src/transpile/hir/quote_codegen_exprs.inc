@@ -243,6 +243,9 @@ impl QuoteCodegen {
             "NEGATIVE_INFINITY" => quote! { f64::NEG_INFINITY },
             "MAX_VALUE" => quote! { f64::MAX },
             "MIN_VALUE" => quote! { f64::MIN_POSITIVE },
+            "EPSILON" => quote! { f64::EPSILON },
+            "MAX_SAFE_INTEGER" => quote! { 9007199254740991.0f64 },
+            "MIN_SAFE_INTEGER" => quote! { -9007199254740991.0f64 },
             _ => { let id = syn::Ident::new(prop, proc_macro2::Span::call_site()); quote! { Number.#id } }
         }
     }

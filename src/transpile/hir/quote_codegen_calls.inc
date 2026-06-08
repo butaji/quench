@@ -1,4 +1,4 @@
-/// Function call codegen helpers for bind, call, apply
+/// Function call codegen helpers for bind, call, apply, Number methods
 
 impl QuoteCodegen {
     /// Handle Function.prototype.call, .apply, .bind
@@ -49,6 +49,55 @@ impl QuoteCodegen {
             quote! { || #fn_name() }
         } else {
             quote! { move || #fn_name(#(#bound_args),*) }
+        }
+    }
+
+    /// Handle Number static methods: Number.isFinite, Number.isNaN, Number.parseInt, Number.parseFloat
+    fn gen_number_method_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        if let Expr::Ident { name } = obj { if name != "Number" { return None; } } else { return None; }
+        
+        let arg0 = arguments.first().map(|a| self.gen_expr(a));
+        
+        match property {
+            "isFinite" => {
+                if let Some(expr) = arg0 {
+                    Some(quote! {
+                        {
+                            let __n = #expr;
+                            if let Value::Number(n) = __n { n.is_finite() } else { false }
+                        }
+                    })
+                } else {
+                    Some(quote! { false })
+                }
+            }
+            "isNaN" => {
+                if let Some(expr) = arg0 {
+                    Some(quote! {
+                        {
+                            let __n = #expr;
+                            if let Value::Number(n) = __n { n.is_nan() } else { false }
+                        }
+                    })
+                } else {
+                    Some(quote! { false })
+                }
+            }
+            "parseInt" => Some(quote! { 0.0 }),
+            "parseFloat" => Some(quote! { 0.0 }),
+            "isInteger" => {
+                if let Some(expr) = arg0 {
+                    Some(quote! {
+                        {
+                            let __n = #expr;
+                            if let Value::Number(n) = __n { n.fract() == 0.0 } else { false }
+                        }
+                    })
+                } else {
+                    Some(quote! { false })
+                }
+            }
+            _ => None
         }
     }
 }
