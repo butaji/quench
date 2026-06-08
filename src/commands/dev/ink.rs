@@ -134,8 +134,7 @@ fn install_host_fn(
 }
 
 const CONSOLE_SHIM: &str = r#"
-(function() {
-    var timers = {};
+var timers = {};
     function fmt(x) {
         if (typeof x === 'string') return x;
         if (typeof x === 'number') return String(x);
@@ -285,7 +284,6 @@ const CONSOLE_SHIM: &str = r#"
             if (!cond) __runts_stderr__('Assertion failed: ' + (msg || '') + '\n');
         }
     };
-})();
 "#;
 
 fn run_interactive_loop(js: &str) -> Result<()> {

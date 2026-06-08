@@ -810,3 +810,22 @@ ink_example_test!(
         "Role: user"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Console methods example
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_console_methods,
+    "ink-console-methods",
+    [
+        "Console Methods Demo",
+        "Exercised:",
+        "  - console.log",
+        "  - console.info",
+        "  - console.warn",
+        "  - console.error",
+        "  - console.time / timeEnd",
+        "  - console.table"
+    ]
+);

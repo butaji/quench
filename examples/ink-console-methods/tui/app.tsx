@@ -10,6 +10,10 @@ import { Box, Text } from 'ink';
 
 export default function ConsoleMethodsDemo() {
   useEffect(() => {
+    console.table([
+      { name: 'Alice', age: 30 },
+      { name: 'Bob', age: 25 },
+    ]);
     console.time('render');
     console.log('App mounted');
     console.info('Info message');
@@ -17,12 +21,6 @@ export default function ConsoleMethodsDemo() {
     console.error('Error message');
     console.timeEnd('render');
   }, []);
-
-  const data = [
-    { name: 'Alice', age: 30 },
-    { name: 'Bob', age: 25 },
-  ];
-  console.table(data);
 
   return (
     <Box flexDirection="column" padding={1}>

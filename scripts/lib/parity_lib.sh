@@ -215,10 +215,11 @@ run_compile() {
   # Use expect to provide a PTY (crossterm requires a terminal).
   # Strip ANSI codes so we can compare plain text.
   # Send 'q' to exit the app gracefully.
+  # Redirect stderr to /dev/null so we only capture stdout (matching deno/rq).
   expect -c "
     log_user 1
     set timeout $TIMEOUT_SECS
-    spawn $bin
+    spawn bash -c \"$bin 2>/dev/null\"
     expect {*}
     send \"q\"
     expect eof
