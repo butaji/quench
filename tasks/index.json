@@ -1110,7 +1110,7 @@
     {
       "id": "101",
       "title": "ink-as-const example \u2014 as const, literal types, tuple types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-as-const/",
