@@ -16,12 +16,15 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasSymbols = typeof Symbol.match !== 'undefined';
+  const re = /\d+/g;
+  const str = 'abc123def456';
+  const match = str.match(re);
+  const matchAll = Array.from(str.matchAll(re));
 
   return (
     <Box flexDirection="column">
-      <Text>Has Symbol.match: {String(hasSymbols)}</Text>
-      <Text>RegExp symbol methods example</Text>
+      <Text>Match: {match?.join(', ') ?? 'none'}</Text>
+      <Text>MatchAll count: {matchAll.length}</Text>
     </Box>
   );
 }

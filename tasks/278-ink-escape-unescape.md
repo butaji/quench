@@ -17,8 +17,8 @@ import { Box, Text } from 'ink';
 
 export default function App() {
   const input = 'hello world';
-  const escaped = typeof escape !== 'undefined' ? escape(input) : encodeURI(input);
-  const unescaped = typeof unescape !== 'undefined' ? unescape(escaped) : decodeURI(escaped);
+  const escaped = escape(input);
+  const unescaped = unescape(escaped);
 
   return (
     <Box flexDirection="column">
@@ -33,7 +33,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-escape-unescape/`
-- [ ] Uses `escape()` and `unescape()` or polyfills
+- [ ] Uses `escape()` and `unescape()`
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path generates compilable Rust
 - [ ] Parity harness passes with 100% match in all 3 environments

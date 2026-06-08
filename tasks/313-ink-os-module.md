@@ -16,8 +16,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const platform = typeof process !== 'undefined' ? process.platform : 'unknown';
-  const arch = typeof process !== 'undefined' ? process.arch : 'unknown';
+  const platform = process.platform;
+  const arch = process.arch;
 
   return (
     <Box flexDirection="column">

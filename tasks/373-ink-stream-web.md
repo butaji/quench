@@ -16,13 +16,29 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasReadable = typeof ReadableStream !== 'undefined';
-  const hasWritable = typeof WritableStream !== 'undefined';
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue('a');
+      controller.enqueue('b');
+      controller.close();
+    },
+  });
+  const reader = stream.getReader();
+  const chunks: string[] = [];
+
+  async function read() {
+    const { done, value } = await reader.read();
+    if (!done) {
+      chunks.push(value);
+      return read();
+    }
+  }
+
+  read();
 
   return (
     <Box flexDirection="column">
-      <Text>ReadableStream: {String(hasReadable)}</Text>
-      <Text>WritableStream: {String(hasWritable)}</Text>
+      <Text>Chunks: {chunks.join(', ')}</Text>
     </Box>
   );
 }

@@ -16,11 +16,14 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasWasm = typeof WebAssembly !== 'undefined';
+  const wasm = new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00
+  ]);
+  const valid = WebAssembly.validate(wasm);
 
   return (
     <Box flexDirection="column">
-      <Text>WebAssembly available: {String(hasWasm)}</Text>
+      <Text>Valid: {String(valid)}</Text>
     </Box>
   );
 }

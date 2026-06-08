@@ -16,13 +16,12 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const g = typeof global !== 'undefined' ? global : globalThis;
-  const hasConsole = 'console' in g;
+  const keys = Object.keys(global).slice(0, 5);
 
   return (
     <Box flexDirection="column">
-      <Text>Has console: {String(hasConsole)}</Text>
-      <Text>Global type: {typeof g}</Text>
+      <Text>Global keys: {keys.join(', ')}</Text>
+      <Text>Has console: {String('console' in global)}</Text>
     </Box>
   );
 }
@@ -31,7 +30,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-global-object/`
-- [ ] Uses `global` or `globalThis` fallback
+- [ ] Uses `global` object
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path generates compilable Rust for `global`
 - [ ] Parity harness passes with 100% match in all 3 environments

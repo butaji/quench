@@ -16,15 +16,11 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasWindow = typeof window !== 'undefined';
-  const hasDocument = typeof document !== 'undefined';
-  const hasNavigator = typeof navigator !== 'undefined';
-
   return (
     <Box flexDirection="column">
-      <Text>Has window: {String(hasWindow)}</Text>
-      <Text>Has document: {String(hasDocument)}</Text>
-      <Text>Has navigator: {String(hasNavigator)}</Text>
+      <Text>Location: {window.location?.href ?? 'none'}</Text>
+      <Text>UserAgent: {navigator.userAgent}</Text>
+      <Text>Language: {navigator.language}</Text>
     </Box>
   );
 }

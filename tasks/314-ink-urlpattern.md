@@ -16,18 +16,13 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasPattern = typeof URLPattern !== 'undefined';
-  let match = null;
-
-  if (hasPattern) {
-    const pattern = new URLPattern({ pathname: '/users/:id' });
-    match = pattern.exec('https://example.com/users/42');
-  }
+  const pattern = new URLPattern({ pathname: '/users/:id' });
+  const match = pattern.exec('https://example.com/users/42');
 
   return (
     <Box flexDirection="column">
-      <Text>Has URLPattern: {String(hasPattern)}</Text>
-      <Text>Match: {match ? 'yes' : 'no'}</Text>
+      <Text>Pathname: {match?.pathname.groups.id ?? 'none'}</Text>
+      <Text>Test: {String(pattern.test('https://example.com/users/42'))}</Text>
     </Box>
   );
 }

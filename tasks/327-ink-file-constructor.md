@@ -16,10 +16,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasFile = typeof File !== 'undefined';
-  const info = hasFile
-    ? { name: 'test.txt', size: 12, type: 'text/plain' }
-    : { name: 'n/a', size: 0, type: 'n/a' };
+  const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+  const info = { name: file.name, size: file.size, type: file.type };
 
   return (
     <Box flexDirection="column">

@@ -22,12 +22,7 @@ export default function App() {
     const seq: string[] = [];
     seq.push('sync');
     setTimeout(() => { seq.push('timeout'); }, 0);
-    if (typeof process !== 'undefined' && process.nextTick) {
-      process.nextTick(() => { seq.push('nextTick'); setOrder([...seq]); });
-    } else {
-      seq.push('nextTick-missing');
-      setOrder(seq);
-    }
+    process.nextTick(() => { seq.push('nextTick'); setOrder([...seq]); });
     seq.push('after-nextTick');
     setOrder([...seq]);
   }, []);

@@ -16,9 +16,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  // Note: RegExp.escape is Stage 3/ES2025 and may not be available in all runtimes.
   const input = 'hello.world';
-  const escaped = (RegExp as any).escape ? (RegExp as any).escape(input) : input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = RegExp.escape(input);
   const pattern = new RegExp(escaped);
   const matches = pattern.test('hello.world');
 
@@ -35,7 +34,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-regexp-escape/`
-- [ ] Uses `RegExp.escape` or polyfill
+- [ ] Uses `RegExp.escape`
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path generates compilable Rust
 - [ ] Parity harness passes with 100% match in all 3 environments

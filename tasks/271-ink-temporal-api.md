@@ -16,14 +16,14 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  // Temporal may not be available; gracefully fallback.
-  const now = (globalThis as any).Temporal
-    ? (globalThis as any).Temporal.Now.instant().toString()
-    : new Date().toISOString();
+  const instant = Temporal.Now.instant();
+  const date = instant.toLocaleString('en-US');
+  const epoch = instant.epochMilliseconds;
 
   return (
     <Box flexDirection="column">
-      <Text>Now: {now}</Text>
+      <Text>Date: {date}</Text>
+      <Text>Epoch: {epoch}</Text>
     </Box>
   );
 }
@@ -32,7 +32,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-temporal-api/`
-- [ ] Uses `Temporal` API with fallback
+- [ ] Uses `Temporal` API
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path handles `Temporal` global or documents gap
 - [ ] Parity harness passes with 100% match in all 3 environments

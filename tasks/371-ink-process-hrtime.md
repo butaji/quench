@@ -16,11 +16,13 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasHrtime = typeof process !== 'undefined' && process.hrtime;
+  const start = process.hrtime.bigint();
+  const end = process.hrtime.bigint();
+  const diff = Number(end - start);
 
   return (
     <Box flexDirection="column">
-      <Text>Has hrtime: {String(hasHrtime)}</Text>
+      <Text>Diff (ns): {diff}</Text>
     </Box>
   );
 }

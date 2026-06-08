@@ -16,8 +16,9 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const env = (import.meta as any).env || {};
-  const mode = env.MODE || 'development';
+  const mode = import.meta.env.MODE;
+  const dev = import.meta.env.DEV;
+  const prod = import.meta.env.PROD;
 
   return (
     <Box flexDirection="column">

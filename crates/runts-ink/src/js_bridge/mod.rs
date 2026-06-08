@@ -31,6 +31,7 @@ mod box_props;
 mod parsers;
 mod performance;
 mod process;
+mod structured_clone;
 mod text_props;
 mod timers;
 
@@ -269,6 +270,7 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     hooks::install(ctx)?;
     performance::install(ctx)?;
     process::install(ctx)?;
+    structured_clone::install(ctx)?;
     timers::install(ctx)?;
     // Note: rquickjs has built-in Date, do not override it
     Ok(())

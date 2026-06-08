@@ -17,13 +17,11 @@ import { Box, Text } from 'ink';
 
 export default function App() {
   const nested = [1, [2, 3], [[4, 5]]];
-  const flat1 = (nested as any).flat ? (nested as any).flat(1) : nested;
-  const flat2 = (nested as any).flat ? (nested as any).flat(2) : nested;
+  const flat1 = nested.flat(1);
+  const flat2 = nested.flat(2);
 
   const mapped = [1, 2, 3];
-  const flatMapped = (mapped as any).flatMap
-    ? (mapped as any).flatMap((x: number) => [x, x * 2])
-    : mapped;
+  const flatMapped = mapped.flatMap((x: number) => [x, x * 2]);
 
   return (
     <Box flexDirection="column">

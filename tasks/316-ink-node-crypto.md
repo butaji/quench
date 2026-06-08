@@ -16,10 +16,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  // Note: Node crypto may not be available in all runtimes.
-  const hash = typeof crypto !== 'undefined' && 'createHash' in (crypto as any)
-    ? 'hash-computed'
-    : 'crypto-unavailable';
+  const hash = crypto.createHash('sha256').update('hello').digest('hex');
 
   return (
     <Box flexDirection="column">

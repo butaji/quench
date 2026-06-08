@@ -16,11 +16,14 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const hasStorage = typeof localStorage !== 'undefined';
+  localStorage.setItem('key', 'value');
+  const value = localStorage.getItem('key');
+  const keys = Object.keys(localStorage);
 
   return (
     <Box flexDirection="column">
-      <Text>Has localStorage: {String(hasStorage)}</Text>
+      <Text>Value: {value}</Text>
+      <Text>Keys: {keys.join(', ')}</Text>
     </Box>
   );
 }

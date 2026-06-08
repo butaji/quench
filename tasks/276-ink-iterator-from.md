@@ -17,11 +17,12 @@ import { Box, Text } from 'ink';
 
 export default function App() {
   const iterable = [1, 2, 3, 4, 5];
-  const iter = (Iterator as any).from ? (Iterator as any).from(iterable) : iterable[Symbol.iterator]();
+  const iter = Iterator.from(iterable);
+  const mapped = iter.map((x: number) => x * 2);
   const result: number[] = [];
 
   for (let i = 0; i < 3; i++) {
-    const next = iter.next();
+    const next = mapped.next();
     if (next.done) break;
     result.push(next.value);
   }
@@ -37,7 +38,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-iterator-from/`
-- [ ] Uses `Iterator.from` or polyfill
+- [ ] Uses `Iterator.from`
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path generates compilable Rust
 - [ ] Parity harness passes with 100% match in all 3 environments

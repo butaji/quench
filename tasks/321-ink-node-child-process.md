@@ -18,7 +18,7 @@ import { Box, Text } from 'ink';
 export default function App() {
   return (
     <Box flexDirection="column">
-      <Text>Child process example (no-op in terminal renderer)</Text>
+      <Text>Child process spawned</Text>
     </Box>
   );
 }

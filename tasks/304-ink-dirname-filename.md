@@ -16,8 +16,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const dir = typeof __dirname !== 'undefined' ? __dirname : import.meta.url;
-  const file = typeof __filename !== 'undefined' ? __filename : import.meta.url;
+  const dir = __dirname;
+  const file = __filename;
 
   return (
     <Box flexDirection="column">

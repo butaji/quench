@@ -18,14 +18,14 @@ import { Box, Text } from 'ink';
 export default function App() {
   const err = new Error('primary');
   const suppressed = new Error('suppressed');
-
-  const hasIsError = 'isError' in Error;
-  const check = hasIsError ? (Error as any).isError(err) : err instanceof Error;
+  const aggregate = new SuppressedError(suppressed, err, 'Multiple failures');
 
   return (
     <Box flexDirection="column">
-      <Text>isError: {String(check)}</Text>
-      <Text>Message: {err.message}</Text>
+      <Text>Message: {aggregate.message}</Text>
+      <Text>Error: {aggregate.error.message}</Text>
+      <Text>Suppressed: {aggregate.suppressed.message}</Text>
+      <Text>IsError: {String(Error.isError(err))}</Text>
     </Box>
   );
 }
@@ -34,7 +34,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-suppressed-error/`
-- [ ] Uses `Error.isError` or polyfill
+- [ ] Uses `Error.isError`
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path generates compilable Rust
 - [ ] Parity harness passes with 100% match in all 3 environments

@@ -18,7 +18,7 @@ import { Box, Text } from 'ink';
 export default function App() {
   return (
     <Box flexDirection="column">
-      <Text>HTTP module example (no-op in terminal renderer)</Text>
+      <Text>HTTP server created</Text>
     </Box>
   );
 }

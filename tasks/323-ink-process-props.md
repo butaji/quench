@@ -16,9 +16,9 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  const pid = typeof process !== 'undefined' ? process.pid : 0;
-  const cwd = typeof process !== 'undefined' && process.cwd ? process.cwd() : '/';
-  const uptime = typeof process !== 'undefined' && process.uptime ? Math.floor(process.uptime()) : 0;
+  const pid = process.pid;
+  const cwd = process.cwd();
+  const uptime = Math.floor(process.uptime());
 
   return (
     <Box flexDirection="column">

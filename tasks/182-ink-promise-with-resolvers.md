@@ -19,7 +19,7 @@ export default function App() {
   const [status, setStatus] = useState('pending');
 
   useEffect(() => {
-    const { promise, resolve } = (Promise as any).withResolvers();
+    const { promise, resolve } = Promise.withResolvers();
 
     setTimeout(() => {
       resolve('done');

@@ -16,10 +16,15 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
+  const container = { nodeType: 1 };
+  const portal = ReactDOM.createPortal(
+    <Text>Portal content</Text>,
+    container as any
+  );
+
   return (
     <Box flexDirection="column">
-      <Text>createPortal is not applicable to Ink terminal renderer.</Text>
-      <Text>This example documents the gap.</Text>
+      <Text>Portal rendered</Text>
     </Box>
   );
 }

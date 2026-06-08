@@ -16,10 +16,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 export default function App() {
-  // Note: import.meta.resolve may not be available in all runtimes.
-  const resolved = (import.meta as any).resolve
-    ? (import.meta as any).resolve('./app.tsx')
-    : import.meta.url;
+  const resolved = import.meta.resolve('./app.tsx');
 
   return (
     <Box flexDirection="column">
@@ -32,7 +29,7 @@ export default function App() {
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-import-meta-resolve/`
-- [ ] Uses `import.meta.resolve()` or polyfills
+- [ ] Uses `import.meta.resolve()`
 - [ ] Renders identically in deno and `runts dev` (100% output match)
 - [ ] Compile path handles `import.meta.resolve`
 - [ ] Parity harness passes with 100% match in all 3 environments
