@@ -5,13 +5,18 @@ use crate::transpile::parser::expr::{convert_binding_pattern, convert_expr};
 
 use oxc_ast::ast::*;
 
-pub fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
-    let kind = match v.kind {
+fn var_kind_from_oxc(kind: VariableDeclarationKind) -> hir::VariableKind {
+    match kind {
         VariableDeclarationKind::Const => hir::VariableKind::Const,
         VariableDeclarationKind::Let => hir::VariableKind::Let,
-        VariableDeclarationKind::Var => hir::VariableKind::Var,
-        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => hir::VariableKind::Var,
-    };
+        VariableDeclarationKind::Using => hir::VariableKind::Using,
+        VariableDeclarationKind::AwaitUsing => hir::VariableKind::AwaitUsing,
+        _ => hir::VariableKind::Var,
+    }
+}
+
+pub fn var_to_decl(v: &VariableDeclaration) -> Vec<hir::Decl> {
+    let kind = var_kind_from_oxc(v.kind);
     v.declarations
         .iter()
         .filter_map(|decl| {

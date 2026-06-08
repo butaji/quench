@@ -2303,11 +2303,14 @@
     {
       "id": "179",
       "title": "ink-using-declaration example \u2014 using and await using (ES2024)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-using-declaration/",
-        "src/transpile/parser/stmt.rs"
+        "crates/runts-hir/src/base.rs",
+        "src/transpile/parser/stmt_decl.rs",
+        "src/transpile/parser/stmt.rs",
+        "src/transpile/hir/quote_codegen_stmts.inc"
       ],
       "acceptance": "Example exists. using/await using declarations produce compilable Rust. Parity harness 100% across deno/rq/compile."
     },

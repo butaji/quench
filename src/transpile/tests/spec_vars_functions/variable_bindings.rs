@@ -84,6 +84,37 @@ use super::helpers::*;
                 _ => panic!("expected variable decl"),
             }
         }
+
+        // ES2024 / TS 5.2 explicit resource management tests
+        #[test]
+        fn using_binding() {
+            let decl = parse_first_decl("using x = getResource();");
+            match decl {
+                Decl::Variable(ref v) => {
+                    assert!(matches!(v.kind, VariableKind::Using));
+                    assert_eq!(v.name, "x");
+                    assert!(v.init.is_some(), "using requires initializer");
+                }
+                _ => panic!("expected variable decl"),
+            }
+            let tokens = codegen_decl(&decl);
+            assert!(!tokens.is_empty(), "using codegen should produce output");
+        }
+
+        #[test]
+        fn await_using_binding() {
+            let decl = parse_first_decl("await using x = getAsyncResource();");
+            match decl {
+                Decl::Variable(ref v) => {
+                    assert!(matches!(v.kind, VariableKind::AwaitUsing));
+                    assert_eq!(v.name, "x");
+                    assert!(v.init.is_some(), "await using requires initializer");
+                }
+                _ => panic!("expected variable decl"),
+            }
+            let tokens = codegen_decl(&decl);
+            assert!(!tokens.is_empty(), "await using codegen should produce output");
+        }
     
 
 }
