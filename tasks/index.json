@@ -1231,7 +1231,7 @@
     {
       "id": "112",
       "title": "ink-weakref example \u2014 WeakRef, FinalizationRegistry",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-weakref/",
