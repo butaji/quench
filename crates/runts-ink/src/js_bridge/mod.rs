@@ -28,6 +28,7 @@
 pub mod hooks;
 mod box_props;
 mod parsers;
+mod process;
 mod text_props;
 
 use crate::{
@@ -262,7 +263,8 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     let runts_ink = Object::new(ctx.clone())?;
     install_functions(ctx.clone(), &runts_ink)?;
     globals.set("runts_ink", runts_ink)?;
-    hooks::install(ctx)
+    hooks::install(ctx)?;
+    process::install(ctx)
 }
 
 fn install_functions<'js>(ctx: Ctx<'js>, runts_ink: &Object<'js>) -> JsResult<()> {

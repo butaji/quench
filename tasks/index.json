@@ -1491,11 +1491,11 @@
     {
       "id": "133",
       "title": "Add process global to rquickjs bridge",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0-Critical",
       "files": [
-        "crates/runts-ink/src/js_bridge/",
-        "src/commands/dev/ink.rs"
+        "crates/runts-ink/src/js_bridge/process.rs",
+        "crates/runts-ink/src/js_bridge/mod.rs"
       ],
       "acceptance": "process.exit, process.env, process.stdin, process.stdout all available in rquickjs. ../tui1 no longer throws ReferenceError."
     },
