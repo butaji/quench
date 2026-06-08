@@ -79,6 +79,21 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return currentHooks[idx];
     }
 
+    // useImperativeHandle - customizes the imperative value that is exposed to parent components
+    function useImperativeHandle(ref, factory, deps) {
+        var idx = currentIdx++;
+        if (!deps || !depsEqual(currentHooks[idx]?.deps, deps)) {
+            // Store deps and the factory result
+            var value = typeof factory === 'function' ? factory() : factory;
+            currentHooks[idx] = { deps: deps, value: value };
+            // Assign to ref.current if ref is provided
+            if (ref && ref !== null) {
+                ref.current = value;
+            }
+        }
+        return currentHooks[idx].value;
+    }
+
     // useId - generates a unique ID for accessibility
     var __reactId = 0;
     function useId() {
@@ -300,7 +315,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     Component.prototype.isReactComponent = {};
 
     return {
-        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle,
         createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component,
         Fragment: 'Fragment', _withHooks: withHooks
     };
@@ -315,6 +330,7 @@ var useMemo = React.useMemo;
 var useRef = React.useRef;
 var useId = React.useId;
 var useTransition = React.useTransition;
+var useImperativeHandle = React.useImperativeHandle;
 var createContext = React.createContext;
 var useContext = React.useContext;
 var memo = React.memo;
