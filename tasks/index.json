@@ -2211,9 +2211,12 @@
     {
       "id": "170",
       "title": "`ink-debugger-labeled` Example \u2014 `debugger` Statement, Labeled Statements",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-debugger-labeled/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
