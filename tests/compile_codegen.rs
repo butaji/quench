@@ -356,6 +356,48 @@ fn test_tagged_template_codegen() {
     assert!(rust_code_compiles(rust_code), "Generated tagged template should compile");
 }
 
+/// Test TypeError constructor generates valid Rust
+#[test]
+fn test_type_error_codegen() {
+    let rust_code = r#"
+fn TypeError(msg: String) -> Value { Value::String(format!("TypeError: {}", msg)) }
+fn test() { let _err = TypeError("invalid type".to_string()); }
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated TypeError should compile");
+}
+
+/// Test RangeError constructor generates valid Rust
+#[test]
+fn test_range_error_codegen() {
+    let rust_code = r#"
+fn RangeError(msg: String) -> Value { Value::String(format!("RangeError: {}", msg)) }
+fn test() { let _err = RangeError("out of range".to_string()); }
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated RangeError should compile");
+}
+
+/// Test ReferenceError constructor generates valid Rust
+#[test]
+fn test_reference_error_codegen() {
+    let rust_code = r#"
+fn ReferenceError(msg: String) -> Value { Value::String(format!("ReferenceError: {}", msg)) }
+fn test() { let _err = ReferenceError("undefined".to_string()); }
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated ReferenceError should compile");
+}
+
+/// Test instanceof with error subclasses generates valid Rust
+#[test]
+fn test_instanceof_error_subclass_codegen() {
+    let rust_code = r#"
+fn test_instance(err: &Value) -> bool {
+    matches!(err, Value::String(s) if s.starts_with("TypeError:"))
+}
+fn test() { let _ = test_instance(&Value::String("TypeError: test".to_string())); }
+"#;
+    assert!(rust_code_compiles(rust_code), "Generated instanceof error subclass should compile");
+}
+
 /// Helper: Verify that Rust code compiles
 fn rust_code_compiles(code: &str) -> bool {
     // Write to temp file with unique name to avoid conflicts
