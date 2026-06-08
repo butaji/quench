@@ -1,0 +1,5 @@
+{
+  "name": "ImportApp",
+  "version": "2.0.0",
+  "features": ["import-attributes", "json-modules"]
+}
