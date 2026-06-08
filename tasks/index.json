@@ -222,6 +222,20 @@
         "139",
         "140"
       ]
+    },
+    {
+      "name": "Phase 14: Final Runtime API + Module Pattern Completion",
+      "description": "Additional Ink examples for remaining runtime APIs (console, URI encoding, array reduce, string search, error subclasses) and module patterns (namespace re-export, inline type imports, parameter properties) not yet exercised.",
+      "tasks": [
+        "141",
+        "142",
+        "143",
+        "144",
+        "145",
+        "146",
+        "147",
+        "148"
+      ]
     }
   ],
   "tasks": [
@@ -1312,7 +1326,7 @@
     {
       "id": "118",
       "title": "ink-date-math example \u2014 Date, Math, Intl",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-date-math/",
@@ -1345,7 +1359,7 @@
     {
       "id": "121",
       "title": "ink-json-api example \u2014 JSON.stringify, JSON.parse",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-json-api/",
@@ -1557,6 +1571,94 @@
         "src/commands/dev/ink.rs"
       ],
       "acceptance": "Module-level render() detected and handled (no-op or primary entry). No double-render. ../tui1 renders correctly with module-level render()."
+    },
+    {
+      "id": "141",
+      "title": "ink-namespace-reexport example \u2014 export * as ns from 'mod'",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-namespace-reexport/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Namespace re-export produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "142",
+      "title": "ink-inline-type-import example \u2014 import { type X }, import type * as ns",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-inline-type-import/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Inline type imports erased without runtime impact. Parity harness 100%."
+    },
+    {
+      "id": "143",
+      "title": "ink-parameter-properties example \u2014 constructor(public x: string)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-parameter-properties/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Parameter properties mapped to class fields. Parity harness 100%."
+    },
+    {
+      "id": "144",
+      "title": "ink-console-methods example \u2014 console.log, error, warn, info, time, timeEnd",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-console-methods/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Console methods produce compilable Rust or no-ops. Parity harness 100%."
+    },
+    {
+      "id": "145",
+      "title": "ink-uri-encoding example \u2014 encodeURI, decodeURI, encodeURIComponent, decodeURIComponent",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-uri-encoding/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. URI encoding functions produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "146",
+      "title": "ink-array-reduce example \u2014 reduce, reduceRight",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-reduce/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Array reduce/reduceRight produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "147",
+      "title": "ink-string-search example \u2014 startsWith, endsWith, includes, repeat",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-string-search/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. String search methods produce compilable Rust. Parity harness 100%."
+    },
+    {
+      "id": "148",
+      "title": "ink-error-subclasses example \u2014 TypeError, RangeError, ReferenceError",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-error-subclasses/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Error subclasses produce compilable Rust. Parity harness 100%."
     }
   ],
   "stats": {
@@ -1579,8 +1681,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 25,
-    "completed_tasks": 96
+    "pending_tasks": 29,
+    "completed_tasks": 100
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -1638,7 +1740,15 @@
       "React Fragment shorthand <></>",
       "dynamic import of node built-ins",
       "JSX pragma /** @jsxImportSource */",
-      "module-level render() call"
+      "module-level render() call",
+      "namespace re-export (export * as ns from 'mod')",
+      "inline type imports (import { type X })",
+      "parameter properties (constructor(public x: string))",
+      "console methods (log, error, warn, info, time, timeEnd)",
+      "URI encoding (encodeURI, decodeURI, encodeURIComponent, decodeURIComponent)",
+      "Array.reduce / reduceRight",
+      "String.startsWith / endsWith / includes / repeat",
+      "Error subclasses (TypeError, RangeError, ReferenceError)"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

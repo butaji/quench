@@ -263,6 +263,24 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 14: Final Runtime API + Module Pattern Completion
+**Goal:** Remaining practical TS/TSX/React/Ink features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 141 | `ink-namespace-reexport` | `export * as ns from "mod"` | P1 |
+| 142 | `ink-inline-type-import` | `import { type X }`, `import type * as ns` | P1 |
+| 143 | `ink-parameter-properties` | `constructor(public x: string)` | P1 |
+| 144 | `ink-console-methods` | `console.log`, `error`, `warn`, `info`, `time`, `timeEnd` | P1 |
+| 145 | `ink-uri-encoding` | `encodeURI`, `decodeURI`, `encodeURIComponent`, `decodeURIComponent` | P1 |
+| 146 | `ink-array-reduce` | `reduce`, `reduceRight` | P1 |
+| 147 | `ink-string-search` | `startsWith`, `endsWith`, `includes`, `repeat` | P1 |
+| 148 | `ink-error-subclasses` | `TypeError`, `RangeError`, `ReferenceError` | P1 |
+
+**Tasks:** 141–148 | **Status:** 🔄 Pending (8 tasks)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
@@ -305,7 +323,8 @@ Remaining gaps (Phase 10–12 targets):
 - Error: `Error.cause`
 - Class: `static {}` blocks, private methods `#method()`, `#field in obj`
 - React: `createRef`, `useDebugValue`
-- Type system: function overloads
+- Type system: function overloads, parameter properties, namespace re-export, inline type imports
+- Runtime APIs: console methods, URI encoding, array reduce, string search, error subclasses
 - **Real-world gaps (from `../tui1` audit):**
   - `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`)
   - `setInterval` / `clearInterval`
@@ -419,4 +438,5 @@ cargo test --test compile_codegen
 - [ ] 21 additional Ink examples for type system + runtime API deep coverage (Tasks 100–120).
 - [ ] 11 additional Ink examples for runtime API + type system completion (Tasks 121–131).
 - [ ] `../tui1` example compiles and renders identically in all 3 environments (Tasks 132–140).
+- [ ] 8 additional Ink examples for final runtime API + module pattern completion (Tasks 141–148).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.

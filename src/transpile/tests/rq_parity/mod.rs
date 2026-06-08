@@ -589,3 +589,28 @@ ink_example_test!(
         "Parsed array: [1, 2, 3, 4, 5]"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Date, Math, Intl (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_date_math,
+    "ink-date-math",
+    [
+        "=== Date ===",
+        "toISOString: 2024-01-15T19:30:00.000Z",
+        "getFullYear: 2024",
+        "getMonth: 0",
+        "getDate: 15",
+        "=== Math ===",
+        "Math.PI: 3.14",
+        "Math.E: 2.71",
+        "Math.abs(-42): 42",
+        "Math.floor(4.7): 4",
+        "Math.ceil(4.2): 5",
+        "Math.round(4.5): 5",
+        "Math.max(1,5,3,9,2): 9",
+        "Math.min(1,5,3,9,2): 1"
+    ]
+);
