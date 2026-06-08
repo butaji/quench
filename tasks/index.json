@@ -2121,9 +2121,12 @@
     {
       "id": "161",
       "title": "`ink-string-wellformed` Example \u2014 `isWellFormed`, `toWellFormed`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-string-wellformed/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {

@@ -624,6 +624,7 @@ fn test_new_examples_have_main_tsx() {
         "ink-import",
         "ink-box",
         "ink-regexp-named-groups",
+        "ink-string-wellformed",
     ];
     
     for example in new_examples {
@@ -1470,6 +1471,7 @@ fn test_new_examples_have_valid_deno_json() {
         "ink-focus-cycle",
         "ink-box",
         "ink-regexp-named-groups",
+        "ink-string-wellformed",
     ];
     
     for example in new_examples {
@@ -1490,6 +1492,7 @@ fn test_new_examples_have_valid_runts_config() {
         "ink-focus-cycle",
         "ink-box",
         "ink-regexp-named-groups",
+        "ink-string-wellformed",
     ];
     
     for example in new_examples {
@@ -1510,6 +1513,7 @@ fn test_new_examples_use_react_and_ink() {
         "ink-focus-cycle",
         "ink-box",
         "ink-regexp-named-groups",
+        "ink-string-wellformed",
     ];
     
     for example in new_examples {
@@ -1538,6 +1542,7 @@ fn test_new_examples_export_or_render() {
         "ink-focus-cycle",
         "ink-box",
         "ink-regexp-named-groups",
+        "ink-string-wellformed",
     ];
     
     for example in new_examples {
