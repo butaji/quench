@@ -2110,9 +2110,12 @@
     {
       "id": "160",
       "title": "`ink-regexp-named-groups` Example \u2014 Named Capture Groups",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-regexp-named-groups/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
