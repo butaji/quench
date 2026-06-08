@@ -441,6 +441,27 @@
         "298",
         "299"
       ]
+    },
+    {
+      "name": "Phase 25: Advanced Destructuring + Node.js/Web Runtime APIs",
+      "description": "Final Ink examples for advanced destructuring patterns (mixed, computed keys, renaming), Node.js runtime APIs (global, Buffer, __dirname, __filename, CommonJS interop, process.nextTick, EventEmitter, path, os), and Web APIs (AbortSignal, fetch, PerformanceObserver, setImmediate, URLPattern).",
+      "tasks": [
+        "300",
+        "301",
+        "302",
+        "303",
+        "304",
+        "305",
+        "306",
+        "307",
+        "308",
+        "309",
+        "310",
+        "311",
+        "312",
+        "313",
+        "314"
+      ]
     }
   ],
   "tasks": [
@@ -1840,7 +1861,7 @@
         "scripts/lib/parity_lib.sh"
       ],
       "acceptance": "Example exists. Console methods produce compilable Rust or no-ops. Parity harness 100%.",
-      "notes": "Deno/rq parity: 99.21%. Compile path produces working binary with console methods mapped to println!/eprintln! or no-ops. Compile-path similarity ~30% due to console.table formatting differences and timing precision — known architectural limitation of static JSX codegen."
+      "notes": "Deno/rq parity: 99.21%. Compile path produces working binary with console methods mapped to println!/eprintln! or no-ops. Compile-path similarity ~30% due to console.table formatting differences and timing precision \u2014 known architectural limitation of static JSX codegen."
     },
     {
       "id": "145",
@@ -1865,12 +1886,12 @@
         "examples/ink-array-reduce/",
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
-      "acceptance": "Example exists. Array reduce/reduceRight produce compilable Rust. Parity harness 100%."   
+      "acceptance": "Example exists. Array reduce/reduceRight produce compilable Rust. Parity harness 100%."
     },
     {
       "id": "147",
       "title": "ink-string-search example \u2014 startsWith, endsWith, includes, repeat",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-string-search/",
@@ -3458,6 +3479,171 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. Nullish object values produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "300",
+      "title": "ink-mixed-destructure example \u2014 mixed array/object destructuring",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-mixed-destructure/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Mixed destructuring produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "301",
+      "title": "ink-computed-destructure example \u2014 computed keys and renaming in destructuring",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-computed-destructure/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Computed/renamed destructuring produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "302",
+      "title": "ink-global-object example \u2014 global object",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-global-object/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. global object produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "303",
+      "title": "ink-buffer example \u2014 Node.js Buffer",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-buffer/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Buffer methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "304",
+      "title": "ink-dirname-filename example \u2014 __dirname and __filename",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-dirname-filename/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. __dirname/__filename produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "305",
+      "title": "ink-commonjs-interop example \u2014 module.exports, exports, require",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-commonjs-interop/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. CommonJS interop handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "306",
+      "title": "ink-abort-signal example \u2014 AbortSignal and AbortController",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-abort-signal/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. AbortController produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "307",
+      "title": "ink-fetch-api example \u2014 fetch, Response, Request",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-fetch-api/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Fetch API constructors produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "308",
+      "title": "ink-performance-observer example \u2014 PerformanceObserver, mark, measure",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-performance-observer/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. PerformanceObserver produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "309",
+      "title": "ink-set-immediate example \u2014 setImmediate / clearImmediate",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-set-immediate/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. setImmediate/clearImmediate produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "310",
+      "title": "ink-process-nexttick example \u2014 process.nextTick",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-process-nexttick/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. process.nextTick produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "311",
+      "title": "ink-events-emitter example \u2014 EventEmitter",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-events-emitter/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. EventEmitter pattern produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "312",
+      "title": "ink-path-module example \u2014 path module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-path-module/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Path manipulation produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "313",
+      "title": "ink-os-module example \u2014 os module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-os-module/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. OS info produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "314",
+      "title": "ink-urlpattern example \u2014 URLPattern",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-urlpattern/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. URLPattern produces compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -3480,8 +3666,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 156,
-    "completed_tasks": 124
+    "pending_tasks": 168,
+    "completed_tasks": 127
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -3661,7 +3847,22 @@
       "Computed property keys in classes",
       "Class fields with complex initializers",
       "Optional catch binding",
-      "Nullish values in object literals"
+      "Nullish values in object literals",
+      "mixed array/object destructuring",
+      "computed keys and renaming in destructuring",
+      "global object",
+      "Node.js Buffer",
+      "__dirname / __filename",
+      "CommonJS module.exports / exports / require",
+      "AbortSignal / AbortController",
+      "fetch / Response / Request API",
+      "PerformanceObserver / mark / measure",
+      "setImmediate / clearImmediate",
+      "process.nextTick",
+      "EventEmitter",
+      "path module",
+      "os module",
+      "URLPattern"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
