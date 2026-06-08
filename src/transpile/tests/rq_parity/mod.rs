@@ -651,11 +651,13 @@ ink_example_test!(
     test_ink_object_meta,
     "ink-object-meta",
     [
-        "Object.create, freeze, seal, assign Demo",
-        "Proto type: widget",
-        "Name: Button",
-        "Frozen x: 1",
-        "Merged keys: a, b"
+        "Object Meta-Methods",
+        "create, defineProperty, freeze, seal, assign",
+        "prototype.greet: Hello from prototype",
+        "readonlyProp: read only",
+        "isFrozen: true",
+        "isSealed: true",
+        "assigned: a=10, b=2, c=3"
     ]
 );
 
