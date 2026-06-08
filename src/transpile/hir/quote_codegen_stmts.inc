@@ -377,6 +377,8 @@ impl QuoteCodegen {
                 super::VariableKind::Var => quote! { let mut },
                 super::VariableKind::Let => quote! { let mut },
                 super::VariableKind::Const => quote! { let },
+                // ES2024 using/await using - erased in compile path
+                super::VariableKind::Using | super::VariableKind::AwaitUsing => quote! { let },
             };
             match init {
                 Some(expr) => {
@@ -500,6 +502,8 @@ impl QuoteCodegen {
             super::VariableKind::Var => quote! { let mut },
             super::VariableKind::Let => quote! { let },
             super::VariableKind::Const => quote! { let },
+            // ES2024 using/await using - erased in compile path
+            super::VariableKind::Using | super::VariableKind::AwaitUsing => quote! { let },
         }
     }
 
@@ -558,6 +562,8 @@ impl QuoteCodegen {
             VariableKind::Var => quote! { let mut },
             VariableKind::Let => quote! { let },
             VariableKind::Const => quote! { let },
+            // ES2024 using/await using - erased in compile path
+            VariableKind::Using | VariableKind::AwaitUsing => quote! { let },
         }
     }
 
