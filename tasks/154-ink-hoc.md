@@ -47,8 +47,20 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-hoc/`
-- [ ] Uses HOC pattern with generic type parameter
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-hoc/`
+- [x] Uses HOC pattern with generic type parameter
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- `withLoading` HOC - shows loading state
+- `withCounter` HOC - adds increment functionality
+- `withLogger` HOC - adds logging (via useEffect)
+- `withBorder` HOC - wraps component with border
+- `withColor` HOC - wraps text with color
+- Chained HOCs (withLoading + withBorder, withLogger + withCounter)
+
+Added `test_ink_hoc` test to `src/transpile/tests/rq_parity/mod.rs`.

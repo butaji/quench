@@ -2045,7 +2045,7 @@
     {
       "id": "154",
       "title": "`ink-hoc` Example — Higher-Order Components",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
