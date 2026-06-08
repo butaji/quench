@@ -601,6 +601,19 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// React createRef & useDebugValue (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_react_refs_debug,
+    "ink-react-refs-debug",
+    [
+        "Count: 0",
+        "createRef + useDebugValue exercised"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // JSON API (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
