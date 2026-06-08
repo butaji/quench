@@ -173,6 +173,7 @@ impl QuoteCodegen {
 include!("quote_codegen_types.inc");
 include!("quote_codegen_stmts.inc");
 include!("quote_codegen_exprs.inc");
+include!("quote_codegen_calls.inc");
 
 impl QuoteCodegen {
     /// Generate Rust struct for a class declaration
@@ -383,6 +384,10 @@ impl QuoteCodegen {
     }
 
     fn gen_call_expr(&self, callee: &Expr, arguments: &[Expr]) -> TokenStream {
+        // Handle Function.prototype.call, .apply, .bind
+        if let Some(code) = self.gen_fn_method_call(callee, arguments) {
+            return code;
+        }
         if let Expr::Ident { name } = callee {
             if let Some(rust_code) = self.gen_global_fn(name, arguments) {
                 return rust_code;
