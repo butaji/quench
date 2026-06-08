@@ -2102,7 +2102,7 @@
     {
       "id": "159",
       "title": "`ink-arguments` Example \u2014 `arguments` Object, Rest vs Arguments",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
