@@ -2243,10 +2243,12 @@
     {
       "id": "173",
       "title": "`ink-array-searchers` Example \u2014 `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-array-searchers/"
+      ],
+      "acceptance": "Example exists. Array searchers (indexOf, lastIndexOf, every, some, filter, find, findIndex, includes) produce 100% parity across deno/rq/compile."
     },
     {
       "id": "174",
