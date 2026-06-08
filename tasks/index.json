@@ -2117,7 +2117,7 @@
     {
       "id": "163",
       "title": "`ink-ref-callback` Example — Callback Refs, `useRef` with Initial Value",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."

@@ -38,9 +38,20 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-ref-callback/`
-- [ ] Uses `useRef` with initial value
-- [ ] Uses callback ref pattern
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-ref-callback/`
+- [x] Uses `useRef` with initial value
+- [x] Uses callback ref pattern
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- `useRef` with initial value (number, string, boolean)
+- Callback ref pattern with `useCallback`
+- Multiple refs of different types
+- Imperative handle pattern
+- Counter using ref for mutable value
+
+Added `test_ink_ref_callback` test to `src/transpile/tests/rq_parity/mod.rs`.

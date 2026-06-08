@@ -672,6 +672,22 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// Callback refs and useRef (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_ref_callback,
+    "ink-ref-callback",
+    [
+        "useRef & Callback Refs Demo",
+        "Refs for mutable values and imperative operations",
+        "Count (via ref): 0",
+        "Callback ref pattern",
+        "Multiple refs of different types"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
