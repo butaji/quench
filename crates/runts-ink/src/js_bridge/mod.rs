@@ -29,6 +29,7 @@ pub mod hooks;
 mod box_props;
 // mod date; // rquickjs has built-in Date
 mod parsers;
+mod performance;
 mod process;
 mod text_props;
 mod timers;
@@ -266,6 +267,7 @@ pub fn install(ctx: &Ctx<'_>) -> JsResult<()> {
     install_functions(ctx.clone(), &runts_ink)?;
     globals.set("runts_ink", runts_ink)?;
     hooks::install(ctx)?;
+    performance::install(ctx)?;
     process::install(ctx)?;
     timers::install(ctx)?;
     // Note: rquickjs has built-in Date, do not override it
