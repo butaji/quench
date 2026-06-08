@@ -713,3 +713,20 @@ ink_example_test!(
         "services: 2"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Private methods and `in` operator for private fields (ES2022)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_private_methods,
+    "ink-private-methods",
+    [
+        "Private Methods Demo",
+        "Counter value: 3",
+        "Counter has #count: yes",
+        "Other has #count: no",
+        "Stack size: 3",
+        "Push overflow: false"
+    ]
+);
