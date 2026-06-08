@@ -2156,9 +2156,12 @@
     {
       "id": "165",
       "title": "`ink-for-await-of` Example \u2014 `for await...of` Async Iteration",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-for-await-of/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
