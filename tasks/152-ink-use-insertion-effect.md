@@ -32,8 +32,20 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-use-insertion-effect/`
-- [ ] Uses `useInsertionEffect` hook
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-use-insertion-effect/`
+- [x] Uses `useInsertionEffect` hook
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- `useInsertionEffect` hook from React 18
+- Effect ordering with useInsertionEffect, useLayoutEffect, and useEffect
+- Tracking insertion effect run count with useRef
+- Documented behavior in TUI context (no DOM, behaves like useLayoutEffect)
+
+Added `useInsertionEffect` to React shim (`src/transpile/js_bundle/react_shim.rs`) - in TUI context it runs like `useLayoutEffect`.
+
+Added `test_ink_use_insertion_effect` test to `src/transpile/tests/rq_parity/mod.rs`.

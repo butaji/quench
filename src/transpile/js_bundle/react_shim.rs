@@ -50,6 +50,18 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         }
     }
 
+    function useInsertionEffect(fn, deps) {
+        var idx = currentIdx++;
+        var old = currentHooks[idx];
+        // In TUI context, useInsertionEffect runs like useLayoutEffect
+        // (before layout, synchronously). There's no actual DOM.
+        if (!old || !depsEqual(old.deps, deps)) {
+            currentHooks[idx] = { deps: deps };
+            __runts_layout_effects.push(fn);
+            __runts_has_layout_effects = true;
+        }
+    }
+
     function useCallback(fn, deps) {
         var idx = currentIdx++;
         var old = currentHooks[idx];
@@ -402,7 +414,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     };
 
     return {
-        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore, useDebugValue,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useInsertionEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore, useDebugValue,
         createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component, createRef,
         Fragment: 'Fragment', _withHooks: withHooks,
         Children: Children, cloneElement: cloneElement, isValidElement: isValidElement
@@ -413,6 +425,7 @@ var useState = React.useState;
 var useReducer = React.useReducer;
 var useEffect = React.useEffect;
 var useLayoutEffect = React.useLayoutEffect;
+var useInsertionEffect = React.useInsertionEffect;
 var useCallback = React.useCallback;
 var useMemo = React.useMemo;
 var useRef = React.useRef;

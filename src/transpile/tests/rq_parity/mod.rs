@@ -590,6 +590,22 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// React 18 useInsertionEffect (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_use_insertion_effect,
+    "ink-use-insertion-effect",
+    [
+        "useInsertionEffect Demo",
+        "React 18 hook for style injection",
+        "Insertion effect status:",
+        "Effect ordering",
+        "useInsertionEffect (first)"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
