@@ -2189,9 +2189,12 @@
     {
       "id": "168",
       "title": "`ink-parse-global` Example \u2014 `parseInt`, `parseFloat`, `isNaN`, `isFinite`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
+      "files": [
+        "examples/ink-parse-global/",
+        "tests/ink_parity_tests.rs"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {
