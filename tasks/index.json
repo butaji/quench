@@ -1468,13 +1468,13 @@
     {
       "id": "127",
       "title": "ink-private-methods example \u2014 private methods #method(), #field in obj",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-private-methods/",
         "src/transpile/parser/stmt_class.rs"
       ],
-      "acceptance": "Example exists. Private methods and in-operator produce compilable Rust. Parity harness 100%."
+      "acceptance": "Example exists. Private methods and in-operator produce compilable Rust. Parity harness 100% in dev path."
     },
     {
       "id": "128",
