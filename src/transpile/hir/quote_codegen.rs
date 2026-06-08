@@ -397,6 +397,9 @@ impl QuoteCodegen {
             if let Some(code) = self.gen_console_call(obj.as_ref(), property, arguments) {
                 return code;
             }
+            if let Some(code) = self.gen_number_method_call(obj.as_ref(), property, arguments) {
+                return code;
+            }
         }
         let callee = self.gen_expr(callee);
         let args: Vec<_> = arguments.iter().map(|a| { let arg = self.gen_expr(a); if matches!(a, Expr::String(_)) { quote! { #arg.to_string() } } else { arg } }).collect();
@@ -410,24 +413,6 @@ impl QuoteCodegen {
             "setInterval" => { let dur = arguments.get(1).map(|a| self.gen_expr(a)).unwrap_or_else(|| quote! { 0 }); Some(quote! { tokio::time::interval(std::time::Duration::from_millis(#dur as u64)) }) }
             _ => None,
         }
-    }
-
-    fn gen_console_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
-        if let Expr::Ident { name } = obj { if name != "console" { return None; } } else { return None; }
-        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
-    }
-
-    fn gen_console_output(&self, method: &str, args: &[Expr]) -> TokenStream {
-        let is_err = method == "error" || method == "warn";
-        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
-        if args.len() == 1 { if is_err { syn::parse_quote! { eprintln!("{}", #(#gen_args),*) } } else { syn::parse_quote! { println!("{}", #(#gen_args),*) } } }
-        else { let fmts: Vec<_> = args.iter().map(|_| quote! { "{}" }).collect(); if is_err { syn::parse_quote! { eprintln!(#(#fmts),*, #(#gen_args),*) } } else { syn::parse_quote! { println!(#(#fmts),*, #(#gen_args),*) } } }
-    }
-
-    fn gen_console_assert(&self, args: &[Expr]) -> TokenStream {
-        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
-        if args.len() >= 2 { let cond = gen_args.first().unwrap(); let msg = gen_args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } }
-        else if args.len() == 1 { quote! { assert!(#(gen_args.first().unwrap())) } } else { quote! { () } }
     }
 
     fn gen_assign_expr(&self, op: &super::AssignOp, left: &Expr, right: &Expr) -> TokenStream {
@@ -485,6 +470,21 @@ impl QuoteCodegen {
     fn bin_cmp(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Lt => quote! { < }, B::Lte => quote! { <= }, B::Gt => quote! { > }, B::Gte => quote! { >= }, _ => quote! { false } } }
     fn bin_js_op(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::Instanceof => quote! { instanceof }, B::In => quote! { in }, _ => quote! { 0 } } }
     fn bin_logical(op: &super::BinaryOp) -> TokenStream { use super::BinaryOp as B; match op { B::LogicalAnd => quote! { && }, B::LogicalOr => quote! { || }, B::NullishCoalescing => quote! { ?? }, _ => quote! { false } } }
+    fn gen_console_call(&self, obj: &Expr, property: &str, arguments: &[Expr]) -> Option<TokenStream> {
+        if let Expr::Ident { name } = obj { if name != "console" { return None; } } else { return None; }
+        match property { "log" | "error" | "info" | "table" | "warn" => Some(self.gen_console_output(property, arguments)), "assert" => Some(self.gen_console_assert(arguments)), _ => None }
+    }
+    fn gen_console_output(&self, method: &str, args: &[Expr]) -> TokenStream {
+        let is_err = method == "error" || method == "warn";
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() == 1 { if is_err { syn::parse_quote! { eprintln!("{}", #(#gen_args),*) } } else { syn::parse_quote! { println!("{}", #(#gen_args),*) } } }
+        else { let fmts: Vec<_> = args.iter().map(|_| quote! { "{}" }).collect(); if is_err { syn::parse_quote! { eprintln!(#(#fmts),*, #(#gen_args),*) } } else { syn::parse_quote! { println!(#(#fmts),*, #(#gen_args),*) } } }
+    }
+    fn gen_console_assert(&self, args: &[Expr]) -> TokenStream {
+        let gen_args: Vec<_> = args.iter().map(|a| self.gen_expr(a)).collect();
+        if args.len() >= 2 { let cond = gen_args.first().unwrap(); let msg = gen_args.get(1).unwrap(); quote! { assert!(#cond, "{}", #msg) } }
+        else if args.len() == 1 { quote! { assert!(#(gen_args.first().unwrap())) } } else { quote! { () } }
+    }
 }
 
 impl Default for QuoteCodegen {
