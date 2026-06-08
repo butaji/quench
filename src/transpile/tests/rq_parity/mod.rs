@@ -294,6 +294,20 @@ ink_example_smoke_test!(test_ink_switch, "ink-switch");
 ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");
 ink_example_smoke_test!(test_ink_generator, "ink-generator");
 
+ink_example_test!(
+    test_ink_regexp_advanced,
+    "ink-regexp-advanced",
+    [
+        "RegExp Advanced Demo",
+        "matchCount: 2",
+        "firstMatch: Hello",
+        "hasNumber: true",
+        "emailUser: user",
+        "pascalCase: helloWorldTest",
+        "year: 2024"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript declaration patterns (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
