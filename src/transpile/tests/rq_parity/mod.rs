@@ -293,6 +293,7 @@ ink_example_smoke_test!(test_ink_switch, "ink-switch");
 
 ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");
 ink_example_smoke_test!(test_ink_generator, "ink-generator");
+ink_example_smoke_test!(test_ink_proxy, "ink-proxy");
 
 ink_example_test!(
     test_ink_regexp_advanced,
