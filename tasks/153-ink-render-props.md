@@ -36,8 +36,18 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-render-props/`
-- [ ] Uses render props pattern with function prop
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-render-props/`
+- [x] Uses render props pattern with function prop
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- MouseTracker component with render prop
+- Generic List<T> component with renderItem prop
+- DataProvider component with render prop
+- Counter component with render prop showing state passing
+
+Added `test_ink_render_props` test to `src/transpile/tests/rq_parity/mod.rs`.

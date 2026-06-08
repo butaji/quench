@@ -606,6 +606,23 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// Render props pattern (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_render_props,
+    "ink-render-props",
+    [
+        "Render Props Pattern Demo",
+        "Component receives function to control rendering",
+        "Position: (42, 13)",
+        "List with render props",
+        "1. React",
+        "Alpha: 100"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
