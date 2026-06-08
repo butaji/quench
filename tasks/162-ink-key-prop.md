@@ -43,9 +43,21 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-key-prop/`
-- [ ] Uses `key` prop with stable ids in `.map()`
-- [ ] Uses `key` prop with string template expressions
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] `key` prop is stripped or handled correctly in compile path
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-key-prop/`
+- [x] Uses `key` prop with stable ids in `.map()`
+- [x] Uses `key` prop with string template expressions
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] `key` prop is stripped or handled correctly in compile path
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- Stable key with `item.id`
+- Template string key: `item-${item.id}-${index}`
+- Nested lists with different key scopes (category + item)
+- Index-based keys
+- Fragment children with keys via `React.Fragment`
+- Mixed elements with shared key context
+
+Added `test_ink_key_prop` test to `src/transpile/tests/rq_parity/mod.rs`.
