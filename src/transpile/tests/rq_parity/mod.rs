@@ -362,6 +362,19 @@ ink_example_test!(
     ]
 );
 
+ink_example_test!(
+    test_ink_template_literal_types,
+    "ink-template-literal-types",
+    [
+        "Template Literal Types Demo",
+        "bgRed: bg-red",
+        "onClick: onclick",
+        "marginTop: margin-top",
+        "path1: /api/v1/users",
+        "dataColor: data-color"
+    ]
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // TypeScript utility types (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
