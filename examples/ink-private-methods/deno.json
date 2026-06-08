@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "react": "npm:react",
+    "react-dom": "npm:react-dom",
+    "ink": "npm:ink",
+    "@types/react": "npm:@types/react",
+    "@types/react-dom": "npm:@types/react-dom"
+  }
+}
