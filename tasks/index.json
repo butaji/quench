@@ -2293,10 +2293,12 @@
     {
       "id": "178",
       "title": "`ink-spread-call-destructure` Example \u2014 Spread in Function Calls, Destructuring in Params/Catch/For-Of",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-spread-call-destructure/"
+      ],
+      "acceptance": "Example exists. JavaScript features (spread in calls, rest params, destructuring in for-of, destructuring in params) produce 100% parity across deno/rq/compile."
     },
     {
       "id": "179",
