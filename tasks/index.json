@@ -2125,7 +2125,7 @@
     {
       "id": "164",
       "title": "`ink-in-operator` Example — `in` Operator (`prop in obj`, `index in arr`)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."

@@ -39,9 +39,21 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-in-operator/`
-- [ ] Uses `in` operator with object properties
-- [ ] Uses `in` operator with array indices
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust for `in` operator
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-in-operator/`
+- [x] Uses `in` operator with object properties
+- [x] Uses `in` operator with array indices
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust for `in` operator
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- Object property checks including inherited properties
+- Nested object property checks
+- Array index checks (existing vs non-existing)
+- Sparse array checks
+- Optional property checks
+- Generic `hasOptionalProp` function with keyof
+
+Added `test_ink_in_operator` test to `src/transpile/tests/rq_parity/mod.rs`.

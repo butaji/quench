@@ -688,6 +688,22 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// in operator (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_in_operator,
+    "ink-in-operator",
+    [
+        "in Operator Demo",
+        "Checking property existence",
+        "'name' in user: true",
+        "'missing' in user: false",
+        "0 in ['a','b','c']: true"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
