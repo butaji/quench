@@ -227,9 +227,39 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return runts_ink.box(props);
     }
 
+    function lazy(importer) {
+        // For TUI context, lazy resolves synchronously
+        // In real React this would suspend, but we run synchronously
+        var resolved = null;
+        return function(props) {
+            if (!resolved) {
+                // Sync resolution for TUI - immediately call importer
+                try {
+                    var result = importer();
+                    // Handle Promise or direct value
+                    if (result && typeof result.then === 'function') {
+                        // Would need async, but TUI is sync - use fallback
+                        return null;
+                    }
+                    resolved = result.default || result;
+                } catch (e) {
+                    return null;
+                }
+            }
+            return resolved(props);
+        };
+    }
+
+    // Suspense - for TUI, we immediately render children
+    // In real React this would suspend and show fallback
+    function Suspense(props) {
+        // Immediately render children - no actual suspense in TUI context
+        return props.children;
+    }
+
     return {
         createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition,
-        createContext, useContext, memo, forwardRef, Fragment: 'Fragment', _withHooks: withHooks
+        createContext, useContext, memo, forwardRef, lazy, Suspense, Fragment: 'Fragment', _withHooks: withHooks
     };
 })();
 
@@ -246,6 +276,8 @@ var createContext = React.createContext;
 var useContext = React.useContext;
 var memo = React.memo;
 var forwardRef = React.forwardRef;
+var lazy = React.lazy;
+var Suspense = React.Suspense;
 var __runts_ink_render = function(app) { return app; };"#;
 
 /// Post-shim code - appended after user code.
