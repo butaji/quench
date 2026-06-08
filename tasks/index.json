@@ -1165,7 +1165,7 @@
     {
       "id": "106",
       "title": "ink-use-imperative-handle example \u2014 useImperativeHandle, forwardRef",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-use-imperative-handle/",
