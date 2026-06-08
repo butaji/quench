@@ -374,6 +374,73 @@
         "249",
         "250"
       ]
+    },
+    {
+      "name": "Phase 22: Web APIs + TypeScript Config Edge Cases + JSX/TS Language Patterns",
+      "description": "Final Ink examples for Web APIs (WebSocket, FormData, Blob, EventTarget, FinalizationRegistry, SharedArrayBuffer), TypeScript configuration edge cases (noImplicitReturns, noFallthroughCasesInSwitch, noUncheckedIndexedAccess, exactOptionalPropertyTypes, preserveValueImports, jsxPreserve, emitDecoratorMetadata), and advanced TS/JSX language patterns (JSX spread children, rest destructuring, named tuples, const enum, ambient modules, ts-nocheck, server components).",
+      "tasks": [
+        "251",
+        "252",
+        "253",
+        "254",
+        "255",
+        "256",
+        "257",
+        "258",
+        "259",
+        "260",
+        "261",
+        "262",
+        "263",
+        "264",
+        "265",
+        "266",
+        "267",
+        "268",
+        "269",
+        "270"
+      ]
+    },
+    {
+      "name": "Phase 23: Emerging Runtime APIs + React Patterns + Module Resolution + Compile Infrastructure",
+      "description": "Final Ink examples for emerging runtime APIs (Temporal, additional Intl, SuppressedError, String.raw, AsyncGenerator, Iterator.from, DisposableStack, escape/unescape), React patterns (Profiler, StrictMode, createPortal), module resolution (package.json exports/imports, project references), and compile infrastructure (watch mode, declaration files).",
+      "tasks": [
+        "271",
+        "272",
+        "273",
+        "274",
+        "275",
+        "276",
+        "277",
+        "278",
+        "279",
+        "280",
+        "281",
+        "282",
+        "283",
+        "284",
+        "285"
+      ]
+    },
+    {
+      "name": "Phase 24: Orphaned Example Audit + Advanced Type System + Language Edge Cases",
+      "description": "Comprehensive audit of 92 orphaned existing Ink examples, plus advanced type system features (recursive types, distributive conditional types, variadic tuples, branded types), language edge cases (generator return/throw, optional catch binding, nullish in objects, object shorthand, computed class members, class field initializers), and module/type directives (type-only import assertions, AMD module, satisfies on functions).",
+      "tasks": [
+        "286",
+        "287",
+        "288",
+        "289",
+        "290",
+        "291",
+        "292",
+        "293",
+        "294",
+        "295",
+        "296",
+        "297",
+        "298",
+        "299"
+      ]
     }
   ],
   "tasks": [
@@ -2845,6 +2912,544 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. CompressionStream produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "251",
+      "title": "ink-websocket example \u2014 WebSocket API",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-websocket/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. WebSocket constructor produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "252",
+      "title": "ink-form-data example \u2014 FormData API",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-form-data/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. FormData methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "253",
+      "title": "ink-blob example \u2014 Blob and FileReader APIs",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-blob/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Blob and FileReader produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "254",
+      "title": "ink-event-target example \u2014 EventTarget and CustomEvent",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-event-target/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. EventTarget API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "255",
+      "title": "ink-finalization-registry example \u2014 FinalizationRegistry",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-finalization-registry/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. FinalizationRegistry produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "256",
+      "title": "ink-shared-array-buffer example \u2014 SharedArrayBuffer",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-shared-array-buffer/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. SharedArrayBuffer produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "257",
+      "title": "ink-no-implicit-returns example \u2014 noImplicitReturns compiler option",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-no-implicit-returns/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. noImplicitReturns respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "258",
+      "title": "ink-no-fallthrough example \u2014 noFallthroughCasesInSwitch compiler option",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-no-fallthrough/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. noFallthroughCasesInSwitch respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "259",
+      "title": "ink-no-unchecked-indexed example \u2014 noUncheckedIndexedAccess compiler option",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-no-unchecked-indexed/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. noUncheckedIndexedAccess respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "260",
+      "title": "ink-exact-optional example \u2014 exactOptionalPropertyTypes compiler option",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-exact-optional/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. exactOptionalPropertyTypes respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "261",
+      "title": "ink-preserve-value-imports example \u2014 preserveValueImports compiler option",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-preserve-value-imports/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. preserveValueImports respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "262",
+      "title": "ink-jsx-spread-children example \u2014 spread in JSX children",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-spread-children/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX spread children produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "263",
+      "title": "ink-rest-destructure example \u2014 rest elements in object/array destructuring",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-rest-destructure/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Rest destructuring produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "264",
+      "title": "ink-named-tuple example \u2014 named tuple members",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-named-tuple/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Named tuple members erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "265",
+      "title": "ink-const-enum example \u2014 const enum declaration",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-const-enum/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. const enum inlined/handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "266",
+      "title": "ink-ambient-module example \u2014 ambient module declarations",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-ambient-module/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. Ambient module declarations stripped. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "267",
+      "title": "ink-ts-nocheck example \u2014 @ts-nocheck and @ts-check directives",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-ts-nocheck/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. @ts-nocheck/@ts-check stripped without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "268",
+      "title": "ink-jsx-preserve example \u2014 jsx preserve transform",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-jsx-preserve/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. jsx: preserve handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "269",
+      "title": "ink-server-component example \u2014 use server / use client directives",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-server-component/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. Server/client directives handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "270",
+      "title": "ink-decorator-metadata example \u2014 emitDecoratorMetadata",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-decorator-metadata/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. emitDecoratorMetadata respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "271",
+      "title": "ink-temporal-api example \u2014 Temporal API",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-temporal-api/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Temporal API handled or documented. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "272",
+      "title": "ink-intl-list example \u2014 Intl.ListFormat, RelativeTimeFormat, PluralRules, Collator",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-intl-list/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Intl constructors produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "273",
+      "title": "ink-suppressed-error example \u2014 SuppressedError and Error.isError",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-suppressed-error/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. SuppressedError and isError produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "274",
+      "title": "ink-string-raw example \u2014 String.raw",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-string-raw/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. String.raw produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "275",
+      "title": "ink-async-generator example \u2014 async generators",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-async-generator/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Async generators produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "276",
+      "title": "ink-iterator-from example \u2014 Iterator.from and iterator helpers",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-iterator-from/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Iterator.from produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "277",
+      "title": "ink-disposable-stack example \u2014 DisposableStack and AsyncDisposableStack",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-disposable-stack/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. DisposableStack produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "278",
+      "title": "ink-escape-unescape example \u2014 legacy escape() and unescape()",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-escape-unescape/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. escape/unescape produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "279",
+      "title": "ink-react-profiler example \u2014 React.Profiler",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-react-profiler/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Profiler JSX element handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "280",
+      "title": "ink-react-strict-mode example \u2014 React.StrictMode",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-react-strict-mode/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. StrictMode JSX element handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "281",
+      "title": "ink-react-portal example \u2014 ReactDOM.createPortal",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-react-portal/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. createPortal handled or documented. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "282",
+      "title": "ink-package-exports example \u2014 package.json exports and imports",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-package-exports/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. package.json exports/imports resolved. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "283",
+      "title": "ink-project-references example \u2014 TypeScript project references",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-project-references/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. Project references respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "284",
+      "title": "ink-watch-mode example \u2014 watch mode / incremental compilation",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "src/commands/build/mod.rs"
+      ],
+      "acceptance": "Example exists. Watch mode rebuilds on changes. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "285",
+      "title": "ink-declaration-files example \u2014 .d.ts declaration files",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-declaration-files/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. .d.ts files stripped without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "286",
+      "title": "Audit and track orphaned existing Ink examples",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "examples/",
+        "tasks/index.json"
+      ],
+      "acceptance": "All 92 orphaned existing Ink examples tracked in tasks/index.json. Parity harness passes with 100% match for all."
+    },
+    {
+      "id": "287",
+      "title": "ink-recursive-types example \u2014 recursive type aliases and interfaces",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-recursive-types/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Recursive types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "288",
+      "title": "ink-distributive-conditional example \u2014 distributive conditional types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-distributive-conditional/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Distributive conditional types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "289",
+      "title": "ink-variadic-tuple example \u2014 variadic tuple types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-variadic-tuple/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Variadic tuple types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "290",
+      "title": "ink-generator-return-throw example \u2014 generator.return() and generator.throw()",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-generator-return-throw/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Generator return/throw produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "291",
+      "title": "ink-branded-types example \u2014 branded / opaque types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-branded-types/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Branded types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "292",
+      "title": "ink-type-only-import-assertion example \u2014 import type with import attributes",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-type-only-import-assertion/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Type-only imports with attributes handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "293",
+      "title": "ink-amd-module example \u2014 /// <reference amd-module name=\"...\" />",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-amd-module/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. AMD module directive stripped. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "294",
+      "title": "ink-satisfies-function example \u2014 satisfies on function expressions",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-satisfies-function/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. satisfies on functions erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "295",
+      "title": "ink-object-pattern-shorthand example \u2014 shorthand properties and method syntax",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-object-pattern-shorthand/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Shorthand properties produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "296",
+      "title": "ink-computed-class-members example \u2014 computed property keys in classes",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-computed-class-members/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Computed class members produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "297",
+      "title": "ink-class-fields-init example \u2014 class fields with complex initializers",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-class-fields-init/",
+        "src/transpile/parser/stmt_class.rs"
+      ],
+      "acceptance": "Example exists. Class field initializers produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "298",
+      "title": "ink-optional-catch-binding example \u2014 optional catch binding",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-optional-catch-binding/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Optional catch binding produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "299",
+      "title": "ink-nullish-in-object example \u2014 nullish values in object literals",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-nullish-in-object/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Nullish object values produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -2867,8 +3472,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 108,
-    "completed_tasks": 123
+    "pending_tasks": 156,
+    "completed_tasks": 124
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -2999,7 +3604,56 @@
       "TextDecoder",
       "crypto.randomUUID / getRandomValues",
       "ReadableStream",
-      "CompressionStream / DecompressionStream"
+      "CompressionStream / DecompressionStream",
+      "WebSocket API",
+      "FormData API",
+      "Blob and FileReader APIs",
+      "EventTarget and CustomEvent",
+      "FinalizationRegistry",
+      "SharedArrayBuffer",
+      "noImplicitReturns compiler option",
+      "noFallthroughCasesInSwitch compiler option",
+      "noUncheckedIndexedAccess compiler option",
+      "exactOptionalPropertyTypes compiler option",
+      "preserveValueImports compiler option",
+      "JSX spread children",
+      "rest elements in object/array destructuring",
+      "named tuple members",
+      "const enum declarations",
+      "ambient module declarations",
+      "@ts-nocheck / @ts-check directives",
+      "jsx: preserve transform",
+      "React server components (use server / use client)",
+      "emitDecoratorMetadata",
+      "Temporal API",
+      "Intl.ListFormat / RelativeTimeFormat / PluralRules / Collator",
+      "SuppressedError / Error.isError",
+      "String.raw",
+      "Async generators",
+      "Iterator.from",
+      "DisposableStack / AsyncDisposableStack",
+      "Legacy escape() / unescape()",
+      "React.Profiler",
+      "React.StrictMode",
+      "ReactDOM.createPortal",
+      "package.json exports / imports",
+      "TypeScript project references",
+      "Watch mode / incremental compilation",
+      ".d.ts declaration files",
+      "Orphaned existing Ink examples (92 total)",
+      "Recursive types",
+      "Distributive conditional types",
+      "Variadic tuple types",
+      "Generator.prototype.return / throw",
+      "Branded / opaque types",
+      "import type with import attributes",
+      "/// <reference amd-module name=\"...\" />",
+      "satisfies on function expressions",
+      "Object shorthand properties and method syntax",
+      "Computed property keys in classes",
+      "Class fields with complex initializers",
+      "Optional catch binding",
+      "Nullish values in object literals"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",

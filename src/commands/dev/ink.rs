@@ -110,19 +110,183 @@ fn eval_render_js(ctx: &rquickjs::Ctx, render_js: &str) -> anyhow::Result<String
 }
 
 fn setup_ink_ctx(ctx: &rquickjs::Ctx) -> anyhow::Result<()> {
-    let globals = ctx.globals();
-    let print_fn =
-        rquickjs::Function::new(ctx.clone(), |msg: String| {
-            eprint!("{}", msg);
-        })
-        .map_err(|e| anyhow::anyhow!("Failed to create print fn: {:?}", e))?;
-    globals
-        .set("__runts_stderr__", print_fn)
-        .map_err(|e| anyhow::anyhow!("Failed to set __runts_stderr__: {:?}", e))?;
+    install_host_fn(ctx, "__runts_stdout__", |msg: String| print!("{}", msg))?;
+    install_host_fn(ctx, "__runts_stderr__", |msg: String| eprint!("{}", msg))?;
+    if let Err(e) = ctx.eval::<rquickjs::Value, _>(CONSOLE_SHIM) {
+        let msg = extract_js_error(ctx, &e);
+        anyhow::bail!("Console shim failed: {}", msg);
+    }
     runts_ink::js_bridge::install(ctx)
-        .map_err(|e| anyhow::anyhow!("Failed to install ink bridge: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Ink bridge: {:?}", e))?;
     Ok(())
 }
+
+fn install_host_fn(
+    ctx: &rquickjs::Ctx,
+    name: &str,
+    f: impl Fn(String) + 'static,
+) -> anyhow::Result<()> {
+    let func = rquickjs::Function::new(ctx.clone(), f)
+        .map_err(|e| anyhow::anyhow!("{} fn: {:?}", name, e))?;
+    ctx.globals()
+        .set(name, func)
+        .map_err(|e| anyhow::anyhow!("{} set: {:?}", name, e))
+}
+
+const CONSOLE_SHIM: &str = r#"
+(function() {
+    var timers = {};
+    function fmt(x) {
+        if (typeof x === 'string') return x;
+        if (typeof x === 'number') return String(x);
+        if (typeof x === 'boolean') return String(x);
+        if (x === null) return 'null';
+        if (x === undefined) return 'undefined';
+        try { return JSON.stringify(x); } catch(e) { return String(x); }
+    }
+    function toRows(data) {
+        var rows = [];
+        var isArray = Array.isArray(data);
+        var keys = [];
+        if (isArray) {
+            for (var i = 0; i < data.length; i++) {
+                var row = data[i];
+                if (row && typeof row === 'object') {
+                    for (var k in row) {
+                        if (keys.indexOf(k) === -1) keys.push(k);
+                    }
+                }
+            }
+        } else if (data && typeof data === 'object') {
+            for (var k in data) {
+                if (data.hasOwnProperty(k)) {
+                    var row = data[k];
+                    if (row && typeof row === 'object') {
+                        for (var rk in row) {
+                            if (keys.indexOf(rk) === -1) keys.push(rk);
+                        }
+                    }
+                }
+            }
+        }
+        return { isArray: isArray, keys: keys };
+    }
+    function pad(s, len) {
+        s = String(s);
+        while (s.length < len) s += ' ';
+        return s;
+    }
+    function table(data) {
+        var meta = toRows(data);
+        var keys = meta.keys;
+        if (keys.length === 0) {
+            __runts_stdout__('\n');
+            return;
+        }
+        var cols = ['(index)'].concat(keys);
+        var rows = [];
+        if (meta.isArray) {
+            for (var i = 0; i < data.length; i++) {
+                var row = [String(i)];
+                for (var j = 0; j < keys.length; j++) {
+                    var v = data[i][keys[j]];
+                    row.push(typeof v === 'string' ? "'" + v + "'" : fmt(v));
+                }
+                rows.push(row);
+            }
+        } else {
+            for (var k in data) {
+                if (!data.hasOwnProperty(k)) continue;
+                var row = [k];
+                var item = data[k];
+                for (var j = 0; j < keys.length; j++) {
+                    var v = item[keys[j]];
+                    row.push(typeof v === 'string' ? "'" + v + "'" : fmt(v));
+                }
+                rows.push(row);
+            }
+        }
+        var widths = [];
+        for (var i = 0; i < cols.length; i++) {
+            widths.push(cols[i].length);
+        }
+        for (var r = 0; r < rows.length; r++) {
+            for (var i = 0; i < rows[r].length; i++) {
+                widths[i] = Math.max(widths[i], String(rows[r][i]).length);
+            }
+        }
+        var top = '┌';
+        var mid = '├';
+        var bot = '└';
+        for (var i = 0; i < cols.length; i++) {
+            for (var j = 0; j < widths[i] + 2; j++) {
+                top += '─';
+                mid += '─';
+                bot += '─';
+            }
+            if (i < cols.length - 1) {
+                top += '┬';
+                mid += '┼';
+                bot += '┴';
+            }
+        }
+        top += '┐\n';
+        mid += '┤\n';
+        bot += '┘\n';
+        var header = '│';
+        for (var i = 0; i < cols.length; i++) {
+            header += ' ' + pad(cols[i], widths[i]) + ' │';
+        }
+        header += '\n';
+        var body = '';
+        for (var r = 0; r < rows.length; r++) {
+            body += '│';
+            for (var i = 0; i < rows[r].length; i++) {
+                body += ' ' + pad(rows[r][i], widths[i]) + ' │';
+            }
+            body += '\n';
+        }
+        __runts_stdout__(top + header + mid + body + bot);
+    }
+    function time(label) {
+        timers[label] = Date.now();
+    }
+    function timeEnd(label) {
+        var start = timers[label];
+        if (start === undefined) {
+            __runts_stdout__(label + ': 0ms\n');
+            return;
+        }
+        var elapsed = Date.now() - start;
+        __runts_stdout__(label + ': ' + elapsed + '.000ms\n');
+        delete timers[label];
+    }
+    var console = {
+        log: function() {
+            var a = Array.prototype.slice.call(arguments);
+            __runts_stdout__(a.map(fmt).join(' ') + '\n');
+        },
+        info: function() {
+            var a = Array.prototype.slice.call(arguments);
+            __runts_stdout__(a.map(fmt).join(' ') + '\n');
+        },
+        warn: function() {
+            var a = Array.prototype.slice.call(arguments);
+            __runts_stderr__(a.map(fmt).join(' ') + '\n');
+        },
+        error: function() {
+            var a = Array.prototype.slice.call(arguments);
+            __runts_stderr__(a.map(fmt).join(' ') + '\n');
+        },
+        table: table,
+        time: time,
+        timeEnd: timeEnd,
+        assert: function(cond, msg) {
+            if (!cond) __runts_stderr__('Assertion failed: ' + (msg || '') + '\n');
+        }
+    };
+})();
+"#;
 
 fn run_interactive_loop(js: &str) -> Result<()> {
     let runtime = rquickjs::Runtime::new()
