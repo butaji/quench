@@ -43,9 +43,21 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-symbol-iterator/`
-- [ ] Uses `Symbol.iterator` in class
-- [ ] Uses generator as iterator
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-symbol-iterator/`
+- [x] Uses `Symbol.iterator` in class
+- [x] Uses generator as iterator
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
+
+## Implementation Notes
+
+Created comprehensive example demonstrating:
+- Custom `Range` class with `[Symbol.iterator]` generator method
+- Custom `PairList` class with iterable protocol
+- Object with inline `[Symbol.iterator]`
+- String and Array iteration (built-in iterables)
+- Direct iterator protocol usage with `next()`
+- Spread operator with custom iterables
+
+Added `test_ink_symbol_iterator` test to `src/transpile/tests/rq_parity/mod.rs`.

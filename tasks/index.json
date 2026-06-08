@@ -2053,7 +2053,7 @@
     {
       "id": "155",
       "title": "`ink-symbol-iterator` Example — `Symbol.iterator`, Custom Iterables",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [],
       "acceptance": "Parity harness 100% across deno/rq/compile."
