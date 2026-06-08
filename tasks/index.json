@@ -1859,13 +1859,13 @@
     {
       "id": "146",
       "title": "ink-array-reduce example \u2014 reduce, reduceRight",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-array-reduce/",
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
-      "acceptance": "Example exists. Array reduce/reduceRight produce compilable Rust. Parity harness 100%."
+      "acceptance": "Example exists. Array reduce/reduceRight produce compilable Rust. Parity harness 100%."   
     },
     {
       "id": "147",

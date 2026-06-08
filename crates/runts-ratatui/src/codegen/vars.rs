@@ -268,9 +268,20 @@ fn try_apply_call(fn_name: &str, args: &[Value]) -> Option<String> {
 }
 
 /// Handle regular method calls: obj.method(args)
+/// Only emits calls for known Rust-compatible methods; returns None for
+/// unknown methods so the variable falls back to a safe default.
 fn try_regular_method_call(obj: &Value, property: &str, args: &[Value]) -> Option<String> {
     let obj_name = extract_ident_name(obj)?;
-    Some(format_fn_call(&format!("{}.{}", obj_name, property), args.iter().filter_map(|a| expr_value_to_rust(a))))
+    // Whitelist of methods that have direct Rust equivalents on the generated types.
+    match property {
+        "toString" | "to_string" => {
+            return Some(format!("{}.to_string()", obj_name));
+        }
+        _ => {}
+    }
+    // Unknown method: skip to avoid invalid Rust codegen.
+    let _ = (args, property);
+    None
 }
 
 fn try_simple_literal(map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
@@ -295,6 +306,11 @@ fn try_cond_to_rust(cond: &Value) -> Option<String> {
 
 fn try_array_to_rust(arr: &Value) -> Option<String> {
     let elems = arr.get("elems")?.as_array()?;
+    let has_nested = elems.iter().any(|e| e.get("Array").is_some() || e.get("Object").is_some());
+    if has_nested {
+        let json = serde_json::to_string(arr).ok()?;
+        return Some(format!("serde_json::json!({})", json));
+    }
     let parts: Vec<String> = elems.iter().filter_map(|e| {
         expr_value_to_rust(e).map(|v| format!("{}.into()", v))
     }).collect();
