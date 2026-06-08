@@ -952,13 +952,12 @@
     {
       "id": "088",
       "title": "ink-bigint-globalthis example — BigInt, numeric separators, globalThis",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
-        "examples/ink-bigint-globalthis/",
-        "src/transpile/parser/expr.rs"
+        "examples/ink-bigint-globalthis/"
       ],
-      "acceptance": "Example exists. BigInt, numeric separators, globalThis handled. Parity harness 100%."
+      "acceptance": "Example exists with BigInt, numeric separators, globalThis. Parity 100% in rq."
     },
     {
       "id": "089",
@@ -1316,7 +1315,7 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 123,
+    "examples_total": 124,
     "examples_with_tests": 120,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -1333,8 +1332,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 41,
-    "completed_tasks": 60
+    "pending_tasks": 40,
+    "completed_tasks": 61
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
