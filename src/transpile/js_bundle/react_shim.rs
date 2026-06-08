@@ -120,6 +120,47 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
         return [hook.isPending, startTransition];
     }
 
+    // useDeferredValue - marks a state update as non-urgent (deferred)
+    function useDeferredValue(value) {
+        var idx = currentIdx++;
+        // In our simplified model, deferred value is the same as the original
+        if (currentHooks[idx] === undefined) {
+            currentHooks[idx] = { value: value };
+        } else {
+            currentHooks[idx].value = value;
+        }
+        return currentHooks[idx].value;
+    }
+
+    // useSyncExternalStore - subscribe to an external store with sync reads
+    function useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
+        var idx = currentIdx++;
+        var hook = currentHooks[idx];
+        var value;
+
+        // Initial render
+        if (hook === undefined) {
+            value = getSnapshot();
+            currentHooks[idx] = { value: value, snapshot: getSnapshot };
+        } else {
+            value = hook.value;
+            // Check if snapshot changed
+            try {
+                var newValue = getSnapshot();
+                if (newValue !== hook.snapshot) {
+                    value = newValue;
+                    hook.value = newValue;
+                    hook.snapshot = getSnapshot;
+                }
+            } catch (e) {
+                // Snapshot changed during render, use new value
+                value = hook.value;
+            }
+        }
+
+        return value;
+    }
+
     // Context value stack: keyed by context object reference (===).
     // Provider pushes on entry, pops on exit.
     var __ctxStack = [];
@@ -315,7 +356,7 @@ pub const REACT_SHIM: &str = r#"var React = (function() {
     Component.prototype.isReactComponent = {};
 
     return {
-        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle,
+        createElement, useState, useReducer, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useId, useTransition, useImperativeHandle, useDeferredValue, useSyncExternalStore,
         createContext, useContext, memo, forwardRef, lazy, Suspense, Component: Component,
         Fragment: 'Fragment', _withHooks: withHooks
     };
@@ -331,6 +372,8 @@ var useRef = React.useRef;
 var useId = React.useId;
 var useTransition = React.useTransition;
 var useImperativeHandle = React.useImperativeHandle;
+var useDeferredValue = React.useDeferredValue;
+var useSyncExternalStore = React.useSyncExternalStore;
 var createContext = React.createContext;
 var useContext = React.useContext;
 var memo = React.memo;
