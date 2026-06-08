@@ -640,6 +640,22 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// Symbol.iterator and custom iterables (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_symbol_iterator,
+    "ink-symbol-iterator",
+    [
+        "Symbol.iterator & Custom Iterables Demo",
+        "Defining custom iteration behavior",
+        "Range(1,5) via for...of: 1, 2, 3, 4, 5",
+        "iterateString(\"hello\"): h, e, l, l, o",
+        "Custom PairList"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Modern array methods (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
