@@ -1301,7 +1301,7 @@
     {
       "id": "117",
       "title": "ink-react-children example \u2014 Children API, cloneElement, isValidElement",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-react-children/",
