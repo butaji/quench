@@ -293,3 +293,18 @@ ink_example_smoke_test!(test_ink_switch, "ink-switch");
 
 ink_example_smoke_test!(test_ink_nullish_optional, "ink-nullish-optional");
 ink_example_smoke_test!(test_ink_generator, "ink-generator");
+
+// ═══════════════════════════════════════════════════════════════════
+// TypeScript declaration patterns (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_namespace_declare,
+    "ink-namespace-declare",
+    [
+        "App: MyApp",
+        "Version: 1.0.0",
+        "Build #: 42",
+        "Theme: default"
+    ]
+);
