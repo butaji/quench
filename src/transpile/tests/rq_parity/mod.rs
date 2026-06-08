@@ -857,3 +857,19 @@ ink_example_test!(
         "URI: https://example.com/path?query=hello%20world"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Error subclasses (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_error_subclasses,
+    "ink-error-subclasses",
+    [
+        "Error Subclasses Demo",
+        "Age 30: valid",
+        "RangeError: Age must be between 0 and 150",
+        "TypeError: Age must be a number",
+        "ReferenceError: missing is undefined"
+    ]
+);

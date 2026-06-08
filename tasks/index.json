@@ -462,6 +462,98 @@
         "313",
         "314"
       ]
+    },
+    {
+      "name": "Phase 26: Node.js Standard Library + Browser Globals + Binary Data + Promise/Math Completion",
+      "description": "Final Ink examples for Node.js standard library modules (fs, crypto, util, stream, readline, assert, child_process, http), process properties (pid, cwd, uptime, hrtime, memoryUsage), browser globals (window, document, navigator, localStorage, sessionStorage), binary data APIs (typed arrays, DataView, File constructor), Promise chaining (then/catch/finally), and advanced Math methods/constants.",
+      "tasks": [
+        "315",
+        "316",
+        "317",
+        "318",
+        "319",
+        "320",
+        "321",
+        "322",
+        "323",
+        "324",
+        "325",
+        "326",
+        "327",
+        "328",
+        "329"
+      ]
+    },
+    {
+      "name": "Phase 27: React Hook Patterns + JSX Expression Patterns + Component Composition",
+      "description": "Final Ink examples for React hook patterns (useEffect cleanup, useCallback/useMemo dependencies, custom hook composition), React children API (Children.only, Children.toArray), component composition patterns (generic components, polymorphic components, compound components, context reducer, controlled/uncontrolled, forwardRef with generics, render props with generics, HOCs with generics), and JSX expression patterns (optional call, non-null assertion, type assertions, nullish coalescing, optional chaining, conditional rendering).",
+      "tasks": [
+        "330",
+        "331",
+        "332",
+        "333",
+        "334",
+        "335",
+        "336",
+        "337",
+        "338",
+        "339",
+        "340",
+        "341",
+        "342",
+        "343",
+        "344",
+        "345",
+        "346",
+        "347",
+        "348",
+        "349",
+        "350"
+      ]
+    },
+    {
+      "name": "Phase 28: Advanced Type System Patterns",
+      "description": "Final Ink examples for advanced TypeScript type system patterns: mapped types with as clause, template literal types with unions, user-defined type guards (is), satisfies with unions, as const in function returns, utility types Extract/Exclude/NonNullable, key remapping, recursive readonly mapped types, nested conditional types, and inline import type syntax.",
+      "tasks": [
+        "351",
+        "352",
+        "353",
+        "354",
+        "355",
+        "356",
+        "357",
+        "358",
+        "359",
+        "360"
+      ]
+    },
+    {
+      "name": "Phase 29: Array/Object/String/Number/Date/Console/Error/Symbol/Process/Stream/WebAssembly API Completion",
+      "description": "Final Ink examples for array methods (flat, flatMap), object methods (fromEntries), string methods (match, search, replace), RegExp well-known symbols, number formatting (toExponential, toPrecision, toFixed), date locale formatting (toLocaleDateString, toLocaleTimeString, toDateString, toTimeString), advanced console methods (assert, count, group, trace, timeLog), error stack APIs (captureStackTrace, stackTraceLimit), well-known symbols (toStringTag, toPrimitive, hasInstance, species), import.meta.env (Vite pattern), process.hrtime, fs/promises, stream/web (ReadableStream, WritableStream, TransformStream), timers/promises, and WebAssembly.",
+      "tasks": [
+        "361",
+        "362",
+        "363",
+        "364",
+        "365",
+        "366",
+        "367",
+        "368",
+        "369",
+        "370",
+        "371",
+        "372",
+        "373",
+        "374",
+        "375"
+      ]
+    },
+    {
+      "name": "Phase 30: Final Comprehensive Coverage Audit",
+      "description": "End-to-end audit of all 376 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.",
+      "tasks": [
+        "376"
+      ]
     }
   ],
   "tasks": [
@@ -1902,7 +1994,7 @@
     {
       "id": "148",
       "title": "ink-error-subclasses example \u2014 TypeError, RangeError, ReferenceError",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-error-subclasses/",
@@ -3644,6 +3736,688 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. URLPattern produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "315",
+      "title": "ink-node-fs example \u2014 Node.js fs module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-node-fs/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. fs module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "316",
+      "title": "ink-node-crypto example \u2014 Node.js crypto module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-node-crypto/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. crypto module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "317",
+      "title": "ink-node-util example \u2014 Node.js util module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-node-util/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. util module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "318",
+      "title": "ink-node-stream example \u2014 Node.js stream module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-node-stream/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. stream module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "319",
+      "title": "ink-node-readline example \u2014 Node.js readline module",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-node-readline/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. readline module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "320",
+      "title": "ink-node-assert example \u2014 Node.js assert module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-node-assert/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. assert module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "321",
+      "title": "ink-node-child-process example \u2014 Node.js child_process module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-node-child-process/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. child_process module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "322",
+      "title": "ink-node-http example \u2014 Node.js http/https module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-node-http/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. http/https module produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "323",
+      "title": "ink-process-props example \u2014 process properties (hrtime, memoryUsage, versions, pid, cwd, chdir)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-process-props/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. process properties produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "324",
+      "title": "ink-browser-globals example \u2014 window, document, navigator, location",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-browser-globals/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Browser globals produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "325",
+      "title": "ink-web-storage example \u2014 localStorage / sessionStorage",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-web-storage/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Web Storage API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "326",
+      "title": "ink-typed-arrays example \u2014 typed arrays and DataView",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-typed-arrays/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Typed arrays produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "327",
+      "title": "ink-file-constructor example \u2014 File constructor",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-file-constructor/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. File constructor produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "328",
+      "title": "ink-promise-chain example \u2014 Promise.prototype.then/catch/finally + Promise.any/race",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-promise-chain/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Promise chaining produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "329",
+      "title": "ink-math-advanced example \u2014 advanced Math methods and constants",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-math-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Advanced Math methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "330",
+      "title": "ink-use-effect-cleanup example \u2014 useEffect cleanup functions",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-effect-cleanup/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. useEffect cleanup produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "331",
+      "title": "ink-use-callback-deps example \u2014 useCallback with dependencies",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-callback-deps/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. useCallback with deps produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "332",
+      "title": "ink-use-memo-deps example \u2014 useMemo with dependencies",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-use-memo-deps/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. useMemo with deps produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "333",
+      "title": "ink-children-only example \u2014 Children.only",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-children-only/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Children.only produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "334",
+      "title": "ink-children-toarray example \u2014 Children.toArray",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-children-toarray/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Children.toArray produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "335",
+      "title": "ink-react-lazy-fallback example \u2014 React.lazy with Suspense fallback",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-react-lazy-fallback/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Suspense fallback handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "336",
+      "title": "ink-generic-function-component example \u2014 generic function components",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-generic-function-component/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Generic components erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "337",
+      "title": "ink-polymorphic-component example \u2014 polymorphic components with as prop",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-polymorphic-component/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Polymorphic types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "338",
+      "title": "ink-compound-components example \u2014 compound component pattern",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-compound-components/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Compound components produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "339",
+      "title": "ink-context-reducer example \u2014 Context with useReducer",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-context-reducer/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Context + reducer produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "340",
+      "title": "ink-controlled-uncontrolled example \u2014 controlled vs uncontrolled components",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-controlled-uncontrolled/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Controlled/uncontrolled patterns produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "341",
+      "title": "ink-forward-ref-generic example \u2014 forwardRef with generic components",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-forward-ref-generic/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. forwardRef generics erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "342",
+      "title": "ink-render-props-generic example \u2014 render props with generics",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-render-props-generic/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Generic render props erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "343",
+      "title": "ink-hoc-generic example \u2014 higher-order components with generics",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-hoc-generic/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Generic HOCs erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "344",
+      "title": "ink-custom-hook-composition example \u2014 composing multiple custom hooks",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-custom-hook-composition/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Custom hook composition produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "345",
+      "title": "ink-optional-call example \u2014 optional call expression (fn?.())",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-optional-call/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Optional call produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "346",
+      "title": "ink-non-null-chain example \u2014 non-null assertion after optional chain",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-non-null-chain/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Non-null assertion erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "347",
+      "title": "ink-type-assertion-jsx example \u2014 type assertions in JSX expressions",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-type-assertion-jsx/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. JSX type assertions erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "348",
+      "title": "ink-nullish-jsx-attr example \u2014 nullish coalescing in JSX attributes",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-nullish-jsx-attr/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Nullish JSX attrs produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "349",
+      "title": "ink-optional-chain-jsx example \u2014 optional chaining in JSX attributes",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-optional-chain-jsx/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Optional chain JSX attrs produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "350",
+      "title": "ink-jsx-conditional-render example \u2014 ternary and logical AND returning JSX",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-conditional-render/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Conditional JSX rendering produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "351",
+      "title": "ink-mapped-types-as example \u2014 mapped types with as clause",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-mapped-types-as/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Mapped types with as erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "352",
+      "title": "ink-template-literal-union example \u2014 template literal types with unions",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-template-literal-union/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Template literal unions erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "353",
+      "title": "ink-type-guard-is example \u2014 user-defined type guards (is)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-type-guard-is/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. is predicate erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "354",
+      "title": "ink-satisfies-union example \u2014 satisfies with union types",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-satisfies-union/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. satisfies with unions erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "355",
+      "title": "ink-as-const-function example \u2014 as const in function returns",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-as-const-function/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. as const in returns erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "356",
+      "title": "ink-utility-extract-exclude example \u2014 Extract, Exclude, NonNullable",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-utility-extract-exclude/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Utility types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "357",
+      "title": "ink-key-remapping example \u2014 key remapping with mapped types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-key-remapping/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Key remapping erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "358",
+      "title": "ink-readonly-mapped example \u2014 readonly mapped types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-readonly-mapped/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Readonly mapped types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "359",
+      "title": "ink-nested-conditional example \u2014 nested conditional types",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-nested-conditional/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Nested conditional types erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "360",
+      "title": "ink-inline-import-type example \u2014 inline import('...').Type syntax",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-inline-import-type/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Inline import type erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "361",
+      "title": "ink-array-flat-flatmap example \u2014 Array.prototype.flat and flatMap",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-flat-flatmap/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. flat/flatMap produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "362",
+      "title": "ink-object-fromentries example \u2014 Object.fromEntries",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-object-fromentries/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object.fromEntries produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "363",
+      "title": "ink-string-match-search example \u2014 String.prototype.match, search, replace",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-string-match-search/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. String match/search/replace produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "364",
+      "title": "ink-regexp-symbol example \u2014 RegExp well-known symbols",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-regexp-symbol/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. RegExp symbols produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "365",
+      "title": "ink-number-format example \u2014 Number.prototype.toExponential, toPrecision, toFixed",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-number-format/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Number formatting produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "366",
+      "title": "ink-date-locale example \u2014 Date locale formatting methods",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-date-locale/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Date locale methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "367",
+      "title": "ink-console-advanced example \u2014 console.assert, count, group, trace, timeLog",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-console-advanced/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Advanced console methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "368",
+      "title": "ink-error-stack example \u2014 Error.captureStackTrace and Error.stackTraceLimit",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-error-stack/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Error stack APIs produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "369",
+      "title": "ink-symbol-wellknown example \u2014 well-known symbols (toStringTag, toPrimitive, hasInstance, species)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-symbol-wellknown/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Well-known symbols produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "370",
+      "title": "ink-import-meta-env example \u2014 import.meta.env (Vite pattern)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-import-meta-env/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. import.meta.env handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "371",
+      "title": "ink-process-hrtime example \u2014 process.hrtime / process.hrtime.bigint",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-process-hrtime/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. process.hrtime produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "372",
+      "title": "ink-fs-promises example \u2014 fs/promises module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-fs-promises/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. fs/promises produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "373",
+      "title": "ink-stream-web example \u2014 stream/web (ReadableStream, WritableStream, TransformStream)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-stream-web/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Web streams produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "374",
+      "title": "ink-timers-promises example \u2014 timers/promises module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-timers-promises/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. timers/promises produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "375",
+      "title": "ink-webassembly example \u2014 WebAssembly API",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-webassembly/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. WebAssembly produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "376",
+      "title": "Final comprehensive coverage audit",
+      "status": "pending",
+      "priority": "P0-Critical",
+      "files": [
+        "tasks/index.json",
+        "EXECUTE.md"
+      ],
+      "acceptance": "All 376 tasks audited for consistency. Stats accurate. Parity language 100% everywhere."
     }
   ],
   "stats": {
@@ -3666,8 +4440,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 168,
-    "completed_tasks": 127
+    "pending_tasks": 229,
+    "completed_tasks": 128
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -3862,7 +4636,68 @@
       "EventEmitter",
       "path module",
       "os module",
-      "URLPattern"
+      "URLPattern",
+      "Node.js fs module",
+      "Node.js crypto module",
+      "Node.js util module",
+      "Node.js stream module",
+      "Node.js readline module",
+      "Node.js assert module",
+      "Node.js child_process module",
+      "Node.js http/https module",
+      "process properties (hrtime, memoryUsage, pid, cwd, chdir)",
+      "Browser globals (window, document, navigator, location)",
+      "localStorage / sessionStorage",
+      "Typed arrays and DataView",
+      "File constructor",
+      "Promise.prototype.then/catch/finally + Promise.any/race",
+      "Advanced Math methods and constants",
+      "useEffect cleanup functions",
+      "useCallback with dependencies",
+      "useMemo with dependencies",
+      "Children.only",
+      "Children.toArray",
+      "React.lazy with Suspense fallback",
+      "Generic function components",
+      "Polymorphic components with as prop",
+      "Compound component pattern",
+      "Context with useReducer",
+      "Controlled vs uncontrolled components",
+      "forwardRef with generic components",
+      "Render props with generics",
+      "Higher-order components with generics",
+      "Custom hook composition",
+      "Optional call expression (fn?.())",
+      "Non-null assertion after optional chain",
+      "Type assertions in JSX expressions",
+      "Nullish coalescing in JSX attributes",
+      "Optional chaining in JSX attributes",
+      "Ternary and logical AND returning JSX",
+      "Mapped types with as clause",
+      "Template literal types with unions",
+      "User-defined type guards (is)",
+      "satisfies with union types",
+      "as const in function returns",
+      "Extract / Exclude / NonNullable utilities",
+      "Key remapping with mapped types",
+      "Recursive readonly mapped types",
+      "Nested conditional types",
+      "Inline import('...').Type syntax",
+      "Array.prototype.flat / flatMap",
+      "Object.fromEntries",
+      "String.prototype.match / search / replace",
+      "RegExp well-known symbols (Symbol.match, Symbol.replace, etc.)",
+      "Number.prototype.toExponential / toPrecision / toFixed",
+      "Date locale formatting (toLocaleDateString, toLocaleTimeString, etc.)",
+      "Advanced console methods (assert, count, group, trace, timeLog)",
+      "Error.captureStackTrace / stackTraceLimit",
+      "Well-known symbols (toStringTag, toPrimitive, hasInstance, species)",
+      "import.meta.env (Vite pattern)",
+      "process.hrtime / process.hrtime.bigint",
+      "fs/promises module",
+      "stream/web (ReadableStream, WritableStream, TransformStream)",
+      "timers/promises module",
+      "WebAssembly API"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
