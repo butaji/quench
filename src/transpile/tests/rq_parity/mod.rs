@@ -629,3 +629,19 @@ ink_example_test!(
         "Partial sum"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Object meta methods (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_object_meta,
+    "ink-object-meta",
+    [
+        "Object.create, freeze, seal, assign Demo",
+        "Proto type: widget",
+        "Name: Button",
+        "Frozen x: 1",
+        "Merged keys: a, b"
+    ]
+);
