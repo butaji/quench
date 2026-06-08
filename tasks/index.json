@@ -2273,10 +2273,12 @@
     {
       "id": "176",
       "title": "`ink-promise-resolve-reject` Example \u2014 `Promise.resolve`, `Promise.reject`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
-      "files": [],
-      "acceptance": "Parity harness 100% across deno/rq/compile."
+      "files": [
+        "examples/ink-promise-resolve-reject/"
+      ],
+      "acceptance": "Example exists. Promise methods (resolve, reject, then, catch, all, race) produce 100% parity across deno/rq/compile."
     },
     {
       "id": "177",
