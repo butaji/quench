@@ -179,7 +179,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 089 | `ink-symbol-collections` | Symbol, Map, Set, WeakMap | P2 |
 | 090 | `ink-suspense-lazy` | `Suspense`, `lazy` | P2 |
 | 091 | `ink-error-boundary` | `<ErrorBoundary>` | P2 |
-| 092 | `ink-namespace-declare` | `namespace`, `declare` | P2 |
+| 092 | `ink-namespace-declare` | `namespace`, `declare` | P2 ✅ |
 | 093 | `ink-override-implements` | `override`, `implements` | P2 |
 | 094 | `ink-abstract-class` | `abstract` classes | P2 |
 | 095 | `ink-new-target` | `new.target` | P3 |
@@ -188,7 +188,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 098 | `ink-infer-conditional` | `infer` in conditional types | P3 |
 | 099 | `ink-regexp-advanced` | RegExp flags, `matchAll` | P3 |
 
-**Tasks:** 079–099 | **Status:** 🔄 Pending (21 tasks)
+**Tasks:** 079–099 | **Status:** 🔄 Pending (19 tasks, 2 completed)
 
 ---
 
@@ -205,7 +205,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 105 | `ink-object-modern` | `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors` | P1 |
 | 106 | `ink-use-imperative-handle` | `useImperativeHandle`, `forwardRef` | P1 |
 | 107 | `ink-use-sync-external-store` | `useSyncExternalStore`, `useDeferredValue` | P1 |
-| 108 | `ink-context-advanced` | Context `displayName`, `defaultValue`, multiple providers | P1 |
+| 108 | `ink-context-advanced` | Context `displayName`, `defaultValue`, multiple providers | P1 ✅ |
 | 109 | `ink-discriminated-unions` | Discriminated unions, exhaustive checks | P1 |
 | 110 | `ink-mapped-types` | Mapped types `{ [K in T]: V }` | P1 |
 | 111 | `ink-proxy` | `Proxy` handler | P2 |
@@ -220,6 +220,27 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 120 | `ink-global-augmentation` | `declare global`, `declare module` | P3 |
 
 **Tasks:** 100–120 | **Status:** 🔄 Pending (21 tasks)
+
+---
+
+### Phase 12: Runtime API + Type System Completion
+**Goal:** Final practical TS/TSX/React/Ink features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 121 | `ink-json-api` | `JSON.stringify`, `JSON.parse` | P1 |
+| 122 | `ink-function-bind` | `bind`, `call`, `apply` | P1 |
+| 123 | `ink-object-meta` | `create`, `defineProperty`, `freeze`, `seal`, `assign` | P1 |
+| 124 | `ink-queue-microtask` | `queueMicrotask` | P1 |
+| 125 | `ink-error-cause` | `Error` with `cause` | P1 |
+| 126 | `ink-static-block` | Class `static {}` blocks | P1 |
+| 127 | `ink-private-methods` | Private methods `#method()`, `#field in obj` | P1 |
+| 128 | `ink-number-static` | `Number.isFinite`, `isNaN`, `parseInt`, `parseFloat`, `EPSILON` | P1 |
+| 129 | `ink-array-immutable` | `toSpliced`, `with` (ES2023) | P1 |
+| 130 | `ink-react-refs-debug` | `createRef`, `useDebugValue` | P2 |
+| 131 | `ink-function-overloads` | Function overloads | P2 |
+
+**Tasks:** 121–131 | **Status:** 🔄 Pending (11 tasks)
 
 ---
 
@@ -238,11 +259,11 @@ All **15/15** test modules are enabled. `spec_expressions` and `spec_types` are 
 | HIR → Rust codegen | ~70% | Core constructs have codegen; advanced TS features pending |
 | Compile-path integration tests | 53 tests | `tests/compile_codegen.rs` — covers most P0 constructs |
 
-### Features Without Examples (43 gaps)
+### Features Without Examples (51 gaps)
 
-124 examples exist. Phase 6 examples (Tasks 042–067) cover the core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
+137 examples exist. Phase 6 examples (Tasks 042–067) cover core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. Phase 12 examples (Tasks 121–131) cover remaining runtime APIs and type system features. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
 
-Remaining gaps (Phase 10–11 targets):
+Remaining gaps (Phase 10–12 targets):
 - Logical assignment: `||=`, `&&=`, `??=`
 - React hooks: `useLayoutEffect`, `useId`, `useTransition`, `useImperativeHandle`, `useSyncExternalStore`, `useDeferredValue`
 - Type declarations: type aliases, interfaces, `namespace`, `declare`
@@ -255,11 +276,17 @@ Remaining gaps (Phase 10–11 targets):
 - Meta-properties: `new.target`
 - Reflection: `Reflect` API
 - RegExp: `matchAll`, advanced flags
-- Modern array methods: `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast`
-- Modern object methods: `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors`
+- Modern array methods: `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast`, `toSpliced`, `with`
+- Modern object methods: `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors`, `create`, `defineProperty`, `freeze`, `seal`, `assign`
 - Modern string methods: `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at`
 - Promise advanced: `allSettled`, `any`, `race`, `withResolvers`
 - Globals: `Date`, `Math`, `Intl`
+- Runtime APIs: `JSON.stringify`/`parse`, `queueMicrotask`, `Number.isFinite`/`isNaN`/`parseInt`/`parseFloat`
+- Function methods: `bind`, `call`, `apply`
+- Error: `Error.cause`
+- Class: `static {}` blocks, private methods `#method()`, `#field in obj`
+- React: `createRef`, `useDebugValue`
+- Type system: function overloads
 
 ---
 
@@ -355,11 +382,12 @@ cargo test --test compile_codegen
 - [x] Dynamic imports `import()` parse into HIR (Task 073).
 - [x] `tests/compile_codegen.rs` has 53 tests (Task 075).
 
-### Pending 🔄 Phase 8–11
+### Pending 🔄 Phase 8–12
 - [ ] Decorators parse into HIR without producing Invalid (Task 074).
 - [ ] Compile-path parity tests for all examples (Task 076).
 - [ ] Compile-path negative tests (Task 077).
 - [ ] Coverage matrix published in `docs/SUPPORTED_SUBSET.md` (Task 078).
-- [ ] 21 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
+- [ ] 19 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
 - [ ] 21 additional Ink examples for type system + runtime API deep coverage (Tasks 100–120).
+- [ ] 11 additional Ink examples for runtime API + type system completion (Tasks 121–131).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
