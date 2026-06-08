@@ -311,6 +311,27 @@
         "204",
         "205"
       ]
+    },
+    {
+      "name": "Phase 19: Tagged Templates + Compiler Options + Reflect Deep Coverage + ES2025",
+      "description": "Final Ink examples for tagged template literals, Function constructor, Object prototype/static methods, Reflect deep methods, tsconfig compiler options (paths, esModuleInterop, jsxFactory, strict mode, downlevelIteration, preserveConstEnums, moduleResolution), Web APIs (URL, TextEncoder, Headers), and ES2025 features (RegExp.escape, Set methods).",
+      "tasks": [
+        "206",
+        "207",
+        "208",
+        "209",
+        "210",
+        "211",
+        "212",
+        "213",
+        "214",
+        "215",
+        "216",
+        "217",
+        "218",
+        "219",
+        "220"
+      ]
     }
   ],
   "tasks": [
@@ -1547,7 +1568,7 @@
     {
       "id": "131",
       "title": "ink-function-overloads example \u2014 function overloads",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-function-overloads/",
@@ -2274,6 +2295,171 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. Collection prototype methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "206",
+      "title": "ink-tagged-template example \u2014 tagged template literals",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-tagged-template/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Tagged template literals produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "207",
+      "title": "ink-function-constructor example \u2014 Function constructor",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-function-constructor/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Function constructor produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "208",
+      "title": "ink-object-prototype example \u2014 Object prototype methods (toString, valueOf, hasOwnProperty, propertyIsEnumerable, isPrototypeOf)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-object-prototype/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object prototype methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "209",
+      "title": "ink-object-static example \u2014 Object static methods (is, setPrototypeOf, getPrototypeOf, preventExtensions, isExtensible, isFrozen, isSealed, getOwnPropertyNames, getOwnPropertySymbols)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-object-static/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object static methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "210",
+      "title": "ink-reflect-deep example \u2014 Reflect methods (apply, construct, defineProperty, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, preventExtensions, isExtensible)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-reflect-deep/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Reflect deep methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "211",
+      "title": "ink-tsconfig-paths example \u2014 tsconfig paths mapping",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-tsconfig-paths/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. Path aliases resolved during compile. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "212",
+      "title": "ink-esmodule-interop example \u2014 esModuleInterop and allowSyntheticDefaultImports",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-esmodule-interop/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. Synthetic default imports handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "213",
+      "title": "ink-jsx-factory-pragma example \u2014 jsxFactory, jsxFragmentFactory, jsxImportSource pragmas",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-factory-pragma/",
+        "src/transpile/js_bundle.rs"
+      ],
+      "acceptance": "Example exists. JSX pragmas respected during transpilation. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "214",
+      "title": "ink-strict-mode example \u2014 TypeScript strict mode flags",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-strict-mode/",
+        "src/transpile/parser/mod.rs"
+      ],
+      "acceptance": "Example exists. Strict mode flags respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "215",
+      "title": "ink-downlevel-iteration example \u2014 downlevelIteration for ES5 targets",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-downlevel-iteration/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. downlevelIteration handled correctly. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "216",
+      "title": "ink-preserve-const-enum example \u2014 preserveConstEnums behavior",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-preserve-const-enum/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. preserveConstEnums handled. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "217",
+      "title": "ink-module-resolution example \u2014 moduleResolution modes (node, bundler, classic)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-module-resolution/",
+        "src/transpile/mod.rs"
+      ],
+      "acceptance": "Example exists. moduleResolution mode respected. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "218",
+      "title": "ink-web-api example \u2014 Web APIs (URL, AbortController, TextEncoder, Blob, FormData, Headers)",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-web-api/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Web API constructors produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "219",
+      "title": "ink-regexp-escape example \u2014 RegExp.escape (ES2025)",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-regexp-escape/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. RegExp.escape produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "220",
+      "title": "ink-set-es2025 example \u2014 Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)",
+      "status": "pending",
+      "priority": "P3-Low",
+      "files": [
+        "examples/ink-set-es2025/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. ES2025 Set methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -2296,8 +2482,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 73,
-    "completed_tasks": 113
+    "pending_tasks": 87,
+    "completed_tasks": 114
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -2384,7 +2570,22 @@
       "static getDerivedStateFromError / componentDidCatch",
       "export * as ns from module",
       "with statement (legacy)",
-      "JSX spread attributes {...props}"
+      "JSX spread attributes {...props}",
+      "tagged template literals",
+      "Function constructor",
+      "Object prototype methods (toString, valueOf, hasOwnProperty, propertyIsEnumerable, isPrototypeOf)",
+      "Object static methods (is, setPrototypeOf, getPrototypeOf, preventExtensions, isExtensible, isFrozen, isSealed, getOwnPropertyNames, getOwnPropertySymbols)",
+      "Reflect methods (apply, construct, defineProperty, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, preventExtensions, isExtensible)",
+      "tsconfig paths mapping",
+      "esModuleInterop / allowSyntheticDefaultImports",
+      "jsxFactory / jsxFragmentFactory / jsxImportSource pragmas",
+      "TypeScript strict mode flags (noImplicitAny, strictNullChecks, strictFunctionTypes, etc.)",
+      "downlevelIteration",
+      "preserveConstEnums",
+      "moduleResolution modes (node, bundler, classic)",
+      "Web APIs (URL, AbortController, TextEncoder, Blob, FormData, Headers)",
+      "RegExp.escape (ES2025)",
+      "Set methods (intersection, union, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom)"
     ],
     "remaining_test_failures": [
       "Advanced destructuring (rest, defaults, nested)",
