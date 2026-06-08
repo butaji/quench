@@ -1121,7 +1121,7 @@
     {
       "id": "102",
       "title": "ink-index-intersection example \u2014 index signatures, intersection types",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-index-intersection/",

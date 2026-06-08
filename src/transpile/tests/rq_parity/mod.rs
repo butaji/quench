@@ -370,3 +370,20 @@ ink_example_test!(
         "Current status: loading"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// TypeScript index signatures & intersections (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_index_intersection,
+    "ink-index-intersection",
+    [
+        "Index Signatures & Intersection Types Demo",
+        "Name: Widget",
+        "ABC.a: hello",
+        "Dict entries:",
+        "Widget.size (index): 100",
+        "Meta entries:"
+    ]
+);
