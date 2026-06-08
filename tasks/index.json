@@ -994,7 +994,7 @@
     {
       "id": "092",
       "title": "ink-namespace-declare example — namespace, declare",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-namespace-declare/",

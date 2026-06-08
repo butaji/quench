@@ -37,9 +37,9 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-namespace-declare/`
-- [ ] Uses `namespace` declaration with exported values
-- [ ] Uses `declare` for ambient values
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path erases `namespace` and `declare` without runtime impact
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-namespace-declare/`
+- [x] Uses `namespace` declaration with exported values
+- [x] Uses `declare` for ambient values
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path erases `namespace` and `declare` without runtime impact
+- [x] Parity harness passes with 100% match in all 3 environments

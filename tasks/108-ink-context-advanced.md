@@ -53,10 +53,10 @@ export default function App() {
 
 ## Acceptance Criteria
 
-- [ ] Example exists at `examples/ink-context-advanced/`
-- [ ] Uses `createContext` with `defaultValue`
-- [ ] Sets `displayName` on context
-- [ ] Uses nested/multiple providers
-- [ ] Renders identically in deno and `runts dev` (100% output match)
-- [ ] Compile path generates compilable Rust
-- [ ] Parity harness passes with 100% match in all 3 environments
+- [x] Example exists at `examples/ink-context-advanced/`
+- [x] Uses `createContext` with `defaultValue`
+- [x] Sets `displayName` on context
+- [x] Uses nested/multiple providers
+- [x] Renders identically in deno and `runts dev` (100% output match)
+- [x] Compile path generates compilable Rust
+- [x] Parity harness passes with 100% match in all 3 environments
