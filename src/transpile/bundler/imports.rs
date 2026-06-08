@@ -2,11 +2,35 @@
 
 use regex::Regex;
 
+/// Check if an import line is type-only (entirely erased at runtime).
+pub fn is_type_only_import(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with("import type ") {
+        return true;
+    }
+    // import { type A, type B } from '...'
+    if let Some(start) = trimmed.strip_prefix("import {") {
+        if let Some(end) = start.find("}") {
+            let specifiers = &start[..end];
+            let all_type = specifiers
+                .split(',')
+                .map(|s| s.trim())
+                .all(|s| s.starts_with("type "));
+            return all_type;
+        }
+    }
+    false
+}
+
 /// Find all local imports (and re-exports) in a JS source string.
 pub fn find_imports(js: &str) -> Vec<String> {
     let re = Regex::new(r#"(?:import|export)\s+.*?\s+from\s+['"]([^'"]+)['"]"#).unwrap();
     re.captures_iter(js)
         .filter_map(|cap| {
+            let full = cap.get(0)?.as_str();
+            if is_type_only_import(full) {
+                return None;
+            }
             let path = cap.get(1)?.as_str().to_string();
             if path.starts_with('.') { Some(path) } else { None }
         })
@@ -33,10 +57,11 @@ pub fn parse_import_names(spec: &str) -> Vec<String> {
 pub fn is_local_import(line: &str) -> bool {
     let trimmed = line.trim();
     if !trimmed.starts_with("import ") { return false; }
+    if is_type_only_import(trimmed) { return false; }
     if let Some(pos) = trimmed.find("from \"") {
         let path_start = pos + 6;
         let rest = &trimmed[path_start..];
-        if let Some(end) = rest.find('\"') {
+        if let Some(end) = rest.find('"') {
             return is_relative_path(&rest[..end]);
         }
     }

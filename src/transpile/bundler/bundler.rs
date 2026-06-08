@@ -207,6 +207,7 @@ impl Bundler {
 
     fn rewrite_import_line(&self, line: &str, from_dir: &Path) -> Option<Vec<String>> {
         let trimmed = line.trim();
+        if imports::is_type_only_import(trimmed) { return Some(Vec::new()); }
         if imports::is_react_import(trimmed) { return Some(Vec::new()); }
         if imports::is_ink_import(trimmed) { return Some(imports::extract_ink_import_declarations(trimmed)); }
         if !imports::is_local_import(trimmed) { return None; }
