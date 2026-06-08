@@ -6,6 +6,7 @@
 //! minimal React shim so the bundle evals cleanly in rquickjs.
 
 pub mod react_shim;
+pub mod runtime_shim;
 
 #[cfg(test)]
 mod tests {

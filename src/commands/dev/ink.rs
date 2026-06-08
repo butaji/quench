@@ -84,8 +84,18 @@ fn eval_bundle_in_ctx(ctx: &rquickjs::Ctx, js: &str) -> anyhow::Result<String> {
     eval_render_js(ctx, render_js)
 }
 
-fn extract_js_error(_ctx: &rquickjs::Ctx, e: &rquickjs::Error) -> String {
-    format!("{:?}", e)
+fn extract_js_error(ctx: &rquickjs::Ctx, e: &rquickjs::Error) -> String {
+    let base = format!("{:?}", e);
+    if matches!(e, rquickjs::Error::Exception) {
+        let caught: rquickjs::Value = ctx.catch();
+        let msg = caught.as_string().map(|s| s.to_string().unwrap_or_default()).unwrap_or_else(|| {
+            caught.as_object().and_then(|o| {
+                o.get::<&str, rquickjs::String>("message").ok().and_then(|s| s.to_string().ok())
+            }).unwrap_or_else(|| format!("{:?}", caught.type_of()))
+        });
+        return format!("{} - {}", base, msg);
+    }
+    base
 }
 
 fn eval_render_js(ctx: &rquickjs::Ctx, render_js: &str) -> anyhow::Result<String> {

@@ -153,6 +153,9 @@ impl Bundler {
             let transformed = line.replacen("export default const", "const __mD", 1);
             return Some(("default".to_string(), name, transformed));
         }
+        if let Some(name) = crate::transpile::postprocess::capture_default_identifier(trimmed) {
+            return Some(("default".to_string(), name, "// export default handled".to_string()));
+        }
         imports::extract_named_export(trimmed).map(|(k, n)| (k, n, line.to_string()))
     }
 
