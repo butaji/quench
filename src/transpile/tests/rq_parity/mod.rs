@@ -472,3 +472,20 @@ ink_example_test!(
         "Carrot"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// JSON API (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_json_api,
+    "ink-json-api",
+    [
+        "JSON.stringify & JSON.parse Demo",
+        "Original: app=MyApp",
+        "Reparsed: true",
+        "Selective keys:",
+        "Parse invalid: success=false",
+        "Parsed array: [1, 2, 3, 4, 5]"
+    ]
+);

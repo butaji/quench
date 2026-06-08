@@ -1330,7 +1330,7 @@
     {
       "id": "121",
       "title": "ink-json-api example \u2014 JSON.stringify, JSON.parse",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-json-api/",
