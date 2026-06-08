@@ -2021,9 +2021,11 @@
     {
       "id": "151",
       "title": "`ink-reference-directive` Example — `/// <reference types=\"...\" />`",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
-      "files": [],
+      "files": [
+        "examples/ink-reference-directive/"
+      ],
       "acceptance": "Parity harness 100% across deno/rq/compile."
     },
     {

@@ -532,6 +532,143 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 
 ---
 
+### Phase 25: Advanced Destructuring + Node.js/Web Runtime APIs
+**Goal:** Advanced destructuring patterns (mixed array/object, computed keys, renaming), Node.js runtime APIs (global, Buffer, __dirname, __filename, CommonJS interop, process.nextTick, EventEmitter, path, os), and Web APIs (AbortSignal, fetch, PerformanceObserver, setImmediate, URLPattern) exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 300 | `ink-mixed-destructure` | Mixed array/object destructuring | P1 |
+| 301 | `ink-computed-destructure` | Computed keys and renaming in destructuring | P1 |
+| 302 | `ink-global-object` | `global` object | P1 |
+| 303 | `ink-buffer` | Node.js `Buffer` | P1 |
+| 304 | `ink-dirname-filename` | `__dirname` and `__filename` | P1 |
+| 305 | `ink-commonjs-interop` | `module.exports`, `exports`, `require` | P1 |
+| 306 | `ink-abort-signal` | `AbortSignal` and `AbortController` | P1 |
+| 307 | `ink-fetch-api` | `fetch`, `Response`, `Request` | P1 |
+| 308 | `ink-performance-observer` | `PerformanceObserver`, `mark`, `measure` | P2 |
+| 309 | `ink-set-immediate` | `setImmediate` / `clearImmediate` | P2 |
+| 310 | `ink-process-nexttick` | `process.nextTick` | P2 |
+| 311 | `ink-events-emitter` | `EventEmitter` | P2 |
+| 312 | `ink-path-module` | `path` module | P2 |
+| 313 | `ink-os-module` | `os` module | P2 |
+| 314 | `ink-urlpattern` | `URLPattern` | P3 |
+
+**Tasks:** 300–314 | **Status:** 🔄 Pending (15 tasks)
+
+---
+
+### Phase 26: Node.js Standard Library + Browser Globals + Binary Data + Promise/Math Completion
+**Goal:** Node.js standard library modules (fs, crypto, util, stream, readline, assert, child_process, http), process properties (pid, cwd, uptime), browser globals (window, document, navigator, localStorage), binary data APIs (typed arrays, DataView, File), Promise chaining (then/catch/finally), and advanced Math methods/constants exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 315 | `ink-node-fs` | Node.js `fs` module | P1 |
+| 316 | `ink-node-crypto` | Node.js `crypto` module | P1 |
+| 317 | `ink-node-util` | Node.js `util` module | P1 |
+| 318 | `ink-node-stream` | Node.js `stream` module | P1 |
+| 319 | `ink-node-readline` | Node.js `readline` module | P1 |
+| 320 | `ink-node-assert` | Node.js `assert` module | P2 |
+| 321 | `ink-node-child-process` | Node.js `child_process` module | P2 |
+| 322 | `ink-node-http` | Node.js `http`/`https` module | P2 |
+| 323 | `ink-process-props` | `process` properties (pid, cwd, uptime, hrtime, memoryUsage) | P1 |
+| 324 | `ink-browser-globals` | `window`, `document`, `navigator`, `location` | P2 |
+| 325 | `ink-web-storage` | `localStorage` / `sessionStorage` | P2 |
+| 326 | `ink-typed-arrays` | Typed arrays and `DataView` | P1 |
+| 327 | `ink-file-constructor` | `File` constructor | P2 |
+| 328 | `ink-promise-chain` | `Promise.prototype.then/catch/finally` + `Promise.any`/`race` | P1 |
+| 329 | `ink-math-advanced` | Advanced `Math` methods and constants | P2 |
+
+**Tasks:** 315–329 | **Status:** 🔄 Pending (15 tasks)
+
+---
+
+### Phase 27: React Hook Patterns + JSX Expression Patterns + Component Composition
+**Goal:** React hook patterns (useEffect cleanup, useCallback/useMemo dependencies, custom hook composition), React children API (Children.only, Children.toArray), component composition patterns (generic components, polymorphic components, compound components, context reducer, controlled/uncontrolled, forwardRef with generics, render props with generics, HOCs with generics), and JSX expression patterns (optional call, non-null assertion, type assertions, nullish coalescing, optional chaining, conditional rendering) exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 330 | `ink-use-effect-cleanup` | `useEffect` cleanup functions | P1 |
+| 331 | `ink-use-callback-deps` | `useCallback` with dependencies | P1 |
+| 332 | `ink-use-memo-deps` | `useMemo` with dependencies | P1 |
+| 333 | `ink-children-only` | `Children.only` | P2 |
+| 334 | `ink-children-toarray` | `Children.toArray` | P2 |
+| 335 | `ink-react-lazy-fallback` | `React.lazy` with `Suspense` fallback | P2 |
+| 336 | `ink-generic-function-component` | Generic function components | P1 |
+| 337 | `ink-polymorphic-component` | Polymorphic components with `as` prop | P2 |
+| 338 | `ink-compound-components` | Compound component pattern | P2 |
+| 339 | `ink-context-reducer` | Context with `useReducer` | P1 |
+| 340 | `ink-controlled-uncontrolled` | Controlled vs uncontrolled components | P1 |
+| 341 | `ink-forward-ref-generic` | `forwardRef` with generic components | P2 |
+| 342 | `ink-render-props-generic` | Render props with generics | P2 |
+| 343 | `ink-hoc-generic` | Higher-order components with generics | P2 |
+| 344 | `ink-custom-hook-composition` | Composing multiple custom hooks | P1 |
+| 345 | `ink-optional-call` | Optional call expression (`fn?.()`) | P1 |
+| 346 | `ink-non-null-chain` | Non-null assertion after optional chain | P1 |
+| 347 | `ink-type-assertion-jsx` | Type assertions in JSX expressions | P1 |
+| 348 | `ink-nullish-jsx-attr` | Nullish coalescing in JSX attributes | P1 |
+| 349 | `ink-optional-chain-jsx` | Optional chaining in JSX attributes | P1 |
+| 350 | `ink-jsx-conditional-render` | Ternary / logical AND returning JSX | P1 |
+
+**Tasks:** 330–350 | **Status:** 🔄 Pending (21 tasks)
+
+---
+
+### Phase 28: Advanced Type System Patterns
+**Goal:** Advanced TypeScript type system patterns exercised by Ink examples: mapped types with `as` clause, template literal types with unions, user-defined type guards (`is`), `satisfies` with unions, `as const` in function returns, utility types `Extract`/`Exclude`/`NonNullable`, key remapping, recursive readonly mapped types, nested conditional types, and inline `import('...').Type` syntax, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 351 | `ink-mapped-types-as` | Mapped types with `as` clause | P2 |
+| 352 | `ink-template-literal-union` | Template literal types with unions | P2 |
+| 353 | `ink-type-guard-is` | User-defined type guards (`is`) | P1 |
+| 354 | `ink-satisfies-union` | `satisfies` with union types | P1 |
+| 355 | `ink-as-const-function` | `as const` in function returns | P1 |
+| 356 | `ink-utility-extract-exclude` | `Extract`, `Exclude`, `NonNullable` | P2 |
+| 357 | `ink-key-remapping` | Key remapping with mapped types | P2 |
+| 358 | `ink-readonly-mapped` | Recursive readonly mapped types | P2 |
+| 359 | `ink-nested-conditional` | Nested conditional types | P2 |
+| 360 | `ink-inline-import-type` | Inline `import('...').Type` syntax | P1 |
+
+**Tasks:** 351–360 | **Status:** 🔄 Pending (10 tasks)
+
+---
+
+### Phase 29: Array/Object/String/Number/Date/Console/Error/Symbol/Process/Stream/WebAssembly API Completion
+**Goal:** Final Ink examples for array methods (flat, flatMap), object methods (fromEntries), string methods (match, search, replace), RegExp well-known symbols, number formatting (toExponential, toPrecision, toFixed), date locale formatting (toLocaleDateString, toLocaleTimeString, toDateString, toTimeString), advanced console methods (assert, count, group, trace, timeLog), error stack APIs (captureStackTrace, stackTraceLimit), well-known symbols (toStringTag, toPrimitive, hasInstance, species), import.meta.env (Vite pattern), process.hrtime, fs/promises, stream/web (ReadableStream, WritableStream, TransformStream), timers/promises, and WebAssembly, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 361 | `ink-array-flat-flatmap` | `Array.prototype.flat` and `flatMap` | P1 |
+| 362 | `ink-object-fromentries` | `Object.fromEntries` | P1 |
+| 363 | `ink-string-match-search` | `String.prototype.match`, `search`, `replace` | P1 |
+| 364 | `ink-regexp-symbol` | RegExp well-known symbols | P2 |
+| 365 | `ink-number-format` | `Number.prototype.toExponential`, `toPrecision`, `toFixed` | P2 |
+| 366 | `ink-date-locale` | Date locale formatting methods | P2 |
+| 367 | `ink-console-advanced` | `console.assert`, `count`, `group`, `trace`, `timeLog` | P2 |
+| 368 | `ink-error-stack` | `Error.captureStackTrace`, `Error.stackTraceLimit` | P2 |
+| 369 | `ink-symbol-wellknown` | Well-known symbols | P1 |
+| 370 | `ink-import-meta-env` | `import.meta.env` (Vite pattern) | P1 |
+| 371 | `ink-process-hrtime` | `process.hrtime` / `process.hrtime.bigint` | P2 |
+| 372 | `ink-fs-promises` | `fs/promises` module | P2 |
+| 373 | `ink-stream-web` | `stream/web` (ReadableStream, WritableStream, TransformStream) | P2 |
+| 374 | `ink-timers-promises` | `timers/promises` module | P2 |
+| 375 | `ink-webassembly` | `WebAssembly` API | P3 |
+
+**Tasks:** 361–375 | **Status:** 🔄 Pending (15 tasks)
+
+---
+
+### Phase 30: Final Comprehensive Coverage Audit
+**Goal:** End-to-end audit of all 376 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.
+
+| Task | Description | Priority |
+|------|-------------|----------|
+| 376 | Final comprehensive coverage audit | P0 |
+
+**Tasks:** 376 | **Status:** 🔄 Pending (1 task)
+
+---
+
 ## Known Coverage Gaps (Current State)
 
 ### Test Coverage
@@ -547,9 +684,9 @@ All **15/15** test modules are enabled. `spec_expressions` and `spec_types` are 
 | HIR → Rust codegen | ~70% | Core constructs have codegen; advanced TS features pending |
 | Compile-path integration tests | 53 tests | `tests/compile_codegen.rs` — covers most P0 constructs |
 
-### Features Without Examples (174 gaps)
+### Features Without Examples (250 gaps)
 
-173 examples exist. Phase 6 examples (Tasks 042–067) cover core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. Phase 12 examples (Tasks 121–131) cover remaining runtime APIs and type system features. Phase 13 examples (Tasks 132–140) cover real-world validation gaps. Phase 14–16 examples (Tasks 141–178) cover final runtime API, module pattern, operator, syntax, and advanced React pattern completion. Phase 17 examples (Tasks 179–190) cover ES2024 and TypeScript 5.0+ features. Phase 18 examples (Tasks 191–205) cover expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features. Phase 19 examples (Tasks 206–220) cover tagged templates, compiler options, deep Reflect/Object coverage, Web APIs, and ES2025 features. Phase 20 examples (Tasks 221–235) cover advanced language features, Intl/Atomics APIs, compile infrastructure, JSX member/namespace expressions, and React patterns. Phase 21 examples (Tasks 236–250) cover niche language features, additional TypeScript configuration options, and Web Streams/Crypto APIs. Phase 22 examples (Tasks 251–270) cover Web APIs (WebSocket, FormData, Blob, EventTarget, FinalizationRegistry, SharedArrayBuffer), TypeScript configuration edge cases, and advanced TS/JSX language patterns. Phase 23 examples (Tasks 271–285) cover emerging runtime APIs, React patterns, module resolution, and compile infrastructure. Phase 24 examples (Tasks 286–299) cover the orphaned existing Ink example audit, advanced type system features, and language edge cases. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
+173 examples exist. Phase 6 examples (Tasks 042–067) cover core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. Phase 12 examples (Tasks 121–131) cover remaining runtime APIs and type system features. Phase 13 examples (Tasks 132–140) cover real-world validation gaps. Phase 14–16 examples (Tasks 141–178) cover final runtime API, module pattern, operator, syntax, and advanced React pattern completion. Phase 17 examples (Tasks 179–190) cover ES2024 and TypeScript 5.0+ features. Phase 18 examples (Tasks 191–205) cover expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features. Phase 19 examples (Tasks 206–220) cover tagged templates, compiler options, deep Reflect/Object coverage, Web APIs, and ES2025 features. Phase 20 examples (Tasks 221–235) cover advanced language features, Intl/Atomics APIs, compile infrastructure, JSX member/namespace expressions, and React patterns. Phase 21 examples (Tasks 236–250) cover niche language features, additional TypeScript configuration options, and Web Streams/Crypto APIs. Phase 22 examples (Tasks 251–270) cover Web APIs (WebSocket, FormData, Blob, EventTarget, FinalizationRegistry, SharedArrayBuffer), TypeScript configuration edge cases, and advanced TS/JSX language patterns. Phase 23 examples (Tasks 271–285) cover emerging runtime APIs, React patterns, module resolution, and compile infrastructure. Phase 24 examples (Tasks 286–299) cover the orphaned existing Ink example audit, advanced type system features, and language edge cases. Phase 25 examples (Tasks 300–314) cover advanced destructuring patterns and Node.js/Web runtime APIs. Phase 26 examples (Tasks 315–329) cover Node.js standard library, browser globals, binary data APIs, Promise chaining, and advanced Math. Phase 27 examples (Tasks 330–350) cover React hook patterns, JSX expression patterns, and component composition. Phase 28 examples (Tasks 351–360) cover advanced TypeScript type system patterns. Phase 29 examples (Tasks 361–375) cover array/object/string/number/date/console/error/symbol/process/stream/WebAssembly API completion. Phase 30 (Task 376) is the final comprehensive coverage audit. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
 
 Remaining gaps (Phase 10–12 targets):
 - Logical assignment: `||=`, `&&=`, `??=`
@@ -700,4 +837,10 @@ cargo test --test compile_codegen
 - [ ] 20 additional Ink examples for Web APIs + TypeScript config edge cases + JSX/TS language patterns (Tasks 251–270).
 - [ ] 15 additional Ink examples for emerging runtime APIs + React patterns + module resolution + compile infrastructure (Tasks 271–285).
 - [ ] 14 additional tasks for orphaned example audit + advanced type system + language edge cases (Tasks 286–299).
+- [ ] 15 additional Ink examples for advanced destructuring + Node.js/Web runtime APIs (Tasks 300–314).
+- [ ] 15 additional Ink examples for Node.js standard library + browser globals + binary data + Promise/Math completion (Tasks 315–329).
+- [ ] 21 additional Ink examples for React hook patterns + JSX expression patterns + component composition (Tasks 330–350).
+- [ ] 10 additional Ink examples for advanced TypeScript type system patterns (Tasks 351–360).
+- [ ] 15 additional Ink examples for array/object/string/number/date/console/error/symbol/process/stream/WebAssembly API completion (Tasks 361–375).
+- [ ] Final comprehensive coverage audit (Task 376).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.

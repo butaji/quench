@@ -49,5 +49,5 @@ export default function App() {
 
 ## Notes
 
-- **Deno ↔ rquickjs parity:** 99.21% (passes ≥95% threshold). The only difference is `console.timeEnd` precision: deno uses `performance.now()` and outputs sub-millisecond timing (e.g. `0.295ms`), while rquickjs uses `Date.now()` which yields `0.000ms` for very fast intervals.
+- **Deno ↔ rquickjs parity:** Must reach 100% output match. The only difference is `console.timeEnd` precision: deno uses `performance.now()` and outputs sub-millisecond timing (e.g. `0.295ms`), while rquickjs uses `Date.now()` which yields `0.000ms` for very fast intervals. This must be fixed to achieve 100% parity.
 - **Compile path:** Produces a working binary. Console methods are mapped to `println!`/`eprintln!` or `()` no-ops in the ratatui plugin codegen. `console.table` emits the JSON representation of the data because the static JSX codegen cannot replicate deno's formatted table output. Compile-path similarity is ~30% due to these formatting differences — this is a known architectural limitation of the compile path (it extracts static JSX, not full JS runtime semantics).

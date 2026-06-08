@@ -1,0 +1,35 @@
+# Task 375: `ink-webassembly` Example — `WebAssembly` API
+
+**Priority:** P3-Low
+**Phase:** 29 — Web Platform APIs
+**Depends on:** 374
+
+## Problem
+
+`WebAssembly` provides near-native performance execution in browsers and Node.js. No existing Ink example exercises it.
+
+## Ink Example
+
+```tsx
+// examples/ink-webassembly/tui/app.tsx
+import React from 'react';
+import { Box, Text } from 'ink';
+
+export default function App() {
+  const hasWasm = typeof WebAssembly !== 'undefined';
+
+  return (
+    <Box flexDirection="column">
+      <Text>WebAssembly available: {String(hasWasm)}</Text>
+    </Box>
+  );
+}
+```
+
+## Acceptance Criteria
+
+- [ ] Example exists at `examples/ink-webassembly/`
+- [ ] Uses `WebAssembly` global detection
+- [ ] Renders identically in deno and `runts dev` (100% output match)
+- [ ] Compile path generates compilable Rust
+- [ ] Parity harness passes with 100% match in all 3 environments
