@@ -25,6 +25,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `JsxElement`, `JsxFragment`, `JsxSpreadAttribute` variants
+- Parser directives (no runtime HIR impact)
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` JSX element codegen + Ratatui plugin
+- Parser/bundler configuration (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-jsx-preserve/`

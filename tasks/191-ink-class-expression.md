@@ -35,6 +35,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+- `ClassMember` and `Class` variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+- `quote_codegen.rs` for class declaration codegen
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-class-expression/`

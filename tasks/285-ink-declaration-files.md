@@ -33,6 +33,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- Parser directives (no runtime HIR impact)
+
+## Compile-Path Codegen
+
+- Parser/bundler configuration (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-declaration-files/`

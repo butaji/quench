@@ -31,6 +31,19 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Stmt` variants for control flow and declarations
+- `ClassMember` and `Class` variants
+- `Import`, `Export`, `ExportAll` statement variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` for statement codegen
+- `quote_codegen.rs` for class declaration codegen
+- `quote_codegen_stmts.inc` + bundler for module resolution
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-module-resolution/`

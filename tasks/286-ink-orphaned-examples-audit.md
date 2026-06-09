@@ -26,6 +26,15 @@ Real-world:
 3. For each example that fails, file a bug-fix task and fix the underlying compile-path or bridge issue.
 4. Update `tasks/index.json` coverage_gaps to remove Ink features covered by these examples.
 
+
+## HIR Coverage
+
+- Standard `Expr`/`Stmt` variants
+
+## Compile-Path Codegen
+
+- Standard `quote_codegen` expression + statement codegen
+
 ## Acceptance Criteria
 
 - [ ] All 92 orphaned examples are tracked in `tasks/index.json`.

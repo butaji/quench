@@ -33,6 +33,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- React hook calls via `Expr::Call`
+
+## Compile-Path Codegen
+
+- `js_bundle/react_shim.rs` for hook definitions
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-use-memo-deps/`

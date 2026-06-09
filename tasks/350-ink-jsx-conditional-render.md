@@ -29,6 +29,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Stmt` variants for control flow and declarations
+- `JsxElement`, `JsxFragment`, `JsxSpreadAttribute` variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` for statement codegen
+- `quote_codegen.rs` JSX element codegen + Ratatui plugin
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-jsx-conditional-render/`

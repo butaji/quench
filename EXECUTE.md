@@ -5,7 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
-> **Current stats:** 362 tasks, 173 completed, 189 pending, 32 phases, 323 example tasks.
+> **Current stats:** 362 tasks, 175 completed, 187 pending, 32 phases, 323 example tasks.
 
 ---
 
@@ -886,7 +886,7 @@ cargo test --test compile_codegen
 - [x] No references to HIR interpreter, Taffy, or `render_tsx`.
 - [x] Docs accurately describe rquickjs + Yoga architecture.
 
-### Completed Phases ✅ (173 tasks)
+### Completed Phases ✅ (175 tasks)
 - [x] Phase 0–5: Build, engine, compile path, coverage, cleanup, hardening (37 tasks).
 - [x] Phase 6: 27 Ink examples covering core TS/TSX/React/Ink features (Tasks 041–067).
 - [x] Phase 7: HIR expansion — optional chaining, enums, private fields, generators, dynamic import, decorators (Tasks 068–074).
@@ -901,7 +901,7 @@ cargo test --test compile_codegen
 - [x] Phase 16: 15 Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 - [x] Phase 17: Partial — ES2024 `using`, import attributes, `Array.fromAsync`, `Promise.withResolvers`, `Object.groupBy`, `const` type params (Tasks 179–184 complete).
 
-### Pending Phases ⏳ (189 tasks)
+### Pending Phases ⏳ (187 tasks)
 - [ ] Phase 17: Remaining ES2024 + TypeScript 5.0+ features (Tasks 185–190).
 - [ ] Phase 18: Expression-level + React pattern + runtime API completion (Tasks 191–205).
 - [ ] Phase 19: Tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).

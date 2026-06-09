@@ -29,6 +29,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+- Type erasure (no runtime HIR needed)
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+- Type erasure at parse time (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-template-literal-union/`

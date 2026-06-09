@@ -1064,3 +1064,18 @@ ink_example_test!(
         "Caught: string error"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Iterator helpers example (TC39 Stage 3)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_iterator_helpers,
+    "ink-iterator-helpers",
+    [
+        "Iterator Helpers Demo",
+        "map*2 filter>10 take(3): 12, 14, 16",
+        "drop(2) reduce sum(3..5): 12",
+        "filter even take(5): 2, 4, 6, 8, 10"
+    ]
+);

@@ -32,6 +32,19 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+- `Stmt` variants for control flow and declarations
+- Parser directives (no runtime HIR impact)
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+- `quote_codegen_stmts.inc` for statement codegen
+- Parser/bundler configuration (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-preserve-value-imports/`

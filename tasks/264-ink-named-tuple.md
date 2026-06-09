@@ -31,6 +31,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- Type erasure (no runtime HIR needed)
+
+## Compile-Path Codegen
+
+- Type erasure at parse time (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-named-tuple/`

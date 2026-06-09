@@ -54,6 +54,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `ClassMember` and `Class` variants
+- React hook calls via `Expr::Call`
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` for class declaration codegen
+- `js_bundle/react_shim.rs` for hook definitions
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-get-derived-state-from-error/`

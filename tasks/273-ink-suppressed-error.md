@@ -31,6 +31,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- Standard `Expr`/`Stmt` variants
+
+## Compile-Path Codegen
+
+- Standard `quote_codegen` expression + statement codegen
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-suppressed-error/`

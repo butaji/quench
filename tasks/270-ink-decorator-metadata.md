@@ -39,6 +39,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `ClassMember` and `Class` variants
+- Parser directives (no runtime HIR impact)
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` for class declaration codegen
+- Parser/bundler configuration (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-decorator-metadata/`

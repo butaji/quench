@@ -30,6 +30,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- React hook calls via `Expr::Call`
+- Standard `Expr::Call` + `Expr::Member` for runtime API access
+
+## Compile-Path Codegen
+
+- `js_bundle/react_shim.rs` for hook definitions
+- Runtime API mapping in codegen or bridge globals
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-process-props/`

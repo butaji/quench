@@ -35,6 +35,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Stmt` variants for control flow and declarations
+- `Import`, `Export`, `ExportAll` statement variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` for statement codegen
+- `quote_codegen_stmts.inc` + bundler for module resolution
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-export-star-as/`

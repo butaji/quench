@@ -30,6 +30,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `ClassMember` and `Class` variants
+- Standard `Expr::Call` + `Expr::Member` for runtime API access
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` for class declaration codegen
+- Runtime API mapping in codegen or bridge globals
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-file-constructor/`

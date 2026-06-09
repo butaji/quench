@@ -45,6 +45,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `ClassMember` and `Class` variants
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` for class declaration codegen
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-super-call/`

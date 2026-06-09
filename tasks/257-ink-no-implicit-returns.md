@@ -32,6 +32,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Stmt` variants for control flow and declarations
+- Parser directives (no runtime HIR impact)
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` for statement codegen
+- Parser/bundler configuration (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-no-implicit-returns/`

@@ -29,6 +29,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `JsxElement`, `JsxFragment`, `JsxSpreadAttribute` variants
+
+## Compile-Path Codegen
+
+- `quote_codegen.rs` JSX element codegen + Ratatui plugin
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-dangerously-set-inner-html/`

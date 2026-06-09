@@ -37,6 +37,18 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+- Type erasure (no runtime HIR needed)
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+- Type erasure at parse time (no runtime codegen)
+- Runtime API mapping in codegen or bridge globals
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-object-prototype/`

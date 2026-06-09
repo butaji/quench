@@ -38,6 +38,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- Standard `Expr::Call` + `Expr::Member` for runtime API access
+
+## Compile-Path Codegen
+
+- Runtime API mapping in codegen or bridge globals
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-abort-signal/`

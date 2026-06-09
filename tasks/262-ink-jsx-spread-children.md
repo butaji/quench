@@ -30,6 +30,18 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+- `JsxElement`, `JsxFragment`, `JsxSpreadAttribute` variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+- `quote_codegen.rs` JSX element codegen + Ratatui plugin
+- `js_bundle/react_shim.rs` for hook definitions
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-jsx-spread-children/`

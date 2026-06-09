@@ -36,6 +36,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Import`, `Export`, `ExportAll` statement variants
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` + bundler for module resolution
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-project-references/`

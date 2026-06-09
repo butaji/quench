@@ -28,6 +28,15 @@ Perform a final end-to-end audit of all 376 tasks to verify:
 - [ ] `cargo build` passes with linter (0 errors, 0 warnings).
 - [ ] `cargo test` passes (all enabled modules).
 
+
+## HIR Coverage
+
+- Standard `Expr`/`Stmt` variants
+
+## Compile-Path Codegen
+
+- Standard `quote_codegen` expression + statement codegen
+
 ## Acceptance Criteria
 
 - [ ] Audit report generated showing consistency across all docs.

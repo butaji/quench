@@ -37,6 +37,17 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Stmt` variants for control flow and declarations
+- Type erasure (no runtime HIR needed)
+
+## Compile-Path Codegen
+
+- `quote_codegen_stmts.inc` for statement codegen
+- Type erasure at parse time (no runtime codegen)
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-as-const-function/`

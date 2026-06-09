@@ -30,6 +30,15 @@ export default function App() {
 }
 ```
 
+
+## HIR Coverage
+
+- `Expr` variants for operators, literals, and call expressions
+
+## Compile-Path Codegen
+
+- `quote_codegen_exprs.inc` for expression evaluation
+
 ## Acceptance Criteria
 
 - [ ] Example exists at `examples/ink-nullish-in-object/`
