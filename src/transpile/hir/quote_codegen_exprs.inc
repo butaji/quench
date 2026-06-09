@@ -438,7 +438,41 @@ impl QuoteCodegen {
     }
 
     fn gen_fn_expr(&self, func: &super::FunctionDecl) -> TokenStream {
-        self.gen_fn(func)
+        // If the function has a name, it's a named function expression (export default)
+        // Generate a function declaration in that case.
+        if !func.name.is_empty() {
+            return self.gen_fn(func);
+        }
+        
+        // Anonymous function expression - generate a Rust closure
+        let params_ts = self.gen_params(&func.params);
+        
+        // Generate destructuring for pattern params at start of body
+        let param_destructuring = self.gen_param_destructuring(&func.params);
+        
+        // Generate body
+        let body = match &func.body {
+            Some(b) => {
+                let mut stmts: Vec<TokenStream> = param_destructuring;
+                stmts.extend(b.0.iter().filter_map(|s| self.gen_stmt(s)));
+                quote! { #(#stmts)* }
+            }
+            None => {
+                if param_destructuring.is_empty() {
+                    quote! { Value::Null }
+                } else {
+                    quote! { #(#param_destructuring)* }
+                }
+            }
+        };
+        
+        let ret_type = self.gen_ret_type(&func.return_type, func.throws, &func.error_type);
+        
+        if func.is_async {
+            quote! { async move |#params_ts| #ret_type { #body } }
+        } else {
+            quote! { move |#params_ts| #ret_type { #body } }
+        }
     }
 
     fn gen_arrow_expr(&self, params: &[super::Param], body: &Expr, is_async: bool) -> TokenStream {

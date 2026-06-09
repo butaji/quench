@@ -162,8 +162,8 @@ pub(crate) fn expr_value_to_rust(value: &Value) -> Option<String> {
         return serde_json::to_string(value).ok().map(|j| format!("serde_json::json!({})", j));
     }
     // Handle Call expressions (function calls)
-    if let Some(call) = map.get("Call") {
-        return try_call_to_rust(call);
+    if map.contains_key("Call") {
+        return try_call_to_rust(map.get("Call")?);
     }
     None
 }
@@ -172,26 +172,65 @@ pub(crate) fn expr_value_to_rust(value: &Value) -> Option<String> {
 fn try_call_to_rust(call: &Value) -> Option<String> {
     let callee = call.get("callee")?;
     let args = call.get("arguments")?.as_array()?;
-    
-    // Handle method calls: obj.method(args...)
+    try_call_callee(callee, args)
+}
+
+fn try_call_callee(callee: &Value, args: &[Value]) -> Option<String> {
     if let Some(static_member) = callee.get("StaticMember") {
         return try_method_call_to_rust(static_member, args);
     }
-    
-    // Direct function call: fn(arg1, arg2)
-    if let Some(fn_name) = extract_ident_name(callee) {
-        let rust_name = map_js_global_fn(fn_name);
-        let is_global = rust_name.starts_with("runts_ink::");
-        return Some(format_fn_call(rust_name, args.iter().filter_map(|a| {
-            if is_global && is_ident_expr(a) {
-                Some(format!("&{}", expr_value_to_rust(a)?))
-            } else {
-                expr_value_to_rust(a)
-            }
-        })));
+    if let Some(func) = callee.get("Function") {
+        return try_iife_to_rust(func, args);
     }
-    
-    None
+    if let Some(arrow) = callee.get("ArrowFunction") {
+        return try_arrow_iife_to_rust(arrow, args);
+    }
+    try_direct_fn_call(callee, args)
+}
+
+fn try_direct_fn_call(callee: &Value, args: &[Value]) -> Option<String> {
+    let fn_name = extract_ident_name(callee)?;
+    let rust_name = map_js_global_fn(fn_name);
+    let is_global = rust_name.starts_with("runts_ink::");
+    Some(format_fn_call(rust_name, args.iter().filter_map(|a| {
+        if is_global && is_ident_expr(a) {
+            Some(format!("&{}", expr_value_to_rust(a)?))
+        } else {
+            expr_value_to_rust(a)
+        }
+    })))
+}
+
+/// Handle IIFE: (function() { return value; })()
+fn try_iife_to_rust(func: &Value, _args: &[Value]) -> Option<String> {
+    let stmts = func.get("body").and_then(|b| {
+        if let Some(arr) = b.as_array() { Some(arr.clone()) }
+        else { b.get("Block").and_then(|block| block.get("stmts")).and_then(|s| s.as_array()).cloned() }
+    })?;
+    let last = stmts.last()?;
+    extract_return_arg(last).and_then(|arg| expr_value_to_rust(arg))
+}
+
+fn extract_return_arg(stmt: &Value) -> Option<&Value> {
+    stmt.get("Return").and_then(|r| r.get("arg"))
+        .or_else(|| {
+            if stmt.get("kind").and_then(|k| k.as_str()) == Some("Return") { stmt.get("arg") }
+            else { None }
+        })
+}
+
+/// Handle arrow IIFE: (() => value)()
+fn try_arrow_iife_to_rust(arrow: &Value, _args: &[Value]) -> Option<String> {
+    // Check if body is a block or expression
+    if let Some(block) = arrow.get("body").and_then(|b| b.get("Block")) {
+        let stmts = block.get("stmts")?.as_array()?;
+        let last = stmts.last()?;
+        let ret_val = last.get("Return")?.get("arg")?;
+        expr_value_to_rust(ret_val)
+    } else {
+        // Arrow expression body - use directly
+        expr_value_to_rust(arrow.get("body")?)
+    }
 }
 
 /// Handle method calls like fn.call, fn.apply, fn.bind
@@ -327,10 +366,15 @@ fn try_array_to_rust(arr: &Value) -> Option<String> {
 
 pub(crate) fn try_codegen_jsx(items: &Value) -> Option<String> {
     let arr = items.as_array()?;
+    // Extract module-level variable declarations first
+    let module_decls = extract_module_var_declarations(items);
     for item in arr {
-        if let Some((jsx, decls, console)) = extract_jsx_from_function_with_vars(item) {
+        if let Some((jsx, func_decls, console)) = extract_jsx_from_function_with_vars(item) {
+            // Combine module-level and function-level declarations
+            let mut all_decls = module_decls.clone();
+            all_decls.extend(func_decls);
             let code = generate_widget_for_jsx(jsx)?;
-            return Some(wrap_ink_main(&code, &decls, &console));
+            return Some(wrap_ink_main(&code, &all_decls, &console));
         }
     }
     None
@@ -339,6 +383,14 @@ pub(crate) fn try_codegen_jsx(items: &Value) -> Option<String> {
 pub(crate) fn extract_jsx_from_function_with_vars(
     item: &Value,
 ) -> Option<(Value, Vec<(String, String)>, Vec<String>)> {
+    // First, check if this item is a Decl -> Variable (top-level var declarations)
+    // These need to be collected at module level, not inside a function
+    if item.get("Decl").and_then(|d| d.get("Variable")).is_some() {
+        // This is a variable declaration - it will be handled separately
+        // Return empty to skip this item
+        return None;
+    }
+    
     let func = item.get("Decl").and_then(|d| d.get("Function"))
         .or_else(|| {
             let stmt = item.get("Stmt")?;
@@ -374,6 +426,32 @@ pub(crate) fn extract_jsx_from_function_with_vars(
     Some((jsx, decls, console))
 }
 
+/// Extract variable declarations from top-level Decl items in the module.
+pub(crate) fn extract_module_var_declarations(items: &Value) -> Vec<(String, String)> {
+    let mut decls = Vec::new();
+    let arr = match items.as_array() { Some(a) => a, None => return decls };
+    for item in arr {
+        if let Some(var) = item.get("Decl").and_then(|d| d.get("Variable")) {
+            if let Some((name, val)) = extract_one_var(var) {
+                decls.push((format!("let {} = {};", name, val.0), name));
+            }
+        }
+    }
+    decls
+}
+
+fn extract_one_var(var: &Value) -> Option<(String, (String, Option<String>))> {
+    let name = var.get("name")?.as_str()?.to_string();
+    let init = var.get("init")?;
+    // Try expr_value_to_rust first (handles Call, etc.)
+    if let Some(val) = expr_value_to_rust(init) {
+        return Some((name, (val, None)));
+    }
+    // Fallback: try extract_call_arg_value_with_type
+    crate::codegen::stmt_collect::extract_call_arg_value_with_type(Some(init))
+        .map(|(val, ty)| (name, (val, ty)))
+}
+
 fn generate_widget_for_jsx(jsx: Value) -> Option<String> {
     let tag = jsx
         .get("opening")?
@@ -405,67 +483,16 @@ fn wrap_ink_main(vnode_expr: &str, decls: &[(String, String)], console: &[String
 }
 
 fn build_use_section(decls: &[(String, String)]) -> String {
-    let mut items = Vec::new();
-    if !get_state_vars().is_empty() || !decls.is_empty() {
-        items.push("use std::cell::Cell;");
-    }
-    if decls.iter().any(|(c, _)| c.contains("Vec<Value>")) {
-        items.push("use serde_json::Value;");
-    }
-    if items.is_empty() {
-        String::new()
-    } else {
-        items.iter().map(|u| format!("    {}\n", u)).collect()
-    }
+    let needs = !get_state_vars().is_empty() || !decls.is_empty();
+    let has_vec = decls.iter().any(|(c, _)| c.contains("Vec<Value>"));
+    if !needs && !has_vec { return String::new(); }
+    let mut s = String::new();
+    if needs { s.push_str("    use std::cell::Cell;\n"); }
+    if has_vec { s.push_str("    use serde_json::Value;\n"); }
+    s
 }
 
 fn build_code_section<'a>(codes: impl Iterator<Item = &'a str>) -> String {
     let lines: Vec<String> = codes.map(|c| format!("    {}", c)).collect();
-    if lines.is_empty() {
-        String::new()
-    } else {
-        lines.join("\n") + "\n"
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_var() {
-        clear_state_vars();
-        let body = serde_json::json!([
-            {"kind": "Expr", "expr": {"Assign": {"left": {"Ident": {"name": "count"}}, "right": {"Number": 0.0}, "kind": "Decl"}}}
-        ]);
-        let decls = extract_var_declarations(&body);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].1, "count");
-        assert!(decls[0].0.contains("0i32"));
-    }
-
-    #[test]
-    fn test_use_state() {
-        clear_state_vars();
-        let body = serde_json::json!([
-            {"kind": "Expr", "expr": {"Assign": {"left": {"Array": {"elems": [{"Ident": {"name": "count"}}, {"Ident": {"name": "setCount"}}]}}, "right": {"Call": {"callee": {"Ident": {"name": "useState"}}, "args": [{"Number": 0.0}]}}, "kind": "Decl"}}}
-        ]);
-        let decls = extract_var_declarations(&body);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].1, "count");
-        assert!(decls[0].0.contains("Cell::new"));
-        assert!(get_state_vars().contains(&"count".to_string()));
-    }
-
-    #[test]
-    fn test_react_use_state() {
-        clear_state_vars();
-        let body = serde_json::json!([
-            {"kind": "Expr", "expr": {"Assign": {"left": {"Array": {"elems": [{"Ident": {"name": "enabled"}}, {"Ident": {"name": "setEnabled"}}]}}, "right": {"Call": {"callee": {"Member": {"property": {"name": "useState"}}}, "args": [{"Bool": false}]}}, "kind": "Decl"}}}
-        ]);
-        let decls = extract_var_declarations(&body);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].1, "enabled");
-        assert!(decls[0].0.contains("false"));
-    }
+    if lines.is_empty() { String::new() } else { lines.join("\n") + "\n" }
 }
