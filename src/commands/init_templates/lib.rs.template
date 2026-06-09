@@ -1,5 +1,0 @@
-//! Library crate - add shared code here
-
-pub mod routes;
-pub mod islands;
-pub mod components;

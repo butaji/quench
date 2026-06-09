@@ -1,9 +1,0 @@
-{
-  "imports": {
-    "ink": "npm:ink@7",
-    "react": "npm:react@19"
-  },
-  "tasks": {
-    "dev": "deno run -A main.tsx"
-  }
-}

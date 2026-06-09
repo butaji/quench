@@ -1,6 +1,0 @@
-{
-  "imports": {
-    "ink": "npm:ink@5.0.1",
-    "react": "npm:react@18.2.0"
-  }
-}

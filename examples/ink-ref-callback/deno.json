@@ -1,7 +1,0 @@
-{
-  "imports": {
-    "react": "npm:react@18",
-    "react/jsx-runtime": "npm:react/jsx-runtime@18",
-    "ink": "npm:ink@5"
-  }
-}
