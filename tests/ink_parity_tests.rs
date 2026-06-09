@@ -1764,3 +1764,15 @@ fn test_ink_table_example() {
             "should show table content");
     assert!(content.contains("Box"), "should use Box component");
 }
+
+/// Verify ink-accessor-field example uses TypeScript accessor fields
+#[test]
+fn test_ink_accessor_field_example() {
+    let path = Path::new("./examples/ink-accessor-field/tui/app.tsx");
+    let content = fs::read_to_string(path).expect("should read file");
+    
+    // Should use accessor keyword (TypeScript 5.0 feature)
+    assert!(content.contains("accessor"), "should use accessor keyword");
+    assert!(content.contains("class"), "should use class");
+    assert!(content.contains("Box"), "should use Box component");
+}
