@@ -9,6 +9,8 @@ Implement `setImmediate` / `clearImmediate` and `process.nextTick` via microtask
 - [ ] Microtasks execute before timers and I/O in each loop iteration.
 - [ ] Unit test: queue microtask + timer; verify microtask runs first.
 
+> ⚠️ **NOT STARTED**: `setImmediate` and `process.nextTick` are not implemented.
+
 ## Dependencies
 - Task 013
 

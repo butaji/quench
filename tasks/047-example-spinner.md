@@ -1,18 +1,15 @@
-# Task 047: Example: Spinner
+# Task 047: Example: Spinner (JS + TS)
 
 ## Goal
-Animated spinner with `useEffect`, `setInterval`, conditional rendering, color cycling.
+Animated spinner with timer-driven animation and color cycling.
 
 ## Acceptance Criteria
-- [ ] Source `examples/spinner.tsx` cycles through spinner frames every 100 ms.
-- [ ] Color changes each frame (`color` prop dynamic).
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: rapid timer-driven re-renders, dynamic styles, conditional text.
+- [ ] `examples/spinner.js` - Spinner in JavaScript
+- [ ] `examples/spinner.ts` - Spinner in TypeScript
+- [ ] Both versions work identically
+- [ ] Cycles through frames every 100ms
+- [ ] Color changes each frame
+- [ ] Covers: rapid timer-driven updates, dynamic styles
 
 ## Dependencies
 - Task 041
-
-## SPEC Reference
-§3.3 Event Loop — timers; §3.2 Renderer

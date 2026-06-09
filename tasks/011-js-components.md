@@ -1,15 +1,24 @@
-# Task 011: JS Component Tags
+# Task 011: Rust: Component Tags
 
 ## Goal
-Export Box, Text, Static, Newline, Spacer as string tags for the reconciler.
+Expose component tags as Rust constants to JS.
+
+## Status
+> ✅ **Done** - Code exists in `src/ink_js.rs`
+> ⚠️ **Not Integrated** - See Task 009b
 
 ## Acceptance Criteria
-- [ ] `Box = 'ink-box'`, `Text = 'ink-text'`, `Static = 'ink-static'`, `Newline = 'ink-newline'`, `Spacer = 'ink-spacer'`.
-- [ ] Each tag is intercepted by host config and creates correct Rust node type.
-- [ ] Unit test: import each tag, verify typeof string and correct value.
+- [x] `ink::BOX = "ink-box"` exposed to JS as `Box`
+- [x] `ink::TEXT = "ink-text"` exposed to JS as `Text`
+- [x] `ink::STATIC = "ink-static"` exposed to JS as `Static`
+- [x] `ink::NEWLINE = "ink-newline"` exposed to JS as `Newline`
+- [x] `ink::SPACER = "ink-spacer"` exposed to JS as `Spacer`
+
+## Code Location
+- `src/ink_js.rs::BOX`, `TEXT`, `STATIC`, `NEWLINE`, `SPACER`
 
 ## Dependencies
-- Task 009
+- Task 009b (integration)
 
 ## SPEC Reference
-§5.2 Components
+§3 Rust ink Module

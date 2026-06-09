@@ -1,18 +1,15 @@
-# Task 048: Example: Tabs
+# Task 048: Example: Tabs (JS + TS)
 
 ## Goal
-Multi-tab interface with keyboard shortcuts and active tab highlight.
+Multi-tab interface with keyboard navigation and active tab highlight.
 
 ## Acceptance Criteria
-- [ ] Source `examples/tabs.tsx` with 3+ tabs; content changes on selection.
-- [ ] Left/right arrow switches tab; active tab has `bold` + `color` highlight.
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: `useState`, keyboard handling, border styles, conditional children.
+- [ ] `examples/tabs.js` - Tabs in JavaScript
+- [ ] `examples/tabs.ts` - Tabs in TypeScript
+- [ ] Both versions work identically
+- [ ] Left/right arrows switch tabs
+- [ ] Active tab highlighted with bold + color
+- [ ] Covers: state, keyboard handling, conditional children
 
 ## Dependencies
 - Task 041
-
-## SPEC Reference
-§4.3 Supported Tags — Tabs

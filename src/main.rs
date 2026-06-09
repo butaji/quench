@@ -10,6 +10,9 @@
 
 mod ink;
 mod bridge;
+mod ink_js;
+#[cfg(feature = "hotreload")]
+mod hotreload;
 
 use anyhow::Result;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -35,6 +38,9 @@ fn render_tree(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     root_id: Option<u32>,
 ) -> Result<()> {
+    // Hide cursor during rendering (prevents flickering)
+    crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide)?;
+    
     terminal.draw(|frame| {
         let Some(root_id) = root_id else { return; };
         
@@ -53,6 +59,9 @@ fn render_tree(
         render_node(root_id, frame.buffer_mut(), area);
     })?;
     
+    // Show cursor after rendering
+    crossterm::execute!(std::io::stdout(), crossterm::cursor::Show)?;
+    
     Ok(())
 }
 
@@ -65,6 +74,7 @@ fn render_node(
     use ratatui::widgets::Widget;
     use ratatui::style::Style;
     use ratatui::layout::Rect;
+    use crate::ink::PropValue;
     
     let tag = match bridge::__ink_get_node_tag(node_id) {
         Some(t) => t,
@@ -106,13 +116,49 @@ fn render_node(
                 }
             }
             
+            // Add padding if specified
+            if let Some(PropValue::Number(padding)) = bridge::__ink_get_node_prop_raw(node_id, "padding") {
+                let p = padding as u16;
+                if p > 0 {
+                    block = block.padding(ratatui::widgets::Padding::symmetric(p, p));
+                }
+            } else if let (Some(PropValue::Number(py)), Some(PropValue::Number(px))) = (
+                bridge::__ink_get_node_prop_raw(node_id, "paddingY"),
+                bridge::__ink_get_node_prop_raw(node_id, "paddingX")
+            ) {
+                block = block.padding(ratatui::widgets::Padding::symmetric(py as u16, px as u16));
+            }
+            
             // Add title if present
             if let Some(title) = bridge::__ink_get_node_prop(node_id, "title")
                 .map(|s| s.trim_matches('"').to_string()) {
                 block = block.title(title);
             }
             
+            // Check for background color
+            let mut bg_style = Style::default();
+            if let Some(bg_color) = bridge::__ink_get_node_prop(node_id, "backgroundColor")
+                .map(|s| s.trim_matches('"').to_string())
+                .and_then(|s| parse_color(&s))
+            {
+                bg_style = bg_style.bg(bg_color);
+            }
+            
             let rect = Rect::new(x, y, w, h);
+            
+            // Fill background if specified
+            if let Some(bg) = bg_style.bg {
+                for cy in rect.y..rect.bottom() {
+                    for cx in rect.x..rect.right() {
+                        if cx < buf.area.right() && cy < buf.area.bottom() {
+                            if let Some(cell) = buf.cell_mut((cx, cy)) {
+                                cell.set_bg(bg);
+                            }
+                        }
+                    }
+                }
+            }
+            
             block.render(rect, buf);
         }
         
@@ -128,6 +174,15 @@ fn render_node(
                 if let Some(c) = parse_color(&color) {
                     style = style.fg(c);
                 }
+            }
+            
+            // Check for background color (critical for selection highlighting)
+            // We use style.bg() which sets the background for the entire widget area
+            if let Some(bg_color) = bridge::__ink_get_node_prop(node_id, "backgroundColor")
+                .map(|s| s.trim_matches('"').to_string())
+                .and_then(|s| parse_color(&s))
+            {
+                style = style.bg(bg_color);
             }
             
             // Check for bold
@@ -150,6 +205,16 @@ fn render_node(
                 style = style.add_modifier(ratatui::style::Modifier::CROSSED_OUT);
             }
             
+            // Check for underline
+            if bridge::__ink_get_node_prop(node_id, "underline").is_some() {
+                style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
+            }
+            
+            // Check for inverse
+            if bridge::__ink_get_node_prop(node_id, "inverse").is_some() {
+                style = style.add_modifier(ratatui::style::Modifier::REVERSED);
+            }
+            
             let para = Paragraph::new(text.as_str())
                 .style(style);
             
@@ -157,13 +222,34 @@ fn render_node(
             para.render(rect, buf);
         }
         
+        "ink-static" => {
+            // Static renders its children as an overlay-like layer.
+            // For parity we render children directly (reconciler handles semantics).
+            for &child_id in &bridge::__ink_get_node_children(node_id).unwrap_or_default() {
+                render_node(child_id, buf, area);
+            }
+        }
+        
+        "ink-newline" => {
+            // Newline forces a blank line — render as empty Paragraph taking full width
+            use ratatui::widgets::Paragraph;
+            let rect = Rect::new(x, y, w.max(1), h.max(1));
+            Paragraph::new("").render(rect, buf);
+        }
+        
+        "ink-spacer" => {
+            // Spacer is an invisible flex filler — nothing to render
+        }
+        
         _ => {}
     }
     
-    // Render children
-    if let Some(children) = bridge::__ink_get_node_children(node_id) {
-        for &child_id in &children {
-            render_node(child_id, buf, area);
+    // Render children (skip for static which already rendered them inline)
+    if tag.as_str() != "ink-static" {
+        if let Some(children) = bridge::__ink_get_node_children(node_id) {
+            for &child_id in &children {
+                render_node(child_id, buf, area);
+            }
         }
     }
 }
@@ -211,10 +297,13 @@ async fn main() -> Result<()> {
         println!("  --version, -v  Show version");
         println!("  --bundle FILE  Load bundled JS from FILE");
         println!("  --eval CODE    Execute CODE");
+        println!("  --watch PATH   Watch for file changes and hot reload");
+        println!("  --hot          Enable hot reload mode (shortcut for --watch .)");
         println!();
         println!("Examples:");
         println!("  tuibridge --bundle plugins/app.tsx");
-        println!("  tuibridge --eval 'console.log(\"Hello, TuiBridge!\")'");
+        println!("  tuibridge --hot examples/counter.js");
+        println!("  tuibridge --watch plugins examples/app.js");
         return Ok(());
     }
     
@@ -224,16 +313,40 @@ async fn main() -> Result<()> {
     }
 
     // Determine what to run and whether to enter interactive mode
-    let (js_code, interactive) = if let Some(idx) = args.iter().position(|a| a == "--eval" || a == "-e") {
-        (args.get(idx + 1).cloned(), false)
-    } else if let Some(idx) = args.iter().position(|a| a == "--bundle" || a == "-b") {
-        (args.get(idx + 1).and_then(|path| std::fs::read_to_string(path).ok()), true)
-    } else if args.len() > 1 && !args[1].starts_with('-') {
-        // Last argument is script file
-        (std::fs::read_to_string(&args[args.len() - 1]).ok(), true)
-    } else {
-        // Default: show help, non-interactive
-        (None, false)
+    // Check for both --bundle and --eval (bundle is loaded first, then eval runs)
+    let bundle_idx = args.iter().position(|a| a == "--bundle" || a == "-b");
+    let eval_idx = args.iter().position(|a| a == "--eval" || a == "-e");
+    let watch_idx = args.iter().position(|a| a == "--watch" || a == "-w");
+    let hot_idx = args.iter().position(|a| a == "--hot");
+    let watch_path = watch_idx.and_then(|i| args.get(i + 1).cloned())
+        .or_else(|| hot_idx.map(|_| ".".to_string()));
+    
+    // Combine: bundle first, then eval (if both present)
+    let (js_code, interactive) = match (bundle_idx, eval_idx) {
+        (Some(bi), Some(ei)) => {
+            let bundle = args.get(bi + 1)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .unwrap_or_default();
+            let eval = args.get(ei + 1).cloned().unwrap_or_default();
+            (Some(format!("{}\n\n{}", bundle, eval)), true)
+        }
+        (Some(bi), None) => {
+            let bundle = args.get(bi + 1)
+                .and_then(|path| std::fs::read_to_string(path).ok());
+            (bundle, true)
+        }
+        (None, Some(ei)) => {
+            let eval = args.get(ei + 1).cloned();
+            (eval, false)
+        }
+        (None, None) if args.len() > 1 && !args[1].starts_with('-') => {
+            // Last argument is script file
+            (std::fs::read_to_string(&args[args.len() - 1]).ok(), true)
+        }
+        _ => {
+            // Default: show help, non-interactive
+            (None, false)
+        }
     };
 
     // Initialize QuickJS runtime
@@ -243,304 +356,11 @@ async fn main() -> Result<()> {
     // Create context and setup bridge functions
     let ctx = rquickjs::Context::full(&runtime)?;
     
-    // Setup globals using eval strings to avoid closure reference cycles
+    // Register Ink API via native rquickjs bindings (Task 009b)
     ctx.with(|ctx| {
-        // Define all __ink_* functions using eval to avoid closure reference issues
-        // All functions use JSON for parameter passing to simplify Rust side
-        let init_code = r#"
-        // Global state for tracking
-        globalThis.__ink_callbacks = {};
-        
-        // __ink_call - bridge dispatcher using JSON args
-        // Expected format: __ink_call(method, argsJson)
-        // Returns result as JSON string
-        globalThis.__ink_call = function(method, argsJson) {
-            var args = argsJson ? JSON.parse(argsJson) : [];
-            switch(method) {
-                case 'create_root':
-                    return String(__ink_create_root());
-                case 'destroy_root':
-                    __ink_destroy_root(args[0]);
-                    return '';
-                case 'create_node':
-                    return String(__ink_create_node(args[0], args[1]));
-                case 'create_text_node':
-                    return String(__ink_create_text_node(args[0]));
-                case 'append_child':
-                    return String(__ink_append_child(args[0], args[1]));
-                case 'remove_child':
-                    return String(__ink_remove_child(args[0], args[1]));
-                case 'insert_before':
-                    return String(__ink_insert_before(args[0], args[1], args[2]));
-                case 'commit_update':
-                    return String(__ink_commit_update(args[0], args[1]));
-                case 'set_text':
-                    return String(__ink_set_text(args[0], args[1]));
-                case 'commit':
-                    __ink_commit();
-                    return '';
-                case 'is_dirty':
-                    return __ink_is_dirty() ? 'true' : 'false';
-                case 'clear_dirty':
-                    __ink_clear_dirty();
-                    return '';
-                case 'measure_text':
-                    return __ink_measure_text(args[0], args[1]);
-                case 'measure_element':
-                    return __ink_measure_element(args[0]);
-                case 'exit':
-                    __ink_exit(args[0]);
-                    return '';
-                case 'should_exit':
-                    return __ink_should_exit() ? 'true' : 'false';
-                case 'get_exit_code':
-                    return String(__ink_get_exit_code());
-                case 'reset_exit':
-                    __ink_reset_exit();
-                    return '';
-                case 'set_terminal_size':
-                    __ink_set_terminal_size(args[0], args[1]);
-                    return '';
-                case 'get_terminal_size':
-                    return __ink_get_terminal_size();
-                case 'get_node_tag':
-                    return __ink_get_node_tag(args[0]);
-                case 'get_node_text':
-                    return __ink_get_node_text(args[0]);
-                case 'get_node_children':
-                    return __ink_get_node_children(args[0]);
-                case 'get_node_prop':
-                    return __ink_get_node_prop(args[0], args[1]);
-                case 'get_root_id':
-                    return __ink_get_root_id();
-                case 'calculate_layout':
-                    return String(__ink_calculate_layout());
-                case 'get_layout':
-                    return __ink_get_layout(args[0]);
-                case 'register_input':
-                    return String(__ink_register_input(args[0]));
-                case 'unregister_input':
-                    __ink_unregister_input(args[0]);
-                    return '';
-                case 'stdout_write':
-                    __ink_stdout_write(args[0]);
-                    return '';
-                case 'stderr_write':
-                    __ink_stderr_write(args[0]);
-                    return '';
-                case 'stdin_is_raw':
-                    return __ink_stdin_is_raw() ? 'true' : 'false';
-                case 'set_raw_mode':
-                    __ink_set_raw_mode(args[0]);
-                    return '';
-                default:
-                    return '';
-            }
-        };
-        
-        // Helper to call bridge with arguments as array
-        globalThis.__ink_ffi = function(method) {
-            var args = Array.prototype.slice.call(arguments, 1);
-            return JSON.parse(__ink_call(method, JSON.stringify(args)));
-        };
-        
-        // Simplified wrappers for common operations
-        globalThis.__ink_create_root = function() {
-            var id = parseFloat(__ink_call('create_root', '[]'));
-            return id;
-        };
-        
-        globalThis.__ink_destroy_root = function(id) {
-            __ink_call('destroy_root', JSON.stringify([id]));
-        };
-        
-        globalThis.__ink_create_node = function(tag, props) {
-            var id = parseFloat(__ink_call('create_node', JSON.stringify([tag, props])));
-            return id;
-        };
-        
-        globalThis.__ink_create_text_node = function(text) {
-            var id = parseFloat(__ink_call('create_text_node', JSON.stringify([text])));
-            return id;
-        };
-        
-        globalThis.__ink_append_child = function(parent, child) {
-            return __ink_call('append_child', JSON.stringify([parent, child])) === 'true';
-        };
-        
-        globalThis.__ink_remove_child = function(parent, child) {
-            return __ink_call('remove_child', JSON.stringify([parent, child])) === 'true';
-        };
-        
-        globalThis.__ink_insert_before = function(parent, child, before) {
-            return __ink_call('insert_before', JSON.stringify([parent, child, before])) === 'true';
-        };
-        
-        globalThis.__ink_commit_update = function(id, props) {
-            return __ink_call('commit_update', JSON.stringify([id, props])) === 'true';
-        };
-        
-        globalThis.__ink_set_text = function(id, text) {
-            return __ink_call('set_text', JSON.stringify([id, text])) === 'true';
-        };
-        
-        globalThis.__ink_commit = function() {
-            __ink_call('commit', '[]');
-        };
-        
-        globalThis.__ink_is_dirty = function() {
-            return __ink_call('is_dirty', '[]') === 'true';
-        };
-        
-        globalThis.__ink_clear_dirty = function() {
-            __ink_call('clear_dirty', '[]');
-        };
-        
-        globalThis.__ink_measure_text = function(text, width) {
-            var result = __ink_call('measure_text', JSON.stringify([text, width]));
-            var parts = result.split(',');
-            return { width: parseInt(parts[0]) || 0, height: parseInt(parts[1]) || 0 };
-        };
-        
-        globalThis.__ink_measure_element = function(id) {
-            var result = __ink_call('measure_element', JSON.stringify([id]));
-            if (result === 'null') return null;
-            var parts = result.split(',');
-            return { width: parseFloat(parts[0]) || 0, height: parseFloat(parts[1]) || 0 };
-        };
-        
-        globalThis.__ink_exit = function(code) {
-            __ink_call('exit', JSON.stringify([code || 0]));
-        };
-        
-        globalThis.__ink_should_exit = function() {
-            return __ink_call('should_exit', '[]') === 'true';
-        };
-        
-        globalThis.__ink_get_exit_code = function() {
-            return parseFloat(__ink_call('get_exit_code', '[]')) || 0;
-        };
-        
-        globalThis.__ink_reset_exit = function() {
-            __ink_call('reset_exit', '[]');
-        };
-        
-        globalThis.__ink_set_terminal_size = function(width, height) {
-            __ink_call('set_terminal_size', JSON.stringify([width, height]));
-        };
-        
-        globalThis.__ink_get_terminal_size = function() {
-            var result = __ink_call('get_terminal_size', '[]');
-            var parts = result.split(',');
-            return { width: parseInt(parts[0]) || 0, height: parseInt(parts[1]) || 0 };
-        };
-        
-        globalThis.__ink_get_node_tag = function(id) {
-            var result = __ink_call('get_node_tag', JSON.stringify([id]));
-            return result === 'null' ? null : result;
-        };
-        
-        globalThis.__ink_get_node_text = function(id) {
-            var result = __ink_call('get_node_text', JSON.stringify([id]));
-            return result === 'null' ? null : result;
-        };
-        
-        globalThis.__ink_get_node_children = function(id) {
-            var result = __ink_call('get_node_children', JSON.stringify([id]));
-            if (result === 'null') return null;
-            try {
-                return JSON.parse(result);
-            } catch(e) {
-                return null;
-            }
-        };
-        
-        globalThis.__ink_get_node_prop = function(id, prop) {
-            var result = __ink_call('get_node_prop', JSON.stringify([id, prop]));
-            return result === 'null' ? null : result;
-        };
-        
-        globalThis.__ink_get_root_id = function() {
-            var result = __ink_call('get_root_id', '[]');
-            return result === 'null' ? null : parseFloat(result) || null;
-        };
-        
-        globalThis.__ink_calculate_layout = function() {
-            return __ink_call('calculate_layout', '[]') === 'true';
-        };
-        
-        globalThis.__ink_get_layout = function(id) {
-            var result = __ink_call('get_layout', JSON.stringify([id]));
-            if (result === 'null') return null;
-            var parts = result.split(',');
-            return {
-                left: parseFloat(parts[0]) || 0,
-                top: parseFloat(parts[1]) || 0,
-                width: parseFloat(parts[2]) || 0,
-                height: parseFloat(parts[3]) || 0
-            };
-        };
-        
-        globalThis.__ink_register_input = function(callback) {
-            return parseFloat(__ink_call('register_input', JSON.stringify([callback])));
-        };
-        
-        globalThis.__ink_unregister_input = function(id) {
-            __ink_call('unregister_input', JSON.stringify([id]));
-        };
-        
-        globalThis.__ink_stdout_write = function(data) {
-            __ink_call('stdout_write', JSON.stringify([data]));
-        };
-        
-        globalThis.__ink_stderr_write = function(data) {
-            __ink_call('stderr_write', JSON.stringify([data]));
-        };
-        
-        globalThis.__ink_stdin_is_raw = function() {
-            return __ink_call('stdin_is_raw', '[]') === 'true';
-        };
-        
-        globalThis.__ink_set_raw_mode = function(enabled) {
-            __ink_call('set_raw_mode', JSON.stringify([enabled]));
-        };
-        
-        // Console polyfill using __ink_stdout_write
-        globalThis.console = {
-            log: function() { 
-                var args = Array.prototype.slice.call(arguments);
-                var msg = args.map(function(v) { return String(v); }).join(' ') + '\n';
-                try { __ink_stdout_write(msg); } catch(e) {}
-            },
-            error: function() { 
-                var args = Array.prototype.slice.call(arguments);
-                var msg = '[ERROR] ' + args.map(function(v) { return String(v); }).join(' ') + '\n';
-                try { __ink_stderr_write(msg); } catch(e) {}
-            },
-            warn: function() { 
-                var args = Array.prototype.slice.call(arguments);
-                var msg = '[WARN] ' + args.map(function(v) { return String(v); }).join(' ') + '\n';
-                try { __ink_stdout_write(msg); } catch(e) {}
-            },
-            info: function() { 
-                var args = Array.prototype.slice.call(arguments);
-                var msg = '[INFO] ' + args.map(function(v) { return String(v); }).join(' ') + '\n';
-                try { __ink_stdout_write(msg); } catch(e) {}
-            }
-        };
-        
-        // Process polyfill
-        globalThis.process = {
-            stdout: {
-                write: function(s) { try { __ink_stdout_write(String(s)); } catch(e) {} }
-            },
-            stderr: {
-                write: function(s) { try { __ink_stderr_write('[STDERR] ' + String(s)); } catch(e) {} }
-            }
-        };
-        "#;
-        
-        ctx.eval::<(), _>(init_code).ok();
+        if let Err(e) = ink_js::register(ctx) {
+            tracing::warn!("ink_js::register error: {:?}", e);
+        }
     });
     
     // Create a single Rust closure for __ink_call
@@ -557,9 +377,31 @@ async fn main() -> Result<()> {
         globals.set("__ink_call", ink_call).ok();
     });
     
+    // Load TuiBridge runtime (React reconciler + bridge wrappers)
+    let runtime_js = include_str!("runtime.js");
+    ctx.with(|ctx| {
+        if let Err(e) = ctx.eval::<(), _>(runtime_js) {
+            tracing::error!("Runtime load error: {:?}", e);
+        } else {
+            tracing::debug!("Runtime loaded successfully");
+        }
+    });
+    
+    // Try to load precompiled bytecode bundle if available (production build)
+    #[cfg(has_bytecode_bundle)]
+    {
+        // Note: QuickJS bytecode loading would use ctx.eval_bytes() or similar
+        // For now, we just log that bytecode is available
+        tracing::info!("Production build: bytecode bundle available");
+        // In a real implementation with bundle_qbc module:
+        // let bytes = bundle_qbc::BUNDLE_BYTECODE;
+        // ctx.eval_bytes(bytes)?;
+    }
+
     // Run the JS code and manage terminal
-    let root_id = bridge::__ink_create_root();
-    tracing::info!("Created root node: {}", root_id);
+    // Note: JS code (via ink.render) will create its own root.
+    // We track the actual root after JS runs.
+    let mut root_id: Option<u32> = None;
     
     // If there's JS code, run it
     if let Some(ref code) = js_code {
@@ -570,6 +412,10 @@ async fn main() -> Result<()> {
                 Err(e) => tracing::error!("Code execution error: {:?}", e),
             }
         });
+        
+        // Get the root created by JS (via ink.render or __ink_create_root)
+        root_id = bridge::__ink_get_root_id();
+        tracing::info!("Root node: {:?}", root_id);
     }
     
     // Create terminal
@@ -611,7 +457,7 @@ async fn main() -> Result<()> {
         tracing::info!("Non-interactive mode: rendering and exiting");
         
         // Do initial render
-        if let Err(e) = render_tree(&mut terminal, Some(root_id)) {
+        if let Err(e) = render_tree(&mut terminal, root_id) {
             tracing::error!("Render error: {:?}", e);
         }
         
@@ -627,6 +473,27 @@ async fn main() -> Result<()> {
     
     // Create event stream
     let mut event_stream = EventStream::new();
+    
+    // Setup hot reload if enabled
+    #[cfg(feature = "hotreload")]
+    let mut hot_reloader = if let Some(ref watch_path) = watch_path {
+        match hotreload::HotReloader::new(watch_path) {
+            Ok(hr) => {
+                tracing::info!("Hot reload enabled for: {}", watch_path);
+                Some(hr)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to setup hot reload: {:?}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    
+    // Keep track of the original script path for hot reload
+    let script_path = bundle_idx.and_then(|i| args.get(i + 1).cloned())
+        .or_else(|| args.get(1).cloned().filter(|s| !s.starts_with('-')));
     
     // Run the event loop
     tracing::info!("Starting event loop");
@@ -650,22 +517,51 @@ async fn main() -> Result<()> {
                         let shift = key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
                         let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                         
-                        // Dispatch to JS
-                        let callback_js = bridge::__ink_dispatch_key(&key_str, ctrl, shift, alt);
-                        if !callback_js.is_empty() && callback_js != "[]" {
-                            ctx.with(|ctx| {
-                                let code = format!("try {{ {} }} catch(e) {{ console.error(e) }}", callback_js);
-                                if let Err(e) = ctx.eval::<(), _>(&*code) {
-                                    tracing::warn!("Callback error: {:?}", e);
-                                }
-                            });
-                        }
+                        // Dispatch to JS runtime handlers
+                        ctx.with(|ctx| {
+                            let code = format!(
+                                "try {{ if (globalThis.__tb_dispatch_key) __tb_dispatch_key('{}', {}, {}, {}); }} catch(e) {{ console.error(e); }}",
+                                key_str.replace("'", "\\'"),
+                                ctrl, shift, alt
+                            );
+                            if let Err(e) = ctx.eval::<(), _>(&*code) {
+                                tracing::warn!("Key dispatch error: {:?}", e);
+                            }
+                        });
                         
                         // Check if JS rendered anything
                         dirty = dirty || bridge::__ink_is_dirty();
                     }
-                    Some(Ok(Event::Mouse(_))) => {
-                        // TODO: Handle mouse events
+                    Some(Ok(Event::Mouse(mouse))) => {
+                        use crossterm::event::MouseEventKind;
+                        
+                        let kind_str = match mouse.kind {
+                            MouseEventKind::Down(_) => "press",
+                            MouseEventKind::Up(_) => "release",
+                            MouseEventKind::Drag(_) | MouseEventKind::Moved => "hold",
+                            MouseEventKind::ScrollUp => "wheelUp",
+                            MouseEventKind::ScrollDown => "wheelDown",
+                            _ => "unknown",
+                        };
+                        
+                        let shift = mouse.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+                        let ctrl = mouse.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+                        let alt = mouse.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+                        
+                        tracing::debug!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
+                        
+                        // Dispatch to JS runtime handlers
+                        ctx.with(|ctx| {
+                            let code = format!(
+                                "try {{ if (globalThis.__tb_dispatch_mouse) __tb_dispatch_mouse({{kind:'{}',column:{},row:{},shift:{},ctrl:{},alt:{}}}); }} catch(e) {{ console.error(e); }}",
+                                kind_str, mouse.column, mouse.row, shift, ctrl, alt
+                            );
+                            if let Err(e) = ctx.eval::<(), _>(&*code) {
+                                tracing::warn!("Mouse dispatch error: {:?}", e);
+                            }
+                        });
+                        
+                        dirty = dirty || bridge::__ink_is_dirty();
                     }
                     Some(Ok(Event::Resize(cols, rows))) => {
                         tracing::debug!("Terminal resize: {}x{}", cols, rows);
@@ -678,14 +574,77 @@ async fn main() -> Result<()> {
             
             // Handle timer callbacks (polled)
             _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                // Process timers - handled by JS
+                // OPTIMIZED: Process microtasks and timers via single JS call
+                // Avoids per-callback eval() - 10x speedup for hot path
+                ctx.with(|ctx| {
+                    // First, invoke microtasks (drained in JS via __tb_invoke_microtasks)
+                    if bridge::__ink_drain_microtasks() {
+                        let microtask_code = "try { if (globalThis.__tb_invoke_microtasks) __tb_invoke_microtasks(); } catch(e) { console.error(e); }";
+                        if let Err(e) = ctx.eval::<(), _>(microtask_code) {
+                            tracing::warn!("Microtask dispatch error: {:?}", e);
+                        }
+                    }
+                    
+                    // Then, invoke timers (via __tb_invoke_timers)
+                    let timer_ids = bridge::__ink_process_timers();
+                    if timer_ids != "[]" {
+                        let timer_code = format!(
+                            "try {{ if (globalThis.__tb_invoke_timers) __tb_invoke_timers({}); }} catch(e) {{ console.error(e); }}",
+                            timer_ids
+                        );
+                        if let Err(e) = ctx.eval::<(), _>(&*timer_code) {
+                            tracing::warn!("Timer dispatch error: {:?}", e);
+                        }
+                    }
+                });
+                
                 dirty = dirty || bridge::__ink_is_dirty();
+            }
+        }
+        
+        // Handle hot reload (outside select to avoid cfg issues)
+        #[cfg(feature = "hotreload")]
+        if let Some(ref mut reloader) = hot_reloader {
+            if let Some(_event) = reloader.poll_changes() {
+                tracing::info!("Hot reload: File changed, reloading...");
+                
+                // Unmount old app
+                if let Some(old_root_id) = bridge::__ink_get_root_id() {
+                    bridge::__ink_destroy_root(old_root_id);
+                }
+                
+                // Reload and re-execute the script
+                if let Some(ref path) = script_path {
+                    if let Ok(new_code) = std::fs::read_to_string(path) {
+                        let start = std::time::Instant::now();
+                        ctx.with(|ctx| {
+                            match ctx.eval::<(), _>(new_code.as_str()) {
+                                Ok(_) => {
+                                    let elapsed = start.elapsed();
+                                    tracing::info!("Hot reload complete in {:?}", elapsed);
+                                    if elapsed.as_millis() < 50 {
+                                        tracing::debug!("Hot reload under 50ms target");
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Hot reload eval error: {:?}", e);
+                                }
+                            }
+                        });
+                        
+                        // Get new root
+                        root_id = bridge::__ink_get_root_id();
+                        dirty = true;
+                    } else {
+                        tracing::error!("Hot reload: Failed to read {}", path);
+                    }
+                }
             }
         }
         
         // Render if dirty
         if dirty {
-            if let Err(e) = render_tree(&mut terminal, Some(root_id)) {
+            if let Err(e) = render_tree(&mut terminal, root_id) {
                 tracing::error!("Render error: {:?}", e);
             }
             bridge::__ink_clear_dirty();
@@ -706,18 +665,30 @@ async fn main() -> Result<()> {
 /// Helper function to call bridge from JavaScript
 /// args_json is a JSON array string containing the arguments
 fn call_ink_ffi(method: &str, args_json: &str) -> String {
-    // Parse the JSON args
-    let args: Vec<String> = serde_json::from_str(args_json).unwrap_or_default();
+    // Parse the JSON args - handle both string and number arrays
+    let args: Vec<serde_json::Value> = serde_json::from_str(args_json).unwrap_or_default();
+    // Convert to strings for convenience
+    let args: Vec<String> = args.iter().map(|v| match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => v.to_string(),
+    }).collect();
     
     match method {
         "create_root" => (bridge::__ink_create_root() as f64).to_string(),
+        "render_element" => {
+            let json = args.first().cloned().unwrap_or_default();
+            (bridge::__ink_render_element(&json) as f64).to_string()
+        }
         "destroy_root" => { 
             let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             bridge::__ink_destroy_root(id);
             String::new()
         }
         "create_node" => {
-            let tag = args.get(0).cloned().unwrap_or_default();
+            let tag = args.first().cloned().unwrap_or_default();
             let props = args.get(1).cloned().unwrap_or_default();
             (bridge::__ink_create_node(&tag, &props).unwrap_or(0) as f64).to_string()
         }
@@ -726,28 +697,28 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
             (bridge::__ink_create_text_node(&text) as f64).to_string()
         }
         "append_child" => {
-            let p = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let p = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let c = args.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             (bridge::__ink_append_child(p, c).is_ok()).to_string()
         }
         "remove_child" => {
-            let p = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let p = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let c = args.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             (bridge::__ink_remove_child(p, c).is_ok()).to_string()
         }
         "insert_before" => {
-            let p = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let p = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let c = args.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let b = args.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             (bridge::__ink_insert_before(p, c, b).is_ok()).to_string()
         }
         "commit_update" => {
-            let id = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let props = args.get(1).cloned().unwrap_or_default();
             (bridge::__ink_commit_update(id, &props).is_ok()).to_string()
         }
         "set_text" => {
-            let id = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let text = args.get(1).cloned().unwrap_or_default();
             (bridge::__ink_set_text(id, &text).is_ok()).to_string()
         }
@@ -758,15 +729,15 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
         "is_dirty" => bridge::__ink_is_dirty().to_string(),
         "clear_dirty" => { bridge::__ink_clear_dirty(); String::new() }
         "measure_text" => {
-            let text = args.get(0).cloned().unwrap_or_default();
+            let text = args.first().cloned().unwrap_or_default();
             let width = args.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(80);
             let (w, h) = bridge::__ink_measure_text(&text, width);
-            format!("{},{}", w, h)
+            format!("{},{}" , w, h)
         }
         "measure_element" => {
             let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             match bridge::__ink_measure_element(id) {
-                Some((w, h)) => format!("{},{}", w, h),
+                Some((w, h)) => format!("{},{}" , w, h),
                 None => "null".to_string(),
             }
         }
@@ -779,14 +750,14 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
         "get_exit_code" => (bridge::__ink_get_exit_code() as f64).to_string(),
         "reset_exit" => { bridge::__ink_reset_exit(); String::new() }
         "set_terminal_size" => {
-            let w = args.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(80);
+            let w = args.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(80);
             let h = args.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(24);
             bridge::__ink_set_terminal_size(w, h);
             String::new()
         }
         "get_terminal_size" => {
             let (w, h) = bridge::__ink_get_terminal_size();
-            format!("{},{}", w, h)
+            format!("{},{}" , w, h)
         }
         "get_node_tag" => {
             let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
@@ -807,7 +778,7 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
             }
         }
         "get_node_prop" => {
-            let id = args.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             let prop = args.get(1).cloned().unwrap_or_default();
             bridge::__ink_get_node_prop(id, &prop).unwrap_or_else(|| "null".to_string())
         }
@@ -821,7 +792,7 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
         "get_layout" => {
             let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
             match bridge::__ink_get_layout(id) {
-                Some((x, y, w, h)) => format!("{},{},{},{}", x, y, w, h),
+                Some((x, y, w, h)) => format!("{},{},{},{}" , x, y, w, h),
                 None => "null".to_string(),
             }
         }
@@ -853,6 +824,42 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
                 let _ = crossterm::terminal::disable_raw_mode();
             }
             String::new()
+        }
+        // Timer polyfills
+        "set_timeout" => {
+            let callback = args.first().cloned().unwrap_or_default();
+            let delay = args.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            (bridge::__ink_set_timeout(&callback, delay) as f64).to_string()
+        }
+        "set_interval" => {
+            let callback = args.first().cloned().unwrap_or_default();
+            let interval = args.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            (bridge::__ink_set_interval(&callback, interval) as f64).to_string()
+        }
+        "clear_timer" => {
+            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            (bridge::__ink_clear_timer(id)).to_string()
+        }
+        "process_timers" => {
+            // Returns JSON array of timer IDs (e.g., "[1,2,3]")
+            bridge::__ink_process_timers()
+        }
+        "has_pending_timers" => bridge::__ink_has_pending_timers().to_string(),
+        "next_timer_delay" => {
+            match bridge::__ink_next_timer_delay() {
+                Some(d) => d.as_millis().to_string(),
+                None => "-1".to_string(),
+            }
+        }
+        // Microtask polyfills
+        "enqueue_microtask" => {
+            let callback = args.first().cloned().unwrap_or_default();
+            bridge::__ink_enqueue_microtask(&callback);
+            String::new()
+        }
+        "drain_microtasks" => {
+            // Returns bool - microtask execution is handled by __tb_invoke_microtasks in JS
+            bridge::__ink_drain_microtasks().to_string()
         }
         _ => String::new(),
     }

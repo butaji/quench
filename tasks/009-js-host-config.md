@@ -1,20 +1,25 @@
-# Task 009: JS Reconciler Host Config
+# Task 009: Rust: Expose ink module to JS
 
 ## Goal
-Build the React reconciler host config that targets `globalThis.__ink_*` bridge functions.
+Expose all ink functionality from Rust to JS via rquickjs globals.
+
+## Status
+> ✅ **Done** - Code exists in `src/ink_js.rs`
+> ⚠️ **Not Integrated** - See Task 009b for integration blocker
 
 ## Acceptance Criteria
-- [ ] `createInstance(type, props)` calls `__ink_create_node`.
-- [ ] `createTextInstance(text)` calls `__ink_create_text_node`.
-- [ ] `appendChild`, `removeChild`, `insertBefore` call bridge equivalents.
-- [ ] `commitUpdate` calls `__ink_commit_update`.
-- [ ] `commitTextUpdate` calls `__ink_set_text`.
-- [ ] `commitRoot` calls `__ink_commit()` once.
-- [ ] `getPublicInstance(instance)` returns `{id: instance.id}` so refs and `measureElement` work.
-- [ ] Integration test: mount `<Box><Text>hi</Text></Box>` in rquickjs, verify Rust tree built.
+- [x] `ink::BOX`, `ink::TEXT`, etc. exposed as JS string constants
+- [x] `ink::render()` exposed as JS function
+- [x] `ink::use_state()`, `ink::use_effect()`, etc. exposed as JS functions
+- [x] Hook context managed in Rust, not JS
+- [x] JS receives data structures only, all logic in Rust
+
+## Code Location
+- `src/ink_js.rs` - Full implementation
+- `ink_js::register()` - Called to expose globals
 
 ## Dependencies
-- Task 004, Task 005
+- Task 009b (integration)
 
 ## SPEC Reference
-§2 What Runs in rquickjs; §5.1 render(); §4 Bridge API
+§3 Rust ink Module

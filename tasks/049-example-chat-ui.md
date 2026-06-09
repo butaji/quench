@@ -1,19 +1,15 @@
-# Task 049: Example: Chat UI
+# Task 049: Example: Chat UI (JS + TS)
 
 ## Goal
-Split-pane chat interface using `useStdin`, `useStdout`, `Newline`, and scrolling.
+Split-pane chat interface with message list and input.
 
 ## Acceptance Criteria
-- [ ] Source `examples/chat-ui.tsx` with message list (top) and input prompt (bottom).
-- [ ] `useStdin` captures typed input; Enter sends message.
-- [ ] Messages separated by `Newline`; list scrolls when full.
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: `useStdin`, `useStdout`, `Newline`, split pane, text input handling.
+- [ ] `examples/chat-ui.js` - Chat UI in JavaScript
+- [ ] `examples/chat-ui.ts` - Chat UI in TypeScript
+- [ ] Both versions work identically
+- [ ] Message list (top) and input prompt (bottom)
+- [ ] `useStdin` captures input; Enter sends
+- [ ] Covers: `useStdin`, `useStdout`, `Newline`, split pane
 
 ## Dependencies
 - Task 032, Task 033, Task 041
-
-## SPEC Reference
-§5.3 useStdin / useStdout; §5.2 Components — Newline

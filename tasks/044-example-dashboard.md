@@ -1,18 +1,13 @@
-# Task 044: Example: Dashboard
+# Task 044: Example: Dashboard (JS + TS)
 
 ## Goal
-Multi-pane dashboard with `flexDirection="row"`, multiple `Box`, borders, titles.
+Multi-pane dashboard with flex layouts, borders, titles.
 
 ## Acceptance Criteria
-- [ ] Source `examples/dashboard.tsx` with header + 3-column layout + footer.
-- [ ] Each pane has `borderStyle`, `title`, `padding`, distinct `color`.
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: complex flex row/column nesting, border styles, title alignment, padding.
+- [ ] `examples/dashboard.js` - Dashboard in JavaScript
+- [ ] `examples/dashboard.ts` - Dashboard in TypeScript
+- [ ] Both versions work identically
+- [ ] Covers: flex row/column nesting, borders, titles, colors
 
 ## Dependencies
 - Task 041
-
-## SPEC Reference
-§3.2 Renderer

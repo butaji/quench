@@ -1,16 +1,35 @@
-# Task 012: JS Hook Shims
+# Task 012: Rust: Hooks Implementation
 
 ## Goal
-Implement thin JS wrappers for `useInput` and `useApp` that bridge to Rust host functions.
+Implement all hooks in Rust and expose to JS via rquickjs.
+
+## Status
+> ⚠️ **Partial** - React hooks are stubs, Ink hooks functional
+> ⚠️ **Not Integrated** - See Task 009b
 
 ## Acceptance Criteria
-- [ ] `useInput(handler, options)` registers/unregisters via `__ink_register_input` in `useEffect`.
-- [ ] `useInput` respects `options.isActive`.
-- [ ] `useApp()` returns object with `exit`, `stdout`, `stdin`, `stderr` using `__ink_*`.
-- [ ] Unit test: mock `globalThis.__ink_*`, verify registration and cleanup.
+- [x] `useState<T>(initial)` → `(T, fn(T))` - **stub only**
+- [x] `useEffect(deps, fn)` → **stub only (no-op)**
+- [x] `useRef<T>(initial)` → `{current: T}` - functional
+- [x] `useMemo(fn, deps)` → functional
+- [x] `useCallback(fn, deps)` → functional
+- [x] `useInput(handler, options)` → functional
+- [x] `useApp()` → functional (exit, stdout, stdin, stderr)
+- [ ] Hook context stored in Rust `HookContext` - **needs reconciler**
+
+## Code Location
+- `src/ink_js.rs::use_state`, `use_effect`, etc.
+
+## Missing: Full React Reconciler
+The current implementation lacks a proper React reconciler for:
+- `useState` that triggers re-renders
+- `useEffect` cleanup and dependency tracking
+- Proper hook order enforcement
+
+This requires integrating a reconciler (like `react-reconciler` port to Rust or custom implementation).
 
 ## Dependencies
-- Task 008, Task 007
+- Task 009b (integration)
 
 ## SPEC Reference
-§5.3 Hooks
+§3 Rust ink Module

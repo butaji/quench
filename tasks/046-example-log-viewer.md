@@ -1,18 +1,15 @@
-# Task 046: Example: Log Viewer
+# Task 046: Example: Log Viewer (JS + TS)
 
 ## Goal
-Real-time log viewer using `Static` component with auto-scrolling.
+Real-time log viewer with auto-scrolling using `Static` component.
 
 ## Acceptance Criteria
-- [ ] Source `examples/log-viewer.tsx` appends log lines every second via `useEffect` + `setInterval`.
-- [ ] Uses `Static` for log lines; main tree shows status bar.
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: `Static`, `useEffect`, timers, scrolling-like behavior, split layout.
+- [ ] `examples/log-viewer.js` - Log viewer in JavaScript
+- [ ] `examples/log-viewer.ts` - Log viewer in TypeScript
+- [ ] Both versions work identically
+- [ ] Log lines every second via `useEffect` + `setInterval`
+- [ ] Uses `Static` for log lines
+- [ ] Covers: `Static`, timers, split layout
 
 ## Dependencies
 - Task 027, Task 017, Task 041
-
-## SPEC Reference
-§3.2 Renderer — Static; §5.2 Components

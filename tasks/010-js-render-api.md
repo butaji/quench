@@ -1,17 +1,24 @@
-# Task 010: JS render() API
+# Task 010: Rust: render() Function
 
 ## Goal
-Implement the `render()` entry point matching Ink's API.
+Implement `render()` in Rust and expose it to JS via rquickjs.
+
+## Status
+> ✅ **Done** - Code exists in `src/ink_js.rs::render()`
+> ⚠️ **Not Integrated** - See Task 009b
 
 ## Acceptance Criteria
-- [ ] `render(node, options)` creates container via reconciler, calls `__ink_create_root`.
-- [ ] Returns `{waitUntilExit, unmount}`.
-- [ ] `unmount()` destroys React container and calls `__ink_destroy_root`.
-- [ ] `waitUntilExit()` resolves on `__ink_exit`.
-- [ ] Integration test: render + unmount cycle completes without panic.
+- [x] `render(element)` accepts JS element object `{type, props}`
+- [x] Builds Rust node tree from JS element
+- [x] Calculates Yoga layout
+- [x] Returns JS object with `{waitUntilExit, unmount, rerender}`
+- [x] No logic in JS
+
+## Code Location
+- `src/ink_js.rs::render()` - Full implementation
 
 ## Dependencies
-- Task 009, Task 002
+- Task 009b (integration)
 
 ## SPEC Reference
-§5.1 `render(<App />, {stdout, stdin, stderr, debug, patchConsole})`
+§3 Rust ink Module; §4 JS is Just Data

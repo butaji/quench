@@ -9,6 +9,8 @@ Implement mouse event hit-testing and dispatch to deepest matching node.
 - [ ] Dispatches to deepest node with registered input callback.
 - [ ] Unit test: build tree with known rects, simulate click at (x,y), verify correct node receives event.
 
+> ⚠️ **NOT STARTED**: Currently `main.rs` has TODO comment - mouse events are not handled.
+
 ## Dependencies
 - Task 008, Task 013
 

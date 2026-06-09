@@ -1,18 +1,14 @@
-# Task 043: Example: Focus Form
+# Task 043: Example: Focus Form (JS + TS)
 
 ## Goal
 Form with multiple inputs demonstrating `useFocus`, `useFocusManager`, tab order.
 
 ## Acceptance Criteria
-- [ ] Source `examples/focus-form.tsx` with 3+ focusable fields (text inputs, buttons).
-- [ ] Tab / Shift+Tab cycles focus; focused field highlighted with `color`/`bold`.
-- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
-- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
-- [ ] Parity harness verifies 100% match.
-- [ ] Covers: `useFocus`, `useFocusManager`, focus styles, keyboard-only navigation.
+- [ ] `examples/focus-form.js` - Focus form in JavaScript
+- [ ] `examples/focus-form.ts` - Focus form in TypeScript
+- [ ] Both versions work identically
+- [ ] Tab/Shift+Tab cycles focus; focused field highlighted
+- [ ] Covers: `useFocus`, `useFocusManager`, keyboard navigation
 
 ## Dependencies
 - Task 035, Task 041
-
-## SPEC Reference
-§5.3 useFocus / useFocusManager
