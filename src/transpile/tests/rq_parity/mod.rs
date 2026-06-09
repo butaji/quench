@@ -1050,3 +1050,17 @@ ink_example_test!(
         "assertDefined with throw IIFE works."
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Catch type annotation example
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_type_annotation_catch,
+    "ink-type-annotation-catch",
+    [
+        "Catch Type Annotation Demo",
+        "Something went wrong",
+        "Caught: string error"
+    ]
+);
