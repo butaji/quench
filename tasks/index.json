@@ -2488,7 +2488,7 @@
     {
       "id": "195",
       "title": "ink-string-advanced example — String prototype methods (localeCompare, normalize, codePointAt, fromCodePoint, concat, charAt, charCodeAt)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-string-advanced/",
