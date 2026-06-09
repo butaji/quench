@@ -294,7 +294,13 @@
         "187",
         "188",
         "189",
-        "190",
+        "190"
+      ]
+    },
+    {
+      "name": "Phase 18: Expression-Level + React Pattern + Runtime API Completion",
+      "description": "Final TS/TSX expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features exercised by Ink examples, validated across all 3 environments via scripts/parity.sh with 100% output match.",
+      "tasks": [
         "191",
         "192",
         "193",
@@ -2504,7 +2510,7 @@
     {
       "id": "197",
       "title": "ink-ts-directive example — // @ts-expect-error and // @ts-ignore",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-ts-directive/",
@@ -4495,7 +4501,7 @@
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 173,
+    "examples_total": 319,
     "examples_with_tests": 128,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -4512,8 +4518,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 216,
-    "completed_tasks": 142
+    "pending_tasks": 193,
+    "completed_tasks": 165
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
