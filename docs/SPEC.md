@@ -30,7 +30,7 @@ ink-shim.js (~120 KB total)
     └── import {render, Box, Text, useInput} from 'ink'
 ```
 
-**Deno backend:** Host config targets Yoga-WASM (or taffy-WASM) for layout and writes ANSI directly via `Deno.stdout.write()`. Uses Deno-native timers and `setTimeout`.
+**Deno backend:** Host config targets Yoga-WASM for layout and writes ANSI directly via `Deno.stdout.write()`. Uses Deno-native timers and `setTimeout`.
 
 **TuiBridge backend:** Host config calls `__ink_*` bridge functions into Rust.
 
@@ -46,7 +46,7 @@ ink-shim.js (~120 KB total)
 
 ### 3.1 Layout Engine: Yoga (`yoga-rs`)
 
-We use Facebook's Yoga C++ library via Rust bindings (`yoga-rs` or `taffy` as fallback). Every reconciler node has a 1:1 `YogaNode` in Rust.
+We use Facebook's Yoga C++ library via Rust bindings (`yoga` crate). Every reconciler node has a 1:1 `YogaNode` in Rust.
 
 **Why Yoga in Rust?** Ink's layout behavior is defined by Yoga. Using the same engine guarantees pixel-identical layouts. Text measurement is bridged to Rust's `unicode-width` + `textwrap`.
 
