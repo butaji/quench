@@ -310,5 +310,7 @@ pub fn transform_and_codegen<'a>(allocator: &'a Allocator, program: &mut oxc_ast
     let _ = Transformer::new(allocator, std::path::Path::new("app.tsx"), &options)
         .build_with_scoping(scoping, program);
 
-    Ok(oxc_codegen::Codegen::new().build(program).code)
+    let code = oxc_codegen::Codegen::new().build(program).code;
+    // Transform TypeScript accessor fields to JavaScript-compatible fields
+    Ok(crate::transpile::postprocess::transform_accessor_fields(&code))
 }
