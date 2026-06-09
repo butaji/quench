@@ -1,0 +1,15 @@
+# Task 034: Hook useStderr
+
+## Goal
+Implement `useStderr` providing write access to stderr.
+
+## Acceptance Criteria
+- [ ] `useStderr()` returns `{write}`.
+- [ ] `write(data)` delegates to `__ink_stderr_write`.
+- [ ] Unit test: write to stderr, verify bytes in stderr buffer.
+
+## Dependencies
+- Task 031
+
+## SPEC Reference
+§5.3 useStderr
