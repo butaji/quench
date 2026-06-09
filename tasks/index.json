@@ -2477,7 +2477,7 @@
     {
       "id": "194",
       "title": "ink-props-with-children example — React.PropsWithChildren",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-props-with-children/",
