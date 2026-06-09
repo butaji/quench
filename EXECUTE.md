@@ -5,7 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
-> **Current stats:** 387 tasks, 176 completed, 211 pending, 33 phases, 323 example tasks.
+> **Current stats:** 407 tasks, 176 completed, 231 pending, 34 phases, 343 example tasks.
 
 ---
 
@@ -702,7 +702,7 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 ---
 
 ### Phase 30: Final Comprehensive Coverage Audit
-**Goal:** End-to-end audit of all 377 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.
+**Goal:** End-to-end audit of all 407 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.
 
 | Task | Description | Status |
 |------|-------------|--------|
@@ -736,16 +736,6 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 **Tasks:** 377–391 | **Status:** ⏳ Pending (15 tasks)
 
 ---
-------|---------|---------|--------|
-| 377 | `ink-jsx-generic-type-args` | JSX generic type arguments (`<Component<T> />`) | ⏳ |
-| 378 | `ink-react-children-foreach-map` | `Children.forEach`, `Children.map`, `Children.count` | ⏳ |
-| 379 | `ink-ts-string-manipulation-types` | `Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize` | ⏳ |
-| 380 | `ink-ts-utility-types-advanced` | `Awaited`, `InstanceType`, `ConstructorParameters`, `ThisType` | ⏳ |
-| 381 | `ink-ts-global-var-augmentation` | `declare var` global augmentation | ⏳ |
-
-**Tasks:** 377–381 | **Status:** ⏳ Pending (5 tasks)
-
----
 
 ### Phase 32: Core Language + React + Runtime Edge Cases
 **Goal:** Remaining practical TS/TSX/React/Ink edge cases: IIFE, function declarations, block scoping, object shorthand/getters/setters/computed properties, JSX boolean attributes, Promise.all mixed outcomes, Array.flat(Infinity), JSON.stringify replacer, console.table, useReducer init, forwardRef displayName, parseInt radix, sparse arrays.
@@ -772,6 +762,36 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 
 ---
 
+### Phase 33: HIR & Codegen Edge Cases
+**Goal:** Additional TS/TSX/React/Ink features not yet explicitly exercised in HIR and compile-path codegen: super member access, fundamental Array/String methods, deep Object statics, console debug methods, process info, Symbol registry, Function properties, base64 encoding, localStorage full API, Web Crypto, Object prototype methods, RegExp compile, BigInt prototype, Intl locale/segmenter/displayNames, requestAnimationFrame, performance navigation, locale string formatting, defineProperties, and Date parse/setters.
+
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 407 | `ink-super-member` | `super.method()`, `super[prop]()` | ⏳ |
+| 408 | `ink-array-fundamental` | `map`, `filter`, `forEach`, `concat`, `join`, `slice` | ⏳ |
+| 409 | `ink-string-fundamental` | `indexOf`, `lastIndexOf`, `slice`, `split`, `substring`, `toLowerCase`, `toUpperCase`, `trim`, `matchAll` | ⏳ |
+| 410 | `ink-object-static-deep` | `getOwnPropertyDescriptor`, `preventExtensions`, `isExtensible`, `isSealed`, `isFrozen`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `defineProperties` | ⏳ |
+| 411 | `ink-console-debug` | `debug`, `dir`, `groupEnd`, `countReset` | ⏳ |
+| 412 | `ink-process-info` | `platform`, `version`, `versions`, `arch`, `release` | ⏳ |
+| 413 | `ink-symbol-for` | `Symbol.for`, `Symbol.keyFor`, `Symbol.isConcatSpreadable`, `Symbol.unscopables` | ⏳ |
+| 414 | `ink-function-props` | `length`, `name`, `prototype`, `[Symbol.hasInstance]` | ⏳ |
+| 415 | `ink-atob-btoa` | `atob`, `btoa` | ⏳ |
+| 416 | `ink-localstorage-api` | `getItem`, `setItem`, `removeItem`, `clear`, `length`, `key` | ⏳ |
+| 417 | `ink-crypto-web` | `crypto.getRandomValues`, `crypto.subtle` | ⏳ |
+| 418 | `ink-object-prototype-deep` | `toLocaleString`, `isPrototypeOf`, `propertyIsEnumerable` | ⏳ |
+| 419 | `ink-regexp-compile` | `RegExp.prototype.compile`, `RegExp.prototype.toString` | ⏳ |
+| 420 | `ink-bigint-proto` | `BigInt.prototype.toString`, `BigInt.prototype.valueOf` | ⏳ |
+| 421 | `ink-intl-locale` | `Intl.Segmenter`, `Intl.DisplayNames`, `Intl.Locale` | ⏳ |
+| 422 | `ink-request-animation-frame` | `requestAnimationFrame`, `cancelAnimationFrame` | ⏳ |
+| 423 | `ink-performance-navigation` | `performance.timing`, `performance.navigation` | ⏳ |
+| 424 | `ink-array-tolocalestring` | `Array.prototype.toLocaleString`, `Number.prototype.toLocaleString` | ⏳ |
+| 425 | `ink-object-define-properties` | `Object.defineProperties` | ⏳ |
+| 426 | `ink-date-parse-setters` | `Date.parse`, `Date.UTC`, `setTime`, `setFullYear`, `setMonth`, `setDate`, `setHours` | ⏳ |
+
+**Tasks:** 407–426 | **Status:** ⏳ Pending (20 tasks)
+
+---
+
 ## HIR Coverage Matrix
 
 HIR must be able to represent every construct used in examples. This table maps feature categories to the relevant HIR files and current status.
@@ -791,7 +811,7 @@ HIR must be able to represent every construct used in examples. This table maps 
 | Async/Iter | `crates/runts-hir/src/expr.rs` | `Await`, `Yield`, `YieldFrom`, `ImportExpr`, `ImportMeta` | ✅ Complete |
 | Patterns | `crates/runts-hir/src/base.rs` | `Pat::Ident`, `Pat::Array`, `Pat::Object`, `Pat::Default`, `Pat::Rest` | ✅ Complete |
 
-**HIR coverage status:** All 38 Expr variants and 24 Stmt variants required by the task roadmap are represented.
+**HIR coverage status:** All 40+ Expr variants and 26+ Stmt variants required by the task roadmap are represented. Pending: `Super` base in member expressions (Task 407), `JsxGenericTypeArgs` (Task 377), `AwaitUsing` (Task 179).
 
 ---
 
@@ -831,7 +851,149 @@ For each HIR variant, `quote_codegen` must emit compilable Rust. This table maps
 | Type erasure (as/satisfies/!) | `quote_codegen_exprs.inc` | ✅ |
 | Using/await using | `quote_codegen_stmts.inc` | ✅ |
 
-**Compile-path status:** All P0 and P1 constructs have codegen. Pending tasks in Phases 17–31 extend this to advanced/runtime-specific features.
+**Compile-path status:** All P0 and P1 constructs have codegen. Pending tasks in Phases 17–33 extend this to advanced/runtime-specific features, prototype method codegen, and edge-case HIR variants.
+
+---
+
+## Complete Feature Taxonomy
+
+The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink features. Every leaf feature has a dedicated task and Ink example.
+
+### JavaScript Expressions (Tasks 042–054, 066, 079, 177, 191–192, 236, 294, 345–350, 392–406)
+- Literals: number, string, boolean, null, undefined, bigint, regexp, object, array
+- Operators: arithmetic, bitwise, logical, comparison, instanceof, in, typeof, delete, void, comma
+- Assignment: simple, compound, logical assignment (`||=`, `&&=`, `??=`)
+- Update: prefix/postfix increment/decrement
+- Member access: dot, computed, optional chaining (`?.`)
+- Call expressions: direct, optional call (`?.()`), `new`, `super()`
+- `super` member access: `super.method()`, `super[prop]()` (Task 407)
+- Functions: arrow, named function expression, anonymous function expression, IIFE
+- Async/await, generators (`function*`, `yield`, `yield*`)
+- Template literals, tagged templates
+- Spread in arrays/objects/calls, rest in params/destructuring
+- Type expressions: `as`, `satisfies`, `!` (non-null), type assertions in JSX (Task 347)
+- Conditional (ternary), nullish coalescing (`??`), optional chaining in JSX attrs (Task 349)
+- Sequence (comma) expressions, `void` expressions
+
+### JavaScript Statements (Tasks 042–045, 170, 177, 178, 203, 237, 238, 298, 388, 391, 392–406)
+- Variable declarations: `var`, `let`, `const`, block scoping
+- Control flow: `if`/`else`, `switch` (with/without fallthrough), `for`, `while`, `do-while`
+- Iteration: `for-in`, `for-of`, `for-await-of`, `break`, `continue`, labeled break/continue
+- Exception handling: `try/catch/finally`, `try/finally` without catch, optional catch binding, `throw`
+- `return`, `debugger`, labeled statements, `with` (legacy)
+- `using` / `await using` (ES2024)
+
+### Declarations & Classes (Tasks 055–057, 083, 093–094, 126–127, 143, 185, 191–192, 200–201, 222–223, 296–297, 393–397)
+- Class declarations/expressions: `extends`, `super`, `constructor`, methods, static methods
+- Access modifiers: `public`, `private`, `protected`, `readonly`
+- `abstract` classes, `implements`, `override`
+- Getters/setters (computed and literal), accessor fields (TS 5.0)
+- Private fields `#field`, private methods `#method()`, `#field in obj`
+- Static blocks, computed class members, class field initializers
+- Parameter properties (`constructor(public x: string)`)
+- Function declarations, function overloads
+- `new.target`
+
+### TypeScript Type System (Tasks 066–067, 082, 087, 097–098, 100–103, 109–110, 115–116, 184, 240, 264, 287–291, 351–360, 377–381, 384, 385–386)
+- Type aliases, interfaces, multiple interface extends
+- Generics, generic function components (Task 336), generic JSX type args (Task 377)
+- `as const`, literal types, tuple types, named tuple members, readonly tuples
+- Utility types: `Partial`, `Required`, `Pick`, `Omit`, `Record`, `ReturnType`, `Extract`, `Exclude`, `NonNullable`, `Awaited`, `InstanceType`, `ConstructorParameters`, `ThisType`
+- String manipulation types: `Uppercase`, `Lowercase`, `Capitalize`, `Uncapitalize`
+- Mapped types (with `as` clause, key remapping, recursive readonly)
+- Conditional types, distributive conditional, nested conditional, `infer`
+- Template literal types, template literal unions
+- Discriminated unions, exhaustive checks, branded/opaque types
+- User-defined type guards (`is`), `asserts` predicates
+- `satisfies` in various contexts, `as` assertions, non-null assertion
+- `typeof` on classes, `keyof` on arrays/tuples, `keyof typeof` pattern
+- `unknown`, `never`, `this` types, `unique symbol`
+- Type erasure: all type-level constructs erased before codegen
+
+### Modules & Imports (Tasks 058–059, 085–086, 119, 138, 141–142, 150, 180, 202, 211–217, 243–244, 282–283, 292–293, 305, 382–383)
+- Named/default exports, `export =`, `import = require()`
+- Re-exports: `export * from`, `export * as ns from`, `export type { X } from`
+- Type-only imports: `import type`, `import { type X }`, inline type imports
+- Dynamic imports `import()`, import attributes (`with { type: "json" }`)
+- `import.meta.url`, `import.meta.resolve`, `import.meta.env`
+- Barrel exports, namespace imports, module-level `render()`
+- tsconfig `paths`, `moduleResolution`, `esModuleInterop`, `isolatedModules`
+- AMD module directives, project references, package.json exports/imports
+
+### JSX (Tasks 061, 137, 139, 161–163, 196–199, 204, 213, 232–233, 262, 268, 269, 347–350, 377, 398)
+- Elements, fragments (`<>...</>`), fragment shorthand
+- Spread attributes `{...props}`, boolean attributes, spread children
+- Dynamic components, member expressions (`My.Component`), namespaced elements
+- Generic type arguments in JSX (`<Component<T> />`)
+- Conditional rendering, nullish coalescing in attrs, optional chaining in attrs
+- `dangerouslySetInnerHTML`, `key` prop, callback refs, `defaultProps`
+- JSX pragmas: `jsxImportSource`, `jsxFactory`, `jsxFragmentFactory`
+- Server components (`"use server"` / `"use client"`)
+
+### React Patterns (Tasks 060, 090–091, 106–108, 117, 130, 152–154, 162–163, 193–194, 198–201, 279–281, 330–344, 377–378, 392–406)
+- Hooks: `useState`, `useEffect`, `useLayoutEffect`, `useInsertionEffect`, `useCallback`, `useMemo`, `useRef`, `useReducer`, `useContext`, `useId`, `useTransition`, `useDeferredValue`, `useSyncExternalStore`, `useImperativeHandle`, `useDebugValue`, `useFormStatus`, `useOptimistic`, `useActionState`, `use`
+- Hook patterns: cleanup functions, dependency arrays, init functions, custom hook composition
+- Refs: `forwardRef`, `createRef`, callback refs, generic forwardRef, `displayName`
+- Context: `createContext`, `Provider`, `Consumer`, `displayName`, `defaultValue`, multiple providers, context reducer
+- `memo`, `lazy`, `Suspense`, `ErrorBoundary`, `Profiler`, `StrictMode`
+- `Children` API: `map`, `forEach`, `count`, `only`, `toArray`, `cloneElement`, `isValidElement`
+- Component patterns: render props, HOCs, compound components, polymorphic components, generic components, controlled/uncontrolled
+- `React.FC`, `PropsWithChildren`, `defaultProps`
+- Class lifecycle: `componentDidMount`, `componentWillUnmount`, `getDerivedStateFromError`, `componentDidCatch`
+
+### Ink/TUI Specific (Tasks 062–065, 132–140, 323–325)
+- Bridge hooks: `useInput`, `useApp`, `useStdin`, `useStdout`, `useStderr`, `useWindowSize`, `useFocus`, `useFocusManager`, `useCursor`, `useAnimation`
+- Bridge components: `Box`, `Text`, `Newline`, `Spacer`, `Static`, `Transform`
+- Layout: `measureElement`, `useBoxMetrics`
+- `process` global, `setInterval`/`clearInterval`, module-level `render()`
+
+### Runtime APIs — Built-in Objects (Tasks 088–089, 104–105, 111–114, 118, 121–123, 125, 128–129, 155–156, 159, 166–167, 171–176, 179, 181–183, 190, 205, 208–210, 218, 219–220, 225–226, 245, 248, 255–256, 264–265, 273–274, 278, 287, 299, 303, 326–329, 361–375, 392–426)
+- **Array:** `from`, `of`, `isArray`, `fromAsync`, `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `toSpliced`, `with`, `includes`, `findLast`, `findLastIndex`, `reduce`, `reduceRight`, `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`, `map`, `forEach`, `concat`, `join`, `slice`, `fill`, `copyWithin`, `toLocaleString`
+- **String:** `charAt`, `charCodeAt`, `codePointAt`, `concat`, `endsWith`, `includes`, `indexOf`, `lastIndexOf`, `localeCompare`, `match`, `matchAll`, `normalize`, `padEnd`, `padStart`, `repeat`, `replace`, `replaceAll`, `search`, `slice`, `split`, `substring`, `startsWith`, `toLowerCase`, `toUpperCase`, `trim`, `trimStart`, `trimEnd`, `at`, `isWellFormed`, `toWellFormed`, `toLocaleString`
+- **Number:** `isFinite`, `isNaN`, `isInteger`, `isSafeInteger`, `parseInt`, `parseFloat`, `EPSILON`, `MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY`, `toFixed`, `toExponential`, `toPrecision`, `toLocaleString`
+- **Math:** `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atan2`, `atanh`, `cbrt`, `ceil`, `clz32`, `cos`, `cosh`, `exp`, `expm1`, `floor`, `fround`, `hypot`, `imul`, `log`, `log10`, `log1p`, `log2`, `max`, `min`, `pow`, `random`, `round`, `sign`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `trunc`, `E`, `LN10`, `LN2`, `LOG10E`, `LOG2E`, `PI`, `SQRT1_2`, `SQRT2`
+- **Date:** `now`, `parse`, `UTC`, getters (`getTime`, `getFullYear`, `getMonth`, `getDate`, `getHours`, `getMinutes`, `getSeconds`, `getMilliseconds`), setters (`setTime`, `setFullYear`, `setMonth`, `setDate`, `setHours`), `toISOString`, `toUTCString`, `toDateString`, `toTimeString`, `toLocaleDateString`, `toLocaleTimeString`, `toJSON`, `valueOf`, `[Symbol.toPrimitive]`
+- **RegExp:** `test`, `exec`, `compile`, `toString`, flags (`g`, `i`, `m`, `u`, `y`, `d`, `s`, `v`), named capture groups, `matchAll`
+- **Object:** `create`, `defineProperty`, `defineProperties`, `freeze`, `seal`, `assign`, `entries`, `values`, `keys`, `hasOwn`, `getOwnPropertyDescriptors`, `getOwnPropertyDescriptor`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `preventExtensions`, `isExtensible`, `isSealed`, `isFrozen`, `is`, `getPrototypeOf`, `setPrototypeOf`, `groupBy`, `fromEntries`, `prototype.toString`, `prototype.toLocaleString`, `prototype.isPrototypeOf`, `prototype.propertyIsEnumerable`, `prototype.valueOf`, `prototype.hasOwnProperty`
+- **Function:** `prototype.bind`, `prototype.call`, `prototype.apply`, `prototype.length`, `prototype.name`, `prototype.prototype`, `prototype[Symbol.hasInstance]`
+- **JSON:** `stringify` (with replacer), `parse`
+- **Promise:** `resolve`, `reject`, `all`, `race`, `allSettled`, `any`, `withResolvers`, `prototype.then`, `prototype.catch`, `prototype.finally`
+- **Map/Set/WeakMap/WeakSet:** `set`, `get`, `has`, `delete`, `clear`, `size`, `keys`, `values`, `entries`, `forEach`, `add`, `groupBy` (Map), ES2025 Set methods (`intersection`, `union`, `difference`, `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`)
+- **Symbol:** `for`, `keyFor`, `iterator`, `asyncIterator`, `hasInstance`, `toStringTag`, `toPrimitive`, `species`, `isConcatSpreadable`, `unscopables`, `dispose`, `asyncDispose`, `match`, `replace`, `search`, `split`
+- **WeakRef/FinalizationRegistry:** `WeakRef.prototype.deref`, `FinalizationRegistry.prototype.register`
+- **Proxy/Reflect:** `Proxy` constructor with handlers, `Reflect.apply`, `Reflect.construct`, `Reflect.defineProperty`, `Reflect.deleteProperty`, `Reflect.get`, `Reflect.getOwnPropertyDescriptor`, `Reflect.getPrototypeOf`, `Reflect.has`, `Reflect.isExtensible`, `Reflect.ownKeys`, `Reflect.preventExtensions`, `Reflect.set`, `Reflect.setPrototypeOf`
+- **ArrayBuffer/TypedArrays/DataView:** `ArrayBuffer`, `Uint8Array`, `Int8Array`, `Uint16Array`, `Int16Array`, `Uint32Array`, `Int32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`, `DataView`
+- **BigInt:** literals, operations, `prototype.toString`, `prototype.valueOf`, `BigInt.asIntN`, `BigInt.asUintN`
+- **Error:** `Error`, `TypeError`, `RangeError`, `ReferenceError`, `SyntaxError`, `AggregateError`, `SuppressedError`, `cause`, `captureStackTrace`, `stackTraceLimit`
+- **Generator/Iterator:** `function*`, `yield`, `yield*`, `Generator.prototype.return`, `Generator.prototype.throw`, `Iterator.from`, `Iterator.prototype.map/filter/take/drop/flatMap/reduce/toArray`, `AsyncIterator` helpers
+- **console:** `log`, `error`, `warn`, `info`, `debug`, `dir`, `assert`, `count`, `countReset`, `group`, `groupEnd`, `trace`, `time`, `timeLog`, `timeEnd`, `table`
+- **globalThis:** `globalThis`, `global`, `window`, `self`, `undefined`, `Infinity`, `NaN`
+- **eval/legacy:** `eval()`, `with`, `escape`, `unescape`
+
+### Runtime APIs — Web & Node.js (Tasks 133–136, 218, 229, 249–250, 251–253, 254, 306–308, 309–310, 311–314, 315–322, 324–325, 370–375, 392–426)
+- **Timers:** `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`, `clearImmediate`, `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`
+- **Encoding:** `TextEncoder`, `TextDecoder`, `atob`, `btoa`
+- **URL:** `URL`, `URLSearchParams`, `URLPattern`
+- **Web Crypto:** `crypto.randomUUID`, `crypto.getRandomValues`, `crypto.subtle.digest`
+- **Streams:** `ReadableStream`, `WritableStream`, `TransformStream`, `CompressionStream`, `DecompressionStream`
+- **Network:** `fetch`, `Headers`, `Request`, `Response`, `WebSocket`
+- **Storage:** `localStorage` / `sessionStorage` (`getItem`, `setItem`, `removeItem`, `clear`, `length`, `key`)
+- **Events:** `EventTarget`, `CustomEvent`, `AbortController`, `AbortSignal`, `EventEmitter`
+- **File/Blob:** `Blob`, `File`, `FileReader`, `FormData`
+- **Performance:** `performance.now`, `performance.mark`, `performance.measure`, `performance.timing`, `performance.navigation`, `PerformanceObserver`
+- **Intl:** `DateTimeFormat`, `NumberFormat`, `ListFormat`, `RelativeTimeFormat`, `PluralRules`, `Collator`, `Segmenter`, `DisplayNames`, `Locale`
+- **Structured Clone:** `structuredClone`
+- **Atomics/SharedArrayBuffer:** `Atomics.add`, `Atomics.load`, `Atomics.store`, `Atomics.compareExchange`, `Atomics.wait`, `Atomics.notify`, `SharedArrayBuffer`
+- **WebAssembly:** `WebAssembly.instantiate`, `WebAssembly.Module`, `WebAssembly.Memory`, `WebAssembly.Table`
+- **Process:** `process.exit`, `process.env`, `process.stdin`, `process.stdout`, `process.pid`, `process.cwd`, `process.uptime`, `process.hrtime`, `process.memoryUsage`, `process.platform`, `process.version`, `process.versions`, `process.arch`, `process.release`, `process.nextTick`
+- **Node.js modules:** `fs`, `fs/promises`, `crypto`, `util`, `stream`, `stream/web`, `readline`, `assert`, `child_process`, `http`/`https`, `path`, `os`, `timers/promises`, `Buffer`
+- **Browser globals:** `window`, `document`, `navigator` (`userAgent`, `language`, `onLine`, `platform`), `location`, `history`
+- **Temporal API:** `Temporal.Now`, `Temporal.Instant`, `Temporal.PlainDate`, `Temporal.PlainTime`, `Temporal.Duration`
+
+### Compiler Options & Directives (Tasks 197, 214–217, 230–231, 242–244, 257–261, 265–268, 282–285, 292–293)
+- Directives: `// @ts-expect-error`, `// @ts-ignore`, `// @ts-nocheck`, `// @ts-check`, `/// <reference types="..." />`, `/// <reference path="..." />`, `/// <amd-module name="..." />`
+- Compiler options: `strict`, `strictNullChecks`, `noImplicitAny`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `preserveValueImports`, `verbatimModuleSyntax`, `isolatedModules`, `resolveJsonModule`, `esModuleInterop`, `allowSyntheticDefaultImports`, `moduleResolution`, `paths`, `baseUrl`, `preserveConstEnums`, `downlevelIteration`, `jsxPreserve`, `emitDecoratorMetadata`
+- Module formats: ESM, CJS interop, AMD references, barrel exports, type-only imports/exports
 
 ---
 
@@ -846,7 +1008,7 @@ Every practical TS/TSX/React/Ink feature is exercised by a real Ink TUI example.
 3. **Compile path:** `scripts/parity.sh --env compile` validates that TSX→HIR→Rust codegen→binary produces output identical to deno.
 
 ### Coverage gaps
-The authoritative list of remaining features is maintained in `tasks/index.json`. As tasks are completed and their examples pass parity in all 3 environments, the corresponding gaps are removed. The goal is zero gaps by Task 376.
+The authoritative list of remaining features is maintained in `tasks/index.json`. As tasks are completed and their examples pass parity in all 3 environments, the corresponding gaps are removed. The goal is zero gaps by Task 426.
 
 ---
 
@@ -946,7 +1108,7 @@ cargo test --test compile_codegen
 - [x] Phase 16: 15 Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 - [x] Phase 17: Partial — ES2024 `using`, import attributes, `Array.fromAsync`, `Promise.withResolvers`, `Object.groupBy`, `const` type params (Tasks 179–184 complete).
 
-### Pending Phases ⏳ (211 tasks)
+### Pending Phases ⏳ (231 tasks)
 - [ ] Phase 17: Remaining ES2024 + TypeScript 5.0+ features (Tasks 185–190).
 - [ ] Phase 18: Expression-level + React pattern + runtime API completion (Tasks 191–205).
 - [ ] Phase 19: Tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).
@@ -960,6 +1122,8 @@ cargo test --test compile_codegen
 - [ ] Phase 27: React hook patterns + JSX expression patterns + component composition (Tasks 330–350).
 - [ ] Phase 28: Advanced TypeScript type system patterns (Tasks 351–360).
 - [ ] Phase 29: Array/Object/String/Number/Date/Console/Error/Symbol/Process/Stream/WebAssembly API completion (Tasks 361–375).
-- [ ] Phase 30: Final comprehensive coverage audit (Task 376).
-- [ ] Phase 31: Advanced JSX + React edge cases (Tasks 377–381).
-- [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
+- [ ] Phase 30: Final comprehensive coverage audit (Task 376), updated for 407 tasks.
+- [ ] Phase 31: Advanced JSX + React edge cases (Tasks 377–391).
+- [ ] Phase 32: Core language + React + runtime edge cases (Tasks 392–406).
+- [ ] Phase 33: HIR & codegen edge cases (Tasks 407–426).
+- [ ] `scripts/parity.sh --env all` passes all examples with 100% match in all 3 environments.

@@ -334,5 +334,61 @@ pub fn extract_call_arg_value_with_type(init: Option<&Value>) -> Option<(String,
         let rust_val = hir_object_to_json_expr(obj);
         return Some((rust_val, Some("serde_json::Value".to_string())));
     }
+    // Handle function expressions - generate a closure placeholder
+    if let Some(func) = init.get("Function") {
+        let rust_val = func_expr_to_rust_closure(func);
+        return Some((rust_val, Some("Box<dyn Fn() -> Value>".to_string())));
+    }
+    // Handle arrow function expressions
+    if let Some(arrow) = init.get("ArrowFunction") {
+        let rust_val = arrow_expr_to_rust_closure(arrow);
+        return Some((rust_val, Some("Box<dyn Fn() -> Value>".to_string())));
+    }
     vars::expr_value_to_rust(init).map(|v| (v, None))
+}
+
+/// Convert a function expression to a Rust closure.
+fn func_expr_to_rust_closure(func: &Value) -> String {
+    let params = func.get("params")
+        .and_then(|p| p.as_array())
+        .map(|arr| arr.iter().filter_map(|p| p.get("name").and_then(|n| n.as_str())).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
+    let ret = func.get("body").and_then(|b| b.get("Block")).and_then(|block| block.get("stmts")).and_then(|s| s.as_array()).and_then(|stmts| stmts.last()).and_then(|s| s.get("Return")).and_then(|r| r.get("arg")).and_then(|arg| expr_to_rust_value(arg)).unwrap_or_else(|| "Value::Null".to_string());
+    format!("Box::new(move |{}| -> Value {{ {} }})", params, ret)
+}
+
+/// Convert an arrow function expression to a Rust closure.
+fn arrow_expr_to_rust_closure(arrow: &Value) -> String {
+    let params = arrow.get("params").and_then(|p| p.as_array()).map(|arr| arr.iter().filter_map(|p| p.get("name").and_then(|n| n.as_str())).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    let ret = arrow.get("body").and_then(|b| b.get("Block")).and_then(|block| block.get("stmts")).and_then(|s| s.as_array()).and_then(|stmts| stmts.last()).and_then(|s| s.get("Return")).and_then(|r| r.get("arg")).and_then(|arg| expr_to_rust_value(arg)).or_else(|| arrow.get("body").and_then(|e| expr_to_rust_value(e))).unwrap_or_else(|| "Value::Null".to_string());
+    format!("Box::new(move |{}| -> Value {{ {} }})", params, ret)
+}
+
+/// Convert an expression to a Rust Value variant.
+fn expr_to_rust_value(expr: &Value) -> Option<String> {
+    if let Some(n) = expr.as_f64() { return Some(format!("Number({})", num_to_rust_str(n))); }
+    if let Some(s) = expr.get("String").and_then(|s| s.as_str()) { return Some(format!("String(\"{}\")", s.replace('\"', "\\\""))); }
+    if let Some(b) = expr.get("Boolean").and_then(|b| b.as_bool()) { return Some(format!("Bool({})", b)); }
+    if let Some(name) = expr.get("Ident").and_then(|i| i.get("name")).and_then(|n| n.as_str()) { return Some(format!("Undefined({})", name)); }
+    if let Some(bin) = expr.get("Binary") { return try_binary_expr(bin); }
+    if let Some(call) = expr.get("Call") { return try_call_expr(call); }
+    None
+}
+
+fn try_binary_expr(bin: &Value) -> Option<String> {
+    let op = bin.get("operator")?.as_str()?;
+    let left = expr_to_rust_value(bin.get("left")?)?;
+    let right = expr_to_rust_value(bin.get("right")?)?;
+    let rust_op = match op { "+" | "-" | "*" | "/" | "%" => op, _ => "+" };
+    Some(format!("Number({} {} {})", left.replace("Value::", ""), rust_op, right.replace("Value::", "")))
+}
+
+fn try_call_expr(call: &Value) -> Option<String> {
+    let fn_name = call.get("callee")?.get("Ident")?.get("name")?.as_str()?;
+    let args = call.get("arguments")?.as_array()?.iter().filter_map(|a| expr_to_rust_value(a)).collect::<Vec<_>>().join(", ");
+    Some(format!("from_js({}({}))", fn_name, args))
+}
+
+fn num_to_rust_str(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{}i32", n as i64) } else { format!("{}f64", n) }
 }

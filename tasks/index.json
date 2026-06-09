@@ -1,6 +1,6 @@
 {
-  "version": "4.5",
-  "last_updated": "2026-06-08T16:55:00Z",
+  "version": "4.6",
+  "last_updated": "2026-06-09T12:00:00Z",
   "project": "runts-ink: Maximize TS/TSX Coverage in HIR + Compile Path",
   "goal": "100% of practical TS/TSX constructs supported in HIR representation and compile-path codegen, validated by Ink examples across all 3 environments (deno, runts dev, runts build) with 100% output match",
   "architecture_decision": {
@@ -601,6 +601,32 @@
         "404",
         "405",
         "406"
+      ]
+    },
+    {
+      "name": "Phase 33: HIR & Codegen Edge Cases",
+      "description": "Additional Ink examples for TS/TSX/React/Ink features not yet explicitly exercised in HIR and compile-path codegen: super member access, fundamental Array/String methods, deep Object statics, console debug methods, process info, Symbol registry, Function properties, base64 encoding, localStorage full API, Web Crypto, Object prototype methods, RegExp compile, BigInt prototype, Intl locale/segmenter/displayNames, requestAnimationFrame, performance navigation, locale string formatting, defineProperties, and Date parse/setters.",
+      "tasks": [
+        "407",
+        "408",
+        "409",
+        "410",
+        "411",
+        "412",
+        "413",
+        "414",
+        "415",
+        "416",
+        "417",
+        "418",
+        "419",
+        "420",
+        "421",
+        "422",
+        "423",
+        "424",
+        "425",
+        "426"
       ]
     }
   ],
@@ -2498,7 +2524,7 @@
     {
       "id": "192",
       "title": "ink-function-expression example \u2014 anonymous and named function expressions",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-function-expression/",
@@ -4858,6 +4884,226 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. Sparse arrays produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "407",
+      "title": "ink-super-member example \u2014 super.method() and super[prop]() Access",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-super-member/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. super.method() and super[expr]() produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "408",
+      "title": "ink-array-fundamental example \u2014 map, filter, forEach, concat, join, slice",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-fundamental/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Fundamental Array methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "409",
+      "title": "ink-string-fundamental example \u2014 indexOf, lastIndexOf, slice, split, substring, toLowerCase, toUpperCase, trim, matchAll",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-string-fundamental/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Fundamental String methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "410",
+      "title": "ink-object-static-deep example \u2014 getOwnPropertyDescriptor, preventExtensions, isExtensible, isSealed, isFrozen, getOwnPropertyNames, getOwnPropertySymbols, defineProperties",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-object-static-deep/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Deep Object static methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "411",
+      "title": "ink-console-debug example \u2014 console.debug, dir, groupEnd, countReset",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-console-debug/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. console.debug/dir/groupEnd/countReset produce compilable Rust or no-op. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "412",
+      "title": "ink-process-info example \u2014 process.platform, version, versions, arch, release",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-process-info/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. process info properties produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "413",
+      "title": "ink-symbol-for example \u2014 Symbol.for, Symbol.keyFor, Symbol.isConcatSpreadable, Symbol.unscopables",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-symbol-for/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Symbol registry and well-known symbols produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "414",
+      "title": "ink-function-props example \u2014 length, name, prototype, [Symbol.hasInstance]",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-function-props/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Function object properties produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "415",
+      "title": "ink-atob-btoa example \u2014 atob, btoa",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-atob-btoa/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. atob/btoa produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "416",
+      "title": "ink-localstorage-api example \u2014 getItem, setItem, removeItem, clear, length, key",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-localstorage-api/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Full localStorage API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "417",
+      "title": "ink-crypto-web example \u2014 crypto.getRandomValues, crypto.subtle",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-crypto-web/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Web Crypto API produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "418",
+      "title": "ink-object-prototype-deep example \u2014 toLocaleString, isPrototypeOf, propertyIsEnumerable",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-object-prototype-deep/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object prototype deep methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "419",
+      "title": "ink-regexp-compile example \u2014 RegExp.prototype.compile, RegExp.prototype.toString",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-regexp-compile/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. RegExp compile/toString produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "420",
+      "title": "ink-bigint-proto example \u2014 BigInt.prototype.toString, BigInt.prototype.valueOf",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-bigint-proto/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. BigInt prototype methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "421",
+      "title": "ink-intl-locale example \u2014 Intl.Segmenter, Intl.DisplayNames, Intl.Locale",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-intl-locale/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Intl Segmenter/DisplayNames/Locale produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "422",
+      "title": "ink-request-animation-frame example \u2014 requestAnimationFrame, cancelAnimationFrame",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-request-animation-frame/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. requestAnimationFrame/cancelAnimationFrame produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "423",
+      "title": "ink-performance-navigation example \u2014 performance.timing, performance.navigation",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-performance-navigation/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. performance timing/navigation produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "424",
+      "title": "ink-array-tolocalestring example \u2014 Array.prototype.toLocaleString, Number.prototype.toLocaleString",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-array-tolocalestring/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. toLocaleString methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "425",
+      "title": "ink-object-define-properties example \u2014 Object.defineProperties",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-object-define-properties/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object.defineProperties produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "426",
+      "title": "ink-date-parse-setters example \u2014 Date.parse, Date.UTC, setTime, setFullYear, setMonth, setDate, setHours",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-date-parse-setters/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Date parse/setters produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -4880,10 +5126,10 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 211,
+    "pending_tasks": 231,
     "completed_tasks": 176,
-    "total_tasks": 387,
-    "phases": 33
+    "total_tasks": 407,
+    "phases": 34
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
@@ -4896,6 +5142,6 @@
       "Class methods and inheritance",
       "Multiple variable declarators in one statement"
     ],
-    "last_updated": "2026-06-08T20:00:00Z"
+    "last_updated": "2026-06-09T12:00:00Z"
   }
 }
