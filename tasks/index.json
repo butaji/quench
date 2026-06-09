@@ -2535,11 +2535,12 @@
     {
       "id": "193",
       "title": "ink-react-fc-type example \u2014 React.FC, React.FunctionComponent",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-react-fc-type/",
-        "src/transpile/parser/expr.rs"
+        "src/transpile/parser/expr.rs",
+        "src/transpile/tests/rq_parity/mod.rs"
       ],
       "acceptance": "Example exists. FC type annotations erased without runtime impact. Parity harness 100% across deno/rq/compile."
     },

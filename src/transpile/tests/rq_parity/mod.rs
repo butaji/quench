@@ -669,6 +669,19 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// React.FC / FunctionComponent type annotations (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_react_fc_type,
+    "ink-react-fc-type",
+    [
+        "Main Title",
+        "Subtitle",
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Symbol.iterator and custom iterables (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
