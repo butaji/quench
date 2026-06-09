@@ -682,6 +682,19 @@ ink_example_test!(
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// dangerouslySetInnerHTML JSX object prop (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_dangerously_set_inner_html,
+    "ink-dangerously-set-inner-html",
+    [
+        "Fallback text",
+        "Object prop parsed successfully",
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // Symbol.iterator and custom iterables (tests with expected output)
 // ═══════════════════════════════════════════════════════════════════
 
