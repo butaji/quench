@@ -15,26 +15,30 @@ A single bundled JS file loaded into the VM:
 ```
 ink-shim.js (~120 KB total)
 ├── React + react-reconciler (~80 KB, pure JS, works in QuickJS)
-├── Host Config Interceptor (~5 KB)
-│   └── createInstance → __ink_create_node()
-│   └── appendChild    → __ink_append_child()
-│   └── commitUpdate   → __ink_commit_update()
-│   └── measureText    → __ink_measure_text()
-│   └── etc.
+├── Host Config Interceptor (~5 KB) — TWO backends
+│   DENO: createInstance → Yoga-WASM node + Deno stdout ANSI
+│   bridge:  createInstance → __ink_create_node()
+│   bridge:  appendChild    → __ink_append_child()
+│   bridge:  commitUpdate   → __ink_commit_update()
+│   bridge:  measureText    → __ink_measure_text()
 ├── Ink API Surface (~10 KB)
 │   └── render(), Box, Text, Static, Newline, Spacer
 │   └── useInput, useApp, useStdin, useStdout, useStderr
 │   └── useFocus, useFocusManager, measureElement
+│   └── useEffect, useState, useMemo, useCallback, useRef (React built-ins)
 └── User Plugin Code
     └── import {render, Box, Text, useInput} from 'ink'
 ```
 
-**Polyfills provided by Rust via `globalThis`:**
+**Deno backend:** Host config targets Yoga-WASM (or taffy-WASM) for layout and writes ANSI directly via `Deno.stdout.write()`. Uses Deno-native timers and `setTimeout`.
+
+**TuiBridge backend:** Host config calls `__ink_*` bridge functions into Rust.
+
+**Polyfills provided by Rust via `globalThis` (TuiBridge only):**
 - `setTimeout` / `setInterval` / `clearTimeout` → tokio timer bridge
 - `setImmediate` / `clearImmediate` → microtask queue
 - `process.nextTick` → microtask queue
 - `console` → tracing/log
-- `EventEmitter` (minimal) → if React scheduler needs it
 
 ---
 
@@ -53,9 +57,15 @@ struct InkNode {
     props: HashMap<String, PropValue>,
     children: Vec<u32>,
     yoga: YogaNode,
-    text: Option<String>,      // for Text/Spacer
+    text: Option<String>,      // concatenated text from child text instances
     style: Style,              // ratatui style cache
 }
+
+// Note: <Text> may contain nested <Text> children and raw strings.
+// The reconciler creates text instances via createTextInstance() and
+// appends them as children. The parent Text node's text field is
+// concatenated from children during commit, or render builds Spans
+// from child nodes for full style nesting.
 ```
 
 **Text Measurement Bridge:**
@@ -120,7 +130,7 @@ fn render_yoga_tree(node_id: u32, buf: &mut Buffer) {
 }
 ```
 
-**Performance guarantee:** The render pass is a single recursive Rust function writing to a `Buffer`. No JS, no allocations, no FFI. For a 500-node tree, this is **<< 1 ms**.
+**Performance guarantee:** The render pass is a single recursive Rust function writing to a `Buffer`. No JS, no allocations, no bridge. For a 500-node tree, this is **<< 1 ms**.
 
 ### 3.3 Event Loop: Event-Driven, Zero Polling
 
@@ -129,11 +139,11 @@ fn render_yoga_tree(node_id: u32, buf: &mut Buffer) {
 async fn main() -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut reader = EventStream::new();
-    let mut vm = InkVm::new().await?;
+    let mut vm = InkVm::new().await?; // owns rquickjs Runtime, Yoga root, timer/reload channels
 
     // Load initial bundle
     vm.eval_bundle(include_str!("dist/bundle.js"))?;
-    vm.mount_app()?; // calls render(<App />) in JS
+    vm.mount_app()?; // calls render(<App />) in JS; stores unmount() callback
 
     let mut dirty = true; // initial render
 
@@ -188,7 +198,7 @@ async fn main() -> Result<()> {
 
 ---
 
-## 4. The FFI Protocol (`globalThis.__ink_*`)
+## 4. The Bridge API (`globalThis.__ink_*`)
 
 These are the only functions JS calls into Rust. All are synchronous, batched during reconciliation.
 
@@ -204,14 +214,17 @@ These are the only functions JS calls into Rust. All are synchronous, batched du
 | `__ink_set_text(id, text)` | `set_text(id, text)` | Update text, mark dirty |
 | `__ink_commit()` | `commit()` | Trigger layout + render |
 | `__ink_measure_text(text, width)` | `measure_text(...)` → `{w, h}` | Text measurement for Yoga |
-| `__ink_register_input(cb)` | `register_input(id, cb)` | Store JS callback for keys |
+| `__ink_measure_element(id)` | `measure_element(id)` → `{w, h}` | Yoga-computed node dimensions |
+| `__ink_register_input(cb)` | `register_input(id, cb)` | Store JS callback for keys/mouse |
 | `__ink_unregister_input(id)` | `unregister_input(id)` | Remove handler |
-| `__ink_exit()` | `exit_app()` | Break event loop |
+| `__ink_exit(code?)` | `exit_app(code?)` | Break event loop |
 | `__ink_stdout_write(data)` | `stdout.write(data)` | Direct crossterm write |
 | `__ink_stderr_write(data)` | `stderr.write(data)` | Direct crossterm write |
 | `__ink_stdin_is_raw()` | `is_raw_mode()` → `bool` | Query terminal state |
+| `__ink_set_raw_mode(enabled)` | `set_raw_mode(enabled)` | Toggle crossterm raw mode |
+| `__ink_destroy_root(id)` | `destroy_root(id)` | Drop Yoga tree and all nodes |
 
-**No other FFI calls exist.** React's reconciliation may call these 50–100 times per commit, but they are all in-memory Rust operations (HashMap inserts, Yoga node updates). Total commit overhead: **<< 2 ms**.
+**No other host calls exist.** React's reconciliation may call these 50–100 times per commit, but they are all in-memory Rust operations (HashMap inserts, Yoga node updates). Total commit overhead: **<< 2 ms**.
 
 ---
 
@@ -225,6 +238,9 @@ import Reconciler from 'react-reconciler';
 import {hostConfig} from './host-config.js';
 
 const InkRenderer = Reconciler(hostConfig);
+
+// Host config must implement getPublicInstance so refs work:
+// getPublicInstance: (instance) => ({id: instance.id})
 
 export function render(node, options = {}) {
   const rootId = globalThis.__ink_create_root();
@@ -275,7 +291,7 @@ export function useInput(handler, options = {}) {
 // useApp returns the app context
 export function useApp() {
   return useMemo(() => ({
-    exit: (err) => globalThis.__ink_exit(err),
+    exit: (err) => globalThis.__ink_exit(err ? 1 : 0),
     stdout: { write: (d) => globalThis.__ink_stdout_write(d) },
     stdin: { isRawModeSupported: () => globalThis.__ink_stdin_is_raw() },
     stderr: { write: (d) => globalThis.__ink_stderr_write(d) },
@@ -305,7 +321,7 @@ Because React state lives in JS, we do a **fast remount** instead of trying to p
 
 1. `notify` detects `plugins/*.tsx` change
 2. `esbuild --watch` rebuilds in **~10 ms**
-3. Rust receives path, calls `vm.unmount_app()` (destroys React root, Yoga tree)
+3. Rust calls the JS `unmount()` function returned by `render()`, which destroys the React root and calls `__ink_destroy_root`
 4. Rust calls `ctx.eval(new_bundle)` in the **same** rquickjs runtime (no VM restart)
 5. Rust calls `vm.mount_app()` → React mounts fresh, emits `__ink_commit()`
 6. Rust renders new tree
@@ -318,7 +334,8 @@ Because React state lives in JS, we do a **fast remount** instead of trying to p
 
 ```rust
 // Precompile JS to QuickJS bytecode at build time
-let bytecode = qjsc::compile(include_str!("dist/bundle.js"));
+// (use qjsc CLI or rquickjs compile_module API)
+let bytecode = compile_bundle(include_str!("dist/bundle.js"));
 // Embed in binary
 const BUNDLE: &[u8] = include_bytes!("../dist/bundle.qbc");
 
@@ -338,7 +355,7 @@ No `esbuild`, no file watcher, no source maps. A single native binary with an em
 | JS engine memory | ~300 KB | rquickjs + React reconciler + shim |
 | Layout | ~0.5–2 ms | Yoga C++ in Rust |
 | Render | ~0.3–1 ms | Pure Rust recursive buffer write |
-| Commit (JS→Rust) | ~1–3 ms | Batched FFI, no per-node chatter |
+| Commit (JS→Rust) | ~1–3 ms | Batched bridge, no per-node chatter |
 | Input latency | ~0.5 ms | Event-driven, no polling |
 | Hot reload | ~30 ms | esbuild + remount |
 | Binary size | ~3–5 MB | Rust + Yoga + ratatui + rquickjs static |
