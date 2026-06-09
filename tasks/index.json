@@ -2401,7 +2401,7 @@
     {
       "id": "187",
       "title": "ink-throw-expression example \u2014 throw expressions (Stage 3)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-throw-expression/",

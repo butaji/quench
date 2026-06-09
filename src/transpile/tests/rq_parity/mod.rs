@@ -1036,3 +1036,17 @@ ink_example_test!(
         "ReferenceError: missing is undefined"
     ]
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// Throw expression example
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_throw_expression,
+    "ink-throw-expression",
+    [
+        "Throw Expression Demo",
+        "Hello World",
+        "assertDefined with throw IIFE works."
+    ]
+);
