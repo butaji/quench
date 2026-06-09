@@ -14,4 +14,4 @@ Compare deno and TuiBridge ANSI outputs and enforce 100% look&feel match.
 - Task 051
 
 ## SPEC Reference
-Acceptance criteria from user: "at least 10 examples covering Ink API as fully as possible, running in deno and in TuiBridge, and having 100% look&feel match"
+§10 Example; §8 Performance Summary

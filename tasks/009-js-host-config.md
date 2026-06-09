@@ -1,20 +1,17 @@
 # Task 009: JS Reconciler Host Config
 
 ## Goal
-Build the React reconciler host config with TWO swappable backends:
-- **Deno backend:** targets Yoga-WASM for layout + ANSI output via `Deno.stdout`.
-- **Rust backend:** targets `globalThis.__ink_*` for TuiBridge.
-
-Both share the same reconciler logic; only the host config operations differ.
+Build the React reconciler host config that targets `globalThis.__ink_*` bridge functions.
 
 ## Acceptance Criteria
-- [ ] `createInstance(type, props)` → creates node (WASM in Deno, `__ink_create_node` in bridge).
-- [ ] `createTextInstance(text)` → creates text leaf (WASM in Deno, `__ink_create_text_node` in bridge).
-- [ ] `appendChild`, `removeChild`, `insertBefore` → tree mutation in both backends.
-- [ ] `commitUpdate` / `commitTextUpdate` → prop/text updates in both backends.
-- [ ] `commitRoot` → triggers render (ANSI write in Deno, `__ink_commit` in bridge).
+- [ ] `createInstance(type, props)` calls `__ink_create_node`.
+- [ ] `createTextInstance(text)` calls `__ink_create_text_node`.
+- [ ] `appendChild`, `removeChild`, `insertBefore` call bridge equivalents.
+- [ ] `commitUpdate` calls `__ink_commit_update`.
+- [ ] `commitTextUpdate` calls `__ink_set_text`.
+- [ ] `commitRoot` calls `__ink_commit()` once.
 - [ ] `getPublicInstance(instance)` returns `{id: instance.id}` so refs and `measureElement` work.
-- [ ] Integration test: mount `<Box><Text>hi</Text></Box>` in both Deno and rquickjs, verify tree built.
+- [ ] Integration test: mount `<Box><Text>hi</Text></Box>` in rquickjs, verify Rust tree built.
 
 ## Dependencies
 - Task 004, Task 005

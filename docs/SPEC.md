@@ -15,12 +15,11 @@ A single bundled JS file loaded into the VM:
 ```
 ink-shim.js (~120 KB total)
 ├── React + react-reconciler (~80 KB, pure JS, works in QuickJS)
-├── Host Config Interceptor (~5 KB) — TWO backends
-│   DENO: createInstance → Yoga-WASM node + Deno stdout ANSI
-│   bridge:  createInstance → __ink_create_node()
-│   bridge:  appendChild    → __ink_append_child()
-│   bridge:  commitUpdate   → __ink_commit_update()
-│   bridge:  measureText    → __ink_measure_text()
+├── Host Config Interceptor (~5 KB)
+│   └── createInstance → __ink_create_node()
+│   └── appendChild    → __ink_append_child()
+│   └── commitUpdate   → __ink_commit_update()
+│   └── measureText    → __ink_measure_text()
 ├── Ink API Surface (~10 KB)
 │   └── render(), Box, Text, Static, Newline, Spacer
 │   └── useInput, useApp, useStdin, useStdout, useStderr
@@ -30,11 +29,7 @@ ink-shim.js (~120 KB total)
     └── import {render, Box, Text, useInput} from 'ink'
 ```
 
-**Deno backend:** Host config targets Yoga-WASM for layout and writes ANSI directly via `Deno.stdout.write()`. Uses Deno-native timers and `setTimeout`.
-
-**TuiBridge backend:** Host config calls `__ink_*` bridge functions into Rust.
-
-**Polyfills provided by Rust via `globalThis` (TuiBridge only):**
+**Polyfills provided by Rust via `globalThis`:**
 - `setTimeout` / `setInterval` / `clearTimeout` → tokio timer bridge
 - `setImmediate` / `clearImmediate` → microtask queue
 - `process.nextTick` → microtask queue
@@ -427,6 +422,6 @@ const Counter = () => {
 render(<Counter />);
 ```
 
-This file requires **zero changes** from standard Ink. It imports from `ink`, uses React hooks, `useApp`, `useInput`, flex props, `borderStyle`, `color`, `dimColor`, `bold`. The only difference is that at build time, `esbuild` bundles it with our `ink` shim instead of the npm `ink` package, and the runtime is rquickjs + Rust instead of Node.js.
+This file requires **zero changes** from standard Ink. It imports from `ink`, uses React hooks, `useApp`, `useInput`, flex props, `borderStyle`, `color`, `dimColor`, `bold`. The same file runs in Deno with the real `npm:ink` package (reference ANSI) and in TuiBridge with our rquickjs shim (actual ANSI). Both must produce identical output.
 
 **That is the final architecture.** Intercept the reconciler, keep the API, move everything else to Rust.

@@ -7,7 +7,9 @@ Split-pane chat interface using `useStdin`, `useStdout`, `Newline`, and scrollin
 - [ ] Source `examples/chat-ui.tsx` with message list (top) and input prompt (bottom).
 - [ ] `useStdin` captures typed input; Enter sends message.
 - [ ] Messages separated by `Newline`; list scrolls when full.
-- [ ] Deno + TuiBridge parity harness verifies 100% match.
+- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
+- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
+- [ ] Parity harness verifies 100% match.
 - [ ] Covers: `useStdin`, `useStdout`, `Newline`, split pane, text input handling.
 
 ## Dependencies

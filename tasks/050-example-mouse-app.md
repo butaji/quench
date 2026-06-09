@@ -7,7 +7,9 @@ Full-screen app demonstrating mouse clicks, hit testing, and mouse-aware `useInp
 - [ ] Source `examples/mouse-app.tsx` with clickable buttons and hover highlighting.
 - [ ] Mouse events received via `useInput` (Ink does not have `useMouse`; mouse comes through input handler when enabled).
 - [ ] Clicking button toggles its state; hover changes `backgroundColor`.
-- [ ] Deno + TuiBridge parity harness verifies 100% match.
+- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
+- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
+- [ ] Parity harness verifies 100% match.
 - [ ] Covers: mouse events, hit testing, dynamic style updates.
 
 ## Dependencies

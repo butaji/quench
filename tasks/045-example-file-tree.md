@@ -7,7 +7,9 @@ Nested file tree explorer with expand/collapse and keyboard navigation.
 - [ ] Source `examples/file-tree.tsx` renders recursive tree structure.
 - [ ] Arrow keys navigate up/down; Enter expands/collapses folders.
 - [ ] Selected item highlighted; indentation via nested `Box` or padding.
-- [ ] Deno + TuiBridge parity harness verifies 100% match.
+- [ ] **Reference:** Deno with `npm:ink` produces baseline ANSI output.
+- [ ] **TuiBridge:** Same file runs with our rquickjs shim.
+- [ ] Parity harness verifies 100% match.
 - [ ] Covers: recursive component composition, nested padding, dynamic children.
 
 ## Dependencies

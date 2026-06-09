@@ -14,4 +14,4 @@ Render `ink-box` nodes as ratatui `Block` widgets with borders and title.
 - Task 024, Task 003
 
 ## SPEC Reference
-§3.2 Renderer; §6.2 ShadowTree Rendering
+§3.2 Renderer
