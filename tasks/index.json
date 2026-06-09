@@ -2499,7 +2499,7 @@
     {
       "id": "196",
       "title": "ink-array-advanced example — Array methods (findLast, findLastIndex, fill, copyWithin, at)",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-array-advanced/",
@@ -4518,8 +4518,8 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 193,
-    "completed_tasks": 165
+    "pending_tasks": 191,
+    "completed_tasks": 167
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
