@@ -2,7 +2,7 @@
 
 ## Goal
 Build the React reconciler host config with TWO swappable backends:
-- **Deno backend:** targets Yoga-WASM (or taffy-WASM) for layout + ANSI output via `Deno.stdout`.
+- **Deno backend:** targets Yoga-WASM for layout + ANSI output via `Deno.stdout`.
 - **Rust backend:** targets `globalThis.__ink_*` for TuiBridge.
 
 Both share the same reconciler logic; only the host config operations differ.
