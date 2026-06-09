@@ -1,4 +1,4 @@
-# Task 007: FFI I/O & Exit
+# Task 007: Bridge: I/O & Exit
 
 ## Goal
 Implement stdout/stderr writes, raw mode query, and app exit.
@@ -14,4 +14,4 @@ Implement stdout/stderr writes, raw mode query, and app exit.
 - Task 001
 
 ## SPEC Reference
-§4 FFI Protocol — stdout_write / stderr_write / stdin_is_raw / exit
+§4 Bridge API — stdout_write / stderr_write / stdin_is_raw / exit

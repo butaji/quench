@@ -1,4 +1,4 @@
-# Task 004: FFI Tree Mutation
+# Task 004: Bridge: Tree Mutation
 
 ## Goal
 Implement tree mutation operations: append, remove, insert before.
@@ -13,4 +13,4 @@ Implement tree mutation operations: append, remove, insert before.
 - Task 003
 
 ## SPEC Reference
-§4 FFI Protocol — append_child / remove_child / insert_before
+§4 Bridge API — append_child / remove_child / insert_before

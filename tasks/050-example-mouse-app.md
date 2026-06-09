@@ -1,17 +1,17 @@
 # Task 050: Example: Mouse App
 
 ## Goal
-Full-screen app demonstrating mouse clicks, hit testing, and `useMouse`.
+Full-screen app demonstrating mouse clicks, hit testing, and mouse-aware `useInput`.
 
 ## Acceptance Criteria
 - [ ] Source `examples/mouse-app.tsx` with clickable buttons and hover highlighting.
-- [ ] `useMouse` or direct mouse callback receives click coordinates.
+- [ ] Mouse events received via `useInput` (Ink does not have `useMouse`; mouse comes through input handler when enabled).
 - [ ] Clicking button toggles its state; hover changes `backgroundColor`.
 - [ ] Deno + TuiBridge parity harness verifies 100% match.
-- [ ] Covers: mouse events, hit testing, dynamic style updates, `onClick` equivalent.
+- [ ] Covers: mouse events, hit testing, dynamic style updates.
 
 ## Dependencies
 - Task 015, Task 041
 
 ## SPEC Reference
-§7.3 Hit Testing (Mouse); §4 FFI Protocol — register_mouse
+§7.3 Hit Testing (Mouse); §4 Bridge API — register_input

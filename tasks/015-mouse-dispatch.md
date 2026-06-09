@@ -5,8 +5,8 @@ Implement mouse event hit-testing and dispatch to deepest matching node.
 
 ## Acceptance Criteria
 - [ ] `dispatch_mouse(mouse)` converts crossterm MouseEvent to JS object.
-- [ ] Hit-test against `computed_rect` of ShadowTree nodes.
-- [ ] Dispatches to deepest node with registered mouse callback.
+- [ ] Hit-test against Yoga-computed layout rects (`left`, `top`, `width`, `height`).
+- [ ] Dispatches to deepest node with registered input callback.
 - [ ] Unit test: build tree with known rects, simulate click at (x,y), verify correct node receives event.
 
 ## Dependencies

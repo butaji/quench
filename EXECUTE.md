@@ -7,7 +7,7 @@
 ## Architecture
 
 ```
-Ink API (exact) → React Reconciler → Host Config → __ink_* FFI → Rust
+Ink API (exact) → React Reconciler → Host Config → __ink_* bridge → Rust
                                                     ↓
                               Yoga (layout) → ratatui Buffer (render)
                                                     ↑
@@ -16,14 +16,14 @@ Ink API (exact) → React Reconciler → Host Config → __ink_* FFI → Rust
 
 - **JS:** React + react-reconciler + ~15 KB shim in rquickjs
 - **Rust:** Yoga C++ for layout, ratatui for terminal output, crossterm for input
-- **FFI:** 16 synchronous functions. One `commit()` per reconciler flush.
+- **Bridge:** 16 synchronous host functions. One `commit()` per reconciler flush.
 
 ---
 
 ## Important Goals
 
 ### 1. Exact Ink API
-Users write standard Ink code — same imports, same hooks, same JSX. No porting. The shim intercepts React's host config at the FFI boundary and replaces the Node.js backend (streams, yoga-layout NAPI, `process.stdout`) with Rust.
+Users write standard Ink code — same imports, same hooks, same JSX. No porting. The shim intercepts React's host config at the native boundary and replaces the Node.js backend (streams, yoga-layout NAPI, `process.stdout`) with Rust.
 
 ### 2. Zero JS in Render Hot Path
 `terminal.draw()` is pure Rust. JS is idle during rendering. Yoga computes layouts; ratatui writes to a double-buffered terminal buffer. For a 500-node tree: **< 1 ms**.
@@ -64,7 +64,7 @@ Release build embeds QuickJS bytecode via `include_bytes!`. No esbuild, no file 
 
 ## Testing Strategy
 
-- **Unit:** Every FFI function, Yoga prop mapping, style parser, text measurement
+- **Unit:** Every bridge function, Yoga prop mapping, style parser, text measurement
 - **Integration:** Full render cycle, keyboard dispatch, timer callbacks, buffer diff
 - **Parity:** Side-by-side Deno vs TuiBridge for all examples; cell-level ANSI comparison
 

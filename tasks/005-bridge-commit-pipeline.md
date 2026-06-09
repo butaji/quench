@@ -1,4 +1,4 @@
-# Task 005: FFI Commit Pipeline
+# Task 005: Bridge: Commit Pipeline
 
 ## Goal
 Implement prop updates, text updates, and the commit trigger.
@@ -13,4 +13,4 @@ Implement prop updates, text updates, and the commit trigger.
 - Task 004
 
 ## SPEC Reference
-§4 FFI Protocol — commit_update / set_text / commit
+§4 Bridge API — commit_update / set_text / commit

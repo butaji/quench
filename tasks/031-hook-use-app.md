@@ -8,7 +8,7 @@ Implement `useApp` returning exit, stdout, stdin, stderr proxies.
 - [ ] `exit(err?)` calls `__ink_exit()`.
 - [ ] `stdout.write(data)` calls `__ink_stdout_write(data)`.
 - [ ] `stdin.isRawModeSupported()` returns `__ink_stdin_is_raw()`.
-- [ ] Unit test: mock FFI globals, verify each method calls correct function.
+- [ ] Unit test: mock bridge globals, verify each method calls correct function.
 
 ## Dependencies
 - Task 012, Task 007

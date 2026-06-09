@@ -1,7 +1,7 @@
 # Task 012: JS Hook Shims
 
 ## Goal
-Implement thin JS wrappers for `useInput` and `useApp` that bridge to FFI.
+Implement thin JS wrappers for `useInput` and `useApp` that bridge to.
 
 ## Acceptance Criteria
 - [ ] `useInput(handler, options)` registers/unregisters via `__ink_register_input` in `useEffect`.

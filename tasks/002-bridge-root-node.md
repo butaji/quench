@@ -1,4 +1,4 @@
-# Task 002: FFI Root Node Lifecycle
+# Task 002: Bridge: Root Node Lifecycle
 
 ## Goal
 Implement `__ink_create_root` and `__ink_destroy_root` to manage the terminal root Yoga node.
@@ -12,4 +12,4 @@ Implement `__ink_create_root` and `__ink_destroy_root` to manage the terminal ro
 - Task 001
 
 ## SPEC Reference
-§4 FFI Protocol — create_root / destroy_root
+§4 Bridge API — create_root / destroy_root
