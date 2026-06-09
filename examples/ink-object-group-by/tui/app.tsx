@@ -1,3 +1,4 @@
+// Object.groupBy example — demonstrates ES2024 Object.groupBy / Map.groupBy
 import React from 'react';
 import { Box, Text } from 'ink';
 
