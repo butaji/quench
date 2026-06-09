@@ -1,675 +1,415 @@
 # TuiBridge Specification v0.1
 
-## 1. Design Philosophy
+## 1. The Core Insight
 
-**JavaScript decides what to draw. Rust decides how and when to draw it.**
+Ink is a **React custom renderer**. It does not use the DOM; it uses `react-reconciler` with a "host config" that creates Yoga nodes, measures text, and writes ANSI to `process.stdout`.
 
-- **Zero JS in the render hot path.** The ratatui immediate-mode loop is 100% Rust. It never calls into JS.
-- **One FFI call per commit.** The JS reconciler emits the entire UI tree in a single `commit()` call to Rust. No per-node FFI chatter.
-- **JS is a plugin format, not a runtime dependency.** In production, JS bundles are pre-compiled to QuickJS bytecode and embedded in the binary.
+If we provide a JS shim that exports the exact same Ink API but whose reconciler host config calls into Rust instead of Node.js, **Ink examples work unmodified**. The JS side is ~15 KB of shim + React reconciler. The heavy work (Yoga, terminal I/O, event loop) is Rust.
 
 ---
 
-## 2. High-Level Architecture
+## 2. What Runs in rquickjs
+
+A single bundled JS file loaded into the VM:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  DEV LOOP                                                           │
-│  ┌──────────────┐   esbuild --watch   ┌──────────────┐            │
-│  │  plugins/    │ ──────────────────► │  dist/       │            │
-│  │  *.tsx       │    < 20 ms          │  *.js        │            │
-│  └──────────────┘                     └──────────────┘            │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  RUST HOST (single binary)                                          │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  rquickjs VM (200 KB footprint)                             │   │
-│  │  ┌─────────────────────────────────────────────────────┐    │   │
-│  │  │  Core Library (~8 KB gzipped)                       │    │   │
-│  │  │  • Custom reconciler (Fiber-lite)                   │    │   │
-│  │  │  • Hooks: useState, useEffect, useMemo, useRef      │    │   │
-│  │  │  • JSX factory (h) + Fragment                       │    │   │
-│  │  │  • Event emitter polyfill                           │    │   │
-│  │  │  • Timer polyfill (setTimeout/setInterval)            │    │   │
-│  │  └─────────────────────────────────────────────────────┘    │   │
-│  │  ┌─────────────────────────────────────────────────────┐    │   │
-│  │  │  Plugin Bundle (user code)                          │    │   │
-│  │  │  export default function App() { ... }              │    │   │
-│  │  └─────────────────────────────────────────────────────┘    │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                          │ commit(tree)                           │
-│                          ▼ (single call)                           │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Rust Bridge                                                │   │
-│  │  • Deserializes JS object tree → ShadowTree                 │   │
-│  │  • Diffs against previous tree                              │   │
-│  │  • Marks dirty regions                                      │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                          │                                        │
-│                          ▼ (60 fps or event-driven)                │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  ratatui Render Loop (pure Rust)                            │   │
-│  │  • Layout pass (top-down rect splitting)                   │   │
-│  │  • Widget render (Block, Paragraph, List, etc.)             │   │
-│  │  • Crossterm event pump                                     │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+ink-shim.js (~120 KB total)
+├── React + react-reconciler (~80 KB, pure JS, works in QuickJS)
+├── Host Config Interceptor (~5 KB)
+│   └── createInstance → __ink_create_node()
+│   └── appendChild    → __ink_append_child()
+│   └── commitUpdate   → __ink_commit_update()
+│   └── measureText    → __ink_measure_text()
+│   └── etc.
+├── Ink API Surface (~10 KB)
+│   └── render(), Box, Text, Static, Newline, Spacer
+│   └── useInput, useApp, useStdin, useStdout, useStderr
+│   └── useFocus, useFocusManager, measureElement
+└── User Plugin Code
+    └── import {render, Box, Text, useInput} from 'ink'
 ```
+
+**Polyfills provided by Rust via `globalThis`:**
+- `setTimeout` / `setInterval` / `clearTimeout` → tokio timer bridge
+- `setImmediate` / `clearImmediate` → microtask queue
+- `process.nextTick` → microtask queue
+- `console` → tracing/log
+- `EventEmitter` (minimal) → if React scheduler needs it
 
 ---
 
-## 3. JavaScript Reconciler (QuickJS-side)
+## 3. The Rust Backend
 
-### 3.1 JSX Transform
+### 3.1 Layout Engine: Yoga (`yoga-rs`)
 
-All `.tsx` files compile with `esbuild` using the **classic JSX transform** targeting a custom factory:
+We use Facebook's Yoga C++ library via Rust bindings (`yoga-rs` or `taffy` as fallback). Every reconciler node has a 1:1 `YogaNode` in Rust.
 
-```json
-{
-  "jsxFactory": "h",
-  "jsxFragment": "Fragment"
+**Why Yoga in Rust?** Ink's layout behavior is defined by Yoga. Using the same engine guarantees pixel-identical layouts. Text measurement is bridged to Rust's `unicode-width` + `textwrap`.
+
+```rust
+struct InkNode {
+    id: u32,
+    tag: InkTag,               // Box | Text | Static | Spacer
+    props: HashMap<String, PropValue>,
+    children: Vec<u32>,
+    yoga: YogaNode,
+    text: Option<String>,      // for Text/Spacer
+    style: Style,              // ratatui style cache
 }
 ```
 
-Example plugin source:
+**Text Measurement Bridge:**
+When Yoga lays out a `<Text>` node, it calls a measure function we register in Rust:
+
+```rust
+fn measure_text_node(node_id: u32, width: f32, _height: f32) -> Size {
+    let node = tree.get(node_id);
+    let text = node.text.as_ref().unwrap();
+    let max_width = width as usize;
+    let lines = textwrap::wrap(text, max_width);
+    let w = lines.iter()
+        .map(|l| unicode_width::UnicodeWidthStr::width(l.as_ref()))
+        .max().unwrap_or(0) as f32;
+    let h = lines.len() as f32;
+    Size { width: w, height: h }
+}
+```
+
+### 3.2 Renderer: ratatui Buffer (Not Layout)
+
+We **do not use ratatui's `Layout` system**. Yoga already computed absolute `x, y, width, height` for every node. We use ratatui purely for:
+
+- **Double-buffered terminal output** (`Buffer` diffing + flush)
+- **Widget primitives** (`Block`, `Paragraph`, `Span`) placed at Yoga coordinates
+- **Crossterm backend abstraction**
+
+```rust
+fn render_yoga_tree(node_id: u32, buf: &mut Buffer) {
+    let node = tree.get(node_id);
+    let layout = node.yoga.get_layout();
+    let rect = Rect {
+        x: layout.left() as u16,
+        y: layout.top() as u16,
+        width: layout.width() as u16,
+        height: layout.height() as u16,
+    };
+
+    match node.tag {
+        InkTag::Box => {
+            let block = Block::default()
+                .borders(parse_border(&node.props))
+                .title(node.props.get("title").cloned().unwrap_or_default());
+            block.render(rect, buf);
+        }
+        InkTag::Text => {
+            let text = Paragraph::new(node.text.clone().unwrap_or_default())
+                .style(node.style)
+                .wrap(Wrap { trim: true });
+            text.render(rect, buf);
+        }
+        InkTag::Static => {
+            // Static items are rendered above the main tree
+            // (same semantics as Ink: unmounting Static items is expensive)
+        }
+        _ => {}
+    }
+
+    for &child_id in &node.children {
+        render_yoga_tree(child_id, buf);
+    }
+}
+```
+
+**Performance guarantee:** The render pass is a single recursive Rust function writing to a `Buffer`. No JS, no allocations, no FFI. For a 500-node tree, this is **<< 1 ms**.
+
+### 3.3 Event Loop: Event-Driven, Zero Polling
+
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut terminal = setup_terminal()?;
+    let mut reader = EventStream::new();
+    let mut vm = InkVm::new().await?;
+
+    // Load initial bundle
+    vm.eval_bundle(include_str!("dist/bundle.js"))?;
+    vm.mount_app()?; // calls render(<App />) in JS
+
+    let mut dirty = true; // initial render
+
+    loop {
+        // Block forever until something happens
+        tokio::select! {
+            biased;
+
+            Some(Ok(evt)) = reader.next() => {
+                match evt {
+                    Event::Key(k) => vm.dispatch_key(k),
+                    Event::Mouse(m) => vm.dispatch_mouse(m),
+                    Event::Resize(w, h) => vm.dispatch_resize(w, h),
+                    _ => {}
+                }
+                // JS handlers ran synchronously. If they called setState,
+                // the reconciler already called __ink_commit() before we returned.
+                dirty = vm.is_dirty();
+            }
+
+            Some(timer_id) = vm.timer_rx.recv() => {
+                vm.dispatch_timer(timer_id);
+                dirty = vm.is_dirty();
+            }
+
+            Some(path) = vm.reload_rx.recv() => {
+                vm.hot_reload(&path).await?;
+                dirty = true;
+            }
+        }
+
+        // Batch rapid events (e.g., timer fired during render)
+        while vm.drain_events() {
+            dirty = true;
+        }
+
+        // Render exactly once per event batch
+        if dirty {
+            terminal.draw(|frame| {
+                let area = frame.area();
+                vm.yoga_root.set_width(area.width as f32);
+                vm.yoga_root.set_height(area.height as f32);
+                vm.yoga_root.calculate_layout();
+                vm.render_yoga_tree(vm.root_id, frame.buffer_mut());
+            })?;
+            vm.clear_dirty();
+            dirty = false;
+        }
+    }
+}
+```
+
+---
+
+## 4. The FFI Protocol (`globalThis.__ink_*`)
+
+These are the only functions JS calls into Rust. All are synchronous, batched during reconciliation.
+
+| JS Call | Rust Handler | Purpose |
+|---------|-------------|---------|
+| `__ink_create_root()` | `create_root()` → `u32` | Create terminal root node |
+| `__ink_create_node(tag, props)` | `create_node(tag, props)` → `u32` | Create Yoga node, set flex props |
+| `__ink_create_text_node(text)` | `create_text_node(text)` → `u32` | Create Yoga leaf with measure func |
+| `__ink_append_child(p, c)` | `append_child(p, c)` | Build tree, mark dirty |
+| `__ink_remove_child(p, c)` | `remove_child(p, c)` | Detach, mark dirty |
+| `__ink_insert_before(p, c, b)` | `insert_before(...)` | Reorder, mark dirty |
+| `__ink_commit_update(id, props)` | `update_node(id, props)` | Update Yoga props, mark dirty |
+| `__ink_set_text(id, text)` | `set_text(id, text)` | Update text, mark dirty |
+| `__ink_commit()` | `commit()` | Trigger layout + render |
+| `__ink_measure_text(text, width)` | `measure_text(...)` → `{w, h}` | Text measurement for Yoga |
+| `__ink_register_input(cb)` | `register_input(id, cb)` | Store JS callback for keys |
+| `__ink_unregister_input(id)` | `unregister_input(id)` | Remove handler |
+| `__ink_exit()` | `exit_app()` | Break event loop |
+| `__ink_stdout_write(data)` | `stdout.write(data)` | Direct crossterm write |
+| `__ink_stderr_write(data)` | `stderr.write(data)` | Direct crossterm write |
+| `__ink_stdin_is_raw()` | `is_raw_mode()` → `bool` | Query terminal state |
+
+**No other FFI calls exist.** React's reconciliation may call these 50–100 times per commit, but they are all in-memory Rust operations (HashMap inserts, Yoga node updates). Total commit overhead: **<< 2 ms**.
+
+---
+
+## 5. Ink API Implementation Details
+
+### 5.1 `render(<App />, {stdout, stdin, stderr, debug, patchConsole})`
+
+```javascript
+// ink/index.js
+import Reconciler from 'react-reconciler';
+import {hostConfig} from './host-config.js';
+
+const InkRenderer = Reconciler(hostConfig);
+
+export function render(node, options = {}) {
+  const rootId = globalThis.__ink_create_root();
+  const container = {id: rootId};
+  const root = InkRenderer.createContainer(container, 0, null, false, null, '', console.error, null);
+
+  InkRenderer.updateContainer(node, root, null, () => {
+    globalThis.__ink_commit();
+  });
+
+  return {
+    waitUntilExit: () => new Promise(r => globalThis.__ink_on_exit = r),
+    unmount: () => {
+      InkRenderer.updateContainer(null, root, null, () => {});
+      globalThis.__ink_destroy_root(rootId);
+    }
+  };
+}
+```
+
+### 5.2 Components
+
+```javascript
+// Box, Text, Static, etc. are just React components that return
+// reconciler elements. The host config intercepts them.
+export const Box = 'ink-box';
+export const Text = 'ink-text';
+export const Static = 'ink-static';
+export const Newline = 'ink-newline';
+export const Spacer = 'ink-spacer';
+```
+
+### 5.3 Hooks
+
+```javascript
+// useInput registers a callback in Rust's crossterm dispatcher
+export function useInput(handler, options = {}) {
+  useEffect(() => {
+    const id = globalThis.__ink_register_input((input, key) => {
+      if (options.isActive !== false) {
+        handler(input, key);
+      }
+    });
+    return () => globalThis.__ink_unregister_input(id);
+  }, [options.isActive]);
+}
+
+// useApp returns the app context
+export function useApp() {
+  return useMemo(() => ({
+    exit: (err) => globalThis.__ink_exit(err),
+    stdout: { write: (d) => globalThis.__ink_stdout_write(d) },
+    stdin: { isRawModeSupported: () => globalThis.__ink_stdin_is_raw() },
+    stderr: { write: (d) => globalThis.__ink_stderr_write(d) },
+  }), []);
+}
+
+// useStdin, useStdout, useStderr, useFocus, useFocusManager
+// are all thin wrappers over __ink_* calls or React context
+```
+
+### 5.4 `measureElement(ref)`
+
+```javascript
+export function measureElement(ref) {
+  if (!ref?.current?.id) return undefined;
+  return globalThis.__ink_measure_element(ref.current.id);
+}
+```
+
+Rust returns `{width, height}` from the Yoga node's computed layout.
+
+---
+
+## 6. Hot Reload
+
+Because React state lives in JS, we do a **fast remount** instead of trying to patch the reconciler:
+
+1. `notify` detects `plugins/*.tsx` change
+2. `esbuild --watch` rebuilds in **~10 ms**
+3. Rust receives path, calls `vm.unmount_app()` (destroys React root, Yoga tree)
+4. Rust calls `ctx.eval(new_bundle)` in the **same** rquickjs runtime (no VM restart)
+5. Rust calls `vm.mount_app()` → React mounts fresh, emits `__ink_commit()`
+6. Rust renders new tree
+
+**Latency:** ~30 ms end-to-end. You lose component state on reload, but TUI state is usually ephemeral. For state preservation, serialize hook states to Rust before unmount and rehydrate after — optional Phase 2 feature.
+
+---
+
+## 7. Production Build
+
+```rust
+// Precompile JS to QuickJS bytecode at build time
+let bytecode = qjsc::compile(include_str!("dist/bundle.js"));
+// Embed in binary
+const BUNDLE: &[u8] = include_bytes!("../dist/bundle.qbc");
+
+// At runtime, load directly into VM — no parse overhead
+let module = ctx.compile_module("ink-app", BUNDLE)?;
+module.eval()?;
+```
+
+No `esbuild`, no file watcher, no source maps. A single native binary with an embedded JS app.
+
+---
+
+## 8. Performance Summary
+
+| Metric | Value | Why |
+|--------|-------|-----|
+| JS engine memory | ~300 KB | rquickjs + React reconciler + shim |
+| Layout | ~0.5–2 ms | Yoga C++ in Rust |
+| Render | ~0.3–1 ms | Pure Rust recursive buffer write |
+| Commit (JS→Rust) | ~1–3 ms | Batched FFI, no per-node chatter |
+| Input latency | ~0.5 ms | Event-driven, no polling |
+| Hot reload | ~30 ms | esbuild + remount |
+| Binary size | ~3–5 MB | Rust + Yoga + ratatui + rquickjs static |
+| Idle CPU | 0% | Blocks on `tokio::select!` |
+
+---
+
+## 9. Build Order
+
+**Week 1: Bridge**
+- [ ] Set up rquickjs + `yoga-rs` + ratatui + crossterm
+- [ ] Implement `__ink_create_node`, `__ink_append_child`, `__ink_commit`
+- [ ] Build host config that targets these functions
+- [ ] Mount a static `<Box><Text>hello</Text></Box>` from JS
+
+**Week 2: React + Ink API**
+- [ ] Bundle React + react-reconciler for QuickJS
+- [ ] Implement `render()`, `Box`, `Text`, `useInput`
+- [ ] Event-driven crossterm loop dispatching to JS
+
+**Week 3: Layout + Widgets**
+- [ ] Map all Ink flex props to Yoga (`flexDirection`, `justifyContent`, `alignItems`, `padding`, `margin`, `borderStyle`, etc.)
+- [ ] Text measurement bridge
+- [ ] `Paragraph`, `Static`, `Newline`, `Spacer`
+
+**Week 4: Advanced API**
+- [ ] `useApp`, `useStdin`, `useStdout`, `useStderr`, `useFocus`, `useFocusManager`
+- [ ] `measureElement`
+- [ ] Mouse support
+
+**Week 5: DevEx + Ship**
+- [ ] `esbuild --watch` integration
+- [ ] Hot reload (unmount/remount)
+- [ ] QuickJS bytecode precompilation
+- [ ] Strip dev code for release
+
+---
+
+## 10. Example: Exact Ink Code Working
 
 ```tsx
-import { Box, Text, useState, useEffect, useInput } from '@tui/core';
+// plugins/dashboard.tsx
+import React, {useState, useEffect} from 'react';
+import {render, Box, Text, useInput, useApp, Static} from 'ink';
 
-export default function App() {
+const Counter = () => {
   const [count, setCount] = useState(0);
+  const {exit} = useApp();
 
   useInput((input, key) => {
-    if (input === 'q') process.exit(); // handled by Rust bridge
+    if (input === 'q') exit();
     if (input === ' ') setCount(c => c + 1);
   });
 
   useEffect(() => {
-    const id = setInterval(() => setCount(c => c + 1), 1000);
-    return () => clearInterval(id);
+    const t = setInterval(() => setCount(c => c + 1), 1000);
+    return () => clearInterval(t);
   }, []);
 
   return (
-    <Box border="round" title="Counter" padding={1}>
-      <Text bold color="green">
-        Count: {count}
-      </Text>
-      <Text dimColor>Press [space] to increment, [q] to quit</Text>
+    <Box flexDirection="column" padding={1} borderStyle="round">
+      <Text color="green" bold>Counter App</Text>
+      <Text>Count: {count}</Text>
+      <Text dimColor>[space] increment | [q] quit</Text>
     </Box>
   );
-}
-```
-
-### 3.2 Reconciler API
-
-The reconciler is a **Preact-style VDOM** (~600 lines) with a React-compatible hook system. It does not use React DOM or Ink. It targets a "host config" that points to Rust.
-
-```typescript
-// Core library internal API
-interface HostConfig {
-  // Called after reconciliation completes
-  commitRoot(tree: VNode): void;
-
-  // Called when effects need scheduling
-  scheduleCallback(cb: () => void): void;
-}
-
-// VNode shape emitted to Rust
-type VNode = VElement | VText;
-
-interface VElement {
-  type: 'element';
-  tag: string;           // 'Box', 'Text', 'Paragraph', 'List', etc.
-  key: string | number | null;
-  props: Record<string, any>;
-  children: VNode[];
-}
-
-interface VText {
-  type: 'text';
-  content: string;
-}
-```
-
-### 3.3 Hooks Implementation
-
-Hooks are implemented using a **component stack** (not true fibers, but sufficient for TUI complexity):
-
-```typescript
-// Simplified hook state
-let currentComponent: ComponentInstance | null = null;
-let hookIndex = 0;
-
-function useState<T>(initial: T): [T, (next: T | ((prev: T) => T)) => void] {
-  const comp = currentComponent!;
-  const hooks = comp.hooks;
-  const idx = hookIndex++;
-
-  if (hooks[idx] === undefined) {
-    hooks[idx] = { state: initial, queue: [] };
-  }
-
-  const hook = hooks[idx];
-  const setState = (next) => {
-    hook.queue.push(next);
-    scheduleUpdate(comp); // triggers reconciler
-  };
-
-  return [hook.state, setState];
-}
-
-function useEffect(cb: () => void | (() => void), deps?: any[]) {
-  // Standard effect comparison + cleanup
-}
-```
-
-**Rules enforced by convention (same as React):**
-- Hooks only at top level of function components
-- Hooks called in same order every render
-
----
-
-## 4. Virtual Tree Protocol
-
-### 4.1 Commit Format
-
-The reconciler calls `globalThis.__tui_commit(tree)` once per commit. The `tree` is a plain JS object graph. Rust traverses it via the rquickjs API.
-
-**Why not JSON strings?** Avoiding `JSON.stringify` in JS and `serde_json` in Rust saves ~30% of commit latency for large trees. rquickjs allows Rust to iterate JS objects directly.
-
-### 4.2 Node Schema
-
-```typescript
-// Standard element
-{
-  type: 'element',
-  tag: 'Box',
-  key: null,
-  props: {
-    border: 'round',          // 'none' | 'single' | 'double' | 'round'
-    title: 'Counter',
-    titleAlign: 'center',
-    padding: [1, 2, 1, 2],    // [top, right, bottom, left]
-    width: '100%',             // number | '100%' | 'auto'
-    height: 'auto',
-    flex: 1,                   // for flex children
-    backgroundColor: 'blue',   // ratatui Color
-    borderColor: 'red',
-    style: { bold: true, fg: 'green' }  // ratatui Style shorthand
-  },
-  children: [
-    { type: 'text', content: 'Hello' },
-    { type: 'element', tag: 'Paragraph', props: { text: '...' }, children: [] }
-  ]
-}
-
-// Text node (always leaf)
-{ type: 'text', content: 'Hello world' }
-```
-
-### 4.3 Supported Tags (Ink-compatible subset)
-
-| Tag | ratatui Widget | Key Props |
-|-----|---------------|-----------|
-| `Fragment` | (transparent) | `children` |
-| `Box` | `Block` | `border`, `title`, `padding`, `style` |
-| `Text` | `Text` / `Span` | `content`, `bold`, `color`, `dimColor` |
-| `Paragraph` | `Paragraph` | `text`, `wrap`, `alignment`, `scroll` |
-| `List` | `List` | `items` (array of strings or VNodes) |
-| `Table` | `Table` | `rows`, `header`, `widths`, `columnSpacing` |
-| `Row` | `Row` | `cells` |
-| `Cell` | `Cell` | `content` |
-| `Gauge` | `Gauge` | `ratio`, `label`, `style` |
-| `Chart` | `Chart` | `datasets`, `xAxis`, `yAxis` |
-| `Tabs` | `Tabs` | `titles`, `selected`, `block` |
-| `Layout` | (layout container) | `direction`, `constraints`, `children` |
-
----
-
-## 5. Rust Bridge Architecture
-
-### 5.1 ShadowTree
-
-Rust maintains a persistent **ShadowTree** — a mirror of the JS virtual tree using strongly-typed Rust structs. This tree survives across commits and is reused for diffing.
-
-```rust
-#[derive(Debug, Clone)]
-enum ShadowNode {
-    Element(ShadowElement),
-    Text(ShadowText),
-}
-
-#[derive(Debug, Clone)]
-struct ShadowElement {
-    tag: String,
-    key: Option<String>,
-    props: HashMap<String, PropValue>,
-    children: Vec<ShadowNode>,
-    // Cached layout rect from last frame
-    computed_rect: Option<Rect>,
-    // Event handlers (stored by JS callback ID)
-    on_key: Option<u32>,
-    on_click: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-struct ShadowText {
-    content: String,
-    style: Style,
-}
-```
-
-### 5.2 Diff Algorithm
-
-When `commit()` is called, Rust diffs the new tree against the old ShadowTree:
-
-1. **Walk both trees in parallel** (pre-order)
-2. **If tag/key match:** Update props in-place, recurse into children
-3. **If mismatch:** Replace subtree
-4. **If node removed:** Drop it (trigger JS cleanup effects if needed)
-
-The diff is **O(n)** where n = tree size. For typical TUI trees (< 500 nodes), this takes < 50 μs.
-
-### 5.3 Dirty Flagging
-
-Only nodes with changed props or changed children are marked `dirty`. During the ratatui render pass, only dirty subtrees are re-laid-out and re-rendered. Static subtrees skip layout computation.
-
----
-
-## 6. ratatui Integration (Zero-Degradation Rendering)
-
-This is the most critical section. The render loop must be pure Rust.
-
-### 6.1 Render Loop Separation
-
-```rust
-// Main loop (tokio::task or std::thread)
-loop {
-    // 1. Poll crossterm events (non-blocking, 1ms timeout)
-    if event::poll(Duration::from_millis(1))? {
-        let evt = event::read()?;
-        dispatch_to_js(evt); // may trigger JS commit
-    }
-
-    // 2. Check if JS produced a new tree
-    if bridge.has_new_commit() {
-        bridge.apply_commit(); // diff into ShadowTree
-    }
-
-    // 3. Render (pure Rust, zero JS)
-    terminal.draw(|frame| {
-        let area = frame.area();
-        shadow_tree.render(area, frame.buffer_mut());
-    })?;
-
-    // 4. Frame rate cap (60fps = 16ms)
-    thread::sleep(Duration::from_millis(16));
-}
-```
-
-### 6.2 ShadowTree Rendering
-
-Each `ShadowNode` implements a custom render method that integrates with ratatui:
-
-```rust
-impl ShadowNode {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        match self {
-            ShadowNode::Text(t) => {
-                let span = Span::styled(t.content.clone(), t.style);
-                buf.set_span(area.x, area.y, &span, area.width);
-            }
-            ShadowNode::Element(el) => {
-                // 1. Compute inner area (subtract padding/border)
-                let inner = self.compute_inner_area(area);
-
-                // 2. If this node has a border, render Block
-                if let Some(border) = el.props.get("border") {
-                    let block = Block::default()
-                        .borders(parse_border(border))
-                        .title(el.props.get("title").and_then(|t| t.as_str()));
-                    block.render(area, buf);
-                }
-
-                // 3. Layout children
-                let child_areas = self.layout_children(inner);
-
-                // 4. Recurse
-                for (child, child_area) in el.children.iter().zip(child_areas) {
-                    child.render(child_area, buf);
-                }
-            }
-        }
-    }
-}
-```
-
-### 6.3 Layout Engine
-
-ratatui uses **constraint-based splitting**, not flexbox. We map JS props to ratatui's `Layout` system:
-
-```rust
-fn layout_children(&self, area: Rect) -> Vec<Rect> {
-    let el = match self { ShadowNode::Element(e) => e, _ => return vec![] };
-
-    let direction = el.props.get("direction")
-        .and_then(|d| d.as_str())
-        .map(|d| match d {
-            "row" => Direction::Horizontal,
-            _ => Direction::Vertical,
-        })
-        .unwrap_or(Direction::Vertical);
-
-    let constraints: Vec<Constraint> = el.children.iter().map(|child| {
-        match child {
-            ShadowNode::Element(c) => parse_constraint(&c.props),
-            ShadowNode::Text(_) => Constraint::Length(1),
-        }
-    }).collect();
-
-    Layout::default()
-        .direction(direction)
-        .constraints(constraints)
-        .split(area)
-        .to_vec()
-}
-
-fn parse_constraint(props: &HashMap<String, PropValue>) -> Constraint {
-    if let Some(flex) = props.get("flex").and_then(|v| v.as_f64()) {
-        // Flex is mapped to ratio; exact calculation needs parent total
-        Constraint::Ratio(flex as u32, 1) // simplified
-    } else if let Some(w) = props.get("width").and_then(|v| v.as_f64()) {
-        Constraint::Length(w as u16)
-    } else if let Some(pct) = props.get("width").and_then(|v| v.as_str()) {
-        if pct.ends_with('%') {
-            Constraint::Percentage(pct.trim_end_matches('%').parse().unwrap_or(100))
-        } else {
-            Constraint::Min(0)
-        }
-    } else {
-        Constraint::Min(0)
-    }
-}
-```
-
-**Performance note:** `Layout::split()` is cached internally by ratatui when constraints haven't changed. Because our ShadowTree persists across frames, we can store the `Layout` object and only recompute when children or constraints change.
-
-### 6.4 Style Mapping
-
-JS props map directly to ratatui's `Style`:
-
-```rust
-fn parse_style(props: &HashMap<String, PropValue>) -> Style {
-    let mut style = Style::default();
-    if let Some(c) = props.get("color").and_then(|v| v.as_str()) {
-        style = style.fg(parse_color(c));
-    }
-    if props.get("bold").and_then(|v| v.as_bool()) == Some(true) {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    if props.get("dimColor").and_then(|v| v.as_bool()) == Some(true) {
-        style = style.add_modifier(Modifier::DIM);
-    }
-    // ... underline, italic, crossed_out, etc.
-    style
-}
-```
-
----
-
-## 7. Event System
-
-### 7.1 Rust → JS Dispatch
-
-Crossterm events are serialized and pushed into a JS queue:
-
-```rust
-fn dispatch_to_js(evt: Event) {
-    let js_event = match evt {
-        Event::Key(k) => json!({
-            "type": "key",
-            "code": format!("{:?}", k.code),
-            "modifiers": parse_modifiers(k.modifiers),
-        }),
-        Event::Mouse(m) => json!({
-            "type": "mouse",
-            "kind": format!("{:?}", m.kind),
-            "column": m.column,
-            "row": m.row,
-        }),
-        Event::Resize(w, h) => json!({
-            "type": "resize",
-            "width": w,
-            "height": h,
-        }),
-        _ => return,
-    };
-
-    // Call JS global handler
-    ctx.eval(format!("__tui_dispatch({})", js_event)).ok();
-}
-```
-
-### 7.2 JS Event Handling
-
-The core library provides `useInput` and `useMouse`:
-
-```typescript
-export function useInput(handler: (input: string, key: Key) => void) {
-  useEffect(() => {
-    const id = globalThis.__tui_registerInputHandler((raw) => {
-      handler(raw.input, raw);
-    });
-    return () => globalThis.__tui_unregisterHandler(id);
-  }, []);
-}
-```
-
-### 7.3 Hit Testing (Mouse)
-
-For mouse clicks, Rust does hit-testing against the `computed_rect` stored in each ShadowNode. The event is dispatched to the deepest matching node that has an `onClick` handler.
-
----
-
-## 8. Hot Reload System
-
-### 8.1 File Watcher
-
-```rust
-use notify::{Watcher, RecursiveMode, watcher};
-use std::sync::mpsc::channel;
-
-let (tx, rx) = channel();
-let mut watcher = watcher(tx, Duration::from_millis(100)).unwrap();
-watcher.watch("plugins/", RecursiveMode::NonRecursive).unwrap();
-
-// In main loop
-if let Ok(event) = rx.try_recv() {
-    match event {
-        DebouncedEvent::Write(path) => reload_plugin(&path),
-        _ => {}
-    }
-}
-```
-
-### 8.2 Reload Strategy
-
-**Full Context Replacement** (recommended for simplicity):
-
-1. Save current terminal state (optional)
-2. Drop old rquickjs `Runtime` / `Context`
-3. Create new `Runtime` with fresh core library
-4. Load updated plugin bundle via `ctx.eval()`
-5. Call `mount()` to trigger initial render
-6. First commit rebuilds the entire ShadowTree
-
-**Latency:** rquickjs context creation + eval takes ~2-5 ms. esbuild watch takes ~10-20 ms. Total reload latency: **<< 50 ms**.
-
-### 8.3 State Preservation (Optional)
-
-For preserving state across reloads, the core library can serialize hook states to Rust before context destruction:
-
-```typescript
-// Core library, pre-reload
-globalThis.__tui_preserveState = () => {
-  return rootComponent.__hooks.map(h => h.state);
 };
+
+render(<Counter />);
 ```
 
-Rust stores this, then injects it into the new context post-reload. This is opt-in.
+This file requires **zero changes** from standard Ink. It imports from `ink`, uses React hooks, `useApp`, `useInput`, flex props, `borderStyle`, `color`, `dimColor`, `bold`. The only difference is that at build time, `esbuild` bundles it with our `ink` shim instead of the npm `ink` package, and the runtime is rquickjs + Rust instead of Node.js.
 
----
-
-## 9. Plugin API Specification
-
-### 9.1 Entry Contract
-
-Every plugin must export a default function component:
-
-```typescript
-export default function MyPlugin(props: { id: string }): VNode;
-```
-
-### 9.2 Core Library Exports
-
-```typescript
-// @tui/core
-export function h(type: string | Function, props: any, ...children: any[]): VNode;
-export function Fragment(props: { children: VNode[] }): VNode;
-
-export function useState<T>(initial: T): [T, (v: T | ((p: T) => T)) => void];
-export function useEffect(effect: () => void | (() => void), deps?: any[]): void;
-export function useMemo<T>(factory: () => T, deps: any[]): T;
-export function useCallback<T extends Function>(fn: T, deps: any[]): T;
-export function useRef<T>(initial: T): { current: T };
-export function useContext<T>(ctx: Context<T>): T;
-export function createContext<T>(defaultValue: T): Context<T>;
-
-export function useInput(handler: (input: string, key: Key) => void): void;
-export function useMouse(handler: (event: MouseEvent) => void): void;
-export function useResize(handler: (width: number, height: number) => void): void;
-
-export const Box: string;
-export const Text: string;
-export const Paragraph: string;
-export const List: string;
-export const Table: string;
-// ... etc
-```
-
-### 9.3 Multi-Plugin Support
-
-Rust can load multiple plugins and mount them as separate roots:
-
-```rust
-let plugins = vec![
-    load_plugin("plugins/status-bar.tsx"),
-    load_plugin("plugins/file-tree.tsx"),
-];
-// Render them into a Layout-managed grid
-```
-
----
-
-## 10. Performance Guarantees
-
-| Metric | Target | How |
-|--------|--------|-----|
-| **JS memory** | < 1 MB | rquickjs baseline ~200 KB + reconciler ~50 KB + plugin code |
-| **Render loop** | < 1 ms/frame | Pure Rust ratatui; no JS, no allocations in hot path |
-| **Commit latency** | < 5 ms | Single FFI call; diff in Rust; O(n) tree walk |
-| **Hot reload** | < 50 ms | esbuild watch + rquickjs context swap |
-| **Binary size** | < 5 MB | Rust + ratatui + rquickjs static link; no V8, no Node |
-| **Startup** | < 20 ms | No JS engine initialization overhead |
-
----
-
-## 11. Implementation Roadmap
-
-### Phase 1: Foundation (Week 1)
-- [ ] Set up rquickjs + ratatui + crossterm scaffold
-- [ ] Build custom reconciler (JS): `h`, `Fragment`, basic mount/unmount
-- [ ] Implement `useState` hook
-- [ ] Build Rust bridge: `commit()` receiver, ShadowTree storage
-- [ ] Map `Box` and `Text` tags to ratatui `Block` + `Span`
-
-### Phase 2: Layout & Events (Week 2)
-- [ ] Implement constraint mapping (`width`, `height`, `flex`, `direction`)
-- [ ] Build `Layout` tag using ratatui's `Layout::split()`
-- [ ] Crossterm event pump → JS dispatch
-- [ ] `useInput` hook
-- [ ] `Paragraph`, `List` widgets
-
-### Phase 3: Polish & Reload (Week 3)
-- [ ] ShadowTree diffing (in-place updates)
-- [ ] `useEffect` + cleanup
-- [ ] `useRef`, `useMemo`, `useCallback`
-- [ ] File watcher + context hot-swap
-- [ ] esbuild integration
-
-### Phase 4: Advanced Widgets (Week 4)
-- [ ] `Table`, `Gauge`, `Chart`, `Tabs`
-- [ ] Mouse support + hit testing
-- [ ] `useContext` / `createContext`
-- [ ] Multi-plugin orchestration
-
-### Phase 5: Production (Week 5)
-- [ ] QuickJS bytecode precompilation (`qjsc` / `write_object`)
-- [ ] Embed bytecode in Rust binary with `include_bytes!`
-- [ ] Strip dev-only code (hot reload, watcher)
-- [ ] Release builds + optimization
-
----
-
-## 12. Example: Complete Plugin
-
-```tsx
-// plugins/dashboard.tsx
-import { Box, Text, Paragraph, List, useState, useEffect, useInput } from '@tui/core';
-
-export default function Dashboard() {
-  const [items, setItems] = useState(['File 1', 'File 2', 'File 3']);
-  const [selected, setSelected] = useState(0);
-
-  useInput((input, key) => {
-    if (key.name === 'up') setSelected(i => Math.max(0, i - 1));
-    if (key.name === 'down') setSelected(i => Math.min(items.length - 1, i + 1));
-    if (input === 'd') {
-      setItems(prev => prev.filter((_, idx) => idx !== selected));
-    }
-  });
-
-  return (
-    <Box direction="row" width="100%" height="100%">
-      <Box width="30%" border="single" title="Files">
-        <List
-          items={items.map((item, i) => (
-            <Text color={i === selected ? 'cyan' : 'white'} bold={i === selected}>
-              {i === selected ? '> ' : '  '}{item}
-            </Text>
-          ))}
-        />
-      </Box>
-      <Box flex={1} border="single" title="Preview" padding={1}>
-        <Paragraph>
-          Selected: {items[selected] || 'None'}
-        </Paragraph>
-      </Box>
-    </Box>
-  );
-}
-```
-
----
-
-## 13. Why This Protects ratatui
-
-1. **No JS in `draw()`:** The `terminal.draw()` closure only touches Rust structs. JS is idle during rendering.
-2. **Persistent ShadowTree:** Layout constraints are cached in Rust. Only changed nodes trigger `Layout::split()` recomputation.
-3. **No dynamic dispatch in render:** Tags are matched via `match` on `String` (or ideally interned strings/small enum). No vtables, no JS callbacks.
-4. **Zero-copy where possible:** Text content is stored as `String` in Rust (owned). No repeated deserialization.
-5. **Event-driven commits:** JS only wakes up on keyboard input or timers, not on every frame.
-
-This gives you the **Ink development experience** (save a `.tsx` file, see the TUI update in <50ms) with the **runtime efficiency of a native Rust TUI** (sub-millisecond frames, <5 MB binaries).
+**That is the final architecture.** Intercept the reconciler, keep the API, move everything else to Rust.
