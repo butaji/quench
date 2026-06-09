@@ -407,6 +407,21 @@ ink_example_test!(
 );
 
 ink_example_test!(
+    test_ink_class_expression,
+    "ink-class-expression",
+    [
+        "Class Expression Demo",
+        "Counter initial: 0",
+        "After 2 increments: 2",
+        "Person: Hello, I'm Alice and I'm 30",
+        "Model: Model #1: Widget",
+        "Singleton value: 42",
+        "Calc version: 1.0",
+        "Calc value: 15"
+    ]
+);
+
+ink_example_test!(
     test_ink_new_target,
     "ink-new-target",
     [
