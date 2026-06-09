@@ -1,3 +1,5 @@
+// ink-accessor-field example — demonstrates accessor fields (TypeScript 4.9+).
+
 import React from 'react';
 import { Box, Text } from 'ink';
 

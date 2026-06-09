@@ -2429,13 +2429,16 @@
     {
       "id": "189",
       "title": "ink-satisfies-expr example \u2014 satisfies in object/array literals",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-satisfies-expr/",
-        "src/transpile/parser/expr.rs"
+        "src/transpile/parser/expr.rs",
+        "crates/runts-ratatui/src/codegen/expr.rs",
+        "crates/runts-ratatui/src/codegen/stmt_collect.rs"
       ],
-      "acceptance": "Example exists. satisfies in literals erased without runtime impact. Parity harness 100%."
+      "acceptance": "Example exists at examples/ink-satisfies-expr/. Uses satisfies on object literal and array literal. Parity harness 100% across deno/rq/compile. Compile path object literal codegen fixed to emit flat serde_json::json! instead of HIR wrapper. Static member access in JSX children now uses bracket notation for serde_json::Value compatibility.",
+      "notes": "Fixed two compile-path codegen issues: (1) stmt_collect now unwraps HIR Object nodes before emitting serde_json::json!, producing {\"theme\":\"dark\"} instead of {\"Object\":{\"members\":...}}. (2) expr.rs static_member_to_rust now generates bracket access (#obj[#property]) so object property access works on serde_json::Value objects."
     },
     {
       "id": "190",
