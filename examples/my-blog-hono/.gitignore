@@ -1,3 +1,0 @@
-# runts build artifacts (generated Rust + cargo cache)
-.runts/
-target/
