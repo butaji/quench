@@ -330,9 +330,9 @@ pub fn extract_call_arg_value_with_type(init: Option<&Value>) -> Option<(String,
         let rust_val = vars::expr_value_to_rust(&serde_json::json!({"Array": arr}))?;
         return Some((rust_val, Some("Vec<Value>".to_string())));
     }
-    if init.get("Object").is_some() {
-        let rust_val = serde_json::to_string(init).ok()?;
-        return Some((format!("serde_json::json!({})", rust_val), Some("serde_json::Value".to_string())));
+    if let Some(obj) = init.get("Object") {
+        let rust_val = hir_object_to_json_expr(obj);
+        return Some((rust_val, Some("serde_json::Value".to_string())));
     }
     vars::expr_value_to_rust(init).map(|v| (v, None))
 }
