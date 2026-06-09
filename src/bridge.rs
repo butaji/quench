@@ -1,7 +1,7 @@
-//! FFI bridge between JavaScript (rquickjs) and Rust
+//! Bridge between JavaScript (rquickjs) and Rust
 //!
 //! All `__ink_*` functions that JS calls go through this module.
-//! These are exposed to the QuickJS VM via rquickjs's `Module`.
+//! These are exposed to the QuickJS VM as native host functions.
 
 use std::io::Write;
 
@@ -32,13 +32,13 @@ static INPUT_CALLBACKS: std::sync::LazyLock<std::sync::Arc<std::sync::Mutex<Hash
 static NEXT_CALLBACK_ID: std::sync::LazyLock<std::sync::Arc<AtomicU32>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(AtomicU32::new(1)));
 
-/// FFI errors
+/// Bridge errors
 #[derive(Error, Debug)]
 pub enum FfiError {
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
-    #[error("FFI call failed: {0}")]
+    #[error("Bridge call failed: {0}")]
     CallFailed(String),
 
     #[error("Ink error: {0}")]
@@ -48,7 +48,7 @@ pub enum FfiError {
 pub type Result<T> = std::result::Result<T, FfiError>;
 
 // ============================================================================
-// FFI Functions - Root Node
+// Bridge Functions - Root Node
 // ============================================================================
 
 /// Create the terminal root node
@@ -69,7 +69,7 @@ pub fn __ink_destroy_root(root_id: u32) {
 }
 
 // ============================================================================
-// FFI Functions - Node Creation
+// Bridge Functions - Node Creation
 // ============================================================================
 
 /// Create a new node with tag and props (props as JSON string)
@@ -92,7 +92,7 @@ pub fn __ink_create_text_node(text: &str) -> u32 {
 }
 
 // ============================================================================
-// FFI Functions - Tree Mutation
+// Bridge Functions - Tree Mutation
 // ============================================================================
 
 /// Append child to parent
@@ -123,7 +123,7 @@ pub fn __ink_insert_before(parent_id: u32, child_id: u32, before_id: u32) -> Res
 }
 
 // ============================================================================
-// FFI Functions - Updates
+// Bridge Functions - Updates
 // ============================================================================
 
 /// Commit prop updates to a node (props as JSON string)
@@ -169,7 +169,7 @@ pub fn __ink_clear_dirty() {
 }
 
 // ============================================================================
-// FFI Functions - Measurement
+// Bridge Functions - Measurement
 // ============================================================================
 
 /// Measure text dimensions
@@ -220,7 +220,7 @@ pub fn __ink_get_layout(node_id: u32) -> Option<(f32, f32, f32, f32)> {
 }
 
 // ============================================================================
-// FFI Functions - I/O
+// Bridge Functions - I/O
 // ============================================================================
 
 /// Write to stdout
@@ -267,7 +267,7 @@ pub fn __ink_reset_exit() {
 }
 
 // ============================================================================
-// FFI Functions - Input Handlers
+// Bridge Functions - Input Handlers
 // ============================================================================
 
 /// Register an input callback (callback as JS code string)
@@ -296,7 +296,7 @@ pub fn __ink_dispatch_key(key: &str, ctrl: bool, shift: bool, alt: bool) -> Stri
 }
 
 // ============================================================================
-// FFI Functions - Terminal State
+// Bridge Functions - Terminal State
 // ============================================================================
 
 /// Set terminal dimensions
@@ -315,7 +315,7 @@ pub fn __ink_get_terminal_size() -> (u32, u32) {
 }
 
 // ============================================================================
-// FFI Functions - Node Access (for rendering)
+// Bridge Functions - Node Access (for rendering)
 // ============================================================================
 
 /// Get node tag

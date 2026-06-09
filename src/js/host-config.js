@@ -1,4 +1,4 @@
-// Host config for React Reconciler targeting TuiBridge FFI
+// Host config for React Reconciler targeting TuiBridge bridge functions
 // This intercepts React's reconciler calls and redirects them to Rust
 
 const hostConfig = {

@@ -4,7 +4,7 @@
 Precompile JS bundle to QuickJS bytecode and embed in binary.
 
 ## Acceptance Criteria
-- [ ] Build script or CI step compiles `dist/bundle.js` to `.qbc` using `qjsc` or rquickjs compile API.
+- [ ] Build script or CI step compiles `dist/bundle.js` to `.qbc` using rquickjs `compile_module` API.
 - [ ] `include_bytes!("../dist/bundle.qbc")` embeds in Rust binary.
 - [ ] Runtime loads bytecode directly with `ctx.compile_module()` — zero parse overhead.
 - [ ] Binary runs standalone without esbuild or source files.
