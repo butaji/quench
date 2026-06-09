@@ -135,7 +135,7 @@ fn install_host_fn(
 
 const CONSOLE_SHIM: &str = r#"
 var timers = {};
-    function fmt(x) {
+    function __runts_fmt(x) {
         if (typeof x === 'string') return x;
         if (typeof x === 'number') return String(x);
         if (typeof x === 'boolean') return String(x);
@@ -189,7 +189,7 @@ var timers = {};
                 var row = [String(i)];
                 for (var j = 0; j < keys.length; j++) {
                     var v = data[i][keys[j]];
-                    row.push(typeof v === 'string' ? "'" + v + "'" : fmt(v));
+                    row.push(typeof v === 'string' ? "'" + v + "'" : __runts_fmt(v));
                 }
                 rows.push(row);
             }
@@ -200,7 +200,7 @@ var timers = {};
                 var item = data[k];
                 for (var j = 0; j < keys.length; j++) {
                     var v = item[keys[j]];
-                    row.push(typeof v === 'string' ? "'" + v + "'" : fmt(v));
+                    row.push(typeof v === 'string' ? "'" + v + "'" : __runts_fmt(v));
                 }
                 rows.push(row);
             }
@@ -263,19 +263,19 @@ var timers = {};
     var console = {
         log: function() {
             var a = Array.prototype.slice.call(arguments);
-            __runts_stdout__(a.map(fmt).join(' ') + '\n');
+            __runts_stdout__(a.map(__runts_fmt).join(' ') + '\n');
         },
         info: function() {
             var a = Array.prototype.slice.call(arguments);
-            __runts_stdout__(a.map(fmt).join(' ') + '\n');
+            __runts_stdout__(a.map(__runts_fmt).join(' ') + '\n');
         },
         warn: function() {
             var a = Array.prototype.slice.call(arguments);
-            __runts_stderr__(a.map(fmt).join(' ') + '\n');
+            __runts_stderr__(a.map(__runts_fmt).join(' ') + '\n');
         },
         error: function() {
             var a = Array.prototype.slice.call(arguments);
-            __runts_stderr__(a.map(fmt).join(' ') + '\n');
+            __runts_stderr__(a.map(__runts_fmt).join(' ') + '\n');
         },
         table: table,
         time: time,
