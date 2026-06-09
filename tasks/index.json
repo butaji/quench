@@ -581,6 +581,27 @@
         "390",
         "391"
       ]
+    },
+    {
+      "name": "Phase 32: Core Language + React + Runtime Edge Cases",
+      "description": "Remaining practical TS/TSX/React/Ink edge cases: IIFE, function declarations, block scoping, object shorthand/getters/setters/computed properties, JSX boolean attributes, Promise.all mixed outcomes, Array.flat(Infinity), JSON.stringify replacer, console.table, useReducer init, forwardRef displayName, parseInt radix, sparse arrays.",
+      "tasks": [
+        "392",
+        "393",
+        "394",
+        "395",
+        "396",
+        "397",
+        "398",
+        "399",
+        "400",
+        "401",
+        "402",
+        "403",
+        "404",
+        "405",
+        "406"
+      ]
     }
   ],
   "tasks": [
@@ -4672,12 +4693,177 @@
         "src/transpile/hir/quote_codegen_stmts.inc"
       ],
       "acceptance": "Example exists. `try...finally` without `catch` produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "392",
+      "title": "ink-iife example \u2014 Immediately Invoked Function Expressions",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-iife/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. IIFE pattern produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "393",
+      "title": "ink-function-declaration example \u2014 Named Function Declarations",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-function-declaration/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Named function declarations produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "394",
+      "title": "ink-block-scope example \u2014 let vs var vs const scoping",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-block-scope/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Block scoping with let/const produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "395",
+      "title": "ink-shorthand-properties example \u2014 Object Shorthand `{a}` and Method Shorthand",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-shorthand-properties/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object shorthand and method shorthand produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "396",
+      "title": "ink-object-getters-setters example \u2014 Getter and Setter Properties",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-object-getters-setters/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Object getters and setters produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "397",
+      "title": "ink-computed-properties example \u2014 Computed Property Names `[expr]: value`",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-computed-properties/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Computed property names produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "398",
+      "title": "ink-jsx-boolean-attrs example \u2014 JSX Boolean Attributes",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-jsx-boolean-attrs/",
+        "src/transpile/hir/quote_codegen.rs"
+      ],
+      "acceptance": "Example exists. JSX boolean attributes produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "399",
+      "title": "ink-promise-all-mixed example \u2014 Promise.all with Mixed Resolve/Reject",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-promise-all-mixed/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Promise.all with mixed outcomes produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "400",
+      "title": "ink-array-flat-infinity example \u2014 Array.flat with Infinity Depth",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-array-flat-infinity/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Array.flat(Infinity) produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "401",
+      "title": "ink-json-stringify-replacer example \u2014 JSON.stringify with Replacer Function",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-json-stringify-replacer/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. JSON.stringify with replacer produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "402",
+      "title": "ink-console-table example \u2014 console.table with Complex Data",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-console-table/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. console.table produces compilable Rust or no-op. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "403",
+      "title": "ink-use-reducer-init example \u2014 useReducer with Initialization Function",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-use-reducer-init/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. useReducer with init function works in rquickjs. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "404",
+      "title": "ink-forward-ref-displayname example \u2014 forwardRef with displayName",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-forward-ref-displayname/",
+        "src/transpile/js_bundle/react_shim.rs"
+      ],
+      "acceptance": "Example exists. forwardRef with displayName works in rquickjs. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "405",
+      "title": "ink-parse-int-radix example \u2014 parseInt with Explicit Radix",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-parse-int-radix/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. parseInt with radix produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "406",
+      "title": "ink-sparse-array example \u2014 Sparse Arrays with Holes `[1, , 3]`",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-sparse-array/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Sparse arrays produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 333,
+    "examples_total": 348,
     "examples_with_tests": 128,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -4694,10 +4880,10 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 196,
+    "pending_tasks": 211,
     "completed_tasks": 176,
-    "total_tasks": 372,
-    "phases": 32
+    "total_tasks": 387,
+    "phases": 33
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
