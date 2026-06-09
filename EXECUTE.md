@@ -5,7 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
-> **Current stats:** 407 tasks, 176 completed, 231 pending, 34 phases, 343 example tasks.
+> **Current stats:** 427 tasks, 176 completed, 251 pending, 35 phases, 363 example tasks.
 
 ---
 
@@ -792,6 +792,36 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 
 ---
 
+### Phase 34: Additional HIR & Codegen Edge Cases
+**Goal:** Further TS/TSX/React/Ink features not yet explicitly exercised: Proxy.revocable, anonymous class expressions with extends, Array.sort comparator, String.replace function replacer, Intl.DurationFormat, Response/Headers methods, process.argv, URL.searchParams instance, async generator return/throw, full iterator helpers, export type star, interface merging, mapped type modifiers, generic classes, super in setter, const enum inline, baseUrl resolution, JSX key with spread, and chained Function.bind.
+
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 427 | `ink-proxy-revoke` | `Proxy.revocable` | ⏳ |
+| 428 | `ink-class-expression-extends` | Anonymous class expression with `extends` and `super()` | ⏳ |
+| 429 | `ink-array-sort-compare` | `Array.prototype.sort` with comparator function | ⏳ |
+| 430 | `ink-string-replace-function` | `String.prototype.replace` with function replacer | ⏳ |
+| 431 | `ink-intl-duration` | `Intl.DurationFormat` | ⏳ |
+| 432 | `ink-response-methods` | `Response.json()`, `Response.text()`, `Response.blob()`, `Response.arrayBuffer()` | ⏳ |
+| 433 | `ink-headers-methods` | `Headers.append()`, `delete()`, `get()`, `has()`, `set()`, `forEach()` | ⏳ |
+| 434 | `ink-process-args` | `process.argv`, `process.title`, `process.execPath`, `process.execArgv` | ⏳ |
+| 435 | `ink-url-search-params-instance` | `URL.searchParams` instance property | ⏳ |
+| 436 | `ink-async-generator-return` | Async generator `return()` / `throw()` | ⏳ |
+| 437 | `ink-iterator-helpers-full` | Full Iterator helpers API | ⏳ |
+| 438 | `ink-export-type-star` | `export type * from './module'` | ⏳ |
+| 439 | `ink-interface-merge` | Interface merging across declarations | ⏳ |
+| 440 | `ink-mapped-modifiers` | Mapped types with `+readonly`, `-readonly`, `+?`, `-?` | ⏳ |
+| 441 | `ink-class-generic` | Generic class declarations | ⏳ |
+| 442 | `ink-super-setter` | `super.prop = value` in setter context | ⏳ |
+| 443 | `ink-enum-const-inline` | `const enum` inline expansion | ⏳ |
+| 444 | `ink-module-baseurl` | `baseUrl` module resolution | ⏳ |
+| 445 | `ink-jsx-key-spread` | JSX `key` prop with spread attributes | ⏳ |
+| 446 | `ink-function-bind-chain` | Chained `Function.prototype.bind` calls | ⏳ |
+
+**Tasks:** 427–446 | **Status:** ⏳ Pending (20 tasks)
+
+---
+
 ## HIR Coverage Matrix
 
 HIR must be able to represent every construct used in examples. This table maps feature categories to the relevant HIR files and current status.
@@ -859,7 +889,7 @@ For each HIR variant, `quote_codegen` must emit compilable Rust. This table maps
 
 The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink features. Every leaf feature has a dedicated task and Ink example.
 
-### JavaScript Expressions (Tasks 042–054, 066, 079, 177, 191–192, 236, 294, 345–350, 392–406)
+### JavaScript Expressions (Tasks 042–054, 066, 079, 177, 191–192, 236, 294, 345–350, 392–406, 427–446)
 - Literals: number, string, boolean, null, undefined, bigint, regexp, object, array
 - Operators: arithmetic, bitwise, logical, comparison, instanceof, in, typeof, delete, void, comma
 - Assignment: simple, compound, logical assignment (`||=`, `&&=`, `??=`)
@@ -875,7 +905,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - Conditional (ternary), nullish coalescing (`??`), optional chaining in JSX attrs (Task 349)
 - Sequence (comma) expressions, `void` expressions
 
-### JavaScript Statements (Tasks 042–045, 170, 177, 178, 203, 237, 238, 298, 388, 391, 392–406)
+### JavaScript Statements (Tasks 042–045, 170, 177, 178, 203, 237, 238, 298, 388, 391, 392–406, 427–446)
 - Variable declarations: `var`, `let`, `const`, block scoping
 - Control flow: `if`/`else`, `switch` (with/without fallthrough), `for`, `while`, `do-while`
 - Iteration: `for-in`, `for-of`, `for-await-of`, `break`, `continue`, labeled break/continue
@@ -883,7 +913,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - `return`, `debugger`, labeled statements, `with` (legacy)
 - `using` / `await using` (ES2024)
 
-### Declarations & Classes (Tasks 055–057, 083, 093–094, 126–127, 143, 185, 191–192, 200–201, 222–223, 296–297, 393–397)
+### Declarations & Classes (Tasks 055–057, 083, 093–094, 126–127, 143, 185, 191–192, 200–201, 222–223, 296–297, 393–397, 428, 441–443)
 - Class declarations/expressions: `extends`, `super`, `constructor`, methods, static methods
 - Access modifiers: `public`, `private`, `protected`, `readonly`
 - `abstract` classes, `implements`, `override`
@@ -894,7 +924,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - Function declarations, function overloads
 - `new.target`
 
-### TypeScript Type System (Tasks 066–067, 082, 087, 097–098, 100–103, 109–110, 115–116, 184, 240, 264, 287–291, 351–360, 377–381, 384, 385–386)
+### TypeScript Type System (Tasks 066–067, 082, 087, 097–098, 100–103, 109–110, 115–116, 184, 240, 264, 287–291, 351–360, 377–381, 384, 385–386, 439–440)
 - Type aliases, interfaces, multiple interface extends
 - Generics, generic function components (Task 336), generic JSX type args (Task 377)
 - `as const`, literal types, tuple types, named tuple members, readonly tuples
@@ -910,7 +940,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - `unknown`, `never`, `this` types, `unique symbol`
 - Type erasure: all type-level constructs erased before codegen
 
-### Modules & Imports (Tasks 058–059, 085–086, 119, 138, 141–142, 150, 180, 202, 211–217, 243–244, 282–283, 292–293, 305, 382–383)
+### Modules & Imports (Tasks 058–059, 085–086, 119, 138, 141–142, 150, 180, 202, 211–217, 243–244, 282–283, 292–293, 305, 382–383, 438, 444)
 - Named/default exports, `export =`, `import = require()`
 - Re-exports: `export * from`, `export * as ns from`, `export type { X } from`
 - Type-only imports: `import type`, `import { type X }`, inline type imports
@@ -920,7 +950,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - tsconfig `paths`, `moduleResolution`, `esModuleInterop`, `isolatedModules`
 - AMD module directives, project references, package.json exports/imports
 
-### JSX (Tasks 061, 137, 139, 161–163, 196–199, 204, 213, 232–233, 262, 268, 269, 347–350, 377, 398)
+### JSX (Tasks 061, 137, 139, 161–163, 196–199, 204, 213, 232–233, 262, 268, 269, 347–350, 377, 398, 445)
 - Elements, fragments (`<>...</>`), fragment shorthand
 - Spread attributes `{...props}`, boolean attributes, spread children
 - Dynamic components, member expressions (`My.Component`), namespaced elements
@@ -930,7 +960,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - JSX pragmas: `jsxImportSource`, `jsxFactory`, `jsxFragmentFactory`
 - Server components (`"use server"` / `"use client"`)
 
-### React Patterns (Tasks 060, 090–091, 106–108, 117, 130, 152–154, 162–163, 193–194, 198–201, 279–281, 330–344, 377–378, 392–406)
+### React Patterns (Tasks 060, 090–091, 106–108, 117, 130, 152–154, 162–163, 193–194, 198–201, 279–281, 330–344, 377–378, 392–406, 427–446)
 - Hooks: `useState`, `useEffect`, `useLayoutEffect`, `useInsertionEffect`, `useCallback`, `useMemo`, `useRef`, `useReducer`, `useContext`, `useId`, `useTransition`, `useDeferredValue`, `useSyncExternalStore`, `useImperativeHandle`, `useDebugValue`, `useFormStatus`, `useOptimistic`, `useActionState`, `use`
 - Hook patterns: cleanup functions, dependency arrays, init functions, custom hook composition
 - Refs: `forwardRef`, `createRef`, callback refs, generic forwardRef, `displayName`
@@ -947,7 +977,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - Layout: `measureElement`, `useBoxMetrics`
 - `process` global, `setInterval`/`clearInterval`, module-level `render()`
 
-### Runtime APIs — Built-in Objects (Tasks 088–089, 104–105, 111–114, 118, 121–123, 125, 128–129, 155–156, 159, 166–167, 171–176, 179, 181–183, 190, 205, 208–210, 218, 219–220, 225–226, 245, 248, 255–256, 264–265, 273–274, 278, 287, 299, 303, 326–329, 361–375, 392–426)
+### Runtime APIs — Built-in Objects (Tasks 088–089, 104–105, 111–114, 118, 121–123, 125, 128–129, 155–156, 159, 166–167, 171–176, 179, 181–183, 190, 205, 208–210, 218, 219–220, 225–226, 245, 248, 255–256, 264–265, 273–274, 278, 287, 299, 303, 326–329, 361–375, 392–446)
 - **Array:** `from`, `of`, `isArray`, `fromAsync`, `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `toSpliced`, `with`, `includes`, `findLast`, `findLastIndex`, `reduce`, `reduceRight`, `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex`, `map`, `forEach`, `concat`, `join`, `slice`, `fill`, `copyWithin`, `toLocaleString`
 - **String:** `charAt`, `charCodeAt`, `codePointAt`, `concat`, `endsWith`, `includes`, `indexOf`, `lastIndexOf`, `localeCompare`, `match`, `matchAll`, `normalize`, `padEnd`, `padStart`, `repeat`, `replace`, `replaceAll`, `search`, `slice`, `split`, `substring`, `startsWith`, `toLowerCase`, `toUpperCase`, `trim`, `trimStart`, `trimEnd`, `at`, `isWellFormed`, `toWellFormed`, `toLocaleString`
 - **Number:** `isFinite`, `isNaN`, `isInteger`, `isSafeInteger`, `parseInt`, `parseFloat`, `EPSILON`, `MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY`, `toFixed`, `toExponential`, `toPrecision`, `toLocaleString`
@@ -970,7 +1000,7 @@ The 407 tasks map to the following exhaustive taxonomy of TS/TSX/React/Ink featu
 - **globalThis:** `globalThis`, `global`, `window`, `self`, `undefined`, `Infinity`, `NaN`
 - **eval/legacy:** `eval()`, `with`, `escape`, `unescape`
 
-### Runtime APIs — Web & Node.js (Tasks 133–136, 218, 229, 249–250, 251–253, 254, 306–308, 309–310, 311–314, 315–322, 324–325, 370–375, 392–426)
+### Runtime APIs — Web & Node.js (Tasks 133–136, 218, 229, 249–250, 251–253, 254, 306–308, 309–310, 311–314, 315–322, 324–325, 370–375, 392–446)
 - **Timers:** `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`, `clearImmediate`, `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`
 - **Encoding:** `TextEncoder`, `TextDecoder`, `atob`, `btoa`
 - **URL:** `URL`, `URLSearchParams`, `URLPattern`
@@ -1122,8 +1152,9 @@ cargo test --test compile_codegen
 - [ ] Phase 27: React hook patterns + JSX expression patterns + component composition (Tasks 330–350).
 - [ ] Phase 28: Advanced TypeScript type system patterns (Tasks 351–360).
 - [ ] Phase 29: Array/Object/String/Number/Date/Console/Error/Symbol/Process/Stream/WebAssembly API completion (Tasks 361–375).
-- [ ] Phase 30: Final comprehensive coverage audit (Task 376), updated for 407 tasks.
+- [ ] Phase 30: Final comprehensive coverage audit (Task 376), updated for 427 tasks.
 - [ ] Phase 31: Advanced JSX + React edge cases (Tasks 377–391).
 - [ ] Phase 32: Core language + React + runtime edge cases (Tasks 392–406).
 - [ ] Phase 33: HIR & codegen edge cases (Tasks 407–426).
+- [ ] Phase 34: Additional HIR & codegen edge cases (Tasks 427–446).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match in all 3 environments.
