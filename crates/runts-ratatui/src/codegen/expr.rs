@@ -81,8 +81,9 @@ fn member_expr_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
 fn static_member_to_rust(member: &serde_json::Value) -> Option<TokenStream> {
     let obj = expr_to_rust(member.get("obj")?)?;
     let property = member.get("property")?.as_str()?;
-    let prop = quote::format_ident!("{}", property);
-    Some(quote! { #obj . #prop })
+    // Use bracket notation so the generated code works for serde_json::Value
+    // (the type used by the compile path for object literals).
+    Some(quote! { #obj[#property] })
 }
 
 fn call_to_rust(call: &serde_json::Value) -> Option<TokenStream> {
