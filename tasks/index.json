@@ -628,6 +628,32 @@
         "425",
         "426"
       ]
+    },
+    {
+      "name": "Phase 34: Additional HIR & Codegen Edge Cases",
+      "description": "Further Ink examples for TS/TSX/React/Ink features not yet explicitly exercised: Proxy.revocable, anonymous class expressions with extends, Array.sort comparator, String.replace function replacer, Intl.DurationFormat, Response/Headers methods, process.argv, URL.searchParams instance, async generator return/throw, full iterator helpers, export type star, interface merging, mapped type modifiers, generic classes, super in setter, const enum inline, baseUrl resolution, JSX key with spread, and chained Function.bind.",
+      "tasks": [
+        "427",
+        "428",
+        "429",
+        "430",
+        "431",
+        "432",
+        "433",
+        "434",
+        "435",
+        "436",
+        "437",
+        "438",
+        "439",
+        "440",
+        "441",
+        "442",
+        "443",
+        "444",
+        "445",
+        "446"
+      ]
     }
   ],
   "tasks": [
@@ -2603,11 +2629,11 @@
     {
       "id": "199",
       "title": "ink-default-props example \u2014 defaultProps on function components",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-Medium",
       "files": [
         "examples/ink-default-props/",
-        "src/transpile/parser/stmt.rs"
+        "src/transpile/tests/rq_parity/mod.rs"
       ],
       "acceptance": "Example exists. Default props produce compilable Rust. Parity harness 100% across deno/rq/compile."
     },
@@ -5106,6 +5132,226 @@
         "src/transpile/hir/quote_codegen_exprs.inc"
       ],
       "acceptance": "Example exists. Date parse/setters produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "427",
+      "title": "ink-proxy-revoke example \u2014 Proxy.revocable",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-proxy-revoke/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Proxy.revocable produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "428",
+      "title": "ink-class-expression-extends example \u2014 anonymous class expression with extends and super",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-class-expression-extends/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Anonymous class expression with extends produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "429",
+      "title": "ink-array-sort-compare example \u2014 Array.prototype.sort with comparator function",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-array-sort-compare/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Array.sort with comparator produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "430",
+      "title": "ink-string-replace-function example \u2014 String.prototype.replace with function replacer",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-string-replace-function/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. String.replace with function replacer produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "431",
+      "title": "ink-intl-duration example \u2014 Intl.DurationFormat",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-intl-duration/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Intl.DurationFormat produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "432",
+      "title": "ink-response-methods example \u2014 Response.json, Response.text, Response.blob, Response.arrayBuffer",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-response-methods/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Response methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "433",
+      "title": "ink-headers-methods example \u2014 Headers.append, delete, get, has, set, entries, keys, values",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-headers-methods/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Headers methods produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "434",
+      "title": "ink-process-args example \u2014 process.argv, process.title, process.execPath, process.execArgv",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-process-args/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. process args properties produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "435",
+      "title": "ink-url-search-params-instance example \u2014 URL.searchParams instance property",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-url-search-params-instance/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. URL.searchParams instance property produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "436",
+      "title": "ink-async-generator-return example \u2014 async generator return and throw",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-async-generator-return/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Async generator return/throw produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "437",
+      "title": "ink-iterator-helpers-full example \u2014 full Iterator helpers API",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-iterator-helpers-full/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Full Iterator helpers produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "438",
+      "title": "ink-export-type-star example \u2014 export type * from module",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-export-type-star/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. export type * from produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "439",
+      "title": "ink-interface-merge example \u2014 interface merging across declarations",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-interface-merge/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Interface merging produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "440",
+      "title": "ink-mapped-modifiers example \u2014 mapped types with +readonly, -readonly, +?, -? modifiers",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-mapped-modifiers/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Mapped type modifiers produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "441",
+      "title": "ink-class-generic example \u2014 generic class declarations with usage",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-class-generic/",
+        "src/transpile/hir/quote_codegen.rs"
+      ],
+      "acceptance": "Example exists. Generic class declarations produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "442",
+      "title": "ink-super-setter example \u2014 super in setter context",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-super-setter/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. super in setter produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "443",
+      "title": "ink-enum-const-inline example \u2014 const enum inline expansion behavior",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-enum-const-inline/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Const enum inline expansion works correctly. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "444",
+      "title": "ink-module-baseurl example \u2014 baseUrl module resolution with non-relative imports",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-module-baseurl/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. baseUrl resolution produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "445",
+      "title": "ink-jsx-key-spread example \u2014 JSX key prop combined with spread attributes",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-jsx-key-spread/",
+        "src/transpile/hir/quote_codegen.rs"
+      ],
+      "acceptance": "Example exists. JSX key with spread produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "446",
+      "title": "ink-function-bind-chain example \u2014 chained Function.prototype.bind calls",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-function-bind-chain/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. Chained bind calls produce compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
@@ -5128,10 +5374,10 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 231,
+    "pending_tasks": 251,
     "completed_tasks": 176,
-    "total_tasks": 407,
-    "phases": 34
+    "total_tasks": 427,
+    "phases": 35
   },
   "coverage_gaps": {
     "hooks_not_in_examples": [],
