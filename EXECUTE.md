@@ -5,6 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
+> **Current stats:** 358 tasks, 165 completed, 193 pending, 32 phases, 173 examples, 250 coverage gaps.
 
 ---
 
@@ -129,8 +130,6 @@ All work is tracked in `tasks/`. Check `tasks/index.json` for the current task b
 ### Phase 7: HIR & Parser Expansion
 **Goal:** HIR can represent 100% of practical TS/TSX constructs.
 
-Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` before reaching HIR:
-
 | Feature | Parser | HIR | Task |
 |---------|--------|-----|------|
 | Optional chaining `?.` | ✅ oxc | ✅ Added | 068 |
@@ -139,222 +138,220 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | Private fields `#field` | ✅ oxc | ✅ Added | 071 |
 | Generators `function*` | ✅ oxc | ✅ Added | 072 |
 | Dynamic import `import()` | ✅ oxc | ✅ Added | 073 |
-| Decorators | ✅ oxc | ⚠️ Partial | 074 |
-| Type aliases | ✅ oxc | ❌ Missing | — (Phase 10, Task 082) |
-| Interface declarations | ✅ oxc | ❌ Missing | — (Phase 10, Task 082) |
+| Decorators | ✅ oxc | ✅ Added | 074 |
 
-**Tasks:** 068–074 | **Status:** ✅ Completed except 074 (6/7 done)
+**Tasks:** 068–074 | **Status:** ✅ Completed (7/7)
 
 ---
 
 ### Phase 8: Compile-Path Integration Tests
 **Goal:** The compile path is thoroughly tested with real generated code.
 
-**Tasks:** 075–077 | **Status:** 🔄 075 Completed, 076–077 Pending (1/3 done)
+**Tasks:** 075–077 | **Status:** ✅ Completed (3/3)
 
 ---
 
 ### Phase 9: Final Audit
 **Goal:** Document the exact coverage matrix. Set v1.0 targets.
 
-**Tasks:** 078 | **Status:** 🔄 Pending (1 task)
+**Tasks:** 078 | **Status:** ✅ Completed (1/1)
 
 ---
 
 ### Phase 10: Extended TS/TSX Coverage
-**Goal:** Every remaining practical TS/TSX/React/Ink feature is exercised by at least one Ink example, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** Extended TS/TSX/React/Ink features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 079 | `ink-logical-assign` | `\|\|=`, `&&=`, `??=` | P1 |
-| 080 | `ink-use-layout-effect` | `useLayoutEffect` | P1 |
-| 081 | `ink-use-id-transition` | `useId`, `useTransition` | P1 |
-| 082 | `ink-type-alias-interface` | Type aliases, interfaces | P1 |
-| 083 | `ink-access-modifiers` | `public`/`private`/`protected`/`readonly` | P1 |
-| 084 | `ink-top-level-await` | Top-level `await` | P1 |
-| 085 | `ink-import-export-type` | `import type`, `export type` | P1 |
-| 086 | `ink-barrel-export` | `export * from`, `import * as` | P1 |
-| 087 | `ink-keyof-readonly` | `keyof`, `readonly` arrays | P1 |
-| 088 | `ink-bigint-globalthis` | BigInt, numeric separators, `globalThis` | P2 |
-| 089 | `ink-symbol-collections` | Symbol, Map, Set, WeakMap | P2 |
-| 090 | `ink-suspense-lazy` | `Suspense`, `lazy` | P2 |
-| 091 | `ink-error-boundary` | `<ErrorBoundary>` | P2 |
-| 092 | `ink-namespace-declare` | `namespace`, `declare` | P2 ✅ |
-| 093 | `ink-override-implements` | `override`, `implements` | P2 |
-| 094 | `ink-abstract-class` | `abstract` classes | P2 |
-| 095 | `ink-new-target` | `new.target` | P3 |
-| 096 | `ink-reflect-api` | `Reflect` API | P3 |
-| 097 | `ink-template-literal-types` | Template literal types | P3 |
-| 098 | `ink-infer-conditional` | `infer` in conditional types | P3 |
-| 099 | `ink-regexp-advanced` | RegExp flags, `matchAll` | P3 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 079 | `ink-logical-assign` | `\|\|=`, `&&=`, `??=` | ✅ |
+| 080 | `ink-use-layout-effect` | `useLayoutEffect` | ✅ |
+| 081 | `ink-use-id-transition` | `useId`, `useTransition` | ✅ |
+| 082 | `ink-type-alias-interface` | Type aliases, interfaces | ✅ |
+| 083 | `ink-access-modifiers` | `public`/`private`/`protected`/`readonly` | ✅ |
+| 084 | `ink-top-level-await` | Top-level `await` | ✅ |
+| 085 | `ink-import-export-type` | `import type`, `export type` | ✅ |
+| 086 | `ink-barrel-export` | `export * from`, `import * as` | ✅ |
+| 087 | `ink-keyof-readonly` | `keyof`, `readonly` arrays | ✅ |
+| 088 | `ink-bigint-globalthis` | BigInt, numeric separators, `globalThis` | ✅ |
+| 089 | `ink-symbol-collections` | Symbol, Map, Set, WeakMap | ✅ |
+| 090 | `ink-suspense-lazy` | `Suspense`, `lazy` | ✅ |
+| 091 | `ink-error-boundary` | `<ErrorBoundary>` | ✅ |
+| 092 | `ink-namespace-declare` | `namespace`, `declare` | ✅ |
+| 093 | `ink-override-implements` | `override`, `implements` | ✅ |
+| 094 | `ink-abstract-class` | `abstract` classes | ✅ |
+| 095 | `ink-new-target` | `new.target` | ✅ |
+| 096 | `ink-reflect-api` | `Reflect` API | ✅ |
+| 097 | `ink-template-literal-types` | Template literal types | ✅ |
+| 098 | `ink-infer-conditional` | `infer` in conditional types | ✅ |
+| 099 | `ink-regexp-advanced` | RegExp flags, `matchAll` | ✅ |
 
-**Tasks:** 079–099 | **Status:** 🔄 Pending (19 tasks, 2 completed)
+**Tasks:** 079–099 | **Status:** ✅ Completed (21/21)
 
 ---
 
 ### Phase 11: Type System + Runtime API Deep Coverage
-**Goal:** Every remaining practical TS/TSX/React/Ink feature is exercised by at least one Ink example, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** Type system deep features and modern runtime APIs exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 100 | `ink-utility-types` | `Partial`, `Required`, `Pick`, `Omit`, `Record`, `ReturnType` | P1 |
-| 101 | `ink-as-const` | `as const`, literal types, tuple types | P1 |
-| 102 | `ink-index-intersection` | Index signatures, intersection types (`A & B`) | P1 |
-| 103 | `ink-unknown-never` | `unknown`, `never`, user-defined type guards | P1 |
-| 104 | `ink-array-modern` | `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast` | P1 |
-| 105 | `ink-object-modern` | `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors` | P1 |
-| 106 | `ink-use-imperative-handle` | `useImperativeHandle`, `forwardRef` | P1 |
-| 107 | `ink-use-sync-external-store` | `useSyncExternalStore`, `useDeferredValue` | P1 |
-| 108 | `ink-context-advanced` | Context `displayName`, `defaultValue`, multiple providers | P1 ✅ |
-| 109 | `ink-discriminated-unions` | Discriminated unions, exhaustive checks | P1 |
-| 110 | `ink-mapped-types` | Mapped types `{ [K in T]: V }` | P1 |
-| 111 | `ink-proxy` | `Proxy` handler | P2 |
-| 112 | `ink-weakref` | `WeakRef`, `FinalizationRegistry` | P2 |
-| 113 | `ink-string-modern` | `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at` | P2 |
-| 114 | `ink-promise-advanced` | `allSettled`, `any`, `race`, `withResolvers` | P2 |
-| 115 | `ink-this-parameter` | `this` parameter, `this` types | P2 |
-| 116 | `ink-unique-symbol` | `unique symbol`, branded types | P2 |
-| 117 | `ink-react-children` | `Children` API, `cloneElement`, `isValidElement` | P2 |
-| 118 | `ink-date-math` | `Date`, `Math`, `Intl` | P2 |
-| 119 | `ink-export-equal` | `export =`, `import = require()` | P3 |
-| 120 | `ink-global-augmentation` | `declare global`, `declare module` | P3 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 100 | `ink-utility-types` | `Partial`, `Required`, `Pick`, `Omit`, `Record`, `ReturnType` | ✅ |
+| 101 | `ink-as-const` | `as const`, literal types, tuple types | ✅ |
+| 102 | `ink-index-intersection` | Index signatures, intersection types (`A & B`) | ✅ |
+| 103 | `ink-unknown-never` | `unknown`, `never`, user-defined type guards | ✅ |
+| 104 | `ink-array-modern` | `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast` | ✅ |
+| 105 | `ink-object-modern` | `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors` | ✅ |
+| 106 | `ink-use-imperative-handle` | `useImperativeHandle`, `forwardRef` | ✅ |
+| 107 | `ink-use-sync-external-store` | `useSyncExternalStore`, `useDeferredValue` | ✅ |
+| 108 | `ink-context-advanced` | Context `displayName`, `defaultValue`, multiple providers | ✅ |
+| 109 | `ink-discriminated-unions` | Discriminated unions, exhaustive checks | ✅ |
+| 110 | `ink-mapped-types` | Mapped types `{ [K in T]: V }` | ✅ |
+| 111 | `ink-proxy` | `Proxy` handler | ✅ |
+| 112 | `ink-weakref` | `WeakRef`, `FinalizationRegistry` | ✅ |
+| 113 | `ink-string-modern` | `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at` | ✅ |
+| 114 | `ink-promise-advanced` | `allSettled`, `any`, `race`, `withResolvers` | ✅ |
+| 115 | `ink-this-parameter` | `this` parameter, `this` types | ✅ |
+| 116 | `ink-unique-symbol` | `unique symbol`, branded types | ✅ |
+| 117 | `ink-react-children` | `Children` API, `cloneElement`, `isValidElement` | ✅ |
+| 118 | `ink-date-math` | `Date`, `Math`, `Intl` | ✅ |
+| 119 | `ink-export-equal` | `export =`, `import = require()` | ✅ |
+| 120 | `ink-global-augmentation` | `declare global`, `declare module` | ✅ |
 
-**Tasks:** 100–120 | **Status:** 🔄 Pending (21 tasks)
+**Tasks:** 100–120 | **Status:** ✅ Completed (21/21)
 
 ---
 
 ### Phase 12: Runtime API + Type System Completion
-**Goal:** Final practical TS/TSX/React/Ink features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** Final runtime APIs and type system features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 121 | `ink-json-api` | `JSON.stringify`, `JSON.parse` | P1 |
-| 122 | `ink-function-bind` | `bind`, `call`, `apply` | P1 |
-| 123 | `ink-object-meta` | `create`, `defineProperty`, `freeze`, `seal`, `assign` | P1 |
-| 124 | `ink-queue-microtask` | `queueMicrotask` | P1 |
-| 125 | `ink-error-cause` | `Error` with `cause` | P1 |
-| 126 | `ink-static-block` | Class `static {}` blocks | P1 |
-| 127 | `ink-private-methods` | Private methods `#method()`, `#field in obj` | P1 |
-| 128 | `ink-number-static` | `Number.isFinite`, `isNaN`, `parseInt`, `parseFloat`, `EPSILON` | P1 |
-| 129 | `ink-array-immutable` | `toSpliced`, `with` (ES2023) | P1 |
-| 130 | `ink-react-refs-debug` | `createRef`, `useDebugValue` | P2 |
-| 131 | `ink-function-overloads` | Function overloads | P2 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 121 | `ink-json-api` | `JSON.stringify`, `JSON.parse` | ✅ |
+| 122 | `ink-function-bind` | `bind`, `call`, `apply` | ✅ |
+| 123 | `ink-object-meta` | `create`, `defineProperty`, `freeze`, `seal`, `assign` | ✅ |
+| 124 | `ink-queue-microtask` | `queueMicrotask` | ✅ |
+| 125 | `ink-error-cause` | `Error` with `cause` | ✅ |
+| 126 | `ink-static-block` | Class `static {}` blocks | ✅ |
+| 127 | `ink-private-methods` | Private methods `#method()`, `#field in obj` | ✅ |
+| 128 | `ink-number-static` | `Number.isFinite`, `isNaN`, `parseInt`, `parseFloat`, `EPSILON` | ✅ |
+| 129 | `ink-array-immutable` | `toSpliced`, `with` (ES2023) | ✅ |
+| 130 | `ink-react-refs-debug` | `createRef`, `useDebugValue` | ✅ |
+| 131 | `ink-function-overloads` | Function overloads | ✅ |
 
-**Tasks:** 121–131 | **Status:** 🔄 Pending (11 tasks)
+**Tasks:** 121–131 | **Status:** ✅ Completed (11/11)
 
 ---
 
 ### Phase 13: Real-World Validation (`../tui1` Port)
 **Goal:** The `../tui1` real-world Ink chat example compiles and renders identically in all 3 environments with 100% output match.
 
-| Task | Gap | Priority |
-|------|-----|----------|
-| 132 | Port `../tui1` — comprehensive feature audit | P0 |
-| 133 | `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`) | P0 |
-| 134 | `setInterval` / `clearInterval` | P0 |
-| 135 | `Date` object (`new Date`, `Date.now`, `toLocaleTimeString`) | P0 |
-| 136 | `Array.prototype.splice` | P1 |
-| 137 | React Fragment shorthand `<></>` | P0 |
-| 138 | Dynamic import of node built-ins (`import("node:readline")`) | P0 |
-| 139 | `/** @jsxImportSource react */` pragma | P1 |
-| 140 | Module-level `render()` call | P1 |
+| Task | Gap | Status |
+|------|-----|--------|
+| 132 | Port `../tui1` — comprehensive feature audit | ✅ |
+| 133 | `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`) | ✅ |
+| 134 | `setInterval` / `clearInterval` | ✅ |
+| 135 | `Date` object (`new Date`, `Date.now`, `toLocaleTimeString`) | ✅ |
+| 136 | `Array.prototype.splice` | ✅ |
+| 137 | React Fragment shorthand `<></>` | ✅ |
+| 138 | Dynamic import of node built-ins (`import("node:readline")`) | ✅ |
+| 139 | `/** @jsxImportSource react */` pragma | ✅ |
+| 140 | Module-level `render()` call | ✅ |
 
-**Tasks:** 132–140 | **Status:** 🔄 Pending (9 tasks)
+**Tasks:** 132–140 | **Status:** ✅ Completed (9/9)
 
 ---
 
 ### Phase 14: Final Runtime API + Module Pattern Completion
-**Goal:** Remaining practical TS/TSX/React/Ink features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** Remaining runtime APIs and module patterns exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 141 | `ink-namespace-reexport` | `export * as ns from "mod"` | P1 |
-| 142 | `ink-inline-type-import` | `import { type X }`, `import type * as ns` | P1 |
-| 143 | `ink-parameter-properties` | `constructor(public x: string)` | P1 |
-| 144 | `ink-console-methods` | `console.log`, `error`, `warn`, `info`, `time`, `timeEnd` | P1 |
-| 145 | `ink-uri-encoding` | `encodeURI`, `decodeURI`, `encodeURIComponent`, `decodeURIComponent` | P1 |
-| 146 | `ink-array-reduce` | `reduce`, `reduceRight` | P1 |
-| 147 | `ink-string-search` | `startsWith`, `endsWith`, `includes`, `repeat` | P1 |
-| 148 | `ink-error-subclasses` | `TypeError`, `RangeError`, `ReferenceError` | P1 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 141 | `ink-namespace-reexport` | `export * as ns from "mod"` | ✅ |
+| 142 | `ink-inline-type-import` | `import { type X }`, `import type * as ns` | ✅ |
+| 143 | `ink-parameter-properties` | `constructor(public x: string)` | ✅ |
+| 144 | `ink-console-methods` | `console.log`, `error`, `warn`, `info`, `time`, `timeEnd` | ✅ |
+| 145 | `ink-uri-encoding` | `encodeURI`, `decodeURI`, `encodeURIComponent`, `decodeURIComponent` | ✅ |
+| 146 | `ink-array-reduce` | `reduce`, `reduceRight` | ✅ |
+| 147 | `ink-string-search` | `startsWith`, `endsWith`, `includes`, `repeat` | ✅ |
+| 148 | `ink-error-subclasses` | `TypeError`, `RangeError`, `ReferenceError` | ✅ |
 
-**Tasks:** 141–148 | **Status:** 🔄 Pending (8 tasks)
+**Tasks:** 141–148 | **Status:** ✅ Completed (8/8)
 
 ---
 
 ### Phase 15: Advanced React Patterns + Deep Runtime Coverage
-**Goal:** Advanced React patterns (render props, HOCs, key/refs) and remaining runtime APIs (Symbol.iterator, ArrayBuffer, performance, structuredClone, arguments, RegExp named groups, string well-formed) exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** Advanced React patterns and remaining runtime APIs exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 149 | `ink-asserts-predicate` | `asserts` type predicate | P1 |
-| 150 | `ink-import-types` | `type T = import("./mod").Type` | P1 |
-| 151 | `ink-reference-directive` | `/// <reference types="..." />` | P2 |
-| 152 | `ink-use-insertion-effect` | `useInsertionEffect` | P1 |
-| 153 | `ink-render-props` | Render props pattern | P1 |
-| 154 | `ink-hoc` | Higher-order components | P1 |
-| 155 | `ink-symbol-iterator` | `Symbol.iterator`, custom iterables | P1 |
-| 156 | `ink-arraybuffer` | `ArrayBuffer`, `Uint8Array`, `DataView` | P2 |
-| 157 | `ink-performance` | `performance.now()`, `performance.mark` | P2 |
-| 158 | `ink-structured-clone` | `structuredClone` | P2 |
-| 159 | `ink-arguments` | `arguments` object | P2 |
-| 160 | `ink-regexp-named-groups` | Named capture groups | P2 |
-| 161 | `ink-string-wellformed` | `isWellFormed`, `toWellFormed` | P2 |
-| 162 | `ink-key-prop` | `key` prop in lists and fragments | P1 |
-| 163 | `ink-ref-callback` | Callback refs, `useRef` with initial value | P1 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 149 | `ink-asserts-predicate` | `asserts` type predicate | ✅ |
+| 150 | `ink-import-types` | `type T = import("./mod").Type` | ✅ |
+| 151 | `ink-reference-directive` | `/// <reference types="..." />` | ✅ |
+| 152 | `ink-use-insertion-effect` | `useInsertionEffect` | ✅ |
+| 153 | `ink-render-props` | Render props pattern | ✅ |
+| 154 | `ink-hoc` | Higher-order components | ✅ |
+| 155 | `ink-symbol-iterator` | `Symbol.iterator`, custom iterables | ✅ |
+| 156 | `ink-arraybuffer` | `ArrayBuffer`, `Uint8Array`, `DataView` | ✅ |
+| 157 | `ink-performance` | `performance.now()`, `performance.mark` | ✅ |
+| 158 | `ink-structured-clone` | `structuredClone` | ✅ |
+| 159 | `ink-arguments` | `arguments` object | ✅ |
+| 160 | `ink-regexp-named-groups` | Named capture groups | ✅ |
+| 161 | `ink-string-wellformed` | `isWellFormed`, `toWellFormed` | ✅ |
+| 162 | `ink-key-prop` | `key` prop in lists and fragments | ✅ |
+| 163 | `ink-ref-callback` | Callback refs, `useRef` with initial value | ✅ |
 
-**Tasks:** 149–163 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 149–163 | **Status:** ✅ Completed (15/15)
 
 ---
 
 ### Phase 16: Operator + Syntax + Runtime API Completion
 **Goal:** Final JavaScript operators, syntax features, and runtime APIs exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 164 | `ink-in-operator` | `in` operator (`prop in obj`) | P1 |
-| 165 | `ink-for-await-of` | `for await...of` async iteration | P1 |
-| 166 | `ink-object-entries-values` | `Object.entries`, `Object.values`, `Object.keys` | P1 |
-| 167 | `ink-array-static` | `Array.from`, `Array.of`, `Array.isArray` | P1 |
-| 168 | `ink-parse-global` | `parseInt`, `parseFloat`, `isNaN`, `isFinite` | P1 |
-| 169 | `ink-import-meta-url` | `import.meta.url` | P1 |
-| 170 | `ink-debugger-labeled` | `debugger`, labeled statements | P2 |
-| 171 | `ink-number-string-proto` | `Number.prototype.toFixed`, `String.prototype.charAt` etc | P1 |
-| 172 | `ink-array-mutators` | `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse` | P1 |
-| 173 | `ink-array-searchers` | `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex` | P1 |
-| 174 | `ink-date-comprehensive` | `getTime`, `getFullYear`, `toISOString`, `toUTCString` | P1 |
-| 175 | `ink-regexp-test-exec` | `RegExp.prototype.test`, `exec` | P1 |
-| 176 | `ink-promise-resolve-reject` | `Promise.resolve`, `Promise.reject` | P1 |
-| 177 | `ink-void-comma-increment` | `void`, comma operator, `++`/`--` | P1 |
-| 178 | `ink-spread-call-destructure` | Spread in calls, destructuring in params/catch/for-of | P1 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 164 | `ink-in-operator` | `in` operator (`prop in obj`) | ✅ |
+| 165 | `ink-for-await-of` | `for await...of` async iteration | ✅ |
+| 166 | `ink-object-entries-values` | `Object.entries`, `Object.values`, `Object.keys` | ✅ |
+| 167 | `ink-array-static` | `Array.from`, `Array.of`, `Array.isArray` | ✅ |
+| 168 | `ink-parse-global` | `parseInt`, `parseFloat`, `isNaN`, `isFinite` | ✅ |
+| 169 | `ink-import-meta-url` | `import.meta.url` | ✅ |
+| 170 | `ink-debugger-labeled` | `debugger`, labeled statements | ✅ |
+| 171 | `ink-number-string-proto` | `Number.prototype.toFixed`, `String.prototype.charAt` etc | ✅ |
+| 172 | `ink-array-mutators` | `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse` | ✅ |
+| 173 | `ink-array-searchers` | `indexOf`, `lastIndexOf`, `every`, `some`, `filter`, `find`, `findIndex` | ✅ |
+| 174 | `ink-date-comprehensive` | `getTime`, `getFullYear`, `toISOString`, `toUTCString` | ✅ |
+| 175 | `ink-regexp-test-exec` | `RegExp.prototype.test`, `exec` | ✅ |
+| 176 | `ink-promise-resolve-reject` | `Promise.resolve`, `Promise.reject` | ✅ |
+| 177 | `ink-void-comma-increment` | `void`, comma operator, `++`/`--` | ✅ |
+| 178 | `ink-spread-call-destructure` | Spread in calls, destructuring in params/catch/for-of | ✅ |
 
-**Tasks:** 164–178 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 164–178 | **Status:** ✅ Completed (15/15)
 
 ---
 
 ### Phase 17: ES2024 + TypeScript 5.0+ Feature Completion
 **Goal:** Latest ECMAScript 2024 and TypeScript 5.0+ features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-| Task | Example | Feature | Priority |
-|------|---------|---------|----------|
-| 179 | `ink-using-declaration` | `using` / `await using` (ES2024) | P1 |
-| 180 | `ink-import-attributes` | Import attributes (`with { type: "json" }`) | P1 |
-| 181 | `ink-array-from-async` | `Array.fromAsync` | P1 |
-| 182 | `ink-promise-with-resolvers` | `Promise.withResolvers` | P1 |
-| 183 | `ink-object-group-by` | `Object.groupBy` / `Map.groupBy` | P1 |
-| 184 | `ink-const-type-param` | `const T` type parameters (TS 5.0) | P1 |
-| 185 | `ink-accessor-field` | `accessor` class fields (TS 5.0) | P1 |
-| 186 | `ink-symbol-async-iterator` | `Symbol.asyncIterator` | P1 |
-| 187 | `ink-throw-expression` | Throw expressions (Stage 3) | P2 |
-| 188 | `ink-type-annotation-catch` | Type annotation in `catch` clause | P1 |
-| 189 | `ink-satisfies-expr` | `satisfies` in object/array literals | P1 |
-| 190 | `ink-iterator-helpers` | Iterator helpers (`map`, `filter`, `take`) | P2 |
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 179 | `ink-using-declaration` | `using` / `await using` (ES2024) | ✅ |
+| 180 | `ink-import-attributes` | Import attributes (`with { type: "json" }`) | ✅ |
+| 181 | `ink-array-from-async` | `Array.fromAsync` | ✅ |
+| 182 | `ink-promise-with-resolvers` | `Promise.withResolvers` | ✅ |
+| 183 | `ink-object-group-by` | `Object.groupBy` / `Map.groupBy` | ✅ |
+| 184 | `ink-const-type-param` | `const T` type parameters (TS 5.0) | ✅ |
+| 185 | `ink-accessor-field` | `accessor` class fields (TS 5.0) | ⏳ |
+| 186 | `ink-symbol-async-iterator` | `Symbol.asyncIterator` | ⏳ |
+| 187 | `ink-throw-expression` | Throw expressions (Stage 3) | ⏳ |
+| 188 | `ink-type-annotation-catch` | Type annotation in `catch` clause | ⏳ |
+| 189 | `ink-satisfies-expr` | `satisfies` in object/array literals | ⏳ |
+| 190 | `ink-iterator-helpers` | Iterator helpers (`map`, `filter`, `take`) | ⏳ |
 
-**Tasks:** 179–190 | **Status:** 🔄 Pending (12 tasks)
+**Tasks:** 179–190 | **Status:** 🔄 6/12 completed
 
 ---
 
 ### Phase 18: Expression-Level + React Pattern + Runtime API Completion
-**Goal:** Final TS/TSX expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
+**Goal:** TS/TSX expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
 | Task | Example | Feature | Priority |
 |------|---------|---------|----------|
@@ -374,7 +371,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 204 | `ink-jsx-spread-attribute` | JSX spread attributes `{...props}` | P1 |
 | 205 | `ink-set-prototype` | `Set`/`Map`/`WeakMap`/`WeakSet` prototype methods | P2 |
 
-**Tasks:** 191–205 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 191–205 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -399,7 +396,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 219 | `ink-regexp-escape` | `RegExp.escape` (ES2025) | P3 |
 | 220 | `ink-set-es2025` | Set methods (`intersection`, `union`, `isSubsetOf`, etc.) | P3 |
 
-**Tasks:** 206–220 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 206–220 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -424,7 +421,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 234 | `ink-start-transition` | `startTransition` | P2 |
 | 235 | `ink-react-19-hooks` | `useFormStatus`, `useOptimistic`, `useActionState`, `use` | P3 |
 
-**Tasks:** 221–235 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 221–235 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -449,7 +446,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 249 | `ink-readable-stream` | `ReadableStream` | P3 |
 | 250 | `ink-compression-stream` | `CompressionStream` / `DecompressionStream` | P3 |
 
-**Tasks:** 236–250 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 236–250 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -479,7 +476,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 269 | `ink-server-component` | `"use server"` / `"use client"` directives | P3 |
 | 270 | `ink-decorator-metadata` | `emitDecoratorMetadata` | P3 |
 
-**Tasks:** 251–270 | **Status:** 🔄 Pending (20 tasks)
+**Tasks:** 251–270 | **Status:** ⏳ Pending (20 tasks)
 
 ---
 
@@ -504,7 +501,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 284 | `ink-watch-mode` | Watch mode / incremental compilation | P2 |
 | 285 | `ink-declaration-files` | `.d.ts` declaration files | P2 |
 
-**Tasks:** 271–285 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 271–285 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -528,7 +525,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 298 | `ink-optional-catch-binding` | Optional catch binding | P1 |
 | 299 | `ink-nullish-in-object` | Nullish values in object literals | P2 |
 
-**Tasks:** 286–299 | **Status:** 🔄 Pending (14 tasks)
+**Tasks:** 286–299 | **Status:** ⏳ Pending (14 tasks)
 
 ---
 
@@ -553,7 +550,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 313 | `ink-os-module` | `os` module | P2 |
 | 314 | `ink-urlpattern` | `URLPattern` | P3 |
 
-**Tasks:** 300–314 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 300–314 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -578,7 +575,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 328 | `ink-promise-chain` | `Promise.prototype.then/catch/finally` + `Promise.any`/`race` | P1 |
 | 329 | `ink-math-advanced` | Advanced `Math` methods and constants | P2 |
 
-**Tasks:** 315–329 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 315–329 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
@@ -609,7 +606,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 349 | `ink-optional-chain-jsx` | Optional chaining in JSX attributes | P1 |
 | 350 | `ink-jsx-conditional-render` | Ternary / logical AND returning JSX | P1 |
 
-**Tasks:** 330–350 | **Status:** 🔄 Pending (21 tasks)
+**Tasks:** 330–350 | **Status:** ⏳ Pending (21 tasks)
 
 ---
 
@@ -629,7 +626,7 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 359 | `ink-nested-conditional` | Nested conditional types | P2 |
 | 360 | `ink-inline-import-type` | Inline `import('...').Type` syntax | P1 |
 
-**Tasks:** 351–360 | **Status:** 🔄 Pending (10 tasks)
+**Tasks:** 351–360 | **Status:** ⏳ Pending (10 tasks)
 
 ---
 
@@ -654,74 +651,44 @@ Some TS features are parsed by oxc but dropped or converted to `Expr::Invalid` b
 | 374 | `ink-timers-promises` | `timers/promises` module | P2 |
 | 375 | `ink-webassembly` | `WebAssembly` API | P3 |
 
-**Tasks:** 361–375 | **Status:** 🔄 Pending (15 tasks)
+**Tasks:** 361–375 | **Status:** ⏳ Pending (15 tasks)
 
 ---
 
 ### Phase 30: Final Comprehensive Coverage Audit
-**Goal:** End-to-end audit of all 376 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.
+**Goal:** End-to-end audit of all 377 tasks, verifying file-to-JSON consistency, phase coverage, 100% parity language, orphaned example tracking, and final stats publication.
 
 | Task | Description | Priority |
 |------|-------------|----------|
 | 376 | Final comprehensive coverage audit | P0 |
 
-**Tasks:** 376 | **Status:** 🔄 Pending (1 task)
+**Tasks:** 376 | **Status:** ⏳ Pending (1 task)
 
 ---
 
-## Known Coverage Gaps (Current State)
+### Phase 31: React 18 Hooks
+**Goal:** React 18 concurrent features exercised by Ink examples, validated across all 3 environments via `scripts/parity.sh` with **100% output match**.
 
-### Test Coverage
-All **15/15** test modules are enabled. `spec_expressions` and `spec_types` are wired in (Task 041 completed).
+| Task | Example | Feature | Priority |
+|------|---------|---------|----------|
+| 377 | `ink-use-sync-external-store` | `useSyncExternalStore`, `useId`, `useTransition`, `useDeferredValue`, `useInsertionEffect` | P1 |
 
-**Result:** 983 passed; 0 failed; 183 ignored.
+**Tasks:** 377 | **Status:** ⏳ Pending (1 task)
 
-### Compile-Path Coverage: ~70%
+---
 
-| Layer | Coverage | Notes |
-|-------|----------|-------|
-| Parser (oxc) → HIR | ~80% | 38 Expr variants, 24 Stmt variants |
-| HIR → Rust codegen | ~70% | Core constructs have codegen; advanced TS features pending |
-| Compile-path integration tests | 53 tests | `tests/compile_codegen.rs` — covers most P0 constructs |
+## Coverage Strategy
 
-### Features Without Examples (250 gaps)
+### Philosophy
+Every practical TS/TSX/React/Ink language feature must be exercised by at least one Ink example. The example must call the **real API directly** — no fallbacks, no polyfills, no `typeof X !== 'undefined'` guards. If an API is missing in rquickjs or the compile path, the parity harness fails with 100% mismatch, and the bridge/runtime/codegen gets fixed.
 
-173 examples exist. Phase 6 examples (Tasks 042–067) cover core TS/TSX/React/Ink features. Phase 10 examples (Tasks 079–099) cover extended features. Phase 11 examples (Tasks 100–120) cover type system deep features and modern runtime APIs. Phase 12 examples (Tasks 121–131) cover remaining runtime APIs and type system features. Phase 13 examples (Tasks 132–140) cover real-world validation gaps. Phase 14–16 examples (Tasks 141–178) cover final runtime API, module pattern, operator, syntax, and advanced React pattern completion. Phase 17 examples (Tasks 179–190) cover ES2024 and TypeScript 5.0+ features. Phase 18 examples (Tasks 191–205) cover expression-level features, React type patterns, advanced runtime APIs, JSX edge cases, and legacy features. Phase 19 examples (Tasks 206–220) cover tagged templates, compiler options, deep Reflect/Object coverage, Web APIs, and ES2025 features. Phase 20 examples (Tasks 221–235) cover advanced language features, Intl/Atomics APIs, compile infrastructure, JSX member/namespace expressions, and React patterns. Phase 21 examples (Tasks 236–250) cover niche language features, additional TypeScript configuration options, and Web Streams/Crypto APIs. Phase 22 examples (Tasks 251–270) cover Web APIs (WebSocket, FormData, Blob, EventTarget, FinalizationRegistry, SharedArrayBuffer), TypeScript configuration edge cases, and advanced TS/JSX language patterns. Phase 23 examples (Tasks 271–285) cover emerging runtime APIs, React patterns, module resolution, and compile infrastructure. Phase 24 examples (Tasks 286–299) cover the orphaned existing Ink example audit, advanced type system features, and language edge cases. Phase 25 examples (Tasks 300–314) cover advanced destructuring patterns and Node.js/Web runtime APIs. Phase 26 examples (Tasks 315–329) cover Node.js standard library, browser globals, binary data APIs, Promise chaining, and advanced Math. Phase 27 examples (Tasks 330–350) cover React hook patterns, JSX expression patterns, and component composition. Phase 28 examples (Tasks 351–360) cover advanced TypeScript type system patterns. Phase 29 examples (Tasks 361–375) cover array/object/string/number/date/console/error/symbol/process/stream/WebAssembly API completion. Phase 30 (Task 376) is the final comprehensive coverage audit. See `tasks/index.json` → `coverage_gaps.features_without_examples` for the full list.
+### Three validation layers
+1. **Parser → HIR:** `cargo test --bin runts` validates that oxc_parser produces correct HIR shapes.
+2. **Dev path (rquickjs):** `scripts/parity.sh --env rq` validates that TSX→JS→rquickjs produces output identical to deno.
+3. **Compile path:** `scripts/parity.sh --env compile` validates that TSX→HIR→Rust codegen→binary produces output identical to deno.
 
-Remaining gaps (Phase 10–12 targets):
-- Logical assignment: `||=`, `&&=`, `??=`
-- React hooks: `useLayoutEffect`, `useId`, `useTransition`, `useImperativeHandle`, `useSyncExternalStore`, `useDeferredValue`
-- Type declarations: type aliases, interfaces, `namespace`, `declare`
-- Class modifiers: `public`/`private`/`protected`/`readonly`, `abstract`, `override`, `implements`
-- Module patterns: `import type`, `export type`, barrel exports (`export * from`), `export =`, `import = require()`
-- Advanced JS: top-level `await`, BigInt, `globalThis`, Symbol, Map/Set, Proxy, WeakRef
-- React patterns: `Suspense`/`lazy`, `ErrorBoundary`, `Children` API, `cloneElement`, `isValidElement`
-- Context advanced: `displayName`, `defaultValue`, multiple providers
-- Type system: `keyof`, template literal types, `infer`, utility types (`Partial`, `Required`, `Pick`, `Omit`, `Record`), `as const`, mapped types, discriminated unions, index signatures, intersection types, `unknown`, `never`, type guards, `unique symbol`, branded types, `this` parameter, global/module augmentation
-- Meta-properties: `new.target`
-- Reflection: `Reflect` API
-- RegExp: `matchAll`, advanced flags
-- Modern array methods: `flat`, `flatMap`, `at`, `toSorted`, `toReversed`, `includes`, `findLast`, `toSpliced`, `with`
-- Modern object methods: `fromEntries`, `hasOwn`, `getOwnPropertyDescriptors`, `create`, `defineProperty`, `freeze`, `seal`, `assign`
-- Modern string methods: `padStart`, `padEnd`, `replaceAll`, `trimStart`, `trimEnd`, `at`
-- Promise advanced: `allSettled`, `any`, `race`, `withResolvers`
-- Globals: `Date`, `Math`, `Intl`
-- Runtime APIs: `JSON.stringify`/`parse`, `queueMicrotask`, `Number.isFinite`/`isNaN`/`parseInt`/`parseFloat`
-- Function methods: `bind`, `call`, `apply`
-- Error: `Error.cause`
-- Class: `static {}` blocks, private methods `#method()`, `#field in obj`
-- React: `createRef`, `useDebugValue`
-- Type system: function overloads, parameter properties, namespace re-export, inline type imports
-- Runtime APIs: console methods, URI encoding, array reduce, string search, error subclasses
-- **Real-world gaps (from `../tui1` audit):**
-  - `process` global (`process.exit`, `process.env`, `process.stdin`, `process.stdout`)
-  - `setInterval` / `clearInterval`
-  - `Date` object (`new Date`, `Date.now`, `toLocaleTimeString`)
-  - `Array.prototype.splice`
-  - React Fragment shorthand `<>...</>`
-  - Dynamic import of node built-ins (`import("node:readline")`)
-  - `/** @jsxImportSource react */` pragma
-  - Module-level `render()` call
+### Coverage matrix
+See `tasks/index.json` → `coverage_gaps.features_without_examples` for the authoritative list of 250 features awaiting examples. The matrix is maintained automatically: when a task is marked completed and its example passes parity in all 3 environments, the corresponding gap is removed.
 
 ---
 
@@ -796,52 +763,44 @@ cargo test --test compile_codegen
 
 ## Success Criteria (Final Checklist)
 
-### Completed ✅
+### Infrastructure ✅
 - [x] `cargo build` passes with 0 errors, 0 warnings.
-- [x] `cargo test --test rq_parity` passes ≥90% of examples (120/123 active).
-- [x] `cargo test --bin runts` exits 0 (983 passing, 183 ignored).
-- [x] `cargo test --test compile_codegen` passes (53/53).
+- [x] `cargo test --test rq_parity` passes ≥90% of examples.
+- [x] `cargo test --bin runts` exits 0.
+- [x] `cargo test --test compile_codegen` passes.
 - [x] Zero commented-out test modules.
 - [x] No file > 500 lines, no fn > 40 lines, no complexity > 10.
 - [x] No references to HIR interpreter, Taffy, or `render_tsx`.
 - [x] Docs accurately describe rquickjs + Yoga architecture.
 
-### Completed ✅ Phase 6–7 (Examples + HIR Expansion)
-- [x] `spec_expressions` + `spec_types` modules enabled (Task 041).
-- [x] 27 Ink examples added covering core TS/TSX/React/Ink features (Tasks 042–067).
-- [x] Each example renders **identically** in deno, `runts dev`, and `runts build` (100% match).
-- [x] Optional chaining `?.` parses into HIR (Task 068).
-- [x] `as`, `satisfies`, `!` parse into HIR and are erased (Task 069).
-- [x] Enums parse into HIR and codegen produces compilable Rust (Task 070).
-- [x] Private fields `#field` parse into HIR and produce compilable Rust (Task 071).
-- [x] Generators `function*` parse into HIR and map to Rust iterators (Task 072).
-- [x] Dynamic imports `import()` parse into HIR (Task 073).
-- [x] `tests/compile_codegen.rs` has 53 tests (Task 075).
+### Completed Phases ✅ (165 tasks)
+- [x] Phase 0–5: Build, engine, compile path, coverage, cleanup, hardening (37 tasks).
+- [x] Phase 6: 27 Ink examples covering core TS/TSX/React/Ink features (Tasks 041–067).
+- [x] Phase 7: HIR expansion — optional chaining, enums, private fields, generators, dynamic import, decorators (Tasks 068–074).
+- [x] Phase 8: Compile-path integration tests (Tasks 075–077).
+- [x] Phase 9: Final audit and coverage matrix (Task 078).
+- [x] Phase 10: 21 Ink examples for extended TS/TSX coverage (Tasks 079–099).
+- [x] Phase 11: 21 Ink examples for type system + runtime API deep coverage (Tasks 100–120).
+- [x] Phase 12: 11 Ink examples for runtime API + type system completion (Tasks 121–131).
+- [x] Phase 13: Real-world validation — `../tui1` port with all bridge gaps fixed (Tasks 132–140).
+- [x] Phase 14: 8 Ink examples for final runtime API + module pattern completion (Tasks 141–148).
+- [x] Phase 15: 15 Ink examples for advanced React patterns + deep runtime coverage (Tasks 149–163).
+- [x] Phase 16: 15 Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 
-### Pending 🔄 Phase 8–12
-- [ ] Decorators parse into HIR without producing Invalid (Task 074).
-- [ ] Compile-path parity tests for all examples (Task 076).
-- [ ] Compile-path negative tests (Task 077).
-- [ ] Coverage matrix published in `docs/SUPPORTED_SUBSET.md` (Task 078).
-- [ ] 19 additional Ink examples for extended TS/TSX coverage (Tasks 079–099).
-- [ ] 21 additional Ink examples for type system + runtime API deep coverage (Tasks 100–120).
-- [ ] 11 additional Ink examples for runtime API + type system completion (Tasks 121–131).
-- [ ] `../tui1` example compiles and renders identically in all 3 environments (Tasks 132–140).
-- [ ] 8 additional Ink examples for final runtime API + module pattern completion (Tasks 141–148).
-- [ ] 15 additional Ink examples for advanced React patterns + deep runtime coverage (Tasks 149–163).
-- [ ] 15 additional Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
-- [ ] 12 additional Ink examples for ES2024 + TypeScript 5.0+ feature completion (Tasks 179–190).
-- [ ] 15 additional Ink examples for expression-level + React pattern + runtime API completion (Tasks 191–205).
-- [ ] 15 additional Ink examples for tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).
-- [ ] 15 additional Ink examples for advanced language + runtime + React patterns + compile infrastructure (Tasks 221–235).
-- [ ] 15 additional Ink examples for niche language features + TypeScript config + Web Streams + Crypto (Tasks 236–250).
-- [ ] 20 additional Ink examples for Web APIs + TypeScript config edge cases + JSX/TS language patterns (Tasks 251–270).
-- [ ] 15 additional Ink examples for emerging runtime APIs + React patterns + module resolution + compile infrastructure (Tasks 271–285).
-- [ ] 14 additional tasks for orphaned example audit + advanced type system + language edge cases (Tasks 286–299).
-- [ ] 15 additional Ink examples for advanced destructuring + Node.js/Web runtime APIs (Tasks 300–314).
-- [ ] 15 additional Ink examples for Node.js standard library + browser globals + binary data + Promise/Math completion (Tasks 315–329).
-- [ ] 21 additional Ink examples for React hook patterns + JSX expression patterns + component composition (Tasks 330–350).
-- [ ] 10 additional Ink examples for advanced TypeScript type system patterns (Tasks 351–360).
-- [ ] 15 additional Ink examples for array/object/string/number/date/console/error/symbol/process/stream/WebAssembly API completion (Tasks 361–375).
-- [ ] Final comprehensive coverage audit (Task 376).
+### Pending Phases ⏳ (193 tasks)
+- [ ] Phase 17: ES2024 + TypeScript 5.0+ features (6/12 completed — Tasks 179–190).
+- [ ] Phase 18: Expression-level + React pattern + runtime API completion (Tasks 191–205).
+- [ ] Phase 19: Tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).
+- [ ] Phase 20: Advanced language + runtime + React patterns + compile infrastructure (Tasks 221–235).
+- [ ] Phase 21: Niche language features + TypeScript config + Web Streams + Crypto (Tasks 236–250).
+- [ ] Phase 22: Web APIs + TypeScript config edge cases + JSX/TS language patterns (Tasks 251–270).
+- [ ] Phase 23: Emerging runtime APIs + React patterns + module resolution + compile infrastructure (Tasks 271–285).
+- [ ] Phase 24: Orphaned example audit + advanced type system + language edge cases (Tasks 286–299).
+- [ ] Phase 25: Advanced destructuring + Node.js/Web runtime APIs (Tasks 300–314).
+- [ ] Phase 26: Node.js standard library + browser globals + binary data + Promise/Math completion (Tasks 315–329).
+- [ ] Phase 27: React hook patterns + JSX expression patterns + component composition (Tasks 330–350).
+- [ ] Phase 28: Advanced TypeScript type system patterns (Tasks 351–360).
+- [ ] Phase 29: Array/Object/String/Number/Date/Console/Error/Symbol/Process/Stream/WebAssembly API completion (Tasks 361–375).
+- [ ] Phase 30: Final comprehensive coverage audit (Task 376).
+- [ ] Phase 31: React 18 hooks (Task 377).
 - [ ] `scripts/parity.sh --env all` passes all examples with 100% match.
