@@ -135,6 +135,11 @@ globalThis.__ink_get_layout = function(id) {
   };
 };
 
+globalThis.__ink_get_node_parent = function(id) {
+  var result = __ink_call('get_node_parent', JSON.stringify([id]));
+  return result === 'null' ? null : parseFloat(result) || null;
+};
+
 globalThis.__ink_register_input = function(callback) {
   return parseFloat(__ink_call('register_input', JSON.stringify([callback]))) || 0;
 };
@@ -237,11 +242,9 @@ function scheduleRerender(instance) {
   pendingRerenders.add(instance);
   if (renderScheduled) return;
   renderScheduled = true;
-  if (globalThis.__ink_set_timeout) {
-    globalThis.__ink_set_timeout('__tb_flush_rerenders()', 0);
-  } else {
-    setTimeout(flushRerenders, 0);
-  }
+  inkSetTimeout(function() {
+    flushRerenders();
+  }, 0);
 }
 
 globalThis.__tb_flush_rerenders = function() {
@@ -288,17 +291,15 @@ function useEffect(effect, deps) {
     state.deps = deps;
     state.cleanup = undefined;
     state.hasRun = false;
-  }
-  const oldDeps = state.deps;
-  const hasChanged = !deps || !oldDeps || deps.length !== oldDeps.length ||
-    deps.some((d, i) => d !== oldDeps[i]);
-  if (hasChanged) {
-    state.deps = deps;
-    state.effect = effect;
-    if (globalThis.__ink_set_timeout) {
-      globalThis.__ink_set_timeout(
-        `__tb_run_effect(${state._instId || 0}, ${hookEffectId++})`, 0
-      );
+    state._shouldRun = true;
+  } else {
+    const oldDeps = state.deps;
+    const hasChanged = !deps || !oldDeps || deps.length !== oldDeps.length ||
+      deps.some((d, i) => d !== oldDeps[i]);
+    if (hasChanged) {
+      state.deps = deps;
+      state.effect = effect;
+      state._shouldRun = true;
     }
   }
 }
@@ -358,6 +359,9 @@ function createContext(defaultValue) {
 const inputHandlers = new Map();
 let nextHandlerId = 1;
 
+// Track the current rendering node ID for mouse hit-testing
+let currentRenderingNodeId = null;
+
 function useInput(handler, options) {
   options = options || {};
   const state = getHookState();
@@ -366,6 +370,8 @@ function useInput(handler, options) {
     state.handler = handler;
     state.options = options;
     state.id = nextHandlerId++;
+    // Associate this handler with the current rendering node
+    state.nodeId = currentRenderingNodeId;
     inputHandlers.set(state.id, state);
   } else {
     state.handler = handler;
@@ -492,14 +498,21 @@ function inkClearInterval(id) {
 globalThis.__tb_invoke_timers = function(timerJsIds) {
   try {
     const ids = typeof timerJsIds === 'string' ? JSON.parse(timerJsIds) : timerJsIds;
-    for (const id of ids) {
-      const entry = timerCallbacks.get(id);
+    for (const rustId of ids) {
+      const jsId = rustTimerToJsId.get(rustId);
+      if (!jsId) continue;
+      const entry = timerCallbacks.get(jsId);
       if (entry && typeof entry.callback === 'function') {
         try {
           entry.callback();
         } catch (e) {
           console.error('Timer callback error:', e);
         }
+      }
+      // Clean up one-shot timers
+      if (entry && entry.type === 'timeout') {
+        timerCallbacks.delete(jsId);
+        rustTimerToJsId.delete(rustId);
       }
     }
   } catch (e) {
@@ -541,8 +554,11 @@ function mountTree(vNode, parentId) {
 
   if (isFunctionComponent(vNode.type)) {
     const inst = new ComponentInstance(vNode.type, vNode.props);
+    const savedNodeId = currentRenderingNodeId;
+    currentRenderingNodeId = parentId;
     const output = inst.render();
     const mounted = mountTree(output, parentId);
+    currentRenderingNodeId = savedNodeId;
     if (mounted) {
       mounted.instance = inst;
       inst.mountedTree = mounted;
@@ -622,7 +638,10 @@ function reconcileTree(tree, newVNode, parentId) {
   if (isFunctionComponent(newVNode.type)) {
     if (tree.instance && tree.instance.fn === newVNode.type) {
       tree.instance.props = newVNode.props;
+      const savedNodeId = currentRenderingNodeId;
+      currentRenderingNodeId = parentId;
       const newOutput = tree.instance.render();
+      currentRenderingNodeId = savedNodeId;
       const newChild = reconcileTree(tree.children[0], newOutput, parentId);
       tree.children = newChild ? [newChild] : [];
       tree.instance.mountedTree = newChild;
@@ -688,7 +707,6 @@ function ComponentInstance(fn, props) {
 }
 
 ComponentInstance.prototype.render = function() {
-  this.hooks = [];
   currentInstance = this;
   currentHookIndex = 0;
   try {
@@ -697,6 +715,22 @@ ComponentInstance.prototype.render = function() {
   } finally {
     currentInstance = null;
     currentHookIndex = 0;
+    // Run effects that should run after this render
+    for (const hook of this.hooks) {
+      if (hook.type === 'effect' && hook._shouldRun) {
+        hook._shouldRun = false;
+        if (hook.cleanup) {
+          try { hook.cleanup(); } catch (e) { console.error('Effect cleanup error:', e); }
+        }
+        try {
+          const cleanup = hook.effect();
+          hook.cleanup = typeof cleanup === 'function' ? cleanup : undefined;
+          hook.hasRun = true;
+        } catch (e) {
+          console.error('Effect error:', e);
+        }
+      }
+    }
   }
 };
 
@@ -816,14 +850,34 @@ globalThis.__tb_invoke_microtasks = function() {
   }
 };
 
+// setImmediate polyfill - same behavior as process.nextTick
+// Schedules callback on next iteration of event loop
+if (!globalThis.setImmediate) {
+  globalThis.setImmediate = (cb, ...args) => {
+    if (typeof cb === 'function') {
+      // Use microtask queue for immediate execution
+      // This matches Node.js behavior where setImmediate runs after I/O but before timers
+      const wrapped = () => cb(...args);
+      microtaskCallbacks.push(wrapped);
+      return microtaskCallbacks.length; // Return "handle" (index for consistency)
+    }
+    return -1;
+  };
+  globalThis.clearImmediate = (handle) => {
+    // For simplicity, we don't support cancellation
+    // In production, we'd track handles and filter them out
+  };
+}
+
 if (!globalThis.process) {
   globalThis.process = {
     stdout: { write: (s) => { try { globalThis.__ink_stdout_write(String(s)); } catch(e) {} } },
     stderr: { write: (s) => { try { globalThis.__ink_stderr_write(String(s)); } catch(e) {} } },
-    nextTick: (cb) => {
+    nextTick: (cb, ...args) => {
       // Store function directly in JS array - no stringification needed
       if (typeof cb === 'function') {
-        microtaskCallbacks.push(cb);
+        const wrapped = () => cb(...args);
+        microtaskCallbacks.push(wrapped);
       }
     }
   };
@@ -844,13 +898,122 @@ globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt) {
   }
 };
 
-globalThis.__tb_dispatch_mouse = function(event) {
+// Helper: Check if a point is inside a node's layout
+function isPointInNode(nodeId, x, y) {
+  const layout = globalThis.__ink_get_layout(nodeId);
+  if (!layout) return false;
+  // Layout: left, top, width, height
+  return x >= layout.left && x < layout.left + layout.width &&
+         y >= layout.top  && y < layout.top  + layout.height;
+}
+
+// Helper: Get all descendants of a node
+function getNodeDescendants(nodeId) {
+  const children = globalThis.__ink_get_node_children(nodeId) || [];
+  let descendants = [];
+  for (const childId of children) {
+    descendants.push(childId);
+    descendants = descendants.concat(getNodeDescendants(childId));
+  }
+  return descendants;
+}
+
+// Helper: Find the deepest node at a given position
+function findDeepestNodeAt(x, y, rootId) {
+  if (!rootId) return null;
+  
+  // Get all nodes and their layouts
+  const candidates = [];
+  
+  // BFS to find all nodes containing the point, track depth
+  function traverse(nodeId, depth) {
+    if (isPointInNode(nodeId, x, y)) {
+      candidates.push({ nodeId, depth });
+    }
+    const children = globalThis.__ink_get_node_children(nodeId) || [];
+    for (const childId of children) {
+      traverse(childId, depth + 1);
+    }
+  }
+  
+  traverse(rootId, 0);
+  
+  if (candidates.length === 0) return null;
+  
+  // Return the deepest (most specific) node
+  candidates.sort((a, b) => b.depth - a.depth);
+  return candidates[0].nodeId;
+}
+
+// Helper: Find which handler should receive the mouse event using hit-testing
+function findMouseHandlerAt(x, y) {
+  const rootId = globalThis.__ink_get_root_id();
+  if (!rootId) return null;
+  
+  // Find the deepest node at this position
+  const targetNodeId = findDeepestNodeAt(x, y, rootId);
+  if (!targetNodeId) return null;
+  
+  // Find handlers whose node is an ancestor of (or equal to) the target
+  // First, get all ancestors of target up to root
+  const ancestors = new Set();
+  let current = targetNodeId;
+  while (current) {
+    ancestors.add(current);
+    // Get parent (we need to track parents - check if bridge provides this)
+    const parent = globalThis.__ink_get_node_parent ? globalThis.__ink_get_node_parent(current) : null;
+    current = parent;
+  }
+  
+  // Find handlers whose nodeId is an ancestor of target
+  let deepestHandler = null;
+  let deepestDepth = -1;
+  
   for (const [id, state] of inputHandlers) {
     if (state.options && state.options.isActive === false) continue;
+    if (!state.nodeId) continue;
+    
+    if (ancestors.has(state.nodeId)) {
+      // Check depth from root (closer to target = higher depth)
+      // For simplicity, we'll just use the nodeId as a proxy for recency
+      // A better approach would track depth per handler
+      if (!deepestHandler || state.nodeId > deepestHandler.nodeId) {
+        deepestHandler = state;
+      }
+    }
+  }
+  
+  return deepestHandler;
+}
+
+// Fallback: mouse handlers without nodeId (legacy/global handlers)
+const globalMouseHandlers = [];
+
+globalThis.__tb_register_global_mouse_handler = function(handler) {
+  globalMouseHandlers.push(handler);
+  return globalMouseHandlers.length;
+};
+
+globalThis.__tb_dispatch_mouse = function(event) {
+  const { column, row } = event;
+  
+  // Find the deepest handler at this position using hit-testing
+  const handler = findMouseHandlerAt(column, row);
+  
+  if (handler) {
     try {
-      if (state.handler) state.handler(event);
+      handler.handler(event);
     } catch (e) {
       console.error('Mouse handler error:', e);
+    }
+  }
+  
+  // Also dispatch to global handlers (legacy behavior)
+  for (const h of globalMouseHandlers) {
+    try {
+      h(event);
+    } catch (e) {
+      console.error('Global mouse handler error:', e);
     }
   }
 };

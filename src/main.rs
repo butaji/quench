@@ -318,6 +318,7 @@ async fn main() -> Result<()> {
     let eval_idx = args.iter().position(|a| a == "--eval" || a == "-e");
     let watch_idx = args.iter().position(|a| a == "--watch" || a == "-w");
     let hot_idx = args.iter().position(|a| a == "--hot");
+    #[allow(unused_variables)]
     let watch_path = watch_idx.and_then(|i| args.get(i + 1).cloned())
         .or_else(|| hot_idx.map(|_| ".".to_string()));
     
@@ -492,6 +493,7 @@ async fn main() -> Result<()> {
     };
     
     // Keep track of the original script path for hot reload
+    #[allow(unused_variables)]
     let script_path = bundle_idx.and_then(|i| args.get(i + 1).cloned())
         .or_else(|| args.get(1).cloned().filter(|s| !s.starts_with('-')));
     
@@ -774,6 +776,13 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
                     let s: Vec<String> = children.iter().map(|&c| c.to_string()).collect();
                     format!("[{}]", s.join(","))
                 }
+                None => "null".to_string(),
+            }
+        }
+        "get_node_parent" => {
+            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
+            match bridge::__ink_get_node_parent(id) {
+                Some(parent_id) => parent_id.to_string(),
                 None => "null".to_string(),
             }
         }

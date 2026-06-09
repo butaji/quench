@@ -52,13 +52,13 @@
 |-------|------------|-------|---------|
 | User code | TS/TSX | — | Ink-compatible API |
 | Transpile | esbuild | — | TSX → JS (optional for .js files) |
-| Reconciler | JS (runtime.js) | ~900 | Hooks, component lifecycle, tree diff |
+| Reconciler | JS (runtime.js) | ~1050 | Hooks, component lifecycle, tree diff |
 | Bridge | JS→Rust FFI | — | `__ink_call(method, args)` |
 | **Runtime** | **Rust** | **2850** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~2,850 lines  
-**Total JS (runtime):** ~900 lines  
-**Ratio:** ~76% Rust, ~24% JS
+**Total Rust:** ~2,875 lines  
+**Total JS (runtime):** ~1050 lines  
+**Ratio:** ~73% Rust, ~27% JS
 
 ---
 
@@ -191,52 +191,50 @@ async fn main() -> Result<()> {
 
 ## 7. Current State
 
-### ✅ Complete (55 tasks)
+### ✅ Complete (51 tasks)
 
 | Area | Tasks | Status |
 |------|-------|--------|
 | Bridge FFI | 001–008 | All done |
-| JS Integration | 009–012, 009b | All done |
+| JS Integration | 009–012 | All done |
 | Event Loop | 013–019 | All done |
 | Yoga Layout | 020–024 | All done |
-| ratatui Render | 025–026, 056 | Box, Text, backgroundColor, padding, underline, inverse done |
+| ratatui Render | 025–028 | Box, Text, Static, Newline, Spacer done. backgroundColor, padding, underline, inverse done |
 | Ink Hooks | 030–036 | All done (via runtime.js) |
-| Hot Path | 055 | Timer/microtask batch dispatch done |
 | DevEx | 037–040 | Hot reload, bytecode, feature flags done |
 | JS Examples | 041–050 | All 10 JS examples done |
-| TS Examples | 057 | All 10 TS examples done |
+| TS Examples | counter.ts–mouse-app.ts | All 10 TS examples done |
 | Parity | 051–052 | Harness and diff scripts done |
 
 ### ⚠️ Partial (1 task)
 
 | Task | Status | Note |
 |------|--------|------|
-| 029 Buffer Diff | Partial | Basic flush works, full diff not implemented |
-
-### ❌ Pending (2 tasks — both deprecated)
-
-| Task | Status | Note |
-|------|--------|------|
-| 053 Function Callbacks | Pending (deprecated) | Superseded by Task 055 |
-| 054 Rust Reconciler | Pending (deprecated) | Not needed, runtime.js works |
+| 029 Buffer Diff | Partial | Basic flush works via ratatui double-buffering. Full cell-level diff not implemented. |
 
 ---
 
 ## 8. Remaining Work
 
-### Task 029: Buffer Diff (Partial)
-- Basic flush works
-- Full diff not implemented (always redraws entire screen)
+### Optional Enhancements
 
-### Optional: Key/Mouse Direct Dispatch
+**Buffer Diff (Task 029):**
+- Basic flush works via ratatui's native double-buffering
+- Full cell-level diff not implemented (always redraws entire screen)
+
+**Key/Mouse Direct Dispatch:**
 - Current: 1 ctx.eval per event
 - Future: Store Function refs, call directly
 - Impact: ~0.5ms → ~0.05ms per event
 
-### Optional: Border Colors
+**Border Colors:**
 - `borderColor` not implemented
 - `borderDimColor` not implemented
 - `borderTop`, `borderBottom`, `borderLeft`, `borderRight` not implemented
+
+**Flex Props:**
+- `minWidth`, `maxWidth`, `minHeight`, `maxHeight` not implemented
+- `flexBasis`, `flexGrow`, `flexShrink` from props not implemented
 
 ---
 
