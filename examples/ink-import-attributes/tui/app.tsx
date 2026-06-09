@@ -1,3 +1,4 @@
+// Import attributes example — demonstrates ES2024 import { type: 'json' } syntax
 import React from 'react';
 import { Box, Text } from 'ink';
 
