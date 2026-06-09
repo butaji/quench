@@ -5,7 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
-> **Current stats:** 372 tasks, 176 completed, 196 pending, 32 phases, 323 example tasks.
+> **Current stats:** 387 tasks, 176 completed, 211 pending, 33 phases, 323 example tasks.
 
 ---
 
@@ -747,6 +747,31 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 
 ---
 
+### Phase 32: Core Language + React + Runtime Edge Cases
+**Goal:** Remaining practical TS/TSX/React/Ink edge cases: IIFE, function declarations, block scoping, object shorthand/getters/setters/computed properties, JSX boolean attributes, Promise.all mixed outcomes, Array.flat(Infinity), JSON.stringify replacer, console.table, useReducer init, forwardRef displayName, parseInt radix, sparse arrays.
+
+| Task | Example | Feature | Status |
+|------|---------|---------|--------|
+| 392 | `ink-iife` | Immediately Invoked Function Expressions | ⏳ |
+| 393 | `ink-function-declaration` | Named function declarations | ⏳ |
+| 394 | `ink-block-scope` | `let` vs `var` vs `const` scoping | ⏳ |
+| 395 | `ink-shorthand-properties` | Object shorthand and method shorthand | ⏳ |
+| 396 | `ink-object-getters-setters` | Getter and setter properties | ⏳ |
+| 397 | `ink-computed-properties` | Computed property names `[expr]: value` | ⏳ |
+| 398 | `ink-jsx-boolean-attrs` | JSX boolean attributes | ⏳ |
+| 399 | `ink-promise-all-mixed` | Promise.all with mixed resolve/reject | ⏳ |
+| 400 | `ink-array-flat-infinity` | Array.flat with Infinity depth | ⏳ |
+| 401 | `ink-json-stringify-replacer` | JSON.stringify with replacer function | ⏳ |
+| 402 | `ink-console-table` | console.table with complex data | ⏳ |
+| 403 | `ink-use-reducer-init` | useReducer with initialization function | ⏳ |
+| 404 | `ink-forward-ref-displayname` | forwardRef with displayName | ⏳ |
+| 405 | `ink-parse-int-radix` | parseInt with explicit radix | ⏳ |
+| 406 | `ink-sparse-array` | Sparse arrays with holes `[1, , 3]` | ⏳ |
+
+**Tasks:** 392–406 | **Status:** ⏳ Pending (15 tasks)
+
+---
+
 ## HIR Coverage Matrix
 
 HIR must be able to represent every construct used in examples. This table maps feature categories to the relevant HIR files and current status.
@@ -921,7 +946,7 @@ cargo test --test compile_codegen
 - [x] Phase 16: 15 Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 - [x] Phase 17: Partial — ES2024 `using`, import attributes, `Array.fromAsync`, `Promise.withResolvers`, `Object.groupBy`, `const` type params (Tasks 179–184 complete).
 
-### Pending Phases ⏳ (196 tasks)
+### Pending Phases ⏳ (211 tasks)
 - [ ] Phase 17: Remaining ES2024 + TypeScript 5.0+ features (Tasks 185–190).
 - [ ] Phase 18: Expression-level + React pattern + runtime API completion (Tasks 191–205).
 - [ ] Phase 19: Tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).
