@@ -2328,7 +2328,7 @@
     {
       "id": "181",
       "title": "ink-array-from-async example — Array.fromAsync",
-      "status": "pending",
+      "status": "completed",
       "priority": "P1-High",
       "files": [
         "examples/ink-array-from-async/",
