@@ -395,14 +395,21 @@ impl InkRuntime {
             (ptr, child.parent)
         };
         
+        // Remove from old parent's Yoga tree if moving from a different parent
+        if let Some(old_pid) = old_parent_id {
+            if old_pid != parent_id {
+                if let Some(old_parent) = self.get_node_mut(old_pid) {
+                    old_parent.children.retain(|&id| id != child_id);
+                    unsafe {
+                        old_parent.yoga.remove_child(&mut *child_yoga_ptr);
+                    }
+                }
+            }
+        }
+        
         // Get parent mutably
         let parent = self.get_node_mut(parent_id)
             .ok_or(InkError::NodeNotFound(parent_id))?;
-
-        // Remove from old parent if different - need to do this first
-        // Note: This is tricky because we hold parent borrow
-        // Workaround: we'll remove from old parent after we're done with parent
-        let old_pid_for_later = if old_parent_id != Some(parent_id) { old_parent_id } else { None };
 
         // Insert into parent's children list
         parent.children.push(child_id);
@@ -411,14 +418,6 @@ impl InkRuntime {
         // Safety: child_yoga_ptr points to a valid Node in self.nodes
         unsafe {
             parent.yoga.insert_child(&mut *child_yoga_ptr, parent.children.len() - 1);
-        }
-        
-        // Now remove from old parent (after parent borrow ends)
-        let _ = parent;
-        if let Some(old_pid) = old_pid_for_later {
-            if let Some(old_parent) = self.get_node_mut(old_pid) {
-                old_parent.children.retain(|&id| id != child_id);
-            }
         }
         
         // Update child's parent
@@ -432,8 +431,17 @@ impl InkRuntime {
 
     /// Remove child from parent
     pub fn remove_child(&mut self, parent_id: u32, child_id: u32) -> Result<()> {
+        let child_ptr = self.get_node(child_id)
+            .map(|c| &c.yoga as *const Node as *mut Node);
+
         let parent = self.get_node_mut(parent_id)
             .ok_or(InkError::NodeNotFound(parent_id))?;
+
+        if let Some(ptr) = child_ptr {
+            unsafe {
+                parent.yoga.remove_child(&mut *ptr);
+            }
+        }
 
         parent.children.retain(|&id| id != child_id);
 

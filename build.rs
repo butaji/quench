@@ -14,6 +14,9 @@ fn main() {
     let bundle_path = env::var("TUI_BRIDGE_BUNDLE")
         .unwrap_or_else(|_| "dist/bundle.js".to_string());
     
+    // Always inform Cargo about the custom cfg we use
+    println!("cargo::rustc-check-cfg=cfg(has_bytecode_bundle)");
+    
     if Path::new(&bundle_path).exists() {
         println!("cargo:rerun-if-changed={}", bundle_path);
         
@@ -44,7 +47,6 @@ pub fn get_bundle_size() -> usize {{
         );
         
         fs::write(&dest_path, declaration).expect("Failed to write bundle_qbc.rs");
-        println!("cargo::rustc-check-cfg=cfg(has_bytecode_bundle)");
     } else {
         // No bundle found - generate empty placeholder
         let declaration = r#"// No bundle - using runtime.js only

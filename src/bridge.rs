@@ -473,6 +473,13 @@ pub fn __ink_get_node_children(node_id: u32) -> Option<Vec<u32>> {
     })
 }
 
+/// Get node parent
+pub fn __ink_get_node_parent(node_id: u32) -> Option<u32> {
+    INK_RUNTIME.with(|runtime| {
+        runtime.borrow().node(node_id).and_then(|n| n.parent)
+    })
+}
+
 /// Get node prop
 pub fn __ink_get_node_prop(node_id: u32, prop: &str) -> Option<String> {
     INK_RUNTIME.with(|runtime| {
@@ -892,6 +899,11 @@ mod tests {
         
         assert_eq!(__ink_get_node_children(root_id), Some(vec![box_id]));
         assert_eq!(__ink_get_node_children(box_id), Some(vec![text_id]));
+        
+        // Test parent relationships
+        assert_eq!(__ink_get_node_parent(box_id), Some(root_id));
+        assert_eq!(__ink_get_node_parent(text_id), Some(box_id));
+        assert_eq!(__ink_get_node_parent(root_id), None); // Root has no parent
         
         __ink_destroy_root(root_id);
     }
