@@ -569,7 +569,17 @@
         "378",
         "379",
         "380",
-        "381"
+        "381",
+        "382",
+        "383",
+        "384",
+        "385",
+        "386",
+        "387",
+        "388",
+        "389",
+        "390",
+        "391"
       ]
     }
   ],
@@ -4552,12 +4562,122 @@
         "src/transpile/parser/mod.rs"
       ],
       "acceptance": "Example exists. Global declare var augmentation stripped without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "382",
+      "title": "ink-import-type-inline example \u2014 import type { type X } (TS 4.5+)",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-import-type-inline/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Inline type import syntax `import type { type X }` is erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "383",
+      "title": "ink-export-type-reexport example \u2014 export type { X } from './module'",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-export-type-reexport/",
+        "src/transpile/parser/stmt.rs"
+      ],
+      "acceptance": "Example exists. Type re-export syntax is erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "384",
+      "title": "ink-interface-multiple-extends example \u2014 interface extends A, B, C",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-interface-multiple-extends/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. Multiple interface inheritance is erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "385",
+      "title": "ink-typeof-class example \u2014 typeof on class constructors",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-typeof-class/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. `typeof` on class constructors produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "386",
+      "title": "ink-keyof-array example \u2014 keyof on arrays and tuples",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-keyof-array/",
+        "src/transpile/parser/expr.rs"
+      ],
+      "acceptance": "Example exists. `keyof` on array/tuple types is erased without runtime impact. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "387",
+      "title": "ink-forof-entries example \u2014 for...of with Object.entries, Map.entries, Set.entries",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-forof-entries/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. `for...of` with `.entries()` iterators produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "388",
+      "title": "ink-switch-fallthrough example \u2014 switch with intentional fallthrough",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-switch-fallthrough/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Switch case fallthrough behavior produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "389",
+      "title": "ink-destructure-rest-defaults example \u2014 destructuring with rest elements and default values combined",
+      "status": "pending",
+      "priority": "P1-High",
+      "files": [
+        "examples/ink-destructure-rest-defaults/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. Combined rest and default patterns in destructuring produce compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "390",
+      "title": "ink-yield-star-iterable example \u2014 yield* with arrays, strings, maps, sets",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-yield-star-iterable/",
+        "src/transpile/hir/quote_codegen_exprs.inc"
+      ],
+      "acceptance": "Example exists. `yield*` delegation to various iterables produces compilable Rust. Parity harness 100% across deno/rq/compile."
+    },
+    {
+      "id": "391",
+      "title": "ink-try-finally-only example \u2014 try...finally without catch",
+      "status": "pending",
+      "priority": "P2-Medium",
+      "files": [
+        "examples/ink-try-finally-only/",
+        "src/transpile/hir/quote_codegen_stmts.inc"
+      ],
+      "acceptance": "Example exists. `try...finally` without `catch` produces compilable Rust. Parity harness 100% across deno/rq/compile."
     }
   ],
   "stats": {
     "build_errors": 0,
     "linter_violations": 0,
-    "examples_total": 323,
+    "examples_total": 333,
     "examples_with_tests": 128,
     "test_modules_enabled": 15,
     "test_modules_disabled": 0,
@@ -4574,9 +4694,9 @@
     "hir_expr_codegen_handled": 30,
     "hir_stmt_variants": 24,
     "hir_stmt_codegen_handled": 16,
-    "pending_tasks": 187,
-    "completed_tasks": 175,
-    "total_tasks": 362,
+    "pending_tasks": 196,
+    "completed_tasks": 176,
+    "total_tasks": 372,
     "phases": 32
   },
   "coverage_gaps": {

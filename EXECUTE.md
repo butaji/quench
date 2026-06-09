@@ -5,7 +5,7 @@
 > **Taffy:** REMOVED. Yoga is the sole layout engine.
 > **Goal:** 100% look&feel parity across 3 environments for all Ink examples, and maximum TS/TSX coverage in HIR + compile-path codegen.
 > **Parity standard:** 100% output match. Zero divergence between deno, `runts dev`, and `runts build`.
-> **Current stats:** 362 tasks, 175 completed, 187 pending, 32 phases, 323 example tasks.
+> **Current stats:** 372 tasks, 176 completed, 196 pending, 32 phases, 323 example tasks.
 
 ---
 
@@ -713,10 +713,30 @@ Some features are intentionally unsupported (e.g., `eval()`, `with`, legacy `esc
 ---
 
 ### Phase 31: Advanced JSX + React Edge Cases
-**Goal:** Edge-case JSX and React patterns not yet explicitly exercised: JSX generic type arguments, full Children API (`forEach`, `map`, `count`), string manipulation utility types (`Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize`), advanced built-in utilities (`Awaited`, `InstanceType`, `ConstructorParameters`, `ThisType`), and global `declare var` augmentation patterns.
+**Goal:** Edge-case JSX and React patterns not yet explicitly exercised: JSX generic type arguments, full Children API (forEach/map/count), string manipulation utility types (Uppercase/Lowercase/Capitalize/Uncapitalize), advanced built-in utilities (Awaited/InstanceType/ConstructorParameters/ThisType), global declare var augmentation, inline type imports, type re-exports, multiple interface inheritance, typeof on classes, keyof on arrays, for...of with entries/keys/values, switch fallthrough, destructuring with rest and defaults, yield* with iterables, and try...finally without catch.
 
 | Task | Example | Feature | Status |
 |------|---------|---------|--------|
+| 377 | `ink-jsx-generic-type-args` | JSX generic type arguments | ⏳ |
+| 378 | `ink-react-children-foreach-map` | `Children.forEach`, `Children.map`, `Children.count` | ⏳ |
+| 379 | `ink-ts-string-manipulation-types` | `Uppercase`, `Lowercase`, `Capitalize`, `Uncapitalize` | ⏳ |
+| 380 | `ink-ts-utility-types-advanced` | `Awaited`, `InstanceType`, `ConstructorParameters`, `ThisType` | ⏳ |
+| 381 | `ink-ts-global-var-augmentation` | `declare var` global augmentation | ⏳ |
+| 382 | `ink-import-type-inline` | `import type { type X }` (TS 4.5+) | ⏳ |
+| 383 | `ink-export-type-reexport` | `export type { X } from './module'` | ⏳ |
+| 384 | `ink-interface-multiple-extends` | `interface extends A, B, C` | ⏳ |
+| 385 | `ink-typeof-class` | `typeof` on class constructors | ⏳ |
+| 386 | `ink-keyof-array` | `keyof` on arrays and tuples | ⏳ |
+| 387 | `ink-forof-entries` | `for...of` with `.entries()`, `.keys()`, `.values()` | ⏳ |
+| 388 | `ink-switch-fallthrough` | `switch` with intentional fallthrough | ⏳ |
+| 389 | `ink-destructure-rest-defaults` | Destructuring with rest and defaults combined | ⏳ |
+| 390 | `ink-yield-star-iterable` | `yield*` with arrays, strings, maps, sets | ⏳ |
+| 391 | `ink-try-finally-only` | `try...finally` without `catch` | ⏳ |
+
+**Tasks:** 377–391 | **Status:** ⏳ Pending (15 tasks)
+
+---
+------|---------|---------|--------|
 | 377 | `ink-jsx-generic-type-args` | JSX generic type arguments (`<Component<T> />`) | ⏳ |
 | 378 | `ink-react-children-foreach-map` | `Children.forEach`, `Children.map`, `Children.count` | ⏳ |
 | 379 | `ink-ts-string-manipulation-types` | `Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize` | ⏳ |
@@ -886,7 +906,7 @@ cargo test --test compile_codegen
 - [x] No references to HIR interpreter, Taffy, or `render_tsx`.
 - [x] Docs accurately describe rquickjs + Yoga architecture.
 
-### Completed Phases ✅ (175 tasks)
+### Completed Phases ✅ (176 tasks)
 - [x] Phase 0–5: Build, engine, compile path, coverage, cleanup, hardening (37 tasks).
 - [x] Phase 6: 27 Ink examples covering core TS/TSX/React/Ink features (Tasks 041–067).
 - [x] Phase 7: HIR expansion — optional chaining, enums, private fields, generators, dynamic import, decorators (Tasks 068–074).
@@ -901,7 +921,7 @@ cargo test --test compile_codegen
 - [x] Phase 16: 15 Ink examples for operator + syntax + runtime API completion (Tasks 164–178).
 - [x] Phase 17: Partial — ES2024 `using`, import attributes, `Array.fromAsync`, `Promise.withResolvers`, `Object.groupBy`, `const` type params (Tasks 179–184 complete).
 
-### Pending Phases ⏳ (187 tasks)
+### Pending Phases ⏳ (196 tasks)
 - [ ] Phase 17: Remaining ES2024 + TypeScript 5.0+ features (Tasks 185–190).
 - [ ] Phase 18: Expression-level + React pattern + runtime API completion (Tasks 191–205).
 - [ ] Phase 19: Tagged templates + compiler options + Reflect deep coverage + ES2025 (Tasks 206–220).
