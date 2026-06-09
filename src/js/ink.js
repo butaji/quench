@@ -1,5 +1,5 @@
 // Ink API shim for TuiBridge
-// Provides the same API as npm:ink but using React Reconciler + FFI
+// Provides the same API as npm:ink but using React Reconciler + bridge functions
 
 // Track render instances
 const renderInstances = new Map();
