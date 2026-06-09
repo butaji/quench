@@ -5,6 +5,10 @@ edition = "2021"
 authors = ["TuiBridge Team"]
 description = "Run Ink (React for terminals) using rquickjs + Rust"
 
+[features]
+default = []
+hotreload = ["notify"]
+
 [dependencies]
 # JavaScript runtime
 rquickjs = { version = "0.7", default-features = false, features = ["loader", "full"] }
@@ -26,8 +30,8 @@ tokio = { version = "1", features = ["full"] }
 atty = "0.2"
 
 # File watching (hot reload)
-notify = "8"
-notify-debouncer-mini = "0.5"
+notify = { version = "8", optional = true }
+notify-debouncer-mini = { version = "0.5", optional = true }
 
 # Text measurement
 unicode-width = "0.2"

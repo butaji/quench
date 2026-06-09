@@ -146,8 +146,53 @@ impl InkNode {
             self.yoga.set_margin(yoga::Edge::All, StyleUnit::Point(OrderedFloat(v)));
         }
 
+        // marginTop, marginBottom, marginLeft, marginRight
+        if let Some(v) = props.get("marginTop").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("marginBottom").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("marginLeft").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("marginRight").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
+        }
+        // marginY = top + bottom, marginX = left + right
+        if let Some(v) = props.get("marginY").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+            self.yoga.set_margin(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("marginX").and_then(parse_spacing_value) {
+            self.yoga.set_margin(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+            self.yoga.set_margin(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
+        }
+
+        // paddingTop, paddingBottom, paddingLeft, paddingRight
+        if let Some(v) = props.get("paddingTop").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("paddingBottom").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("paddingLeft").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("paddingRight").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
+        }
         if let Some(v) = props.get("padding").and_then(parse_spacing_value) {
             self.yoga.set_padding(yoga::Edge::All, StyleUnit::Point(OrderedFloat(v)));
+        }
+        // paddingY = top + bottom, paddingX = left + right
+        if let Some(v) = props.get("paddingY").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+            self.yoga.set_padding(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
+        }
+        if let Some(v) = props.get("paddingX").and_then(parse_spacing_value) {
+            self.yoga.set_padding(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+            self.yoga.set_padding(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
         }
 
         // Borders
