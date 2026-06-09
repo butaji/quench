@@ -242,6 +242,19 @@ ink_example_smoke_test!(test_ink_context, "ink-context");
 ink_example_smoke_test!(test_ink_context_advanced, "ink-context-advanced");
 
 // ═══════════════════════════════════════════════════════════════════
+// Default props / default parameters (tests with expected output)
+// ═══════════════════════════════════════════════════════════════════
+
+ink_example_test!(
+    test_ink_default_props,
+    "ink-default-props",
+    [
+        "Hello, Alice!",
+        "Hi, Bob!"
+    ]
+);
+
+// ═══════════════════════════════════════════════════════════════════
 // React hooks (smoke tests)
 // ═══════════════════════════════════════════════════════════════════
 
