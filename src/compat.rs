@@ -8,7 +8,7 @@ use std::collections::HashSet;
 /// All Ink props supported by TuiBridge (Box components)
 pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     // Flex
-    "flexDirection", "alignItems", "alignSelf", "justifyContent", "flexWrap",
+    "flexDirection", "alignItems", "alignSelf", "alignContent", "justifyContent", "flexWrap",
     "flexGrow", "flexShrink", "flexBasis",
     // Spacing
     "margin", "marginTop", "marginBottom", "marginLeft", "marginRight",
@@ -27,6 +27,32 @@ pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     "top", "right", "bottom", "left",
     // Children
     "children",
+];
+
+/// Ink 7.0.5 Box props NOT YET supported by TuiBridge
+/// (Listed for documentation purposes - these will generate warnings)
+pub static UNSUPPORTED_BOX_PROPS: &[&str] = &[
+    // Individual border colors (MEDIUM priority)
+    "borderTopColor", "borderBottomColor", "borderLeftColor", "borderRightColor",
+    "borderTopDimColor", "borderBottomDimColor", "borderLeftDimColor", "borderRightDimColor",
+    "borderBackgroundColor", "borderTopBackgroundColor", "borderBottomBackgroundColor",
+    "borderLeftBackgroundColor", "borderRightBackgroundColor",
+    // Overflow (LOW priority)
+    "overflow", "overflowX", "overflowY",
+    // Aspect ratio (LOW priority)
+    "aspectRatio",
+    // Accessibility (N/A for terminals)
+    "aria-label", "aria-hidden", "aria-role", "aria-state",
+];
+
+/// Ink 7.0.5 hooks NOT YET supported by TuiBridge
+pub static UNSUPPORTED_HOOKS: &[&str] = &[
+    "useAnimation",   // Animation hook (frame, time, delta, reset)
+    "useWindowSize",  // Terminal dimensions
+    "useCursor",      // Cursor positioning
+    "usePaste",       // Paste event handling
+    "useIsScreenReaderEnabled", // Screen reader detection
+    "useBoxMetrics",  // Box measurement
 ];
 
 /// All Ink props supported by TuiBridge (Text components)

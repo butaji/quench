@@ -138,6 +138,19 @@ fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
         });
     }
 
+    // alignContent - multi-line alignment (for wrapped content)
+    if let Some(PropValue::String(s)) = props.get("alignContent") {
+        node.yoga.set_align_content(match s.as_str() {
+            "center" => Align::Center,
+            "flex-end" => Align::FlexEnd,
+            "flex-start" => Align::FlexStart,
+            "stretch" => Align::Stretch,
+            "space-between" => Align::SpaceBetween,
+            "space-around" => Align::SpaceAround,
+            _ => Align::FlexStart,
+        });
+    }
+
     if let Some(PropValue::String(s)) = props.get("justifyContent") {
         node.yoga.set_justify_content(match s.as_str() {
             "center" => Justify::Center,

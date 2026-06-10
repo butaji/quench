@@ -14,6 +14,7 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 | `columnGap` | number | Horizontal gap (alias for `gapX`) | ✅ |
 | `rowGap` | number | Vertical gap (alias for `gapY`) | ✅ |
 | `alignSelf` | string | Override parent's alignItems for this child | ✅ |
+| `alignContent` | string | Multi-line alignment for wrapped content | ✅ |
 | `top` | number | Position from top (when position=absolute) | ✅ |
 | `right` | number | Position from right (when position=absolute) | ✅ |
 | `bottom` | number | Position from bottom (when position=absolute) | ✅ |
@@ -25,9 +26,28 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 |------|------|-------------|--------|
 | `wrap` | string | Text wrapping (Ink 7 uses `wrap` instead of `textWrap`) | ✅ |
 
+## Core Layout Props Supported ✅
+
+| Prop | Type | Description | Status |
+|------|------|-------------|--------|
+| `flexDirection` | string | row, column, row-reverse, column-reverse | ✅ |
+| `alignItems` | string | flex-start, center, flex-end, stretch, baseline | ✅ |
+| `alignSelf` | string | Override parent's alignItems | ✅ |
+| `alignContent` | string | Multi-line alignment (wrap) | ✅ |
+| `justifyContent` | string | flex-start, center, flex-end, space-* | ✅ |
+| `flexWrap` | string | nowrap, wrap, wrap-reverse | ✅ |
+| `flexGrow` | number | Grow factor | ✅ |
+| `flexShrink` | number | Shrink factor | ✅ |
+| `flexBasis` | number/string | Initial size | ✅ |
+| `gap` | number | Both row and column gap | ✅ |
+| `gapX` | number | Column gap (Ink 6) | ✅ |
+| `gapY` | number | Row gap (Ink 6) | ✅ |
+| `columnGap` | number | Column gap (Ink 7 alias) | ✅ |
+| `rowGap` | number | Row gap (Ink 7 alias) | ✅ |
+
 ## Remaining Props
 
-### Box Props (MEDIUM priority)
+### Box Props (MEDIUM priority - border colors)
 
 | Prop | Type | Description | Status |
 |------|------|-------------|--------|
@@ -44,19 +64,34 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 
 | Prop | Type | Description | Status |
 |------|------|-------------|--------|
-| `alignContent` | string | Multi-line alignment | ❌ |
 | `aspectRatio` | number | Aspect ratio constraint | ❌ |
 | `overflow` | string | Overflow handling | ❌ |
 | `overflowX` | string | Horizontal overflow | ❌ |
 | `overflowY` | string | Vertical overflow | ❌ |
+| `borderBackgroundColor` | string | Border background color | ❌ |
+| `border*BackgroundColor` | string | Individual border backgrounds | ❌ |
 
-### Missing Hooks (MEDIUM priority)
+### Missing Hooks
 
-| Hook | Description | Status |
-|------|-------------|--------|
-| `useAnimation` | Built-in animation helper (frame, time, delta, reset) | ❌ |
-| `useWindowSize` | Terminal dimensions (can be alias for useStdout) | ❌ |
-| `useBoxMetrics` | Measure box dimensions | ❌ |
+| Hook | Description | Status | Priority |
+|------|-------------|--------|----------|
+| `useAnimation` | Built-in animation helper (frame, time, delta, reset) | ❌ | HIGH |
+| `useWindowSize` | Terminal dimensions | ❌ | MEDIUM |
+| `useCursor` | Cursor positioning | ❌ | MEDIUM |
+| `usePaste` | Paste event handling | ❌ | LOW |
+| `useBoxMetrics` | Measure box dimensions | ❌ | LOW |
+| `useIsScreenReaderEnabled` | Screen reader detection | ❌ | N/A |
+
+### Accessibility Props (Not Applicable)
+
+These are ignored in TuiBridge as they are for screen readers:
+
+| Prop | Description |
+|------|-------------|
+| `aria-label` | Screen reader label |
+| `aria-hidden` | Hide from screen reader |
+| `aria-role` | ARIA role |
+| `aria-state` | ARIA state |
 
 ## Implementation Details
 
@@ -89,7 +124,23 @@ if let Some(PropValue::String(s)) = props.get("alignSelf") {
 }
 ```
 
-### 3. Position props (Done)
+### 3. alignContent (Done)
+In `src/ink/node.rs`:
+```rust
+if let Some(PropValue::String(s)) = props.get("alignContent") {
+    node.yoga.set_align_content(match s.as_str() {
+        "center" => Align::Center,
+        "flex-end" => Align::FlexEnd,
+        "flex-start" => Align::FlexStart,
+        "stretch" => Align::Stretch,
+        "space-between" => Align::SpaceBetween,
+        "space-around" => Align::SpaceAround,
+        _ => Align::FlexStart,
+    });
+}
+```
+
+### 4. Position props (Done)
 In `src/ink/node.rs`:
 ```rust
 fn apply_position_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
@@ -100,12 +151,13 @@ fn apply_position_props(node: &mut InkNode, props: &HashMap<String, PropValue>) 
 }
 ```
 
-### 4. wrap alias (Done)
-In `src/render.rs`, added support for both `wrap` and `textWrap` props.
+### 5. wrap alias (Done)
+In `src/render.rs`, added support for both `wrap` and `textWrap` props with Ink 7 modes.
 
 ## Verification
 1. Check `scripts/parity.sh` for examples using new props
 2. Visual verification in tmux for positioning and alignment
+3. Run `examples/align-demo.tsx` for alignSelf/alignContent demo
 
 ## References
 - Ink 7.0.5 types: https://unpkg.com/ink@7.0.5/build/index.d.ts
