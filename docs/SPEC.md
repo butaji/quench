@@ -51,7 +51,7 @@
 | Layer | Technology | Lines | Purpose |
 |-------|------------|-------|---------|
 | User code | TS/TSX | - | Ink-compatible API |
-| Transpile | esbuild | - | TSX → JS (optional for .js files) |
+| Transpile | esbuild OR swc (optional) | - | TSX → JS, JSX → createElement |
 | Reconciler | JS (runtime.js) | ~1060 | Hooks, component lifecycle, tree diff |
 | Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
 | **Runtime** | **Rust** | **2990** | **Tree, layout, render, timers, I/O, hot reload** |
@@ -66,11 +66,14 @@
 
 ```
 src/
-├── main.rs       980 lines  # Entry point, event loop, ratatui rendering
-├── bridge.rs    1120 lines  # FFI bridge, timers, microtasks, I/O
-├── ink.rs        710 lines  # Yoga tree, layout calculation
-├── hotreload.rs  127 lines  # File watching, remount cycle
-└── ink_js.rs      52 lines  # Constants registration (Box, Text, etc.)
+├── main.rs          980 lines  # Entry point, event loop, ratatui rendering
+├── bridge.rs       1120 lines  # FFI bridge, timers, microtasks, I/O
+├── ink.rs           710 lines  # Yoga tree, layout calculation
+├── hotreload.rs     127 lines  # File watching, remount cycle
+├── ink_js.rs         52 lines  # Constants registration (Box, Text, etc.)
+└── compiler/                  # Optional swc-based TSX compiler (feature "compiler")
+    ├── mod.rs       ~350 lines  # JSX → createElement AST transformation
+    └── shim.rs                  # Import removal, React→Ink shim
 
 build.rs            # Bytecode precompilation + lint rules (warning-only)
 scripts/
