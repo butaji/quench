@@ -1,0 +1,159 @@
+//! Ink tree operations
+//!
+//! Append, remove, insert, and update operations on the node tree.
+
+use crate::ink::{InkNode, InkError, PropValue};
+use std::collections::HashMap;
+use yoga::Node;
+
+pub type Result<T> = std::result::Result<T, InkError>;
+
+/// Append child to parent
+pub fn append_child(runtime: &mut crate::ink::InkRuntime, parent_id: u32, child_id: u32) -> Result<()> {
+    let (child_yoga_ptr, old_parent_id) = {
+        let child = runtime
+            .get_node(child_id)
+            .ok_or(InkError::NodeNotFound(child_id))?;
+        let ptr = &child.yoga as *const Node as *mut Node;
+        (ptr, child.parent)
+    };
+
+    if let Some(old_pid) = old_parent_id {
+        if old_pid != parent_id {
+            if let Some(old_parent) = runtime.get_node_mut(old_pid) {
+                old_parent.children.retain(|&id| id != child_id);
+                unsafe {
+                    old_parent.yoga.remove_child(&mut *child_yoga_ptr);
+                }
+            }
+        }
+    }
+
+    let parent = runtime
+        .get_node_mut(parent_id)
+        .ok_or(InkError::NodeNotFound(parent_id))?;
+
+    parent.children.push(child_id);
+
+    unsafe {
+        parent.yoga.insert_child(&mut *child_yoga_ptr, parent.children.len() - 1);
+    }
+
+    if let Some(child_node) = runtime.get_node_mut(child_id) {
+        child_node.parent = Some(parent_id);
+    }
+
+    runtime.dirty = true;
+    Ok(())
+}
+
+/// Remove child from parent
+pub fn remove_child(runtime: &mut crate::ink::InkRuntime, parent_id: u32, child_id: u32) -> Result<()> {
+    let child_ptr = runtime
+        .get_node(child_id)
+        .map(|c| &c.yoga as *const Node as *mut Node);
+
+    let parent = runtime
+        .get_node_mut(parent_id)
+        .ok_or(InkError::NodeNotFound(parent_id))?;
+
+    if let Some(ptr) = child_ptr {
+        unsafe {
+            parent.yoga.remove_child(&mut *ptr);
+        }
+    }
+
+    parent.children.retain(|&id| id != child_id);
+
+    if let Some(child) = runtime.get_node_mut(child_id) {
+        child.parent = None;
+    }
+
+    runtime.dirty = true;
+    Ok(())
+}
+
+/// Insert child before another child
+pub fn insert_before(
+    runtime: &mut crate::ink::InkRuntime,
+    parent_id: u32,
+    child_id: u32,
+    before_id: u32,
+) -> Result<()> {
+    let (insert_idx, old_parent_id, child_ptrs) = {
+        let parent = runtime
+            .get_node(parent_id)
+            .ok_or(InkError::NodeNotFound(parent_id))?;
+        let insert_idx = parent
+            .children
+            .iter()
+            .position(|&id| id == before_id)
+            .ok_or(InkError::InsertBeforeError(before_id))?;
+        let old_parent_id = runtime.get_node(child_id).and_then(|c| c.parent);
+        let child_ptrs: Vec<(*mut Node, u32)> = parent
+            .children
+            .iter()
+            .filter(|&&id| id != child_id)
+            .filter_map(|&id| runtime.get_node(id).map(|n| (&n.yoga as *const Node as *mut Node, id)))
+            .collect();
+        (insert_idx, old_parent_id, child_ptrs)
+    };
+
+    let parent = runtime
+        .get_node_mut(parent_id)
+        .ok_or(InkError::NodeNotFound(parent_id))?;
+
+    let old_pid_for_later = if old_parent_id != Some(parent_id) {
+        old_parent_id
+    } else {
+        None
+    };
+
+    parent.children.retain(|&id| id != child_id);
+    parent.children.insert(insert_idx, child_id);
+
+    for (i, &(ptr, _)) in child_ptrs.iter().enumerate() {
+        unsafe {
+            parent.yoga.insert_child(&mut *ptr, i);
+        }
+    }
+
+    drop(parent);
+
+    if let Some(old_pid) = old_pid_for_later {
+        if let Some(old_parent) = runtime.get_node_mut(old_pid) {
+            old_parent.children.retain(|&id| id != child_id);
+        }
+    }
+
+    if let Some(child) = runtime.get_node_mut(child_id) {
+        child.parent = Some(parent_id);
+    }
+
+    runtime.dirty = true;
+    Ok(())
+}
+
+/// Commit an update to a node's props
+pub fn commit_update(
+    runtime: &mut crate::ink::InkRuntime,
+    node_id: u32,
+    props: HashMap<String, PropValue>,
+) -> Result<()> {
+    let node = runtime
+        .get_node_mut(node_id)
+        .ok_or(InkError::NodeNotFound(node_id))?;
+    node.apply_props(&props);
+    runtime.dirty = true;
+    Ok(())
+}
+
+/// Set text content of a text node
+pub fn set_text(runtime: &mut crate::ink::InkRuntime, node_id: u32, text: &str) -> Result<()> {
+    let node = runtime
+        .get_node_mut(node_id)
+        .ok_or(InkError::NodeNotFound(node_id))?;
+    node.text = Some(text.to_string());
+    runtime.dirty = true;
+    Ok(())
+}
