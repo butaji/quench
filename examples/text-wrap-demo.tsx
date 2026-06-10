@@ -1,10 +1,15 @@
 // Text Wrap Demo — TuiBridge
-// Demonstrates textWrap property for text handling
-// Shows wrap, truncate, and other truncation modes
+// Demonstrates wrap property for text handling (Ink 6: textWrap, Ink 7: wrap)
+// Shows wrap and truncate modes. Note: ratatui has limited wrap modes vs Ink.
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';
 
-const WRAP_OPTIONS = ['wrap', 'end', 'middle', 'truncate-end', 'truncate', 'truncate-middle', 'truncate-start'] as const;
+// Ink 7 wrap modes and TuiBridge support:
+// ✅ "wrap" - Word wrap (full support)
+// ✅ "truncate" - Truncate with ellipsis (full support)
+// ⚠️ "end", "middle" - Fall back to "wrap" (partial)
+// ⚠️ "truncate-end", "truncate-middle", "truncate-start" - Fall back to "truncate" (partial)
+const WRAP_OPTIONS = ['wrap', 'truncate', 'end', 'middle', 'truncate-end', 'truncate-start'] as const;
 type WrapOption = typeof WRAP_OPTIONS[number];
 
 const SAMPLE_TEXT = "The quick brown fox jumps over the lazy dog. This is a longer text to demonstrate wrapping behavior.";
@@ -24,12 +29,12 @@ function TextWrapDemo(): JSX.Element {
 
   return (
     <Box flexDirection="column" padding={1} borderStyle="round">
-      <Text bold color="green">textWrap Demo</Text>
+      <Text bold color="green">wrap/textWrap Demo</Text>
       <Text dimColor>[w] wrap mode | [+/-] width | [q] quit</Text>
       <Text> </Text>
 
       <Box flexDirection="row" gap={2}>
-        <Text dimColor>wrap:</Text>
+        <Text dimColor>mode:</Text>
         <Text color="cyan">{wrapMode}</Text>
       </Box>
       <Box flexDirection="row" gap={2}>
@@ -41,25 +46,14 @@ function TextWrapDemo(): JSX.Element {
       
       <Box borderStyle="single" padding={1}>
         <Box width={width}>
+          {/* Use wrap (Ink 7) with textWrap (Ink 6) fallback */}
           <Text wrap={wrapMode}>{SAMPLE_TEXT}</Text>
         </Box>
       </Box>
 
       <Text> </Text>
       <Text dimColor small>
-        Mode explanations:
-      </Text>
-      <Text dimColor small>
-        wrap - Wrap to multiple lines
-      </Text>
-      <Text dimColor small>
-        end - Wrap at end of line
-      </Text>
-      <Text dimColor small>
-        truncate-end - Truncate at end with ellipsis
-      </Text>
-      <Text dimColor small>
-        truncate-start - Truncate at start
+        Modes: wrap ✅ | truncate ✅ | end/middle ⚠️ | truncate-* ⚠️
       </Text>
     </Box>
   );
