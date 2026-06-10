@@ -167,6 +167,20 @@
         "083",
         "084"
       ]
+    },
+    {
+      "name": "Second Review Remediation",
+      "tasks": [
+        "085",
+        "086",
+        "087",
+        "088",
+        "089",
+        "090",
+        "091",
+        "092",
+        "093"
+      ]
     }
   ],
   "tasks": {
@@ -736,6 +750,69 @@
       "phase": 14,
       "status": "pending",
       "note": "JS errors swallowed by tracing::error!; users see blank screen"
+    },
+    "085": {
+      "file": "085-fix-raw-pointer-ub-in-tree-mutations.md",
+      "title": "Fix Raw Pointer UB in Tree Mutations",
+      "phase": 15,
+      "status": "pending",
+      "note": "Raw pointers derived from shared borrows used after mutable borrow — undefined behavior"
+    },
+    "086": {
+      "file": "086-fix-silent-error-swallowing-in-load_user_code.md",
+      "title": "Fix Silent Error Swallowing in load_user_code",
+      "phase": 15,
+      "status": "pending",
+      "note": "ctx.catch() catches ALL errors including syntax errors; user sees blank terminal"
+    },
+    "087": {
+      "file": "087-fix-refcell-reentrancy-panic-risk.md",
+      "title": "Fix RefCell Reentrancy Panic Risk Across FFI",
+      "phase": 15,
+      "status": "pending",
+      "note": "JS callbacks can trigger borrow_mut while runtime already borrowed mutably"
+    },
+    "088": {
+      "file": "088-fix-double-json-parse-on-create-node.md",
+      "title": "Fix Double JSON Parse on Every create_node",
+      "phase": 15,
+      "status": "pending",
+      "note": "serde_json parse + custom parser for same data; ~4k parses for 2k-node tree"
+    },
+    "089": {
+      "file": "089-fix-children-vec-cloned-on-every-render.md",
+      "title": "Fix Children Vec Cloned on Every Render",
+      "phase": 15,
+      "status": "pending",
+      "note": "__ink_get_node_children clones Vec<u32> on every frame for every node"
+    },
+    "090": {
+      "file": "090-fix-timer-id-counter-never-resets.md",
+      "title": "Fix Timer ID Counter Never Resets",
+      "phase": 15,
+      "status": "pending",
+      "note": "destroy_root clears nodes but not next_id; IDs grow forever"
+    },
+    "091": {
+      "file": "091-fix-stdin-is-raw-stub.md",
+      "title": "Fix stdin_is_raw Hardcoded Stub",
+      "phase": 15,
+      "status": "pending",
+      "note": "Always returns false even when raw mode IS enabled"
+    },
+    "092": {
+      "file": "092-fix-setup-runtime-error-propagation.md",
+      "title": "Fix setup_runtime Error Propagation",
+      "phase": 15,
+      "status": "pending",
+      "note": "runtime.js load errors logged but Ok(()) returned regardless"
+    },
+    "093": {
+      "file": "093-fix-keycode-string-allocation.md",
+      "title": "Fix keycode_to_ink_name String Allocation",
+      "phase": 15,
+      "status": "pending",
+      "note": "Allocates String on every keystroke; should return &'static str"
     }
   }
 }
