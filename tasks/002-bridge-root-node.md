@@ -1,5 +1,9 @@
 # Task 002: Bridge: Root Node Lifecycle
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `__ink_create_root` and `__ink_destroy_root` to manage the terminal root Yoga node.
 

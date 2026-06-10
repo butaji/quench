@@ -1,5 +1,9 @@
 # Task 032: Hook useStdin
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `useStdin` providing raw mode control and read stream.
 

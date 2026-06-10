@@ -1,5 +1,9 @@
 # Task 019: Console Polyfill
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Bridge `console.log` / `console.error` / `console.warn` to Rust `tracing`.
 

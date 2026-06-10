@@ -1,5 +1,9 @@
 # Task 062: Rust → Ink Props Propagation
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Provide a mechanism for developers to pass configuration, computed values, and platform info from Rust into the Ink/JS runtime.
 

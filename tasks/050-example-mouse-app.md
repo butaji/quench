@@ -1,5 +1,9 @@
 # Task 050: Example: Mouse App (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Full-screen app demonstrating mouse clicks and mouse-aware input.
 

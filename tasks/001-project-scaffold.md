@@ -1,5 +1,9 @@
 # Task 001: Project Scaffold
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Create the Cargo workspace with all dependencies required for TuiBridge.
 

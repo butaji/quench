@@ -1,5 +1,9 @@
 # Task 004: Bridge: Tree Mutation
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement tree mutation operations: append, remove, insert before.
 

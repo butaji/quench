@@ -1,5 +1,9 @@
 # Task 008: Bridge: Input Handler Registration
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Register and unregister JS callbacks for keyboard and mouse events.
 

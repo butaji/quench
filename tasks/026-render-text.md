@@ -1,5 +1,9 @@
 # Task 026: Render Text (Paragraph/Span)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Render `ink-text` nodes as ratatui `Paragraph` / `Span` with full style support.
 

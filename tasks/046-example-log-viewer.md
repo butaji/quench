@@ -1,5 +1,9 @@
 # Task 046: Example: Log Viewer (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Real-time log viewer with auto-scrolling using `Static` component.
 

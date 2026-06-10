@@ -1,5 +1,9 @@
 # Task 033: Hook useStdout
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `useStdout` providing write access and terminal dimensions.
 

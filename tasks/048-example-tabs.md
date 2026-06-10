@@ -1,5 +1,9 @@
 # Task 048: Example: Tabs (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Multi-tab interface with keyboard navigation and active tab highlight.
 

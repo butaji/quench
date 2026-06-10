@@ -1,5 +1,9 @@
 # Task 051: Parity: Side-by-Side Runner
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Build harness that runs each example in both deno (Ink) and TuiBridge, capturing ANSI output.
 

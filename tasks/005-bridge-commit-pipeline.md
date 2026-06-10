@@ -1,5 +1,9 @@
 # Task 005: Bridge: Commit Pipeline
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement prop updates, text updates, and the commit trigger.
 

@@ -1,5 +1,9 @@
 # Task 042: Example: Todo List (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Todo list with `useState`, `useInput`, nested flex layouts, keyboard navigation.
 

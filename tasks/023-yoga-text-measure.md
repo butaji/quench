@@ -1,5 +1,9 @@
 # Task 023: Yoga Text Measurement Bridge
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Register Rust measure function on Yoga text nodes so Yoga can size text during layout.
 

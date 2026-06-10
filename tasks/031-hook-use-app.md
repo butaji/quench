@@ -1,5 +1,9 @@
 # Task 031: Hook useApp
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `useApp` returning exit, stdout, stdin, stderr proxies.
 

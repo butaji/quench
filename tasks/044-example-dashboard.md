@@ -1,5 +1,9 @@
 # Task 044: Example: Dashboard (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Multi-pane dashboard with flex layouts, borders, titles.
 

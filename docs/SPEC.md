@@ -33,14 +33,14 @@
 │                    ALL HOT PATH IN RUST                     │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │  src/main.rs         192 lines  Event loop entry    │   │
-│  │  src/event_loop.rs   289 lines  sync poll          │   │
-│  │  src/render.rs       374 lines  ratatui rendering  │   │
-│  │  src/bridge/         476 lines  FFI, timers, I/O    │   │
-│  │  src/ink/            919 lines  Yoga tree, layout │   │
-│  │  src/hotreload.rs    196 lines  File watching      │   │
-│  │  src/ink_js.rs        52 lines  Constants          │   │
-│  │  src/cli.rs           200 lines  CLI args          │   │
+│  │  src/main.rs         224 lines  Event loop entry    │   │
+│  │  src/event_loop.rs   244 lines  sync poll           │   │
+│  │  src/render.rs       338 lines  ratatui rendering  │   │
+│  │  src/bridge/         1596 lines FFI, timers, I/O    │   │
+│  │  src/ink/            836 lines  Yoga tree, layout │   │
+│  │  src/hotreload.rs    198 lines  File watching      │   │
+│  │  src/ink_js.rs        54 lines  Constants          │   │
+│  │  src/cli.rs           240 lines  CLI args          │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -57,11 +57,11 @@
 | Transpile | esbuild OR swc (optional) | - | TSX → JS, JSX → createElement |
 | Reconciler | JS (runtime.js) | ~1060 | Hooks, component lifecycle, tree diff |
 | Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
-| **Runtime** | **Rust** | **~4900** | **Tree, layout, render, timers, I/O, hot reload** |
+| **Runtime** | **Rust** | **~5400** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~4,900 lines
+**Total Rust:** ~5,400 lines
 **Total JS (runtime):** ~1,300 lines
-**Ratio:** ~78% Rust, ~22% JS
+**Ratio:** ~80% Rust, ~20% JS
 
 ---
 
@@ -69,31 +69,34 @@
 
 ```
 src/
-├── main.rs           192 lines  # Entry point, minimal
-├── event_loop.rs     289 lines  # Event loop + hot reload
-├── render.rs         380 lines  # ratatui rendering
-├── cli.rs            200 lines  # CLI argument parsing
-├── hotreload.rs      196 lines  # File watching, remount cycle
+├── main.rs           224 lines  # Entry point, minimal
+├── event_loop.rs     244 lines  # Event loop + hot reload
+├── render.rs         338 lines  # ratatui rendering (with submodules)
+│   ├── color.rs       51 lines  # Color parsing
+│   ├── keycode.rs     28 lines  # Key → Ink name mapping
+│   └── text.rs       115 lines  # Text truncation
+├── cli.rs            240 lines  # CLI argument parsing
+├── hotreload.rs      198 lines  # File watching, remount cycle
 ├── bridge_config.rs  217 lines  # Platform detection, useBridge()
-├── compat.rs         166 lines  # Prop validation, partial support warnings
-├── ink_js.rs          52 lines  # Constants registration
+├── compat.rs         253 lines  # Prop validation, partial support warnings
+├── ink_js.rs          54 lines  # Constants registration
+├── bench.rs          171 lines  # Benchmark harness (feature "bench")
 ├── bridge/                    # FFI bridge (modular)
-│   ├── mod.rs          58 lines  # Module exports
-│   ├── ffi.rs        376 lines  # __ink_call FFI
+│   ├── mod.rs         65 lines  # Module exports
+│   ├── ffi.rs        384 lines  # __ink_call FFI
 │   ├── io.rs         105 lines  # stdout/stderr/exit
-│   ├── node.rs       383 lines  # Node creation/updates
-│   ├── props.rs      314 lines  # Props parsing
+│   ├── node.rs       385 lines  # Node creation/updates
+│   ├── props.rs      312 lines  # JSON props parsing
 │   ├── timers.rs     174 lines  # Timer registry
 │   └── tree.rs       173 lines  # Tree mutation
 ├── ink/                      # Yoga tree (modular)
-│   ├── mod.rs          21 lines  # Module exports
-│   ├── node.rs        390 lines  # InkNode + Yoga layout + gap
-│   ├── runtime.rs     190 lines  # InkRuntime state
-│   ├── tree.rs        159 lines  # Tree operations
-│   └── shared.rs       18 lines  # Shared types
+│   ├── mod.rs         23 lines  # Module exports
+│   ├── node.rs       437 lines  # InkNode + Yoga layout + gap
+│   ├── runtime.rs    191 lines  # InkRuntime state
+│   ├── tree.rs       167 lines  # Tree operations
+│   └── shared.rs      18 lines  # Shared types
 └── compiler/                  # Optional TSX compiler (feature "compiler")
-    ├── mod.rs         143 lines  # Module exports
-    ├── jsx.rs        497 lines  # JSX → createElement
+    ├── mod.rs        607 lines  # Module exports + regex-based JSX transform
     └── shim.rs       208 lines  # Import removal
 
 build.rs            # Bytecode precompilation + lint rules (warning-only)
@@ -391,14 +394,14 @@ Original examples kept for compatibility reference.
 | Criteria | Status | Notes |
 |----------|--------|-------|
 | All tasks in `tasks/` complete | 🟡 | **85 tasks**, 65 "done", 2 "partial", 16 "pending", 2 "deferred" |
-| Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
+| Tests passing | ✅ | 34 tests in bridge/, ink/, compat.rs, parity.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.0 MB** (under target) |
-| Rust/JS ratio | ✅ | **78% Rust, 22% JS** |
+| Rust/JS ratio | ✅ | **~80% Rust, ~20% JS** |
 | Linter compliance | 🟡 | All files under 500 lines; function length/complexity warning-only; 2 build.rs clippy warnings (Task 083) |
 | Hot reload | 🔴 | **BROKEN** — Task 072. New context never gets `setup_runtime()`. |
 | TSX compiler | ✅ | `--compile` and `--run` flags |
-| `cargo test` | ✅ | Tests passing |
+| `cargo test` | ✅ | 34 tests passing |
 | clippy | 🟡 | 0 warnings in library, 2 warnings in `build.rs` — Task 083 |
 | Binary size | ✅ | 2.0 MB release binary |
 

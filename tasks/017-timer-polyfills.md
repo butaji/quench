@@ -1,5 +1,9 @@
 # Task 017: Timer Polyfills
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Bridge `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval` to tokio timers.
 

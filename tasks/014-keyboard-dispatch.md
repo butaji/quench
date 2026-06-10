@@ -1,5 +1,9 @@
 # Task 014: Keyboard Dispatch
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Serialize crossterm KeyEvent and dispatch to all registered JS input handlers.
 

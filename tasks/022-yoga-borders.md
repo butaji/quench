@@ -1,5 +1,9 @@
 # Task 022: Yoga Borders & Style
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Map border props to Yoga insets and ratatui Block rendering.
 

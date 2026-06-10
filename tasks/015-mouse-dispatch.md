@@ -1,5 +1,9 @@
 # Task 015: Mouse Dispatch
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement mouse event hit-testing and dispatch to deepest matching node.
 

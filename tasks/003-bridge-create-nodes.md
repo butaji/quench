@@ -1,5 +1,9 @@
 # Task 003: Bridge: Create Nodes
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `__ink_create_node` and `__ink_create_text_node` for reconciler node creation.
 

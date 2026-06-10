@@ -1,5 +1,9 @@
 # Task 025: Render Box (Block)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Render `ink-box` nodes as ratatui `Block` widgets with borders and title.
 

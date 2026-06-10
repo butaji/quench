@@ -1,5 +1,9 @@
 # Task 047: Example: Spinner (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Animated spinner with timer-driven animation and color cycling.
 

@@ -1,5 +1,9 @@
 # Task 021: Yoga Spacing & Sizing
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Map padding, margin, gap, width, height, and min/max dimensions to Yoga.
 

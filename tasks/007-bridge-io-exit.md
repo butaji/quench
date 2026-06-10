@@ -1,5 +1,9 @@
 # Task 007: Bridge: I/O & Exit
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement stdout/stderr writes, raw mode query, and app exit.
 

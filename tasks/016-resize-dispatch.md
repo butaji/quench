@@ -1,5 +1,9 @@
 # Task 016: Terminal Resize
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Handle crossterm Resize event and recalculate Yoga root dimensions.
 

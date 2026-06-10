@@ -1,5 +1,9 @@
 # Task 035: Hook useFocus & useFocusManager
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement focus system with tab order and focus manager. Implemented entirely in JS via React context (no new Rust bridge).
 

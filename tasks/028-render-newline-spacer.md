@@ -1,5 +1,9 @@
 # Task 028: Render Newline & Spacer
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Handle `ink-newline` (force line break) and `ink-spacer` (flex filler).
 

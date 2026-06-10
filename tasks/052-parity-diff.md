@@ -1,5 +1,9 @@
 # Task 052: Parity: ANSI Diff & Match
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Compare deno and TuiBridge ANSI outputs and enforce 100% look&feel match.
 

@@ -1,5 +1,9 @@
 # Task 027: Render Static Overlay
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `ink-static` semantics: items rendered above main tree, unmounting is expensive.
 

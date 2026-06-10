@@ -1,5 +1,9 @@
 # Task 037: DevEx: File Watcher
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Integrate `notify` + `esbuild --watch` to detect plugin changes.
 

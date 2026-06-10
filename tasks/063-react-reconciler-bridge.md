@@ -1,5 +1,9 @@
 # Task 063: React Reconciler Bridge
 
+## Status
+📅 **Deferred** — Approach A: React host config. Approach B: Build-time swap with @tuibridge/ink-shim.
+
+
 ## Goal
 Enable running full React apps (bundled with `react-reconciler`) under TuiBridge by providing a bridge host config.
 

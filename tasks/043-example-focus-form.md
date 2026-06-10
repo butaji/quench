@@ -1,5 +1,9 @@
 # Task 043: Example: Focus Form (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Form with multiple inputs demonstrating `useFocus`, `useFocusManager`, tab order.
 

@@ -1,5 +1,9 @@
 # Task 034: Hook useStderr
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `useStderr` providing write access to stderr.
 

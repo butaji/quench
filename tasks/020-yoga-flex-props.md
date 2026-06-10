@@ -1,5 +1,9 @@
 # Task 020: Yoga Flex Props
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Map Ink flex props to Yoga node properties.
 

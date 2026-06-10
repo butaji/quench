@@ -1,5 +1,9 @@
 # Task 049: Example: Chat UI (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Split-pane chat interface with message list and input.
 

@@ -1,5 +1,9 @@
 # Task 030: Hook useInput
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Full `useInput` implementation with options and keyboard dispatch.
 

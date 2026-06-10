@@ -1,5 +1,9 @@
 # Task 045: Example: File Tree (JS + TS)
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Nested file tree explorer with expand/collapse and keyboard navigation.
 

@@ -1,5 +1,9 @@
 # Task 024: Yoga Full Layout Calculation
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Trigger `calculate_layout` on root and propagate computed layouts to all nodes.
 

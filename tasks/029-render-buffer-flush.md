@@ -1,5 +1,9 @@
 # Task 029: Render Buffer Diff & Flush
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Use ratatui's double-buffered terminal output for minimal redraw.
 

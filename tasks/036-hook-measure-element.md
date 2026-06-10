@@ -1,5 +1,9 @@
 # Task 036: Hook measureElement
 
+## Status
+✅ **Done**
+
+
 ## Goal
 Implement `measureElement(ref)` returning Yoga-computed dimensions.
 
