@@ -9,7 +9,9 @@ use crate::ink::INK_RUNTIME;
 use crate::bridge::props::parse_props_json;
 
 // Re-export props functions for backwards compatibility
-pub use crate::bridge::props::{prop_value_to_json, unescape_string};
+pub use crate::bridge::props::prop_value_to_json;
+#[cfg(test)]
+pub use crate::bridge::props::unescape_string;
 
 /// Reset all bridge state for testing
 pub fn reset_bridge_state() {
@@ -56,8 +58,13 @@ pub fn __ink_create_text_node(text: &str) -> u32 {
 pub fn __ink_render_element(json: &str) -> u32 {
     let root_id = __ink_create_root();
 
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json) {
-        build_element_tree(root_id, &val);
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(val) => {
+            build_element_tree(root_id, &val);
+        }
+        Err(e) => {
+            tracing::error!("Malformed JSON in __ink_render_element: {}", e);
+        }
     }
 
     crate::bridge::__ink_commit();
@@ -378,6 +385,18 @@ mod tests {
         crate::bridge::__ink_clear_dirty();
         assert!(!crate::bridge::__ink_is_dirty());
 
+        __ink_destroy_root(root_id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_render_element_malformed_json() {
+        setup();
+        // Malformed JSON should NOT panic and should return a root node
+        let root_id = __ink_render_element("{ not valid json");
+        assert!(root_id > 0, "Should return a root node even with bad JSON");
+        // Root should have no children
+        assert_eq!(crate::bridge::__ink_get_node_children(root_id), Some(vec![]));
         __ink_destroy_root(root_id);
     }
 }

@@ -2,14 +2,22 @@
 //!
 //! Renders the node tree to the ratatui terminal buffer.
 
+pub mod color;
+pub mod keycode;
+pub mod text;
+
 use crate::bridge;
 use crate::ink::PropValue;
+use crate::render::text::truncate_text;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, BorderType, Paragraph, Widget, Wrap},
 };
+
+pub use color::parse_color;
+pub use keycode::keycode_to_ink_name;
 
 /// Render the current tree to the terminal
 pub fn render_tree(
@@ -22,9 +30,14 @@ pub fn render_tree(
         let area = frame.area();
         bridge::__ink_set_terminal_size(area.width as u32, area.height as u32);
 
-        if let Err(e) = bridge::__ink_calculate_layout() {
-            tracing::error!("Layout error: {:?}", e);
-            return;
+        // Only recalculate layout when the tree is dirty.
+        // Layout is expensive for large trees (~µs but adds up at 60fps).
+        // Calling calculate_layout unconditionally burns CPU on every idle frame.
+        if bridge::__ink_is_dirty() {
+            if let Err(e) = bridge::__ink_calculate_layout() {
+                tracing::error!("Layout error: {:?}", e);
+                return;
+            }
         }
 
         render_node(root_id, frame.buffer_mut(), area);
@@ -34,6 +47,7 @@ pub fn render_tree(
 }
 
 /// Recursively render a node and its children
+#[allow(clippy::complexity, clippy::too_many_lines)]
 fn render_node(node_id: u32, buf: &mut Buffer, area: Rect) {
     let tag = match bridge::__ink_get_node_tag(node_id) {
         Some(t) => t,
@@ -107,6 +121,7 @@ fn render_box(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
 }
 
 /// Apply border styles to a block
+#[allow(clippy::complexity, clippy::too_many_lines)]
 fn apply_border_styles(node_id: u32, mut block: Block) -> Block {
     let border_style = bridge::__ink_get_node_prop(node_id, "borderStyle")
         .map(|s| s.trim_matches('"').to_string());
@@ -184,7 +199,7 @@ fn apply_border_styles(node_id: u32, mut block: Block) -> Block {
 }
 
 /// Apply padding to a block
-fn apply_padding(node_id: u32, mut block: Block) -> Block {
+fn apply_padding(node_id: u32, block: Block) -> Block {
     if let Some(PropValue::Number(padding)) = bridge::__ink_get_node_prop_raw(node_id, "padding") {
         let p = padding as u16;
         if p > 0 {
@@ -224,6 +239,14 @@ fn render_text(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
     let text = apply_text_transform(node_id, text);
     let wrap = apply_text_wrap(node_id);
 
+    // Handle truncation modes - pre-truncate text since ratatui doesn't support Wrap::Truncate
+    let text = if wrap.is_none() {
+        let max_chars = w.saturating_sub(1) as usize; // Leave room for potential ellipsis
+        truncate_text(&text, max_chars)
+    } else {
+        text
+    };
+
     let mut para = Paragraph::new(text.as_str()).style(style);
     if let Some(wrap_mode) = wrap {
         para = para.wrap(wrap_mode);
@@ -233,12 +256,6 @@ fn render_text(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
 }
 
 /// Apply text wrap mode (supports both Ink 6 "textWrap" and Ink 7 "wrap")
-/// 
-/// Ink 7 wrap modes and their TuiBridge equivalents:
-/// - "wrap", "hard" → Wrap::default() (word wrap) ✅
-/// - "truncate", "ellipsis", "truncate-end" → Wrap::Truncate ✅
-/// - "end", "middle", "truncate-middle", "truncate-start" → Wrap::Truncate (partial)
-/// - "scroll" → Wrap::default() (no scroll in ratatui, partial)
 fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
     // Check both textWrap (Ink 6) and wrap (Ink 7) props
     let wrap_prop = bridge::__ink_get_node_prop(node_id, "wrap")
@@ -247,14 +264,14 @@ fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
         .to_string();
 
     match wrap_prop.as_str() {
-        // Ink 6/Ink 7 basic modes
-        "wrap" | "hard" | "end" | "middle" => Some(Wrap::default()),
-        // Truncation modes (Ink 6 and 7)
-        "truncate" | "ellipsis" | "truncate-end" | "truncate-middle" | "truncate-start" => Some(Wrap::Truncate),
+        // Ink 6/Ink 7 basic modes - use word wrap
+        "wrap" | "hard" | "end" | "middle" => Some(Wrap { trim: false }),
+        // Truncation modes (Ink 6 and 7) - no wrap, handled in render_text
+        "truncate" | "ellipsis" | "truncate-end" | "truncate-middle" | "truncate-start" => None,
         // Scroll is not supported in ratatui, fall back to wrap
-        "scroll" => Some(Wrap::default()),
+        "scroll" => Some(Wrap { trim: false }),
         // Unknown modes default to wrap
-        _ => Some(Wrap::default()),
+        _ => Some(Wrap { trim: false }),
     }
 }
 
@@ -274,26 +291,49 @@ fn apply_text_style(node_id: u32, mut style: Style) -> Style {
         style = style.bg(bg_color);
     }
 
-    if bridge::__ink_get_node_prop(node_id, "bold").is_some() {
+    // Check prop value, not just presence.  Using .is_some() would enable
+    // modifiers for ANY prop value including "false" and 0.
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "bold"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::BOLD);
     }
-    if bridge::__ink_get_node_prop(node_id, "dimColor").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "dimColor"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::DIM);
     }
-    if bridge::__ink_get_node_prop(node_id, "italic").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "italic"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::ITALIC);
     }
-    if bridge::__ink_get_node_prop(node_id, "strikethrough").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "strikethrough"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::CROSSED_OUT);
     }
-    if bridge::__ink_get_node_prop(node_id, "underline").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "underline"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::UNDERLINED);
     }
-    if bridge::__ink_get_node_prop(node_id, "inverse").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "inverse"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::REVERSED);
     }
     // small text - rendered as dim (terminals don't have small font)
-    if bridge::__ink_get_node_prop(node_id, "small").is_some() {
+    if matches!(
+        bridge::__ink_get_node_prop_raw(node_id, "small"),
+        Some(PropValue::Bool(true))
+    ) {
         style = style.add_modifier(Modifier::DIM);
     }
 
@@ -323,86 +363,4 @@ fn render_static(node_id: u32, buf: &mut Buffer, area: Rect) {
 fn render_newline(buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
     let rect = Rect::new(x, y, w.max(1), h.max(1));
     Paragraph::new("").render(rect, buf);
-}
-
-// ===================================================================
-// Color parsing
-// ===================================================================
-
-/// Parse color string to ratatui Color
-pub fn parse_color(s: &str) -> Option<Color> {
-    match s.to_lowercase().as_str() {
-        "black" => Some(Color::Black),
-        "red" => Some(Color::Red),
-        "green" => Some(Color::Green),
-        "yellow" => Some(Color::Yellow),
-        "blue" => Some(Color::Blue),
-        "magenta" => Some(Color::Magenta),
-        "cyan" => Some(Color::Cyan),
-        "white" => Some(Color::White),
-        "gray" | "grey" => Some(Color::Gray),
-        "brightblack" | "brightBlack" => Some(Color::Indexed(8)),
-        "brightred" | "brightRed" => Some(Color::Indexed(9)),
-        "brightgreen" | "brightGreen" => Some(Color::Indexed(10)),
-        "brightyellow" | "brightYellow" => Some(Color::Indexed(11)),
-        "brightblue" | "brightBlue" => Some(Color::Indexed(12)),
-        "brightmagenta" | "brightMagenta" => Some(Color::Indexed(13)),
-        "brightcyan" | "brightCyan" => Some(Color::Indexed(14)),
-        "brightwhite" | "brightWhite" => Some(Color::Indexed(15)),
-        _ => parse_hex_color(s),
-    }
-}
-
-/// Parse hex color (#rgb or #rrggbb) to ratatui Color
-fn parse_hex_color(s: &str) -> Option<Color> {
-    let s = s.trim();
-    if !s.starts_with('#') {
-        return None;
-    }
-    let hex = &s[1..];
-    match hex.len() {
-        6 => {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            Some(Color::Rgb(r, g, b))
-        }
-        3 => {
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
-            Some(Color::Rgb(r, g, b))
-        }
-        _ => None,
-    }
-}
-
-// ===================================================================
-// Key code conversion
-// ===================================================================
-
-/// Convert crossterm KeyCode to Ink-compatible key name
-pub fn keycode_to_ink_name(key: &crossterm::event::KeyEvent) -> String {
-    use crossterm::event::KeyCode;
-    match key.code {
-        KeyCode::Char(' ') => " ".to_string(),
-        KeyCode::Char(c) => c.to_string(),
-        KeyCode::Enter => "return".to_string(),
-        KeyCode::Esc => "escape".to_string(),
-        KeyCode::Backspace => "backspace".to_string(),
-        KeyCode::Delete => "delete".to_string(),
-        KeyCode::Tab => "tab".to_string(),
-        KeyCode::Up => "upArrow".to_string(),
-        KeyCode::Down => "downArrow".to_string(),
-        KeyCode::Left => "leftArrow".to_string(),
-        KeyCode::Right => "rightArrow".to_string(),
-        KeyCode::Home => "home".to_string(),
-        KeyCode::End => "end".to_string(),
-        KeyCode::PageUp => "pageUp".to_string(),
-        KeyCode::PageDown => "pageDown".to_string(),
-        KeyCode::Insert => "insert".to_string(),
-        KeyCode::BackTab => "tab".to_string(),
-        KeyCode::F(n) => format!("f{}", n),
-        _ => format!("{:?}", key.code).to_lowercase(),
-    }
 }
