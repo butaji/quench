@@ -354,6 +354,12 @@ let nextHandlerId = 1;
 // Track the current rendering node ID for mouse hit-testing
 let currentRenderingNodeId = null;
 
+// Focus manager state (shared across all useFocus hooks)
+let focusIdCounter = 1;
+const focusables = new Map(); // id -> { autoFocus }
+let activeFocusId = null;
+let focusEnabled = true;
+
 function useInput(handler, options) {
   options = options || {};
   const state = getHookState();
@@ -362,7 +368,6 @@ function useInput(handler, options) {
     state.handler = handler;
     state.options = options;
     state.id = nextHandlerId++;
-    // Associate this handler with the current rendering node
     state.nodeId = currentRenderingNodeId;
     inputHandlers.set(state.id, state);
   } else {
@@ -371,35 +376,43 @@ function useInput(handler, options) {
   }
 }
 
+// useApp — Ink returns { exit, waitUntilRenderFlush }
 function useApp() {
   return useMemo(() => ({
-    exit: (err) => globalThis.__ink_exit(err ? 1 : 0),
-    stdout: {
-      write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null
+    exit: (err) => {
+      globalThis.__ink_exit(err ? 1 : 0);
     },
-    stdin: { isRawModeSupported: true },
-    stderr: {
-      write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null
-    }
+    waitUntilRenderFlush: () => Promise.resolve(), // No-op: TuiBridge renders synchronously
   }), []);
 }
 
+// useStdin — Ink returns full stdin context from StdinContext
 function useStdin() {
   return useMemo(() => ({
     stdin: {
       isRawMode: () => globalThis.__ink_stdin_is_raw ? globalThis.__ink_stdin_is_raw() : false,
       setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
-      on: () => {}, // EventEmitter compat stub
+      on: () => {},
       off: () => {},
       once: () => {},
       emit: () => {},
     },
     setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
-    setBracketedPasteMode: () => {}, // Not yet supported
+    setBracketedPasteMode: () => {},
     isRawModeSupported: true,
+    internal_exitOnCtrlC: true,
+    internal_eventEmitter: {
+      on: () => {},
+      off: () => {},
+      once: () => {},
+      emit: () => {},
+      setMaxListeners: () => {},
+      removeListener: () => {},
+    },
   }), []);
 }
 
+// useStdout — Ink returns { stdout } from StdoutContext
 function useStdout() {
   return useMemo(() => {
     const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
@@ -413,11 +426,11 @@ function useStdout() {
         once: () => {},
         emit: () => {},
       },
-      write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null,
     };
   }, []);
 }
 
+// useStderr — Ink returns { stderr } from StderrContext
 function useStderr() {
   return useMemo(() => ({
     stderr: {
@@ -427,24 +440,52 @@ function useStderr() {
       once: () => {},
       emit: () => {},
     },
-    write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null,
   }), []);
 }
 
-function useFocus() {
-  // Ink returns a boolean, not a function. Default to focused since we
-  // don't implement a real focus manager yet.
-  return useMemo(() => ({ isFocused: true }), []);
+// useFocus — Ink accepts { isActive, autoFocus, id }, returns { isFocused, focus }
+function useFocus({ isActive = true, autoFocus = false, id: customId } = {}) {
+  const state = getHookState();
+  if (state.type === 'empty') {
+    state.type = 'focus';
+    state.id = customId || String(focusIdCounter++);
+    state.isActive = isActive;
+    state.autoFocus = autoFocus;
+    focusables.set(state.id, { autoFocus });
+    if (autoFocus || !activeFocusId) {
+      activeFocusId = state.id;
+    }
+  }
+
+  const isFocused = focusEnabled && isActive && activeFocusId === state.id;
+
+  return useMemo(() => ({
+    isFocused: Boolean(isFocused),
+    focus: () => {
+      if (focusEnabled && isActive) {
+        activeFocusId = state.id;
+      }
+    },
+  }), [isFocused, isActive, state.id]);
 }
 
+// useFocusManager — Ink returns { enableFocus, disableFocus, focusNext, focusPrevious, focus, activeId }
 function useFocusManager() {
   return useMemo(() => ({
-    focus: () => {},
-    blur: () => {},
-    next: () => {},
-    previous: () => {},
-    focusNext: () => {},
-    focusPrevious: () => {}
+    enableFocus: () => { focusEnabled = true; },
+    disableFocus: () => { focusEnabled = false; },
+    focusNext: () => {
+      const ids = Array.from(focusables.keys());
+      const idx = ids.indexOf(activeFocusId);
+      activeFocusId = ids[(idx + 1) % ids.length] || null;
+    },
+    focusPrevious: () => {
+      const ids = Array.from(focusables.keys());
+      const idx = ids.indexOf(activeFocusId);
+      activeFocusId = ids[(idx - 1 + ids.length) % ids.length] || null;
+    },
+    focus: (id) => { if (focusables.has(id)) activeFocusId = id; },
+    activeId: activeFocusId,
   }), []);
 }
 
