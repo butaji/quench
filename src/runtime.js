@@ -431,6 +431,16 @@ function measureElement(ref) {
   return { width: parseFloat(parts[0]) || 0, height: parseFloat(parts[1]) || 0 };
 }
 
+function useBridge() {
+  return useMemo(() => {
+    const tb = globalThis.__tuibridge || { config: {} };
+    return {
+      config: tb.config || {},
+      get: (key, defaultValue) => tb.config[key] ?? defaultValue,
+    };
+  }, []);
+}
+
 // ===================================================================
 // 5. Timer Polyfills (using Rust bridge) - OPTIMIZED
 // Store Functions in JS Maps, pass only IDs to Rust
@@ -1022,6 +1032,7 @@ const ink = {
   useState, useEffect, useRef, useMemo, useCallback, useContext,
   useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager,
   measureElement,
+  useBridge,
   createElement,
   createContext,
   setTimeout: inkSetTimeout,
@@ -1051,6 +1062,7 @@ globalThis.useStderr = useStderr;
 globalThis.useFocus = useFocus;
 globalThis.useFocusManager = useFocusManager;
 globalThis.measureElement = measureElement;
+globalThis.useBridge = useBridge;
 globalThis.createElement = createElement;
 globalThis.createContext = createContext;
 

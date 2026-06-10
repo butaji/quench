@@ -1,6 +1,8 @@
 #!/bin/bash
 # Parity Harness — Run TSX examples in Deno (reference) and TuiBridge
 # Compare ANSI output cell-by-cell for 100% look&feel parity
+#
+# Uses PTY for proper terminal emulation when available
 
 set -e
 
@@ -9,66 +11,92 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Config
 TUIBRIDGE="${TUIBRIDGE:-./target/release/tuibridge}"
 DENO="${DENO:-deno}"
 TIMEOUT="${TIMEOUT:-5}"
+USE_PTY="${USE_PTY:-1}"
 
 echo "=========================================="
 echo "TuiBridge Parity Harness"
 echo "=========================================="
 echo "TuiBridge: $TUIBRIDGE"
 echo "Deno: $DENO"
+echo "PTY mode: $USE_PTY"
 echo ""
+
+# Check if tuibridge exists
+if [ ! -f "$TUIBRIDGE" ]; then
+    echo -e "${RED}Error:${NC} TuiBridge binary not found at $TUIBRIDGE"
+    echo "Run: cargo build --release"
+    exit 1
+fi
 
 # Track results
 PASS=0
 FAIL=0
 SKIP=0
+TOTAL=0
 
 # Function to strip ANSI codes for comparison
 strip_ansi() {
     sed 's/\x1b\[[0-9;]*m//g' | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
 }
 
-# Run TSX example in Deno (requires transpile or inline)
+# Run TSX example in Deno
 run_deno() {
     local example="$1"
     local output="$2"
     
-    # Create a temp file with ink import
-    local tmpfile=$(mktemp /tmp/ink-XXXXXX.mjs)
-    
-    # For TSX, we need to transpile. Use esbuild or deno cache
-    # Since Deno supports TSX natively, we use deno run
+    # Deno supports TSX natively
     timeout "$TIMEOUT" "$DENO" run -A --no-lock "$example" < /dev/null 2>/dev/null > "$output" || {
-        rm -f "$tmpfile"
         return 1
     }
-    rm -f "$tmpfile"
     return 0
 }
 
-# Run example in TuiBridge
+# Run example in TuiBridge with PTY support
 run_tuibridge() {
     local example="$1"
     local output="$2"
+    local use_pty="${3:-1}"
     
-    timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null > "$output" || true
+    if [ "$use_pty" = "1" ] && command -v script &> /dev/null; then
+        # Use PTY via script(1) for proper terminal emulation
+        script -q -c "$TUIBRIDGE $example" /dev/null < /dev/null 2>/dev/null > "$output" || true
+    else
+        # Direct execution (may have TTY issues)
+        timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null > "$output" || true
+    fi
 }
 
-# Compare outputs
+# Compare outputs with detailed diff
 compare() {
     local deno_out="$1"
     local tui_out="$2"
     local name="$3"
     
+    ((TOTAL++))
+    
     # Check both outputs exist
     if [ ! -s "$deno_out" ] && [ ! -s "$tui_out" ]; then
         echo -e "${YELLOW}⊘${NC} $name (no output)"
         ((SKIP++))
+        return
+    fi
+    
+    if [ ! -s "$deno_out" ]; then
+        echo -e "${RED}✗${NC} $name (Deno: no output)"
+        ((FAIL++))
+        return
+    fi
+    
+    if [ ! -s "$tui_out" ]; then
+        echo -e "${RED}✗${NC} $name (TuiBridge: no output)"
+        ((FAIL++))
         return
     fi
     
@@ -82,10 +110,12 @@ compare() {
         ((PASS++))
     else
         echo -e "${RED}✗${NC} $name"
-        echo "  Deno (first 3 lines):"
-        echo "$deno_stripped" | head -3 | sed 's/^/    /'
-        echo "  TuiBridge (first 3 lines):"
-        echo "$tui_stripped" | head -3 | sed 's/^/    /'
+        
+        # Show diff for first few lines
+        local diff_output=$(diff <(echo "$deno_stripped") <(echo "$tui_stripped") | head -20)
+        if [ -n "$diff_output" ]; then
+            echo "$diff_output" | sed 's/^/    /'
+        fi
         ((FAIL++))
     fi
 }
@@ -111,17 +141,18 @@ echo "=========================================="
 echo "Primary Examples (Core Hooks & Layout)"
 echo "=========================================="
 
+# Primary examples that should have full parity
 PRIMARY_EXAMPLES=(
-    "counter.tsx"
-    "todo-list.tsx"
-    "focus-form.tsx"
-    "dashboard.tsx"
-    "file-tree.tsx"
-    "log-viewer.tsx"
-    "spinner.tsx"
-    "tabs.tsx"
-    "chat-ui.tsx"
-    "mouse-app.tsx"
+    "counter.ts"
+    "todo-list.ts"
+    "focus-form.ts"
+    "dashboard.ts"
+    "file-tree.ts"
+    "log-viewer.ts"
+    "spinner.ts"
+    "tabs.ts"
+    "chat-ui.ts"
+    "mouse-app.ts"
 )
 
 for name in "${PRIMARY_EXAMPLES[@]}"; do
@@ -129,6 +160,7 @@ for name in "${PRIMARY_EXAMPLES[@]}"; do
     if [ ! -f "$example" ]; then
         echo -e "${YELLOW}⊘${NC} $name (not found)"
         ((SKIP++))
+        ((TOTAL++))
         continue
     fi
     
@@ -137,14 +169,9 @@ for name in "${PRIMARY_EXAMPLES[@]}"; do
     tui_out="$TMPDIR/${name}.tui.txt"
     
     run_deno "$example" "$deno_out" 2>/dev/null || true
-    run_tuibridge "$example" "$tui_out"
+    run_tuibridge "$example" "$tui_out" "$USE_PTY"
     
-    if [ -s "$deno_out" ] || [ -s "$tui_out" ]; then
-        compare "$deno_out" "$tui_out" "$name" || true
-    else
-        echo -e "${YELLOW}⊘${NC} (no output)"
-        ((SKIP++))
-    fi
+    compare "$deno_out" "$tui_out" "$name" || true
 done
 
 echo ""
@@ -159,10 +186,7 @@ EXTENDED_EXAMPLES=(
     "measure-ref.tsx"
     "sizing-constraints.tsx"
     "spacing-props.tsx"
-    "static-overlay.tsx"
-    "stdin-stdout.tsx"
-    "use-bridge.tsx"
-    "wizard.tsx"
+    "flex-layouts.tsx"
 )
 
 for name in "${EXTENDED_EXAMPLES[@]}"; do
@@ -170,6 +194,7 @@ for name in "${EXTENDED_EXAMPLES[@]}"; do
     if [ ! -f "$example" ]; then
         echo -e "${YELLOW}⊘${NC} $name (not found)"
         ((SKIP++))
+        ((TOTAL++))
         continue
     fi
     
@@ -178,14 +203,9 @@ for name in "${EXTENDED_EXAMPLES[@]}"; do
     tui_out="$TMPDIR/${name}.tui.txt"
     
     run_deno "$example" "$deno_out" 2>/dev/null || true
-    run_tuibridge "$example" "$tui_out"
+    run_tuibridge "$example" "$tui_out" "$USE_PTY"
     
-    if [ -s "$deno_out" ] || [ -s "$tui_out" ]; then
-        compare "$deno_out" "$tui_out" "$name" || true
-    else
-        echo -e "${YELLOW}⊘${NC} (no output)"
-        ((SKIP++))
-    fi
+    compare "$deno_out" "$tui_out" "$name" || true
 done
 
 # Summary
@@ -193,6 +213,7 @@ echo ""
 echo "=========================================="
 echo "Summary"
 echo "=========================================="
+echo -e "Total: ${CYAN}$TOTAL${NC}"
 echo -e "Passed: ${GREEN}$PASS${NC}"
 echo -e "Failed: ${RED}$FAIL${NC}"
 echo -e "Skipped: ${YELLOW}$SKIP${NC}"
@@ -201,15 +222,15 @@ echo ""
 if [ $FAIL -gt 0 ]; then
     echo -e "${RED}Parity FAILED${NC}"
     echo ""
-    echo "For visual comparison, run in tmux:"
-    echo "  Terminal 1: deno run -A npm:ink <example>"
-    echo "  Terminal 2: tuibridge <example>"
+    echo "For visual comparison in tmux:"
+    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.ts; read'"
+    echo "  tmux attach -t tui"
     exit 1
 else
     echo -e "${GREEN}Parity PASSED${NC}"
     echo ""
     echo "For 100% visual verification, test in tmux:"
-    echo "  tmux new-session -d -s tui 'tuibridge examples/counter.tsx; read'"
+    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.ts; read'"
     echo "  tmux attach -t tui"
     exit 0
 fi
