@@ -173,7 +173,7 @@ fn setup_terminal(
     // Run event loop or single render
     if cli_args.interactive {
         // Run event loop
-        event_loop::run_event_loop(&mut terminal, &cli_args, script_path)?;
+        event_loop::run_event_loop(&mut terminal, &cli_args, script_path, ctx)?;
     } else {
         // Non-interactive: single render and exit
         if let Err(e) = render_tree(&mut terminal, root_id) {
