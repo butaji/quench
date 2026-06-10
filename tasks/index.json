@@ -618,6 +618,13 @@
       "phase": 13,
       "status": "pending",
       "note": "overflow/overflowX/overflowY clipping, aspectRatio proportional sizing"
+    },
+    "071": {
+      "file": "071-full-api-audit.md",
+      "title": "Full Ink 7.0.5 API Audit",
+      "phase": 13,
+      "status": "done",
+      "note": "Comprehensive audit of all Ink 7.0.5 exports, props, and hooks against TuiBridge"
     }
   }
 }
