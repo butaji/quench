@@ -140,6 +140,14 @@
         "066",
         "067"
       ]
+    },
+    {
+      "name": "Remaining Ink API Gaps",
+      "tasks": [
+        "068",
+        "069",
+        "070"
+      ]
     }
   ],
   "tasks": {
@@ -588,7 +596,28 @@
       "title": "Implement Missing Ink Props for 100% Compatibility",
       "phase": 12,
       "status": "done",
-      "note": "columnGap/rowGap, alignSelf, position props (top/right/bottom/left), wrap alias - DONE. Border colors (MEDIUM), overflow (LOW) remain."
+      "note": "columnGap/rowGap, alignSelf, alignContent, position props, wrap alias, useAnimation, useWindowSize, useCursor, usePaste, useBoxMetrics - DONE."
+    },
+    "068": {
+      "file": "068-border-colors.md",
+      "title": "Implement Individual Border Colors",
+      "phase": 13,
+      "status": "pending",
+      "note": "borderTopColor, borderBottomColor, borderLeftColor, borderRightColor + dim/background variants"
+    },
+    "069": {
+      "file": "069-render-to-string.md",
+      "title": "Implement renderToString",
+      "phase": 13,
+      "status": "pending",
+      "note": "Synchronous string rendering without terminal I/O"
+    },
+    "070": {
+      "file": "070-overflow-aspect-ratio.md",
+      "title": "Implement overflow and aspectRatio",
+      "phase": 13,
+      "status": "pending",
+      "note": "overflow/overflowX/overflowY clipping, aspectRatio proportional sizing"
     }
   }
 }

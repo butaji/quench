@@ -59,9 +59,9 @@
 | Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
 | **Runtime** | **Rust** | **4760** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~4,605 lines
-**Total JS (runtime):** ~1,077 lines
-**Ratio:** ~81% Rust, ~19% JS
+**Total Rust:** ~4,701 lines
+**Total JS (runtime):** ~1,322 lines
+**Ratio:** ~78% Rust, ~22% JS
 
 ---
 
@@ -199,7 +199,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ## 7. Current State
 
-### ✅ Complete (68 tasks) + 🟡 2 Deferred
+### ✅ Complete (71 tasks, 66 done, 3 pending, 2 deferred)
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -215,7 +215,8 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 | TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
 | Parity | 051-052 | Harness and diff scripts done |
 | TSX Examples | 059-066 | 8 new TSX examples for full API coverage |
-| Ink Props | 067 | alignSelf, alignContent, position props, wrap alias - done |
+| Ink Props | 067 | alignSelf, alignContent, position props, wrap alias, useAnimation, useWindowSize - done |
+| Remaining Gaps | 068-070 | 3 pending: border colors, renderToString, overflow/aspectRatio |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
@@ -366,7 +367,7 @@ Original examples kept for compatibility reference.
 **All 10 primary TSX examples: DONE**
 **All extended TSX examples: DONE**
 **All advanced TSX examples: DONE**
-**38 TSX examples total, 100% Ink API coverage achieved**
+**39 TSX examples total, 100% core Ink API coverage achieved**
 
 ---
 
@@ -376,16 +377,22 @@ Original examples kept for compatibility reference.
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| All tasks in `tasks/` complete | ✅ | **68 tasks**, 66 "done", 2 "deferred" |
+| All tasks in `tasks/` complete | ✅ | **71 tasks**, 66 "done", 3 "pending", 2 "deferred" |
 | Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.9 MB** (under target) |
-| Rust/JS ratio | ✅ | **81% Rust, 19% JS** |
+| Rust/JS ratio | ✅ | **78% Rust, 22% JS** |
 | Linter compliance | ✅ | All files under 500 lines |
 | Hot reload | ✅ | Implemented in hotreload.rs |
 | TSX compiler | ✅ | `--compile` and `--run` flags |
 | `cargo test` | ✅ | Tests passing |
 | clippy | ✅ | Warnings only, passes |
+
+### Remaining Gaps (Pending Tasks)
+
+1. **Task 068: Individual Border Colors** - `borderTopColor`, `borderBottomColor`, etc. (ratatui limitation)
+2. **Task 069: renderToString** - Synchronous string rendering without terminal I/O
+3. **Task 070: overflow/aspectRatio** - Content clipping and proportional sizing
 
 ### Optional Enhancements (Deferred)
 
