@@ -101,12 +101,17 @@ warning: `tuibridge` (build script) generated 2 warnings
 
 ## Remaining Work
 
-The core functionality is verified. The remaining items are tracked in post-review tasks:
+The core functionality is verified. Remaining issues are tracked in post-review tasks:
 
+**First review (Tasks 072–084):**
 1. **Task 072** — Hot reload is broken (creates new VM without setup)
 2. **Task 083** — `build.rs` has 2 clippy warnings
 3. **PTY for Parity** — `scripts/parity.sh` exists but needs proper TTY emulation
-4. **Hot Reload Benchmark** — Currently broken; fix first, then benchmark
+
+**Second review (Tasks 085–093) — critical bugs identified:**
+4. **Task 085** — Raw pointer UB in tree mutations
+5. **Task 086** — Silent error swallowing in `load_user_code()`
+6. **Task 087** — RefCell reentrancy panic risk across FFI
 
 ## Acceptance Criteria
 - [x] `cargo test` runs and passes (34 tests)

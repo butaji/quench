@@ -17,5 +17,9 @@ Implement stdout/stderr writes, raw mode query, and app exit.
 ## Dependencies
 - Task 001
 
+> ⚠️ **Known issues:**
+> - `__ink_stdin_is_raw()` is a stub that always returns `false` (Task 091).
+> - `__ink_exit()` uses `process::exit(0)` which bypasses terminal cleanup destructors (Task 074).
+
 ## SPEC Reference
 §3 Rust Modules (bridge/io.rs)

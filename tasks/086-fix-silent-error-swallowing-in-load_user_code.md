@@ -53,6 +53,10 @@ Alternatively, remove `catch()` entirely and let uncaught exceptions propagate u
 - [ ] Scripts that use JS `try-catch` internally still work normally
 - [ ] Integration test: malformed JS script produces stderr output and exit code ≠ 0
 
+## Related Tasks
+- **Task 084** — General error-swallowing pattern across the codebase (tracing::error! swallowed)
+- **Task 092** — `setup_runtime()` also swallows errors by returning `Ok(())` regardless
+
 ## Files to Modify
 - `src/main.rs` — `load_user_code()` error handling
 

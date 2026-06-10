@@ -77,5 +77,7 @@ ctx.eval("__tb_invoke_microtasks()")?;
 ## Dependencies
 - Task 013
 
+> ⚠️ **Known issue:** Microtask callbacks dispatch via `ctx.eval()` which can trigger JS code that calls back into Rust bridge functions. If those bridge functions attempt `borrow_mut()` on `INK_RUNTIME` while already borrowed, a panic occurs. See Task 087.
+
 ## SPEC Reference
 §4 JS Runtime (timer/microtask polyfills)

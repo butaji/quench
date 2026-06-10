@@ -86,6 +86,10 @@ fn format_js_error(e: rquickjs::Error) -> String {
 - [ ] Integration test: malformed JS script produces stderr output and exit code ≠ 0
 - [ ] `cargo test` passes
 
+## Related Tasks
+- **Task 086** — `load_user_code()` uses `ctx.catch()` which catches ALL JS errors (including syntax errors) silently. Task 084 covers the general error-swallowing pattern; Task 086 covers the specific `ctx.catch()` bug.
+- **Task 092** — `setup_runtime()` errors are logged but not propagated. Related to runtime.js load failures.
+
 ## Files to Modify
 - `src/main.rs` — Propagate `ctx.eval` errors instead of swallowing
 - `src/event_loop.rs` — Reduce event dispatch error to debug level

@@ -79,4 +79,4 @@ tuibridge dist/counter.js
 - Tasks 041–050 (JS examples)
 
 ## SPEC Reference
-§11 Examples
+§10 Examples Matrix

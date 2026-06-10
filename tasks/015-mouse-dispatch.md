@@ -72,5 +72,7 @@ Added `__ink_get_node_parent` for ancestor traversal during hit-testing.
 ## Dependencies
 - Task 008, Task 013
 
+> ⚠️ **Known issue:** Mouse handlers dispatch via `ctx.eval()` which can trigger JS callbacks that call back into Rust bridge functions. If those bridge functions attempt `borrow_mut()` on `INK_RUNTIME` while it's already borrowed, a panic occurs. See Task 087.
+
 ## SPEC Reference
 §5 Event Loop

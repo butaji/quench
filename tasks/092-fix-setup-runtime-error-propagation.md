@@ -66,6 +66,10 @@ fn setup_runtime(ctx: &rquickjs::Context) -> Result<()> {
 - [ ] Main function exits with clear error message if setup fails
 - [ ] `cargo test` passes
 
+## Related Tasks
+- **Task 084** — General JS error-swallowing pattern
+- **Task 086** — `load_user_code()` swallows ALL JS errors with `ctx.catch()`
+
 ## Files to Modify
 - `src/main.rs` — `setup_runtime()` error handling
 

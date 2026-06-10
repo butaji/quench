@@ -407,7 +407,7 @@ Original examples kept for compatibility reference.
 
 ### Remaining Gaps (Pending Tasks)
 
-All pending tasks are documented in the tasks directory. The 16 pending tasks fall into three categories:
+All pending tasks are documented in the tasks directory. The 25 pending tasks fall into six categories:
 
 1. **Ink API Gaps** (068-070): border colors, renderToString, overflow/aspectRatio
 2. **Post-Review Critical Bugs** (072-075): hot reload, JSON parser, terminal cleanup, render FFI

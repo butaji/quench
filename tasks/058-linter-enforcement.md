@@ -52,9 +52,8 @@ src/bridge/
 **Compiler module (strictly enforced):**
 ```
 src/compiler/
-├── mod.rs   — 120 lines ✅
-├── jsx.rs   — 415 lines ✅
-└── shim.rs  — 208 lines ✅
+├── mod.rs   — 607 lines ✅ (regex-based JSX transform)
+└── shim.rs  — 208 lines ✅ (import removal)
 ```
 
 ## Remaining Work

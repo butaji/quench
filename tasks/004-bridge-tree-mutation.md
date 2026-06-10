@@ -16,5 +16,7 @@ Implement tree mutation operations: append, remove, insert before.
 ## Dependencies
 - Task 003
 
+> ⚠️ **Bug identified (Task 085):** The current tree mutation implementation (`append_child`, `remove_child`, `insert_before`) derives raw pointers from shared `&InkNode` borrows and uses them after taking mutable `&mut InkNode` borrows. This is undefined behavior under Rust's aliasing model. See Task 085 for the fix.
+
 ## SPEC Reference
 §3 Rust Modules (bridge/tree.rs)

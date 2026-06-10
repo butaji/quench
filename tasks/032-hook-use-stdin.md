@@ -16,5 +16,7 @@ Implement `useStdin` providing raw mode control and read stream.
 ## Dependencies
 - Task 031
 
+> ⚠️ **Known issue:** `__ink_stdin_is_raw()` is a stub that always returns `false`, so `useStdin`'s `isRawModeSupported` and `isRawMode` values may be incorrect. See Task 091.
+
 ## SPEC Reference
 §4 JS Runtime (runtime.js hooks)
