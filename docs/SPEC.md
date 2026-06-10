@@ -215,7 +215,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 | TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
 | Parity | 051-052 | Harness and diff scripts done |
 | TSX Examples | 059-066 | 8 new TSX examples for full API coverage |
-| Ink Props | 067 | alignSelf, position props, wrap alias - done |
+| Ink Props | 067 | alignSelf, alignContent, position props, wrap alias - done |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
@@ -249,6 +249,9 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 - ✅ `minWidth`, `maxWidth`, `minHeight`, `maxHeight` (number + %)
 - ✅ `flexBasis`, `flexGrow`, `flexShrink` from props
 - ✅ `gap`, `gapX`, `gapY` for flex gap spacing
+- ✅ `columnGap`, `rowGap` (Ink 7 aliases)
+- ✅ `alignSelf` for child alignment override
+- ✅ `alignContent` for multi-line alignment
 
 **Layout Accuracy:**
 - ✅ `calculate_layout` uses terminal dimensions (was hardcoded 512×512)

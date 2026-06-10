@@ -51,7 +51,7 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 ## Supported Ink API
 
 ### Box (ink-box)
-- **Flex:** flexDirection, alignItems, **alignSelf**, justifyContent, flexWrap, flexGrow, flexShrink, flexBasis
+- **Flex:** flexDirection, alignItems, **alignSelf**, **alignContent**, justifyContent, flexWrap, flexGrow, flexShrink, flexBasis
 - **Spacing:** margin/marginTop/marginBottom/marginLeft/marginRight/marginX/marginY, padding variants
 - **Gap:** **gap**, **gapX**, **gapY**, **columnGap**, **rowGap** (Ink 6 & 7 names)
 - **Borders:** borderStyle, borderColor, borderDimColor, borderTop/borderBottom/borderLeft/borderRight, **title**
