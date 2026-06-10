@@ -5,12 +5,15 @@
 use crate::bridge::node::{__ink_create_node, __ink_create_root, __ink_create_text_node, __ink_render_element, __ink_destroy_root};
 use crate::bridge::tree::{__ink_append_child, __ink_calculate_layout, __ink_clear_dirty, __ink_commit, __ink_commit_update, __ink_get_layout, __ink_get_node_children, __ink_get_node_parent, __ink_get_node_prop, __ink_get_node_tag, __ink_get_node_text, __ink_get_root_id, __ink_insert_before, __ink_is_dirty, __ink_measure_element, __ink_remove_child, __ink_set_text};
 use crate::bridge::timers::{__ink_clear_timer, __ink_drain_microtasks, __ink_enqueue_microtask, __ink_has_pending_timers, __ink_next_timer_delay, __ink_process_timers, __ink_set_interval, __ink_set_timeout};
-use crate::bridge::io::{__ink_exit as ink_exit, __ink_get_exit_code, __ink_get_terminal_size, __ink_reset_exit, __ink_set_terminal_size, __ink_should_exit, __ink_stdout_write, __ink_stderr_write, __ink_measure_text, __ink_stdin_is_raw, __ink_set_raw_mode};
+use crate::bridge::io::{__ink_exit as ink_exit, __ink_get_exit_code, __ink_get_terminal_size, __ink_reset_exit, __ink_set_terminal_size, __ink_should_exit, __ink_stdout_write, __ink_stderr_write, __ink_measure_text, __ink_stdin_is_raw};
 
-/// Parse JSON args into String vector
-fn parse_args(args_json: &str) -> Vec<String> {
-    let json_vals: Vec<serde_json::Value> = serde_json::from_str(args_json).unwrap_or_default();
-    json_vals.iter().map(json_val_to_string).collect()
+
+
+/// Parse JSON args into String vector.
+/// Returns Err on malformed JSON so callers can log and handle it.
+fn parse_args(args_json: &str) -> std::result::Result<Vec<String>, serde_json::Error> {
+    let json_vals: Vec<serde_json::Value> = serde_json::from_str(args_json)?;
+    Ok(json_vals.iter().map(json_val_to_string).collect())
 }
 
 /// Convert JSON value to string representation
@@ -289,6 +292,7 @@ fn handle_drain_microtasks(_args: &[String]) -> String { __ink_drain_microtasks(
 // Dispatch routing tables
 // ===================================================================
 
+#[allow(clippy::type_complexity)]
 const NODE_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("create_root", handle_create_root),
     ("render_element", handle_render_element),
@@ -297,6 +301,7 @@ const NODE_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("create_text_node", handle_create_text_node),
 ];
 
+#[allow(clippy::type_complexity)]
 const TREE_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("append_child", handle_append_child),
     ("remove_child", handle_remove_child),
@@ -310,6 +315,7 @@ const TREE_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("get_layout", handle_get_layout),
 ];
 
+#[allow(clippy::type_complexity)]
 const NODE_QUERY_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("get_node_tag", handle_get_node_tag),
     ("get_node_text", handle_get_node_text),
@@ -319,6 +325,7 @@ const NODE_QUERY_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("get_root_id", handle_get_root_id),
 ];
 
+#[allow(clippy::type_complexity)]
 const IO_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("measure_text", handle_measure_text),
     ("measure_element", handle_measure_element),
@@ -334,6 +341,7 @@ const IO_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("set_raw_mode", handle_set_raw_mode),
 ];
 
+#[allow(clippy::type_complexity)]
 const TIMER_METHODS: &[(&str, fn(&[String]) -> String)] = &[
     ("set_timeout", handle_set_timeout),
     ("set_interval", handle_set_interval),
@@ -346,13 +354,33 @@ const TIMER_METHODS: &[(&str, fn(&[String]) -> String)] = &[
 ];
 
 /// Lookup handler from method table
+#[allow(clippy::type_complexity)]
 fn lookup_handler<'a>(method: &str, table: &[(&str, fn(&'a [String]) -> String)]) -> Option<fn(&'a [String]) -> String> {
     table.iter().find(|(name, _)| *name == method).map(|(_, handler)| *handler)
 }
 
-/// Main dispatch function
+/// Main dispatch function — catches panics so they don't propagate into QuickJS C code.
+/// Panics in any FFI handler would otherwise cause UB by unwinding through
+/// foreign (C) stack frames.
 pub fn call_ink_ffi(method: &str, args_json: &str) -> String {
-    let args = parse_args(args_json);
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        call_ink_ffi_inner(method, args_json)
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::error!("Panic in FFI handler '{}'", method);
+            // Return a value that JS can detect as an error
+            "__INK_PANIC__".to_string()
+        }
+    }
+}
+
+/// Inner dispatch — never called directly; always wrapped in catch_unwind above.
+fn call_ink_ffi_inner(method: &str, args_json: &str) -> String {
+    let args = parse_args(args_json).unwrap_or_else(|_| {
+        tracing::warn!("Malformed JSON args in __ink_call('{}', ...)", method);
+        Vec::new()
+    });
     let args_slice: &[String] = &args;
 
     // Try each dispatch table in order

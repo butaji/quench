@@ -2,9 +2,16 @@
 //!
 //! Append, remove, insert, and update operations on the node tree.
 
-use crate::ink::{InkNode, InkError, PropValue};
-use std::collections::HashMap;
+#[allow(unused_imports)]
+use crate::ink::InkNode;
+#[allow(unused_imports)]
+use crate::ink::InkError;
+#[allow(unused_imports)]
+use crate::ink::PropValue;
 use yoga::Node;
+
+#[allow(unused_imports)]
+use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, InkError>;
 
@@ -69,11 +76,16 @@ pub fn remove_child(runtime: &mut crate::ink::InkRuntime, parent_id: u32, child_
         child.parent = None;
     }
 
+    // Free the node's memory so removed nodes don't leak.
+    // The Yoga C++ pointer inside InkNode is dropped here.
+    runtime.remove_node(child_id);
+
     runtime.dirty = true;
     Ok(())
 }
 
 /// Insert child before another child
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn insert_before(
     runtime: &mut crate::ink::InkRuntime,
     parent_id: u32,
@@ -118,7 +130,7 @@ pub fn insert_before(
         }
     }
 
-    drop(parent);
+    let _ = parent;
 
     if let Some(old_pid) = old_pid_for_later {
         if let Some(old_parent) = runtime.get_node_mut(old_pid) {

@@ -2,6 +2,7 @@
 //!
 //! Manages the node tree and coordinates layout calculations.
 
+#[allow(unused_imports)]
 use crate::ink::{InkNode, InkTag, PropValue};
 use ordered_float::OrderedFloat;
 use std::collections::HashMap;
@@ -120,6 +121,16 @@ impl InkRuntime {
 
     pub(crate) fn get_node_mut(&mut self, id: u32) -> Option<&mut InkNode> {
         self.nodes.get_mut(id as usize).and_then(|n| n.as_mut())
+    }
+
+    /// Remove a node from the runtime, freeing its InkNode (and Yoga C++ pointer).
+    /// Call this when a node is permanently detached and should be freed.
+    /// This prevents memory leaks from nodes that are remove_child'd but never
+    /// destroy_root'd.
+    pub(crate) fn remove_node(&mut self, id: u32) {
+        if (id as usize) < self.nodes.len() {
+            self.nodes[id as usize] = None;
+        }
     }
 
     /// Mark dirty
