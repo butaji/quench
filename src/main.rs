@@ -11,6 +11,8 @@
 mod ink;
 mod bridge;
 mod ink_js;
+mod compat;
+mod bridge_config;
 #[cfg(feature = "hotreload")]
 mod hotreload;
 
@@ -413,6 +415,7 @@ async fn main() -> Result<()> {
         println!("  --eval CODE    Execute CODE");
         println!("  --watch PATH   Watch for file changes and hot reload");
         println!("  --hot          Enable hot reload mode (shortcut for --watch .)");
+        println!("  --prop KEY=VAL Pass a prop to the JS runtime (useBridge().config)");
         println!();
         println!("Examples:");
         println!("  tuibridge --bundle plugins/app.tsx");
@@ -499,6 +502,17 @@ async fn main() -> Result<()> {
             tracing::error!("Runtime load error: {:?}", e);
         } else {
             tracing::debug!("Runtime loaded successfully");
+        }
+    });
+    
+    // Inject bridge config (platform, terminal, user --prop flags)
+    let bridge_config = bridge_config::BridgeConfig::from_args(&args);
+    let config_js = bridge_config.to_js_injection();
+    ctx.with(|ctx| {
+        if let Err(e) = ctx.eval::<(), _>(config_js.as_str()) {
+            tracing::warn!("Bridge config injection error: {:?}", e);
+        } else {
+            tracing::debug!("Bridge config injected");
         }
     });
     

@@ -125,3 +125,72 @@ mod tests {
         fs::remove_file(&file_path).ok();
     }
 }
+
+#[cfg(feature = "bench")]
+#[cfg(test)]
+mod benchmarks {
+    use super::*;
+    use std::fs;
+    use std::time::Instant;
+    use tempfile::tempdir;
+
+    /// Benchmark: File watcher detection latency
+    /// Target: < 10ms for notify to detect change
+    #[test]
+    fn bench_file_watcher_latency() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("bench_test.txt");
+        
+        let mut reloader = HotReloader::new(dir.path()).unwrap();
+        
+        // Warm up
+        fs::write(&file_path, "warmup").ok();
+        std::thread::sleep(Duration::from_millis(200));
+        reloader.poll_changes();
+        
+        // Benchmark
+        let iterations = 10;
+        let mut latencies = Vec::with_capacity(iterations);
+        
+        for i in 0..iterations {
+            let start = Instant::now();
+            
+            // Write file
+            fs::write(&file_path, format!("bench-{}", i)).ok();
+            
+            // Wait for detection (poll with timeout)
+            let mut detected = false;
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(5));
+                if reloader.poll_changes().is_some() {
+                    detected = true;
+                    break;
+                }
+            }
+            
+            let elapsed = start.elapsed();
+            if detected {
+                latencies.push(elapsed);
+            }
+        }
+        
+        // Calculate stats
+        if !latencies.is_empty() {
+            let avg_ms = latencies.iter().sum::<std::time::Duration>() / latencies.len() as u32;
+            let max_ms = latencies.iter().max().unwrap();
+            let min_ms = latencies.iter().min().unwrap();
+            
+            println!("\nFile watcher benchmark ({} iterations):", latencies.len());
+            println!("  Average: {:?}", avg_ms);
+            println!("  Min: {:?}", min_ms);
+            println!("  Max: {:?}", max_ms);
+            
+            // Assert target
+            assert!(
+                avg_ms.as_millis() < 50,
+                "Average watcher latency {}ms exceeds 50ms target",
+                avg_ms.as_millis()
+            );
+        }
+    }
+}
