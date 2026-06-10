@@ -136,7 +136,9 @@
         "062",
         "063",
         "064",
-        "065"
+        "065",
+        "066",
+        "067"
       ]
     }
   ],
@@ -580,6 +582,13 @@
       "phase": 12,
       "status": "done",
       "note": "gap/gapX/gapY for flex spacing, small for dim text, title on Box"
+    },
+    "067": {
+      "file": "067-missing-ink-props.md",
+      "title": "Implement Missing Ink Props for 100% Compatibility",
+      "phase": 12,
+      "status": "done",
+      "note": "columnGap/rowGap, alignSelf, position props (top/right/bottom/left), wrap alias - DONE. Border colors (MEDIUM), overflow (LOW) remain."
     }
   }
 }

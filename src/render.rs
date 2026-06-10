@@ -8,7 +8,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, BorderType, Paragraph, Widget},
+    widgets::{Block, Borders, BorderType, Paragraph, Widget, Wrap},
 };
 
 /// Render the current tree to the terminal
@@ -222,10 +222,30 @@ fn render_text(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
 
     style = apply_text_style(node_id, style);
     let text = apply_text_transform(node_id, text);
+    let wrap = apply_text_wrap(node_id);
 
-    let para = Paragraph::new(text.as_str()).style(style);
+    let mut para = Paragraph::new(text.as_str()).style(style);
+    if let Some(wrap_mode) = wrap {
+        para = para.wrap(wrap_mode);
+    }
     let rect = Rect::new(x, y, w, h);
     para.render(rect, buf);
+}
+
+/// Apply text wrap mode (supports both Ink 6 "textWrap" and Ink 7 "wrap")
+fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
+    // Check both textWrap (Ink 6) and wrap (Ink 7) props
+    let wrap_prop = bridge::__ink_get_node_prop(node_id, "wrap")
+        .or_else(|| bridge::__ink_get_node_prop(node_id, "textWrap"))?
+        .trim_matches('"')
+        .to_string();
+
+    match wrap_prop.as_str() {
+        "wrap" | "hard" => Some(Wrap::default()), // Wrap at word boundaries
+        "truncate" | "ellipsis" => Some(Wrap::Truncate),
+        // "scroll" is not supported in ratatui, falls back to wrap
+        _ => Some(Wrap::default()),
+    }
 }
 
 /// Apply text styling props

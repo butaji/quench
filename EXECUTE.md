@@ -15,14 +15,14 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 ```
 
 - **JS:** Reconciler + hooks in runtime.js (~1077 lines)
-- **Rust:** Yoga layout, ratatui rendering, event loop (~4900 lines)
-- **Ratio:** ~82% Rust, ~18% JS
+- **Rust:** Yoga layout, ratatui rendering, event loop (~4605 lines)
+- **Ratio:** ~81% Rust, ~19% JS
 
 ---
 
 ## ✅ Done Definition
 
-- [x] All tasks in `tasks/` complete (66 tasks)
+- [x] All tasks in `tasks/` complete (67 tasks)
 - [x] All examples run in TuiBridge without source modification
 - [x] 100% Ink API coverage achieved
 - [x] Release binary 2.9 MB (under 5 MB target)
@@ -51,17 +51,18 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 ## Supported Ink API
 
 ### Box (ink-box)
-- **Flex:** flexDirection, alignItems, justifyContent, flexWrap, flexGrow, flexShrink, flexBasis, **gap**, **gapX**, **gapY**
+- **Flex:** flexDirection, alignItems, **alignSelf**, justifyContent, flexWrap, flexGrow, flexShrink, flexBasis
 - **Spacing:** margin/marginTop/marginBottom/marginLeft/marginRight/marginX/marginY, padding variants
+- **Gap:** **gap**, **gapX**, **gapY**, **columnGap**, **rowGap** (Ink 6 & 7 names)
 - **Borders:** borderStyle, borderColor, borderDimColor, borderTop/borderBottom/borderLeft/borderRight, **title**
 - **Dimensions:** width, height, minWidth, maxWidth, minHeight, maxHeight
-- **Position:** position (absolute), display
+- **Position:** position (absolute), display, **top**, **right**, **bottom**, **left**
 
 ### Text (ink-text)
 - **Color:** color, backgroundColor
 - **Style:** bold, dimColor, **dim**, italic, strikethrough, underline, inverse
 - **Size:** **small** (rendered as dim)
-- **Transform:** textWrap (wrap/truncate/ellipsis/scroll), transform (uppercase/lowercase)
+- **Transform:** **wrap**/textWrap (wrap/truncate/ellipsis/scroll), transform (uppercase/lowercase)
 
 ### Hooks
 - **State:** useState, useEffect, useRef, useMemo, useCallback

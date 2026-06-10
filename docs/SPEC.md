@@ -59,7 +59,7 @@
 | Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
 | **Runtime** | **Rust** | **4760** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~4,577 lines
+**Total Rust:** ~4,605 lines
 **Total JS (runtime):** ~1,077 lines
 **Ratio:** ~81% Rust, ~19% JS
 

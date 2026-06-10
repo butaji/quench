@@ -7,27 +7,39 @@ use std::collections::HashSet;
 
 /// All Ink props supported by TuiBridge (Box components)
 pub static SUPPORTED_BOX_PROPS: &[&str] = &[
-    "flexDirection", "alignItems", "justifyContent", "flexWrap",
+    // Flex
+    "flexDirection", "alignItems", "alignSelf", "justifyContent", "flexWrap",
     "flexGrow", "flexShrink", "flexBasis",
+    // Spacing
     "margin", "marginTop", "marginBottom", "marginLeft", "marginRight",
     "marginX", "marginY",
     "padding", "paddingTop", "paddingBottom", "paddingLeft", "paddingRight",
     "paddingX", "paddingY",
-    "gap", "gapX", "gapY",
+    // Gap (supports both Ink 6 and Ink 7 names)
+    "gap", "gapX", "gapY", "columnGap", "rowGap",
+    // Borders
     "borderStyle", "borderColor", "borderDimColor",
     "borderTop", "borderBottom", "borderLeft", "borderRight",
+    // Dimensions
     "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight",
+    // Position (absolute)
     "position", "display", "title",
+    "top", "right", "bottom", "left",
+    // Children
     "children",
 ];
 
 /// All Ink props supported by TuiBridge (Text components)
 pub static SUPPORTED_TEXT_PROPS: &[&str] = &[
+    // Color
     "color", "backgroundColor",
+    // Style
     "bold", "dimColor", "dim", "italic",
     "strikethrough", "underline", "inverse",
     "small",
-    "transform", "textWrap",
+    // Transform & Wrap (supports both Ink 6 and Ink 7 prop names)
+    "transform", "textWrap", "wrap",
+    // Children
     "children",
 ];
 
