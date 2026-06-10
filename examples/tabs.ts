@@ -1,7 +1,7 @@
 // Tabs Example - TuiBridge demo (TypeScript)
 // Demonstrates tab navigation and dynamic content
 
-import { render, Box, Text, useState, useInput } from 'ink';
+import { render, Box, Text, useState, useInput, useApp } from 'ink';
 
 interface Tab {
   name: string;
@@ -68,21 +68,22 @@ function TabsApp(): JSX.Element {
   
   const [activeTab, setActiveTab] = useState(0);
   
-  useInput((input: string) => {
+  useInput((input: string, key: { shift?: boolean }) => {
     if (input === 'tab') {
-      setActiveTab((t: number) => (t + 1) % tabs.length);
+      if (key.shift) {
+        setActiveTab((t: number) => (t - 1 + tabs.length) % tabs.length);
+      } else {
+        setActiveTab((t: number) => (t + 1) % tabs.length);
+      }
     }
-    if (input === 'S-tab') {
+    if (input === 'leftArrow') {
       setActiveTab((t: number) => (t - 1 + tabs.length) % tabs.length);
     }
-    if (input === 'left') {
-      setActiveTab((t: number) => (t - 1 + tabs.length) % tabs.length);
-    }
-    if (input === 'right') {
+    if (input === 'rightArrow') {
       setActiveTab((t: number) => (t + 1) % tabs.length);
     }
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
   

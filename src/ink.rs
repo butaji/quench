@@ -217,11 +217,13 @@ impl InkNode {
                 PropValue::Number(n) => {
                     self.yoga.set_width(StyleUnit::Point(OrderedFloat(*n as f32)));
                 }
-                PropValue::String(s) if s == "100%" => {
-                    self.yoga.set_width(StyleUnit::Percent(OrderedFloat(100.0)));
-                }
                 PropValue::String(s) if s == "auto" => {
                     self.yoga.set_width(StyleUnit::Auto);
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_width(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
                 }
                 _ => {}
             }
@@ -232,11 +234,13 @@ impl InkNode {
                 PropValue::Number(n) => {
                     self.yoga.set_height(StyleUnit::Point(OrderedFloat(*n as f32)));
                 }
-                PropValue::String(s) if s == "100%" => {
-                    self.yoga.set_height(StyleUnit::Percent(OrderedFloat(100.0)));
-                }
                 PropValue::String(s) if s == "auto" => {
                     self.yoga.set_height(StyleUnit::Auto);
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_height(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
                 }
                 _ => {}
             }
@@ -248,6 +252,88 @@ impl InkNode {
                 "absolute" => PositionType::Absolute,
                 _ => PositionType::Relative,
             });
+        }
+
+        // Flex grow (not on Spacer which hardcodes it)
+        if self.tag != InkTag::Spacer {
+            if let Some(PropValue::Number(n)) = props.get("flexGrow") {
+                self.yoga.set_flex_grow(*n as f32);
+            }
+            if let Some(PropValue::Number(n)) = props.get("flexShrink") {
+                self.yoga.set_flex_shrink(*n as f32);
+            }
+        }
+
+        // Flex basis
+        if let Some(v) = props.get("flexBasis") {
+            match v {
+                PropValue::Number(n) => {
+                    self.yoga.set_flex_basis(StyleUnit::Point(OrderedFloat(*n as f32)));
+                }
+                PropValue::String(s) if s == "auto" => {
+                    self.yoga.set_flex_basis(StyleUnit::Auto);
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_flex_basis(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Min/max dimensions
+        if let Some(v) = props.get("minWidth") {
+            match v {
+                PropValue::Number(n) => {
+                    self.yoga.set_min_width(StyleUnit::Point(OrderedFloat(*n as f32)));
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_min_width(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(v) = props.get("maxWidth") {
+            match v {
+                PropValue::Number(n) => {
+                    self.yoga.set_max_width(StyleUnit::Point(OrderedFloat(*n as f32)));
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_max_width(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(v) = props.get("minHeight") {
+            match v {
+                PropValue::Number(n) => {
+                    self.yoga.set_min_height(StyleUnit::Point(OrderedFloat(*n as f32)));
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_min_height(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(v) = props.get("maxHeight") {
+            match v {
+                PropValue::Number(n) => {
+                    self.yoga.set_max_height(StyleUnit::Point(OrderedFloat(*n as f32)));
+                }
+                PropValue::String(s) if s.ends_with('%') => {
+                    if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                        self.yoga.set_max_height(StyleUnit::Percent(OrderedFloat(pct)));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -573,7 +659,7 @@ impl InkRuntime {
         root.yoga.set_width(StyleUnit::Point(OrderedFloat(width)));
         root.yoga.set_height(StyleUnit::Point(OrderedFloat(height)));
         
-        root.yoga.calculate_layout(512.0, 512.0, yoga::Direction::LTR);
+        root.yoga.calculate_layout(width, height, yoga::Direction::LTR);
 
         Ok(())
     }
