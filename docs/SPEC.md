@@ -33,11 +33,11 @@
 │                    ALL HOT PATH IN RUST                     │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │  main.rs      980 lines — Event loop, rendering     │   │
-│  │  bridge.rs   1120 lines — FFI, timers, I/O          │   │
-│  │  ink.rs       710 lines — Yoga tree, layout         │   │
-│  │  hotreload.rs 127 lines — File watching, remount    │   │
-│  │  ink_js.rs     52 lines — Constants (Box, Text...)  │   │
+│  │  main.rs      980 lines - Event loop, rendering     │   │
+│  │  bridge.rs   1120 lines - FFI, timers, I/O          │   │
+│  │  ink.rs       710 lines - Yoga tree, layout         │   │
+│  │  hotreload.rs 127 lines - File watching, remount    │   │
+│  │  ink_js.rs     52 lines - Constants (Box, Text...)  │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -50,14 +50,14 @@
 
 | Layer | Technology | Lines | Purpose |
 |-------|------------|-------|---------|
-| User code | TS/TSX | — | Ink-compatible API |
-| Transpile | esbuild | — | TSX → JS (optional for .js files) |
+| User code | TS/TSX | - | Ink-compatible API |
+| Transpile | esbuild | - | TSX → JS (optional for .js files) |
 | Reconciler | JS (runtime.js) | ~1060 | Hooks, component lifecycle, tree diff |
-| Bridge | JS→Rust FFI | — | `__ink_call(method, args)` |
+| Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
 | **Runtime** | **Rust** | **2990** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~2,990 lines  
-**Total JS (runtime):** ~1060 lines  
+**Total Rust:** ~2,990 lines
+**Total JS (runtime):** ~1060 lines
 **Ratio:** ~74% Rust, ~26% JS
 
 ---
@@ -83,9 +83,9 @@ scripts/
 ## 4. JS Runtime (runtime.js)
 
 The reconciler lives in JS because:
-1. **rquickjs Function references** — callbacks, component functions
-2. **Hook state** — per-instance hook arrays, React rules
-3. **Tree diffing** — DOM-like reconciliation algorithm
+1. **rquickjs Function references** - callbacks, component functions
+2. **Hook state** - per-instance hook arrays, React rules
+3. **Tree diffing** - DOM-like reconciliation algorithm
 
 **NOT on the hot path.** The reconciler only runs when:
 - Initial render
@@ -112,7 +112,7 @@ let ids = bridge::__ink_process_timers(); // "[1,2,3]"
 ctx.eval("__tb_invoke_timers([1,2,3])");  // JS calls Function refs
 ```
 
-**Key/mouse dispatch:** Single `ctx.eval()` per event calling JS `__tb_dispatch_key`/`__tb_dispatch_mouse`. Key names mapped to Ink format (`q`, `upArrow`, `f1`–`f12`, `return`, `escape`). Meta key (Cmd/Super) detected. No per-handler string building.
+**Key/mouse dispatch:** Single `ctx.eval()` per event calling JS `__tb_dispatch_key`/`__tb_dispatch_mouse`. Key names mapped to Ink format (`q`, `upArrow`, `f1`-`f12`, `return`, `escape`). Meta key (Cmd/Super) detected. No per-handler string building.
 
 ---
 
@@ -187,7 +187,7 @@ async fn main() -> Result<()> {
 | ratatui render | 1ms | 4.6ms |
 | Buffer flush | 0.5ms | **5.1ms** |
 
-**Budget: 16.6ms — within target.**
+**Budget: 16.6ms - within target.**
 
 ### Cursor Handling
 Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit. No per-frame cursor hide/show (eliminates flicker and reduces I/O).
@@ -200,17 +200,17 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 | Area | Tasks | Status |
 |------|-------|--------|
-| Bridge FFI | 001–008 | All done |
-| JS Integration | 009–012 | All done |
-| Event Loop | 013–019 | All done |
-| Yoga Layout | 020–024 | All done |
-| ratatui Render | 025–029 | Box, Text, Static, Newline, Spacer done. backgroundColor, padding, underline, inverse done. ratatui double-buffering handles diff |
-| Optimizations | 053–057 | Hot-path batching done. Reconciler stays in JS. Render parity gaps closed. |
-| Ink Hooks | 030–036 | All done (via runtime.js) |
-| DevEx | 037–040 | Hot reload, bytecode, feature flags done |
-| JS Examples | 041–050 | All 10 JS examples done |
-| TS Examples | counter.ts–mouse-app.ts | All 10 TS examples done |
-| Parity | 051–052 | Harness and diff scripts done |
+| Bridge FFI | 001-008 | All done |
+| JS Integration | 009-012 | All done |
+| Event Loop | 013-019 | All done |
+| Yoga Layout | 020-024 | All done |
+| ratatui Render | 025-029 | Box, Text, Static, Newline, Spacer done. backgroundColor, padding, underline, inverse done. ratatui double-buffering handles diff |
+| Optimizations | 053-057 | Hot-path batching done. Reconciler stays in JS. Render parity gaps closed. |
+| Ink Hooks | 030-036 | All done (via runtime.js) |
+| DevEx | 037-040 | Hot reload, bytecode, feature flags done |
+| JS Examples | 041-050 | All 10 JS examples done |
+| TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
+| Parity | 051-052 | Harness and diff scripts done |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
@@ -316,6 +316,29 @@ Additional examples demonstrating specific API features.
 | `stdin-stdout.tsx` | useStdin, useStdout, useStderr | ✅ |
 | `use-bridge.tsx` | useBridge (TuiBridge-specific) | ✅ |
 | `wizard.tsx` | useMemo, useCallback | ✅ |
+| `animations.tsx` | useEffect with intervals, animations | ✅ |
+| `component-composition.tsx` | component patterns, composition | ✅ |
+| `confirm-prompt.tsx` | yes/no dialog, focus navigation | ✅ |
+| `flex-layouts.tsx` | alignItems, justifyContent, flexWrap | ✅ |
+| `progress-bar.tsx` | progress visualization | ✅ |
+| `scroll-view.tsx` | keyboard scroll, list navigation | ✅ |
+| `select-input.tsx` | select/dropdown pattern | ✅ |
+| `table-demo.tsx` | tabular data, column layout | ✅ |
+| `terminal-resize.tsx` | useStdout, terminal dimensions | ✅ |
+
+### Advanced (TSX) — Real-World Patterns
+Real-world examples based on Ink community usage.
+
+| Example | Coverage | Status |
+|---------|----------|--------|
+| `align-demo.tsx` | alignSelf override, child alignment | ✅ |
+| `flex-basis-demo.tsx` | flexBasis, flexGrow interaction | ✅ |
+| `text-wrap-demo.tsx` | textWrap modes, truncation | ✅ |
+| `transform-demo.tsx` | text transformation, ANSI codes | ✅ |
+| `form-validation.tsx` | form handling, validation patterns | ✅ |
+| `multi-select.tsx` | checkbox selection, multi-choice | ✅ |
+| `realtime-dashboard.tsx` | live data, real-time updates | ✅ |
+| `loading-states.tsx` | spinners, progress bars, skeletons | ✅ |
 
 ### Legacy (JS/TS) — Reference Only
 Original examples kept for compatibility reference.
@@ -328,14 +351,15 @@ Original examples kept for compatibility reference.
 | `text-wrap.js` | textWrap reference | ✅ |
 | `flex-layouts.js` | Flexbox reference | ✅ |
 
-**All 10 primary TSX examples: DONE**  
-**All 10 extended TSX examples: DONE**  
-**100% Ink API coverage achieved**
-\n---\n\n## Done Definition\n\n### Verification Status (as of 2026-06-09)\n\n| Criteria | Status | Notes |\n|----------|--------|-------|\n| All tasks in `tasks/` complete | ✅ | 57 tasks, all marked "done" in index.json |\n| Tests passing | ✅ | **19 tests** in bridge.rs and hotreload.rs, all passing |\n| Examples run without modification | ✅ | counter.js, simple.js verified working via FFI tests |\n| Parity harness: ANSI match | ⚠️ | Harness exists but needs PTY for TTY emulation |\n| Release binary < 5 MB | ✅ | **2.1 MB** (under target) |\n| Hot reload < 50 ms | ⏳ | Implemented in hotreload.rs, not benchmarked |\n| `cargo test` | ✅ | 19 tests passing |\n| clippy | ✅ | Warnings only, passes |\n| Parity gate | ⏳ | Needs proper TTY emulation (see scripts/parity.sh) |\n\n### Remaining Work\n\n1. **Test Suite** — Add `#[cfg(test)]` modules to Rust files and/or `tests/` integration tests\n2. **PTY for Parity** — Fix `scripts/parity.sh` to use PTY for proper terminal emulation\n3. **Hot Reload Benchmark** — Measure end-to-end hot reload latency\n4. **Terminal Output Verification** — Run examples in actual TTY to verify visual output
+**All 10 primary TSX examples: DONE**
+**All 10 extended TSX examples: DONE**
+**All 8 advanced TSX examples: DONE**
+**28 TSX examples total, 100% Ink API coverage achieved**
+\n---\n\n## Done Definition\n\n### Verification Status (as of 2026-06-09)\n\n| Criteria | Status | Notes |\n|----------|--------|-------|\n| All tasks in `tasks/` complete | ✅ | 57 tasks, all marked "done" in index.json |\n| Tests passing | ✅ | **19 tests** in bridge.rs and hotreload.rs, all passing |\n| Examples run without modification | ✅ | counter.js, simple.js verified working via FFI tests |\n| Parity harness: ANSI match | ⚠️ | Harness exists but needs PTY for TTY emulation |\n| Release binary < 5 MB | ✅ | **2.1 MB** (under target) |\n| Hot reload < 50 ms | ⏳ | Implemented in hotreload.rs, not benchmarked |\n| `cargo test` | ✅ | 19 tests passing |\n| clippy | ✅ | Warnings only, passes |\n| Parity gate | ⏳ | Needs proper TTY emulation (see scripts/parity.sh) |\n\n### Remaining Work\n\n1. **Test Suite** - Add `#[cfg(test)]` modules to Rust files and/or `tests/` integration tests\n2. **PTY for Parity** - Fix `scripts/parity.sh` to use PTY for proper terminal emulation\n3. **Hot Reload Benchmark** - Measure end-to-end hot reload latency\n4. **Terminal Output Verification** - Run examples in actual TTY to verify visual output
 
 ### Remaining Work
 
-1. **PTY for Parity** — Fix `scripts/parity.sh` to use PTY for proper terminal emulation
-2. **Hot Reload Benchmark** — Measure end-to-end hot reload latency (< 50 ms target)
-3. **Terminal Output Verification** — Run examples in actual TTY to verify visual output
-4. **Linter Compliance** — Reduce file sizes and complexity to meet lint thresholds (task 058)
+1. **PTY for Parity** - Fix `scripts/parity.sh` to use PTY for proper terminal emulation
+2. **Hot Reload Benchmark** - Measure end-to-end hot reload latency (< 50 ms target)
+3. **Terminal Output Verification** - Run examples in actual TTY to verify visual output
+4. **Linter Compliance** - Reduce file sizes and complexity to meet lint thresholds (task 058)
