@@ -1,10 +1,14 @@
 //! Build script for TuiBridge
 //!
 //! 1. Compiles JavaScript to QuickJS bytecode (placeholder).
-//! 2. Lints Rust sources against project rules (warning-only):
+//! 2. Lints Rust sources against project rules:
 //!    - File length: max 500 lines
 //!    - Function length: max 40 lines
 //!    - Cyclomatic complexity: max 10
+//!
+//! **Enforcement:**
+//! - Compiler module (src/compiler/): Panic on violations (fully compliant)
+//! - Other modules: Warning only (pending refactoring)
 
 use std::env;
 use std::fs;
@@ -77,13 +81,24 @@ struct Violation {
 
 fn lint_rust_sources(src_dir: &Path) -> Result<(), String> {
     let mut violations = Vec::new();
+    let mut strict_violations = Vec::new();
     let files = collect_rs_files(src_dir)?;
 
     for path in files {
         let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let lines: Vec<&str> = content.lines().collect();
-        check_file_length(&path, &lines, &mut violations);
-        check_functions(&path, &lines, &mut violations);
+        
+        // Check if this is a compiler module (strict enforcement)
+        let is_compiler = path.components().any(|c| c.as_os_str() == "compiler");
+        let target_vec = if is_compiler { &mut strict_violations } else { &mut violations };
+        
+        check_file_length(&path, &lines, target_vec);
+        check_functions(&path, &lines, target_vec);
+    }
+
+    // Compiler module violations are fatal
+    if !strict_violations.is_empty() {
+        panic!("Compiler module lint violations:\n{}", format_violations(&strict_violations));
     }
 
     if violations.is_empty() {
@@ -100,8 +115,15 @@ fn collect_rs_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn collect_rs_files_rec(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
-    for entry in entries.flatten() {
+    let mut entries: Vec<_> = fs::read_dir(dir).map_err(|e| e.to_string())?.collect();
+    // Sort alphabetically for deterministic line numbers
+    entries.sort_by(|a, b| {
+        let name_a = a.as_ref().unwrap().file_name();
+        let name_b = b.as_ref().unwrap().file_name();
+        name_a.cmp(&name_b)
+    });
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_dir() {
             collect_rs_files_rec(&path, files)?;
@@ -186,8 +208,8 @@ fn find_open_brace(lines: &[&str], start: usize) -> Option<(usize, usize)> {
     if let Some(c) = lines[start].find('{') {
         return Some((start, c));
     }
-    for j in start + 1..lines.len() {
-        if let Some(c) = lines[j].find('{') {
+    for (j, line) in lines.iter().enumerate().skip(start + 1) {
+        if let Some(c) = line.find('{') {
             return Some((j, c));
         }
     }
@@ -196,10 +218,38 @@ fn find_open_brace(lines: &[&str], start: usize) -> Option<(usize, usize)> {
 
 fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option<usize> {
     let mut depth: isize = 1;
-    for j in open_line..lines.len() {
-        let l = lines[j];
+    for (j, line) in lines.iter().enumerate().skip(open_line) {
         let start = if j == open_line { open_col + 1 } else { 0 };
-        for ch in l.chars().skip(start) {
+        let mut in_string = false;
+        let mut string_delim = '\0';
+        let mut prev_char = '\0';
+        
+        for (idx, ch) in line.chars().enumerate() {
+            if idx < start {
+                continue;
+            }
+            
+            // Handle string delimiters
+            if !in_string && (ch == '"' || ch == '\'') {
+                in_string = true;
+                string_delim = ch;
+            } else if in_string && ch == string_delim && prev_char != '\\' {
+                in_string = false;
+                string_delim = '\0';
+            }
+            
+            // Skip braces inside strings
+            if in_string {
+                prev_char = ch;
+                continue;
+            }
+            
+            // Handle escape sequences
+            if prev_char == '\\' {
+                prev_char = '\0'; // Next char is escaped, don't process
+                continue;
+            }
+            
             match ch {
                 '{' => depth += 1,
                 '}' => {
@@ -210,6 +260,7 @@ fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option
                 }
                 _ => {}
             }
+            prev_char = ch;
         }
     }
     None
@@ -237,7 +288,7 @@ fn check_function_complexity(
     body: &[&str],
     violations: &mut Vec<Violation>,
 ) {
-    let complexity = cyclomatic_complexity(body);
+    let complexity = check_cyclomatic(body);
     if complexity > MAX_COMPLEXITY {
         violations.push(Violation {
             file: path.to_path_buf(),
@@ -246,18 +297,6 @@ fn check_function_complexity(
             message: format!("function complexity is {} (max {})", complexity, MAX_COMPLEXITY),
         });
     }
-}
-
-fn cyclomatic_complexity(body: &[&str]) -> usize {
-    let mut score = 1;
-    for line in body {
-        let code = strip_comment(line.trim());
-        if code.is_empty() {
-            continue;
-        }
-        score += count_decisions(&code);
-    }
-    score
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -286,4 +325,17 @@ fn count_decisions(code: &str) -> usize {
     n += code.matches(" && ").count();
     n += code.matches(" || ").count();
     n + code.matches('?').count()
+}
+
+#[allow(clippy::needless_borrow)]
+fn check_cyclomatic(body: &[&str]) -> usize {
+    let mut score = 1;
+    for line in body {
+        let code = strip_comment(line.trim());
+        if code.is_empty() {
+            continue;
+        }
+        score += count_decisions(code);
+    }
+    score
 }
