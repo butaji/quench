@@ -29,12 +29,12 @@
 | `useContext` | `value` | ✅ | ✅ |
 | `createContext` | `{ _currentValue, Provider }` | ✅ | ✅ |
 | `useInput` | `void` | ✅ `(input, key)` dispatched | ✅ |
-| `useApp` | `{ exit, stdout, stdin, stderr }` | ✅ | ✅ |
-| `useStdin` | `{ stdin, setRawMode, setBracketedPasteMode, isRawModeSupported }` | ✅ | ✅ |
-| `useStdout` | `{ stdout: { columns, rows, write }, write }` | ✅ | ✅ |
-| `useStderr` | `{ stderr: { write }, write }` | ✅ | ✅ |
-| `useFocus` | `{ isFocused, focus }` | ⚠️ Always `isFocused: true`, no `focus` | ⚠️ |
-| `useFocusManager` | `{ enableFocus, disableFocus, focusNext, focusPrevious, focus, activeId }` | ⚠️ Missing `enableFocus`, `disableFocus`, `activeId` | ⚠️ |
+| `useApp` | `{ exit, waitUntilRenderFlush }` | ✅ | ✅ |
+| `useStdin` | `{ stdin, setRawMode, internal_exitOnCtrlC, internal_eventEmitter, setBracketedPasteMode, isRawModeSupported }` | ✅ | ✅ |
+| `useStdout` | `{ stdout }` from StdoutContext | ✅ | ✅ |
+| `useStderr` | `{ stderr }` from StderrContext | ✅ | ✅ |
+| `useFocus` | `{ isFocused, focus }` | ✅ Accepts `{isActive, autoFocus, id}`, tracks focus state | ✅ |
+| `useFocusManager` | `{ enableFocus, disableFocus, focusNext, focusPrevious, focus, activeId }` | ✅ All methods implemented | ✅ |
 | `useIsScreenReaderEnabled` | `boolean` | ✅ Returns `false` | ✅ |
 | `useCursor` | `{ setCursorPosition }` | ✅ (position tracking only) | ✅ |
 | `useAnimation` | `{ frame, time, delta, reset }` | ✅ | ✅ |
@@ -169,9 +169,8 @@
 
 ### 1. Focus Management (useFocus / useFocusManager)
 - **Ink behavior**: Tab-based focus cycling, focusable components, activeId tracking
-- **TuiBridge**: useFocus always returns `isFocused: true`. No actual focus manager.
-- **Impact**: Apps using tab navigation won't work correctly
-- **Workaround**: Apps can use useInput directly for manual navigation
+- **TuiBridge**: ✅ Basic focus tracking with useFocus({id}) and useFocusManager().focusNext()/focusPrevious()
+- **Status**: Core API shape matches. Full tab navigation works in examples.
 
 ### 2. Background Color Inheritance
 - **Ink behavior**: `backgroundColor` on Box is inherited by child Text via React context
