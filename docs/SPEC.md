@@ -117,7 +117,7 @@ The reconciler lives in JS because:
 - Props change
 
 **Hot path (every frame) is in Rust:**
-- Event loop: tokio::select! in src/event_loop.rs
+- Event loop: synchronous `crossterm::event::poll` in src/event_loop.rs (see Task 077 for async migration)
 - Layout: Yoga in src/ink/
 - Rendering: ratatui in src/render.rs
 
@@ -177,7 +177,7 @@ pub fn run_event_loop(...) -> Result<()> {
 | Layout (10 boxes × 5 texts) | < 2ms | **~62µs** | ✅ |
 | Tree creation (2200 nodes) | < 5ms | **~490µs** | ✅ |
 | Prop updates (50 nodes) | < 3ms | **~808µs** | ✅ |
-| Binary size | < 5 MB | **2.8 MB** | ✅ |
+| Binary size | < 5 MB | **2.0 MB** | ✅ |
 | Startup time | < 100ms | **~5ms** | ✅ |
 
 ### Hot Path Performance
@@ -211,8 +211,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ## 7. Current State
 
-### ✅ Complete (71 tasks, 66 done, 3 pending, 2 deferred)
-### 🔴 Critical Bugs Found (13 new tasks: 072-084)
+### Task Overview (84 tasks: 65 done, 1 partial, 16 pending, 2 deferred)
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -223,29 +222,30 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 | ratatui Render | 025-029 | Box, Text, Static, Newline, Spacer done. backgroundColor, padding, underline, inverse done. ratatui double-buffering handles diff |
 | Optimizations | 053-057 | Hot-path batching done. Reconciler stays in JS. Render parity gaps closed. |
 | Ink Hooks | 030-036 | All done (via runtime.js) |
-| DevEx | 037-040 | Hot reload, bytecode, feature flags done |
+| DevEx | 037-040 | File watcher ✅, bytecode ✅, feature flags ✅. **Hot reload broken** — see Task 072. |
 | JS Examples | 041-050 | All 10 JS examples done |
 | TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
 | Parity | 051-052 | Harness and diff scripts done |
 | TSX Examples | 059-066 | 8 new TSX examples for full API coverage |
 | Ink Props | 067 | alignSelf, alignContent, position props, wrap alias, useAnimation, useWindowSize - done |
-| Remaining Gaps | 068-070 | 3 pending: border colors, renderToString, overflow/aspectRatio |
+| Remaining Gaps | 068-071 | 4 pending: border colors, renderToString, overflow/aspectRatio, API audit done |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
 
 ## 8. Remaining Work
 
-### Optional Enhancements
+### Ink API Gaps (Tasks 068-070)
+
+1. **Task 068: Individual Border Colors** - `borderTopColor`, `borderBottomColor`, etc. (ratatui limitation)
+2. **Task 069: renderToString** - Synchronous string rendering without terminal I/O
+3. **Task 070: overflow/aspectRatio** - Content clipping and proportional sizing
+
+### Completed Enhancements (no longer remaining)
 
 **Buffer Diff (Task 029):**
 - ✅ ratatui's native double-buffering handles cell-level diff
 - Cursor hidden during draw, restored on exit
-
-**Key/Mouse Direct Dispatch:**
-- Current: 1 ctx.eval per event dispatching to JS handler Maps
-- Future: Store Function refs in Rust, call directly
-- Impact: ~0.5ms → ~0.05ms per event
 
 **Color Parsing:**
 - ✅ Named colors (`red`, `brightRed`, `gray`, etc.)
@@ -273,9 +273,9 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 **Code Quality (Task 058):**
 - `build.rs` lints Rust sources for file length (≤500 lines), function length (≤40 lines), and complexity (≤10)
-- Currently warning-only until existing modules are refactored
-- **Progress (2026-06-09):** `src/compiler/` module refactored and compliant
-- Target: zero warnings, then `panic!()` on new violations
+- File length enforced globally; function length/complexity warning-only
+- **Progress:** `src/compiler/` module fully compliant (panic on violation)
+- 2 clippy warnings remain in `build.rs` itself (Task 083)
 
 ---
 
@@ -393,7 +393,7 @@ Original examples kept for compatibility reference.
 | All tasks in `tasks/` complete | 🟡 | **84 tasks**, 66 "done", 16 "pending", 2 "deferred" |
 | Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
-| Release binary < 5 MB | ✅ | **2.9 MB** (under target) |
+| Release binary < 5 MB | ✅ | **2.0 MB** (under target) |
 | Rust/JS ratio | ✅ | **78% Rust, 22% JS** |
 | Linter compliance | ✅ | All files under 500 lines |
 | Hot reload | 🔴 | **BROKEN** — Task 072. New context never gets `setup_runtime()`. |
@@ -404,24 +404,13 @@ Original examples kept for compatibility reference.
 
 ### Remaining Gaps (Pending Tasks)
 
-1. **Task 068: Individual Border Colors** - `borderTopColor`, `borderBottomColor`, etc. (ratatui limitation)
-2. **Task 069: renderToString** - Synchronous string rendering without terminal I/O
-3. **Task 070: overflow/aspectRatio** - Content clipping and proportional sizing
-4. **Task 072: Fix Hot Reload** — Critical bug: new context missing `setup_runtime()`
-5. **Task 073: Replace Custom JSON Parser** — Use `serde_json` instead of bespoke parser
-6. **Task 074: Fix Terminal Cleanup** — `process::exit(0)` bricks TTY on panic
-7. **Task 075: Eliminate FFI from Render Path** — 250+ FFI calls per frame
-8. **Task 076: rquickjs Function Refs** — Replace eval strings with direct calls
-9. **Task 077: Async Event Loop** — Replace sync poll with `EventStream` + tokio
-10. **Task 078: HashMap Node Storage** — Sparse Vec wastes memory
-11. **Task 079: rquickjs Memory Limits** — No sandbox on user scripts
-12. **Task 080: Yoga Memory Cleanup** — Unverified C++ node freeing
-13. **Task 081: Render Prop Accessors** — Use `PropValue` directly, not JSON strings
-14. **Task 082: Remove fill_background** — Redundant manual cell iteration
-15. **Task 083: Dead Code/Warnings** — Unreachable match arms, build.rs clippy warnings
-16. **Task 084: Surface JS Errors** — Silent failures leave users blind
+All pending tasks are documented in the tasks directory. The 16 pending tasks fall into three categories:
 
-## 8.1 Post-Review Remediation (Tasks 072-084)
+1. **Ink API Gaps** (068-070): border colors, renderToString, overflow/aspectRatio
+2. **Post-Review Critical Bugs** (072-075): hot reload, JSON parser, terminal cleanup, render FFI
+3. **Post-Review Improvements** (076-084): event dispatch, async loop, storage, sandbox, cleanup, polish
+
+## 9. Post-Review Remediation (Tasks 072-084)
 
 An architecture and code review (2026-06-10) identified critical bugs and significant improvements. These are tracked in new tasks:
 
