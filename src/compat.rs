@@ -25,6 +25,9 @@ pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     // Position (absolute)
     "position", "display", "title",
     "top", "right", "bottom", "left",
+    // Accessibility — accepted but no-op in terminal environments
+    // (Ink passes these to React DOM; TuiBridge silently ignores them)
+    "aria-label", "aria-hidden", "aria-role", "aria-state",
     // Children
     "children",
 ];
@@ -41,22 +44,22 @@ pub static UNSUPPORTED_BOX_PROPS: &[&str] = &[
     "overflow", "overflowX", "overflowY",
     // Aspect ratio (LOW priority)
     "aspectRatio",
-    // Accessibility (N/A for terminals)
-    "aria-label", "aria-hidden", "aria-role", "aria-state",
 ];
 
-/// Hooks with partial support (implemented but with limitations)
+/// Hooks with partial or no-op support (implemented but with limitations)
 pub static PARTIAL_HOOKS: &[&str] = &[
     "useAnimation",   // Shared timer, accurate frame/time/delta
     "useWindowSize",  // Poll-based (500ms), not event-driven
     "useCursor",      // Position tracking only, no physical cursor move
     "usePaste",       // Handler registered, bracketed paste not supported
     "useBoxMetrics",  // Poll-based (500ms), not event-driven
+    "useIsScreenReaderEnabled", // Returns false — no screen reader API in terminal
 ];
 
 /// Hooks not applicable to terminal environments
+/// (All hooks are now implemented — this list is kept for documentation)
 pub static NA_HOOKS: &[&str] = &[
-    "useIsScreenReaderEnabled", // Screen reader detection - N/A for terminals
+    // useIsScreenReaderEnabled returns false — no screen reader API in terminal
 ];
 
 /// All Ink props supported by TuiBridge (Text components)
@@ -69,6 +72,8 @@ pub static SUPPORTED_TEXT_PROPS: &[&str] = &[
     "small",
     // Transform & Wrap (supports both Ink 6 and Ink 7 prop names)
     "transform", "textWrap", "wrap",
+    // Accessibility — accepted but no-op in terminal environments
+    "aria-label", "aria-hidden", "aria-role", "aria-state",
     // Children
     "children",
 ];

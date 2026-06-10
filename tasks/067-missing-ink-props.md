@@ -80,18 +80,18 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 | `useCursor` | Cursor positioning | ✅ | Position tracking only |
 | `usePaste` | Paste event handling | ✅ | Handler registered |
 | `useBoxMetrics` | Measure box dimensions | ✅ | Poll-based (500ms) |
-| `useIsScreenReaderEnabled` | Screen reader detection | N/A | Not applicable to terminals |
+| `useIsScreenReaderEnabled` | Screen reader detection | ✅ | Returns `false` — no screen reader API in terminal |
 
-### Accessibility Props (Not Applicable)
+### Accessibility Props (Accepted, no-op in terminal)
 
-These are ignored in TuiBridge as they are for screen readers:
+Ink passes `aria-*` props to the React DOM for screen reader support. TuiBridge accepts these props silently (no warnings) since they're valid Ink API, but they have no observable effect in a terminal environment. This ensures Ink apps using accessibility props run without modification.
 
-| Prop | Description |
-|------|-------------|
-| `aria-label` | Screen reader label |
-| `aria-hidden` | Hide from screen reader |
-| `aria-role` | ARIA role |
-| `aria-state` | ARIA state |
+| Prop | Status | Notes |
+|------|--------|-------|
+| `aria-label` | ✅ accepted | Silently ignored (no screen reader API in terminal) |
+| `aria-hidden` | ✅ accepted | Silently ignored |
+| `aria-role` | ✅ accepted | Silently ignored |
+| `aria-state` | ✅ accepted | Silently ignored |
 
 ## Implementation Details
 
