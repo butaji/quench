@@ -24,38 +24,6 @@ static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 /// Exit code to return
 static EXIT_CODE: AtomicU32 = AtomicU32::new(0);
 
-/// Callback registry for input handlers
-static INPUT_CALLBACKS: std::sync::LazyLock<std::sync::Arc<std::sync::Mutex<HashMap<u32, String>>>> =
-    std::sync::LazyLock::new(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())));
-
-static NEXT_CALLBACK_ID: std::sync::LazyLock<std::sync::Arc<AtomicU32>> =
-    std::sync::LazyLock::new(|| std::sync::Arc::new(AtomicU32::new(1)));
-
-/// Mouse event types
-#[derive(Debug, Clone)]
-pub struct MouseEvent {
-    pub kind: MouseEventKind,
-    pub column: u16,
-    pub row: u16,
-    pub modifiers: MouseModifiers,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MouseEventKind {
-    Press,
-    Release,
-    Hold,
-    WheelUp,
-    WheelDown,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MouseModifiers {
-    pub shift: bool,
-    pub ctrl: bool,
-    pub alt: bool,
-}
 
 /// Bridge errors
 #[derive(Error, Debug)]
@@ -361,65 +329,6 @@ pub fn __ink_get_exit_code() -> u32 {
 pub fn __ink_reset_exit() {
     SHOULD_EXIT.store(false, Ordering::SeqCst);
     EXIT_CODE.store(0, Ordering::SeqCst);
-}
-
-// ============================================================================
-// Bridge Functions - Input Handlers
-// ============================================================================
-
-/// Register an input callback (callback as JS code string)
-/// Returns callback ID
-pub fn __ink_register_input(callback_js: &str) -> u32 {
-    let id = NEXT_CALLBACK_ID.fetch_add(1, Ordering::SeqCst);
-    let mut callbacks = INPUT_CALLBACKS.lock().unwrap();
-    callbacks.insert(id, callback_js.to_string());
-    id
-}
-
-/// Unregister an input callback
-pub fn __ink_unregister_input(id: u32) {
-    let mut callbacks = INPUT_CALLBACKS.lock().unwrap();
-    callbacks.remove(&id);
-}
-
-/// Dispatch a key event to registered callbacks
-/// Returns JSON array of callback results for JS to evaluate
-pub fn __ink_dispatch_key(key: &str, ctrl: bool, shift: bool, alt: bool) -> String {
-    let callbacks = INPUT_CALLBACKS.lock().unwrap();
-    let results: Vec<String> = callbacks.values()
-        .map(|cb| format!("({})({{key:'{}',ctrl:{},shift:{},alt:{}}})", cb, key, ctrl, shift, alt))
-        .collect();
-    format!("[{}]", results.join(","))
-}
-
-/// Dispatch a mouse event to registered callbacks
-/// Returns JSON array of callback results for JS to evaluate
-pub fn __ink_dispatch_mouse(event: &MouseEvent) -> String {
-    let kind_str = match event.kind {
-        MouseEventKind::Press => "press",
-        MouseEventKind::Release => "release",
-        MouseEventKind::Hold => "hold",
-        MouseEventKind::WheelUp => "wheelUp",
-        MouseEventKind::WheelDown => "wheelDown",
-        MouseEventKind::Unknown => "unknown",
-    };
-
-    let mouse_obj = format!(
-        r#"{{"kind":"{}","column":{},"row":{},"shift":{},"ctrl":{},"alt":{}}}"#,
-        kind_str,
-        event.column,
-        event.row,
-        event.modifiers.shift,
-        event.modifiers.ctrl,
-        event.modifiers.alt
-    );
-
-    let callbacks = INPUT_CALLBACKS.lock().unwrap();
-    let results: Vec<String> = callbacks.values()
-        .map(|cb| format!("({})({})", cb, mouse_obj))
-        .collect();
-
-    format!("[{}]", results.join(","))
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 // File Tree Example - TuiBridge demo (TypeScript)
 // Demonstrates recursive rendering and selection
 
-import { render, Box, Text, useState, useInput } from 'ink';
+import { render, Box, Text, useState, useInput, useApp } from 'ink';
 
 interface FileNode {
   name: string;
@@ -83,10 +83,10 @@ function FileTreeApp(): JSX.Element {
   
   useInput((input: string) => {
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
     // Simplified: just toggle selection on first item
-    if (input === 'enter' || input === ' ') {
+    if (input === 'return' || input === ' ') {
       setSelectedPath([]);
     }
   });

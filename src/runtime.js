@@ -1,5 +1,5 @@
 // TuiBridge Runtime — React-like reconciler + Ink bridge wrappers
-// ~450 lines. All logic that must live in JS (hooks, reconciliation).
+// ~1070 lines. All logic that must live in JS (hooks, reconciliation).
 // Bridge wrappers at the top call into Rust via __ink_call.
 
 // ===================================================================
@@ -138,14 +138,6 @@ globalThis.__ink_get_layout = function(id) {
 globalThis.__ink_get_node_parent = function(id) {
   var result = __ink_call('get_node_parent', JSON.stringify([id]));
   return result === 'null' ? null : parseFloat(result) || null;
-};
-
-globalThis.__ink_register_input = function(callback) {
-  return parseFloat(__ink_call('register_input', JSON.stringify([callback]))) || 0;
-};
-
-globalThis.__ink_unregister_input = function(id) {
-  __ink_call('unregister_input', JSON.stringify([id]));
 };
 
 globalThis.__ink_stdout_write = function(data) {
@@ -415,12 +407,19 @@ function useStderr() {
 }
 
 function useFocus() {
-  return useMemo(() => ({ isFocused: () => true }), []);
+  // Ink returns a boolean, not a function. Default to focused since we
+  // don't implement a real focus manager yet.
+  return useMemo(() => ({ isFocused: true }), []);
 }
 
 function useFocusManager() {
   return useMemo(() => ({
-    focus: () => {}, blur: () => {}, next: () => {}, previous: () => {}
+    focus: () => {},
+    blur: () => {},
+    next: () => {},
+    previous: () => {},
+    focusNext: () => {},
+    focusPrevious: () => {}
   }), []);
 }
 
@@ -887,11 +886,11 @@ if (!globalThis.process) {
 // 12. Input Dispatch Wiring
 // ===================================================================
 
-globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt) {
+globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt, meta) {
   for (const [id, state] of inputHandlers) {
     if (state.options && state.options.isActive === false) continue;
     try {
-      state.handler(key, { ctrl, shift, alt, name: key, meta: false });
+      state.handler(key, { ctrl, shift, alt, name: key, meta: meta || false });
     } catch (e) {
       console.error('Input handler error:', e);
     }
@@ -919,13 +918,12 @@ function getNodeDescendants(nodeId) {
 }
 
 // Helper: Find the deepest node at a given position
+// Returns { nodeId, depthMap } where depthMap is a Map of nodeId -> depth
 function findDeepestNodeAt(x, y, rootId) {
-  if (!rootId) return null;
-  
-  // Get all nodes and their layouts
+  if (!rootId) return { nodeId: null, depthMap: new Map() };
+
   const candidates = [];
-  
-  // BFS to find all nodes containing the point, track depth
+
   function traverse(nodeId, depth) {
     if (isPointInNode(nodeId, x, y)) {
       candidates.push({ nodeId, depth });
@@ -935,54 +933,50 @@ function findDeepestNodeAt(x, y, rootId) {
       traverse(childId, depth + 1);
     }
   }
-  
+
   traverse(rootId, 0);
-  
-  if (candidates.length === 0) return null;
-  
-  // Return the deepest (most specific) node
+
+  if (candidates.length === 0) return { nodeId: null, depthMap: new Map() };
+
   candidates.sort((a, b) => b.depth - a.depth);
-  return candidates[0].nodeId;
+  const depthMap = new Map();
+  for (const c of candidates) depthMap.set(c.nodeId, c.depth);
+  return { nodeId: candidates[0].nodeId, depthMap };
 }
 
 // Helper: Find which handler should receive the mouse event using hit-testing
 function findMouseHandlerAt(x, y) {
   const rootId = globalThis.__ink_get_root_id();
   if (!rootId) return null;
-  
-  // Find the deepest node at this position
-  const targetNodeId = findDeepestNodeAt(x, y, rootId);
+
+  const { nodeId: targetNodeId, depthMap } = findDeepestNodeAt(x, y, rootId);
   if (!targetNodeId) return null;
-  
+
   // Find handlers whose node is an ancestor of (or equal to) the target
-  // First, get all ancestors of target up to root
   const ancestors = new Set();
   let current = targetNodeId;
   while (current) {
     ancestors.add(current);
-    // Get parent (we need to track parents - check if bridge provides this)
     const parent = globalThis.__ink_get_node_parent ? globalThis.__ink_get_node_parent(current) : null;
     current = parent;
   }
-  
-  // Find handlers whose nodeId is an ancestor of target
+
   let deepestHandler = null;
   let deepestDepth = -1;
-  
+
   for (const [id, state] of inputHandlers) {
     if (state.options && state.options.isActive === false) continue;
     if (!state.nodeId) continue;
-    
+
     if (ancestors.has(state.nodeId)) {
-      // Check depth from root (closer to target = higher depth)
-      // For simplicity, we'll just use the nodeId as a proxy for recency
-      // A better approach would track depth per handler
-      if (!deepestHandler || state.nodeId > deepestHandler.nodeId) {
+      const handlerDepth = depthMap.get(state.nodeId) ?? -1;
+      if (!deepestHandler || handlerDepth > deepestDepth) {
         deepestHandler = state;
+        deepestDepth = handlerDepth;
       }
     }
   }
-  
+
   return deepestHandler;
 }
 
@@ -1059,6 +1053,12 @@ globalThis.useFocusManager = useFocusManager;
 globalThis.measureElement = measureElement;
 globalThis.createElement = createElement;
 globalThis.createContext = createContext;
+
+// Global timer polyfills (Ink uses these directly)
+globalThis.setTimeout = inkSetTimeout;
+globalThis.clearTimeout = inkClearTimeout;
+globalThis.setInterval = inkSetInterval;
+globalThis.clearInterval = inkClearInterval;
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ink;
