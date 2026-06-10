@@ -1,7 +1,7 @@
 // Mouse App Example - TuiBridge demo (TypeScript)
 // Demonstrates click tracking and mouse events
 
-import { render, Box, Text, useState, useInput, useEffect } from 'ink';
+import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';
 
 interface ClickEvent {
   x: number;
@@ -31,7 +31,7 @@ function MouseApp(): JSX.Element {
   
   useInput((input: string) => {
     // Simulate click with keyboard (since actual mouse requires terminal support)
-    if (input === ' ' || input === 'enter') {
+    if (input === ' ' || input === 'return') {
       const now = new Date();
       const time = now.toTimeString().slice(0, 8);
       
@@ -52,7 +52,7 @@ function MouseApp(): JSX.Element {
       }
     }
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
   

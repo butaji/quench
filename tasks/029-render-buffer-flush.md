@@ -18,16 +18,7 @@ Use ratatui's double-buffered terminal output for minimal redraw.
 ## Implementation Notes
 
 ### Cursor Handling
-Added `crossterm::cursor::Hide` before `terminal.draw()` and `Show` after in `render_tree()`:
-
-```rust
-fn render_tree(...) -> Result<()> {
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide)?;
-    terminal.draw(|frame| { ... })?;
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Show)?;
-    Ok(())
-}
-```
+Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit. No per-frame hide/show (eliminates flicker and reduces I/O).
 
 ### Integration Tests
 Added three tests verifying buffer diff behavior:

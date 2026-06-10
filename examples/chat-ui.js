@@ -67,21 +67,21 @@ function App() {
     if (input === 'q' || input === 'Q') {
       useApp().exit();
     }
-    if (input === 'j' || input === 'ArrowDown') {
+    if (input === 'j' || input === 'downArrow') {
       setAutoScroll(false);
     }
-    if (input === 'k' || input === 'ArrowUp') {
+    if (input === 'k' || input === 'upArrow') {
       setAutoScroll(false);
     }
     if (input === 'G') {
       setAutoScroll(true);
     }
     // Backspace
-    if (input === '\u007F') {
+    if (input === 'backspace') {
       setInputText(function(t) { return t.slice(0, -1); });
     }
     // Enter - send
-    if (input === '\r') {
+    if (input === 'return') {
       if (inputText.trim()) {
         setMessages(function(msgs) {
           return msgs.concat([{ 

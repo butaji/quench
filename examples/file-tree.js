@@ -76,13 +76,13 @@ function App() {
     if (input === 'q' || input === 'Q') {
       useApp().exit();
     }
-    if (input === 'j' || input === 'ArrowDown') {
+    if (input === 'j' || input === 'downArrow') {
       setSelectedIndex(function(i) { return Math.min(i + 1, flatNodes.length - 1); });
     }
-    if (input === 'k' || input === 'ArrowUp') {
+    if (input === 'k' || input === 'upArrow') {
       setSelectedIndex(function(i) { return Math.max(i - 1, 0); });
     }
-    if (input === ' ' || input === '\r') {
+    if (input === ' ' || input === 'return') {
       if (selectedNode && selectedNode.node.type === 'folder') {
         var path = selectedNode.path;
         setExpanded(function(e) {
@@ -93,7 +93,7 @@ function App() {
         });
       }
     }
-    if (input === 'l' || input === 'ArrowRight') {
+    if (input === 'l' || input === 'rightArrow') {
       // Expand current
       if (selectedNode && selectedNode.node.type === 'folder') {
         var path = selectedNode.path;

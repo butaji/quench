@@ -79,12 +79,12 @@ function App() {
     if (input === '2') setActiveTab('about');
     if (input === '3') setActiveTab('data');
     // Left/right navigation
-    if (input === 'h' || input === 'ArrowLeft') {
+    if (input === 'h' || input === 'leftArrow') {
       var tabs = ['home', 'about', 'data'];
       var idx = tabs.indexOf(activeTab);
       setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length]);
     }
-    if (input === 'l' || input === 'ArrowRight') {
+    if (input === 'l' || input === 'rightArrow') {
       var tabs = ['home', 'about', 'data'];
       var idx = tabs.indexOf(activeTab);
       setActiveTab(tabs[(idx + 1) % tabs.length]);

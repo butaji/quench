@@ -1,7 +1,7 @@
 // Focus Form Example - TuiBridge demo (TypeScript)
 // Demonstrates focus management and input handling
 
-import { render, Box, Text, useState, useInput, useFocus, useFocusManager } from 'ink';
+import { render, Box, Text, useState, useInput, useFocus, useFocusManager, useApp } from 'ink';
 
 interface FormField {
   label: string;
@@ -25,10 +25,10 @@ function FocusForm(): JSX.Element {
       focusManager.focusNext();
       setCursorPos(0);
     }
-    if (input === 'left') {
+    if (input === 'leftArrow') {
       setCursorPos((p: number) => Math.max(0, p - 1));
     }
-    if (input === 'right') {
+    if (input === 'rightArrow') {
       setCursorPos((p: number) => Math.min(p + 1, fields[0].value.length));
     }
     if (input === 'backspace') {
@@ -53,7 +53,7 @@ function FocusForm(): JSX.Element {
       setCursorPos((p: number) => p + 1);
     }
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
 

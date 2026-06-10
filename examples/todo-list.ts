@@ -1,7 +1,7 @@
 // Todo List Example - TuiBridge demo (TypeScript)
 // Demonstrates nested layouts, keyboard navigation, and state management
 
-import { render, Box, Text, useState, useInput } from 'ink';
+import { render, Box, Text, useState, useInput, useApp } from 'ink';
 
 interface TodoItem {
   id: number;
@@ -18,10 +18,10 @@ function TodoList(): JSX.Element {
   const [selected, setSelected] = useState(0);
 
   useInput((input: string) => {
-    if (input === 'j' || input === 'down') {
+    if (input === 'j' || input === 'downArrow') {
       setSelected((s: number) => Math.min(s + 1, todos.length - 1));
     }
-    if (input === 'k' || input === 'up') {
+    if (input === 'k' || input === 'upArrow') {
       setSelected((s: number) => Math.max(s - 1, 0));
     }
     if (input === ' ') {
@@ -32,7 +32,7 @@ function TodoList(): JSX.Element {
       );
     }
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
 

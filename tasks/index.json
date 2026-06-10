@@ -10,93 +10,553 @@
   "phases": [
     {
       "name": "Foundation",
-      "tasks": ["001","002","003","004","005","006","007","008"]
+      "tasks": [
+        "001",
+        "002",
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008"
+      ]
     },
     {
       "name": "JS Reconciler Shim",
-      "tasks": ["009","010","011","012"]
+      "tasks": [
+        "009",
+        "010",
+        "011",
+        "012"
+      ]
     },
     {
       "name": "Event Loop & Polyfills",
-      "tasks": ["013","014","015","016","017","018","019"]
+      "tasks": [
+        "013",
+        "014",
+        "015",
+        "016",
+        "017",
+        "018",
+        "019"
+      ]
     },
     {
       "name": "Yoga Layout Engine",
-      "tasks": ["020","021","022","023","024"]
+      "tasks": [
+        "020",
+        "021",
+        "022",
+        "023",
+        "024"
+      ]
     },
     {
       "name": "ratatui Rendering",
-      "tasks": ["025","026","027","028","029"]
+      "tasks": [
+        "025",
+        "026",
+        "027",
+        "028",
+        "029"
+      ]
     },
     {
       "name": "Ink Hooks & API",
-      "tasks": ["030","031","032","033","034","035","036"]
+      "tasks": [
+        "030",
+        "031",
+        "032",
+        "033",
+        "034",
+        "035",
+        "036"
+      ]
     },
     {
       "name": "DevEx",
-      "tasks": ["037","038","039","040"]
+      "tasks": [
+        "037",
+        "038",
+        "039",
+        "040"
+      ]
     },
     {
       "name": "Examples",
-      "tasks": ["041","042","043","044","045","046","047","048","049","050"]
+      "tasks": [
+        "041",
+        "042",
+        "043",
+        "044",
+        "045",
+        "046",
+        "047",
+        "048",
+        "049",
+        "050"
+      ]
     },
     {
       "name": "Parity",
-      "tasks": ["051","052"]
+      "tasks": [
+        "051",
+        "052"
+      ]
+    },
+    {
+      "name": "Optimizations & Deferred Work",
+      "tasks": [
+        "053",
+        "054",
+        "055",
+        "056",
+        "057"
+      ]
+    },
+    {
+      "name": "Code Quality",
+      "tasks": [
+        "058"
+      ]
+    },
+    {
+      "name": "Verification",
+      "tasks": [
+        "059"
+      ]
+    },
+    {
+      "name": "Compatibility",
+      "tasks": [
+        "060",
+        "061",
+        "062",
+        "063",
+        "064",
+        "065"
+      ]
     }
   ],
   "tasks": {
-    "001": { "file": "001-project-scaffold.md", "title": "Project Scaffold", "phase": 1, "status": "done" },
-    "002": { "file": "002-bridge-root-node.md", "title": "Bridge: Root Node Lifecycle", "phase": 1, "status": "done" },
-    "003": { "file": "003-bridge-create-nodes.md", "title": "Bridge: Create Nodes", "phase": 1, "status": "done" },
-    "004": { "file": "004-bridge-tree-mutation.md", "title": "Bridge: Tree Mutation", "phase": 1, "status": "done" },
-    "005": { "file": "005-bridge-commit-pipeline.md", "title": "Bridge: Commit Pipeline", "phase": 1, "status": "done" },
-    "006": { "file": "006-bridge-text-measure.md", "title": "Bridge: Text & Element Measure", "phase": 1, "status": "done" },
-    "007": { "file": "007-bridge-io-exit.md", "title": "Bridge: I/O & Exit", "phase": 1, "status": "done" },
-    "008": { "file": "008-bridge-input-handlers.md", "title": "Bridge: Input Handler Registration", "phase": 1, "status": "done" },
-    "009": { "file": "009-js-host-config.md", "title": "JS: Reconciler Host Config", "phase": 2, "status": "done" },
-    "010": { "file": "010-js-render-api.md", "title": "JS: render() API", "phase": 2, "status": "done" },
-    "011": { "file": "011-js-components.md", "title": "JS: Component Tags", "phase": 2, "status": "done" },
-    "012": { "file": "012-js-hooks-shim.md", "title": "JS: Hook Shims", "phase": 2, "status": "done" },
-    "013": { "file": "013-event-loop-tokio.md", "title": "Event Loop: tokio::select!", "phase": 3, "status": "done" },
-    "014": { "file": "014-keyboard-dispatch.md", "title": "Event Loop: Keyboard Dispatch", "phase": 3, "status": "done" },
-    "015": { "file": "015-mouse-dispatch.md", "title": "Event Loop: Mouse Dispatch", "phase": 3, "status": "done", "note": "Hit-testing + deepest node dispatch" },
-    "016": { "file": "016-resize-dispatch.md", "title": "Event Loop: Terminal Resize", "phase": 3, "status": "done" },
-    "017": { "file": "017-timer-polyfills.md", "title": "Polyfills: Timers", "phase": 3, "status": "done", "note": "Batch dispatch via __tb_invoke_timers" },
-    "018": { "file": "018-microtask-polyfills.md", "title": "Polyfills: Microtasks", "phase": 3, "status": "done", "note": "setImmediate + process.nextTick with Function refs" },
-    "019": { "file": "019-console-polyfill.md", "title": "Polyfills: Console", "phase": 3, "status": "done" },
-    "020": { "file": "020-yoga-flex-props.md", "title": "Yoga: Flex Props", "phase": 4, "status": "done" },
-    "021": { "file": "021-yoga-spacing-sizing.md", "title": "Yoga: Spacing & Sizing", "phase": 4, "status": "done", "note": "margin, marginY, marginX, padding, paddingY, paddingX" },
-    "022": { "file": "022-yoga-borders.md", "title": "Yoga: Borders & Style", "phase": 4, "status": "done" },
-    "023": { "file": "023-yoga-text-measure.md", "title": "Yoga: Text Measurement Bridge", "phase": 4, "status": "done" },
-    "024": { "file": "024-yoga-full-layout.md", "title": "Yoga: Full Layout Calculation", "phase": 4, "status": "done" },
-    "025": { "file": "025-render-box.md", "title": "Render: Box (Block)", "phase": 5, "status": "done", "note": "borders, padding, backgroundColor, title" },
-    "026": { "file": "026-render-text.md", "title": "Render: Text (Paragraph/Span)", "phase": 5, "status": "done", "note": "color, bold, dimColor, italic, strikethrough, underline, inverse, backgroundColor" },
-    "027": { "file": "027-render-static.md", "title": "Render: Static Overlay", "phase": 5, "status": "done" },
-    "028": { "file": "028-render-newline-spacer.md", "title": "Render: Newline & Spacer", "phase": 5, "status": "done" },
-    "029": { "file": "029-render-buffer-flush.md", "title": "Render: Buffer Diff & Flush", "phase": 5, "status": "partial", "note": "Basic flush works via ratatui double-buffering. Full cell-level diff not implemented." },
-    "030": { "file": "030-hook-use-input.md", "title": "Hook: useInput", "phase": 6, "status": "done" },
-    "031": { "file": "031-hook-use-app.md", "title": "Hook: useApp", "phase": 6, "status": "done" },
-    "032": { "file": "032-hook-use-stdin.md", "title": "Hook: useStdin", "phase": 6, "status": "done" },
-    "033": { "file": "033-hook-use-stdout.md", "title": "Hook: useStdout", "phase": 6, "status": "done" },
-    "034": { "file": "034-hook-use-stderr.md", "title": "Hook: useStderr", "phase": 6, "status": "done" },
-    "035": { "file": "035-hook-use-focus.md", "title": "Hook: useFocus & useFocusManager", "phase": 6, "status": "done" },
-    "036": { "file": "036-hook-measure-element.md", "title": "Hook: measureElement", "phase": 6, "status": "done" },
-    "037": { "file": "037-hot-reload-watch.md", "title": "DevEx: File Watcher", "phase": 7, "status": "done", "note": "notify integrated via hotreload.rs. --watch and --hot flags." },
-    "038": { "file": "038-hot-reload-remount.md", "title": "DevEx: Remount Cycle", "phase": 7, "status": "done", "note": "Unmount + eval(new_code) in same VM. <50ms target." },
-    "039": { "file": "039-production-bytecode.md", "title": "Production: Bytecode Precompilation", "phase": 7, "status": "done", "note": "build.rs placeholder. cfg(has_bytecode_bundle) gating." },
-    "040": { "file": "040-production-strip-dev.md", "title": "Production: Strip Dev Code", "phase": 7, "status": "done", "note": "hotreload feature flag. notify excluded from default build." },
-    "041": { "file": "041-example-counter.md", "title": "Example: Counter", "phase": 8, "status": "done", "note": "JS + TS. useState, useEffect, useInput." },
-    "042": { "file": "042-example-todo-list.md", "title": "Example: Todo List", "phase": 8, "status": "done", "note": "JS + TS. Nested layouts, keyboard navigation." },
-    "043": { "file": "043-example-focus-form.md", "title": "Example: Focus Form", "phase": 8, "status": "done", "note": "JS + TS. Focus management, form state." },
-    "044": { "file": "044-example-dashboard.md", "title": "Example: Dashboard", "phase": 8, "status": "done", "note": "JS + TS. Multiple sections, live stats, borders." },
-    "045": { "file": "045-example-file-tree.md", "title": "Example: File Tree", "phase": 8, "status": "done", "note": "JS + TS. Recursive tree, keyboard nav, backgroundColor." },
-    "046": { "file": "046-example-log-viewer.md", "title": "Example: Log Viewer", "phase": 8, "status": "done", "note": "JS + TS. useEffect, setInterval, scrolling." },
-    "047": { "file": "047-example-spinner.md", "title": "Example: Spinner", "phase": 8, "status": "done", "note": "JS + TS. Animation, timers." },
-    "048": { "file": "048-example-tabs.md", "title": "Example: Tabs", "phase": 8, "status": "done", "note": "JS + TS. Conditional render, backgroundColor." },
-    "049": { "file": "049-example-chat-ui.md", "title": "Example: Chat UI", "phase": 8, "status": "done", "note": "JS + TS. Split pane, input handling." },
-    "050": { "file": "050-example-mouse-app.md", "title": "Example: Mouse App", "phase": 8, "status": "done", "note": "JS + TS. Mouse events, hit-testing." },
-    "051": { "file": "051-parity-harness.md", "title": "Parity: Side-by-Side Runner", "phase": 9, "status": "done", "note": "scripts/parity.sh runs examples in Deno and TuiBridge." },
-    "052": { "file": "052-parity-diff.md", "title": "Parity: ANSI Diff & Match", "phase": 9, "status": "done", "note": "scripts/ansi-diff.js compares ANSI outputs line-by-line." }
+    "001": {
+      "file": "001-project-scaffold.md",
+      "title": "Project Scaffold",
+      "phase": 1,
+      "status": "done"
+    },
+    "002": {
+      "file": "002-bridge-root-node.md",
+      "title": "Bridge: Root Node Lifecycle",
+      "phase": 1,
+      "status": "done"
+    },
+    "003": {
+      "file": "003-bridge-create-nodes.md",
+      "title": "Bridge: Create Nodes",
+      "phase": 1,
+      "status": "done"
+    },
+    "004": {
+      "file": "004-bridge-tree-mutation.md",
+      "title": "Bridge: Tree Mutation",
+      "phase": 1,
+      "status": "done"
+    },
+    "005": {
+      "file": "005-bridge-commit-pipeline.md",
+      "title": "Bridge: Commit Pipeline",
+      "phase": 1,
+      "status": "done"
+    },
+    "006": {
+      "file": "006-bridge-text-measure.md",
+      "title": "Bridge: Text & Element Measure",
+      "phase": 1,
+      "status": "done"
+    },
+    "007": {
+      "file": "007-bridge-io-exit.md",
+      "title": "Bridge: I/O & Exit",
+      "phase": 1,
+      "status": "done"
+    },
+    "008": {
+      "file": "008-bridge-input-handlers.md",
+      "title": "Bridge: Input Handler Registration",
+      "phase": 1,
+      "status": "done"
+    },
+    "009": {
+      "file": "009-js-host-config.md",
+      "title": "JS: Reconciler Host Config",
+      "phase": 2,
+      "status": "done"
+    },
+    "010": {
+      "file": "010-js-render-api.md",
+      "title": "JS: render() API",
+      "phase": 2,
+      "status": "done"
+    },
+    "011": {
+      "file": "011-js-components.md",
+      "title": "JS: Component Tags",
+      "phase": 2,
+      "status": "done"
+    },
+    "012": {
+      "file": "012-js-hooks-shim.md",
+      "title": "JS: Hook Shims",
+      "phase": 2,
+      "status": "done"
+    },
+    "013": {
+      "file": "013-event-loop-tokio.md",
+      "title": "Event Loop: tokio::select!",
+      "phase": 3,
+      "status": "done"
+    },
+    "014": {
+      "file": "014-keyboard-dispatch.md",
+      "title": "Event Loop: Keyboard Dispatch",
+      "phase": 3,
+      "status": "done"
+    },
+    "015": {
+      "file": "015-mouse-dispatch.md",
+      "title": "Event Loop: Mouse Dispatch",
+      "phase": 3,
+      "status": "done",
+      "note": "Hit-testing + deepest node dispatch"
+    },
+    "016": {
+      "file": "016-resize-dispatch.md",
+      "title": "Event Loop: Terminal Resize",
+      "phase": 3,
+      "status": "done"
+    },
+    "017": {
+      "file": "017-timer-polyfills.md",
+      "title": "Polyfills: Timers",
+      "phase": 3,
+      "status": "done",
+      "note": "Batch dispatch via __tb_invoke_timers"
+    },
+    "018": {
+      "file": "018-microtask-polyfills.md",
+      "title": "Polyfills: Microtasks",
+      "phase": 3,
+      "status": "done",
+      "note": "setImmediate + process.nextTick with Function refs"
+    },
+    "019": {
+      "file": "019-console-polyfill.md",
+      "title": "Polyfills: Console",
+      "phase": 3,
+      "status": "done"
+    },
+    "020": {
+      "file": "020-yoga-flex-props.md",
+      "title": "Yoga: Flex Props",
+      "phase": 4,
+      "status": "done"
+    },
+    "021": {
+      "file": "021-yoga-spacing-sizing.md",
+      "title": "Yoga: Spacing & Sizing",
+      "phase": 4,
+      "status": "done",
+      "note": "margin, marginY, marginX, padding, paddingY, paddingX"
+    },
+    "022": {
+      "file": "022-yoga-borders.md",
+      "title": "Yoga: Borders & Style",
+      "phase": 4,
+      "status": "done"
+    },
+    "023": {
+      "file": "023-yoga-text-measure.md",
+      "title": "Yoga: Text Measurement Bridge",
+      "phase": 4,
+      "status": "done"
+    },
+    "024": {
+      "file": "024-yoga-full-layout.md",
+      "title": "Yoga: Full Layout Calculation",
+      "phase": 4,
+      "status": "done"
+    },
+    "025": {
+      "file": "025-render-box.md",
+      "title": "Render: Box (Block)",
+      "phase": 5,
+      "status": "done",
+      "note": "borders, padding, backgroundColor, title"
+    },
+    "026": {
+      "file": "026-render-text.md",
+      "title": "Render: Text (Paragraph/Span)",
+      "phase": 5,
+      "status": "done",
+      "note": "color, bold, dimColor, italic, strikethrough, underline, inverse, backgroundColor"
+    },
+    "027": {
+      "file": "027-render-static.md",
+      "title": "Render: Static Overlay",
+      "phase": 5,
+      "status": "done"
+    },
+    "028": {
+      "file": "028-render-newline-spacer.md",
+      "title": "Render: Newline & Spacer",
+      "phase": 5,
+      "status": "done"
+    },
+    "029": {
+      "file": "029-render-buffer-flush.md",
+      "title": "Render: Buffer Diff & Flush",
+      "phase": 5,
+      "status": "done",
+      "note": "ratatui double-buffering handles cell-level diff natively. Cursor hidden during draw, restored on exit."
+    },
+    "030": {
+      "file": "030-hook-use-input.md",
+      "title": "Hook: useInput",
+      "phase": 6,
+      "status": "done"
+    },
+    "031": {
+      "file": "031-hook-use-app.md",
+      "title": "Hook: useApp",
+      "phase": 6,
+      "status": "done"
+    },
+    "032": {
+      "file": "032-hook-use-stdin.md",
+      "title": "Hook: useStdin",
+      "phase": 6,
+      "status": "done"
+    },
+    "033": {
+      "file": "033-hook-use-stdout.md",
+      "title": "Hook: useStdout",
+      "phase": 6,
+      "status": "done"
+    },
+    "034": {
+      "file": "034-hook-use-stderr.md",
+      "title": "Hook: useStderr",
+      "phase": 6,
+      "status": "done"
+    },
+    "035": {
+      "file": "035-hook-use-focus.md",
+      "title": "Hook: useFocus & useFocusManager",
+      "phase": 6,
+      "status": "done"
+    },
+    "036": {
+      "file": "036-hook-measure-element.md",
+      "title": "Hook: measureElement",
+      "phase": 6,
+      "status": "done"
+    },
+    "037": {
+      "file": "037-hot-reload-watch.md",
+      "title": "DevEx: File Watcher",
+      "phase": 7,
+      "status": "done",
+      "note": "notify integrated via hotreload.rs. --watch and --hot flags."
+    },
+    "038": {
+      "file": "038-hot-reload-remount.md",
+      "title": "DevEx: Remount Cycle",
+      "phase": 7,
+      "status": "done",
+      "note": "Unmount + eval(new_code) in same VM. <50ms target."
+    },
+    "039": {
+      "file": "039-production-bytecode.md",
+      "title": "Production: Bytecode Precompilation",
+      "phase": 7,
+      "status": "done",
+      "note": "build.rs placeholder. cfg(has_bytecode_bundle) gating."
+    },
+    "040": {
+      "file": "040-production-strip-dev.md",
+      "title": "Production: Strip Dev Code",
+      "phase": 7,
+      "status": "done",
+      "note": "hotreload feature flag. notify excluded from default build."
+    },
+    "041": {
+      "file": "041-example-counter.md",
+      "title": "Example: Counter",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. useState, useEffect, useInput."
+    },
+    "042": {
+      "file": "042-example-todo-list.md",
+      "title": "Example: Todo List",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Nested layouts, keyboard navigation."
+    },
+    "043": {
+      "file": "043-example-focus-form.md",
+      "title": "Example: Focus Form",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Focus management, form state."
+    },
+    "044": {
+      "file": "044-example-dashboard.md",
+      "title": "Example: Dashboard",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Multiple sections, live stats, borders."
+    },
+    "045": {
+      "file": "045-example-file-tree.md",
+      "title": "Example: File Tree",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Recursive tree, keyboard nav, backgroundColor."
+    },
+    "046": {
+      "file": "046-example-log-viewer.md",
+      "title": "Example: Log Viewer",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. useEffect, setInterval, scrolling."
+    },
+    "047": {
+      "file": "047-example-spinner.md",
+      "title": "Example: Spinner",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Animation, timers."
+    },
+    "048": {
+      "file": "048-example-tabs.md",
+      "title": "Example: Tabs",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Conditional render, backgroundColor."
+    },
+    "049": {
+      "file": "049-example-chat-ui.md",
+      "title": "Example: Chat UI",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Split pane, input handling."
+    },
+    "050": {
+      "file": "050-example-mouse-app.md",
+      "title": "Example: Mouse App",
+      "phase": 8,
+      "status": "done",
+      "note": "JS + TS. Mouse events, hit-testing."
+    },
+    "051": {
+      "file": "051-parity-harness.md",
+      "title": "Parity: Side-by-Side Runner",
+      "phase": 9,
+      "status": "done",
+      "note": "scripts/parity.sh runs examples in Deno and TuiBridge."
+    },
+    "052": {
+      "file": "052-parity-diff.md",
+      "title": "Parity: ANSI Diff & Match",
+      "phase": 9,
+      "status": "done",
+      "note": "scripts/ansi-diff.js compares ANSI outputs line-by-line."
+    },
+    "053": {
+      "file": "053-function-callbacks.md",
+      "title": "Optim: Function Callbacks (Superseded)",
+      "phase": 10,
+      "status": "done",
+      "note": "Superseded by Task 055 batching approach."
+    },
+    "054": {
+      "file": "054-rust-reconciler.md",
+      "title": "Rust Reconciler (Deferred)",
+      "phase": 10,
+      "status": "done",
+      "note": "Reconciler stays in JS for Ink compat. Hot paths in Rust."
+    },
+    "055": {
+      "file": "055-hot-path-optimization.md",
+      "title": "Hot Path Optimization (60fps)",
+      "phase": 10,
+      "status": "done",
+      "note": "Batch timer/microtask dispatch. Key/mouse single eval."
+    },
+    "056": {
+      "file": "056-render-parity-gaps.md",
+      "title": "Render Parity: Missing Props",
+      "phase": 10,
+      "status": "done",
+      "note": "borderColor, individual borders, flexGrow, transform done. borderDimColor partial (ratatui limitation)"
+    },
+    "057": {
+      "file": "057-typescript-examples.md",
+      "title": "TypeScript Examples",
+      "phase": 10,
+      "status": "done",
+      "note": "All 10 TS examples exist and transpile with esbuild."
+    },
+    "058": {
+      "file": "058-linter-enforcement.md",
+      "title": "Linter Enforcement",
+      "phase": 11,
+      "status": "partial",
+      "note": "build.rs emits warnings for file/function length and complexity. Refactor needed to make warnings zero. Clippy clean (1 manual Default impl fixed in compat.rs)."
+    },
+    "059": {
+      "file": "059-verification.md",
+      "title": "Verification & Testing",
+      "phase": 11,
+      "status": "pending"
+    },
+    "060": {
+      "file": "060-compat-validation.md",
+      "title": "Ink Compatibility Validation",
+      "phase": 12,
+      "status": "done",
+      "note": "src/compat.rs + bridge.rs integration"
+    },
+    "061": {
+      "file": "061-compat-coverage.md",
+      "title": "Ink API Coverage Matrix",
+      "phase": 12,
+      "status": "done",
+      "note": "100% coverage: 10 primary + 10 extended TSX examples"
+    },
+    "062": {
+      "file": "062-rust-to-js-props.md",
+      "title": "Rust \u2192 Ink Props Propagation",
+      "phase": 12,
+      "status": "done",
+      "note": "BridgeConfig + useBridge() hook. --prop CLI flag. Platform/terminal auto-detection."
+    },
+    "064": {
+      "file": "064-compile-react-apps.md",
+      "title": "Compile React+Ink Apps for TuiBridge (Rust Pipeline)",
+      "phase": 12,
+      "status": "pending",
+      "note": "swc-based TSX parser + transform, zero Node.js deps"
+    },
+    "065": {
+      "file": "065-compile-react-apps-esbuild.md",
+      "title": "Compile React+Ink Apps (esbuild approach \u2014 deprecated)",
+      "phase": 12,
+      "status": "deferred",
+      "note": "Superseded by Task 064 (Rust/swc pipeline)"
+    }
   }
 }

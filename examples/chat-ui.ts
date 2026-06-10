@@ -1,7 +1,7 @@
 // Chat UI Example - TuiBridge demo (TypeScript)
 // Demonstrates real-time messaging and input
 
-import { render, Box, Text, useState, useInput, useEffect } from 'ink';
+import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';
 
 interface Message {
   id: number;
@@ -53,7 +53,7 @@ function ChatApp(): JSX.Element {
   }, [nextId]);
   
   useInput((input: string) => {
-    if (input === 'enter') {
+    if (input === 'return') {
       if (inputValue.trim()) {
         const now = new Date();
         const timestamp = now.toTimeString().slice(0, 5);
@@ -79,7 +79,7 @@ function ChatApp(): JSX.Element {
       setInputValue((v: string) => v + input);
     }
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
   

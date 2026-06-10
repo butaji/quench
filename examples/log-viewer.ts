@@ -1,7 +1,7 @@
 // Log Viewer Example - TuiBridge demo (TypeScript)
 // Demonstrates scrolling, filtering, and auto-scroll
 
-import { render, Box, Text, useState, useInput, useEffect } from 'ink';
+import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';
 
 type LogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
 
@@ -54,11 +54,11 @@ function LogViewer(): JSX.Element {
   }, []);
   
   useInput((input: string) => {
-    if (input === 'j' || input === 'down') {
+    if (input === 'j' || input === 'downArrow') {
       setScrollOffset((o: number) => o + 1);
       setAutoScroll(false);
     }
-    if (input === 'k' || input === 'up') {
+    if (input === 'k' || input === 'upArrow') {
       setScrollOffset((o: number) => Math.max(0, o - 1));
     }
     if (input === 'G') {
@@ -77,7 +77,7 @@ function LogViewer(): JSX.Element {
     if (input === '3') setFilter('WARN');
     if (input === '4') setFilter('ERROR');
     if (input === 'q' || input === 'Q') {
-      process.exit(0);
+      useApp().exit();
     }
   });
   

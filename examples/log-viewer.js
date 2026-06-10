@@ -90,7 +90,7 @@ function App() {
     if (input === 'q' || input === 'Q') {
       useApp().exit();
     }
-    if (input === 'j' || input === 'ArrowDown') {
+    if (input === 'j' || input === 'downArrow') {
       setAutoScroll(false);
     }
     if (input === 'G') {

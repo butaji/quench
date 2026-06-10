@@ -38,9 +38,6 @@ fn render_tree(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     root_id: Option<u32>,
 ) -> Result<()> {
-    // Hide cursor during rendering (prevents flickering)
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide)?;
-    
     terminal.draw(|frame| {
         let Some(root_id) = root_id else { return; };
         
@@ -58,9 +55,6 @@ fn render_tree(
         // Render nodes recursively
         render_node(root_id, frame.buffer_mut(), area);
     })?;
-    
-    // Show cursor after rendering
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Show)?;
     
     Ok(())
 }
@@ -86,10 +80,11 @@ fn render_node(
         None => return,
     };
     
-    let x = layout.0 as u16;
-    let y = layout.1 as u16;
-    let w = layout.2 as u16;
-    let h = layout.3 as u16;
+    // Ink uses round() for positions and ceil() for dimensions to avoid clipping
+    let x = layout.0.round() as u16;
+    let y = layout.1.round() as u16;
+    let w = layout.2.ceil() as u16;
+    let h = layout.3.ceil() as u16;
     
     // Skip if out of bounds
     if x >= area.right() || y >= area.bottom() {
@@ -99,7 +94,7 @@ fn render_node(
     match tag.as_str() {
         "ink-box" => {
             use ratatui::widgets::Block;
-            use ratatui::widgets::Borders;
+            use ratatui::widgets::{Borders, BorderType};
             
             // Check for border style
             let border_style = bridge::__ink_get_node_prop(node_id, "borderStyle")
@@ -107,12 +102,65 @@ fn render_node(
             
             let mut block = Block::default();
             
-            if let Some(ref style) = border_style {
-                match style.as_str() {
-                    "round" | "bold" | "single" | "double" => {
-                        block = block.borders(Borders::ALL);
-                    }
-                    _ => {}
+            // Check for individual border sides (boolean props in Ink)
+            let border_top = matches!(
+                bridge::__ink_get_node_prop_raw(node_id, "borderTop"),
+                Some(PropValue::Bool(true))
+            );
+            let border_bottom = matches!(
+                bridge::__ink_get_node_prop_raw(node_id, "borderBottom"),
+                Some(PropValue::Bool(true))
+            );
+            let border_left = matches!(
+                bridge::__ink_get_node_prop_raw(node_id, "borderLeft"),
+                Some(PropValue::Bool(true))
+            );
+            let border_right = matches!(
+                bridge::__ink_get_node_prop_raw(node_id, "borderRight"),
+                Some(PropValue::Bool(true))
+            );
+
+            // Check for border color (applied to all borders)
+            let border_color = bridge::__ink_get_node_prop(node_id, "borderColor")
+                .map(|s| s.trim_matches('"').to_string())
+                .and_then(|s| parse_color(&s));
+            let border_dim_color = bridge::__ink_get_node_prop(node_id, "borderDimColor")
+                .map(|s| s.trim_matches('"').to_string())
+                .and_then(|s| parse_color(&s));
+
+            let has_individual_borders = border_top || border_bottom || border_left || border_right;
+
+            if has_individual_borders || border_style.is_some() {
+                let border_type = border_style.as_ref().map(|s| match s.as_str() {
+                    "round" => BorderType::Rounded,
+                    "bold" => BorderType::Thick,
+                    "double" => BorderType::Double,
+                    _ => BorderType::Plain,
+                }).unwrap_or(BorderType::Plain);
+
+                let borders = if has_individual_borders {
+                    let mut b = Borders::empty();
+                    if border_top { b.insert(Borders::TOP); }
+                    if border_bottom { b.insert(Borders::BOTTOM); }
+                    if border_left { b.insert(Borders::LEFT); }
+                    if border_right { b.insert(Borders::RIGHT); }
+                    b
+                } else {
+                    Borders::ALL
+                };
+
+                block = block.borders(borders).border_type(border_type);
+
+                // Apply border color + dim modifier
+                let mut border_sty = Style::default();
+                if let Some(color) = border_color {
+                    border_sty = border_sty.fg(color);
+                }
+                if border_dim_color.is_some() {
+                    border_sty = border_sty.add_modifier(ratatui::style::Modifier::DIM);
+                }
+                if border_sty != Style::default() {
+                    block = block.border_style(border_sty);
                 }
             }
             
@@ -145,9 +193,11 @@ fn render_node(
             }
             
             let rect = Rect::new(x, y, w, h);
-            
-            // Fill background if specified
+
+            // Apply background color to block style so borders inherit it
             if let Some(bg) = bg_style.bg {
+                block = block.style(Style::default().bg(bg));
+                // Also fill inner area (Block doesn't fill inner background)
                 for cy in rect.y..rect.bottom() {
                     for cx in rect.x..rect.right() {
                         if cx < buf.area.right() && cy < buf.area.bottom() {
@@ -158,7 +208,7 @@ fn render_node(
                     }
                 }
             }
-            
+
             block.render(rect, buf);
         }
         
@@ -214,6 +264,19 @@ fn render_node(
             if bridge::__ink_get_node_prop(node_id, "inverse").is_some() {
                 style = style.add_modifier(ratatui::style::Modifier::REVERSED);
             }
+            
+            // Check for text transform (uppercase/lowercase)
+            let text = if let Some(transform) = bridge::__ink_get_node_prop(node_id, "transform")
+                .map(|s| s.trim_matches('"').to_string())
+            {
+                match transform.as_str() {
+                    "uppercase" => text.to_uppercase(),
+                    "lowercase" => text.to_lowercase(),
+                    _ => text,
+                }
+            } else {
+                text
+            };
             
             let para = Paragraph::new(text.as_str())
                 .style(style);
@@ -274,7 +337,58 @@ fn parse_color(s: &str) -> Option<ratatui::style::Color> {
         "brightmagenta" | "brightMagenta" => Some(ratatui::style::Color::Indexed(13)),
         "brightcyan" | "brightCyan" => Some(ratatui::style::Color::Indexed(14)),
         "brightwhite" | "brightWhite" => Some(ratatui::style::Color::Indexed(15)),
+        _ => parse_hex_color(s),
+    }
+}
+
+/// Parse hex color (#rgb or #rrggbb) to ratatui Color
+fn parse_hex_color(s: &str) -> Option<ratatui::style::Color> {
+    let s = s.trim();
+    if !s.starts_with('#') {
+        return None;
+    }
+    let hex = &s[1..];
+    match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(ratatui::style::Color::Rgb(r, g, b))
+        }
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
+            Some(ratatui::style::Color::Rgb(r, g, b))
+        }
         _ => None,
+    }
+}
+
+/// Convert crossterm KeyCode to Ink-compatible key name
+/// This ensures useInput handlers receive the same key strings as Deno/Ink.
+fn keycode_to_ink_name(key: &crossterm::event::KeyEvent) -> String {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Char(' ') => " ".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "return".to_string(),
+        KeyCode::Esc => "escape".to_string(),
+        KeyCode::Backspace => "backspace".to_string(),
+        KeyCode::Delete => "delete".to_string(),
+        KeyCode::Tab => "tab".to_string(),
+        KeyCode::Up => "upArrow".to_string(),
+        KeyCode::Down => "downArrow".to_string(),
+        KeyCode::Left => "leftArrow".to_string(),
+        KeyCode::Right => "rightArrow".to_string(),
+        KeyCode::Home => "home".to_string(),
+        KeyCode::End => "end".to_string(),
+        KeyCode::PageUp => "pageUp".to_string(),
+        KeyCode::PageDown => "pageDown".to_string(),
+        KeyCode::Insert => "insert".to_string(),
+        KeyCode::BackTab => "tab".to_string(),
+        KeyCode::F(n) => format!("f{}", n),
+        _ => format!("{:?}", key.code).to_lowercase(),
     }
 }
 
@@ -453,6 +567,9 @@ async fn main() -> Result<()> {
         tracing::warn!("Could not clear terminal: {:?}", e);
     }
     
+    // Hide cursor once for the entire session (prevents flicker on every draw)
+    let _ = terminal.hide_cursor();
+    
     // If not interactive, just run the initial render and exit
     if !interactive {
         tracing::info!("Non-interactive mode: rendering and exiting");
@@ -514,17 +631,20 @@ async fn main() -> Result<()> {
             evt = event_stream.next() => {
                 match evt {
                     Some(Ok(Event::Key(key))) => {
-                        let key_str = format!("{:?}", key.code);
+                        let is_backtab = matches!(key.code, crossterm::event::KeyCode::BackTab);
+                        let key_str = keycode_to_ink_name(&key);
                         let ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
-                        let shift = key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+                        let shift = key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) || is_backtab;
                         let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
-                        
+                        let meta = key.modifiers.contains(crossterm::event::KeyModifiers::META)
+                            || key.modifiers.contains(crossterm::event::KeyModifiers::SUPER);
+
                         // Dispatch to JS runtime handlers
                         ctx.with(|ctx| {
                             let code = format!(
-                                "try {{ if (globalThis.__tb_dispatch_key) __tb_dispatch_key('{}', {}, {}, {}); }} catch(e) {{ console.error(e); }}",
+                                "try {{ if (globalThis.__tb_dispatch_key) __tb_dispatch_key('{}', {}, {}, {}, {}); }} catch(e) {{ console.error(e); }}",
                                 key_str.replace("'", "\\'"),
-                                ctrl, shift, alt
+                                ctrl, shift, alt, meta
                             );
                             if let Err(e) = ctx.eval::<(), _>(&*code) {
                                 tracing::warn!("Key dispatch error: {:?}", e);
@@ -804,15 +924,6 @@ fn call_ink_ffi(method: &str, args_json: &str) -> String {
                 Some((x, y, w, h)) => format!("{},{},{},{}" , x, y, w, h),
                 None => "null".to_string(),
             }
-        }
-        "register_input" => {
-            let callback = args.first().cloned().unwrap_or_default();
-            (bridge::__ink_register_input(&callback) as f64).to_string()
-        }
-        "unregister_input" => {
-            let id = args.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0) as u32;
-            bridge::__ink_unregister_input(id);
-            String::new()
         }
         "stdout_write" => {
             let data = args.first().cloned().unwrap_or_default();

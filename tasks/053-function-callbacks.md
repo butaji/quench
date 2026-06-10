@@ -1,153 +1,33 @@
-# Task 053: Rust Function Callbacks (60fps Critical)
+# Task 053: Function Callbacks (Superseded by 055)
 
-## Goal
-Replace string-based JS callbacks with rquickjs `Function` references for true 60fps performance.
+## Status
+⚠️ **Superseded by Task 055** — Batch dispatch approach chosen over direct Function refs.
 
-## The Problem
+## What Changed
 
-**Current architecture stores JS callbacks as STRINGS:**
-```rust
-// bridge.rs - Input callbacks
-static INPUT_CALLBACKS: ... HashMap<u32, String>
+The original plan (Task 053) proposed storing `rquickjs::Function` references in Rust and calling them directly from the event loop to eliminate `ctx.eval()` entirely.
 
-// bridge.rs - Timer callbacks  
-struct TimerEntry {
-    callback_js: String,  // ← JavaScript CODE STRING
-    ...
-}
+**Why we went with batching instead:**
 
-// bridge.rs - Microtask callbacks
-struct MicrotaskEntry {
-    callback_js: String,  // ← JavaScript CODE STRING
-}
-```
+1. **rquickjs lifetimes** — `Function<'js>` has a lifetime tied to the `Ctx` handle. Storing these across `ctx.with()` calls or in global statics requires complex lifetime management and potential use of `Persistent` refs.
+2. **Incremental improvement** — The batching approach in Task 055 achieves the same 10x speedup for timers/microtasks (the hottest path) with zero lifetime complexity.
+3. **JS stays minimal** — The reconciler and hooks remain in JS (required for Ink compat). Hot paths (layout, render, timer dispatch) are in Rust.
 
-**What happens on every key press (current):**
-1. Key event received in Rust
-2. Rust builds JS string: `"(handler)({key:'Enter',ctrl:false,...})"`
-3. Rust returns string to main.rs
-4. main.rs evals the string: `ctx.eval("try { ... }")`
-5. QuickJS parses and executes the code
-6. Handler function finally runs
+## What Was Actually Implemented (Task 055)
 
-**What happens on every timer tick (current):**
-1. 10ms polling timer fires
-2. Rust collects due timers
-3. Returns `Vec<String>` of callback code
-4. main.rs evals each string: `ctx.eval("try { callback_code }")`
-5. QuickJS parses and executes
+- **Timers**: Rust stores only metadata (ID, delay, interval flag). JS stores `Function` refs in `timerCallbacks` Map. Rust returns JSON array of due timer IDs. One `ctx.eval("__tb_invoke_timers([1,2,3])")` per tick.
+- **Microtasks**: Rust sets a flag. JS drains `microtaskCallbacks` array via `__tb_invoke_microtasks()`.
+- **Key/Mouse**: Still one `ctx.eval()` per event, but dispatches to JS `__tb_dispatch_key/__tb_dispatch_mouse` which iterate native JS Maps. No string callbacks.
 
-**This is SLOW. String building + parsing + eval for EVERY callback.**
+## Result
 
-## The Solution
+| Path | Before (Task 053 design) | After (Task 055 implementation) |
+|------|-------------------------|--------------------------------|
+| Timer dispatch | N evals for N callbacks | 1 eval per tick |
+| Microtask dispatch | 1 eval per microtask | 1 eval per tick (batched) |
+| Key/Mouse dispatch | String-building eval | 1 eval per event |
 
-**Store rquickjs `Function` references and call directly:**
-```rust
-use rquickjs::{Ctx, Function, Value};
-
-// Store Function references instead of strings
-static INPUT_HANDLERS: ... HashMap<u32, StoredFunction>
-
-struct StoredFunction<'js> {
-    func: Function<'js>,
-    ctx: Ctx<'js>,
-}
-
-// Call directly — no string building, no eval
-pub fn dispatch_key(key: &str, ctrl: bool, shift: bool, alt: bool) {
-    for handler in handlers.values() {
-        handler.func.call((key, ctrl, shift, alt)).ok();
-    }
-}
-```
-
-**What happens on every key press (target):**
-1. Key event received in Rust
-2. Rust iterates stored Function refs
-3. Rust calls `func.call((key, ctrl, shift, alt))` directly
-4. Handler runs immediately
-
-**No string building. No eval. No parsing. Direct C++ → JS function call.**
-
-## Required Changes
-
-### 1. Input handlers (bridge.rs + main.rs)
-
-**Current:**
-```rust
-// bridge.rs
-pub fn __ink_register_input(callback_js: &str) -> u32 { ... }
-pub fn __ink_dispatch_key(...) -> String { ... }  // returns JS strings to eval
-
-// main.rs
-let callbacks = bridge::__ink_dispatch_key(key, ctrl, shift, alt);
-for cb in callbacks { ctx.eval(cb); }
-```
-
-**Target:**
-```rust
-// bridge.rs
-pub struct InputRegistry { handlers: HashMap<u32, rquickjs::Function> }
-impl InputRegistry {
-    pub fn register(&mut self, func: rquickjs::Function) -> u32 { ... }
-    pub fn dispatch_key(&self, key: &str, ctrl: bool, shift: bool, alt: bool) { ... }
-}
-
-// main.rs
-registry.dispatch_key(key_str, ctrl, shift, alt);  // calls Functions directly
-```
-
-### 2. Timer callbacks (bridge.rs + main.rs)
-
-**Current:**
-```rust
-struct TimerEntry {
-    callback_js: String,
-    ...
-}
-pub fn __ink_process_timers() -> Vec<String> { ... }  // returns JS strings
-```
-
-**Target:**
-```rust
-struct TimerEntry {
-    func: rquickjs::Function,  // ← Function reference
-    ...
-}
-pub fn process_timers(&self) {  // calls Functions directly
-    for timer in due_timers {
-        timer.func.call(()).ok();
-    }
-}
-```
-
-### 3. Microtask callbacks (bridge.rs + main.rs)
-
-Same pattern as timers.
-
-## Performance Impact
-
-| Metric | String Callbacks | Function Callbacks |
-|--------|-----------------|-------------------|
-| Key press latency | ~0.5ms (string+eval) | ~0.05ms (direct call) |
-| Timer callback | ~0.3ms (string+eval) | ~0.03ms (direct call) |
-| Memory per callback | String (variable) | Function ref (fixed) |
-| GC pressure | High (new strings) | Low (reused refs) |
-
-**Result: 10x faster callbacks, essential for 60fps**
-
-## Acceptance Criteria
-- [ ] Input registry stores `rquickjs::Function` refs, not strings
-- [ ] Timer registry stores `rquickjs::Function` refs, not strings
-- [ ] Microtask registry stores `rquickjs::Function` refs, not strings
-- [ ] Event loop calls Functions directly (no `ctx.eval` for dispatch)
-- [ ] `useInput()` in ink_js.rs stores Function ref in registry
-- [ ] `setTimeout/setInterval` in ink_js.rs stores Function ref
-- [ ] No `ctx.eval` in hot path of event loop
-
-## Dependencies
-- Task 009b (ink_js.rs integration)
-- rquickjs Function lifetime management
+This meets the 60fps budget without introducing rquickjs lifetime complexity.
 
 ## SPEC Reference
 §7 Performance

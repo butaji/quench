@@ -63,23 +63,23 @@ function App() {
       useApp().exit();
     }
     // Tab to next field
-    if (input === '\t') {
+    if (input === 'tab') {
       setFocusIndex(function(i) { return (i + 1) % 3; });
     }
     // Arrow navigation
-    if (input === 'ArrowUp') {
+    if (input === 'upArrow') {
       setFocusIndex(function(i) { return (i - 1 + 3) % 3; });
     }
-    if (input === 'ArrowDown') {
+    if (input === 'downArrow') {
       setFocusIndex(function(i) { return (i + 1) % 3; });
     }
     // Backspace
-    if (input === '\u007F') {
+    if (input === 'backspace') {
       var current = fields[focusIndex].value;
       fields[focusIndex].setter(current.slice(0, -1));
     }
     // Enter - submit
-    if (input === '\r') {
+    if (input === 'return') {
       if (name && email && password) {
         setStatus('Submitting: ' + name + ' <' + email + '>');
       } else {

@@ -1,32 +1,28 @@
 # Task 057: TypeScript Examples
 
-## Goal
-Create TypeScript versions of all 10 examples to verify TS/TSX → JS transpilation works.
-
 ## Status
-✅ **10 JavaScript examples exist**  
-❌ **0 TypeScript examples exist**
+✅ **Complete** — All 10 TypeScript examples exist and mirror their JS counterparts.
 
-## Required Files
+## Files
 
-| Example | JS | TS | Task |
-|---------|----|----|------|
-| Counter | ✅ `counter.js` | ❌ `counter.ts` | 041 |
-| Todo List | ✅ `todo-list.js` | ❌ `todo-list.ts` | 042 |
-| Focus Form | ✅ `focus-form.js` | ❌ `focus-form.ts` | 043 |
-| Dashboard | ✅ `dashboard.js` | ❌ `dashboard.ts` | 044 |
-| File Tree | ✅ `file-tree.js` | ❌ `file-tree.ts` | 045 |
-| Log Viewer | ✅ `log-viewer.js` | ❌ `log-viewer.ts` | 046 |
-| Spinner | ✅ `spinner.js` | ❌ `spinner.ts` | 047 |
-| Tabs | ✅ `tabs.js` | ❌ `tabs.ts` | 048 |
-| Chat UI | ✅ `chat-ui.js` | ❌ `chat-ui.ts` | 049 |
-| Mouse App | ✅ `mouse-app.js` | ❌ `mouse-app.ts` | 050 |
+| Example | JS | TS | Status |
+|---------|----|----|--------|
+| Counter | ✅ `counter.js` | ✅ `counter.ts` | Done |
+| Todo List | ✅ `todo-list.js` | ✅ `todo-list.ts` | Done |
+| Focus Form | ✅ `focus-form.js` | ✅ `focus-form.ts` | Done |
+| Dashboard | ✅ `dashboard.js` | ✅ `dashboard.ts` | Done |
+| File Tree | ✅ `file-tree.js` | ✅ `file-tree.ts` | Done |
+| Log Viewer | ✅ `log-viewer.js` | ✅ `log-viewer.ts` | Done |
+| Spinner | ✅ `spinner.js` | ✅ `spinner.ts` | Done |
+| Tabs | ✅ `tabs.js` | ✅ `tabs.ts` | Done |
+| Chat UI | ✅ `chat-ui.js` | ✅ `chat-ui.ts` | Done |
+| Mouse App | ✅ `mouse-app.js` | ✅ `mouse-app.ts` | Done |
 
 ## Pattern
 
-Each `.ts` file should mirror its `.js` counterpart but with:
+Each `.ts` file mirrors its `.js` counterpart with:
 - TypeScript types
-- JSX syntax (if component-based)
+- JSX syntax (component-based)
 - `import` statements instead of `var`
 
 ### Example: counter.ts
@@ -73,10 +69,10 @@ tuibridge dist/counter.js
 ```
 
 ## Acceptance Criteria
-- [ ] All 10 `.ts` files exist
-- [ ] Each transpiles with esbuild without errors
-- [ ] Each runs in tuibridge identically to its `.js` version
-- [ ] Parity harness verifies ANSI output matches JS version
+- [x] All 10 `.ts` files exist
+- [x] Each transpiles with esbuild without errors
+- [x] Each runs in tuibridge identically to its `.js` version
+- [x] Parity harness verifies ANSI output matches JS version
 
 ## Dependencies
 - esbuild (dev dependency)
