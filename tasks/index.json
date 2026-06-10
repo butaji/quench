@@ -148,6 +148,24 @@
         "069",
         "070"
       ]
+    },
+    {
+      "name": "Post-Review Remediation",
+      "tasks": [
+        "072",
+        "073",
+        "074",
+        "075",
+        "076",
+        "077",
+        "078",
+        "079",
+        "080",
+        "081",
+        "082",
+        "083",
+        "084"
+      ]
     }
   ],
   "tasks": {
@@ -625,6 +643,97 @@
       "phase": 13,
       "status": "done",
       "note": "Comprehensive audit of all Ink 7.0.5 exports, props, and hooks against TuiBridge"
+    },
+    "072": {
+      "file": "072-fix-hot-reload.md",
+      "title": "Fix Hot Reload — Broken Context Setup",
+      "phase": 14,
+      "status": "pending",
+      "note": "Critical bug: handle_hot_reload creates new Context without setup_runtime()"
+    },
+    "073": {
+      "file": "073-replace-custom-json-parser.md",
+      "title": "Replace Custom JSON Parser with serde_json",
+      "phase": 14,
+      "status": "pending",
+      "note": "Delete 180-line bespoke parser; serde_json already a dependency"
+    },
+    "074": {
+      "file": "074-fix-terminal-cleanup-on-exit.md",
+      "title": "Fix Terminal Cleanup on Exit",
+      "phase": 14,
+      "status": "pending",
+      "note": "process::exit(0) bypasses destructors; terminal stays in raw mode on panic"
+    },
+    "075": {
+      "file": "075-eliminate-ffi-from-render-path.md",
+      "title": "Eliminate FFI Round-Trips from Render Path",
+      "phase": 14,
+      "status": "pending",
+      "note": "250+ FFI calls per frame for prop queries; should pass &InkNode directly"
+    },
+    "076": {
+      "file": "076-rquickjs-function-refs-for-events.md",
+      "title": "Use rquickjs Function References for Event Dispatch",
+      "phase": 14,
+      "status": "pending",
+      "note": "Replace string eval per event with direct rquickjs::Function.call"
+    },
+    "077": {
+      "file": "077-async-event-loop-with-eventstream.md",
+      "title": "Async Event Loop with crossterm EventStream",
+      "phase": 14,
+      "status": "pending",
+      "note": "Replace sync poll(Duration::from_millis(10)) with tokio::select! + EventStream"
+    },
+    "078": {
+      "file": "078-switch-node-storage-to-hashmap.md",
+      "title": "Switch Node Storage from Sparse Vec to HashMap",
+      "phase": 14,
+      "status": "pending",
+      "note": "Vec<Option<InkNode>> has O(n) growth; HashMap<u32, InkNode> is O(1)"
+    },
+    "079": {
+      "file": "079-rquickjs-memory-limits.md",
+      "title": "Add rquickjs Memory Limits and Sandbox",
+      "phase": 14,
+      "status": "pending",
+      "note": "No memory/stack limits; malicious scripts can crash process"
+    },
+    "080": {
+      "file": "080-verify-yoga-memory-cleanup.md",
+      "title": "Verify Yoga Node Memory Cleanup",
+      "phase": 14,
+      "status": "pending",
+      "note": "Unverified whether yoga::Node frees its C++ pointer on Rust drop"
+    },
+    "081": {
+      "file": "081-clean-up-render-prop-accessors.md",
+      "title": "Clean Up Render Prop Accessors",
+      "phase": 14,
+      "status": "pending",
+      "note": "render.rs uses JSON-string props instead of PropValue directly"
+    },
+    "082": {
+      "file": "082-remove-redundant-fill-background.md",
+      "title": "Remove Redundant fill_background",
+      "phase": 14,
+      "status": "pending",
+      "note": "Manual cell iteration redundant; ratatui Block handles bg fill"
+    },
+    "083": {
+      "file": "083-fix-dead-code-and-build-warnings.md",
+      "title": "Fix Dead Code and Build Warnings",
+      "phase": 14,
+      "status": "pending",
+      "note": "Dead CLI match arm, unused #[allow], build.rs clippy warnings"
+    },
+    "084": {
+      "file": "084-surface-js-errors-to-users.md",
+      "title": "Surface JS Errors to Users",
+      "phase": 14,
+      "status": "pending",
+      "note": "JS errors swallowed by tracing::error!; users see blank screen"
     }
   }
 }
