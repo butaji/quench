@@ -125,6 +125,19 @@ fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
         });
     }
 
+    // alignSelf - override parent's alignItems for this child
+    if let Some(PropValue::String(s)) = props.get("alignSelf") {
+        node.yoga.set_align_self(match s.as_str() {
+            "center" => Align::Center,
+            "flex-end" => Align::FlexEnd,
+            "flex-start" => Align::FlexStart,
+            "stretch" => Align::Stretch,
+            "baseline" => Align::Baseline,
+            "auto" => Align::Auto,
+            _ => Align::Auto,
+        });
+    }
+
     if let Some(PropValue::String(s)) = props.get("justifyContent") {
         node.yoga.set_justify_content(match s.as_str() {
             "center" => Justify::Center,
@@ -242,14 +255,17 @@ fn apply_spacing_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     }
 
     // Gap (flex gap between children)
+    // Supports both Ink 7 names (columnGap/rowGap) and Ink 6 names (gapX/gapY)
     if let Some(PropValue::Number(n)) = props.get("gap") {
         node.yoga.set_gap(yoga::Axis::Horizontal, OrderedFloat(*n as f32));
         node.yoga.set_gap(yoga::Axis::Vertical, OrderedFloat(*n as f32));
     }
-    if let Some(PropValue::Number(n)) = props.get("gapX") {
+    // gapX and columnGap are synonyms
+    if let Some(PropValue::Number(n)) = props.get("gapX").or(props.get("columnGap")) {
         node.yoga.set_gap(yoga::Axis::Horizontal, OrderedFloat(*n as f32));
     }
-    if let Some(PropValue::Number(n)) = props.get("gapY") {
+    // gapY and rowGap are synonyms
+    if let Some(PropValue::Number(n)) = props.get("gapY").or(props.get("rowGap")) {
         node.yoga.set_gap(yoga::Axis::Vertical, OrderedFloat(*n as f32));
     }
 }
@@ -318,6 +334,9 @@ fn apply_dimension_props(node: &mut InkNode, props: &HashMap<String, PropValue>)
         });
     }
 
+    // Position props (top, right, bottom, left) for absolute positioning
+    apply_position_props(node, props);
+
     // Min/max dimensions
     apply_min_max(node, props);
 }
@@ -367,6 +386,28 @@ fn apply_min_max(node: &mut InkNode, props: &HashMap<String, PropValue>) {
                 node.yoga.set_max_height(StyleUnit::Percent(OrderedFloat(pct)));
             }
         }
+    }
+}
+
+/// Apply position props (top, right, bottom, left) for absolute positioning
+fn apply_position_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
+    let parse_pos = |v: &PropValue| parse_spacing_value(v);
+
+    if let Some(v) = props.get("top").and_then(parse_pos) {
+        node.yoga
+            .set_position(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+    }
+    if let Some(v) = props.get("right").and_then(parse_pos) {
+        node.yoga
+            .set_position(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
+    }
+    if let Some(v) = props.get("bottom").and_then(parse_pos) {
+        node.yoga
+            .set_position(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
+    }
+    if let Some(v) = props.get("left").and_then(parse_pos) {
+        node.yoga
+            .set_position(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
     }
 }
 
