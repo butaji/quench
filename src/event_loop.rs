@@ -18,6 +18,7 @@ pub fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     args: &CliArgs,
     script_path: Option<String>,
+    js_ctx: &rquickjs::Context,
 ) -> Result<()> {
     let mut dirty = true;
     let mut root_id = bridge::__ink_get_root_id();
@@ -58,7 +59,7 @@ pub fn run_event_loop(
         // Poll for events with a timeout
         if let Ok(true) = crossterm::event::poll(Duration::from_millis(10)) {
             if let Ok(event) = crossterm::event::read() {
-                dirty = handle_event(terminal, event, &mut root_id) || dirty;
+                dirty = handle_event(terminal, event, &mut root_id, js_ctx) || dirty;
             }
         }
 
@@ -78,13 +79,14 @@ pub fn run_event_loop(
 
 /// Handle a terminal event
 fn handle_event(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    _terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     event: Event,
-    root_id: &mut Option<u32>,
+    _root_id: &mut Option<u32>,
+    js_ctx: &rquickjs::Context,
 ) -> bool {
     match event {
-        Event::Key(key) => handle_key_event(key),
-        Event::Mouse(mouse) => handle_mouse_event(mouse),
+        Event::Key(key) => handle_key_event(key, js_ctx),
+        Event::Mouse(mouse) => handle_mouse_event(mouse, js_ctx),
         Event::Resize(cols, rows) => {
             tracing::debug!("Terminal resize: {}x{}", cols, rows);
             bridge::__ink_set_terminal_size(cols as u32, rows as u32);
@@ -94,8 +96,11 @@ fn handle_event(
     }
 }
 
-/// Handle keyboard event
-fn handle_key_event(key: crossterm::event::KeyEvent) -> bool {
+/// Handle keyboard event — dispatch to JS useInput handlers
+fn handle_key_event(
+    key: crossterm::event::KeyEvent,
+    js_ctx: &rquickjs::Context,
+) -> bool {
     let is_backtab = matches!(key.code, KeyCode::BackTab);
     let key_str = keycode_to_ink_name(&key);
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -104,15 +109,33 @@ fn handle_key_event(key: crossterm::event::KeyEvent) -> bool {
     let meta = key.modifiers.contains(KeyModifiers::META)
         || key.modifiers.contains(KeyModifiers::SUPER);
 
-    // For now, just mark dirty - actual dispatch happens via JS callbacks
-    // The JS runtime is loaded in main.rs and processes callbacks
     tracing::debug!("Key event: {} (ctrl={}, shift={}, alt={}, meta={})", key_str, ctrl, shift, alt, meta);
+
+    // Dispatch to JS __tb_dispatch_key(key, ctrl, shift, alt, meta)
+    // Use JSON.stringify for safe escaping of key string
+    let dispatch_js = format!(
+        "if(typeof __tb_dispatch_key==='function'){{__tb_dispatch_key({}, {}, {}, {}, {})}}",
+        serde_json::to_string(&key_str).unwrap_or_else(|_| "\"\"".to_string()),
+        ctrl,
+        shift,
+        alt,
+        meta,
+    );
+
+    js_ctx.with(|ctx| {
+        if let Err(e) = ctx.eval::<(), _>(dispatch_js.as_str()) {
+            tracing::warn!("Key dispatch error: {:?}", e);
+        }
+    });
 
     bridge::__ink_is_dirty()
 }
 
-/// Handle mouse event
-fn handle_mouse_event(mouse: crossterm::event::MouseEvent) -> bool {
+/// Handle mouse event — dispatch to JS mouse handlers
+fn handle_mouse_event(
+    mouse: crossterm::event::MouseEvent,
+    js_ctx: &rquickjs::Context,
+) -> bool {
     let kind_str = match mouse.kind {
         MouseEventKind::Down(_) => "press",
         MouseEventKind::Up(_) => "release",
@@ -123,6 +146,38 @@ fn handle_mouse_event(mouse: crossterm::event::MouseEvent) -> bool {
     };
 
     tracing::debug!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
+
+    // Dispatch to JS __tb_dispatch_mouse({column, row, kind, button, ctrl, shift, alt})
+    let button = match mouse.kind {
+        MouseEventKind::Down(btn) | MouseEventKind::Up(btn) | MouseEventKind::Drag(btn) => {
+            match btn {
+                crossterm::event::MouseButton::Left => 0,
+                crossterm::event::MouseButton::Right => 1,
+                crossterm::event::MouseButton::Middle => 2,
+            }
+        }
+        _ => -1,
+    };
+    let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+    let alt = mouse.modifiers.contains(KeyModifiers::ALT);
+
+    let dispatch_js = format!(
+        "if(typeof __tb_dispatch_mouse==='function'){{__tb_dispatch_mouse({{column:{},row:{},kind:'{}',button:{},ctrl:{},shift:{},alt:{}}})}}",
+        mouse.column,
+        mouse.row,
+        kind_str,
+        button,
+        ctrl,
+        shift,
+        alt,
+    );
+
+    js_ctx.with(|ctx| {
+        if let Err(e) = ctx.eval::<(), _>(dispatch_js.as_str()) {
+            tracing::warn!("Mouse dispatch error: {:?}", e);
+        }
+    });
 
     bridge::__ink_is_dirty()
 }
