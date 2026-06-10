@@ -442,6 +442,207 @@ function useBridge() {
 }
 
 // ===================================================================
+// 5a. Missing Ink 7.0.5 Hooks
+// ===================================================================
+
+function useWindowSize() {
+  const [size, setSize] = useState(() => {
+    const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
+    return { columns: ts.width || 80, rows: ts.height || 24 };
+  });
+
+  useEffect(() => {
+    // Poll for terminal size changes every 500ms
+    // In a full implementation, this would be event-driven from Rust
+    const intervalId = inkSetInterval(() => {
+      const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
+      const newSize = { columns: ts.width || 80, rows: ts.height || 24 };
+      if (newSize.columns !== size.columns || newSize.rows !== size.rows) {
+        setSize(newSize);
+      }
+    }, 500);
+
+    return () => inkClearInterval(intervalId);
+  }, []);
+
+  return size;
+}
+
+// Shared animation state - all useAnimation hooks share one timer
+let animationTimerId = null;
+let animationHooks = [];
+let animationStartTime = 0;
+let animationLastTick = 0;
+
+function useAnimation(options) {
+  options = options || {};
+  const interval = options.interval || 100;
+  const isActive = options.isActive !== false;
+
+  const [state, setState] = useState({
+    frame: 0,
+    time: 0,
+    delta: 0,
+  });
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const resetRef = useRef(() => {
+    stateRef.current = { frame: 0, time: 0, delta: 0 };
+    setState({ frame: 0, time: 0, delta: 0 });
+    animationStartTime = Date.now();
+    animationLastTick = animationStartTime;
+  });
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const hookData = {
+      setState,
+      stateRef,
+      interval,
+      reset: resetRef.current,
+    };
+    animationHooks.push(hookData);
+
+    // Start shared timer if not already running
+    if (!animationTimerId) {
+      animationStartTime = Date.now();
+      animationLastTick = animationStartTime;
+      animationTimerId = inkSetInterval(() => {
+        const now = Date.now();
+        const elapsed = now - animationStartTime;
+        const delta = now - animationLastTick;
+        animationLastTick = now;
+
+        // Batch update all active animation hooks
+        for (const hook of animationHooks) {
+          const current = hook.stateRef.current;
+          const newFrame = current.frame + 1;
+          const newTime = elapsed;
+          const newDelta = delta;
+          hook.setState({ frame: newFrame, time: newTime, delta: newDelta });
+        }
+      }, interval);
+    }
+
+    return () => {
+      animationHooks = animationHooks.filter(h => h !== hookData);
+      // Stop shared timer if no more hooks
+      if (animationHooks.length === 0 && animationTimerId) {
+        inkClearInterval(animationTimerId);
+        animationTimerId = null;
+      }
+    };
+  }, [isActive, interval]);
+
+  return useMemo(() => ({
+    frame: state.frame,
+    time: state.time,
+    delta: state.delta,
+    reset: resetRef.current,
+  }), [state.frame, state.time, state.delta]);
+}
+
+// usePaste - paste event handling (partial: bracketed paste mode not yet supported)
+const pasteHandlers = [];
+function usePaste(handler, options) {
+  options = options || {};
+  const isActive = options.isActive !== false;
+
+  useEffect(() => {
+    if (!isActive) return;
+    pasteHandlers.push(handler);
+    return () => {
+      const idx = pasteHandlers.indexOf(handler);
+      if (idx >= 0) pasteHandlers.splice(idx, 1);
+    };
+  }, [isActive]);
+}
+
+// useCursor - cursor positioning (partial: position tracking only)
+function useCursor() {
+  const positionRef = useRef(undefined);
+
+  return useMemo(() => ({
+    setCursorPosition: (position) => {
+      positionRef.current = position;
+      // In a full implementation, this would call into Rust to move the cursor
+      // For now, we track the position but don't move the physical cursor
+    }
+  }), []);
+}
+
+// useBoxMetrics - reactive box measurement (partial: one-shot only)
+function useBoxMetrics(ref) {
+  const [metrics, setMetrics] = useState({ width: 0, height: 0, left: 0, top: 0, hasMeasured: false });
+
+  useEffect(() => {
+    if (!ref || !ref.current || !ref.current.id) {
+      setMetrics({ width: 0, height: 0, left: 0, top: 0, hasMeasured: false });
+      return;
+    }
+
+    const measure = () => {
+      const result = globalThis.__ink_measure_element(String(ref.current.id));
+      if (!result || result === 'null') {
+        setMetrics({ width: 0, height: 0, left: 0, top: 0, hasMeasured: false });
+        return;
+      }
+      const parts = result.split(',');
+      const layout = globalThis.__ink_get_layout ? globalThis.__ink_get_layout(ref.current.id) : null;
+      setMetrics({
+        width: parseFloat(parts[0]) || 0,
+        height: parseFloat(parts[1]) || 0,
+        left: layout ? layout.left : 0,
+        top: layout ? layout.top : 0,
+        hasMeasured: true,
+      });
+    };
+
+    measure();
+    // Poll for changes every 500ms
+    const id = inkSetInterval(measure, 500);
+    return () => inkClearInterval(id);
+  }, [ref && ref.current && ref.current.id]);
+
+  return metrics;
+}
+
+// Transform component - transforms string output of children
+function Transform({ children, transform }) {
+  // Transform is a special component that intercepts text output
+  // In TuiBridge, we implement it by wrapping children and applying
+  // the transform function to the final text output
+  // Note: Full Transform support requires render pipeline changes
+  // This is a best-effort implementation
+  return createElement('ink-text', {
+    transform: typeof transform === 'function' ? transform : undefined,
+  }, children);
+}
+
+// Kitty keyboard constants
+const kittyFlags = {
+  DisambiguateEscapeCodes: 1,
+  ReportEventTypes: 2,
+  ReportAlternateKeys: 4,
+  ReportAllKeysAsEscapeCodes: 8,
+  ReportAssociatedText: 16,
+};
+
+const kittyModifiers = {
+  Shift: 1,
+  Alt: 2,
+  Control: 4,
+  Super: 8,
+  Hyper: 16,
+  Meta: 32,
+  CapsLock: 64,
+  NumLock: 128,
+};
+
+// ===================================================================
 // 5. Timer Polyfills (using Rust bridge) - OPTIMIZED
 // Store Functions in JS Maps, pass only IDs to Rust
 // ===================================================================
@@ -810,6 +1011,7 @@ const Text = 'ink-text';
 const Static = 'ink-static';
 const Newline = 'ink-newline';
 const Spacer = 'ink-spacer';
+const Transform = 'ink-transform';
 
 // ===================================================================
 // 10. Console Polyfill
@@ -1028,26 +1230,62 @@ globalThis.__tb_dispatch_mouse = function(event) {
 
 const ink = {
   render,
-  Box, Text, Static, Newline, Spacer,
+  renderToString,
+  Box, Text, Static, Newline, Spacer, Transform,
   useState, useEffect, useRef, useMemo, useCallback, useContext,
   useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager,
+  useWindowSize, useAnimation, usePaste, useCursor, useBoxMetrics,
   measureElement,
   useBridge,
   createElement,
   createContext,
+  kittyFlags,
+  kittyModifiers,
   setTimeout: inkSetTimeout,
   clearTimeout: inkClearTimeout,
   setInterval: inkSetInterval,
   clearInterval: inkClearInterval,
 };
 
+// renderToString - synchronous string rendering (for testing/documentation)
+function renderToString(element, options) {
+  options = options || {};
+  const columns = options.columns || 80;
+  
+  // Set up a virtual terminal size
+  if (globalThis.__ink_set_terminal_size) {
+    globalThis.__ink_set_terminal_size(columns, 24);
+  }
+  
+  const rootId = globalThis.__ink_create_root();
+  const tree = mountTree(element, rootId);
+  globalThis.__ink_commit();
+  
+  // Calculate layout
+  if (globalThis.__ink_calculate_layout) {
+    globalThis.__ink_calculate_layout();
+  }
+  
+  // For now, return a placeholder - full implementation would need
+  // to render the ratatui buffer to a string without terminal I/O
+  // This requires a separate rendering path
+  var result = '';
+  
+  // Clean up
+  globalThis.__ink_destroy_root(rootId);
+  
+  return result;
+}
+
 globalThis.ink = ink;
 globalThis.render = render;
+globalThis.renderToString = renderToString;
 globalThis.Box = Box;
 globalThis.Text = Text;
 globalThis.Static = Static;
 globalThis.Newline = Newline;
 globalThis.Spacer = Spacer;
+globalThis.Transform = Transform;
 globalThis.useState = useState;
 globalThis.useEffect = useEffect;
 globalThis.useRef = useRef;
@@ -1061,7 +1299,14 @@ globalThis.useStdout = useStdout;
 globalThis.useStderr = useStderr;
 globalThis.useFocus = useFocus;
 globalThis.useFocusManager = useFocusManager;
+globalThis.useWindowSize = useWindowSize;
+globalThis.useAnimation = useAnimation;
+globalThis.usePaste = usePaste;
+globalThis.useCursor = useCursor;
+globalThis.useBoxMetrics = useBoxMetrics;
 globalThis.measureElement = measureElement;
+globalThis.kittyFlags = kittyFlags;
+globalThis.kittyModifiers = kittyModifiers;
 globalThis.useBridge = useBridge;
 globalThis.createElement = createElement;
 globalThis.createContext = createContext;

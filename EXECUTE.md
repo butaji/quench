@@ -14,9 +14,9 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
                               Crossterm Events ← Event Loop
 ```
 
-- **JS:** Reconciler + hooks in runtime.js (~1077 lines)
-- **Rust:** Yoga layout, ratatui rendering, event loop (~4605 lines)
-- **Ratio:** ~81% Rust, ~19% JS
+- **JS:** Reconciler + hooks in runtime.js (~1320 lines)
+- **Rust:** Yoga layout, ratatui rendering, event loop (~4701 lines)
+- **Ratio:** ~78% Rust, ~22% JS
 
 ---
 
@@ -68,10 +68,11 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 - **State:** useState, useEffect, useRef, useMemo, useCallback
 - **Context:** createContext, useContext
 - **Ink:** useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager, measureElement
+- **Ink 7:** useAnimation, useWindowSize, useCursor, usePaste, useBoxMetrics
 - **TuiBridge:** useBridge
 
 ### Components
-- ink-box, ink-text, ink-static, ink-newline, ink-spacer
+- ink-box, ink-text, ink-static, ink-newline, ink-spacer, ink-transform
 
 ---
 
@@ -104,6 +105,7 @@ tmux attach -t tui
 - **Primary (10):** counter, todo-list, focus-form, dashboard, file-tree, log-viewer, spinner, tabs, chat-ui, mouse-app
 - **Extended (20):** border-styles, context-demo, flex-layouts, focus-manager, measure-ref, sizing-constraints, spacing-props, static-overlay, stdin-stdout, text-styles, use-bridge, wizard, animations, component-composition, confirm-prompt, progress-bar, scroll-view, select-input, table-demo, terminal-resize
 - **Advanced (8):** align-demo, flex-basis-demo, text-wrap-demo, transform-demo, form-validation, multi-select, realtime-dashboard, loading-states
+- **Ink 7 Features (1):** use-animation
 - **Legacy (JS):** All have JS equivalents for reference
 
 ---
