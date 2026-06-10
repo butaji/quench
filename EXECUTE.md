@@ -22,7 +22,7 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 
 ## ✅ Done Definition
 
-- [x] All tasks in `tasks/` complete (67 tasks)
+- [x] All tasks in `tasks/` complete (68 tasks, 66 done, 2 deferred)
 - [x] All examples run in TuiBridge without source modification
 - [x] 100% Ink API coverage achieved
 - [x] Release binary 2.9 MB (under 5 MB target)

@@ -199,7 +199,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ## 7. Current State
 
-### ✅ Complete (57 tasks) + 🟡 1 Deferred
+### ✅ Complete (68 tasks) + 🟡 2 Deferred
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -214,6 +214,8 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 | JS Examples | 041-050 | All 10 JS examples done |
 | TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
 | Parity | 051-052 | Harness and diff scripts done |
+| TSX Examples | 059-066 | 8 new TSX examples for full API coverage |
+| Ink Props | 067 | alignSelf, position props, wrap alias - done |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
@@ -371,11 +373,11 @@ Original examples kept for compatibility reference.
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| All tasks in `tasks/` complete | ✅ | **66 tasks**, 62 "done", 1 "partial", 1 "pending", 2 "deferred" |
+| All tasks in `tasks/` complete | ✅ | **68 tasks**, 66 "done", 2 "deferred" |
 | Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.9 MB** (under target) |
-| Rust/JS ratio | ✅ | **82% Rust, 18% JS** |
+| Rust/JS ratio | ✅ | **81% Rust, 19% JS** |
 | Linter compliance | ✅ | All files under 500 lines |
 | Hot reload | ✅ | Implemented in hotreload.rs |
 | TSX compiler | ✅ | `--compile` and `--run` flags |
