@@ -4,7 +4,7 @@
 Add build-time lint rules to keep the Rust codebase maintainable and fast.
 
 ## Status
-✅ **COMPLETE — All files under 500 lines, modularization complete.**
+🟡 **PARTIALLY COMPLETE — File length limits met; function length/complexity still being enforced.**
 
 **Completed (2026-06-10):**
 - All 23 Rust source files ≤ 500 lines ✅
@@ -13,6 +13,11 @@ Add build-time lint rules to keep the Rust codebase maintainable and fast.
 - render.rs, cli.rs, event_loop.rs extracted ✅
 - Compiler module: panic! on violations ✅
 - Linter correctly handles strings, escaped quotes, and raw strings ✅
+
+**Still pending (see Remaining Work below):**
+- Function length ≤ 40 lines (not yet enforced globally)
+- Cyclomatic complexity ≤ 10 (not yet enforced globally)
+- build.rs has 2 clippy warnings (Task 083)
 
 ## Current Enforcement
 
@@ -84,8 +89,8 @@ src/compiler/
 ## Acceptance Criteria
 - [x] `cargo build` produces zero linter warnings ✅
 - [x] All Rust source files ≤ 500 lines ✅
-- [x] All function bodies ≤ 40 lines ✅
-- [x] All functions complexity ≤ 10 ✅
+- [ ] All function bodies ≤ 40 lines (warning-only; not yet enforced globally)
+- [ ] All functions complexity ≤ 10 (warning-only; not yet enforced globally)
 - [ ] Build fails (not warns) on violations (partial: compiler/ only)
 
 ## Dependencies

@@ -146,7 +146,8 @@
       "tasks": [
         "068",
         "069",
-        "070"
+        "070",
+        "071"
       ]
     },
     {
@@ -250,9 +251,10 @@
     },
     "013": {
       "file": "013-event-loop-tokio.md",
-      "title": "Event Loop: tokio::select!",
+      "title": "Event Loop (Synchronous Poll)",
       "phase": 3,
-      "status": "done"
+      "status": "done",
+      "note": "Uses sync crossterm::event::poll, not tokio::select!. See Task 077 for async migration."
     },
     "014": {
       "file": "014-keyboard-dispatch.md",
@@ -410,8 +412,8 @@
       "file": "038-hot-reload-remount.md",
       "title": "DevEx: Remount Cycle",
       "phase": 7,
-      "status": "done",
-      "note": "Unmount + eval(new_code) in same VM. <50ms target."
+      "status": "partial",
+      "note": "File watcher wired up but creates new VM without setup_runtime(). Broken — see Task 072."
     },
     "039": {
       "file": "039-production-bytecode.md",
@@ -530,7 +532,7 @@
       "title": "Hot Path Optimization (60fps)",
       "phase": 10,
       "status": "done",
-      "note": "Batch timer/microtask dispatch. Key/mouse single eval."
+      "note": "Batch timer/microtask dispatch. Key/mouse still use ctx.eval per event — see Task 076."
     },
     "056": {
       "file": "056-render-parity-gaps.md",
@@ -550,15 +552,15 @@
       "file": "058-linter-enforcement.md",
       "title": "Linter Enforcement",
       "phase": 11,
-      "status": "done",
-      "note": "All 23 files under 500 lines. bridge/, ink/, compiler/ modularized."
+      "status": "partial",
+      "note": "All files ≤500 lines. Function length/complexity warning-only. 2 clippy warnings in build.rs (Task 083)."
     },
     "059": {
       "file": "059-verification.md",
       "title": "Verification & Testing",
       "phase": 11,
       "status": "done",
-      "note": "28 tests passing, 2.1 MB binary, CLI working"
+      "note": "34 tests passing, 2.0 MB binary, CLI working. 2 clippy warnings in build.rs."
     },
     "060": {
       "file": "060-compat-validation.md",

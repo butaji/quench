@@ -37,9 +37,9 @@ ctx.eval("__tb_invoke_timers([1,2,3])");  // JS calls Function refs directly
 
 ### Key/Mouse Dispatch
 
-Key and mouse events still use one `ctx.eval()` per event, but they dispatch to JS `__tb_dispatch_key/__tb_dispatch_mouse` which iterate native JS Maps. No string callbacks, no per-handler eval.
+Key and mouse events use one `ctx.eval()` per event, dispatching to JS `__tb_dispatch_key/__tb_dispatch_mouse` which iterate native JS Maps. No per-handler string building, but still one JS parse+execute per keystroke.
 
-**Note:** Direct `rquickjs::Function` calls (the original Task 053 plan) were avoided due to lifetime complexity. The batching approach achieves the same performance gain with simpler code.
+**Note:** Direct `rquickjs::Function` calls (original Task 053 plan) were avoided due to lifetime complexity. However, string eval per keystroke is still wasteful. See **Task 076** for replacing this with direct `rquickjs::Function` calls.
 
 ## Performance Impact
 
@@ -47,8 +47,8 @@ Key and mouse events still use one `ctx.eval()` per event, but they dispatch to 
 |------|--------|-------|-------------|
 | Timer dispatch | ~0.3ms per callback | ~0.03ms total | **10x** |
 | Microtask dispatch | ~0.3ms per task | ~0.03ms total | **10x** |
-| Key dispatch | ~0.5ms (string eval) | ~0.5ms (single eval) | Same (still 1 eval) |
-| Mouse dispatch | ~0.5ms (string eval) | ~0.5ms (single eval) | Same (still 1 eval) |
+| Key dispatch | ~0.5ms (string eval) | ~0.5ms (single eval) | Same (still 1 eval) — **see Task 076** |
+| Mouse dispatch | ~0.5ms (string eval) | ~0.5ms (single eval) | Same (still 1 eval) — **see Task 076** |
 
 ## Acceptance Criteria
 - [x] Timer callbacks stored in JS Map, invoked via `__tb_invoke_timers(ids)`

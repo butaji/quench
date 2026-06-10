@@ -1,4 +1,4 @@
-# Task 064: Compile React+Ink Apps for TuiBridge
+# Task 065: Compile React+Ink Apps for TuiBridge (esbuild approach — deprecated)
 
 ## Goal
 Compile React+Ink source files (like `../tui1/mod.tsx`) into TuiBridge-compatible JS — without running pre-built bundles.

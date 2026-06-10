@@ -3,15 +3,15 @@
 ## Goal
 Verify the implementation meets all acceptance criteria.
 
-## Current Status
+## Current Status (as of 2026-06-10)
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
 | Build succeeds | ✅ | `cargo build --release` passes |
-| Binary size < 5 MB | ✅ | **2.1 MB** |
-| FFI tests | ✅ | 28 tests passing |
-| clippy | ✅ | Warnings only, passes |
-| Test suite | ✅ | 28 meaningful tests |
+| Binary size < 5 MB | ✅ | **2.0 MB** |
+| FFI tests | ✅ | 34 tests passing |
+| clippy | 🟡 | 0 warnings in library; 2 warnings in `build.rs` (Task 083) |
+| Test suite | ✅ | 34 tests across bridge/, ink/, compat.rs, parity.rs |
 | Compiler CLI | ✅ | `--compile` and `--run` flags work |
 
 ## Verification Results
@@ -19,45 +19,50 @@ Verify the implementation meets all acceptance criteria.
 ### Build & Release
 ```bash
 $ cargo build --release
-   Finished `release` profile [optimized] target(s) in 9.53s
+   Finished `release` profile [optimized] target(s) in 5.52s
 
-$ ls -la target/release/tuibridge
--rwxr-xr-x  16 admin  staff  2203616 Jun  9 22:19 tuibridge  # 2.1 MB
+$ ls -lh target/release/tuibridge
+-rwxr-xr-x  admin  staff  2.0M Jun 10 15:12 target/release/tuibridge
 ```
 
 ### Tests
 ```bash
 $ cargo test
-running 28 tests
-test bridge::tests::test_append_child ... ok
-test bridge::tests::test_box_layout_stability ... ok
-test bridge::tests::test_create_nodes ... ok
-test bridge::tests::test_dirty_flag_for_text_change ... ok
-test bridge::tests::test_measure_text ... ok
-test bridge::tests::test_node_with_background_color ... ok
-test bridge::tests::test_node_with_margin_props ... ok
-test bridge::tests::test_text_measurement_accuracy ... ok
-test bridge::tests::test_exit ... ok
-test bridge::tests::test_parse_background_color ... ok
-test bridge::tests::test_parse_props_json ... ok
-test bridge::tests::test_escape_string ... ok
-test bridge::tests::test_microtasks ... ok
-test bridge::tests::test_interval_repeats ... ok
-test bridge::tests::test_create_and_destroy_root ... ok
-test bridge::tests::test_timers ... ok
-test bridge::tests::test_process_timers ... ok
+test bridge::node::tests::test_append_child ... ok
+test bridge::node::tests::test_create_and_destroy_root ... ok
+test bridge::node::tests::test_create_nodes ... ok
+test bridge::node::tests::test_dirty_flag_for_text_change ... ok
+test bridge::node::tests::test_escape_string ... ok
+test bridge::node::tests::test_measure_text ... ok
+test bridge::node::tests::test_microtasks ... ok
+test bridge::node::tests::test_parse_margin_props ... ok
+test bridge::node::tests::test_parse_padding_props ... ok
+test bridge::node::tests::test_parse_props_json ... ok
+test bridge::node::tests::test_process_timers ... ok
+test bridge::node::tests::test_text_measurement_accuracy ... ok
+test bridge::node::tests::test_timers ... ok
+test bridge::node::tests::test_exit ... ok
+test bridge::node::tests::test_interval_repeats ... ok
+test bridge::props::tests::test_background_color ... ok
+test bridge::props::tests::test_basic ... ok
+test bridge::props::tests::test_empty ... ok
+test bridge::props::tests::test_escape_string ... ok
+test bridge::props::tests::test_margin_props ... ok
+test bridge::props::tests::test_padding_props ... ok
 test bridge_config::tests::test_bridge_config_from_args ... ok
-test bridge_config::tests::test_bridge_config_new ... ok
 test bridge_config::tests::test_bridge_config_js_injection ... ok
+test bridge_config::tests::test_bridge_config_new ... ok
 test bridge_config::tests::test_detect_color_support ... ok
-test bridge::tests::test_parse_margin_props ... ok
-test bridge::tests::test_parse_padding_props ... ok
+test bridge_config::tests::test_empty_props ... ok
 test compat::tests::test_is_partial_prop ... ok
 test compat::tests::test_text_wrap_from_str ... ok
 test compat::tests::test_validate_box_props ... ok
 test compat::tests::test_validate_text_props ... ok
+test tests::test_binary_exists ... ok
+test tests::test_counter_jsx_compiles ... ok
+test tests::test_simple_js_ffi ... ok
 
-test result: ok. 28 passed; 0 failed
+test result: ok. 34 passed; 0 failed
 ```
 
 ### CLI
@@ -82,28 +87,30 @@ Options:
 
 ### Clippy
 ```bash
-$ cargo clippy -- -D warnings
-warning: tuibridge@0.1.0: Lint violations found (see warnings)
-warning: tuibridge@0.1.0: [file-length] src/bridge.rs:1118 - file has 1118 lines (max 500)
-warning: tuibridge@0.1.0: [function-length] ...
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+$ cargo clippy
+warning: implicit saturating sub
+warning: needless range loop
+warning: `tuibridge` (build script) generated 2 warnings
+    Checking tuibridge v0.1.0
+    Finished `dev` profile [unoptimized + debuginfo] in 0.47s
 ```
 
 ## Remaining Work
 
-The core functionality is verified. The remaining items are optional enhancements:
+The core functionality is verified. The remaining items are tracked in post-review tasks:
 
-1. **PTY for Parity** - Scripts exist (`scripts/parity.sh`) but need proper TTY emulation
-2. **Hot Reload Benchmark** - Hot reload implemented, not benchmarked
-3. **Visual Verification** - Run examples in actual terminal to verify output
+1. **Task 072** — Hot reload is broken (creates new VM without setup)
+2. **Task 083** — `build.rs` has 2 clippy warnings
+3. **PTY for Parity** — `scripts/parity.sh` exists but needs proper TTY emulation
+4. **Hot Reload Benchmark** — Currently broken; fix first, then benchmark
 
 ## Acceptance Criteria
-
-- [x] `cargo test` runs and passes
-- [x] Binary < 5 MB
+- [x] `cargo test` runs and passes (34 tests)
+- [x] Binary < 5 MB (2.0 MB achieved)
 - [x] CLI works
 - [x] Compiler module works (limited)
 - [x] Examples run
+- [ ] clippy zero warnings (2 in build.rs — Task 083)
 
 ## Dependencies
-- Task 001–065 (all tasks complete)
+- Task 001–058 (core functionality)
