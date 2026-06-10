@@ -574,6 +574,12 @@ function useCursor() {
   }), []);
 }
 
+// useIsScreenReaderEnabled - screen reader detection (no-op in terminal)
+// Returns false since terminals don't expose screen reader state
+function useIsScreenReaderEnabled() {
+  return false;
+}
+
 // useBoxMetrics - reactive box measurement (partial: one-shot only)
 function useBoxMetrics(ref) {
   const [metrics, setMetrics] = useState({ width: 0, height: 0, left: 0, top: 0, hasMeasured: false });
@@ -1011,7 +1017,7 @@ const Text = 'ink-text';
 const Static = 'ink-static';
 const Newline = 'ink-newline';
 const Spacer = 'ink-spacer';
-const Transform = 'ink-transform';
+const TransformTag = 'ink-transform';
 
 // ===================================================================
 // 10. Console Polyfill
@@ -1231,10 +1237,11 @@ globalThis.__tb_dispatch_mouse = function(event) {
 const ink = {
   render,
   renderToString,
-  Box, Text, Static, Newline, Spacer, Transform,
+  Box, Text, Static, Newline, Spacer, TransformTag,
   useState, useEffect, useRef, useMemo, useCallback, useContext,
   useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager,
   useWindowSize, useAnimation, usePaste, useCursor, useBoxMetrics,
+  useIsScreenReaderEnabled,
   measureElement,
   useBridge,
   createElement,
@@ -1285,7 +1292,7 @@ globalThis.Text = Text;
 globalThis.Static = Static;
 globalThis.Newline = Newline;
 globalThis.Spacer = Spacer;
-globalThis.Transform = Transform;
+globalThis.Transform = TransformTag;
 globalThis.useState = useState;
 globalThis.useEffect = useEffect;
 globalThis.useRef = useRef;
@@ -1304,6 +1311,7 @@ globalThis.useAnimation = useAnimation;
 globalThis.usePaste = usePaste;
 globalThis.useCursor = useCursor;
 globalThis.useBoxMetrics = useBoxMetrics;
+globalThis.useIsScreenReaderEnabled = useIsScreenReaderEnabled;
 globalThis.measureElement = measureElement;
 globalThis.kittyFlags = kittyFlags;
 globalThis.kittyModifiers = kittyModifiers;
