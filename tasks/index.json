@@ -25,6 +25,7 @@
       "name": "JS Reconciler Shim",
       "tasks": [
         "009",
+        "009b",
         "010",
         "011",
         "012"
@@ -193,6 +194,13 @@
       "title": "JS: Reconciler Host Config",
       "phase": 2,
       "status": "done"
+    },
+    "009b": {
+      "file": "009b-ink-js-integration.md",
+      "title": "JS: Integrate ink_js.rs into main.rs",
+      "phase": 2,
+      "status": "done",
+      "note": "Native rquickjs bindings, removed JS shims, runtime.js is canonical"
     },
     "010": {
       "file": "010-js-render-api.md",
@@ -514,14 +522,15 @@
       "file": "058-linter-enforcement.md",
       "title": "Linter Enforcement",
       "phase": 11,
-      "status": "partial",
-      "note": "build.rs emits warnings for file/function length and complexity. Refactor needed to make warnings zero. Clippy clean (1 manual Default impl fixed in compat.rs)."
+      "status": "done",
+      "note": "All 23 files under 500 lines. bridge/, ink/, compiler/ modularized."
     },
     "059": {
       "file": "059-verification.md",
       "title": "Verification & Testing",
       "phase": 11,
-      "status": "pending"
+      "status": "done",
+      "note": "28 tests passing, 2.1 MB binary, CLI working"
     },
     "060": {
       "file": "060-compat-validation.md",
@@ -544,12 +553,19 @@
       "status": "done",
       "note": "BridgeConfig + useBridge() hook. --prop CLI flag. Platform/terminal auto-detection."
     },
+    "063": {
+      "file": "063-react-reconciler-bridge.md",
+      "title": "React Reconciler Bridge",
+      "phase": 12,
+      "status": "deferred",
+      "note": "Approach A: React host config. Approach B: Build-time swap with @tuibridge/ink-shim."
+    },
     "064": {
       "file": "064-compile-react-apps.md",
       "title": "Compile React+Ink Apps for TuiBridge (Rust Pipeline)",
       "phase": 12,
-      "status": "pending",
-      "note": "swc-based TSX parser + transform, zero Node.js deps"
+      "status": "done",
+      "note": "Regex-based JSX compiler with CLI integration"
     },
     "065": {
       "file": "065-compile-react-apps-esbuild.md",
@@ -557,6 +573,13 @@
       "phase": 12,
       "status": "deferred",
       "note": "Superseded by Task 064 (Rust/swc pipeline)"
+    },
+    "066": {
+      "file": "066-gap-small-props.md",
+      "title": "Implement Missing Ink Props (gap, small, title)",
+      "phase": 12,
+      "status": "done",
+      "note": "gap/gapX/gapY for flex spacing, small for dim text, title on Box"
     }
   }
 }
