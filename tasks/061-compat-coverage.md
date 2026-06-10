@@ -1,7 +1,7 @@
 # Task 061: Ink API Coverage Matrix
 
 ## Status
-✅ **COMPLETE** — 100% Ink API coverage achieved with TSX examples (2026-06-09)
+✅ **COMPLETE** — 100% Ink API coverage achieved with 18 TSX examples (2026-06-09)
 
 ## Ink API Surface
 
@@ -115,13 +115,15 @@ examples/mouse-app.tsx     — Mouse events
 examples/border-styles.tsx  — borderColor, dim, sides
 examples/context-demo.tsx    — createContext, useContext
 examples/focus-manager.tsx  — useFocus, useFocusManager
-examples/measure-ref.tsx    — useRef, measureElement
+examples/measure-ref.tsx      — useRef, measureElement
 examples/sizing-constraints.tsx — min/max, position, display
-examples/spacing-props.tsx  — margin/padding variants
-examples/static-overlay.tsx — Static, Newline, Spacer
-examples/stdin-stdout.tsx   — useStdin, useStdout, useStderr
-examples/use-bridge.tsx      — TuiBridge-specific props
-examples/wizard.tsx         — useMemo, useCallback
+examples/spacing-props.tsx    — margin/padding variants
+examples/static-overlay.tsx   — Static, Newline, Spacer
+examples/stdin-stdout.tsx     — useStdin, useStdout, useStderr
+examples/use-bridge.tsx        — TuiBridge-specific props
+examples/wizard.tsx           — useMemo, useCallback
+examples/animations.tsx        — Spinner, progress, blinking, pulse
+examples/terminal-resize.tsx   — Terminal resize handling
 ```
 
 ### Reference JS/TS (legacy)
