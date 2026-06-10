@@ -14,4 +14,4 @@ Full `useInput` implementation with options and keyboard dispatch.
 - Task 012, Task 014
 
 ## SPEC Reference
-§5.3 useInput
+§4 JS Runtime (runtime.js hooks)

@@ -14,4 +14,4 @@ Bridge `console.log` / `console.error` / `console.warn` to Rust `tracing`.
 - Task 001
 
 ## SPEC Reference
-§2 Polyfills — console
+§4 JS Runtime (console polyfill)

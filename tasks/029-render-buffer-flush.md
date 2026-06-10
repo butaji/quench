@@ -13,7 +13,7 @@ Use ratatui's double-buffered terminal output for minimal redraw.
 - Task 025
 
 ## SPEC Reference
-§3.2 Renderer — Double-buffered terminal output
+§3 Rust Modules (render.rs)
 
 ## Implementation Notes
 

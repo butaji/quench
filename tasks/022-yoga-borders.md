@@ -14,4 +14,4 @@ Map border props to Yoga insets and ratatui Block rendering.
 - Task 021
 
 ## SPEC Reference
-§3.1 Layout Engine; §3.2 Renderer
+§3 Rust Modules (ink/node.rs, render.rs)

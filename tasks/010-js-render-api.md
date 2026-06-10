@@ -21,4 +21,4 @@ Implement `render()` in Rust and expose it to JS via rquickjs.
 - Task 009b (integration)
 
 ## SPEC Reference
-§3 Rust ink Module; §4 JS is Just Data
+§3 Rust Modules; §4 JS Runtime

@@ -13,4 +13,4 @@ Implement tree mutation operations: append, remove, insert before.
 - Task 003
 
 ## SPEC Reference
-§4 Bridge API — append_child / remove_child / insert_before
+§3 Rust Modules (bridge/tree.rs)

@@ -14,4 +14,4 @@ Compare deno and TuiBridge ANSI outputs and enforce 100% look&feel match.
 - Task 051
 
 ## SPEC Reference
-§10 Example; §8 Performance Summary
+§10 Examples Matrix; §6 Performance

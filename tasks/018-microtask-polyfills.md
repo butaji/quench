@@ -74,4 +74,4 @@ ctx.eval("__tb_invoke_microtasks()")?;
 - Task 013
 
 ## SPEC Reference
-§2 Polyfills — setImmediate / process.nextTick
+§4 JS Runtime (timer/microtask polyfills)

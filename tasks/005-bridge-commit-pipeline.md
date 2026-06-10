@@ -13,4 +13,4 @@ Implement prop updates, text updates, and the commit trigger.
 - Task 004
 
 ## SPEC Reference
-§4 Bridge API — commit_update / set_text / commit
+§3 Rust Modules (bridge/tree.rs)

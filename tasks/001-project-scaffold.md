@@ -13,4 +13,4 @@ Create the Cargo workspace with all dependencies required for TuiBridge.
 None.
 
 ## SPEC Reference
-§9 Week 1: Bridge — scaffold
+§3 Rust Modules; §2 Stack

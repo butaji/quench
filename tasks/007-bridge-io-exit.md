@@ -14,4 +14,4 @@ Implement stdout/stderr writes, raw mode query, and app exit.
 - Task 001
 
 ## SPEC Reference
-§4 Bridge API — stdout_write / stderr_write / stdin_is_raw / exit
+§3 Rust Modules (bridge/io.rs)

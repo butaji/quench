@@ -30,4 +30,4 @@ The original plan (Task 053) proposed storing `rquickjs::Function` references in
 This meets the 60fps budget without introducing rquickjs lifetime complexity.
 
 ## SPEC Reference
-§7 Performance
+§6 Performance

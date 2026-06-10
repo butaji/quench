@@ -14,4 +14,4 @@ Register and unregister JS callbacks for keyboard and mouse events.
 - Task 001
 
 ## SPEC Reference
-§4 Bridge API — register_input / unregister_input; §7.1 Rust → JS Dispatch
+§3 Rust Modules (bridge/); §5 Event Loop

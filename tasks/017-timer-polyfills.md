@@ -15,4 +15,4 @@ Bridge `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval` to tokio 
 - Task 013
 
 ## SPEC Reference
-§2 Polyfills — setTimeout / setInterval
+§4 JS Runtime (timer/microtask polyfills)

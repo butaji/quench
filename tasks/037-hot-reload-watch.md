@@ -13,4 +13,4 @@ Integrate `notify` + `esbuild --watch` to detect plugin changes.
 - Task 001
 
 ## SPEC Reference
-§6 Hot Reload
+§11 Post-Review Remediation (hot reload sub-topic)

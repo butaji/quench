@@ -13,4 +13,4 @@ Handle `ink-newline` (force line break) and `ink-spacer` (flex filler).
 - Task 026
 
 ## SPEC Reference
-§5.2 Components — Newline / Spacer
+§3 Rust Modules (ink/node.rs, render.rs)

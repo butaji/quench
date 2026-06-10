@@ -13,4 +13,4 @@ Trigger `calculate_layout` on root and propagate computed layouts to all nodes.
 - Task 023, Task 022, Task 005
 
 ## SPEC Reference
-§3.1 Layout Engine; §3.3 Event Loop dirty render
+§3 Rust Modules (ink/); §5 Event Loop

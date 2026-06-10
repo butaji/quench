@@ -14,4 +14,4 @@ Implement `useApp` returning exit, stdout, stdin, stderr proxies.
 - Task 012, Task 007
 
 ## SPEC Reference
-§5.3 useApp
+§4 JS Runtime (runtime.js hooks)

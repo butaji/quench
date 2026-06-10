@@ -13,4 +13,4 @@ Serialize crossterm KeyEvent and dispatch to all registered JS input handlers.
 - Task 008, Task 013
 
 ## SPEC Reference
-§7.1 Rust → JS Dispatch; §7.2 JS Event Handling
+§5 Event Loop

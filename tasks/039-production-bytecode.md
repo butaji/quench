@@ -14,4 +14,4 @@ Precompile JS bundle to QuickJS bytecode and embed in binary.
 - Task 010
 
 ## SPEC Reference
-§7 Production Build
+§8 Remaining Work (production features subsection)

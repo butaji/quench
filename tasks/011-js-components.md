@@ -21,4 +21,4 @@ Expose component tags as Rust constants to JS.
 - Task 009b (integration)
 
 ## SPEC Reference
-§3 Rust ink Module
+§3 Rust Modules

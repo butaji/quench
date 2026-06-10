@@ -15,4 +15,4 @@ Build harness that runs each example in both deno (Ink) and TuiBridge, capturing
 - All example tasks (041–050)
 
 ## SPEC Reference
-§10 Example: Exact Ink Code Working
+§10 Examples Matrix

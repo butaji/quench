@@ -15,4 +15,4 @@ Map padding, margin, gap, width, height, and min/max dimensions to Yoga.
 - Task 020
 
 ## SPEC Reference
-§3.1 Layout Engine; §9 Week 3
+§3 Rust Modules (ink/)

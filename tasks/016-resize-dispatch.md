@@ -12,4 +12,4 @@ Handle crossterm Resize event and recalculate Yoga root dimensions.
 - Task 002, Task 013
 
 ## SPEC Reference
-§3.3 Event Loop — Resize(w, h)
+§5 Event Loop

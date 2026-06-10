@@ -22,4 +22,4 @@ Expose all ink functionality from Rust to JS via rquickjs globals.
 - Task 009b (integration)
 
 ## SPEC Reference
-§3 Rust ink Module
+§3 Rust Modules

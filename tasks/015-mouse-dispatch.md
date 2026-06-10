@@ -69,4 +69,4 @@ Added `__ink_get_node_parent` for ancestor traversal during hit-testing.
 - Task 008, Task 013
 
 ## SPEC Reference
-§7.3 Hit Testing (Mouse)
+§5 Event Loop

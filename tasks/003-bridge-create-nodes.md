@@ -13,4 +13,4 @@ Implement `__ink_create_node` and `__ink_create_text_node` for reconciler node c
 - Task 002
 
 ## SPEC Reference
-§4 Bridge API — create_node / create_text_node
+§3 Rust Modules (bridge/node.rs)

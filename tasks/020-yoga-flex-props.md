@@ -15,4 +15,4 @@ Map Ink flex props to Yoga node properties.
 - Task 003
 
 ## SPEC Reference
-§3.1 Layout Engine; §9 Week 3: Layout + Widgets
+§3 Rust Modules (ink/)

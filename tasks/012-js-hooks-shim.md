@@ -32,4 +32,4 @@ This requires integrating a reconciler (like `react-reconciler` port to Rust or 
 - Task 009b (integration)
 
 ## SPEC Reference
-§3 Rust ink Module
+§3 Rust Modules; §4 JS Runtime

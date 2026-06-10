@@ -14,4 +14,4 @@ Implement focus system with tab order and focus manager. Implemented entirely in
 - Task 030
 
 ## SPEC Reference
-§5.3 useFocus / useFocusManager
+§4 JS Runtime (runtime.js hooks)

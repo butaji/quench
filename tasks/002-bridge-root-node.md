@@ -12,4 +12,4 @@ Implement `__ink_create_root` and `__ink_destroy_root` to manage the terminal ro
 - Task 001
 
 ## SPEC Reference
-§4 Bridge API — create_root / destroy_root
+§3 Rust Modules (bridge/node.rs, ink/runtime.rs)

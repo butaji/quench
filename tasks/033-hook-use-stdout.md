@@ -14,4 +14,4 @@ Implement `useStdout` providing write access and terminal dimensions.
 - Task 031
 
 ## SPEC Reference
-§5.3 useStdout
+§4 JS Runtime (runtime.js hooks)

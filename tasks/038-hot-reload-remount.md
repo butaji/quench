@@ -23,4 +23,4 @@ See **Task 072** for the full bug description and fix plan.
 - Task 010, Task 037, Task 002, Task 072
 
 ## SPEC Reference
-§6 Hot Reload
+§11 Post-Review Remediation (hot reload sub-topic)

@@ -13,4 +13,4 @@ Remove watcher, esbuild, source maps, and hot-reload code from release builds.
 - Task 037, Task 039
 
 ## SPEC Reference
-§7 Production Build; §8 Performance Summary
+§8 Remaining Work (production features); §6 Performance

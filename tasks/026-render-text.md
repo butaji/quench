@@ -13,4 +13,4 @@ Render `ink-text` nodes as ratatui `Paragraph` / `Span` with full style support.
 - Task 025
 
 ## SPEC Reference
-§3.2 Renderer
+§3 Rust Modules (render.rs)

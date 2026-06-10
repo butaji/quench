@@ -46,4 +46,4 @@ User TS/JS → transpiled JS → rquickjs VM → runtime.js (reconciler + hooks)
 - [x] No rquickjs lifetime complexity in reconciler
 
 ## SPEC Reference
-§3 Rust ink Module; §7 Performance
+§3 Rust Modules; §6 Performance

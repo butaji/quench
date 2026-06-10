@@ -13,4 +13,4 @@ Implement `measureElement(ref)` returning Yoga-computed dimensions.
 - Task 006, Task 010
 
 ## SPEC Reference
-§5.4 measureElement(ref)
+§3 Rust Modules (bridge/tree.rs, ink/)

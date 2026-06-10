@@ -153,4 +153,4 @@ tracing::debug!("borderDimColor uses DIM modifier, not separate color");
 - None
 
 ## SPEC Reference
-§7 Performance (debug mode off = zero overhead)
+§6 Performance (debug mode off = zero overhead)

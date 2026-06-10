@@ -13,4 +13,4 @@ Implement `ink-static` semantics: items rendered above main tree, unmounting is 
 - Task 025
 
 ## SPEC Reference
-§3.2 Renderer — InkTag::Static
+§3 Rust Modules (render.rs, ink/node.rs)

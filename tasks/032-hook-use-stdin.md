@@ -13,4 +13,4 @@ Implement `useStdin` providing raw mode control and read stream.
 - Task 031
 
 ## SPEC Reference
-§5.3 useStdin
+§4 JS Runtime (runtime.js hooks)

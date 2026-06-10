@@ -66,4 +66,4 @@ ctx.with(|ctx| ctx.eval(new_code))?;
 ## References
 - Task 037 (File Watcher)
 - Task 038 (Remount Cycle)
-- SPEC §6 Hot Reload
+- SPEC §11 Post-Review Remediation (hot reload sub-topic)

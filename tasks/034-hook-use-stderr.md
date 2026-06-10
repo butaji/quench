@@ -12,4 +12,4 @@ Implement `useStderr` providing write access to stderr.
 - Task 031
 
 ## SPEC Reference
-§5.3 useStderr
+§4 JS Runtime (runtime.js hooks)

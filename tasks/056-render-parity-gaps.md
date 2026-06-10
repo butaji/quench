@@ -81,4 +81,4 @@
 - Task 026 (Text render)
 
 ## SPEC Reference
-§5 ratatui Rendering
+§3 Rust Modules (render.rs)

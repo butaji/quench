@@ -13,4 +13,4 @@ Implement text measurement and element measurement bridges.
 - Task 003
 
 ## SPEC Reference
-§4 Bridge API — measure_text / measure_element; §3.1 Text Measurement Bridge
+§3 Rust Modules (bridge/io.rs, ink/)

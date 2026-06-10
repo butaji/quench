@@ -124,4 +124,4 @@ tuibridge examples/counter.js
 - Task 026 (Text render)
 
 ## SPEC Reference
-§9 Example
+§10 Examples Matrix

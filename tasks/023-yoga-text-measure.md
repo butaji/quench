@@ -13,4 +13,4 @@ Register Rust measure function on Yoga text nodes so Yoga can size text during l
 - Task 006, Task 003
 
 ## SPEC Reference
-§3.1 Text Measurement Bridge
+§3 Rust Modules (bridge/io.rs, ink/)
