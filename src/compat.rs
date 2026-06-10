@@ -45,14 +45,18 @@ pub static UNSUPPORTED_BOX_PROPS: &[&str] = &[
     "aria-label", "aria-hidden", "aria-role", "aria-state",
 ];
 
-/// Ink 7.0.5 hooks NOT YET supported by TuiBridge
-pub static UNSUPPORTED_HOOKS: &[&str] = &[
-    "useAnimation",   // Animation hook (frame, time, delta, reset)
-    "useWindowSize",  // Terminal dimensions
-    "useCursor",      // Cursor positioning
-    "usePaste",       // Paste event handling
-    "useIsScreenReaderEnabled", // Screen reader detection
-    "useBoxMetrics",  // Box measurement
+/// Hooks with partial support (implemented but with limitations)
+pub static PARTIAL_HOOKS: &[&str] = &[
+    "useAnimation",   // Shared timer, accurate frame/time/delta
+    "useWindowSize",  // Poll-based (500ms), not event-driven
+    "useCursor",      // Position tracking only, no physical cursor move
+    "usePaste",       // Handler registered, bracketed paste not supported
+    "useBoxMetrics",  // Poll-based (500ms), not event-driven
+];
+
+/// Hooks not applicable to terminal environments
+pub static NA_HOOKS: &[&str] = &[
+    "useIsScreenReaderEnabled", // Screen reader detection - N/A for terminals
 ];
 
 /// All Ink props supported by TuiBridge (Text components)
@@ -125,6 +129,16 @@ pub fn is_partial_prop(prop: &str) -> bool {
     PARTIAL_PROPS.contains(&prop)
 }
 
+/// Check if a hook has partial support
+pub fn is_partial_hook(hook: &str) -> bool {
+    PARTIAL_HOOKS.contains(&hook)
+}
+
+/// Check if a hook is not applicable to terminals
+pub fn is_na_hook(hook: &str) -> bool {
+    NA_HOOKS.contains(&hook)
+}
+
 /// Log warnings for unsupported props (only in debug mode)
 pub fn warn_unsupported_props(unsupported: &[String], component: &str) {
     if unsupported.is_empty() {
@@ -146,6 +160,40 @@ pub fn warn_unsupported_props(unsupported: &[String], component: &str) {
             tracing::warn!(
                 "Unsupported prop '{}' on <{}>",
                 prop, component
+            );
+        }
+    }
+}
+
+/// Log warnings for unsupported hooks (only in debug mode)
+pub fn warn_unsupported_hooks(hooks: &[String]) {
+    if hooks.is_empty() {
+        return;
+    }
+    
+    for hook in hooks {
+        if is_partial_hook(hook) {
+            let note = match hook.as_str() {
+                "useAnimation" => "(shared timer, accurate frame/time/delta)",
+                "useWindowSize" => "(poll-based, not event-driven)",
+                "useCursor" => "(position tracking only)",
+                "usePaste" => "(handler registered, bracketed paste not supported)",
+                "useBoxMetrics" => "(poll-based, not event-driven)",
+                _ => "",
+            };
+            tracing::warn!(
+                "Partial support: hook '{}' {}",
+                hook, note
+            );
+        } else if is_na_hook(hook) {
+            tracing::debug!(
+                "Hook '{}' not applicable to terminal environments",
+                hook
+            );
+        } else {
+            tracing::warn!(
+                "Unsupported hook '{}'",
+                hook
             );
         }
     }

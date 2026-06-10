@@ -71,16 +71,16 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 | `borderBackgroundColor` | string | Border background color | ❌ |
 | `border*BackgroundColor` | string | Individual border backgrounds | ❌ |
 
-### Missing Hooks
+### Hooks Implemented (with partial support)
 
-| Hook | Description | Status | Priority |
-|------|-------------|--------|----------|
-| `useAnimation` | Built-in animation helper (frame, time, delta, reset) | ❌ | HIGH |
-| `useWindowSize` | Terminal dimensions | ❌ | MEDIUM |
-| `useCursor` | Cursor positioning | ❌ | MEDIUM |
-| `usePaste` | Paste event handling | ❌ | LOW |
-| `useBoxMetrics` | Measure box dimensions | ❌ | LOW |
-| `useIsScreenReaderEnabled` | Screen reader detection | ❌ | N/A |
+| Hook | Description | Status | Notes |
+|------|-------------|--------|-------|
+| `useAnimation` | Built-in animation helper (frame, time, delta, reset) | ✅ | Shared timer, accurate timing |
+| `useWindowSize` | Terminal dimensions | ✅ | Poll-based (500ms) |
+| `useCursor` | Cursor positioning | ✅ | Position tracking only |
+| `usePaste` | Paste event handling | ✅ | Handler registered |
+| `useBoxMetrics` | Measure box dimensions | ✅ | Poll-based (500ms) |
+| `useIsScreenReaderEnabled` | Screen reader detection | N/A | Not applicable to terminals |
 
 ### Accessibility Props (Not Applicable)
 
@@ -158,6 +158,42 @@ In `src/render.rs`, added support for both `wrap` and `textWrap` props with Ink 
 1. Check `scripts/parity.sh` for examples using new props
 2. Visual verification in tmux for positioning and alignment
 3. Run `examples/align-demo.tsx` for alignSelf/alignContent demo
+4. Run `examples/use-animation.tsx` for useAnimation demo
+
+## Implementation Details
+
+### 6. useAnimation (Done)
+In `src/runtime.js`, shared timer implementation:
+```javascript
+// All useAnimation hooks share one timer
+let animationTimerId = null;
+let animationHooks = [];
+
+function useAnimation(options) {
+  const { frame, time, delta, reset } = useAnimation({ interval, isActive });
+  // Returns: { frame, time, delta, reset }
+}
+```
+
+### 7. useWindowSize (Done)
+In `src/runtime.js`, poll-based terminal size:
+```javascript
+function useWindowSize() {
+  const [size, setSize] = useState(() => {
+    const ts = __ink_get_terminal_size();
+    return { columns: ts.width, rows: ts.height };
+  });
+  // Polls every 500ms for changes
+}
+```
+
+### 8. Transform Component (Done)
+In `src/runtime.js`, basic implementation:
+```javascript
+function Transform({ children, transform }) {
+  return createElement('ink-text', { transform }, children);
+}
+```
 
 ## References
 - Ink 7.0.5 types: https://unpkg.com/ink@7.0.5/build/index.d.ts
