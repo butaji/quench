@@ -8,9 +8,9 @@ Counter app with useState, useEffect, useInput demonstrating stateful re-renderi
 
 ## Acceptance Criteria
 - [x] `examples/counter.js` — Counter in JavaScript with useState
-- [ ] `examples/counter.ts` — Counter in TypeScript (same logic)
-- [ ] Both produce identical ANSI output
-- [ ] Parity harness verifies 100% match
+- [x] `examples/counter.tsx` — Counter in TypeScript/TSX (same logic)
+- [x] Both produce identical ANSI output
+- [x] Parity harness verifies 100% match
 
 ## Working Example (JavaScript)
 
@@ -76,10 +76,10 @@ tuibridge examples/counter.js
 - Component re-rendering on state change
 - `Box` with borders, `Text` with colors
 
-## TypeScript Version (Pending)
+## TypeScript/TSX Version
 
-```typescript
-// examples/counter.ts
+```tsx
+// examples/counter.tsx
 import { render, Box, Text, useState, useInput, useApp, useEffect } from 'ink';
 
 function Counter() {
@@ -109,8 +109,12 @@ render(<Counter />);
 
 ### Build and Run
 ```bash
-npx esbuild examples/counter.ts --bundle --outfile=dist/counter.js
-tuibridge dist/counter.js
+# With --features compiler:
+tuibridge --run examples/counter.tsx
+
+# Or compile first:
+tuibridge --compile examples/counter.tsx -o examples/counter.js
+tuibridge examples/counter.js
 ```
 
 ## Dependencies

@@ -143,16 +143,16 @@ echo "=========================================="
 
 # Primary examples that should have full parity
 PRIMARY_EXAMPLES=(
-    "counter.ts"
-    "todo-list.ts"
-    "focus-form.ts"
-    "dashboard.ts"
-    "file-tree.ts"
-    "log-viewer.ts"
-    "spinner.ts"
-    "tabs.ts"
-    "chat-ui.ts"
-    "mouse-app.ts"
+    "counter.tsx"
+    "todo-list.tsx"
+    "focus-form.tsx"
+    "dashboard.tsx"
+    "file-tree.tsx"
+    "log-viewer.tsx"
+    "spinner.tsx"
+    "tabs.tsx"
+    "chat-ui.tsx"
+    "mouse-app.tsx"
 )
 
 for name in "${PRIMARY_EXAMPLES[@]}"; do
@@ -187,6 +187,7 @@ EXTENDED_EXAMPLES=(
     "sizing-constraints.tsx"
     "spacing-props.tsx"
     "flex-layouts.tsx"
+    "text-styles.tsx"
 )
 
 for name in "${EXTENDED_EXAMPLES[@]}"; do
@@ -223,14 +224,14 @@ if [ $FAIL -gt 0 ]; then
     echo -e "${RED}Parity FAILED${NC}"
     echo ""
     echo "For visual comparison in tmux:"
-    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.ts; read'"
+    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.tsx; read'"
     echo "  tmux attach -t tui"
     exit 1
 else
     echo -e "${GREEN}Parity PASSED${NC}"
     echo ""
     echo "For 100% visual verification, test in tmux:"
-    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.ts; read'"
+    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.tsx; read'"
     echo "  tmux attach -t tui"
     exit 0
 fi
