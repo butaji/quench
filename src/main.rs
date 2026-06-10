@@ -21,10 +21,14 @@ mod compiler;
 mod cli;
 mod event_loop;
 mod render;
+mod signals;
+
+#[cfg(feature = "bench")]
+mod bench;
 
 use anyhow::Result;
 use bridge_config::BridgeConfig;
-use cli::{parse_args, handle_compiler_cmd};
+use cli::{parse_args, handle_compiler_cmd, compile_in_memory};
 use render::render_tree;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -35,59 +39,98 @@ fn setup_logging() {
         .unwrap_or_else(|_| EnvFilter::new("info,tuibridge=debug"));
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(true))
+        .with(fmt::layer().with_target(true).with_writer(std::io::stderr))
         .with(filter)
         .init();
 }
 
 fn main() -> Result<()> {
     setup_logging();
-
     tracing::info!("TuiBridge v{} — Ink runtime in rquickjs + Rust", VERSION);
 
-    // Parse command line arguments
+    // Must be set before terminal init so cleanup runs even on Ctrl+C
+    signals::setup_signal_handlers();
+
     let args: Vec<String> = std::env::args().collect();
     let cli_args = parse_args(&args);
 
-    // Handle compiler commands
-    if let Some(cmd) = cli_args.compiler_cmd {
-        handle_compiler_cmd(cmd);
+    if try_handle_compiler_cmd(&cli_args) {
         return Ok(());
     }
 
-    // Initialize QuickJS runtime
     tracing::debug!("Initializing QuickJS runtime");
     let runtime = rquickjs::Runtime::new()?;
     let ctx = rquickjs::Context::full(&runtime)?;
-
-    // Register constants and runtime
     setup_runtime(&ctx)?;
 
-    // Load user code if provided
-    let root_id = load_user_code(&ctx, &cli_args)?;
+    let (final_cli_args, root_id) = compile_and_load(&ctx, cli_args)?;
 
-    // Setup terminal
     let is_tty = atty::is(atty::Stream::Stdout);
     if !is_tty {
         tracing::info!("Not a TTY, skipping terminal initialization");
         return Ok(());
     }
 
-    setup_terminal(&ctx, cli_args, root_id)?;
+    setup_terminal(&ctx, final_cli_args, root_id)?;
 
+    // Normal exit path already calls disable_raw_mode / show_cursor.
+    // Signal handler sets SHUTDOWN_REQUESTED so event_loop can drain gracefully.
     Ok(())
+}
+
+/// Handle standalone compiler commands (non in-memory)
+fn try_handle_compiler_cmd(cli_args: &cli::CliArgs) -> bool {
+    if let Some(cmd) = &cli_args.compiler_cmd {
+        if !matches!(cmd, cli::CompilerCmd::CompileInMemory { .. }) {
+            handle_compiler_cmd(cmd.clone());
+            return true;
+        }
+    }
+    false
+}
+
+/// Compile TSX/JSX in-memory and load user code
+fn compile_and_load(
+    ctx: &rquickjs::Context,
+    mut cli_args: cli::CliArgs,
+) -> Result<(cli::CliArgs, Option<u32>)> {
+    if let Some(cli::CompilerCmd::CompileInMemory { input }) = cli_args.compiler_cmd.take() {
+        tracing::info!("Compiling {} in-memory...", input);
+        match compile_in_memory(&input) {
+            Ok(js) => {
+                tracing::debug!("Compiled {} -> {} chars", input, js.len());
+                cli_args.js_code = Some(js);
+                cli_args.script = None;
+            }
+            Err(e) => {
+                tracing::error!("Compilation error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let root_id = load_user_code(ctx, &cli_args)?;
+    Ok((cli_args, root_id))
 }
 
 /// Setup the QuickJS runtime with bridge functions and runtime.js
 fn setup_runtime(ctx: &rquickjs::Context) -> Result<()> {
-    // Register Ink API constants
+    register_ink_api(ctx);
+    register_ink_call(ctx);
+    load_runtime_js(ctx);
+    inject_bridge_config(ctx);
+    Ok(())
+}
+
+fn register_ink_api(ctx: &rquickjs::Context) {
     ctx.with(|ctx| {
         if let Err(e) = ink_js::register(ctx) {
             tracing::warn!("ink_js::register error: {:?}", e);
         }
     });
+}
 
-    // Register __ink_call function
+fn register_ink_call(ctx: &rquickjs::Context) {
     ctx.with(|ctx| {
         let globals = ctx.globals();
         let ink_call = rquickjs::Function::new(
@@ -96,10 +139,15 @@ fn setup_runtime(ctx: &rquickjs::Context) -> Result<()> {
                 bridge::call_ink_ffi(&method, &args_json)
             },
         );
-        globals.set("__ink_call", ink_call).ok();
+        if let Err(e) = globals.set("__ink_call", ink_call) {
+            tracing::warn!("Failed to set __ink_call: {:?}", e);
+        } else {
+            tracing::debug!("__ink_call registered");
+        }
     });
+}
 
-    // Load runtime.js
+fn load_runtime_js(ctx: &rquickjs::Context) {
     let runtime_js = include_str!("runtime.js");
     ctx.with(|ctx| {
         if let Err(e) = ctx.eval::<(), _>(runtime_js) {
@@ -108,8 +156,9 @@ fn setup_runtime(ctx: &rquickjs::Context) -> Result<()> {
             tracing::debug!("Runtime loaded successfully");
         }
     });
+}
 
-    // Inject bridge config
+fn inject_bridge_config(ctx: &rquickjs::Context) {
     let bridge_config = BridgeConfig::default();
     let config_js = bridge_config.to_js_injection();
     ctx.with(|ctx| {
@@ -117,8 +166,6 @@ fn setup_runtime(ctx: &rquickjs::Context) -> Result<()> {
             tracing::warn!("Bridge config injection error: {:?}", e);
         }
     });
-
-    Ok(())
 }
 
 /// Load and execute user JavaScript code
@@ -130,16 +177,22 @@ fn load_user_code(
         tracing::debug!("Loading script: {}", script);
         let code = std::fs::read_to_string(script)?;
         ctx.with(|ctx| {
-            if let Err(e) = ctx.eval::<(), _>(&*code) {
-                tracing::error!("Script error: {:?}", e);
+            if let Err(_e) = ctx.eval::<(), _>(&*code) {
+                // Call catch() to clear any pending exception
+                // This handles cases where JS code uses try-catch internally
+                let _ = ctx.catch();
+                // Note: We intentionally don't log the error since JS caught it
             }
         });
     }
 
     if let Some(ref code) = cli_args.js_code {
         ctx.with(|ctx| {
-            if let Err(e) = ctx.eval::<(), _>(code.as_str()) {
-                tracing::error!("Eval error: {:?}", e);
+            if let Err(_e) = ctx.eval::<(), _>(code.as_str()) {
+                // Call catch() to clear any pending exception
+                // This handles cases where JS code uses try-catch internally
+                let _ = ctx.catch();
+                // Note: We intentionally don't log the error since JS caught it
             }
         });
     }

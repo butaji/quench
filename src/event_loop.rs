@@ -9,15 +9,14 @@ use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::stdout;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Main event loop (synchronous)
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    args: &CliArgs,
-    script_path: Option<String>,
+    _args: &CliArgs,
+    _script_path: Option<String>,
     js_ctx: &rquickjs::Context,
 ) -> Result<()> {
     let mut dirty = true;
@@ -41,9 +40,9 @@ pub fn run_event_loop(
     };
 
     loop {
-        // Check for exit
-        if bridge::__ink_should_exit() {
-            tracing::info!("Exit requested, code: {}", bridge::__ink_get_exit_code());
+        // Check for exit or shutdown signal (Ctrl+C)
+        if bridge::__ink_should_exit() || crate::signals::shutdown_requested() {
+            tracing::info!("Shutdown requested, code: {}", bridge::__ink_get_exit_code());
             break;
         }
 
@@ -52,7 +51,7 @@ pub fn run_event_loop(
         if let Some(ref mut reloader) = hot_reloader {
             if let Some(_event) = reloader.poll_changes() {
                 tracing::info!("Hot reload: File changed, reloading...");
-                dirty = handle_hot_reload(&script_path, &mut root_id) || dirty;
+                dirty = handle_hot_reload(&script_path, &mut root_id, std::time::Instant::now()) || dirty;
             }
         }
 
@@ -132,6 +131,7 @@ fn handle_key_event(
 }
 
 /// Handle mouse event — dispatch to JS mouse handlers
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn handle_mouse_event(
     mouse: crossterm::event::MouseEvent,
     js_ctx: &rquickjs::Context,
@@ -203,6 +203,7 @@ fn poll_timers() -> bool {
 fn handle_hot_reload(
     script_path: &Option<String>,
     root_id: &mut Option<u32>,
+    _start: std::time::Instant,
 ) -> bool {
     // Unmount old app
     if let Some(old_root_id) = *root_id {
@@ -212,8 +213,6 @@ fn handle_hot_reload(
     // Reload and re-execute the script
     if let Some(ref path) = script_path {
         if let Ok(new_code) = std::fs::read_to_string(path) {
-            let start = std::time::Instant::now();
-
             // Create a new runtime for hot reload eval
             let runtime = match rquickjs::Runtime::new() {
                 Ok(r) => r,
@@ -228,9 +227,9 @@ fn handle_hot_reload(
                 });
             }
 
-            let elapsed = start.elapsed();
-            tracing::info!("Hot reload complete in {:?}", elapsed);
-            if elapsed.as_millis() < 50 {
+            let _elapsed = _start.elapsed();
+            tracing::info!("Hot reload complete in {:?}", _elapsed);
+            if _elapsed.as_millis() < 50 {
                 tracing::debug!("Hot reload under 50ms target");
             }
 
