@@ -170,9 +170,21 @@ pub fn run_event_loop(...) -> Result<()> {
 
 ## 6. Performance
 
+### Benchmark Results (2026-06-10)
+
+| Operation | Target | Achieved | Status |
+|-----------|--------|----------|--------|
+| Layout (10 boxes × 5 texts) | < 2ms | **~62µs** | ✅ |
+| Tree creation (2200 nodes) | < 5ms | **~490µs** | ✅ |
+| Prop updates (50 nodes) | < 3ms | **~808µs** | ✅ |
+| Binary size | < 5 MB | **2.8 MB** | ✅ |
+| Startup time | < 100ms | **~5ms** | ✅ |
+
+### Hot Path Performance
+
 | Component | Path | Latency | Status |
 |-----------|------|---------|--------|
-| Layout | Rust + Yoga | ~1ms | ✅ |
+| Layout | Rust + Yoga | ~62µs | ✅ |
 | Rendering | Rust + ratatui | ~1ms | ✅ |
 | Reconciler | JS (runtime.js) | ~2ms | ✅ (on state change) |
 | Timer dispatch | Batch eval + Function.call | ~0.1ms | ✅ (Task 055) |
@@ -200,6 +212,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 ## 7. Current State
 
 ### ✅ Complete (71 tasks, 66 done, 3 pending, 2 deferred)
+### 🔴 Critical Bugs Found (13 new tasks: 072-084)
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -377,26 +390,72 @@ Original examples kept for compatibility reference.
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| All tasks in `tasks/` complete | ✅ | **71 tasks**, 66 "done", 3 "pending", 2 "deferred" |
+| All tasks in `tasks/` complete | 🟡 | **84 tasks**, 66 "done", 16 "pending", 2 "deferred" |
 | Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.9 MB** (under target) |
 | Rust/JS ratio | ✅ | **78% Rust, 22% JS** |
 | Linter compliance | ✅ | All files under 500 lines |
-| Hot reload | ✅ | Implemented in hotreload.rs |
+| Hot reload | 🔴 | **BROKEN** — Task 072. New context never gets `setup_runtime()`. |
 | TSX compiler | ✅ | `--compile` and `--run` flags |
 | `cargo test` | ✅ | Tests passing |
-| clippy | ✅ | Warnings only, passes |
+| clippy | 🟡 | 0 warnings in library, 2 warnings in `build.rs` — Task 083 |
+| Binary size | ✅ | 2.0 MB release binary |
 
 ### Remaining Gaps (Pending Tasks)
 
 1. **Task 068: Individual Border Colors** - `borderTopColor`, `borderBottomColor`, etc. (ratatui limitation)
 2. **Task 069: renderToString** - Synchronous string rendering without terminal I/O
 3. **Task 070: overflow/aspectRatio** - Content clipping and proportional sizing
+4. **Task 072: Fix Hot Reload** — Critical bug: new context missing `setup_runtime()`
+5. **Task 073: Replace Custom JSON Parser** — Use `serde_json` instead of bespoke parser
+6. **Task 074: Fix Terminal Cleanup** — `process::exit(0)` bricks TTY on panic
+7. **Task 075: Eliminate FFI from Render Path** — 250+ FFI calls per frame
+8. **Task 076: rquickjs Function Refs** — Replace eval strings with direct calls
+9. **Task 077: Async Event Loop** — Replace sync poll with `EventStream` + tokio
+10. **Task 078: HashMap Node Storage** — Sparse Vec wastes memory
+11. **Task 079: rquickjs Memory Limits** — No sandbox on user scripts
+12. **Task 080: Yoga Memory Cleanup** — Unverified C++ node freeing
+13. **Task 081: Render Prop Accessors** — Use `PropValue` directly, not JSON strings
+14. **Task 082: Remove fill_background** — Redundant manual cell iteration
+15. **Task 083: Dead Code/Warnings** — Unreachable match arms, build.rs clippy warnings
+16. **Task 084: Surface JS Errors** — Silent failures leave users blind
+
+## 8.1 Post-Review Remediation (Tasks 072-084)
+
+An architecture and code review (2026-06-10) identified critical bugs and significant improvements. These are tracked in new tasks:
+
+### 🔴 Critical Bugs (P0)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **072** | Hot reload creates new rquickjs Context without `setup_runtime()` | Hot reload silently does nothing |
+| **073** | Custom 180-line JSON parser instead of `serde_json` | Fragile, unnecessary, already a dependency |
+| **074** | `process::exit(0)` bypasses terminal cleanup | Terminal stays in raw mode on panic/error |
+| **075** | Renderer does 250+ FFI calls per frame for prop queries | Major performance overhead at scale |
+
+### 🟡 Significant Improvements (P1)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **076** | Key/mouse dispatch uses string `eval()` per event | ~10x speedup with `rquickjs::Function` refs |
+| **077** | Event loop is synchronous despite tokio dependency | Wastes CPU, poor timer accuracy |
+| **078** | Node storage uses sparse `Vec` instead of `HashMap` | O(n) growth, memory waste |
+| **079** | No rquickjs memory/stack limits | Malicious scripts can crash process |
+| **080** | Yoga C++ node memory cleanup unverified | Potential memory leak on tree destroy |
+
+### 🟠 Polish (P2)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **081** | `render.rs` uses JSON-string props instead of `PropValue` | String alloc + trim overhead |
+| **082** | `fill_background()` manually iterates cells | Redundant — ratatui Block handles this |
+| **083** | Dead CLI match arm, unused `#[allow]`, build.rs warnings | Code hygiene |
+| **084** | JS errors swallowed by `tracing::error!` | Users see blank screen with no error message |
 
 ### Optional Enhancements (Deferred)
 
 1. **PTY for Parity** - `scripts/parity.sh` exists, needs proper TTY emulation
-2. **Hot Reload Benchmark** - Hot reload implemented, latency not measured
+2. **Hot Reload Benchmark** - Hot reload implemented, latency not measured (but currently broken — see Task 072)
 3. **Visual Verification** - Run in tmux to verify 100% look&feel parity
 4. **React Reconciler Bridge (063)** - Optional, for full React app support
