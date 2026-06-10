@@ -34,7 +34,7 @@
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │  src/main.rs         192 lines  Event loop entry    │   │
-│  │  src/event_loop.rs   184 lines  tokio::select!     │   │
+│  │  src/event_loop.rs   289 lines  sync poll          │   │
 │  │  src/render.rs       374 lines  ratatui rendering  │   │
 │  │  src/bridge/         476 lines  FFI, timers, I/O    │   │
 │  │  src/ink/            919 lines  Yoga tree, layout │   │
@@ -57,10 +57,10 @@
 | Transpile | esbuild OR swc (optional) | - | TSX → JS, JSX → createElement |
 | Reconciler | JS (runtime.js) | ~1060 | Hooks, component lifecycle, tree diff |
 | Bridge | JS→Rust FFI | - | `__ink_call(method, args)` |
-| **Runtime** | **Rust** | **4760** | **Tree, layout, render, timers, I/O, hot reload** |
+| **Runtime** | **Rust** | **~4900** | **Tree, layout, render, timers, I/O, hot reload** |
 
-**Total Rust:** ~4,701 lines
-**Total JS (runtime):** ~1,322 lines
+**Total Rust:** ~4,900 lines
+**Total JS (runtime):** ~1,300 lines
 **Ratio:** ~78% Rust, ~22% JS
 
 ---
@@ -211,7 +211,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ## 7. Current State
 
-### Task Overview (84 tasks: 65 done, 1 partial, 16 pending, 2 deferred)
+### Task Overview (85 tasks: 65 done, 2 partial, 16 pending, 2 deferred)
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -224,11 +224,11 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 | Ink Hooks | 030-036 | All done (via runtime.js) |
 | DevEx | 037-040 | File watcher ✅, bytecode ✅, feature flags ✅. **Hot reload broken** — see Task 072. |
 | JS Examples | 041-050 | All 10 JS examples done |
-| TS Examples | counter.ts-mouse-app.ts | All 10 TS examples done |
+| TSX Examples | 041-050 | All 10 primary TSX examples done |
 | Parity | 051-052 | Harness and diff scripts done |
-| TSX Examples | 059-066 | 8 new TSX examples for full API coverage |
-| Ink Props | 067 | alignSelf, alignContent, position props, wrap alias, useAnimation, useWindowSize - done |
-| Remaining Gaps | 068-071 | 4 pending: border colors, renderToString, overflow/aspectRatio, API audit done |
+| Compatibility | 059-067 | Validation, coverage, props done. React reconciler (063) and esbuild pipeline (065) deferred. |
+| Ink Props | 066-067 | gap/small/title + remaining Ink props (alignSelf, alignContent, position, hooks) — done |
+| Remaining Gaps | 068-071 | 3 pending (068-070): border colors, renderToString, overflow/aspectRatio. 071 (API audit) done. |
 | Code Quality | 058 | 🟡 Linter rules in `build.rs` (warning-only). Refactor required to enforce. |
 
 ---
@@ -390,12 +390,12 @@ Original examples kept for compatibility reference.
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| All tasks in `tasks/` complete | 🟡 | **84 tasks**, 66 "done", 16 "pending", 2 "deferred" |
+| All tasks in `tasks/` complete | 🟡 | **85 tasks**, 65 "done", 2 "partial", 16 "pending", 2 "deferred" |
 | Tests passing | ✅ | Tests in bridge/, ink/, compat.rs, hotreload.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.0 MB** (under target) |
 | Rust/JS ratio | ✅ | **78% Rust, 22% JS** |
-| Linter compliance | ✅ | All files under 500 lines |
+| Linter compliance | 🟡 | All files under 500 lines; function length/complexity warning-only; 2 build.rs clippy warnings (Task 083) |
 | Hot reload | 🔴 | **BROKEN** — Task 072. New context never gets `setup_runtime()`. |
 | TSX compiler | ✅ | `--compile` and `--run` flags |
 | `cargo test` | ✅ | Tests passing |
@@ -410,7 +410,7 @@ All pending tasks are documented in the tasks directory. The 16 pending tasks fa
 2. **Post-Review Critical Bugs** (072-075): hot reload, JSON parser, terminal cleanup, render FFI
 3. **Post-Review Improvements** (076-084): event dispatch, async loop, storage, sandbox, cleanup, polish
 
-## 9. Post-Review Remediation (Tasks 072-084)
+## 11. Post-Review Remediation (Tasks 072-084)
 
 An architecture and code review (2026-06-10) identified critical bugs and significant improvements. These are tracked in new tasks:
 
@@ -445,6 +445,6 @@ An architecture and code review (2026-06-10) identified critical bugs and signif
 ### Optional Enhancements (Deferred)
 
 1. **PTY for Parity** - `scripts/parity.sh` exists, needs proper TTY emulation
-2. **Hot Reload Benchmark** - Hot reload implemented, latency not measured (but currently broken — see Task 072)
+2. **Hot Reload Benchmark** - Currently broken (Task 072); benchmark after fix
 3. **Visual Verification** - Run in tmux to verify 100% look&feel parity
 4. **React Reconciler Bridge (063)** - Optional, for full React app support
