@@ -386,7 +386,17 @@ function useApp() {
 
 function useStdin() {
   return useMemo(() => ({
-    isRawMode: () => globalThis.__ink_stdin_is_raw ? globalThis.__ink_stdin_is_raw() : false
+    stdin: {
+      isRawMode: () => globalThis.__ink_stdin_is_raw ? globalThis.__ink_stdin_is_raw() : false,
+      setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
+      on: () => {}, // EventEmitter compat stub
+      off: () => {},
+      once: () => {},
+      emit: () => {},
+    },
+    setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
+    setBracketedPasteMode: () => {}, // Not yet supported
+    isRawModeSupported: true,
   }), []);
 }
 
@@ -394,15 +404,30 @@ function useStdout() {
   return useMemo(() => {
     const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
     return {
-      columns: ts.width || 80,
-      write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null
+      stdout: {
+        columns: ts.width || 80,
+        rows: ts.height || 24,
+        write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null,
+        on: () => {},
+        off: () => {},
+        once: () => {},
+        emit: () => {},
+      },
+      write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null,
     };
   }, []);
 }
 
 function useStderr() {
   return useMemo(() => ({
-    write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null
+    stderr: {
+      write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null,
+      on: () => {},
+      off: () => {},
+      once: () => {},
+      emit: () => {},
+    },
+    write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null,
   }), []);
 }
 
@@ -991,9 +1016,21 @@ function render(element, options) {
         check();
       });
     },
+    waitUntilRenderFlush: () => Promise.resolve(), // No-op: TuiBridge renders synchronously
     unmount: () => {
       container.unmounted = true;
       globalThis.__ink_destroy_root(rootId);
+    },
+    cleanup: () => {
+      // Same as unmount in TuiBridge
+      container.unmounted = true;
+      globalThis.__ink_destroy_root(rootId);
+    },
+    clear: () => {
+      // Clear the terminal screen
+      if (globalThis.__ink_stdout_write) {
+        globalThis.__ink_stdout_write('\x1b[2J\x1b[H');
+      }
     },
     rerender: (newElement) => {
       if (container.unmounted) return;
@@ -1104,11 +1141,57 @@ if (!globalThis.process) {
 // 12. Input Dispatch Wiring
 // ===================================================================
 
+// Map raw key names to Ink's key object shape
+function buildInkKey(keyName, ctrl, shift, alt, meta) {
+  // keyName is what Rust passes: 'q', 'upArrow', 'return', etc.
+  // Ink's key object has: upArrow, downArrow, leftArrow, rightArrow,
+  // pageDown, pageUp, home, end, return, escape, ctrl, shift, tab,
+  // backspace, delete, meta, super, hyper
+  const key = {
+    upArrow: keyName === 'up' || keyName === 'upArrow',
+    downArrow: keyName === 'down' || keyName === 'downArrow',
+    leftArrow: keyName === 'left' || keyName === 'leftArrow',
+    rightArrow: keyName === 'right' || keyName === 'rightArrow',
+    pageDown: keyName === 'pagedown' || keyName === 'pageDown',
+    pageUp: keyName === 'pageup' || keyName === 'pageUp',
+    home: keyName === 'home',
+    end: keyName === 'end',
+    return: keyName === 'return' || keyName === '\r',
+    escape: keyName === 'escape' || keyName === 'esc',
+    ctrl: !!ctrl,
+    shift: !!shift,
+    tab: keyName === 'tab' || keyName === '\t',
+    backspace: keyName === 'backspace',
+    delete: keyName === 'delete' || keyName === 'del',
+    meta: !!(meta || (shift && (keyName === 'up' || keyName === 'down' || keyName === 'left' || keyName === 'right'))),
+    super: false,
+    hyper: false,
+  };
+  return key;
+}
+
+// Determine the 'input' string for Ink's useInput handler
+// Ink passes the printable character as 'input', and non-printable keys have empty input
+function getInputFromKey(keyName) {
+  if (!keyName) return '';
+  // If it's a single printable character, that's the input
+  if (keyName.length === 1 && keyName.charCodeAt(0) >= 32) return keyName;
+  // Special cases
+  if (keyName === 'return' || keyName === '\r') return '\r';
+  if (keyName === 'tab' || keyName === '\t') return '\t';
+  if (keyName === 'space') return ' ';
+  // Arrow keys, etc. have empty input in Ink
+  return '';
+}
+
 globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt, meta) {
   for (const [id, state] of inputHandlers) {
     if (state.options && state.options.isActive === false) continue;
     try {
-      state.handler(key, { ctrl, shift, alt, name: key, meta: meta || false });
+      const input = getInputFromKey(key);
+      const keyObj = buildInkKey(key, ctrl, shift, alt, meta);
+      // Ink calls handler(input, key) where input is the character and key has booleans
+      state.handler(input, keyObj);
     } catch (e) {
       console.error('Input handler error:', e);
     }
@@ -1237,7 +1320,7 @@ globalThis.__tb_dispatch_mouse = function(event) {
 const ink = {
   render,
   renderToString,
-  Box, Text, Static, Newline, Spacer, TransformTag,
+  Box, Text, Static, Newline, Spacer, Transform,
   useState, useEffect, useRef, useMemo, useCallback, useContext,
   useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager,
   useWindowSize, useAnimation, usePaste, useCursor, useBoxMetrics,
@@ -1292,7 +1375,7 @@ globalThis.Text = Text;
 globalThis.Static = Static;
 globalThis.Newline = Newline;
 globalThis.Spacer = Spacer;
-globalThis.Transform = TransformTag;
+globalThis.Transform = Transform;
 globalThis.useState = useState;
 globalThis.useEffect = useEffect;
 globalThis.useRef = useRef;
