@@ -214,7 +214,7 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ## 7. Current State
 
-### Task Overview (85 tasks: 65 done, 2 partial, 16 pending, 2 deferred)
+### Task Overview (94 tasks: 65 done, 2 partial, 25 pending, 2 deferred)
 
 | Area | Tasks | Status |
 |------|-------|--------|
@@ -393,7 +393,7 @@ Original examples kept for compatibility reference.
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| All tasks in `tasks/` complete | 🟡 | **85 tasks**, 65 "done", 2 "partial", 16 "pending", 2 "deferred" |
+| All tasks in `tasks/` complete | 🟡 | **94 tasks**, 65 "done", 2 "partial", 25 "pending", 2 "deferred" |
 | Tests passing | ✅ | 34 tests in bridge/, ink/, compat.rs, parity.rs |
 | Examples run without modification | ✅ | JS + TSX examples work |
 | Release binary < 5 MB | ✅ | **2.0 MB** (under target) |
@@ -412,6 +412,9 @@ All pending tasks are documented in the tasks directory. The 16 pending tasks fa
 1. **Ink API Gaps** (068-070): border colors, renderToString, overflow/aspectRatio
 2. **Post-Review Critical Bugs** (072-075): hot reload, JSON parser, terminal cleanup, render FFI
 3. **Post-Review Improvements** (076-084): event dispatch, async loop, storage, sandbox, cleanup, polish
+4. **Second Review Critical Bugs** (085-087): raw pointer UB, silent errors, RefCell reentrancy
+5. **Second Review Performance** (088-089, 093): double JSON parse, Vec clone, String alloc
+6. **Second Review Polish** (090-092): timer reset, raw mode stub, error propagation
 
 ## 11. Post-Review Remediation (Tasks 072-084)
 
@@ -444,6 +447,39 @@ An architecture and code review (2026-06-10) identified critical bugs and signif
 | **082** | `fill_background()` manually iterates cells | Redundant — ratatui Block handles this |
 | **083** | Dead CLI match arm, unused `#[allow]`, build.rs warnings | Code hygiene |
 | **084** | JS errors swallowed by `tracing::error!` | Users see blank screen with no error message |
+
+## 12. Second Review Remediation (Tasks 085-093)
+
+A second architecture and code review (2026-06-10) identified additional critical bugs, performance issues, and polish items:
+
+### 🔴 Critical Bugs (P0)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **085** | Raw pointer UB in `ink/tree.rs` (derived from shared borrow, used after mutable) | Undefined behavior under Miri, potential miscompilation |
+| **086** | `load_user_code()` catches ALL JS errors silently with `ctx.catch()` | Broken scripts show blank terminal, zero user feedback |
+| **087** | RefCell reentrancy: JS callbacks can trigger `borrow_mut()` while already borrowed | Hard panic across FFI with opaque "already borrowed" message |
+
+### 🟠 Significant Issues (P1)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **088** | Double JSON parse on every `create_node` (serde_json + custom parser) | ~4,000 parses for 2k-node tree; startup latency dominated by parsing |
+| **089** | `__ink_get_node_children` clones `Vec<u32>` on every render frame | 250+ Vec allocations per frame for 50-node tree |
+
+### 🟡 Moderate Issues (P2)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **090** | Timer/node ID counters never reset on `destroy_root` | IDs grow forever; indicates incomplete cleanup |
+| **091** | `__ink_stdin_is_raw()` hardcoded to `false` | `useStdin` reports wrong raw mode status |
+| **092** | `setup_runtime()` errors logged but not propagated | Missing/corrupted `runtime.js` → blank terminal, no error |
+
+### 🟢 Minor Issues (P3)
+
+| Task | Issue | Impact |
+|------|-------|--------|
+| **093** | `keycode_to_ink_name` allocates `String` on every keystroke | Hundreds of allocations/second during rapid typing |
 
 ### Optional Enhancements (Deferred)
 
