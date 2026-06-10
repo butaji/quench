@@ -45,8 +45,10 @@ pub static SUPPORTED_TEXT_PROPS: &[&str] = &[
 
 /// Props with partial support
 pub static PARTIAL_PROPS: &[&str] = &[
-    "textWrap",  // "scroll" falls back to "wrap"
+    "textWrap",  // "scroll", "end", "middle", etc. fall back to "wrap"
+    "wrap",      // "end", "middle", "truncate-*" modes fall back to basic wrap/truncate
     "borderDimColor", // DIM modifier, not separate color
+    "borderTop", "borderBottom", "borderLeft", "borderRight", // Individual borders use combined borderStyle
 ];
 
 /// TextWrap enum for text wrapping behavior

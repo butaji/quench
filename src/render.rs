@@ -233,6 +233,12 @@ fn render_text(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
 }
 
 /// Apply text wrap mode (supports both Ink 6 "textWrap" and Ink 7 "wrap")
+/// 
+/// Ink 7 wrap modes and their TuiBridge equivalents:
+/// - "wrap", "hard" → Wrap::default() (word wrap) ✅
+/// - "truncate", "ellipsis", "truncate-end" → Wrap::Truncate ✅
+/// - "end", "middle", "truncate-middle", "truncate-start" → Wrap::Truncate (partial)
+/// - "scroll" → Wrap::default() (no scroll in ratatui, partial)
 fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
     // Check both textWrap (Ink 6) and wrap (Ink 7) props
     let wrap_prop = bridge::__ink_get_node_prop(node_id, "wrap")
@@ -241,9 +247,13 @@ fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
         .to_string();
 
     match wrap_prop.as_str() {
-        "wrap" | "hard" => Some(Wrap::default()), // Wrap at word boundaries
-        "truncate" | "ellipsis" => Some(Wrap::Truncate),
-        // "scroll" is not supported in ratatui, falls back to wrap
+        // Ink 6/Ink 7 basic modes
+        "wrap" | "hard" | "end" | "middle" => Some(Wrap::default()),
+        // Truncation modes (Ink 6 and 7)
+        "truncate" | "ellipsis" | "truncate-end" | "truncate-middle" | "truncate-start" => Some(Wrap::Truncate),
+        // Scroll is not supported in ratatui, fall back to wrap
+        "scroll" => Some(Wrap::default()),
+        // Unknown modes default to wrap
         _ => Some(Wrap::default()),
     }
 }
