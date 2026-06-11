@@ -2,8 +2,15 @@
 //!
 //! Provides `BridgeConfig` to inject CLI flags, platform info, and terminal
 //! capabilities into the QuickJS VM before user code runs.
+//!
+//! **IMPORTANT:** Keep `BRIDGE_GLOBAL` in sync with `runtime.js`.
+//! See `src/runtime.js:BRIDGE_GLOBAL`.
 
 use std::collections::HashMap;
+
+/// The global name used to expose the bridge API to JavaScript.
+/// Keep in sync with `runtime.js:BRIDGE_GLOBAL`.
+pub const BRIDGE_GLOBAL: &str = "__quench";
 
 /// Bridge configuration injected into the JS runtime
 #[derive(Debug, Clone, Default)]
@@ -85,6 +92,7 @@ impl BridgeConfig {
     }
 
     /// Generate a JS snippet that injects `globalThis.__quench.config`
+    /// Uses `BRIDGE_GLOBAL` constant to ensure sync with runtime.js.
     pub fn to_js_injection(&self) -> String {
         let props_json = if self.props.is_empty() {
             String::new()
@@ -122,15 +130,16 @@ impl BridgeConfig {
             self.terminal.has_unicode,
         );
 
+        // Use BRIDGE_GLOBAL constant - keep in sync with runtime.js
         if props_json.is_empty() {
             format!(
-                r#"globalThis.__quench = {{ config: {{ {}, {} }} }};"#,
+                r#"globalThis.{BRIDGE_GLOBAL} = {{ config: {{ {}, {} }} }};"#,
                 platform_json,
                 terminal_json
             )
         } else {
             format!(
-                r#"globalThis.__quench = {{ config: {{ {}, {}, {} }} }};"#,
+                r#"globalThis.{BRIDGE_GLOBAL} = {{ config: {{ {}, {}, {} }} }};"#,
                 props_json,
                 platform_json,
                 terminal_json
@@ -190,7 +199,7 @@ mod tests {
             .with_prop("theme", "dark")
             .with_prop("locale", "en-US");
         let js = config.to_js_injection();
-        assert!(js.contains("globalThis.__quench"));
+        assert!(js.contains(&format!("globalThis.{BRIDGE_GLOBAL}")));
         assert!(js.contains("theme"));
         assert!(js.contains("dark"));
         assert!(js.contains("platform"));
@@ -202,7 +211,7 @@ mod tests {
     fn test_empty_props() {
         let config = BridgeConfig::new();
         let js = config.to_js_injection();
-        assert!(js.contains("globalThis.__quench"));
+        assert!(js.contains(&format!("globalThis.{BRIDGE_GLOBAL}")));
         assert!(js.contains("platform"));
         // No trailing comma issues
         assert!(!js.contains(",\n    ,"));

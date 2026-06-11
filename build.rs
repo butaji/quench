@@ -60,13 +60,6 @@ pub fn get_bundle_size() -> usize {{ {len} }}
 }
 
 fn run_linter() {
-    // The linter has a known false-positive on `static FOO: &str = r#"…"#;` blocks
-    // in src/compiler/mod.rs: it counts the entire multi-line string literal as
-    // the surrounding function body.  Until the brace-walking handles raw
-    // string literals properly, allow opting out via the LINT_SKIP env var.
-    if std::env::var("LINT_SKIP").is_ok() {
-        return;
-    }
     if let Err(e) = lint_rust_sources(Path::new("src")) {
         for line in e.lines() {
             println!("cargo:warning={}", line);
@@ -230,9 +223,32 @@ fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option
         let mut in_string = false;
         let mut string_delim = '\0';
         let mut prev_char = '\0';
+        let mut raw_string_hashes: usize = 0; // >0 when inside r#"..."#
         
         for (idx, ch) in line.chars().enumerate() {
             if idx < start {
+                // Detect raw-string start before `start` so we know if we're inside one
+                if let Some(rest) = line.get(idx..) {
+                    if raw_string_hashes == 0 && !in_string {
+                        if let Some(h) = raw_string_prefix_len(rest) {
+                            raw_string_hashes = h;
+                        }
+                    }
+                }
+                continue;
+            }
+            
+            // Raw string literals: r#"..."#
+            if raw_string_hashes > 0 {
+                if prev_char != '\\' && ch == '"' {
+                    // Check if followed by exactly raw_string_hashes '#' characters
+                    let trailing = line.chars().skip(idx + 1);
+                    let hash_count = trailing.take(raw_string_hashes).take_while(|c| *c == '#').count();
+                    if hash_count == raw_string_hashes {
+                        raw_string_hashes = 0;
+                    }
+                }
+                prev_char = ch;
                 continue;
             }
             
@@ -249,6 +265,15 @@ fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option
             if in_string {
                 prev_char = ch;
                 continue;
+            }
+            
+            // Detect raw string start
+            if let Some(rest) = line.get(idx..) {
+                if let Some(h) = raw_string_prefix_len(rest) {
+                    raw_string_hashes = h;
+                    prev_char = ch;
+                    continue;
+                }
             }
             
             // Handle escape sequences
@@ -271,6 +296,23 @@ fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option
         }
     }
     None
+}
+
+/// If `s` starts with a raw string prefix `r#*"`, return the number of `#` characters.
+fn raw_string_prefix_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'r' {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && bytes[i] == b'#' {
+        i += 1;
+    }
+    if i < bytes.len() && bytes[i] == b'"' && i >= 1 {
+        Some(i - 1)
+    } else {
+        None
+    }
 }
 
 fn check_function_length(

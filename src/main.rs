@@ -4,14 +4,12 @@
 //! and executes it in a QuickJS runtime with Yoga layout and ratatui rendering.
 
 #![deny(unused_must_use)]
-#![deny(clippy::all)]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(dead_code)]
 
 mod ink;
 mod bridge;
 mod ink_js;
-mod compat;
 mod bridge_config;
 #[cfg(feature = "hotreload")]
 mod hotreload;
@@ -22,9 +20,6 @@ mod event_loop;
 mod render;
 mod signals;
 
-#[cfg(feature = "bench")]
-mod bench;
-
 use anyhow::Result;
 use bridge_config::BridgeConfig;
 use cli::{parse_args, handle_compiler_cmd, compile_in_memory};
@@ -32,6 +27,23 @@ use render::render_tree;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Get terminal size, checking COLUMNS/ROWS env vars first
+fn get_terminal_size() -> (u32, u32) {
+    let cols = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let rows = std::env::var("ROWS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    
+    if let (Some(cols), Some(rows)) = (cols, rows) {
+        return (cols, rows);
+    }
+    
+    let (c, r) = crossterm::terminal::size().unwrap_or((80, 24));
+    (c as u32, r as u32)
+}
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
@@ -47,11 +59,11 @@ fn main() -> Result<()> {
     setup_logging();
     tracing::info!("Quench v{} — Ink runtime in rquickjs + Rust", VERSION);
 
-    // Must be set before terminal init so cleanup runs even on Ctrl+C
-    signals::setup_signal_handlers();
-    // Reset the terminal on panic too — otherwise a panic inside the event
-    // loop leaves the user's shell in raw mode with the cursor hidden.
+    // Install panic hook FIRST, then signal handlers, then anything
+    // terminal-related.  If signal-handler installation itself panics,
+    // the panic hook must already be in place so cleanup still runs.
     signals::install_panic_cleanup();
+    signals::setup_signal_handlers();
 
     let args: Vec<String> = std::env::args().collect();
     let cli_args = parse_args(&args);
@@ -60,33 +72,32 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    tracing::debug!("Initializing QuickJS runtime");
-    let runtime = rquickjs::Runtime::new()?;
-    let ctx = rquickjs::Context::full(&runtime)?;
+    run_app(cli_args)
+}
 
-    // Pre-populate the terminal size so that the JS polyfill's
-    // `process.stdout.rows/columns` returns the *real* dimensions during the
-    // initial `render(...)` call.  This matters because user code commonly
-    // wraps the root in `<Box height={process.stdout.rows}>`, and an
-    // incorrect height pushes the bottom of the tree off-screen.
-    let (initial_cols, initial_rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    bridge::__ink_set_terminal_size(initial_cols as u32, initial_rows as u32);
-
-    setup_runtime(&ctx)?;
-
+fn run_app(cli_args: cli::CliArgs) -> Result<()> {
+    let ctx = init_runtime()?;
     let (final_cli_args, root_id) = compile_and_load(&ctx, cli_args)?;
 
-    let is_tty = atty::is(atty::Stream::Stdout);
-    if !is_tty {
+    if !atty::is(atty::Stream::Stdout) {
         tracing::info!("Not a TTY, skipping terminal initialization");
         return Ok(());
     }
 
     setup_terminal(&ctx, final_cli_args, root_id)?;
-
-    // Normal exit path already calls disable_raw_mode / show_cursor.
-    // Signal handler sets SHUTDOWN_REQUESTED so event_loop can drain gracefully.
     Ok(())
+}
+
+fn init_runtime() -> Result<rquickjs::Context> {
+    tracing::debug!("Initializing QuickJS runtime");
+    let runtime = rquickjs::Runtime::new()?;
+    let ctx = rquickjs::Context::full(&runtime)?;
+
+    let (cols, rows) = get_terminal_size();
+    bridge::__ink_set_terminal_size(cols, rows);
+
+    setup_runtime(&ctx)?;
+    Ok(ctx)
 }
 
 /// Handle standalone compiler commands (non in-memory)
@@ -144,6 +155,8 @@ fn register_ink_api(ctx: &rquickjs::Context) {
 fn register_ink_call(ctx: &rquickjs::Context) {
     ctx.with(|ctx| {
         let globals = ctx.globals();
+
+        // Register __ink_call (JSON args)
         let ink_call = rquickjs::Function::new(
             ctx.clone(),
             |method: String, args_json: String| -> String {
@@ -154,6 +167,19 @@ fn register_ink_call(ctx: &rquickjs::Context) {
             tracing::warn!("Failed to set __ink_call: {:?}", e);
         } else {
             tracing::debug!("__ink_call registered");
+        }
+
+        // Register __ink_call_fast (method ID + f64 args for hot path)
+        let ink_call_fast = rquickjs::Function::new(
+            ctx.clone(),
+            |method_id: u32, a: f64, b: f64, c: f64, d: f64, e: f64| -> f64 {
+                bridge::call_ink_ffi_fast(method_id, a, b, c, d, e)
+            },
+        );
+        if let Err(e) = globals.set("__ink_call_fast", ink_call_fast) {
+            tracing::warn!("Failed to set __ink_call_fast: {:?}", e);
+        } else {
+            tracing::debug!("__ink_call_fast registered");
         }
     });
 }
@@ -224,6 +250,8 @@ fn setup_terminal(
         tracing::warn!("Could not enable raw mode");
         return Ok(());
     }
+    crate::bridge::io::set_raw_mode_tracking(true);
+    crate::signals::set_terminal_mode("raw", true);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
     let _ = terminal.hide_cursor();
@@ -260,12 +288,23 @@ fn setup_terminal(
 /// running.
 fn cleanup_terminal(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>) {
     use std::io::Write;
-    let _ = crossterm::terminal::disable_raw_mode();
-    let _ = terminal.show_cursor();
+    let modes = crate::signals::get_terminal_modes();
     let mut out = std::io::stdout();
-    let _ = out.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"); // mouse off
-    let _ = out.write_all(b"\x1b[?1049l"); // leave alt screen
-    let _ = out.write_all(b"\x1b[?2004l"); // bracketed paste off
-    let _ = out.write_all(b"\x1b[?25h");   // ensure cursor visible
+
+    if modes.raw_mode {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+    crate::bridge::io::set_raw_mode_tracking(false);
+    let _ = terminal.show_cursor();
+    if modes.mouse_tracking {
+        let _ = out.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
+    }
+    if modes.alt_screen {
+        let _ = out.write_all(b"\x1b[?1049l");
+    }
+    if modes.bracketed_paste {
+        let _ = out.write_all(b"\x1b[?2004l");
+    }
+    let _ = out.write_all(b"\x1b[?25h");
     let _ = out.flush();
 }

@@ -1,6 +1,46 @@
 // Quench Runtime — React-like reconciler + Ink bridge wrappers
-// ~1070 lines. All logic that must live in JS (hooks, reconciliation).
+// All logic that must live in JS (hooks, reconciliation).
 // Bridge wrappers at the top call into Rust via __ink_call.
+//
+// **Ink namespace:** Defined at the top and populated by each module.
+// Order of population:
+//   1. Bridge wrappers (globals, no ink.* dependency)
+//   2. Reconciler functions (no ink.* dependency)
+//   3. Hooks (may call bridge wrappers)
+//   4. Elements (use hooks internally)
+//   5. Exports (final aggregation)
+
+// Keep in sync with src/bridge_config.rs BRIDGE_GLOBAL.
+const BRIDGE_GLOBAL = '__quench';
+
+// ===================================================================
+// Fast path method IDs (must match FastMethodId in src/bridge/ffi.rs)
+// ===================================================================
+const __INK_FAST_METHOD_IDS = {
+  is_dirty: 1,
+  clear_dirty: 2,
+  commit: 3,
+  calculate_layout: 4,
+  get_layout: 5,
+  get_root_id: 6,
+  should_exit: 7,
+  get_terminal_size: 8,
+  stdin_is_raw: 9,
+};
+
+// Cached method IDs for hot-path wrappers
+const __ink_fast_cache = {};
+
+function __ink_call_fast(method_name, a, b, c, d, e) {
+  if (!globalThis.__ink_call_fast) return 0;
+  // Get or cache the method ID
+  let method_id = __ink_fast_cache[method_name];
+  if (method_id === undefined) {
+    // Fall back to string lookup on first call
+    return globalThis.__ink_call_fast(method_name, a, b, c, d, e);
+  }
+  return globalThis.__ink_call_fast(method_id, a, b, c, d, e);
+}
 
 // Cached terminal size for process.stdout.rows/columns.
 // Initialised lazily from the Rust bridge on first access and refreshed
@@ -413,59 +453,42 @@ function useApp() {
 
 // useStdin — Ink returns full stdin context from StdinContext
 function useStdin() {
-  return useMemo(() => ({
-    stdin: {
-      isRawMode: () => globalThis.__ink_stdin_is_raw ? globalThis.__ink_stdin_is_raw() : false,
-      setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
-      on: () => {},
-      off: () => {},
-      once: () => {},
-      emit: () => {},
-    },
+  return {
+    isRawMode: () => globalThis.__ink_stdin_is_raw ? globalThis.__ink_stdin_is_raw() : false,
     setRawMode: (enabled) => globalThis.__ink_set_raw_mode ? globalThis.__ink_set_raw_mode(enabled) : null,
+    on: () => {},
+    off: () => {},
+    once: () => {},
+    emit: () => {},
     setBracketedPasteMode: () => {},
     isRawModeSupported: true,
-    internal_exitOnCtrlC: true,
-    internal_eventEmitter: {
-      on: () => {},
-      off: () => {},
-      once: () => {},
-      emit: () => {},
-      setMaxListeners: () => {},
-      removeListener: () => {},
-    },
-  }), []);
+    exitOnCtrlC: true,
+  };
 }
 
-// useStdout — Ink returns { stdout } from StdoutContext
+// useStdout — Ink returns { stdout } with terminal size
 function useStdout() {
-  return useMemo(() => {
-    const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
-    return {
-      stdout: {
-        columns: ts.width || 80,
-        rows: ts.height || 24,
-        write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null,
-        on: () => {},
-        off: () => {},
-        once: () => {},
-        emit: () => {},
-      },
-    };
-  }, []);
+  const ts = globalThis.__ink_get_terminal_size ? globalThis.__ink_get_terminal_size() : { width: 80, height: 24 };
+  return {
+    columns: ts.width || 80,
+    rows: ts.height || 24,
+    write: (d) => globalThis.__ink_stdout_write ? globalThis.__ink_stdout_write(d) : null,
+    on: () => {},
+    off: () => {},
+    once: () => {},
+    emit: () => {},
+  };
 }
 
-// useStderr — Ink returns { stderr } from StderrContext
+// useStderr — Ink returns stderr object
 function useStderr() {
-  return useMemo(() => ({
-    stderr: {
-      write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null,
-      on: () => {},
-      off: () => {},
-      once: () => {},
-      emit: () => {},
-    },
-  }), []);
+  return {
+    write: (d) => globalThis.__ink_stderr_write ? globalThis.__ink_stderr_write(d) : null,
+    on: () => {},
+    off: () => {},
+    once: () => {},
+    emit: () => {},
+  };
 }
 
 // useFocus — Ink accepts { isActive, autoFocus, id }, returns { isFocused, focus }
@@ -522,12 +545,15 @@ function measureElement(ref) {
   return { width: parseFloat(parts[0]) || 0, height: parseFloat(parts[1]) || 0 };
 }
 
+// useBridge() — returns the Rust-injected bridge configuration.
+// The namespace is created by src/bridge_config.rs::to_js_injection
+// before user code runs, so `globalThis.__quench` is always present.
 function useBridge() {
   return useMemo(() => {
-    const q = globalThis.__quench || { config: {} };
+    const bridgeNs = globalThis[BRIDGE_GLOBAL] || { config: {} };
     return {
-      config: q.config || {},
-      get: (key, defaultValue) => q.config[key] ?? defaultValue,
+      config: bridgeNs.config || {},
+      get: (key, defaultValue) => bridgeNs.config[key] ?? defaultValue,
     };
   }, []);
 }
@@ -1319,7 +1345,20 @@ function getInputFromKey(keyName) {
   return '';
 }
 
-globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt, meta) {
+// Pending key dispatch globals — set by Rust event_loop.rs to avoid
+// per-keystroke string allocations.
+globalThis.__pending_key = null;
+globalThis.__pending_ctrl = false;
+globalThis.__pending_shift = false;
+globalThis.__pending_alt = false;
+globalThis.__pending_meta = false;
+
+globalThis.__tb_dispatch_key = function() {
+  const key = globalThis.__pending_key;
+  const ctrl = globalThis.__pending_ctrl;
+  const shift = globalThis.__pending_shift;
+  const alt = globalThis.__pending_alt;
+  const meta = globalThis.__pending_meta;
   for (const [id, state] of inputHandlers) {
     if (state.options && state.options.isActive === false) continue;
     try {
@@ -1424,7 +1463,25 @@ globalThis.__tb_register_global_mouse_handler = function(handler) {
   return globalMouseHandlers.length;
 };
 
-globalThis.__tb_dispatch_mouse = function(event) {
+// Pending mouse dispatch globals — set by Rust event_loop.rs.
+globalThis.__pending_mouse_col = 0;
+globalThis.__pending_mouse_row = 0;
+globalThis.__pending_mouse_kind = '';
+globalThis.__pending_mouse_button = -1;
+globalThis.__pending_mouse_ctrl = false;
+globalThis.__pending_mouse_shift = false;
+globalThis.__pending_mouse_alt = false;
+
+globalThis.__tb_dispatch_mouse = function() {
+  const event = {
+    column: globalThis.__pending_mouse_col,
+    row: globalThis.__pending_mouse_row,
+    kind: globalThis.__pending_mouse_kind,
+    button: globalThis.__pending_mouse_button,
+    ctrl: globalThis.__pending_mouse_ctrl,
+    shift: globalThis.__pending_mouse_shift,
+    alt: globalThis.__pending_mouse_alt,
+  };
   const { column, row } = event;
   
   // Find the deepest handler at this position using hit-testing
@@ -1449,7 +1506,33 @@ globalThis.__tb_dispatch_mouse = function(event) {
 };
 
 // ===================================================================
-// 15. Exports
+// 0. Ink Namespace Declaration
+// ===================================================================
+
+// The ink namespace is declared early so each module can populate it.
+// All functions are defined before this object literal is created.
+const ink = {
+  // Will be populated by reconciler
+  render: null,
+  renderToString: null,
+  // Will be populated by elements
+  Fragment: null,
+  Box: null, Text: null, Static: null, Newline: null, Spacer: null, Transform: null,
+  // Will be populated by hooks
+  useState: null, useEffect: null, useRef: null, useMemo: null, useCallback: null, useContext: null,
+  useInput: null, useApp: null, useStdin: null, useStdout: null, useStderr: null,
+  useFocus: null, useFocusManager: null, useWindowSize: null, useAnimation: null,
+  usePaste: null, useCursor: null, useBoxMetrics: null, useIsScreenReaderEnabled: null,
+  measureElement: null, useBridge: null,
+  // Utilities
+  createElement: null, createContext: null,
+  kittyFlags: null, kittyModifiers: null,
+  // Timer polyfills
+  setTimeout: null, clearTimeout: null, setInterval: null, clearInterval: null,
+};
+
+// ===================================================================
+// 15. Exports (final aggregation)
 // ===================================================================
 
 // Fragment helper - used for JSX fragments
@@ -1461,7 +1544,8 @@ const Fragment = function(props, ...children) {
   return children;
 };
 
-const ink = {
+// Populate the ink namespace with all exports
+Object.assign(ink, {
   render,
   renderToString,
   Fragment,
@@ -1480,7 +1564,7 @@ const ink = {
   clearTimeout: inkClearTimeout,
   setInterval: inkSetInterval,
   clearInterval: inkClearInterval,
-};
+});
 
 // renderToString - synchronous string rendering (for testing/documentation)
 function renderToString(element, options) {
@@ -1544,7 +1628,7 @@ globalThis.useIsScreenReaderEnabled = useIsScreenReaderEnabled;
 globalThis.measureElement = measureElement;
 globalThis.kittyFlags = kittyFlags;
 globalThis.kittyModifiers = kittyModifiers;
-globalThis.useBridge = useBridge;
+// useBridge is available only via the ink namespace (not duplicated on globalThis).
 globalThis.createElement = createElement;
 globalThis.createContext = createContext;
 
@@ -1553,6 +1637,17 @@ globalThis.setTimeout = inkSetTimeout;
 globalThis.clearTimeout = inkClearTimeout;
 globalThis.setInterval = inkSetInterval;
 globalThis.clearInterval = inkClearInterval;
+
+// Resize dispatch — called by Rust when the terminal is resized.
+globalThis.__tb_dispatch_resize = function(cols, rows) {
+  if (globalThis.__ink_refresh_terminal_size) {
+    globalThis.__ink_refresh_terminal_size();
+  }
+  // Trigger a re-render if the app subscribes to window size changes
+  if (typeof scheduleRerender === 'function') {
+    scheduleRerender(null);
+  }
+};
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ink;

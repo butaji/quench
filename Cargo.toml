@@ -2,16 +2,13 @@
 name = "quench"
 version = "0.1.0"
 edition = "2021"
-authors = ["Quench Team"]
+authors = ["Vitaly Baum <vitaly.baum@gmail.com>"]
 description = "Run Ink (React for terminals) using rquickjs + Rust"
+license = "MIT"
 
 [features]
 default = []
-hotreload = ["notify"]
-bench = []
-# Enable swc-based TSX compiler
-compiler = ["swc", "swc_common", "swc_ecma_parser", "swc_ecma_codegen", "swc_ecma_visit", "swc_ecma_ast", "swc_ecma_transforms"]
-swc = []
+hotreload = ["notify", "notify-debouncer-mini"]
 
 [dependencies]
 # JavaScript runtime
@@ -58,14 +55,7 @@ futures = "0.3"
 # Signal handling for Ctrl+C cleanup
 ctrlc = "3"
 
-# TSX/TS Compiler (optional swc-based)
-swc_common = { version = "23", optional = true }
-swc_ecma_parser = { version = "41", optional = true }
-swc_ecma_codegen = { version = "28", optional = true }
-swc_ecma_visit = { version = "25", optional = true }
-swc_ecma_ast = { version = "25", optional = true }
-swc_ecma_transforms = { version = "55", optional = true }
-regex = "1"
+once_cell = "1"
 
 [dev-dependencies]
 tempfile = "3"

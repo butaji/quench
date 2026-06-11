@@ -141,6 +141,16 @@ pub fn __ink_get_node_prop(node_id: u32, prop: &str) -> Option<String> {
     })
 }
 
+/// Get all node props as a single JSON string (cached on the node).
+pub fn __ink_get_node_props_json(node_id: u32) -> Option<String> {
+    INK_RUNTIME.with(|runtime| {
+        runtime
+            .borrow()
+            .node(node_id)
+            .and_then(|n| n.props_json_cache.clone())
+    })
+}
+
 /// Get raw node prop value
 pub fn __ink_get_node_prop_raw(node_id: u32, prop: &str) -> Option<PropValue> {
     INK_RUNTIME.with(|runtime| {

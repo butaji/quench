@@ -58,13 +58,31 @@ pub fn __ink_stderr_write(data: &str) {
     eprint!("{}", data);
 }
 
+/// Global raw-mode state tracked so `__ink_stdin_is_raw` tells the truth.
+/// Updated by both the Rust terminal-setup path and the JS FFI call.
+static RAW_MODE: AtomicBool = AtomicBool::new(false);
+
 /// Check if stdin is in raw mode
 pub fn __ink_stdin_is_raw() -> bool {
-    false
+    RAW_MODE.load(Ordering::SeqCst)
 }
 
 /// Set raw mode on stdin
-pub fn __ink_set_raw_mode(_enabled: bool) {}
+pub fn __ink_set_raw_mode(enabled: bool) {
+    set_raw_mode_tracking(enabled);
+    if enabled {
+        let _ = crossterm::terminal::enable_raw_mode();
+    } else {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+/// Update the tracked raw-mode flag without touching crossterm.
+/// Called from `main.rs::setup_terminal` and `cleanup_terminal` so the
+/// flag stays in sync with the actual terminal state.
+pub fn set_raw_mode_tracking(enabled: bool) {
+    RAW_MODE.store(enabled, Ordering::SeqCst);
+}
 
 // ===================================================================
 // Terminal state
@@ -146,6 +164,16 @@ mod tests {
         // No ANSI codes - unchanged
         assert_eq!(strip_ansi("hello"), "hello");
         assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn test_raw_mode_tracking() {
+        set_raw_mode_tracking(false);
+        assert!(!__ink_stdin_is_raw());
+        set_raw_mode_tracking(true);
+        assert!(__ink_stdin_is_raw());
+        set_raw_mode_tracking(false);
+        assert!(!__ink_stdin_is_raw());
     }
 
     #[test]

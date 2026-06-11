@@ -23,7 +23,34 @@ pub enum CompilerCmd {
     CompileInMemory { input: String },
 }
 
-/// Parse command line arguments
+/// What a flag expects.
+enum FlagAction {
+    /// Takes nothing (boolean flag)
+    Bool,
+    /// Takes the next argument as a path/value
+    TakesValue,
+    /// Takes the next argument as KEY=VAL
+    TakesKV,
+}
+
+const FLAGS: &[(&str, FlagAction)] = &[
+    ("--help", FlagAction::Bool),
+    ("-h", FlagAction::Bool),
+    ("--version", FlagAction::Bool),
+    ("-v", FlagAction::Bool),
+    ("--compile", FlagAction::TakesValue),
+    ("--run", FlagAction::TakesValue),
+    ("--watch", FlagAction::TakesValue),
+    ("-w", FlagAction::TakesValue),
+    ("--hot", FlagAction::Bool),
+    ("--prop", FlagAction::TakesKV),
+    ("--bundle", FlagAction::TakesValue),
+    ("-b", FlagAction::TakesValue),
+    ("--eval", FlagAction::TakesValue),
+    ("-e", FlagAction::TakesValue),
+];
+
+/// Parse command line arguments using a single-pass flag table.
 pub fn parse_args(args: &[String]) -> CliArgs {
     let mut result = CliArgs {
         script: None,
@@ -34,113 +61,129 @@ pub fn parse_args(args: &[String]) -> CliArgs {
         compiler_cmd: None,
     };
 
-    // Skip the program name (args[0])
     let mut i = 1;
     while i < args.len() {
-        match args[i].as_str() {
-            "--help" | "-h" => {
-                print_help();
-                std::process::exit(0);
-            }
-            "--version" | "-v" => {
-                println!("Quench v{}", VERSION);
-                std::process::exit(0);
-            }
-            "--compile" => {
-                if let Some(input) = args.get(i + 1) {
-                    let output = args.iter()
-                        .position(|a| a == "-o" || a == "--out")
-                        .and_then(|j| args.get(j + 1).cloned());
-                    result.compiler_cmd = Some(CompilerCmd::Compile {
-                        input: input.clone(),
-                        output,
-                    });
-                    result.interactive = false;
-                }
-                i += 2;
-            }
-            "--run" => {
-                if let Some(input) = args.get(i + 1) {
-                    // --run always in-memory compiles (no temp file written)
-                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
-                        input: input.clone(),
-                    });
-                    result.interactive = true;
-                }
-                i += 2;
-            }
-            "run" => {
-                // `quench run <file>` subcommand
-                if let Some(input) = args.get(i + 1) {
-                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
-                        input: input.clone(),
-                    });
-                    result.interactive = true;
-                }
-                i += 2;
-            }
-            // Support direct TSX/TS file execution with in-memory compile
-            arg if !arg.starts_with('-') && result.script.is_none() => {
-                let path = arg;
-                // Only compile files that need JSX transformation
-                // Plain .js files can be loaded directly
-                if path.ends_with(".tsx") || path.ends_with(".ts") || path.ends_with(".jsx") {
-                    // Compile in-memory for JSX/TSX/TS files
-                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
-                        input: path.to_string(),
-                    });
-                } else if path.ends_with(".js") {
-                    // Plain JS files - load directly without compilation
-                    result.script = Some(path.to_string());
-                } else {
-                    result.script = Some(path.to_string());
-                }
-                i += 1;
-            }
-            "--watch" | "-w" => {
-                if let Some(path) = args.get(i + 1) {
-                    result.watch_path = Some(path.clone());
-                }
-                i += 2;
-            }
-            "--hot" => {
-                result.watch_path = Some(".".to_string());
-                i += 1;
-            }
-            "--prop" => {
-                if let Some(kv) = args.get(i + 1) {
-                    if let Some((key, val)) = kv.split_once('=') {
-                        result.bridge_config.props.insert(key.to_string(), val.to_string());
+        let arg = args[i].as_str();
+
+        if let Some(action) = FLAGS.iter().find(|(f, _)| *f == arg).map(|(_, a)| a) {
+            match action {
+                FlagAction::Bool => {
+                    if let Some(new_i) = handle_bool_flag(arg, &mut result) {
+                        i = new_i;
+                        continue;
                     }
                 }
-                i += 2;
-            }
-            "--bundle" | "-b" => {
-                if let Some(path) = args.get(i + 1) {
-                    result.script = Some(path.clone());
+                FlagAction::TakesValue => {
+                    if let Some(new_i) = handle_value_flag(arg, &args, i, &mut result) {
+                        i = new_i;
+                        continue;
+                    }
                 }
-                i += 2;
-            }
-            "--eval" | "-e" => {
-                if let Some(code) = args.get(i + 1) {
-                    result.js_code = Some(code.clone());
+                FlagAction::TakesKV => {
+                    if let Some(new_i) = handle_kv_flag(&args, i, &mut result) {
+                        i = new_i;
+                        continue;
+                    }
                 }
-                i += 2;
             }
-            arg if !arg.starts_with('-') && result.script.is_none() => {
-                result.script = Some(arg.to_string());
-                i += 1;
+        } else if arg == "run" {
+            if let Some(input) = args.get(i + 1) {
+                result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
+                    input: input.clone(),
+                });
+                result.interactive = true;
             }
-            _ => i += 1,
+            i += 2;
+            continue;
+        } else if !arg.starts_with('-') && result.script.is_none() {
+            handle_positional(arg, &mut result);
+            i += 1;
+            continue;
         }
+
+        i += 1;
     }
 
-    // Determine interactive mode
     if result.script.is_some() {
         result.interactive = true;
     }
 
     result
+}
+
+fn handle_bool_flag(flag: &str, result: &mut CliArgs) -> Option<usize> {
+    match flag {
+        "--help" | "-h" => {
+            print_help();
+            std::process::exit(0);
+        }
+        "--version" | "-v" => {
+            println!("Quench v{}", VERSION);
+            std::process::exit(0);
+        }
+        "--hot" => {
+            result.watch_path = Some(".".to_string());
+            Some(0) // consumed, caller adds 1
+        }
+        _ => None,
+    }
+}
+
+fn handle_value_flag(
+    flag: &str,
+    args: &[String],
+    i: usize,
+    result: &mut CliArgs,
+) -> Option<usize> {
+    let value = args.get(i + 1)?;
+    match flag {
+        "--compile" => {
+            let output = args
+                .iter()
+                .position(|a| a == "-o" || a == "--out")
+                .and_then(|j| args.get(j + 1).cloned());
+            result.compiler_cmd = Some(CompilerCmd::Compile {
+                input: value.clone(),
+                output,
+            });
+            result.interactive = false;
+        }
+        "--run" => {
+            result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
+                input: value.clone(),
+            });
+            result.interactive = true;
+        }
+        "--watch" | "-w" => {
+            result.watch_path = Some(value.clone());
+        }
+        "--bundle" | "-b" => {
+            result.script = Some(value.clone());
+        }
+        "--eval" | "-e" => {
+            result.js_code = Some(value.clone());
+        }
+        _ => return None,
+    }
+    Some(i + 2)
+}
+
+fn handle_kv_flag(args: &[String], i: usize, result: &mut CliArgs) -> Option<usize> {
+    let kv = args.get(i + 1)?;
+    if let Some((key, val)) = kv.split_once('=') {
+        result.bridge_config.props.insert(key.to_string(), val.to_string());
+    }
+    Some(i + 2)
+}
+
+fn handle_positional(path: &str, result: &mut CliArgs) {
+    if path.ends_with(".tsx") || path.ends_with(".ts") || path.ends_with(".jsx") {
+        result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
+            input: path.to_string(),
+        });
+    } else {
+        result.script = Some(path.to_string());
+    }
 }
 
 /// Print help text
