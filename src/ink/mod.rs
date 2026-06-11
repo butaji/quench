@@ -15,6 +15,7 @@ pub mod tree;
 pub use node::{InkNode, InkTag, PropValue};
 pub use runtime::InkRuntime;
 pub use tree::{append_child, remove_child, insert_before, commit_update, set_text};
+#[allow(unused_imports)]
 pub use shared::{INK_RUNTIME, reset_runtime};
 
 // Re-export errors

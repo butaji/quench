@@ -271,7 +271,7 @@ fn poll_timers(js_ctx: &rquickjs::Context) -> bool {
                 let globals = ctx.globals();
                 if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_invoke_timers") {
                     // Pass the timer IDs as a JS array
-                    let mut js_array = rquickjs::Array::new(ctx.clone()).ok();
+                    let js_array = rquickjs::Array::new(ctx.clone()).ok();
                     if let Some(ref arr) = js_array {
                         for (i, &id) in ids.iter().enumerate() {
                             let _ = arr.set(i, id);
