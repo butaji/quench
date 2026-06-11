@@ -1,0 +1,33 @@
+# Build artifacts
+/target/
+**/target/
+
+# Cargo lock fragments that some toolchains leave behind
+**/*.rs.bk
+
+# Embedded quickjs build dir
+/quickjs/
+/quickjs2020/
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local scratch / test outputs
+/tmp/
+/scratch/
+
+# Agent / RALPH logs (ephemeral session traces)
+/.ralph/
+
+# Local benchmark output
+/criterion/
+
+# Generated docs (built from markdown with mdbook, etc.)
+/book/
+/docs/_book/
