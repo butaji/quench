@@ -1,4 +1,4 @@
-// Align Demo — TuiBridge
+// Align Demo — Quench
 // Demonstrates alignSelf and alignContent properties for alignment
 // Shows how children can override parent's alignItems (alignSelf)
 // and how wrapped content is aligned (alignContent)

@@ -1,4 +1,4 @@
-// Progress Bar — TuiBridge
+// Progress Bar — Quench
 // Visual progress indicator with percentage
 // Common pattern for long-running operations
 

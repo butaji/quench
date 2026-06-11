@@ -1,4 +1,4 @@
-// Focus Form Example - TuiBridge demo (TypeScript)
+// Focus Form Example - Quench demo (TypeScript)
 // Demonstrates focus management and input handling
 
 import { render, Box, Text, useState, useInput, useFocus, useFocusManager, useApp } from 'ink';

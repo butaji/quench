@@ -1,6 +1,6 @@
-# TuiBridge — Project Status
+# Quench — Project Status
 
-> **Goal:** Exact Ink API running in rquickjs + Rust. 59 examples run in TuiBridge with **full Ink API compatibility**.
+> **Goal:** Exact Ink API running in rquickjs + Rust. 59 examples run in Quench with **full Ink API compatibility**.
 
 ---
 
@@ -23,7 +23,7 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 ## ✅ Done Definition
 
 - [x] All tasks in `tasks/` complete (71 tasks, 66 done, 3 pending, 2 deferred)
-- [x] All examples run in TuiBridge without source modification
+- [x] All examples run in Quench without source modification
 - [x] 100% Ink API coverage achieved
 - [x] Release binary 2.9 MB (under 5 MB target)
 - [x] Hot reload < 50ms end-to-end
@@ -69,7 +69,7 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 - **Context:** createContext, useContext
 - **Ink:** useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager, measureElement
 - **Ink 7:** useAnimation, useWindowSize, useCursor, usePaste, useBoxMetrics
-- **TuiBridge:** useBridge
+- **Quench:** useBridge
 
 ### Components
 - ink-box, ink-text, ink-static, ink-newline, ink-spacer, ink-transform
@@ -83,18 +83,18 @@ Ink API (exact) → JS Reconciler → __ink_* bridge → Rust
 cargo build --release
 
 # Run TSX examples
-./target/release/tuibridge examples/counter.tsx
-./target/release/tuibridge examples/dashboard.tsx
-./target/release/tuibridge examples/animations.tsx
+./target/release/quench examples/counter.tsx
+./target/release/quench examples/dashboard.tsx
+./target/release/quench examples/animations.tsx
 
 # Run with hot reload
-./target/release/tuibridge --watch examples/counter.tsx
+./target/release/quench --watch examples/counter.tsx
 
 # Run parity comparison
 ./scripts/parity.sh
 
 # Visual verification in tmux
-tmux new-session -d -s tui './target/release/tuibridge examples/counter.tsx; read'
+tmux new-session -d -s tui './target/release/quench examples/counter.tsx; read'
 tmux attach -t tui
 ```
 

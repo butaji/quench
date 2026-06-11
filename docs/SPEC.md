@@ -1,4 +1,4 @@
-# TuiBridge Specification v0.1
+# Quench Specification v0.1
 
 ## 1. Architecture
 
@@ -101,7 +101,7 @@ src/
 
 build.rs            # Bytecode precompilation + lint rules (warning-only)
 scripts/
-├── parity.sh       # Side-by-side Deno/TuiBridge runner
+├── parity.sh       # Side-by-side Deno/Quench runner
 └── ansi-diff.js    # ANSI output comparison
 ```
 
@@ -286,21 +286,21 @@ Cursor is hidden once at startup (`terminal.hide_cursor()`) and restored on exit
 
 ### TSX (recommended)
 ```bash
-tuibridge examples/counter.tsx
-tuibridge examples/dashboard.tsx
+quench examples/counter.tsx
+quench examples/dashboard.tsx
 ```
 
 ### Legacy JavaScript
 ```bash
-tuibridge examples/counter.js
-tuibridge examples/dashboard.js
+quench examples/counter.js
+quench examples/dashboard.js
 ```
 
 ### With hot reload
 ```bash
-tuibridge --watch examples/counter.tsx
+quench --watch examples/counter.tsx
 # Or
-tuibridge --hot examples/counter.tsx
+quench --hot examples/counter.tsx
 ```
 
 ### Parity harness
@@ -341,7 +341,7 @@ Additional examples demonstrating specific API features.
 | `spacing-props.tsx` | margin/padding/gap variants | ✅ |
 | `static-overlay.tsx` | Static, Newline, Spacer | ✅ |
 | `stdin-stdout.tsx` | useStdin, useStdout, useStderr | ✅ |
-| `use-bridge.tsx` | useBridge (TuiBridge-specific) | ✅ |
+| `use-bridge.tsx` | useBridge (Quench-specific) | ✅ |
 | `wizard.tsx` | useMemo, useCallback | ✅ |
 | `animations.tsx` | useEffect with intervals, animations, small text | ✅ |
 | `component-composition.tsx` | component patterns, composition | ✅ |

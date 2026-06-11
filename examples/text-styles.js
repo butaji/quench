@@ -1,4 +1,4 @@
-// Text Styles Example — TuiBridge
+// Text Styles Example — Quench
 // Demonstrates all Ink text styling props
 // Covers: italic, strikethrough, underline, inverse, transform, textWrap
 

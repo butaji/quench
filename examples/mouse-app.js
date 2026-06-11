@@ -1,4 +1,4 @@
-// Mouse App Example - TuiBridge demo
+// Mouse App Example - Quench demo
 // Demonstrates mouse event handling, clickable areas, and coordinates
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

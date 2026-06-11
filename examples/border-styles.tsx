@@ -1,4 +1,4 @@
-// Border Styles Demo — TuiBridge
+// Border Styles Demo — Quench
 // Demonstrates borderColor, borderDimColor, individual sides, title
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';

@@ -1,4 +1,4 @@
-// Real-Time Dashboard — TuiBridge
+// Real-Time Dashboard — Quench
 // Demonstrates live updating data with animations
 // Common pattern for monitoring tools, system stats
 

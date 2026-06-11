@@ -1746,6 +1746,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atty",
+ "criterion",
+ "crossterm 0.28.1",
+ "ctrlc",
+ "futures",
+ "notify 8.2.0",
+ "notify-debouncer-mini",
+ "ordered-float",
+ "ratatui",
+ "regex",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_codegen",
+ "swc_ecma_parser",
+ "swc_ecma_transforms",
+ "swc_ecma_visit",
+ "tempfile",
+ "textwrap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "unicode-width",
+ "yoga",
+]
+
+[[package]]
 name = "quote"
 version = "0.6.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2767,42 +2803,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tuibridge"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "atty",
- "criterion",
- "crossterm 0.28.1",
- "ctrlc",
- "futures",
- "notify 8.2.0",
- "notify-debouncer-mini",
- "ordered-float",
- "ratatui",
- "regex",
- "rquickjs",
- "serde",
- "serde_json",
- "serial_test",
- "swc_common",
- "swc_ecma_ast",
- "swc_ecma_codegen",
- "swc_ecma_parser",
- "swc_ecma_transforms",
- "swc_ecma_visit",
- "tempfile",
- "textwrap",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-error",
- "tracing-subscriber",
- "unicode-width",
- "yoga",
-]
-
-[[package]]
 name = "unicode-id-start"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3408,18 +3408,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.51"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e5361301a1d9e5dd94c524eb99365fbaed5b237e831d7f45e2ddea11ffe8627"
+checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.51"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "422033a2245cb4b6ff8def11b2dfaf184a2ab2573f5af28082a163a68889af0e"
+checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",

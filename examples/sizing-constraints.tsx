@@ -1,4 +1,4 @@
-// Sizing Constraints Demo — TuiBridge
+// Sizing Constraints Demo — Quench
 // Demonstrates min/max width/height, position=absolute, display=none
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';

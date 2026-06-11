@@ -1,5 +1,5 @@
 #!/bin/bash
-# Parity Harness — Run TSX examples in Deno (reference) and TuiBridge
+# Parity Harness — Run TSX examples in Deno (reference) and Quench
 # Compare ANSI output cell-by-cell for 100% look&feel parity
 #
 # Uses PTY for proper terminal emulation when available
@@ -15,22 +15,22 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Config
-TUIBRIDGE="${TUIBRIDGE:-./target/release/tuibridge}"
+QUENCH="${QUENCH:-./target/release/quench}"
 DENO="${DENO:-deno}"
 TIMEOUT="${TIMEOUT:-5}"
 USE_PTY="${USE_PTY:-1}"
 
 echo "=========================================="
-echo "TuiBridge Parity Harness"
+echo "Quench Parity Harness"
 echo "=========================================="
-echo "TuiBridge: $TUIBRIDGE"
+echo "Quench: $QUENCH"
 echo "Deno: $DENO"
 echo "PTY mode: $USE_PTY"
 echo ""
 
-# Check if tuibridge exists
-if [ ! -f "$TUIBRIDGE" ]; then
-    echo -e "${RED}Error:${NC} TuiBridge binary not found at $TUIBRIDGE"
+# Check if quench exists
+if [ ! -f "$QUENCH" ]; then
+    echo -e "${RED}Error:${NC} Quench binary not found at $QUENCH"
     echo "Run: cargo build --release"
     exit 1
 fi
@@ -58,18 +58,18 @@ run_deno() {
     return 0
 }
 
-# Run example in TuiBridge with PTY support
-run_tuibridge() {
+# Run example in Quench with PTY support
+run_quench() {
     local example="$1"
     local output="$2"
     local use_pty="${3:-1}"
     
     if [ "$use_pty" = "1" ] && command -v script &> /dev/null; then
         # Use PTY via script(1) for proper terminal emulation
-        script -q -c "$TUIBRIDGE $example" /dev/null < /dev/null 2>/dev/null > "$output" || true
+        script -q -c "$QUENCH $example" /dev/null < /dev/null 2>/dev/null > "$output" || true
     else
         # Direct execution (may have TTY issues)
-        timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null > "$output" || true
+        timeout "$TIMEOUT" "$QUENCH" "$example" 2>/dev/null > "$output" || true
     fi
 }
 
@@ -95,7 +95,7 @@ compare() {
     fi
     
     if [ ! -s "$tui_out" ]; then
-        echo -e "${RED}✗${NC} $name (TuiBridge: no output)"
+        echo -e "${RED}✗${NC} $name (Quench: no output)"
         ((FAIL++))
         return
     fi
@@ -169,7 +169,7 @@ for name in "${PRIMARY_EXAMPLES[@]}"; do
     tui_out="$TMPDIR/${name}.tui.txt"
     
     run_deno "$example" "$deno_out" 2>/dev/null || true
-    run_tuibridge "$example" "$tui_out" "$USE_PTY"
+    run_quench "$example" "$tui_out" "$USE_PTY"
     
     compare "$deno_out" "$tui_out" "$name" || true
 done
@@ -204,7 +204,7 @@ for name in "${EXTENDED_EXAMPLES[@]}"; do
     tui_out="$TMPDIR/${name}.tui.txt"
     
     run_deno "$example" "$deno_out" 2>/dev/null || true
-    run_tuibridge "$example" "$tui_out" "$USE_PTY"
+    run_quench "$example" "$tui_out" "$USE_PTY"
     
     compare "$deno_out" "$tui_out" "$name" || true
 done
@@ -224,14 +224,14 @@ if [ $FAIL -gt 0 ]; then
     echo -e "${RED}Parity FAILED${NC}"
     echo ""
     echo "For visual comparison in tmux:"
-    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.tsx; read'"
+    echo "  tmux new-session -d -s tui '$QUENCH examples/counter.tsx; read'"
     echo "  tmux attach -t tui"
     exit 1
 else
     echo -e "${GREEN}Parity PASSED${NC}"
     echo ""
     echo "For 100% visual verification, test in tmux:"
-    echo "  tmux new-session -d -s tui '$TUIBRIDGE examples/counter.tsx; read'"
+    echo "  tmux new-session -d -s tui '$QUENCH examples/counter.tsx; read'"
     echo "  tmux attach -t tui"
     exit 0
 fi

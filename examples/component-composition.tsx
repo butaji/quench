@@ -1,4 +1,4 @@
-// Component Composition — TuiBridge
+// Component Composition — Quench
 // Demonstrates real-world component patterns: reusable UI components
 // Shows how to build larger apps from small, composable pieces
 
@@ -176,7 +176,7 @@ function App(): JSX.Element {
           <Text>My CLI App</Text>
           <Text dimColor>Version 1.0.0</Text>
           <Text> </Text>
-          <Text dimColor small>Built with React + Ink + TuiBridge</Text>
+          <Text dimColor small>Built with React + Ink + Quench</Text>
         </Card>
       )}
 
