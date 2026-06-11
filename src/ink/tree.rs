@@ -123,6 +123,7 @@ pub fn insert_before(
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn gather_insert_info(
     runtime: &crate::ink::InkRuntime,
     parent_id: u32,

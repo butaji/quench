@@ -80,6 +80,7 @@ fn render_node(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset
     render_children(node_id, &tag, buf, area, x, y);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_node_by_tag(
     node_id: u32,
     tag: &str,

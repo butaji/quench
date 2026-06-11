@@ -29,7 +29,7 @@ fn run_esbuild(source: &str, loader: &str) -> Result<String> {
     std::fs::write(&temp_input, source)?;
 
     let output = Command::new("npx")
-        .args(&[
+        .args([
             "esbuild",
             &temp_input,
             "--outfile=/dev/stdout",
@@ -96,7 +96,7 @@ fn extract_ink_imports(js: &str) -> Vec<String> {
             let trimmed = line.trim();
             trimmed.starts_with("import ") && (trimmed.contains("from \"ink\"") || trimmed.contains("from 'ink'"))
         })
-        .flat_map(|line| extract_names_from_import(line))
+        .flat_map(extract_names_from_import)
         .collect()
 }
 

@@ -104,8 +104,6 @@ fn skip_to_next_entry(chars: &[char], pos: usize) -> usize {
 
 /// Parse a single prop value
 fn parse_prop_value(chars: &[char], pos: &mut usize) -> PropValue {
-    let start = *pos;
-    
     match chars[*pos] {
         '"' => parse_string_value(chars, pos),
         '[' => parse_array_value(chars, pos),

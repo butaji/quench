@@ -175,7 +175,7 @@ mod tests {
         let config = BridgeConfig::new();
         assert!(!config.platform.os.is_empty());
         assert!(!config.platform.arch.is_empty());
-        assert_eq!(config.terminal.has_mouse, true);
+        assert!(config.terminal.has_mouse);
     }
 
     #[test]

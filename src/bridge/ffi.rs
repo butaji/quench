@@ -392,7 +392,7 @@ fn fast_calculate_layout(_a: f64, _b: f64, _c: f64, _d: f64, _e: f64) -> f64 {
 fn fast_get_layout(a: f64, _b: f64, _c: f64, _d: f64, _e: f64) -> f64 {
     let id = a as u32;
     match __ink_get_layout(id) {
-        Some((x, y, w, h)) => {
+        Some((_x, _y, _w, _h)) => {
             // Pack into single f64 using IEEE 754 format
             // This is a simplified approach; full impl would need proper encoding
             // For now, return the layout as a side effect and return 0
