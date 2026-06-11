@@ -51,6 +51,10 @@ pub struct InkNode {
     pub parent: Option<u32>,
     pub children: Vec<u32>,
     pub yoga: Node,
+    /// Cached JSON serialization of props for the render path.
+    pub props_json_cache: Option<String>,
+    /// Last props JSON bytes for short-circuiting no-op commit_update.
+    pub last_props_json: Option<Vec<u8>>,
 }
 
 impl InkNode {
@@ -65,6 +69,10 @@ impl InkNode {
         yoga.set_align_items(Align::Stretch);
         yoga.set_justify_content(Justify::FlexStart);
 
+        if tag == InkTag::Box {
+            yoga.set_align_self(Align::Stretch);
+        }
+
         Self {
             id,
             tag,
@@ -73,6 +81,8 @@ impl InkNode {
             parent: None,
             children: Vec::new(),
             yoga,
+            props_json_cache: None,
+            last_props_json: None,
         }
     }
 
@@ -103,6 +113,8 @@ impl InkNode {
     /// Apply props to the Yoga node
     pub fn apply_props(&mut self, props: &HashMap<String, PropValue>) {
         self.props = props.clone();
+        self.props_json_cache = Some(props_to_json(props));
+        self.last_props_json = Some(self.props_json_cache.as_ref().unwrap().as_bytes().to_vec());
         apply_flex_props(self, props);
         apply_spacing_props(self, props);
         apply_border_props(self, props);
@@ -117,6 +129,14 @@ impl InkNode {
 
 /// Apply flex-related props
 fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
+    apply_flex_direction(node, props);
+    apply_align_props(node, props);
+    apply_justify_and_wrap(node, props);
+    apply_flex_grow_shrink(node, props);
+    apply_flex_basis(node, props);
+}
+
+fn apply_flex_direction(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     if let Some(PropValue::String(s)) = props.get("flexDirection") {
         node.yoga.set_flex_direction(match s.as_str() {
             "column" => FlexDirection::Column,
@@ -125,43 +145,55 @@ fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
             _ => FlexDirection::Row,
         });
     }
+}
 
+fn apply_align_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     if let Some(PropValue::String(s)) = props.get("alignItems") {
-        node.yoga.set_align_items(match s.as_str() {
-            "center" => Align::Center,
-            "flex-end" => Align::FlexEnd,
-            "stretch" => Align::Stretch,
-            "baseline" => Align::Baseline,
-            _ => Align::FlexStart,
-        });
+        node.yoga.set_align_items(parse_align(s));
     }
-
-    // alignSelf - override parent's alignItems for this child
     if let Some(PropValue::String(s)) = props.get("alignSelf") {
-        node.yoga.set_align_self(match s.as_str() {
-            "center" => Align::Center,
-            "flex-end" => Align::FlexEnd,
-            "flex-start" => Align::FlexStart,
-            "stretch" => Align::Stretch,
-            "baseline" => Align::Baseline,
-            "auto" => Align::Auto,
-            _ => Align::Auto,
-        });
+        node.yoga.set_align_self(parse_align_self(s));
     }
-
-    // alignContent - multi-line alignment (for wrapped content)
     if let Some(PropValue::String(s)) = props.get("alignContent") {
-        node.yoga.set_align_content(match s.as_str() {
-            "center" => Align::Center,
-            "flex-end" => Align::FlexEnd,
-            "flex-start" => Align::FlexStart,
-            "stretch" => Align::Stretch,
-            "space-between" => Align::SpaceBetween,
-            "space-around" => Align::SpaceAround,
-            _ => Align::FlexStart,
-        });
+        node.yoga.set_align_content(parse_align_content(s));
     }
+}
 
+fn parse_align(s: &str) -> Align {
+    match s {
+        "center" => Align::Center,
+        "flex-end" => Align::FlexEnd,
+        "stretch" => Align::Stretch,
+        "baseline" => Align::Baseline,
+        _ => Align::FlexStart,
+    }
+}
+
+fn parse_align_self(s: &str) -> Align {
+    match s {
+        "center" => Align::Center,
+        "flex-end" => Align::FlexEnd,
+        "flex-start" => Align::FlexStart,
+        "stretch" => Align::Stretch,
+        "baseline" => Align::Baseline,
+        "auto" => Align::Auto,
+        _ => Align::Auto,
+    }
+}
+
+fn parse_align_content(s: &str) -> Align {
+    match s {
+        "center" => Align::Center,
+        "flex-end" => Align::FlexEnd,
+        "flex-start" => Align::FlexStart,
+        "stretch" => Align::Stretch,
+        "space-between" => Align::SpaceBetween,
+        "space-around" => Align::SpaceAround,
+        _ => Align::FlexStart,
+    }
+}
+
+fn apply_justify_and_wrap(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     if let Some(PropValue::String(s)) = props.get("justifyContent") {
         node.yoga.set_justify_content(match s.as_str() {
             "center" => Justify::Center,
@@ -172,34 +204,33 @@ fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
             _ => Justify::FlexStart,
         });
     }
-
     if let Some(PropValue::String(s)) = props.get("flexWrap") {
         node.yoga.set_flex_wrap(match s.as_str() {
             "wrap" => Wrap::Wrap,
-            "nowrap" => Wrap::NoWrap,
             _ => Wrap::NoWrap,
         });
     }
-
     if let Some(PropValue::String(s)) = props.get("display") {
         node.yoga.set_display(match s.as_str() {
-            "flex" => Display::Flex,
             "none" => Display::None,
             _ => Display::Flex,
         });
     }
+}
 
-    // Flex grow/shrink (not on Spacer)
-    if node.tag != InkTag::Spacer {
-        if let Some(PropValue::Number(n)) = props.get("flexGrow") {
-            node.yoga.set_flex_grow(*n as f32);
-        }
-        if let Some(PropValue::Number(n)) = props.get("flexShrink") {
-            node.yoga.set_flex_shrink(*n as f32);
-        }
+fn apply_flex_grow_shrink(node: &mut InkNode, props: &HashMap<String, PropValue>) {
+    if node.tag == InkTag::Spacer {
+        return;
     }
+    if let Some(PropValue::Number(n)) = props.get("flexGrow") {
+        node.yoga.set_flex_grow(*n as f32);
+    }
+    if let Some(PropValue::Number(n)) = props.get("flexShrink") {
+        node.yoga.set_flex_shrink(*n as f32);
+    }
+}
 
-    // Flex basis
+fn apply_flex_basis(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     if let Some(v) = props.get("flexBasis") {
         match v {
             PropValue::Number(n) => {
@@ -220,75 +251,68 @@ fn apply_flex_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
 
 /// Apply spacing (margin, padding, gap) props
 fn apply_spacing_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
-    let set_margin = |node: &mut InkNode, edge: yoga::Edge, v: f32| {
-        node.yoga.set_margin(edge, StyleUnit::Point(OrderedFloat(v)));
-    };
-    let set_padding = |node: &mut InkNode, edge: yoga::Edge, v: f32| {
-        node.yoga.set_padding(edge, StyleUnit::Point(OrderedFloat(v)));
-    };
-    let parse_val = |v: &PropValue| parse_spacing_value(v);
+    apply_margin_props(node, props);
+    apply_padding_props(node, props);
+    apply_gap_props(node, props);
+}
 
-    // Margin
-    if let Some(v) = props.get("margin").and_then(parse_val) {
+fn apply_margin_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
+    if let Some(v) = props.get("margin").and_then(parse_spacing_value) {
         node.yoga.set_margin(yoga::Edge::All, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("marginTop").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Top, v);
+    for (key, edge) in [
+        ("marginTop", yoga::Edge::Top),
+        ("marginBottom", yoga::Edge::Bottom),
+        ("marginLeft", yoga::Edge::Left),
+        ("marginRight", yoga::Edge::Right),
+    ] {
+        if let Some(v) = props.get(key).and_then(parse_spacing_value) {
+            node.yoga.set_margin(edge, StyleUnit::Point(OrderedFloat(v)));
+        }
     }
-    if let Some(v) = props.get("marginBottom").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Bottom, v);
+    if let Some(v) = props.get("marginY").and_then(parse_spacing_value) {
+        node.yoga.set_margin(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+        node.yoga.set_margin(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("marginLeft").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Left, v);
+    if let Some(v) = props.get("marginX").and_then(parse_spacing_value) {
+        node.yoga.set_margin(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+        node.yoga.set_margin(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("marginRight").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Right, v);
-    }
-    if let Some(v) = props.get("marginY").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Top, v);
-        set_margin(node, yoga::Edge::Bottom, v);
-    }
-    if let Some(v) = props.get("marginX").and_then(parse_val) {
-        set_margin(node, yoga::Edge::Left, v);
-        set_margin(node, yoga::Edge::Right, v);
-    }
+}
 
-    // Padding
-    if let Some(v) = props.get("padding").and_then(parse_val) {
+fn apply_padding_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
+    if let Some(v) = props.get("padding").and_then(parse_spacing_value) {
         node.yoga.set_padding(yoga::Edge::All, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("paddingTop").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Top, v);
+    for (key, edge) in [
+        ("paddingTop", yoga::Edge::Top),
+        ("paddingBottom", yoga::Edge::Bottom),
+        ("paddingLeft", yoga::Edge::Left),
+        ("paddingRight", yoga::Edge::Right),
+    ] {
+        if let Some(v) = props.get(key).and_then(parse_spacing_value) {
+            node.yoga.set_padding(edge, StyleUnit::Point(OrderedFloat(v)));
+        }
     }
-    if let Some(v) = props.get("paddingBottom").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Bottom, v);
+    if let Some(v) = props.get("paddingY").and_then(parse_spacing_value) {
+        node.yoga.set_padding(yoga::Edge::Top, StyleUnit::Point(OrderedFloat(v)));
+        node.yoga.set_padding(yoga::Edge::Bottom, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("paddingLeft").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Left, v);
+    if let Some(v) = props.get("paddingX").and_then(parse_spacing_value) {
+        node.yoga.set_padding(yoga::Edge::Left, StyleUnit::Point(OrderedFloat(v)));
+        node.yoga.set_padding(yoga::Edge::Right, StyleUnit::Point(OrderedFloat(v)));
     }
-    if let Some(v) = props.get("paddingRight").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Right, v);
-    }
-    if let Some(v) = props.get("paddingY").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Top, v);
-        set_padding(node, yoga::Edge::Bottom, v);
-    }
-    if let Some(v) = props.get("paddingX").and_then(parse_val) {
-        set_padding(node, yoga::Edge::Left, v);
-        set_padding(node, yoga::Edge::Right, v);
-    }
+}
 
-    // Gap (flex gap between children)
-    // Supports both Ink 7 names (columnGap/rowGap) and Ink 6 names (gapX/gapY)
+fn apply_gap_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     if let Some(PropValue::Number(n)) = props.get("gap") {
-        node.yoga.set_gap(yoga::Gutter::Column, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
-        node.yoga.set_gap(yoga::Gutter::Row, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
+        let v = yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32));
+        node.yoga.set_gap(yoga::Gutter::Column, v);
+        node.yoga.set_gap(yoga::Gutter::Row, v);
     }
-    // gapX and columnGap are synonyms
     if let Some(PropValue::Number(n)) = props.get("gapX").or(props.get("columnGap")) {
         node.yoga.set_gap(yoga::Gutter::Column, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
     }
-    // gapY and rowGap are synonyms
     if let Some(PropValue::Number(n)) = props.get("gapY").or(props.get("rowGap")) {
         node.yoga.set_gap(yoga::Gutter::Row, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
     }
@@ -312,45 +336,38 @@ fn apply_border_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     }
 }
 
+/// Serialize props HashMap to JSON string.
+pub fn props_to_json(props: &HashMap<String, PropValue>) -> String {
+    let mut map = serde_json::Map::new();
+    for (k, v) in props {
+        map.insert(k.clone(), prop_value_to_json_value(v));
+    }
+    serde_json::Value::Object(map).to_string()
+}
+
+fn prop_value_to_json_value(v: &PropValue) -> serde_json::Value {
+    match v {
+        PropValue::Null => serde_json::Value::Null,
+        PropValue::Bool(b) => serde_json::Value::Bool(*b),
+        PropValue::Number(n) => serde_json::Value::Number(
+            serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)),
+        ),
+        PropValue::String(s) => serde_json::Value::String(s.clone()),
+        PropValue::Vec(arr) => {
+            serde_json::Value::Array(arr.iter().map(prop_value_to_json_value).collect())
+        }
+    }
+}
+
 /// Apply dimension props
 fn apply_dimension_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
-    // Width
-    if let Some(v) = props.get("width") {
-        match v {
-            PropValue::Number(n) => {
-                node.yoga.set_width(StyleUnit::Point(OrderedFloat(*n as f32)));
-            }
-            PropValue::String(s) if s == "auto" => {
-                node.yoga.set_width(StyleUnit::Auto);
-            }
-            PropValue::String(s) if s.ends_with('%') => {
-                if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                    node.yoga.set_width(StyleUnit::Percent(OrderedFloat(pct)));
-                }
-            }
-            _ => {}
-        }
+    let has_width = apply_width(node, props);
+    let has_height = apply_height(node, props);
+
+    if node.tag == InkTag::Box && (has_width || has_height) {
+        node.yoga.set_align_self(Align::Auto);
     }
 
-    // Height
-    if let Some(v) = props.get("height") {
-        match v {
-            PropValue::Number(n) => {
-                node.yoga.set_height(StyleUnit::Point(OrderedFloat(*n as f32)));
-            }
-            PropValue::String(s) if s == "auto" => {
-                node.yoga.set_height(StyleUnit::Auto);
-            }
-            PropValue::String(s) if s.ends_with('%') => {
-                if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                    node.yoga.set_height(StyleUnit::Percent(OrderedFloat(pct)));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Position
     if let Some(PropValue::String(s)) = props.get("position") {
         node.yoga.set_position_type(match s.as_str() {
             "absolute" => PositionType::Absolute,
@@ -358,57 +375,69 @@ fn apply_dimension_props(node: &mut InkNode, props: &HashMap<String, PropValue>)
         });
     }
 
-    // Position props (top, right, bottom, left) for absolute positioning
     apply_position_props(node, props);
-
-    // Min/max dimensions
     apply_min_max(node, props);
 }
 
+fn apply_width(node: &mut InkNode, props: &HashMap<String, PropValue>) -> bool {
+    if let Some(v) = props.get("width") {
+        match v {
+            PropValue::Number(n) => node.yoga.set_width(StyleUnit::Point(OrderedFloat(*n as f32))),
+            PropValue::String(s) if s == "auto" => node.yoga.set_width(StyleUnit::Auto),
+            PropValue::String(s) if s.ends_with('%') => {
+                if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                    node.yoga.set_width(StyleUnit::Percent(OrderedFloat(pct)));
+                }
+            }
+            _ => {}
+        }
+        return true;
+    }
+    false
+}
+
+fn apply_height(node: &mut InkNode, props: &HashMap<String, PropValue>) -> bool {
+    if let Some(v) = props.get("height") {
+        match v {
+            PropValue::Number(n) => node.yoga.set_height(StyleUnit::Point(OrderedFloat(*n as f32))),
+            PropValue::String(s) if s == "auto" => node.yoga.set_height(StyleUnit::Auto),
+            PropValue::String(s) if s.ends_with('%') => {
+                if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                    node.yoga.set_height(StyleUnit::Percent(OrderedFloat(pct)));
+                }
+            }
+            _ => {}
+        }
+        return true;
+    }
+    false
+}
+
 /// Apply min/max dimension constraints
-#[allow(clippy::complexity_threshold)]
 fn apply_min_max(node: &mut InkNode, props: &HashMap<String, PropValue>) {
-    if let Some(PropValue::Number(n)) = props.get("minWidth") {
-        node.yoga.set_min_width(StyleUnit::Point(OrderedFloat(*n as f32)));
-    }
-    if let Some(PropValue::String(s)) = props.get("minWidth") {
-        if s.ends_with('%') {
-            if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                node.yoga.set_min_width(StyleUnit::Percent(OrderedFloat(pct)));
-            }
-        }
-    }
+    apply_min_max_prop(node, props, "minWidth",  |n, v| n.yoga.set_min_width(v));
+    apply_min_max_prop(node, props, "maxWidth",  |n, v| n.yoga.set_max_width(v));
+    apply_min_max_prop(node, props, "minHeight", |n, v| n.yoga.set_min_height(v));
+    apply_min_max_prop(node, props, "maxHeight", |n, v| n.yoga.set_max_height(v));
+}
 
-    if let Some(PropValue::Number(n)) = props.get("maxWidth") {
-        node.yoga.set_max_width(StyleUnit::Point(OrderedFloat(*n as f32)));
-    }
-    if let Some(PropValue::String(s)) = props.get("maxWidth") {
-        if s.ends_with('%') {
-            if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                node.yoga.set_max_width(StyleUnit::Percent(OrderedFloat(pct)));
+fn apply_min_max_prop(
+    node: &mut InkNode,
+    props: &HashMap<String, PropValue>,
+    key: &str,
+    mut setter: impl FnMut(&mut InkNode, StyleUnit),
+) {
+    if let Some(v) = props.get(key) {
+        match v {
+            PropValue::Number(n) => {
+                setter(node, StyleUnit::Point(OrderedFloat(*n as f32)));
             }
-        }
-    }
-
-    if let Some(PropValue::Number(n)) = props.get("minHeight") {
-        node.yoga.set_min_height(StyleUnit::Point(OrderedFloat(*n as f32)));
-    }
-    if let Some(PropValue::String(s)) = props.get("minHeight") {
-        if s.ends_with('%') {
-            if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                node.yoga.set_min_height(StyleUnit::Percent(OrderedFloat(pct)));
+            PropValue::String(s) if s.ends_with('%') => {
+                if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
+                    setter(node, StyleUnit::Percent(OrderedFloat(pct)));
+                }
             }
-        }
-    }
-
-    if let Some(PropValue::Number(n)) = props.get("maxHeight") {
-        node.yoga.set_max_height(StyleUnit::Point(OrderedFloat(*n as f32)));
-    }
-    if let Some(PropValue::String(s)) = props.get("maxHeight") {
-        if s.ends_with('%') {
-            if let Ok(pct) = s.trim_end_matches('%').parse::<f32>() {
-                node.yoga.set_max_height(StyleUnit::Percent(OrderedFloat(pct)));
-            }
+            _ => {}
         }
     }
 }

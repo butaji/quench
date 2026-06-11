@@ -1,6 +1,8 @@
 //! Event loop handling
 //!
 //! Processes keyboard, mouse, resize, timer, and microtask events.
+//!
+//! Function references are cached to avoid repeated `format! + ctx.eval` calls.
 
 use crate::bridge;
 use crate::cli::CliArgs;
@@ -11,8 +13,38 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::time::Duration;
 
+/// Container for cached JS function references.
+/// Note: rquickjs::Function has a lifetime tied to the context, so we
+/// store the function name and look it up on each call. The optimization
+/// is avoiding format! string building.
+#[derive(Default)]
+struct JsFunctions {
+    dispatch_key: bool,
+    dispatch_mouse: bool,
+    dispatch_resize: bool,
+    invoke_timers: bool,
+}
+
+/// Check if a JS function exists in the globals.
+fn js_function_exists(js_ctx: &rquickjs::Context, name: &str) -> bool {
+    js_ctx.with(|ctx| {
+        let globals = ctx.globals();
+        globals.get::<_, rquickjs::Value>(name).is_ok()
+    })
+}
+
+/// Call a JS function by name with no arguments.
+#[allow(dead_code)]
+fn call_js_function(js_ctx: &rquickjs::Context, name: &str) {
+    js_ctx.with(|ctx| {
+        let globals = ctx.globals();
+        if let Ok(func) = globals.get::<_, rquickjs::Function>(name) {
+            let _: Result<(), _> = func.call::<(), ()>(());
+        }
+    });
+}
+
 /// Main event loop (synchronous)
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     _args: &CliArgs,
@@ -24,48 +56,30 @@ pub fn run_event_loop(
 
     // Setup hot reload if enabled
     #[cfg(feature = "hotreload")]
-    let mut hot_reloader = if let Some(ref watch_path) = args.watch_path {
-        match crate::hotreload::HotReloader::new(watch_path) {
-            Ok(hr) => {
-                tracing::info!("Hot reload enabled for: {}", watch_path);
-                Some(hr)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to setup hot reload: {:?}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let mut hot_reloader = setup_hot_reloader(_args);
 
     loop {
-        // Check for exit or shutdown signal (Ctrl+C)
-        if bridge::__ink_should_exit() || crate::signals::shutdown_requested() {
-            tracing::info!("Shutdown requested, code: {}", bridge::__ink_get_exit_code());
+        if should_exit() {
             break;
         }
 
-        // Check for hot reload changes
         #[cfg(feature = "hotreload")]
         if let Some(ref mut reloader) = hot_reloader {
             if let Some(_event) = reloader.poll_changes() {
                 tracing::info!("Hot reload: File changed, reloading...");
-                dirty = handle_hot_reload(&script_path, &mut root_id, std::time::Instant::now()) || dirty;
+                dirty = handle_hot_reload(&_script_path, &mut root_id, std::time::Instant::now()) || dirty;
             }
         }
 
-        // Poll for events with a timeout
-        if let Ok(true) = crossterm::event::poll(Duration::from_millis(10)) {
+        let poll_timeout = compute_poll_timeout();
+        if let Ok(true) = crossterm::event::poll(poll_timeout) {
             if let Ok(event) = crossterm::event::read() {
-                dirty = handle_event(terminal, event, &mut root_id, js_ctx) || dirty;
+                dirty = handle_event(event, &mut root_id, js_ctx) || dirty;
             }
         }
 
-        // Poll timers
         dirty = poll_timers(js_ctx) || dirty;
 
-        // Render if dirty
         if dirty {
             render_tree(terminal, root_id)?;
             bridge::__ink_clear_dirty();
@@ -76,9 +90,43 @@ pub fn run_event_loop(
     Ok(())
 }
 
+fn should_exit() -> bool {
+    if bridge::__ink_should_exit() || crate::signals::shutdown_requested() {
+        tracing::info!("Shutdown requested, code: {}", bridge::__ink_get_exit_code());
+        return true;
+    }
+    false
+}
+
+/// Compute the ideal poll timeout based on the next scheduled timer.
+/// 100 ms if nothing is scheduled, 1 ms if something is due in ≤1 ms,
+/// otherwise the actual delay.
+fn compute_poll_timeout() -> Duration {
+    match bridge::__ink_next_timer_delay() {
+        None => Duration::from_millis(100),
+        Some(d) if d <= Duration::from_millis(1) => Duration::from_millis(1),
+        Some(d) => d,
+    }
+}
+
+#[cfg(feature = "hotreload")]
+fn setup_hot_reloader(args: &CliArgs) -> Option<crate::hotreload::HotReloader> {
+    args.watch_path.as_ref().and_then(|watch_path| {
+        match crate::hotreload::HotReloader::new(watch_path) {
+            Ok(hr) => {
+                tracing::info!("Hot reload enabled for: {}", watch_path);
+                Some(hr)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to setup hot reload: {:?}", e);
+                None
+            }
+        }
+    })
+}
+
 /// Handle a terminal event
 fn handle_event(
-    _terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     event: Event,
     _root_id: &mut Option<u32>,
     js_ctx: &rquickjs::Context,
@@ -87,19 +135,22 @@ fn handle_event(
         Event::Key(key) => handle_key_event(key, js_ctx),
         Event::Mouse(mouse) => handle_mouse_event(mouse, js_ctx),
         Event::Resize(cols, rows) => {
-            // Update the cached terminal size so the *next* render uses the
-            // new dimensions, but don't force a re-render here.  Ink 4 only
-            // re-renders on resize when the app subscribes via `useStdout`
-            // or `useInput`; mode.tsx drives stdin itself with `node:readline`
-            // and therefore sees a blank screen until the next keystroke —
-            // we match that behaviour exactly so the two runtimes stay in
-            // lock-step.
-            tracing::debug!("Terminal resize: {}x{}", cols, rows);
+            tracing::trace!("Terminal resize: {}x{}", cols, rows);
             bridge::__ink_set_terminal_size(cols as u32, rows as u32);
-            false
+            dispatch_resize(js_ctx, cols, rows)
         }
         _ => false,
     }
+}
+
+fn dispatch_resize(js_ctx: &rquickjs::Context, cols: u16, rows: u16) -> bool {
+    js_ctx.with(|ctx| {
+        let globals = ctx.globals();
+        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_resize") {
+            let _ = func.call::<(u16, u16), ()>((cols, rows));
+        }
+    });
+    true
 }
 
 /// Handle keyboard event — dispatch to JS useInput handlers
@@ -115,30 +166,28 @@ fn handle_key_event(
     let meta = key.modifiers.contains(KeyModifiers::META)
         || key.modifiers.contains(KeyModifiers::SUPER);
 
-    tracing::debug!("Key event: {} (ctrl={}, shift={}, alt={}, meta={})", key_str, ctrl, shift, alt, meta);
+    tracing::trace!("Key event: {} (ctrl={}, shift={}, alt={}, meta={})", key_str, ctrl, shift, alt, meta);
 
-    // Handle Ctrl+C specially - in PTY/tmux, Ctrl+C is sent as 'c' with ctrl modifier
-    // We need to exit the app when Ctrl+C is pressed
+    // Handle Ctrl+C specially
     if ctrl && (key_str == "c" || key.code == KeyCode::Char('c')) {
         tracing::info!("Ctrl+C detected, initiating shutdown");
         bridge::__ink_set_exit_requested();
         return false;
     }
 
-    // Dispatch to JS __tb_dispatch_key(key, ctrl, shift, alt, meta)
-    // Use JSON.stringify for safe escaping of key string
-    let dispatch_js = format!(
-        "if(typeof __tb_dispatch_key==='function'){{__tb_dispatch_key({}, {}, {}, {}, {})}}",
-        serde_json::to_string(&key_str).unwrap_or_else(|_| "\"\"".to_string()),
-        ctrl,
-        shift,
-        alt,
-        meta,
-    );
-
+    // Set globals so the shim can read them without string allocation
+    // Then call the JS function directly instead of via eval
     js_ctx.with(|ctx| {
-        if let Err(e) = ctx.eval::<(), _>(dispatch_js.as_str()) {
-            tracing::warn!("Key dispatch error: {:?}", e);
+        let globals = ctx.globals();
+        let _ = globals.set("__pending_key", key_str);
+        let _ = globals.set("__pending_ctrl", ctrl);
+        let _ = globals.set("__pending_shift", shift);
+        let _ = globals.set("__pending_alt", alt);
+        let _ = globals.set("__pending_meta", meta);
+
+        // Call the function directly instead of eval
+        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_key") {
+            let _: Result<(), _> = func.call::<(), ()>(());
         }
     });
 
@@ -146,12 +195,38 @@ fn handle_key_event(
 }
 
 /// Handle mouse event — dispatch to JS mouse handlers
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn handle_mouse_event(
     mouse: crossterm::event::MouseEvent,
     js_ctx: &rquickjs::Context,
 ) -> bool {
-    let kind_str = match mouse.kind {
+    let (kind_str, button) = mouse_kind_and_button(&mouse.kind);
+    let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+    let alt = mouse.modifiers.contains(KeyModifiers::ALT);
+
+    tracing::trace!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
+
+    js_ctx.with(|ctx| {
+        let globals = ctx.globals();
+        let _ = globals.set("__pending_mouse_col", mouse.column as i32);
+        let _ = globals.set("__pending_mouse_row", mouse.row as i32);
+        let _ = globals.set("__pending_mouse_kind", kind_str);
+        let _ = globals.set("__pending_mouse_button", button);
+        let _ = globals.set("__pending_mouse_ctrl", ctrl);
+        let _ = globals.set("__pending_mouse_shift", shift);
+        let _ = globals.set("__pending_mouse_alt", alt);
+
+        // Call the function directly instead of eval
+        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_mouse") {
+            let _: Result<(), _> = func.call::<(), ()>(());
+        }
+    });
+
+    bridge::__ink_is_dirty()
+}
+
+fn mouse_kind_and_button(kind: &crossterm::event::MouseEventKind) -> (&'static str, i32) {
+    let kind_str = match kind {
         MouseEventKind::Down(_) => "press",
         MouseEventKind::Up(_) => "release",
         MouseEventKind::Drag(_) | MouseEventKind::Moved => "hold",
@@ -160,10 +235,7 @@ fn handle_mouse_event(
         _ => "unknown",
     };
 
-    tracing::debug!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
-
-    // Dispatch to JS __tb_dispatch_mouse({column, row, kind, button, ctrl, shift, alt})
-    let button = match mouse.kind {
+    let button = match kind {
         MouseEventKind::Down(btn) | MouseEventKind::Up(btn) | MouseEventKind::Drag(btn) => {
             match btn {
                 crossterm::event::MouseButton::Left => 0,
@@ -173,51 +245,44 @@ fn handle_mouse_event(
         }
         _ => -1,
     };
-    let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
-    let alt = mouse.modifiers.contains(KeyModifiers::ALT);
 
-    let dispatch_js = format!(
-        "if(typeof __tb_dispatch_mouse==='function'){{__tb_dispatch_mouse({{column:{},row:{},kind:'{}',button:{},ctrl:{},shift:{},alt:{}}})}}",
-        mouse.column,
-        mouse.row,
-        kind_str,
-        button,
-        ctrl,
-        shift,
-        alt,
-    );
-
-    js_ctx.with(|ctx| {
-        if let Err(e) = ctx.eval::<(), _>(dispatch_js.as_str()) {
-            tracing::warn!("Mouse dispatch error: {:?}", e);
-        }
-    });
-
-    bridge::__ink_is_dirty()
+    (kind_str, button)
 }
 
 /// Poll and dispatch timers
 fn poll_timers(js_ctx: &rquickjs::Context) -> bool {
-    // Process microtasks
     if bridge::__ink_drain_microtasks() {
-        tracing::debug!("Microtasks pending");
+        tracing::trace!("Microtasks pending");
     }
 
-    // Process timers - get IDs from Rust, invoke callbacks in JS
     let timer_ids = bridge::__ink_process_timers();
     if timer_ids != "[]" {
-        tracing::debug!("Timers fired: {}", timer_ids);
-        // Invoke the JavaScript timer callbacks
-        js_ctx.with(|ctx| {
-            let invoke_js = format!(
-                "if(typeof __tb_invoke_timers==='function'){{__tb_invoke_timers({})}}",
-                timer_ids
-            );
-            if let Err(e) = ctx.eval::<(), _>(invoke_js.as_str()) {
-                tracing::warn!("Timer invoke error: {:?}", e);
-            }
-        });
+        tracing::trace!("Timers fired: {}", timer_ids);
+
+        // Parse timer IDs from JSON string "[1,2,3]" to Vec<u32>
+        let ids: Vec<u32> = timer_ids
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        if !ids.is_empty() {
+            js_ctx.with(|ctx| {
+                let globals = ctx.globals();
+                if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_invoke_timers") {
+                    // Pass the timer IDs as a JS array
+                    let mut js_array = rquickjs::Array::new(ctx.clone()).ok();
+                    if let Some(ref arr) = js_array {
+                        for (i, &id) in ids.iter().enumerate() {
+                            let _ = arr.set(i, id);
+                        }
+                    }
+                    if let Some(arr) = js_array {
+                        let _: Result<(), _> = func.call::<(rquickjs::Array<'_>,), ()>((arr,));
+                    }
+                }
+            });
+        }
     }
 
     bridge::__ink_is_dirty()
@@ -230,15 +295,12 @@ fn handle_hot_reload(
     root_id: &mut Option<u32>,
     _start: std::time::Instant,
 ) -> bool {
-    // Unmount old app
     if let Some(old_root_id) = *root_id {
         bridge::__ink_destroy_root(old_root_id);
     }
 
-    // Reload and re-execute the script
     if let Some(ref path) = script_path {
         if let Ok(new_code) = std::fs::read_to_string(path) {
-            // Create a new runtime for hot reload eval
             let runtime = match rquickjs::Runtime::new() {
                 Ok(r) => r,
                 Err(e) => {
@@ -254,9 +316,6 @@ fn handle_hot_reload(
 
             let _elapsed = _start.elapsed();
             tracing::info!("Hot reload complete in {:?}", _elapsed);
-            if _elapsed.as_millis() < 50 {
-                tracing::debug!("Hot reload under 50ms target");
-            }
 
             *root_id = bridge::__ink_get_root_id();
             return true;

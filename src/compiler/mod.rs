@@ -2,25 +2,11 @@
 //!
 //! Pipeline:
 //! 1. esbuild strips TypeScript and transforms JSX to JS
-//! 2. Post-process to add Quench shims and fix imports
+//! 2. Transform imports and API calls
 
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
-
-/// React hooks that need to be prefixed with ink.
-const REACT_HOOKS: &[&str] = &[
-    "useState",
-    "useEffect",
-    "useRef",
-    "useMemo",
-    "useCallback",
-    "useContext",
-    "useReducer",
-    "useLayoutEffect",
-    "useImperativeHandle",
-    "useDebugValue",
-];
 
 /// Compile TSX/TS source to Quench-compatible JavaScript
 pub fn compile_tsx(source: &str, _filename: &str) -> Result<String> {
@@ -33,6 +19,12 @@ pub fn compile_ts(source: &str, _filename: &str) -> Result<String> {
 }
 
 fn compile_with_esbuild(source: &str, loader: &str) -> Result<String> {
+    let raw_js = run_esbuild(source, loader)?;
+    let transformed = transform_js(&raw_js)?;
+    Ok(prepend_shims(&transformed))
+}
+
+fn run_esbuild(source: &str, loader: &str) -> Result<String> {
     let temp_input = format!("/tmp/quench_input_{}.tsx", std::process::id());
     std::fs::write(&temp_input, source)?;
 
@@ -55,64 +47,132 @@ fn compile_with_esbuild(source: &str, loader: &str) -> Result<String> {
         return Err(anyhow::anyhow!("esbuild failed: {}", err));
     }
 
-    let js = String::from_utf8_lossy(&output.stdout).to_string();
-    let js = strip_imports(&js);
-    let js = transform_node_imports(&js);
-    let js = transform_react_apis(&js);
-    let js = transform_react_hooks(&js);
-    let js = transform_process_polyfills(&js);
-    Ok(prepend_shims(&js))
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn transform_react_apis(js: &str) -> String {
-    js.replace("React.createElement(React.Fragment,", "ink.Fragment(")
+fn transform_js(js: &str) -> Result<String> {
+    // Extract ink imports to know what to prefix
+    let ink_imports = extract_ink_imports(js);
+
+    // Step 1: Remove react/ink imports
+    let js = strip_imports(js);
+
+    // Step 2: Transform React.createElement calls
+    let js = js
+        .replace("React.createElement(React.Fragment,", "ink.Fragment(")
         .replace("React.createElement(Fragment,", "ink.Fragment(")
-        .replace("React.createElement", "ink.createElement")
+        .replace("React.createElement(", "ink.createElement(");
+
+    // Step 3: Prefix ink imports in createElement calls
+    let js = prefix_components(&js, &ink_imports);
+
+    // Step 4: Prefix hooks
+    let js = prefix_hooks(&js);
+
+    // Step 5: Replace bare render() with ink.render()
+    let js = js
+        .replace("ink.render", "__protected_render")
+        .replace("render(", "ink.render(")
+        .replace("__protected_render", "ink.render");
+
+    // Step 6: Transform dynamic node: imports to shim
+    let js = js
+        .replace(r#"import("node:readline")"#, r#"__tb_import("node:readline")"#)
+        .replace("import('node:readline')", "__tb_import('node:readline')")
+        .replace(r#"import("readline")"#, r#"__tb_import("readline")"#)
+        .replace("import('readline')", "__tb_import('readline')");
+
+    // Step 7: Process polyfills
+    let js = js
+        .replace("process.exit(", "ink.useApp().exit(")
+        .replace("process.env.NODE_ENV", "\"production\"");
+
+    Ok(js)
 }
 
-fn transform_react_hooks(js: &str) -> String {
+fn extract_ink_imports(js: &str) -> Vec<String> {
+    js.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with("import ") && (trimmed.contains("from \"ink\"") || trimmed.contains("from 'ink'"))
+        })
+        .flat_map(|line| extract_names_from_import(line))
+        .collect()
+}
+
+fn extract_names_from_import(line: &str) -> Vec<String> {
+    let start = match line.find('{') {
+        Some(i) => i + 1,
+        None => return vec![],
+    };
+    let end = match line.find('}') {
+        Some(i) => i,
+        None => return vec![],
+    };
+    line[start..end]
+        .split(',')
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty() && n != "React")
+        .collect()
+}
+
+fn prefix_components(js: &str, imports: &[String]) -> String {
     let mut result = js.to_string();
-    for hook in REACT_HOOKS {
-        let replacement = format!("ink.{}", hook);
-        result = result.replace(hook, &replacement);
-        result = result.replace(&format!("ink.ink.{}", hook), &replacement);
+    for name in imports {
+        // Protect already-prefixed
+        result = result.replace(&format!("ink.ink.{}", name), &format!("ink.{}", name));
+        // Prefix in createElement calls
+        let from = format!("ink.createElement({}", name);
+        let to = format!("ink.createElement(ink.{}", name);
+        result = result.replace(&from, &to);
     }
-    result
+    // Clean up
+    result.replace("ink.ink.", "ink.")
 }
 
-fn transform_process_polyfills(js: &str) -> String {
-    let result = transform_exit_calls(js);
-    let result = transform_std_streams(&result);
-    transform_env_and_signals(&result)
+fn prefix_hooks(js: &str) -> String {
+    // All React hooks + Ink hooks that can be called as functions
+    let hooks = [
+        // React hooks
+        "useState", "useEffect", "useRef", "useMemo", "useCallback",
+        "useContext", "useReducer", "useLayoutEffect", "useImperativeHandle",
+        "useDebugValue",
+        // Ink hooks
+        "useInput", "useApp", "useStdin", "useStdout", "useStderr",
+        "useFocus", "useFocusManager", "useWindowSize", "useAnimation",
+        "usePaste", "useCursor", "useBoxMetrics", "useIsScreenReaderEnabled",
+        "measureElement", "useBridge", "createContext",
+    ];
+    let mut result = js.to_string();
+    for hook in &hooks {
+        // Protect already-prefixed
+        result = result.replace(&format!("ink.ink.{}", hook), &format!("ink.{}", hook));
+        // Prefix call sites
+        result = result.replace(hook, &format!("ink.{}", hook));
+    }
+    result.replace("ink.ink.", "ink.")
 }
 
-fn transform_exit_calls(js: &str) -> String {
-    let re_exit = regex::Regex::new(r"process\.exit\([^)]*\)").unwrap();
-    re_exit.replace_all(js, "ink.useApp().exit()").to_string()
+fn strip_imports(js: &str) -> String {
+    js.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with("import ") {
+                let from_react = trimmed.contains("from \"react\"") || trimmed.contains("from 'react'");
+                let from_ink = trimmed.contains("from \"ink\"") || trimmed.contains("from 'ink'");
+                return !(from_react || from_ink);
+            }
+            if trimmed.starts_with("import type ") {
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn transform_std_streams(js: &str) -> String {
-    // We deliberately leave `process.stdout.rows` and `process.stdout.columns`
-    // untouched so the runtime polyfill returns the *real* terminal size from
-    // the Rust bridge.  Hardcoding them to 100 made the root `<Box height={...}>`
-    // overflow the visible area.
-    let r = js.replace("process.stdin?.isTTY", "true");
-    let r = r.replace("process.stdin.setRawMode", "(() => {})");
-    let r = r.replace("process.stdin.resume", "(() => {})");
-    r.replace("process.stdin.on", "(() => {})")
-}
-
-fn transform_env_and_signals(js: &str) -> String {
-    let re_env = regex::Regex::new(r"process\.env\.(\w+)").unwrap();
-    let step1 = js.replace("process.env.NODE_ENV", "\"production\"");
-    let step2 = step1.replace("process.on(\"SIGINT\",", "// SIGINT handled by quench\n// ");
-    let step3 = step2.replace("process.on('SIGINT',", "// SIGINT handled by quench\n// ");
-    re_env.replace_all(&step3, "undefined").to_string()
-}
-
-fn prepend_shims(js: &str) -> String {
-    static SHIMS: &str = r#"// Quench Node.js/React shims
-// Readline shim with working keypress events
+// SHIMS constant
+static SHIMS: &str = r#"// Quench Node.js/React shims
 const __tb_keypress_handlers = [];
 const __tb_readline_shim = {
     createInterface: (options) => {
@@ -141,11 +201,6 @@ const __tb_readline_shim = {
         };
     },
 };
-// Override __tb_dispatch_key to also call readline handlers.  The Rust side
-// emits Ink-style names (e.g. "upArrow", "downArrow", "return", "escape"),
-// but `node:readline` uses Node-style names ("up", "down", "return", "escape",
-// "tab", "backspace").  Translate so user code that wires up `readline` keeps
-// working unchanged.
 const __tb_readline_key_aliases = {
     upArrow: 'up', downArrow: 'down', leftArrow: 'left', rightArrow: 'right',
     pageUp: 'pageup', pageDown: 'pagedown',
@@ -157,28 +212,35 @@ function __tb_to_readline_name(name) {
     if (Object.prototype.hasOwnProperty.call(__tb_readline_key_aliases, name)) {
         return __tb_readline_key_aliases[name];
     }
-    // F1-F12
     if (/^f\d+$/.test(name)) return name;
-    // Fall back to the Ink name (e.g. "a", "b" for character keys).
     return name;
 }
-const __tb_orig_dispatch_key = globalThis.__tb_dispatch_key;
-globalThis.__tb_dispatch_key = function(key, ctrl, shift, alt, meta) {
-    if (__tb_orig_dispatch_key) __tb_orig_dispatch_key(key, ctrl, shift, alt, meta);
-    const name = __tb_to_readline_name(key);
-    const str = name.length === 1 ? name : '';
-    const keyObj = {
-        ctrl: ctrl,
-        meta: meta,
-        shift: shift,
-        name: name,
-        sequence: name.length === 1 ? name : '',
+// Readline shim: override __tb_dispatch_key to also call readline handlers
+// The runtime.js version reads from globals, so we need to hook into that flow
+(function() {
+    const __tb_orig_dispatch_key = globalThis.__tb_dispatch_key;
+    globalThis.__tb_dispatch_key = function() {
+        // Call the original (reads globals, calls inputHandlers)
+        if (__tb_orig_dispatch_key) __tb_orig_dispatch_key();
+        
+        // Also call readline handlers
+        const key = globalThis.__pending_key;
+        const ctrl = globalThis.__pending_ctrl;
+        const shift = globalThis.__pending_shift;
+        const alt = globalThis.__pending_alt;
+        const meta = globalThis.__pending_meta;
+        const name = __tb_to_readline_name(key);
+        const str = name.length === 1 ? name : '';
+        const keyObj = { ctrl: ctrl, meta: meta, shift: shift, name: name, sequence: name.length === 1 ? name : '' };
+        for (const handler of __tb_keypress_handlers) {
+            try { 
+                handler(str, keyObj); 
+            } catch(e) { 
+                console.error('[shim] Handler error:', e); 
+            }
+        }
     };
-    for (const handler of __tb_keypress_handlers) {
-        try { handler(str, keyObj); } catch(e) { console.error('[shim] Handler error:', e); }
-    }
-};
-// Non-async version for compatibility
+})();
 const __tb_import_sync = function(moduleName) {
     const isStr = typeof moduleName === 'string';
     const name = isStr ? moduleName.replace('node:', '') : '';
@@ -186,59 +248,35 @@ const __tb_import_sync = function(moduleName) {
     return {};
 };
 globalThis.__tb_import = function(moduleName) {
-    // Return a resolved promise-like object
     const result = __tb_import_sync(moduleName);
-    return {
-        then: function(onFulfilled) { onFulfilled(result); },
-        catch: function() { return this; }
-    };
+    return { then: function(onFulfilled) { onFulfilled(result); }, catch: function() { return this; } };
 };
-
 globalThis.process = {
     exit: (code) => { try { ink.useApp().exit(); } catch(e) {} },
     stdout: {
       write: (s) => { try { ink.stdout_write(s); } catch(e) {} },
-      get rows() { try { return ink.useStdout().stdout.rows; } catch(e) { return 24; } },
-      get columns() { try { return ink.useStdout().stdout.columns; } catch(e) { return 80; } },
+      get rows() { try { return ink.useStdout().rows; } catch(e) { return 24; } },
+      get columns() { try { return ink.useStdout().columns; } catch(e) { return 80; } },
       isTTY: true
     },
     stderr: { write: (s) => { try { ink.stderr_write(s); } catch(e) {} } },
-    stdin: { isTTY: true, setRawMode: () => {}, resume: () => {}, on: () => {} },
+    stdin: {
+      isTTY: true,
+      setRawMode: () => {},
+      resume: () => {},
+      on: () => {},
+      removeListener: () => {},
+    },
     env: { NODE_ENV: 'production' },
     on: (evt, cb) => {},
 };
 
 "#;
+
+fn prepend_shims(js: &str) -> String {
     let mut result = js.to_string();
     result.insert_str(0, SHIMS);
     result
-}
-
-/// Remove import statements for react and ink
-fn strip_imports(js: &str) -> String {
-    js.lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with("import ") {
-                let from_react = trimmed.contains("from \"react\"") || trimmed.contains("from 'react'");
-                let from_ink = trimmed.contains("from \"ink\"") || trimmed.contains("from 'ink'");
-                return !(from_react || from_ink);
-            }
-            if trimmed.starts_with("import type ") {
-                return false;
-            }
-            true
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Transform node:* dynamic imports to use our shim
-fn transform_node_imports(js: &str) -> String {
-    js.replace(r#"import("node:readline")"#, r#"__tb_import("node:readline")"#)
-        .replace(r#"import('node:readline')"#, r#"__tb_import('node:readline')"#)
-        .replace(r#"import("readline")"#, r#"__tb_import("readline")"#)
-        .replace(r#"import('readline')"#, r#"__tb_import('readline')"#)
 }
 
 /// Compile a file

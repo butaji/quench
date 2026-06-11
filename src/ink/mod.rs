@@ -18,4 +18,4 @@ pub use tree::{append_child, remove_child, insert_before, commit_update, set_tex
 pub use shared::{INK_RUNTIME, reset_runtime};
 
 // Re-export errors
-pub use runtime::{InkError, Result};
+pub use runtime::InkError;
