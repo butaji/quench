@@ -15,7 +15,6 @@ mod compat;
 mod bridge_config;
 #[cfg(feature = "hotreload")]
 mod hotreload;
-#[cfg(feature = "compiler")]
 mod compiler;
 
 mod cli;
@@ -36,7 +35,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,tuibridge=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,tuibridge=info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_writer(std::io::stderr))
@@ -50,6 +49,9 @@ fn main() -> Result<()> {
 
     // Must be set before terminal init so cleanup runs even on Ctrl+C
     signals::setup_signal_handlers();
+    // Reset the terminal on panic too — otherwise a panic inside the event
+    // loop leaves the user's shell in raw mode with the cursor hidden.
+    signals::install_panic_cleanup();
 
     let args: Vec<String> = std::env::args().collect();
     let cli_args = parse_args(&args);
@@ -61,6 +63,15 @@ fn main() -> Result<()> {
     tracing::debug!("Initializing QuickJS runtime");
     let runtime = rquickjs::Runtime::new()?;
     let ctx = rquickjs::Context::full(&runtime)?;
+
+    // Pre-populate the terminal size so that the JS polyfill's
+    // `process.stdout.rows/columns` returns the *real* dimensions during the
+    // initial `render(...)` call.  This matters because user code commonly
+    // wraps the root in `<Box height={process.stdout.rows}>`, and an
+    // incorrect height pushes the bottom of the tree off-screen.
+    let (initial_cols, initial_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    bridge::__ink_set_terminal_size(initial_cols as u32, initial_rows as u32);
+
     setup_runtime(&ctx)?;
 
     let (final_cli_args, root_id) = compile_and_load(&ctx, cli_args)?;
@@ -188,11 +199,9 @@ fn load_user_code(
 
     if let Some(ref code) = cli_args.js_code {
         ctx.with(|ctx| {
-            if let Err(_e) = ctx.eval::<(), _>(code.as_str()) {
-                // Call catch() to clear any pending exception
-                // This handles cases where JS code uses try-catch internally
+            if let Err(e) = ctx.eval::<(), _>(code.as_str()) {
+                tracing::error!("JS code error: {:?}", e);
                 let _ = ctx.catch();
-                // Note: We intentionally don't log the error since JS caught it
             }
         });
     }
@@ -224,22 +233,39 @@ fn setup_terminal(
     let script_path = cli_args.script.clone();
 
     // Run event loop or single render
-    if cli_args.interactive {
-        // Run event loop
-        event_loop::run_event_loop(&mut terminal, &cli_args, script_path, ctx)?;
+    let run_result: Result<()> = if cli_args.interactive {
+        event_loop::run_event_loop(&mut terminal, &cli_args, script_path, ctx)
     } else {
-        // Non-interactive: single render and exit
         if let Err(e) = render_tree(&mut terminal, root_id) {
             tracing::error!("Render error: {:?}", e);
         }
+        tracing::info!("Single render complete");
+        Ok(())
+    };
+
+    // Comprehensive cleanup.  We restore every terminal mode the user might
+    // have observed in our TUI (raw, cursor, mouse, alt screen, bracketed
+    // paste) so their shell stays in a sane state after we exit.
+    if let Err(e) = run_result {
+        tracing::warn!("Event loop error: {:?}", e);
     }
-
-    // Cleanup
-    let _ = crossterm::terminal::disable_raw_mode();
-    let _ = terminal.show_cursor();
-
-    tracing::info!("TuiBridge shutting down");
+    cleanup_terminal(&mut terminal);
 
     // Force exit to bypass rquickjs GC assertion
     std::process::exit(0);
+}
+
+/// Restore the terminal to the state it was in before we took over.  Each
+/// step is best-effort: a failure here must not prevent the others from
+/// running.
+fn cleanup_terminal(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>) {
+    use std::io::Write;
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = terminal.show_cursor();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"); // mouse off
+    let _ = out.write_all(b"\x1b[?1049l"); // leave alt screen
+    let _ = out.write_all(b"\x1b[?2004l"); // bracketed paste off
+    let _ = out.write_all(b"\x1b[?25h");   // ensure cursor visible
+    let _ = out.flush();
 }

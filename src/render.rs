@@ -40,7 +40,7 @@ pub fn render_tree(
             }
         }
 
-        render_node(root_id, frame.buffer_mut(), area);
+        render_node(root_id, frame.buffer_mut(), area, 0, 0);
     })?;
 
     Ok(())
@@ -48,20 +48,19 @@ pub fn render_tree(
 
 /// Recursively render a node and its children
 #[allow(clippy::complexity, clippy::too_many_lines)]
-fn render_node(node_id: u32, buf: &mut Buffer, area: Rect) {
+fn render_node(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset_y: u16) {
     let tag = match bridge::__ink_get_node_tag(node_id) {
         Some(t) => t,
         None => return,
     };
-
     let layout = match bridge::__ink_get_layout(node_id) {
         Some(l) => l,
         None => return,
     };
-
     // Ink uses round() for positions and ceil() for dimensions
-    let x = layout.0.round() as u16;
-    let y = layout.1.round() as u16;
+    // Yoga returns relative coordinates, so add parent offset
+    let x = offset_x + layout.0.round() as u16;
+    let y = offset_y + layout.1.round() as u16;
     let w = layout.2.ceil() as u16;
     let h = layout.3.ceil() as u16;
 
@@ -72,7 +71,7 @@ fn render_node(node_id: u32, buf: &mut Buffer, area: Rect) {
     match tag.as_str() {
         "ink-box" => render_box(node_id, buf, x, y, w, h),
         "ink-text" => render_text(node_id, buf, x, y, w, h),
-        "ink-static" => render_static(node_id, buf, area),
+        "ink-static" => render_static(node_id, buf, area, offset_x, offset_y),
         "ink-newline" => render_newline(buf, x, y, w, h),
         "ink-spacer" => {} // Spacer is invisible
         _ => {}
@@ -82,7 +81,7 @@ fn render_node(node_id: u32, buf: &mut Buffer, area: Rect) {
     if tag.as_str() != "ink-static" {
         if let Some(children) = bridge::__ink_get_node_children(node_id) {
             for &child_id in &children {
-                render_node(child_id, buf, area);
+                render_node(child_id, buf, area, x, y);
             }
         }
     }
@@ -241,7 +240,7 @@ fn render_text(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
 
     // Handle truncation modes - pre-truncate text since ratatui doesn't support Wrap::Truncate
     let text = if wrap.is_none() {
-        let max_chars = w.saturating_sub(1) as usize; // Leave room for potential ellipsis
+        let max_chars = w as usize; // Leave room for potential ellipsis
         truncate_text(&text, max_chars)
     } else {
         text
@@ -353,9 +352,9 @@ fn apply_text_transform(node_id: u32, text: String) -> String {
 }
 
 /// Render static node (renders children directly)
-fn render_static(node_id: u32, buf: &mut Buffer, area: Rect) {
+fn render_static(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset_y: u16) {
     for &child_id in &bridge::__ink_get_node_children(node_id).unwrap_or_default() {
-        render_node(child_id, buf, area);
+        render_node(child_id, buf, area, offset_x, offset_y);
     }
 }
 

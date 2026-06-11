@@ -5,6 +5,7 @@
 // PropValue is defined in this file, don't re-export
 use ordered_float::OrderedFloat;
 use std::collections::HashMap;
+use unicode_width::UnicodeWidthStr;
 use yoga::{Align, Display, FlexDirection, Justify, Node, PositionType, StyleUnit, Wrap};
 
 /// Tag types matching React component names from Ink
@@ -56,7 +57,12 @@ impl InkNode {
     pub fn new(id: u32, tag: InkTag) -> Self {
         let mut yoga = Node::new();
         yoga.set_flex_direction(FlexDirection::Row);
-        yoga.set_align_items(Align::FlexStart);
+        // CSS default for flex containers is `align-items: stretch`, which
+        // makes children fill the cross-axis unless they opt out.  Yoga's
+        // default is `flex-start`, which leaves children at their intrinsic
+        // size and breaks layouts like `<Box flexGrow={1}>` that rely on
+        // auto-stretching to fill the parent.
+        yoga.set_align_items(Align::Stretch);
         yoga.set_justify_content(Justify::FlexStart);
 
         Self {
@@ -72,7 +78,12 @@ impl InkNode {
 
     pub fn new_text(id: u32, text: String) -> Self {
         let mut node = Self::new(id, InkTag::Text);
-        node.text = Some(text);
+        node.text = Some(text.clone());
+        // Set intrinsic dimensions for text so Yoga can lay it out.
+        // Use Unicode-aware display width for terminal cells.
+        let width = text.width() as f32;
+        node.yoga.set_width(StyleUnit::Point(OrderedFloat(width)));
+        node.yoga.set_height(StyleUnit::Point(OrderedFloat(1.0)));
         node
     }
 
@@ -270,16 +281,16 @@ fn apply_spacing_props(node: &mut InkNode, props: &HashMap<String, PropValue>) {
     // Gap (flex gap between children)
     // Supports both Ink 7 names (columnGap/rowGap) and Ink 6 names (gapX/gapY)
     if let Some(PropValue::Number(n)) = props.get("gap") {
-        node.yoga.set_gap(yoga::Axis::Horizontal, OrderedFloat(*n as f32));
-        node.yoga.set_gap(yoga::Axis::Vertical, OrderedFloat(*n as f32));
+        node.yoga.set_gap(yoga::Gutter::Column, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
+        node.yoga.set_gap(yoga::Gutter::Row, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
     }
     // gapX and columnGap are synonyms
     if let Some(PropValue::Number(n)) = props.get("gapX").or(props.get("columnGap")) {
-        node.yoga.set_gap(yoga::Axis::Horizontal, OrderedFloat(*n as f32));
+        node.yoga.set_gap(yoga::Gutter::Column, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
     }
     // gapY and rowGap are synonyms
     if let Some(PropValue::Number(n)) = props.get("gapY").or(props.get("rowGap")) {
-        node.yoga.set_gap(yoga::Axis::Vertical, OrderedFloat(*n as f32));
+        node.yoga.set_gap(yoga::Gutter::Row, yoga::StyleUnit::Point(ordered_float::OrderedFloat(*n as f32)));
     }
 }
 
