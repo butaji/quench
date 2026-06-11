@@ -35,8 +35,8 @@ pub use timers::{
 };
 pub use io::{
     __ink_exit, __ink_get_exit_code, __ink_get_terminal_size, __ink_reset_exit,
-    __ink_set_raw_mode, __ink_set_terminal_size, __ink_should_exit, __ink_stderr_write,
-    __ink_stdin_is_raw, __ink_stdout_write, __ink_measure_text,
+    __ink_set_exit_requested, __ink_set_raw_mode, __ink_set_terminal_size, __ink_should_exit,
+    __ink_stderr_write, __ink_stdin_is_raw, __ink_stdout_write, __ink_measure_text,
 };
 pub use ffi::call_ink_ffi;
 

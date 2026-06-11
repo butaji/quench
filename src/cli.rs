@@ -17,9 +17,10 @@ pub struct CliArgs {
 }
 
 /// Compiler subcommands
+#[derive(Clone)]
 pub enum CompilerCmd {
     Compile { input: String, output: Option<String> },
-    Run { input: String },
+    CompileInMemory { input: String },
 }
 
 /// Parse command line arguments
@@ -60,12 +61,41 @@ pub fn parse_args(args: &[String]) -> CliArgs {
             }
             "--run" => {
                 if let Some(input) = args.get(i + 1) {
-                    result.compiler_cmd = Some(CompilerCmd::Run {
+                    // --run always in-memory compiles (no temp file written)
+                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
                         input: input.clone(),
                     });
-                    result.interactive = false;
+                    result.interactive = true;
                 }
                 i += 2;
+            }
+            "run" => {
+                // `tuibridge run <file>` subcommand
+                if let Some(input) = args.get(i + 1) {
+                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
+                        input: input.clone(),
+                    });
+                    result.interactive = true;
+                }
+                i += 2;
+            }
+            // Support direct TSX/TS file execution with in-memory compile
+            arg if !arg.starts_with('-') && result.script.is_none() => {
+                let path = arg;
+                // Only compile files that need JSX transformation
+                // Plain .js files can be loaded directly
+                if path.ends_with(".tsx") || path.ends_with(".ts") || path.ends_with(".jsx") {
+                    // Compile in-memory for JSX/TSX/TS files
+                    result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
+                        input: path.to_string(),
+                    });
+                } else if path.ends_with(".js") {
+                    // Plain JS files - load directly without compilation
+                    result.script = Some(path.to_string());
+                } else {
+                    result.script = Some(path.to_string());
+                }
+                i += 1;
             }
             "--watch" | "-w" => {
                 if let Some(path) = args.get(i + 1) {
@@ -127,28 +157,22 @@ pub fn print_help() {
     println!("  --watch PATH   Watch for file changes and hot reload");
     println!("  --hot          Enable hot reload mode (shortcut for --watch .)");
     println!("  --prop KEY=VAL Pass a prop to the JS runtime (useBridge().config)");
-    #[cfg(feature = "compiler")]
-    {
-        println!("  --compile FILE Compile TSX to TuiBridge JS");
-        println!("  --run FILE     Compile and run TSX file");
-        println!("  -o, --out FILE Output file for compiled JS");
-    }
+    println!("  --compile FILE Compile TSX to TuiBridge JS");
+    println!("  --run FILE     Compile and run TSX file");
+    println!("  -o, --out FILE Output file for compiled JS");
     println!();
     println!("Examples:");
     println!("  tuibridge --bundle plugins/app.tsx");
     println!("  tuibridge --hot examples/counter.js");
     println!("  tuibridge --watch plugins examples/app.js");
-    #[cfg(feature = "compiler")]
-    {
-        println!();
-        println!("Compiler (requires --features compiler):");
-        println!("  tuibridge --compile mod.tsx -o mod-tb.js");
-        println!("  tuibridge --run mod.tsx");
-    }
+    println!();
+    println!("Compiler:");
+    println!("  tuibridge --compile mod.tsx -o mod-tb.js");
+    println!("  tuibridge run mod.tsx       # compile and run in-memory");
+    println!("  tuibridge mod.tsx           # auto-detect .tsx, in-memory compile");
 }
 
 /// Execute compiler command
-#[cfg(feature = "compiler")]
 pub fn handle_compiler_cmd(cmd: CompilerCmd) {
     match cmd {
         CompilerCmd::Compile { input, output } => {
@@ -170,31 +194,13 @@ pub fn handle_compiler_cmd(cmd: CompilerCmd) {
                 }
             }
         }
-        CompilerCmd::Run { input } => {
-            match crate::compiler::compile_file(&input) {
-                Ok(js) => {
-                    let temp_file = format!("{}.compiled.js", input);
-                    if let Err(e) = std::fs::write(&temp_file, &js) {
-                        eprintln!("Failed to write temp file: {}", e);
-                        std::process::exit(1);
-                    }
-                    let result = std::process::Command::new(std::env::current_exe().unwrap())
-                        .arg(&temp_file)
-                        .status();
-                    let _ = std::fs::remove_file(&temp_file);
-                    std::process::exit(result.map(|s| s.code().unwrap_or(0)).unwrap_or(1));
-                }
-                Err(e) => {
-                    eprintln!("Compilation error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+        CompilerCmd::CompileInMemory { input: _ } => {
+            // This is handled separately in main.rs
         }
     }
 }
 
-#[cfg(not(feature = "compiler"))]
-pub fn handle_compiler_cmd(_cmd: CompilerCmd) {
-    eprintln!("Compiler feature not enabled. Build with --features compiler");
-    std::process::exit(1);
+/// Compile TSX/TS file to JS string (for in-memory execution)
+pub fn compile_in_memory(input: &str) -> Result<String, anyhow::Error> {
+    crate::compiler::compile_file(input)
 }

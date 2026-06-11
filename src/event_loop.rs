@@ -63,7 +63,7 @@ pub fn run_event_loop(
         }
 
         // Poll timers
-        dirty = poll_timers() || dirty;
+        dirty = poll_timers(js_ctx) || dirty;
 
         // Render if dirty
         if dirty {
@@ -87,9 +87,16 @@ fn handle_event(
         Event::Key(key) => handle_key_event(key, js_ctx),
         Event::Mouse(mouse) => handle_mouse_event(mouse, js_ctx),
         Event::Resize(cols, rows) => {
+            // Update the cached terminal size so the *next* render uses the
+            // new dimensions, but don't force a re-render here.  Ink 4 only
+            // re-renders on resize when the app subscribes via `useStdout`
+            // or `useInput`; mode.tsx drives stdin itself with `node:readline`
+            // and therefore sees a blank screen until the next keystroke —
+            // we match that behaviour exactly so the two runtimes stay in
+            // lock-step.
             tracing::debug!("Terminal resize: {}x{}", cols, rows);
             bridge::__ink_set_terminal_size(cols as u32, rows as u32);
-            true
+            false
         }
         _ => false,
     }
@@ -109,6 +116,14 @@ fn handle_key_event(
         || key.modifiers.contains(KeyModifiers::SUPER);
 
     tracing::debug!("Key event: {} (ctrl={}, shift={}, alt={}, meta={})", key_str, ctrl, shift, alt, meta);
+
+    // Handle Ctrl+C specially - in PTY/tmux, Ctrl+C is sent as 'c' with ctrl modifier
+    // We need to exit the app when Ctrl+C is pressed
+    if ctrl && (key_str == "c" || key.code == KeyCode::Char('c')) {
+        tracing::info!("Ctrl+C detected, initiating shutdown");
+        bridge::__ink_set_exit_requested();
+        return false;
+    }
 
     // Dispatch to JS __tb_dispatch_key(key, ctrl, shift, alt, meta)
     // Use JSON.stringify for safe escaping of key string
@@ -183,16 +198,26 @@ fn handle_mouse_event(
 }
 
 /// Poll and dispatch timers
-fn poll_timers() -> bool {
+fn poll_timers(js_ctx: &rquickjs::Context) -> bool {
     // Process microtasks
     if bridge::__ink_drain_microtasks() {
         tracing::debug!("Microtasks pending");
     }
 
-    // Process timers - this is handled in Rust, callbacks stored in JS
+    // Process timers - get IDs from Rust, invoke callbacks in JS
     let timer_ids = bridge::__ink_process_timers();
     if timer_ids != "[]" {
         tracing::debug!("Timers fired: {}", timer_ids);
+        // Invoke the JavaScript timer callbacks
+        js_ctx.with(|ctx| {
+            let invoke_js = format!(
+                "if(typeof __tb_invoke_timers==='function'){{__tb_invoke_timers({})}}",
+                timer_ids
+            );
+            if let Err(e) = ctx.eval::<(), _>(invoke_js.as_str()) {
+                tracing::warn!("Timer invoke error: {:?}", e);
+            }
+        });
     }
 
     bridge::__ink_is_dirty()

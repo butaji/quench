@@ -38,6 +38,12 @@ pub fn __ink_reset_exit() {
     EXIT_CODE.store(0, Ordering::SeqCst);
 }
 
+/// Request exit (used for Ctrl+C handling)
+pub fn __ink_set_exit_requested() {
+    SHOULD_EXIT.store(true, Ordering::SeqCst);
+    EXIT_CODE.store(130, Ordering::SeqCst); // 128 + 2 = SIGINT
+}
+
 // ===================================================================
 // I/O
 // ===================================================================

@@ -2,6 +2,22 @@
 // ~1070 lines. All logic that must live in JS (hooks, reconciliation).
 // Bridge wrappers at the top call into Rust via __ink_call.
 
+// Cached terminal size for process.stdout.rows/columns.
+// Initialised lazily from the Rust bridge on first access and refreshed
+// whenever the terminal is resized, so the JS polyfill always returns the
+// actual current dimensions.
+let __ink_terminal_width = null;
+let __ink_terminal_height = null;
+function __ink_refresh_terminal_size() {
+  if (globalThis.__ink_get_terminal_size) {
+    const ts = globalThis.__ink_get_terminal_size();
+    if (ts && ts.width > 0) __ink_terminal_width = ts.width;
+    if (ts && ts.height > 0) __ink_terminal_height = ts.height;
+  }
+  if (__ink_terminal_width == null) __ink_terminal_width = 80;
+  if (__ink_terminal_height == null) __ink_terminal_height = 24;
+}
+
 // ===================================================================
 // 0. Bridge Wrappers (Rust FFI via __ink_call)
 // ===================================================================
@@ -81,6 +97,10 @@ globalThis.__ink_get_exit_code = function() {
 
 globalThis.__ink_reset_exit = function() {
   __ink_call('reset_exit', '[]');
+};
+
+globalThis.__ink_set_exit_requested = function() {
+  __ink_call('set_exit_requested', '[]');
 };
 
 globalThis.__ink_set_terminal_size = function(width, height) {
@@ -251,6 +271,11 @@ globalThis.__tb_flush_rerenders = function() {
     }
   }
 };
+
+// Expose flushRerenders globally for use in setTimeout callbacks
+function flushRerenders() {
+  globalThis.__tb_flush_rerenders();
+}
 
 // ===================================================================
 // 3. Hooks
@@ -825,6 +850,7 @@ function mountTree(vNode, parentId) {
     return { nodeId: id, vNode: String(vNode), children: [], isText: true };
   }
 
+
   if (Array.isArray(vNode)) {
     const children = [];
     for (const child of vNode) {
@@ -1035,7 +1061,11 @@ function render(element, options) {
   const rootId = globalThis.__ink_create_root();
   const container = { rootId, tree: null, instance: null, unmounted: false };
 
-  container.tree = mountTree(element, rootId);
+  try {
+    container.tree = mountTree(element, rootId);
+  } catch (e) {
+    console.error("render: mountTree error:", e);
+  }
   if (container.tree && container.tree.instance) {
     container.instance = container.tree.instance;
     container.instance.rootId = rootId;
@@ -1166,10 +1196,27 @@ if (!globalThis.setImmediate) {
 
 if (!globalThis.process) {
   globalThis.process = {
-    stdout: { write: (s) => { try { globalThis.__ink_stdout_write(String(s)); } catch(e) {} } },
+    stdout: {
+      write: (s) => { try { globalThis.__ink_stdout_write(String(s)); } catch(e) {} },
+      get rows() { if (__ink_terminal_height == null) __ink_refresh_terminal_size(); return __ink_terminal_height; },
+      get columns() { if (__ink_terminal_width == null) __ink_refresh_terminal_size(); return __ink_terminal_width; },
+      isTTY: true
+    },
     stderr: { write: (s) => { try { globalThis.__ink_stderr_write(String(s)); } catch(e) {} } },
+    stdin: {
+      isTTY: true,
+      setRawMode: (enabled) => { if (globalThis.__ink_set_raw_mode) globalThis.__ink_set_raw_mode(enabled); },
+      resume: () => {},
+      pause: () => {},
+      on: () => {},
+      off: () => {},
+      once: () => {},
+    },
+    on: (event, handler) => {
+      // No-op for SIGINT and other process events
+    },
+    exit: (code) => { globalThis.__ink_exit(code || 0); },
     nextTick: (cb, ...args) => {
-      // Store function directly in JS array - no stringification needed
       if (typeof cb === 'function') {
         const wrapped = () => cb(...args);
         microtaskCallbacks.push(wrapped);
@@ -1179,7 +1226,54 @@ if (!globalThis.process) {
 }
 
 // ===================================================================
-// 12. Input Dispatch Wiring
+// 12. Date Polyfill
+// ===================================================================
+//
+// (See helper below.)
+//
+// QuickJS ignores the `options` argument of `toLocaleTimeString` and falls
+// back to the full 12-hour format ("09:38:13 AM").  Ink apps commonly pass
+// `{ hour: '2-digit', minute: '2-digit', hour12: false }` to get a tidy
+// "09:38" — so we implement just enough of the spec to honour the
+// hour/minute/second + hour12 options we see in the wild.
+
+(function patchDateLocale() {
+  if (!Date.prototype.toLocaleTimeString) return;
+  const original = Date.prototype.toLocaleTimeString;
+  Date.prototype.toLocaleTimeString = function patchedToLocaleTimeString(locales, options) {
+    if (!options || typeof options !== 'object') {
+      return original.call(this, locales);
+    }
+    const d = this;
+    const want = (k) => Object.prototype.hasOwnProperty.call(options, k);
+    const hasHour = want('hour');
+    const hasMinute = want('minute');
+    const hasSecond = want('second');
+    if (!hasHour && !hasMinute && !hasSecond) {
+      return original.call(this, locales);
+    }
+    const hour12 = options.hour12 === true; // default false when hourCycle isn't set
+    const hourDigits = hasHour && options.hour === '2-digit' ? 2 : 1;
+    const minDigits = hasMinute && options.minute === '2-digit' ? 2 : 1;
+    const secDigits = hasSecond && options.second === '2-digit' ? 2 : 1;
+
+    let h = d.getHours();
+    let suffix = '';
+    if (hour12) {
+      suffix = h >= 12 ? ' PM' : ' AM';
+      h = h % 12;
+      if (h === 0) h = 12;
+    }
+    const m = d.getMinutes();
+    const s = d.getSeconds();
+    const pad = (n, w) => String(n).padStart(w, '0');
+    return pad(h, hourDigits) + ':' + pad(m, minDigits) +
+           (hasSecond ? ':' + pad(s, secDigits) : '') + suffix;
+  };
+})();
+
+// ===================================================================
+// 14. Input Dispatch Wiring
 // ===================================================================
 
 // Map raw key names to Ink's key object shape
@@ -1355,12 +1449,22 @@ globalThis.__tb_dispatch_mouse = function(event) {
 };
 
 // ===================================================================
-// 13. Exports
+// 15. Exports
 // ===================================================================
+
+// Fragment helper - used for JSX fragments
+// esbuild calls Fragment(props, ...children) where props may be null or {key: ...}
+const Fragment = function(props, ...children) {
+  if (children.length === 1) {
+    return children[0];
+  }
+  return children;
+};
 
 const ink = {
   render,
   renderToString,
+  Fragment,
   Box, Text, Static, Newline, Spacer, Transform,
   useState, useEffect, useRef, useMemo, useCallback, useContext,
   useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager,
@@ -1409,6 +1513,7 @@ function renderToString(element, options) {
 }
 
 globalThis.ink = ink;
+globalThis.Fragment = Fragment;
 globalThis.render = render;
 globalThis.renderToString = renderToString;
 globalThis.Box = Box;
