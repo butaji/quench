@@ -1,4 +1,4 @@
-// Scroll View Demo — TuiBridge
+// Scroll View Demo — Quench
 // Demonstrates scrolling content with keyboard navigation
 // Common pattern for long lists, logs, file viewers
 

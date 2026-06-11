@@ -1,4 +1,4 @@
-// Log Viewer Example - TuiBridge demo (TypeScript)
+// Log Viewer Example - Quench demo (TypeScript)
 // Demonstrates scrolling, filtering, and auto-scroll
 
 import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';

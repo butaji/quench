@@ -1,20 +1,20 @@
 # Task 063: React Reconciler Bridge
 
 ## Status
-📅 **Deferred** — Approach A: React host config. Approach B: Build-time swap with @tuibridge/ink-shim.
+📅 **Deferred** — Approach A: React host config. Approach B: Build-time swap with @quench/ink-shim.
 
 
 ## Goal
-Enable running full React apps (bundled with `react-reconciler`) under TuiBridge by providing a bridge host config.
+Enable running full React apps (bundled with `react-reconciler`) under Quench by providing a bridge host config.
 
 ## Problem
 
-The `../tui1` app bundles React + Ink's reconciler into a 28,000-line ESM bundle. Running it under TuiBridge fails because:
+The `../tui1` app bundles React + Ink's reconciler into a 28,000-line ESM bundle. Running it under Quench fails because:
 
 1. **Node.js imports** — Bundle starts with `import { createRequire } from "node:module"`; QuickJS lacks Node.js built-ins
 2. **React reconciler** — Ink's reconciler uses `react-reconciler` which expects a full host environment
-3. **Double reconciler** — TuiBridge already has a reconciler in `runtime.js`; React apps bring their own
-4. **Exit without render** — The bundled app never calls TuiBridge's `render()`, so no tree is built
+3. **Double reconciler** — Quench already has a reconciler in `runtime.js`; React apps bring their own
+4. **Exit without render** — The bundled app never calls Quench's `render()`, so no tree is built
 
 ## Root Cause
 
@@ -25,26 +25,26 @@ tui1/dist/bundle.js (28,479 lines)
 ├── Ink's host config (maps React elements → Ink nodes)
 └── Node.js ESM shim (createRequire, __filename, __dirname)
 
-TuiBridge runtime.js (~1,070 lines)
+Quench runtime.js (~1,070 lines)
 ├── Custom reconciler (NOT React's)
 ├── Bridge wrappers (__ink_create_node → Rust FFI)
 └── No Node.js module system
 ```
 
-React apps expect to use React's reconciler. TuiBridge provides its own. These cannot coexist.
+React apps expect to use React's reconciler. Quench provides its own. These cannot coexist.
 
 ## Solution Approaches
 
-### Approach A: React Host Config for TuiBridge (Recommended)
+### Approach A: React Host Config for Quench (Recommended)
 
-Implement a proper `react-reconciler` host config that bridges React's reconciler to TuiBridge's Rust tree.
+Implement a proper `react-reconciler` host config that bridges React's reconciler to Quench's Rust tree.
 
 **Architecture:**
 
 ```
 User App (React + JSX)
     │
-    │ import { render } from "@tuibridge/react-renderer"
+    │ import { render } from "@quench/react-renderer"
     ▼
 react-reconciler (Facebook's reconciler)
     │
@@ -53,7 +53,7 @@ react-reconciler (Facebook's reconciler)
     │   appendChild(parent, child)  → __ink_append_child()
     │   commitUpdate(...)           → __ink_commit_update()
     ▼
-TuiBridge Host Config (JS)
+Quench Host Config (JS)
     │
     │ __ink_call FFI
     ▼
@@ -69,11 +69,11 @@ Ink Runtime + Yoga + ratatui
 
 **API:**
 ```js
-// New module: @tuibridge/react-renderer
-import { createRenderer } from '@tuibridge/react-renderer';
+// New module: @quench/react-renderer
+import { createRenderer } from '@quench/react-renderer';
 
 const { render } = createRenderer({
-  // TuiBridge FFI is already available as globals
+  // Quench FFI is already available as globals
   createNode: __ink_create_node,
   appendChild: __ink_append_child,
   // ...
@@ -89,7 +89,7 @@ render(<App />);
 
 ### Approach B: Build-Time Target Swap (Alternative)
 
-Replace Ink imports with TuiBridge API at build time using esbuild aliases.
+Replace Ink imports with Quench API at build time using esbuild aliases.
 
 **User build config:**
 ```js
@@ -98,15 +98,15 @@ await esbuild.build({
   entryPoints: ['app.tsx'],
   bundle: true,
   alias: {
-    'ink': '@tuibridge/ink-shim',  // Replace Ink with TuiBridge shim
-    'react': '@tuibridge/react-shim', // Optional: replace React hooks
+    'ink': '@quench/ink-shim',  // Replace Ink with Quench shim
+    'react': '@quench/react-shim', // Optional: replace React hooks
   },
 });
 ```
 
-**`@tuibridge/ink-shim` package:**
+**`@quench/ink-shim` package:**
 ```js
-// Provides the same exports as Ink, but uses TuiBridge globals
+// Provides the same exports as Ink, but uses Quench globals
 export const render = globalThis.ink.render;
 export const Box = globalThis.ink.Box;
 export const Text = globalThis.ink.Text;
@@ -117,7 +117,7 @@ export const useInput = globalThis.ink.useInput;
 **Pros:**
 - No reconciler duplication
 - Zero runtime overhead
-- Apps compile to TuiBridge-native code
+- Apps compile to Quench-native code
 
 **Cons:**
 - Requires recompilation of the app
@@ -141,21 +141,21 @@ Polyfill enough of Node.js to run bundled React apps directly.
 
 ### Phase 1: Build-Time Target (Approach B)
 
-Create `@tuibridge/ink-shim` npm package that maps Ink's API to TuiBridge globals.
+Create `@quench/ink-shim` npm package that maps Ink's API to Quench globals.
 
 ```bash
-# User rebuilds their app targeting TuiBridge
-npm install @tuibridge/ink-shim
+# User rebuilds their app targeting Quench
+npm install @quench/ink-shim
 npx esbuild app.tsx \
   --bundle \
-  --alias:ink=@tuibridge/ink-shim \
-  --outfile=dist/tuibridge-app.js
+  --alias:ink=@quench/ink-shim \
+  --outfile=dist/quench-app.js
 
 # Run
-tuibridge dist/tuibridge-app.js
+quench dist/quench-app.js
 ```
 
-**`@tuibridge/ink-shim` exports:**
+**`@quench/ink-shim` exports:**
 ```typescript
 export const render: typeof import('ink').render;
 export const Box: typeof import('ink').Box;
@@ -246,7 +246,7 @@ export function render(element) {
 **Usage:**
 ```bash
 # Load React reconciler bridge
-tuibridge --react ../tui1/dist/bundle.js
+quench --react ../tui1/dist/bundle.js
 ```
 
 **Size:** `runtime_react.js` would be ~100KB (react-reconciler + host config)
@@ -262,8 +262,8 @@ tuibridge --react ../tui1/dist/bundle.js
 ## Files to Create
 
 ### New Files
-- `packages/ink-shim/` — npm package: `@tuibridge/ink-shim`
-  - `index.js` — TuiBridge-compatible Ink API
+- `packages/ink-shim/` — npm package: `@quench/ink-shim`
+  - `index.js` — Quench-compatible Ink API
   - `index.d.ts` — TypeScript definitions
 - `src/runtime_react.js` — React reconciler host config (optional runtime)
 
@@ -274,9 +274,9 @@ tuibridge --react ../tui1/dist/bundle.js
 ## Acceptance Criteria
 
 ### Phase 1 (Build-Time Swap)
-- [ ] `@tuibridge/ink-shim` package published to npm
-- [ ] tui1 can be rebuilt with `--alias:ink=@tuibridge/ink-shim`
-- [ ] Rebuilt tui1 runs under `tuibridge` without errors
+- [ ] `@quench/ink-shim` package published to npm
+- [ ] tui1 can be rebuilt with `--alias:ink=@quench/ink-shim`
+- [ ] Rebuilt tui1 runs under `quench` without errors
 - [ ] Visual output matches Deno/Ink within ANSI diff tolerance
 
 ### Phase 2 (React Reconciler Bridge)
@@ -290,13 +290,13 @@ tuibridge --react ../tui1/dist/bundle.js
 ```bash
 # Phase 1 test
 cd ../tui1
-npm install @tuibridge/ink-shim
-npx esbuild mod.tsx --bundle --alias:ink=@tuibridge/ink-shim --outfile=dist/tuibridge.js
+npm install @quench/ink-shim
+npx esbuild mod.tsx --bundle --alias:ink=@quench/ink-shim --outfile=dist/quench.js
 cd -
-./target/release/tuibridge ../tui1/dist/tuibridge.js
+./target/release/quench ../tui1/dist/quench.js
 
 # Phase 2 test
-./target/release/tuibridge --react ../tui1/dist/bundle.js
+./target/release/quench --react ../tui1/dist/bundle.js
 ```
 
 ## Dependencies
@@ -308,15 +308,15 @@ cd -
 
 ## Notes
 
-**Why not just use TuiBridge's reconciler?**
+**Why not just use Quench's reconciler?**
 
-TuiBridge's `runtime.js` reconciler is ~300 lines and handles basic React patterns. However:
+Quench's `runtime.js` reconciler is ~300 lines and handles basic React patterns. However:
 - It doesn't implement React's full concurrent features
 - It doesn't support React DevTools
 - It doesn't handle all edge cases ( Suspense, error boundaries, portals)
 
-For simple apps, TuiBridge's reconciler is sufficient. For complex apps (like tui1 with React+Ink), a proper React reconciler bridge is needed.
+For simple apps, Quench's reconciler is sufficient. For complex apps (like tui1 with React+Ink), a proper React reconciler bridge is needed.
 
 **Bundle size concern:**
 
-React + react-reconciler adds ~40KB gzipped. For a terminal app, this is acceptable. TuiBridge's current runtime.js is ~30KB (1,070 lines). The React bridge would be optional, loaded only with `--react`.
+React + react-reconciler adds ~40KB gzipped. For a terminal app, this is acceptable. Quench's current runtime.js is ~30KB (1,070 lines). The React bridge would be optional, loaded only with `--react`.

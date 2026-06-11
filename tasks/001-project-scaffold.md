@@ -5,7 +5,7 @@
 
 
 ## Goal
-Create the Cargo workspace with all dependencies required for TuiBridge.
+Create the Cargo workspace with all dependencies required for Quench.
 
 ## Acceptance Criteria
 - [ ] `Cargo.toml` with `rquickjs`, `ratatui`, `crossterm`, `yoga`, `tokio`, `notify`, `unicode-width`, `textwrap`, `tracing`.

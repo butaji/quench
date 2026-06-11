@@ -1,4 +1,4 @@
-// Wizard Example — TuiBridge
+// Wizard Example — Quench
 // Demonstrates useMemo, useCallback, multi-step flow
 
 var useState = ink.useState;

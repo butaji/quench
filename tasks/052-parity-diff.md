@@ -5,7 +5,7 @@
 
 
 ## Goal
-Compare deno and TuiBridge ANSI outputs and enforce 100% look&feel match.
+Compare deno and Quench ANSI outputs and enforce 100% look&feel match.
 
 ## Acceptance Criteria
 - [ ] Diff tool strips escape sequences or compares rendered cell grids.

@@ -1,4 +1,4 @@
-// Todo List Example - TuiBridge demo (TypeScript)
+// Todo List Example - Quench demo (TypeScript)
 // Demonstrates nested layouts, keyboard navigation, and state management
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';
@@ -11,7 +11,7 @@ interface TodoItem {
 
 function TodoList(): JSX.Element {
   const [todos, setTodos] = useState<TodoItem[]>([
-    { id: 1, text: 'Learn TuiBridge', done: true },
+    { id: 1, text: 'Learn Quench', done: true },
     { id: 2, text: 'Build a TUI app', done: false },
     { id: 3, text: 'Ship it!', done: false },
   ]);

@@ -1,4 +1,4 @@
-// Wizard Example — TuiBridge
+// Wizard Example — Quench
 // Demonstrates useMemo, useCallback, multi-step flow
 
 import { render, Box, Text, useState, useMemo, useCallback, useInput, useApp } from 'ink';

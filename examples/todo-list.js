@@ -1,4 +1,4 @@
-// Todo List Example - TuiBridge demo
+// Todo List Example - Quench demo
 // Demonstrates useState, useInput, nested flex layouts, keyboard navigation
 // Note: Box, Text, etc. are already globally exported from runtime.js
 
@@ -9,7 +9,7 @@ var render = ink.render;
 
 function App() {
   var _useState = useState([
-    { id: 1, text: 'Learn TuiBridge', done: true },
+    { id: 1, text: 'Learn Quench', done: true },
     { id: 2, text: 'Build a TUI app', done: false },
     { id: 3, text: 'Ship to production', done: false }
   ]);

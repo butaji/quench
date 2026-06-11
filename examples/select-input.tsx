@@ -1,4 +1,4 @@
-// Select Input — TuiBridge
+// Select Input — Quench
 // Common UI pattern: keyboard-navigable select/choice component
 // Real-world pattern used in CLI tools
 

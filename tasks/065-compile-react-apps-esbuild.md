@@ -1,7 +1,7 @@
-# Task 065: Compile React+Ink Apps for TuiBridge (esbuild approach — deprecated)
+# Task 065: Compile React+Ink Apps for Quench (esbuild approach — deprecated)
 
 ## Goal
-Compile React+Ink source files (like `../tui1/mod.tsx`) into TuiBridge-compatible JS — without running pre-built bundles.
+Compile React+Ink source files (like `../tui1/mod.tsx`) into Quench-compatible JS — without running pre-built bundles.
 
 ## Problem
 
@@ -11,7 +11,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { render, Text, Box } from "ink";
 ```
 
-TuiBridge expects globals:
+Quench expects globals:
 ```js
 const { useState, useEffect, render, Box, Text } = ink;
 ```
@@ -20,7 +20,7 @@ We need a build step that transforms one into the other.
 
 ## Simple Solution: esbuild Transform
 
-Use esbuild with aliases and a custom JSX transform to compile React+Ink → TuiBridge.
+Use esbuild with aliases and a custom JSX transform to compile React+Ink → Quench.
 
 ### Transform Rules
 
@@ -44,13 +44,13 @@ npx esbuild ../tui1/mod.tsx \
   --jsx-fragment=Fragment \
   --define:process.env.NODE_ENV='"production"' \
   --inject:scripts/react-to-ink-shim.js \
-  --outfile=dist/tui1-for-tuibridge.js
+  --outfile=dist/tui1-for-quench.js
 ```
 
 ### Shim File (`scripts/react-to-ink-shim.js`)
 
 ```js
-// Injected at top of bundle — provides React/Ink API from TuiBridge globals
+// Injected at top of bundle — provides React/Ink API from Quench globals
 const React = {
   useState: ink.useState,
   useEffect: ink.useEffect,
@@ -102,7 +102,7 @@ npx esbuild ../tui1/mod.tsx \
   --jsx-factory=createElement \
   --jsx-fragment=Fragment \
   --inject:scripts/react-to-ink-shim.js \
-  --outfile=dist/tui1-for-tuibridge.js
+  --outfile=dist/tui1-for-quench.js
 ```
 
 But `--external` leaves `import` statements, which QuickJS doesn't handle well. Better approach:
@@ -110,16 +110,16 @@ But `--external` leaves `import` statements, which QuickJS doesn't handle well. 
 ### Plugin Approach (esbuild plugin)
 
 ```js
-// scripts/tuibridge-build-plugin.js
-const tuibridgePlugin = {
-  name: 'tuibridge',
+// scripts/quench-build-plugin.js
+const quenchPlugin = {
+  name: 'quench',
   setup(build) {
     // Replace "react" imports with shim
     build.onResolve({ filter: /^react$/ }, () => ({
       path: 'react',
-      namespace: 'tuibridge-shim',
+      namespace: 'quench-shim',
     }));
-    build.onLoad({ filter: /.*/, namespace: 'tuibridge-shim' }, () => ({
+    build.onLoad({ filter: /.*/, namespace: 'quench-shim' }, () => ({
       contents: `export default React; export const { useState, useEffect, useRef, useMemo, useCallback, useContext, createElement, Fragment } = React;`,
       loader: 'js',
     }));
@@ -127,9 +127,9 @@ const tuibridgePlugin = {
     // Replace "ink" imports with shim
     build.onResolve({ filter: /^ink$/ }, () => ({
       path: 'ink',
-      namespace: 'tuibridge-shim',
+      namespace: 'quench-shim',
     }));
-    build.onLoad({ filter: /.*/, namespace: 'tuibridge-shim-ink' }, () => ({
+    build.onLoad({ filter: /.*/, namespace: 'quench-shim-ink' }, () => ({
       contents: `export { render, Box, Text, Static, Newline, Spacer, useInput, useApp, useStdin, useStdout, useStderr, useFocus, useFocusManager, measureElement, createContext };`,
       loader: 'js',
     }));
@@ -141,10 +141,10 @@ const tuibridgePlugin = {
 
 ```bash
 #!/bin/bash
-# scripts/build-for-tuibridge.sh — compile any React+Ink app for TuiBridge
+# scripts/build-for-quench.sh — compile any React+Ink app for Quench
 
 INPUT="$1"
-OUTPUT="${2:-dist/tuibridge-app.js}"
+OUTPUT="${2:-dist/quench-app.js}"
 
 # Create temp shim
 cat > /tmp/tb-shim.js << 'SHIM'
@@ -178,24 +178,24 @@ npx esbuild "$INPUT" \
   --outfile="$OUTPUT"
 
 echo "Built: $OUTPUT"
-echo "Run: tuibridge $OUTPUT"
+echo "Run: quench $OUTPUT"
 ```
 
 ## Usage
 
 ```bash
-# Build tui1 for TuiBridge
-./scripts/build-for-tuibridge.sh ../tui1/mod.tsx ../tui1/dist/tui1-tb.js
+# Build tui1 for Quench
+./scripts/build-for-quench.sh ../tui1/mod.tsx ../tui1/dist/tui1-tb.js
 
 # Run
-tuibridge ../tui1/dist/tui1-tb.js
+quench ../tui1/dist/tui1-tb.js
 ```
 
 ## Gap Analysis: tui1/mod.tsx
 
-What tui1 uses vs what TuiBridge provides:
+What tui1 uses vs what Quench provides:
 
-| tui1 Usage | TuiBridge Status | Action |
+| tui1 Usage | Quench Status | Action |
 |-----------|------------------|--------|
 | `useState` | ✅ | `ink.useState` |
 | `useEffect` | ✅ | `ink.useEffect` |
@@ -219,7 +219,7 @@ function Counter() {
   const [count, setCount] = useState(0);
   return (
     <Box flexDirection="column" padding={1} borderStyle="round">
-      <Text color="green" bold>React → TuiBridge</Text>
+      <Text color="green" bold>React → Quench</Text>
       <Text>Count: {count}</Text>
     </Box>
   );
@@ -228,13 +228,13 @@ function Counter() {
 render(<Counter />);
 EOF
 
-./scripts/build-for-tuibridge.sh /tmp/test-react.tsx /tmp/test-tb.js
-tuibridge /tmp/test-tb.js
+./scripts/build-for-quench.sh /tmp/test-react.tsx /tmp/test-tb.js
+quench /tmp/test-tb.js
 ```
 
 ## Files to Create
 
-- `scripts/build-for-tuibridge.sh` — Build script
+- `scripts/build-for-quench.sh` — Build script
 - `scripts/react-to-ink-shim.js` — Shim for esbuild inject
 
 ## Modified Files
@@ -242,8 +242,8 @@ tuibridge /tmp/test-tb.js
 - `docs/SPEC.md` — Document React app compilation
 
 ## Acceptance Criteria
-- [ ] `build-for-tuibridge.sh` compiles `../tui1/mod.tsx` without errors
-- [ ] Compiled app runs under `tuibridge` in tmux
+- [ ] `build-for-quench.sh` compiles `../tui1/mod.tsx` without errors
+- [ ] Compiled app runs under `quench` in tmux
 - [ ] Visual output matches Deno/Ink version
 - [ ] Keyboard input works (arrow keys, space, q)
 

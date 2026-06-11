@@ -12,7 +12,7 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-TUIBRIDGE="${TUIBRIDGE:-./target/release/tuibridge}"
+QUENCH="${QUENCH:-./target/release/quench}"
 DENO="${DENO:-deno}"
 SESSION_PREFIX="tb_verify"
 
@@ -27,7 +27,7 @@ EXAMPLES=(
 echo "=========================================="
 echo "Terminal Output Verification"
 echo "=========================================="
-echo "TuiBridge: $TUIBRIDGE"
+echo "Quench: $QUENCH"
 echo "Deno: $DENO"
 echo ""
 
@@ -38,9 +38,9 @@ if ! command -v tmux &> /dev/null; then
     exit 1
 fi
 
-# Check if tuibridge exists
-if [ ! -f "$TUIBRIDGE" ]; then
-    echo -e "${RED}Error:${NC} TuiBridge binary not found"
+# Check if quench exists
+if [ ! -f "$QUENCH" ]; then
+    echo -e "${RED}Error:${NC} Quench binary not found"
     echo "Build: cargo build --release"
     exit 1
 fi
@@ -57,7 +57,7 @@ echo ""
 echo "Starting verification sessions..."
 echo ""
 
-# Launch TuiBridge examples in separate tmux sessions
+# Launch Quench examples in separate tmux sessions
 for ex in "${EXAMPLES[@]}"; do
     name=$(basename "$ex" | sed 's/\..*//')
     session="${SESSION_PREFIX}_${name}"
@@ -65,7 +65,7 @@ for ex in "${EXAMPLES[@]}"; do
     echo -e "${CYAN}→${NC} Launching: $name"
     
     # Launch in detached tmux session
-    tmux new-session -d -s "$session" "$TUIBRIDGE $ex; read -p 'Press Enter to close...'" 2>/dev/null
+    tmux new-session -d -s "$session" "$QUENCH $ex; read -p 'Press Enter to close...'" 2>/dev/null
     
     sleep 0.5  # Stagger launches
 done

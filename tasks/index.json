@@ -1,5 +1,5 @@
 {
-  "project": "TuiBridge",
+  "project": "Quench",
   "spec": "docs/SPEC.md",
   "status_schema": {
     "pending": "Not started",
@@ -518,7 +518,7 @@
       "title": "Parity: Side-by-Side Runner",
       "phase": 9,
       "status": "done",
-      "note": "scripts/parity.sh runs examples in Deno and TuiBridge."
+      "note": "scripts/parity.sh runs examples in Deno and Quench."
     },
     "052": {
       "file": "052-parity-diff.md",
@@ -602,11 +602,11 @@
       "title": "React Reconciler Bridge",
       "phase": 12,
       "status": "deferred",
-      "note": "Approach A: React host config. Approach B: Build-time swap with @tuibridge/ink-shim."
+      "note": "Approach A: React host config. Approach B: Build-time swap with @quench/ink-shim."
     },
     "064": {
       "file": "064-compile-react-apps.md",
-      "title": "Compile React+Ink Apps for TuiBridge (Rust Pipeline)",
+      "title": "Compile React+Ink Apps for Quench (Rust Pipeline)",
       "phase": 12,
       "status": "done",
       "note": "Regex-based JSX compiler with CLI integration"
@@ -658,7 +658,7 @@
       "title": "Full Ink 7.0.5 API Audit",
       "phase": 13,
       "status": "done",
-      "note": "Comprehensive audit of all Ink 7.0.5 exports, props, and hooks against TuiBridge"
+      "note": "Comprehensive audit of all Ink 7.0.5 exports, props, and hooks against Quench"
     },
     "072": {
       "file": "072-fix-hot-reload.md",

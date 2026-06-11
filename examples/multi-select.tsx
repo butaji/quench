@@ -1,4 +1,4 @@
-// Multi-Select Demo — TuiBridge
+// Multi-Select Demo — Quench
 // Demonstrates checkbox-style selection with multiple items
 // Common pattern for package selection, filter toggles
 

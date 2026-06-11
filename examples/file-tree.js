@@ -1,4 +1,4 @@
-// File Tree Example - TuiBridge demo
+// File Tree Example - Quench demo
 // Demonstrates recursive rendering, tree structure, and selection
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

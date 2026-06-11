@@ -84,7 +84,7 @@ Implement remaining Ink 7.0.5 props to achieve 100% API compatibility with Ink, 
 
 ### Accessibility Props (Accepted, no-op in terminal)
 
-Ink passes `aria-*` props to the React DOM for screen reader support. TuiBridge accepts these props silently (no warnings) since they're valid Ink API, but they have no observable effect in a terminal environment. This ensures Ink apps using accessibility props run without modification.
+Ink passes `aria-*` props to the React DOM for screen reader support. Quench accepts these props silently (no warnings) since they're valid Ink API, but they have no observable effect in a terminal environment. This ensures Ink apps using accessibility props run without modification.
 
 | Prop | Status | Notes |
 |------|--------|-------|

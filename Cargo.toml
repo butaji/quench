@@ -1,8 +1,8 @@
 [package]
-name = "tuibridge"
+name = "quench"
 version = "0.1.0"
 edition = "2021"
-authors = ["TuiBridge Team"]
+authors = ["Quench Team"]
 description = "Run Ink (React for terminals) using rquickjs + Rust"
 
 [features]
@@ -73,7 +73,7 @@ criterion = "0.5"
 serial_test = "3"
 
 [[bin]]
-name = "tuibridge"
+name = "quench"
 path = "src/main.rs"
 
 [profile.release]

@@ -81,7 +81,7 @@
 | `useFocus` | `focus-manager.tsx` | ✅ |
 | `useFocusManager` | `focus-manager.tsx` | ✅ |
 | `measureElement` | `measure-ref.tsx` | ✅ |
-| `useBridge` | `use-bridge.tsx` | ✅ (TuiBridge) |
+| `useBridge` | `use-bridge.tsx` | ✅ (Quench) |
 
 ### Polyfills ✅
 | Feature | Example | Status |
@@ -120,7 +120,7 @@ examples/sizing-constraints.tsx — min/max, position, display
 examples/spacing-props.tsx    — margin/padding variants
 examples/static-overlay.tsx   — Static, Newline, Spacer
 examples/stdin-stdout.tsx     — useStdin, useStdout, useStderr
-examples/use-bridge.tsx        — TuiBridge-specific props
+examples/use-bridge.tsx        — Quench-specific props
 examples/wizard.tsx           — useMemo, useCallback
 examples/animations.tsx        — Spinner, progress, blinking, pulse
 examples/terminal-resize.tsx   — Terminal resize handling
@@ -147,7 +147,7 @@ Run with tmux to verify 100% look&feel match:
 # Terminal 1: Deno reference
 deno run -A npm:ink examples/counter.tsx
 
-# Terminal 2: TuiBridge
-tmux new-session -d -s tui 'tuibridge examples/counter.tsx; read'
+# Terminal 2: Quench
+tmux new-session -d -s tui 'quench examples/counter.tsx; read'
 tmux attach -t tui
 ```

@@ -1,4 +1,4 @@
-// Form Validation Demo — TuiBridge
+// Form Validation Demo — Quench
 // Demonstrates form handling with validation
 // Common pattern for CLI configuration tools
 

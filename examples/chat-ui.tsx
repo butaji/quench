@@ -1,4 +1,4 @@
-// Chat UI Example - TuiBridge demo (TypeScript)
+// Chat UI Example - Quench demo (TypeScript)
 // Demonstrates real-time messaging and input
 
 import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';
@@ -14,7 +14,7 @@ interface Message {
 function ChatApp(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([
     { id: 1, sender: 'Alice', text: 'Hey, how are you?', timestamp: '10:00', isMe: false },
-    { id: 2, sender: 'Bob', text: 'Doing great! Working on TuiBridge.', timestamp: '10:01', isMe: false },
+    { id: 2, sender: 'Bob', text: 'Doing great! Working on Quench.', timestamp: '10:01', isMe: false },
     { id: 3, sender: 'You', text: 'That sounds exciting!', timestamp: '10:02', isMe: true },
   ]);
   const [inputValue, setInputValue] = useState('');

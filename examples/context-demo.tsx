@@ -1,4 +1,4 @@
-// Context Demo — TuiBridge
+// Context Demo — Quench
 // Demonstrates useContext / createContext for theme sharing
 
 import { render, Box, Text, useState, useContext, createContext, useInput, useApp } from 'ink';

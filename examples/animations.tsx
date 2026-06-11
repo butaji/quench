@@ -1,4 +1,4 @@
-// Animations Demo — TuiBridge
+// Animations Demo — Quench
 // Demonstrates terminal animations using useEffect and intervals
 // Real-world pattern for loading spinners, progress animations
 

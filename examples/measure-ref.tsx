@@ -1,4 +1,4 @@
-// Measure Ref Demo — TuiBridge
+// Measure Ref Demo — Quench
 // Demonstrates useRef + measureElement for responsive layout
 
 import { render, Box, Text, useState, useRef, useEffect, useInput, useApp, measureElement } from 'ink';

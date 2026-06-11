@@ -16,9 +16,9 @@ let runtime = rquickjs::Runtime::new()?;
 A buggy `while(true) { arr.push(new Object()) }` or an infinite recursion will:
 - Exhaust system RAM (no memory limit)
 - Stack overflow the native thread (no stack limit)
-- Potentially crash the entire TuiBridge process
+- Potentially crash the entire Quench process
 
-Since TuiBridge runs arbitrary user code (TSX files), this is a security and reliability concern.
+Since Quench runs arbitrary user code (TSX files), this is a security and reliability concern.
 
 ## Fix Approach
 
@@ -46,7 +46,7 @@ if !cli_args.interactive {
 
 ## Error Handling
 
-When limits are exceeded, rquickjs throws an exception. TuiBridge should catch this and surface a helpful error:
+When limits are exceeded, rquickjs throws an exception. Quench should catch this and surface a helpful error:
 
 ```rust
 ctx.eval(code).map_err(|e| {

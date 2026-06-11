@@ -1,5 +1,5 @@
 // Simple Hello World — uses Rust-exposed Ink API (no JS shim needed)
-// Run with: tuibridge examples/simple-hello.js
+// Run with: quench examples/simple-hello.js
 
 var element = {
   type: Box,
@@ -8,7 +8,7 @@ var element = {
     padding: 1,
     borderStyle: 'round',
     children: [
-      { type: Text, props: { color: 'green', bold: true, children: 'Hello from TuiBridge!' } },
+      { type: Text, props: { color: 'green', bold: true, children: 'Hello from Quench!' } },
       { type: Text, props: { children: 'This is a simple test' } },
       { type: Text, props: { dimColor: true, children: '[q] quit' } },
     ]

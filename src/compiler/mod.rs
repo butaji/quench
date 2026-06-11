@@ -1,8 +1,8 @@
-//! TuiBridge TSX/TS Compiler using esbuild
+//! Quench TSX/TS Compiler using esbuild
 //!
 //! Pipeline:
 //! 1. esbuild strips TypeScript and transforms JSX to JS
-//! 2. Post-process to add TuiBridge shims and fix imports
+//! 2. Post-process to add Quench shims and fix imports
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -22,7 +22,7 @@ const REACT_HOOKS: &[&str] = &[
     "useDebugValue",
 ];
 
-/// Compile TSX/TS source to TuiBridge-compatible JavaScript
+/// Compile TSX/TS source to Quench-compatible JavaScript
 pub fn compile_tsx(source: &str, _filename: &str) -> Result<String> {
     compile_with_esbuild(source, "tsx")
 }
@@ -33,7 +33,7 @@ pub fn compile_ts(source: &str, _filename: &str) -> Result<String> {
 }
 
 fn compile_with_esbuild(source: &str, loader: &str) -> Result<String> {
-    let temp_input = format!("/tmp/tuibridge_input_{}.tsx", std::process::id());
+    let temp_input = format!("/tmp/quench_input_{}.tsx", std::process::id());
     std::fs::write(&temp_input, source)?;
 
     let output = Command::new("npx")
@@ -105,13 +105,13 @@ fn transform_std_streams(js: &str) -> String {
 fn transform_env_and_signals(js: &str) -> String {
     let re_env = regex::Regex::new(r"process\.env\.(\w+)").unwrap();
     let step1 = js.replace("process.env.NODE_ENV", "\"production\"");
-    let step2 = step1.replace("process.on(\"SIGINT\",", "// SIGINT handled by tuibridge\n// ");
-    let step3 = step2.replace("process.on('SIGINT',", "// SIGINT handled by tuibridge\n// ");
+    let step2 = step1.replace("process.on(\"SIGINT\",", "// SIGINT handled by quench\n// ");
+    let step3 = step2.replace("process.on('SIGINT',", "// SIGINT handled by quench\n// ");
     re_env.replace_all(&step3, "undefined").to_string()
 }
 
 fn prepend_shims(js: &str) -> String {
-    static SHIMS: &str = r#"// TuiBridge Node.js/React shims
+    static SHIMS: &str = r#"// Quench Node.js/React shims
 // Readline shim with working keypress events
 const __tb_keypress_handlers = [];
 const __tb_readline_shim = {

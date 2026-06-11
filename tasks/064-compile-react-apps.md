@@ -1,11 +1,11 @@
-# Task 064: Compile React+Ink Apps for TuiBridge
+# Task 064: Compile React+Ink Apps for Quench
 
 ## Status
 ✅ **Done**
 
 
 ## Goal
-Transform React+Ink source files (`mod.tsx`, `app.ts`, etc.) into TuiBridge-compatible JS using a lightweight TSX compiler.
+Transform React+Ink source files (`mod.tsx`, `app.ts`, etc.) into Quench-compatible JS using a lightweight TSX compiler.
 
 ## Current Status
 
@@ -46,7 +46,7 @@ Input: mod.tsx
 └─────────────────────────────────────┘
     │
     ▼
-Output: mod-tb.js (TuiBridge-compatible)
+Output: mod-tb.js (Quench-compatible)
 ```
 
 ### Rust Module Structure
@@ -62,11 +62,11 @@ src/
 ### CLI Integration
 
 ```bash
-# Compile TSX → TuiBridge JS
-tuibridge --compile mod.tsx -o mod-tb.js
+# Compile TSX → Quench JS
+quench --compile mod.tsx -o mod-tb.js
 
 # Run directly (compile + execute)
-tuibridge --run mod.tsx
+quench --run mod.tsx
 ```
 
 ## Features
@@ -91,26 +91,26 @@ tuibridge --run mod.tsx
 
 ## Usage Notes
 
-The examples in this project are written in JS (`.js` files) which run directly in TuiBridge. The TSX compiler is an optional feature for users who want to write in TSX.
+The examples in this project are written in JS (`.js` files) which run directly in Quench. The TSX compiler is an optional feature for users who want to write in TSX.
 
 For production use:
 ```bash
 # Option 1: Use JS examples directly
-tuibridge examples/counter.js
+quench examples/counter.js
 
 # Option 2: Pre-compile TSX with esbuild
 esbuild app.tsx --outfile=app.js --bundle
-tuibridge app.js
+quench app.js
 
 # Option 3: Use the built-in compiler (limited)
-tuibridge --compile app.tsx -o app.js
-tuibridge app.js
+quench --compile app.tsx -o app.js
+quench app.js
 ```
 
 ## Acceptance Criteria
 
-- [x] `tuibridge::compiler::compile_tsx()` exists
-- [x] `tuibridge::compiler::compile_file()` exists
+- [x] `quench::compiler::compile_tsx()` exists
+- [x] `quench::compiler::compile_file()` exists
 - [x] CLI `--compile` flag works
 - [x] CLI `--run` flag works
 - [x] Import removal works

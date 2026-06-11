@@ -1,4 +1,4 @@
-//! TuiBridge — Run Ink (React for terminals) using rquickjs + Rust
+//! Quench — Run Ink (React for terminals) using rquickjs + Rust
 //!
 //! This binary loads a bundled JavaScript application (Ink-compatible)
 //! and executes it in a QuickJS runtime with Yoga layout and ratatui rendering.
@@ -35,7 +35,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,tuibridge=info"));
+        .unwrap_or_else(|_| EnvFilter::new("info,quench=info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_writer(std::io::stderr))
@@ -45,7 +45,7 @@ fn setup_logging() {
 
 fn main() -> Result<()> {
     setup_logging();
-    tracing::info!("TuiBridge v{} — Ink runtime in rquickjs + Rust", VERSION);
+    tracing::info!("Quench v{} — Ink runtime in rquickjs + Rust", VERSION);
 
     // Must be set before terminal init so cleanup runs even on Ctrl+C
     signals::setup_signal_handlers();

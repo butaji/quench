@@ -1,4 +1,4 @@
-// Stdin/Stdout/Stderr Demo — TuiBridge
+// Stdin/Stdout/Stderr Demo — Quench
 // Demonstrates useStdin, useStdout, useStderr hooks
 
 import { render, Box, Text, useState, useStdin, useStdout, useStderr, useInput, useApp } from 'ink';

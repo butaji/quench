@@ -20,23 +20,23 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Config
-TUIBRIDGE="${TUIBRIDGE:-./target/release/tuibridge}"
+QUENCH="${QUENCH:-./target/release/quench}"
 DENO="${DENO:-deno}"
 TIMEOUT="${TIMEOUT:-5}"
 FRAME_DELAY="${FRAME_DELAY:-1}"  # Seconds between input frames
 
 echo "=========================================="
-echo "TuiBridge Interactive Parity Harness"
+echo "Quench Interactive Parity Harness"
 echo "=========================================="
-echo "TuiBridge: $TUIBRIDGE"
+echo "Quench: $QUENCH"
 echo "Deno: $DENO"
 echo "Timeout per example: ${TIMEOUT}s"
 echo "Frame capture interval: ${FRAME_DELAY}s"
 echo ""
 
-# Check if tuibridge exists
-if [ ! -f "$TUIBRIDGE" ]; then
-    echo -e "${RED}Error:${NC} TuiBridge binary not found at $TUIBRIDGE"
+# Check if quench exists
+if [ ! -f "$QUENCH" ]; then
+    echo -e "${RED}Error:${NC} Quench binary not found at $QUENCH"
     echo "Run: cargo build --release"
     exit 1
 fi
@@ -142,7 +142,7 @@ test_interactive() {
     else
         # Visual-only: just capture without input
         timeout "$TIMEOUT" "$DENO" run -A --no-lock "$example" 2>/dev/null > "$deno_out" || true
-        timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null > "$tui_out" || true
+        timeout "$TIMEOUT" "$QUENCH" "$example" 2>/dev/null > "$tui_out" || true
     fi
     
     # Compare stripped output
@@ -176,7 +176,7 @@ test_animation() {
     
     # Capture animation output
     timeout "$TIMEOUT" "$DENO" run -A --no-lock "$example" 2>/dev/null | strip_ansi > "$deno_frames" || true
-    timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null | strip_ansi > "$tui_frames" || true
+    timeout "$TIMEOUT" "$QUENCH" "$example" 2>/dev/null | strip_ansi > "$tui_frames" || true
     
     # For animations: check structure, not exact content
     # Animations may differ in timing but structure should match
@@ -208,7 +208,7 @@ test_static() {
     local tui_out="$TMPDIR/${name}.tui.txt"
     
     timeout "$TIMEOUT" "$DENO" run -A --no-lock "$example" 2>/dev/null | strip_ansi > "$deno_out" || true
-    timeout "$TIMEOUT" "$TUIBRIDGE" "$example" 2>/dev/null | strip_ansi > "$tui_out" || true
+    timeout "$TIMEOUT" "$QUENCH" "$example" 2>/dev/null | strip_ansi > "$tui_out" || true
     
     if diff "$deno_out" "$tui_out" > /dev/null 2>&1; then
         echo -e "${GREEN}✓${NC}"

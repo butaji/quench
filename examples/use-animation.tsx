@@ -1,4 +1,4 @@
-// useAnimation Demo — TuiBridge
+// useAnimation Demo — Quench
 // Demonstrates useAnimation hook for smooth animations
 // Shows frame counter, elapsed time, and delta timing
 

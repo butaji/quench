@@ -5,11 +5,11 @@
 
 
 ## Goal
-Build harness that runs each example in both deno (Ink) and TuiBridge, capturing ANSI output.
+Build harness that runs each example in both deno (Ink) and Quench, capturing ANSI output.
 
 ## Acceptance Criteria
 - [ ] `scripts/parity.sh` runs each example in **Deno** with `npm:ink` (reference ANSI output).
-- [ ] Same example runs in **TuiBridge** with our rquickjs shim (actual ANSI output).
+- [ ] Same example runs in **Quench** with our rquickjs shim (actual ANSI output).
 - [ ] Both use identical terminal dimensions (e.g., 80×24 via env var or pty).
 - [ ] Both capture final frame ANSI output to file.
 - [ ] Supports deterministic mode (mocked timers, pre-computed state) for stable snapshots.

@@ -1,4 +1,4 @@
-// Dashboard Example - TuiBridge demo
+// Dashboard Example - Quench demo
 // Demonstrates layout with multiple sections, live stats, and borders
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

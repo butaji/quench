@@ -14,7 +14,7 @@ Currently, data only flows one way: JS creates elements → Rust renders them. T
 
 ### 1. CLI-driven theming
 ```bash
-tuibridge --prop theme=dark --prop locale=en-US examples/app.js
+quench --prop theme=dark --prop locale=en-US examples/app.js
 ```
 
 ### 2. Rust-computed values in JS
@@ -74,7 +74,7 @@ impl BridgeConfig {
 // 14. Bridge Config — Rust-injected values
 function useBridge() {
   return useMemo(() => {
-    const tb = globalThis.__tuibridge || { config: {} };
+    const tb = globalThis.__quench || { config: {} };
     return {
       config: tb.config || {},
       // Helper for typed access
@@ -110,7 +110,7 @@ if args.contains(&"--prop".to_string()) {
 ## Data Flow
 
 ```
-CLI: tuibridge --prop theme=dark examples/app.js
+CLI: quench --prop theme=dark examples/app.js
                 │
                 ▼
 Rust: BridgeConfig::from_args()
@@ -120,7 +120,7 @@ Rust: BridgeConfig::from_args()
                 │
                 ▼
 Rust: config.to_js_injection()
-      → "globalThis.__tuibridge = { config: { theme: 'dark', ... } };"
+      → "globalThis.__quench = { config: { theme: 'dark', ... } };"
                 │
                 ▼
 QuickJS: ctx.eval(injection_snippet)

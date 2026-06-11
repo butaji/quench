@@ -84,7 +84,7 @@ impl BridgeConfig {
         config
     }
 
-    /// Generate a JS snippet that injects `globalThis.__tuibridge.config`
+    /// Generate a JS snippet that injects `globalThis.__quench.config`
     pub fn to_js_injection(&self) -> String {
         let props_json = if self.props.is_empty() {
             String::new()
@@ -124,13 +124,13 @@ impl BridgeConfig {
 
         if props_json.is_empty() {
             format!(
-                r#"globalThis.__tuibridge = {{ config: {{ {}, {} }} }};"#,
+                r#"globalThis.__quench = {{ config: {{ {}, {} }} }};"#,
                 platform_json,
                 terminal_json
             )
         } else {
             format!(
-                r#"globalThis.__tuibridge = {{ config: {{ {}, {}, {} }} }};"#,
+                r#"globalThis.__quench = {{ config: {{ {}, {}, {} }} }};"#,
                 props_json,
                 platform_json,
                 terminal_json
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn test_bridge_config_from_args() {
         let args = vec![
-            "tuibridge".to_string(),
+            "quench".to_string(),
             "--prop".to_string(),
             "theme=dark".to_string(),
             "--prop".to_string(),
@@ -190,7 +190,7 @@ mod tests {
             .with_prop("theme", "dark")
             .with_prop("locale", "en-US");
         let js = config.to_js_injection();
-        assert!(js.contains("globalThis.__tuibridge"));
+        assert!(js.contains("globalThis.__quench"));
         assert!(js.contains("theme"));
         assert!(js.contains("dark"));
         assert!(js.contains("platform"));
@@ -202,7 +202,7 @@ mod tests {
     fn test_empty_props() {
         let config = BridgeConfig::new();
         let js = config.to_js_injection();
-        assert!(js.contains("globalThis.__tuibridge"));
+        assert!(js.contains("globalThis.__quench"));
         assert!(js.contains("platform"));
         // No trailing comma issues
         assert!(!js.contains(",\n    ,"));

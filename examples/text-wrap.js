@@ -1,4 +1,4 @@
-// Text Wrap Example — TuiBridge
+// Text Wrap Example — Quench
 // Demonstrates Ink text wrapping modes
 // Covers: wrap, hard, truncate, truncate-start, truncate-middle, truncate-end
 

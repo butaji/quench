@@ -1,4 +1,4 @@
-// Tabs Example - TuiBridge demo (TypeScript)
+// Tabs Example - Quench demo (TypeScript)
 // Demonstrates tab navigation and dynamic content
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';
@@ -13,7 +13,7 @@ function TabsApp(): JSX.Element {
     {
       name: 'Overview',
       content: [
-        'Welcome to TuiBridge!',
+        'Welcome to Quench!',
         '',
         'This is a terminal-based UI framework',
         'built with Rust and JavaScript.',
@@ -53,7 +53,7 @@ function TabsApp(): JSX.Element {
     {
       name: 'About',
       content: [
-        'TuiBridge',
+        'Quench',
         '=========',
         '',
         'Version: 0.1.0',
@@ -61,7 +61,7 @@ function TabsApp(): JSX.Element {
         'A bridge between React/Ink',
         'and the terminal.',
         '',
-        '© 2024 TuiBridge Team',
+        '© 2024 Quench Team',
       ],
     },
   ];

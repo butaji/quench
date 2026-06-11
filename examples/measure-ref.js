@@ -1,4 +1,4 @@
-// Measure Ref Demo — TuiBridge
+// Measure Ref Demo — Quench
 // Demonstrates useRef + measureElement for responsive layout
 
 var useState = ink.useState;

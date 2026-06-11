@@ -1,8 +1,8 @@
-// Simple test script for TuiBridge
+// Simple test script for Quench
 // Creates a basic Box with Text and measures it
 
 // Test basic FFI functions
-console.log('TuiBridge FFI Test');
+console.log('Quench FFI Test');
 console.log('==================');
 
 // Test 1: Create root
@@ -14,7 +14,7 @@ var boxId = __ink_create_node('ink-box', '{"flexDirection":"column","padding":2}
 console.log('Created Box:', boxId);
 
 // Test 3: Create Text
-var textId = __ink_create_text_node('Hello, TuiBridge!');
+var textId = __ink_create_text_node('Hello, Quench!');
 console.log('Created Text:', textId);
 
 // Test 4: Append text to box

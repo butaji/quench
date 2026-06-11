@@ -65,13 +65,13 @@ npx esbuild examples/counter.ts --bundle --outfile=dist/counter.js \
   --external:ink --jsx-factory=createElement --jsx-fragment=Fragment
 
 # Run
-tuibridge dist/counter.js
+quench dist/counter.js
 ```
 
 ## Acceptance Criteria
 - [x] All 10 `.ts` files exist
 - [x] Each transpiles with esbuild without errors
-- [x] Each runs in tuibridge identically to its `.js` version
+- [x] Each runs in quench identically to its `.js` version
 - [x] Parity harness verifies ANSI output matches JS version
 
 ## Dependencies

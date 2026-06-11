@@ -1,4 +1,4 @@
-// TuiBridge Runtime — React-like reconciler + Ink bridge wrappers
+// Quench Runtime — React-like reconciler + Ink bridge wrappers
 // ~1070 lines. All logic that must live in JS (hooks, reconciliation).
 // Bridge wrappers at the top call into Rust via __ink_call.
 
@@ -407,7 +407,7 @@ function useApp() {
     exit: (err) => {
       globalThis.__ink_exit(err ? 1 : 0);
     },
-    waitUntilRenderFlush: () => Promise.resolve(), // No-op: TuiBridge renders synchronously
+    waitUntilRenderFlush: () => Promise.resolve(), // No-op: Quench renders synchronously
   }), []);
 }
 
@@ -524,10 +524,10 @@ function measureElement(ref) {
 
 function useBridge() {
   return useMemo(() => {
-    const tb = globalThis.__tuibridge || { config: {} };
+    const q = globalThis.__quench || { config: {} };
     return {
-      config: tb.config || {},
-      get: (key, defaultValue) => tb.config[key] ?? defaultValue,
+      config: q.config || {},
+      get: (key, defaultValue) => q.config[key] ?? defaultValue,
     };
   }, []);
 }
@@ -710,7 +710,7 @@ function useBoxMetrics(ref) {
 // Transform component - transforms string output of children
 function Transform({ children, transform }) {
   // Transform is a special component that intercepts text output
-  // In TuiBridge, we implement it by wrapping children and applying
+  // In Quench, we implement it by wrapping children and applying
   // the transform function to the final text output
   // Note: Full Transform support requires render pipeline changes
   // This is a best-effort implementation
@@ -1087,13 +1087,13 @@ function render(element, options) {
         check();
       });
     },
-    waitUntilRenderFlush: () => Promise.resolve(), // No-op: TuiBridge renders synchronously
+    waitUntilRenderFlush: () => Promise.resolve(), // No-op: Quench renders synchronously
     unmount: () => {
       container.unmounted = true;
       globalThis.__ink_destroy_root(rootId);
     },
     cleanup: () => {
-      // Same as unmount in TuiBridge
+      // Same as unmount in Quench
       container.unmounted = true;
       globalThis.__ink_destroy_root(rootId);
     },

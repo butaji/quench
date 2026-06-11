@@ -1,4 +1,4 @@
-// Counter Example - TuiBridge demo
+// Counter Example - Quench demo
 // Demonstrates useState, useEffect, useInput with the Ink API
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

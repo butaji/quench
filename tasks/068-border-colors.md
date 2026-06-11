@@ -6,7 +6,7 @@
 Implement per-side border colors (`borderTopColor`, `borderBottomColor`, `borderLeftColor`, `borderRightColor`) and their dim/background variants for 100% Ink API parity.
 
 ## Why This Matters
-Ink apps use individual border colors to create visual hierarchy — e.g., a red top border for errors, green bottom for success. Without this, TuiBridge silently ignores these props and all borders render with the same color.
+Ink apps use individual border colors to create visual hierarchy — e.g., a red top border for errors, green bottom for success. Without this, Quench silently ignores these props and all borders render with the same color.
 
 ## Ink API Reference
 

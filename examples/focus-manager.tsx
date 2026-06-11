@@ -1,4 +1,4 @@
-// Focus Manager Demo — TuiBridge
+// Focus Manager Demo — Quench
 // Demonstrates useFocus + useFocusManager for keyboard navigation
 
 import { render, Box, Text, useState, useInput, useApp, useFocus, useFocusManager } from 'ink';

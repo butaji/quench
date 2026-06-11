@@ -4,7 +4,7 @@
 Warn users when they use unsupported or partially-supported Ink props.
 
 ## Problem
-Users have no feedback when they use Ink props that TuiBridge:
+Users have no feedback when they use Ink props that Quench:
 1. Silently ignores
 2. Partially supports (different behavior than Deno/Ink)
 
@@ -18,7 +18,7 @@ Add a compatibility validation layer:
 ```rust
 //! Ink Compatibility Validation
 
-/// All Ink props supported by TuiBridge (Box components)
+/// All Ink props supported by Quench (Box components)
 pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     "flexDirection", "alignItems", "justifyContent", "flexWrap",
     "flexGrow", "flexShrink", "flexBasis",
@@ -33,7 +33,7 @@ pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     "children",
 ];
 
-/// All Ink props supported by TuiBridge (Text components)
+/// All Ink props supported by Quench (Text components)
 pub static SUPPORTED_TEXT_PROPS: &[&str] = &[
     "color", "backgroundColor",
     "bold", "dimColor", "dim", "italic",
@@ -95,7 +95,7 @@ if is_debug_mode() {
 }
 ```
 
-### 3. Add `--debug` flag + `TUIBRIDGE_DEBUG` env var
+### 3. Add `--debug` flag + `QUENCH_DEBUG` env var
 
 ```rust
 // In main.rs
@@ -105,7 +105,7 @@ fn is_debug_mode() -> bool {
     DEBUG_MODE.load(Relaxed)
 }
 
-// Parse --debug flag and TUIBRIDGE_DEBUG env var
+// Parse --debug flag and QUENCH_DEBUG env var
 ```
 
 ### 4. Log partial support warnings
@@ -133,7 +133,7 @@ tracing::debug!("borderDimColor uses DIM modifier, not separate color");
 
 ### `src/main.rs`
 - `DEBUG_MODE` static + `is_debug_mode()` function
-- `--debug` flag + `TUIBRIDGE_DEBUG` env var
+- `--debug` flag + `QUENCH_DEBUG` env var
 
 ### `src/bridge.rs::commit_update()`
 - Validates props against component type in debug mode
@@ -146,7 +146,7 @@ tracing::debug!("borderDimColor uses DIM modifier, not separate color");
 - [x] `src/compat.rs` created with prop lists
 - [x] Unsupported props logged as warnings when `--debug` enabled
 - [x] Partial props (textWrap, borderDimColor) logged with behavior note
-- [x] `--debug` flag and `TUIBRIDGE_DEBUG` env var work
+- [x] `--debug` flag and `QUENCH_DEBUG` env var work
 - [x] No performance impact when debug mode is off
 
 ## Dependencies

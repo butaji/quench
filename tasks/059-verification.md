@@ -25,8 +25,8 @@ Verify the implementation meets all acceptance criteria.
 $ cargo build --release
    Finished `release` profile [optimized] target(s) in 5.52s
 
-$ ls -lh target/release/tuibridge
--rwxr-xr-x  admin  staff  2.0M Jun 10 15:12 target/release/tuibridge
+$ ls -lh target/release/quench
+-rwxr-xr-x  admin  staff  2.0M Jun 10 15:12 target/release/quench
 ```
 
 ### Tests
@@ -71,10 +71,10 @@ test result: ok. 34 passed; 0 failed
 
 ### CLI
 ```bash
-$ ./target/release/tuibridge --help
-TuiBridge v0.1.0
+$ ./target/release/quench --help
+Quench v0.1.0
 
-Usage: tuibridge [OPTIONS] [SCRIPT]
+Usage: quench [OPTIONS] [SCRIPT]
 
 Options:
   --help, -h     Show this help
@@ -84,7 +84,7 @@ Options:
   --watch PATH   Watch for file changes and hot reload
   --hot          Enable hot reload mode (shortcut for --watch .)
   --prop KEY=VAL Pass a prop to the JS runtime (useBridge().config)
-  --compile FILE Compile TSX to TuiBridge JS
+  --compile FILE Compile TSX to Quench JS
   --run FILE     Compile and run TSX file
   -o, --out FILE Output file for compiled JS
 ```
@@ -94,8 +94,8 @@ Options:
 $ cargo clippy
 warning: implicit saturating sub
 warning: needless range loop
-warning: `tuibridge` (build script) generated 2 warnings
-    Checking tuibridge v0.1.0
+warning: `quench` (build script) generated 2 warnings
+    Checking quench v0.1.0
     Finished `dev` profile [unoptimized + debuginfo] in 0.47s
 ```
 

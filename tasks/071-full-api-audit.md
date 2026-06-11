@@ -6,7 +6,7 @@
 
 ### Components
 
-| Export | Ink Type | TuiBridge | Status |
+| Export | Ink Type | Quench | Status |
 |--------|----------|-----------|--------|
 | `render` | Function | ✅ Function | ✅ |
 | `renderToString` | Function | ⚠️ Stub (returns '') | ⚠️ Task 069 |
@@ -19,7 +19,7 @@
 
 ### Hooks
 
-| Export | Ink Return Shape | TuiBridge | Status |
+| Export | Ink Return Shape | Quench | Status |
 |--------|------------------|-----------|--------|
 | `useState` | `[value, setValue]` | ✅ | ✅ |
 | `useEffect` | `void` | ✅ | ✅ |
@@ -169,17 +169,17 @@
 
 ### 1. Focus Management (useFocus / useFocusManager)
 - **Ink behavior**: Tab-based focus cycling, focusable components, activeId tracking
-- **TuiBridge**: ✅ Basic focus tracking with useFocus({id}) and useFocusManager().focusNext()/focusPrevious()
+- **Quench**: ✅ Basic focus tracking with useFocus({id}) and useFocusManager().focusNext()/focusPrevious()
 - **Status**: Core API shape matches. Full tab navigation works in examples.
 
 ### 2. Background Color Inheritance
 - **Ink behavior**: `backgroundColor` on Box is inherited by child Text via React context
-- **TuiBridge**: Each Text must specify its own `backgroundColor`
+- **Quench**: Each Text must specify its own `backgroundColor`
 - **Impact**: Apps relying on inherited background colors render differently
 
 ### 3. Ref Forwarding
 - **Ink behavior**: `ref` on Box/Text gives access to DOM element
-- **TuiBridge**: Refs not wired up in reconciler
+- **Quench**: Refs not wired up in reconciler
 - **Impact**: `measureElement(ref)` requires `ref.current.id` which is never set
 
 ### 4. renderToString

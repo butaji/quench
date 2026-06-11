@@ -1,4 +1,4 @@
-// Static Overlay Demo — TuiBridge
+// Static Overlay Demo — Quench
 // Demonstrates Static, Newline, Spacer components
 
 import { render, Box, Text, Static, Newline, Spacer, useState, useEffect, useInput, useApp } from 'ink';

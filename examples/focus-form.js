@@ -1,4 +1,4 @@
-// Focus Form Example - TuiBridge demo
+// Focus Form Example - Quench demo
 // Demonstrates focus management, input handling, and form state
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

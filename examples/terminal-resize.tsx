@@ -1,4 +1,4 @@
-// Terminal Resize Demo — TuiBridge
+// Terminal Resize Demo — Quench
 // Demonstrates handling terminal resize events
 // Real-world pattern for responsive terminal UIs
 
@@ -11,10 +11,10 @@ function TerminalResizeDemo(): JSX.Element {
   // Listen for resize events (handled via useEffect + custom event)
   useEffect(() => {
     // In real Ink apps, resize is handled automatically
-    // TuiBridge propagates resize events via bridge
+    // Quench propagates resize events via bridge
     const checkSize = () => {
       try {
-        // Size is updated automatically by TuiBridge
+        // Size is updated automatically by Quench
         setResizeCount(c => c + 1);
       } catch (e) {
         // Ignore errors in non-interactive mode
@@ -54,7 +54,7 @@ function TerminalResizeDemo(): JSX.Element {
       <Text> </Text>
       <Text dimColor small>
         Resize your terminal window to see updates.
-        TuiBridge automatically handles resize events.
+        Quench automatically handles resize events.
       </Text>
     </Box>
   );

@@ -65,7 +65,7 @@ render({ type: Counter, props: {} });
 
 ### Run
 ```bash
-tuibridge examples/counter.js
+quench examples/counter.js
 ```
 
 **Features demonstrated:**
@@ -110,11 +110,11 @@ render(<Counter />);
 ### Build and Run
 ```bash
 # With --features compiler:
-tuibridge --run examples/counter.tsx
+quench --run examples/counter.tsx
 
 # Or compile first:
-tuibridge --compile examples/counter.tsx -o examples/counter.js
-tuibridge examples/counter.js
+quench --compile examples/counter.tsx -o examples/counter.js
+quench examples/counter.js
 ```
 
 ## Dependencies

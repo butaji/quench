@@ -1,4 +1,4 @@
-// Flex Layouts Example — TuiBridge
+// Flex Layouts Example — Quench
 // Demonstrates flexbox props: flexGrow, flexShrink, flexBasis, flexWrap, alignItems, justifyContent
 
 var useState = ink.useState;

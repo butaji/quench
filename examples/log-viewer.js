@@ -1,4 +1,4 @@
-// Log Viewer Example - TuiBridge demo
+// Log Viewer Example - Quench demo
 // Demonstrates scrolling content, auto-scroll, and styled log levels
 // Note: Box, Text, etc. are already globally exported from runtime.js
 

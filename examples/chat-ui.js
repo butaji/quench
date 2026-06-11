@@ -1,4 +1,4 @@
-// Chat UI Example - TuiBridge demo
+// Chat UI Example - Quench demo
 // Demonstrates real-time messaging, scrollable messages, and input
 // Note: Box, Text, etc. are already globally exported from runtime.js
 
