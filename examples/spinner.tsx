@@ -1,4 +1,4 @@
-// Spinner Example - TuiBridge demo (TypeScript)
+// Spinner Example - Quench demo (TypeScript)
 // Demonstrates timer-driven animation and color cycling
 
 import { render, Box, Text, useState, useEffect } from 'ink';

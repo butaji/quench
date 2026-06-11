@@ -1,4 +1,4 @@
-// Transform Component Demo — TuiBridge
+// Transform Component Demo — Quench
 // Demonstrates text transformation using ANSI codes
 // Transform applies transformations to text output
 
@@ -34,7 +34,7 @@ function blinkify(s: string): string {
 }
 
 function TransformDemo(): JSX.Element {
-  const [text, setText] = useState('Hello TuiBridge');
+  const [text, setText] = useState('Hello Quench');
   const [transformMode, setTransformMode] = useState<'normal' | 'reverse' | 'bold' | 'dim' | 'underline' | 'blink'>('normal');
 
   useInput((input: string) => {
@@ -46,7 +46,7 @@ function TransformDemo(): JSX.Element {
     if (input === '5') setTransformMode('underline');
     if (input === '6') setTransformMode('blink');
     if (input === ' ') {
-      setText(t => t.length > 1 ? t.slice(1) : 'Hello TuiBridge');
+      setText(t => t.length > 1 ? t.slice(1) : 'Hello Quench');
     }
   });
 

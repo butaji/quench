@@ -1,7 +1,7 @@
-//! TuiBridge Shim — React/Ink imports to ink.* global mappings
+//! Quench Shim — React/Ink imports to ink.* global mappings
 //!
 //! This module defines how React and Ink imports are transformed into
-//! TuiBridge-compatible global references.
+//! Quench-compatible global references.
 //!
 //! ## Import Mappings
 //!
@@ -79,7 +79,7 @@ pub fn get_all_imports() -> Vec<&'static str> {
     all
 }
 
-/// Mapping of import names to their TuiBridge global references
+/// Mapping of import names to their Quench global references
 #[derive(Debug, Clone, Default)]
 pub struct ImportShim {
     /// Maps local name -> ink.* reference

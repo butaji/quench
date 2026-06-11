@@ -1,4 +1,4 @@
-// Flex Basis Demo — TuiBridge
+// Flex Basis Demo — Quench
 // Demonstrates flexBasis property for initial sizing
 // flexBasis sets the initial size before flexGrow/shrink
 

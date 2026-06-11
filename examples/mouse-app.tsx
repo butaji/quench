@@ -1,4 +1,4 @@
-// Mouse App Example - TuiBridge demo (TypeScript)
+// Mouse App Example - Quench demo (TypeScript)
 // Demonstrates click tracking and mouse events
 
 import { render, Box, Text, useState, useInput, useEffect, useApp } from 'ink';

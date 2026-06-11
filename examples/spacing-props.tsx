@@ -1,4 +1,4 @@
-// Spacing Props Demo — TuiBridge
+// Spacing Props Demo — Quench
 // Demonstrates individual margin/padding sides + X/Y variants
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';

@@ -1,4 +1,4 @@
-// Loading States Demo — TuiBridge
+// Loading States Demo — Quench
 // Demonstrates various loading indicators
 // Common pattern for async operations
 

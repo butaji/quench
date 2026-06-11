@@ -1,4 +1,4 @@
-// Counter Example - TuiBridge demo (TypeScript)
+// Counter Example - Quench demo (TypeScript)
 // Demonstrates useState, useEffect, useInput with the Ink API
 
 import { render, Box, Text, useState, useInput, useApp, useEffect } from 'ink';

@@ -13,21 +13,21 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Config
-TUIBRIDGE="${TUIBRIDGE:-./target/release/tuibridge}"
+QUENCH="${QUENCH:-./target/release/quench}"
 EXAMPLE="${EXAMPLE:-examples/counter.ts}"
 ITERATIONS="${ITERATIONS:-10}"
 
 echo "=========================================="
 echo "Hot Reload Benchmark"
 echo "=========================================="
-echo "TuiBridge: $TUIBRIDGE"
+echo "Quench: $QUENCH"
 echo "Example: $EXAMPLE"
 echo "Iterations: $ITERATIONS"
 echo ""
 
-# Check if tuibridge supports hot reload
-if ! "$TUIBRIDGE" --help 2>&1 | grep -q "watch\|hot"; then
-    echo -e "${YELLOW}Note:${NC} TuiBridge may not have hot reload enabled"
+# Check if quench supports hot reload
+if ! "$QUENCH" --help 2>&1 | grep -q "watch\|hot"; then
+    echo -e "${YELLOW}Note:${NC} Quench may not have hot reload enabled"
     echo "Build with: cargo build --release --features hotreload"
 fi
 

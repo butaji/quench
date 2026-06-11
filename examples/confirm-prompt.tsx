@@ -1,4 +1,4 @@
-// Confirm Prompt — TuiBridge
+// Confirm Prompt — Quench
 // Yes/No confirmation dialog pattern
 // Common in CLI tools for destructive actions
 

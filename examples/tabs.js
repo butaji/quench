@@ -1,4 +1,4 @@
-// Tabs Example - TuiBridge demo
+// Tabs Example - Quench demo
 // Demonstrates tab navigation, state management, and dynamic content
 // Note: Box, Text, etc. are already globally exported from runtime.js
 
@@ -17,10 +17,10 @@ function TabContent(props) {
       props: {
         padding: 1,
         children: [
-          { type: Text, props: { bold: true, children: 'Welcome to TuiBridge!' }},
+          { type: Text, props: { bold: true, children: 'Welcome to Quench!' }},
           { type: Text, props: { children: '' }},
           { type: Text, props: { children: 'A React-like framework for terminals.' }},
-          { type: Text, props: { children: 'Write once, run in Deno and TuiBridge.' }}
+          { type: Text, props: { children: 'Write once, run in Deno and Quench.' }}
         ]
       }
     };
@@ -34,7 +34,7 @@ function TabContent(props) {
         children: [
           { type: Text, props: { bold: true, children: 'About' }},
           { type: Text, props: { children: '' }},
-          { type: Text, props: { children: 'TuiBridge v0.1.0' }},
+          { type: Text, props: { children: 'Quench v0.1.0' }},
           { type: Text, props: { children: 'Built with Rust + rquickjs + ratatui' }},
           { type: Text, props: { children: 'Yoga layout engine for flexbox' }}
         ]

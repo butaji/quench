@@ -1,4 +1,4 @@
-// Flex Layouts — TuiBridge
+// Flex Layouts — Quench
 // Demonstrates all Flexbox alignment and distribution options
 // Based on Ink's yoga-based layout system
 

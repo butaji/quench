@@ -1,10 +1,10 @@
-// Text Wrap Demo — TuiBridge
+// Text Wrap Demo — Quench
 // Demonstrates wrap property for text handling (Ink 6: textWrap, Ink 7: wrap)
 // Shows wrap and truncate modes. Note: ratatui has limited wrap modes vs Ink.
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';
 
-// Ink 7 wrap modes and TuiBridge support:
+// Ink 7 wrap modes and Quench support:
 // ✅ "wrap" - Word wrap (full support)
 // ✅ "truncate" - Truncate with ellipsis (full support)
 // ⚠️ "end", "middle" - Fall back to "wrap" (partial)

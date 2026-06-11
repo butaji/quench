@@ -1,4 +1,4 @@
-// Table Demo — TuiBridge
+// Table Demo — Quench
 // Renders tabular data with aligned columns
 // Common pattern for displaying structured data
 

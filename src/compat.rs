@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-/// All Ink props supported by TuiBridge (Box components)
+/// All Ink props supported by Quench (Box components)
 pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     // Flex
     "flexDirection", "alignItems", "alignSelf", "alignContent", "justifyContent", "flexWrap",
@@ -26,13 +26,13 @@ pub static SUPPORTED_BOX_PROPS: &[&str] = &[
     "position", "display", "title",
     "top", "right", "bottom", "left",
     // Accessibility — accepted but no-op in terminal environments
-    // (Ink passes these to React DOM; TuiBridge silently ignores them)
+    // (Ink passes these to React DOM; Quench silently ignores them)
     "aria-label", "aria-hidden", "aria-role", "aria-state",
     // Children
     "children",
 ];
 
-/// Ink 7.0.5 Box props NOT YET supported by TuiBridge
+/// Ink 7.0.5 Box props NOT YET supported by Quench
 /// (Listed for documentation purposes - these will generate warnings)
 pub static UNSUPPORTED_BOX_PROPS: &[&str] = &[
     // Individual border colors (MEDIUM priority)
@@ -62,7 +62,7 @@ pub static NA_HOOKS: &[&str] = &[
     // useIsScreenReaderEnabled returns false — no screen reader API in terminal
 ];
 
-/// All Ink props supported by TuiBridge (Text components)
+/// All Ink props supported by Quench (Text components)
 pub static SUPPORTED_TEXT_PROPS: &[&str] = &[
     // Color
     "color", "backgroundColor",
@@ -96,7 +96,7 @@ pub enum TextWrap {
     Truncate,
     /// Show ellipsis (approximated with truncate)
     Ellipsis,
-    /// Scroll behavior (falls back to Wrap in TuiBridge)
+    /// Scroll behavior (falls back to Wrap in Quench)
     Scroll,
 }
 

@@ -1,6 +1,6 @@
-// useBridge Demo — TuiBridge
+// useBridge Demo — Quench
 // Demonstrates useBridge() for accessing Rust-propagated props
-// Run with: tuibridge --prop theme=dark --prop user=admin examples/use-bridge.tsx
+// Run with: quench --prop theme=dark --prop user=admin examples/use-bridge.tsx
 
 import { render, Box, Text, useBridge, useInput, useApp } from 'ink';
 

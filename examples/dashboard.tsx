@@ -1,4 +1,4 @@
-// Dashboard Example - TuiBridge demo (TypeScript)
+// Dashboard Example - Quench demo (TypeScript)
 // Demonstrates layout with multiple sections, live stats, and borders
 
 import { render, Box, Text, useState, useEffect, useInput, useApp } from 'ink';

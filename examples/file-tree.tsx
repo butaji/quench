@@ -1,4 +1,4 @@
-// File Tree Example - TuiBridge demo (TypeScript)
+// File Tree Example - Quench demo (TypeScript)
 // Demonstrates recursive rendering and selection
 
 import { render, Box, Text, useState, useInput, useApp } from 'ink';

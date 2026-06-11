@@ -43,7 +43,7 @@ pub fn parse_args(args: &[String]) -> CliArgs {
                 std::process::exit(0);
             }
             "--version" | "-v" => {
-                println!("TuiBridge v{}", VERSION);
+                println!("Quench v{}", VERSION);
                 std::process::exit(0);
             }
             "--compile" => {
@@ -70,7 +70,7 @@ pub fn parse_args(args: &[String]) -> CliArgs {
                 i += 2;
             }
             "run" => {
-                // `tuibridge run <file>` subcommand
+                // `quench run <file>` subcommand
                 if let Some(input) = args.get(i + 1) {
                     result.compiler_cmd = Some(CompilerCmd::CompileInMemory {
                         input: input.clone(),
@@ -145,9 +145,9 @@ pub fn parse_args(args: &[String]) -> CliArgs {
 
 /// Print help text
 pub fn print_help() {
-    println!("TuiBridge v{}", VERSION);
+    println!("Quench v{}", VERSION);
     println!();
-    println!("Usage: tuibridge [OPTIONS] [SCRIPT]");
+    println!("Usage: quench [OPTIONS] [SCRIPT]");
     println!();
     println!("Options:");
     println!("  --help, -h     Show this help");
@@ -157,19 +157,19 @@ pub fn print_help() {
     println!("  --watch PATH   Watch for file changes and hot reload");
     println!("  --hot          Enable hot reload mode (shortcut for --watch .)");
     println!("  --prop KEY=VAL Pass a prop to the JS runtime (useBridge().config)");
-    println!("  --compile FILE Compile TSX to TuiBridge JS");
+    println!("  --compile FILE Compile TSX to Quench JS");
     println!("  --run FILE     Compile and run TSX file");
     println!("  -o, --out FILE Output file for compiled JS");
     println!();
     println!("Examples:");
-    println!("  tuibridge --bundle plugins/app.tsx");
-    println!("  tuibridge --hot examples/counter.js");
-    println!("  tuibridge --watch plugins examples/app.js");
+    println!("  quench --bundle plugins/app.tsx");
+    println!("  quench --hot examples/counter.js");
+    println!("  quench --watch plugins examples/app.js");
     println!();
     println!("Compiler:");
-    println!("  tuibridge --compile mod.tsx -o mod-tb.js");
-    println!("  tuibridge run mod.tsx       # compile and run in-memory");
-    println!("  tuibridge mod.tsx           # auto-detect .tsx, in-memory compile");
+    println!("  quench --compile mod.tsx -o mod-tb.js");
+    println!("  quench run mod.tsx       # compile and run in-memory");
+    println!("  quench mod.tsx           # auto-detect .tsx, in-memory compile");
 }
 
 /// Execute compiler command

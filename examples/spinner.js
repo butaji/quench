@@ -1,4 +1,4 @@
-// Spinner Example - TuiBridge demo
+// Spinner Example - Quench demo
 // Demonstrates timer-driven animation and color cycling
 // Note: Box, Text, etc. are already globally exported from runtime.js
 
