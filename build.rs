@@ -225,7 +225,7 @@ fn find_close_brace(lines: &[&str], open_line: usize, open_col: usize) -> Option
         let mut prev_char = '\0';
         let mut raw_string_hashes: usize = 0; // >0 when inside r#"..."#
         
-        for (idx, ch) in line.chars().enumerate() {
+        for (idx, ch) in line.char_indices() {
             if idx < start {
                 // Detect raw-string start before `start` so we know if we're inside one
                 if let Some(rest) = line.get(idx..) {

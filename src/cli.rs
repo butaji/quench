@@ -74,13 +74,13 @@ pub fn parse_args(args: &[String]) -> CliArgs {
                     }
                 }
                 FlagAction::TakesValue => {
-                    if let Some(new_i) = handle_value_flag(arg, &args, i, &mut result) {
+                    if let Some(new_i) = handle_value_flag(arg, args, i, &mut result) {
                         i = new_i;
                         continue;
                     }
                 }
                 FlagAction::TakesKV => {
-                    if let Some(new_i) = handle_kv_flag(&args, i, &mut result) {
+                    if let Some(new_i) = handle_kv_flag(args, i, &mut result) {
                         i = new_i;
                         continue;
                     }
