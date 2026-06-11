@@ -15,6 +15,14 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, BorderType, Paragraph, Widget, Wrap},
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+thread_local! {
+    /// Cache ratatui::Block allocations across frames per node.
+    /// Key is (node_id, hash of props_json) so we rebuild only when props change.
+    static BLOCK_CACHE: RefCell<HashMap<(u32, u64), Block<'static>>> = RefCell::new(HashMap::new());
+}
 
 pub use color::parse_color;
 pub use keycode::keycode_to_ink_name;
@@ -38,6 +46,9 @@ pub fn render_tree(
                 tracing::error!("Layout error: {:?}", e);
                 return;
             }
+            // Props may have changed; clear the Block cache so borders/padding
+            // are rebuilt with the new values.
+            BLOCK_CACHE.with(|c| c.borrow_mut().clear());
         }
 
         render_node(root_id, frame.buffer_mut(), area, 0, 0);
@@ -47,7 +58,6 @@ pub fn render_tree(
 }
 
 /// Recursively render a node and its children
-#[allow(clippy::complexity, clippy::too_many_lines)]
 fn render_node(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset_y: u16) {
     let tag = match bridge::__ink_get_node_tag(node_id) {
         Some(t) => t,
@@ -57,8 +67,6 @@ fn render_node(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset
         Some(l) => l,
         None => return,
     };
-    // Ink uses round() for positions and ceil() for dimensions
-    // Yoga returns relative coordinates, so add parent offset
     let x = offset_x + layout.0.round() as u16;
     let y = offset_y + layout.1.round() as u16;
     let w = layout.2.ceil() as u16;
@@ -68,43 +76,59 @@ fn render_node(node_id: u32, buf: &mut Buffer, area: Rect, offset_x: u16, offset
         return;
     }
 
-    match tag.as_str() {
+    render_node_by_tag(node_id, &tag, buf, x, y, w, h, area, offset_x, offset_y);
+    render_children(node_id, &tag, buf, area, x, y);
+}
+
+fn render_node_by_tag(
+    node_id: u32,
+    tag: &str,
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
+    area: Rect,
+    offset_x: u16,
+    offset_y: u16,
+) {
+    match tag {
         "ink-box" => render_box(node_id, buf, x, y, w, h),
         "ink-text" => render_text(node_id, buf, x, y, w, h),
         "ink-static" => render_static(node_id, buf, area, offset_x, offset_y),
         "ink-newline" => render_newline(buf, x, y, w, h),
-        "ink-spacer" => {} // Spacer is invisible
+        "ink-spacer" => {}
         _ => {}
     }
+}
 
-    // Render children (except static which renders them inline)
-    if tag.as_str() != "ink-static" {
-        if let Some(children) = bridge::__ink_get_node_children(node_id) {
-            for &child_id in &children {
-                render_node(child_id, buf, area, x, y);
-            }
+fn render_children(node_id: u32, tag: &str, buf: &mut Buffer, area: Rect, x: u16, y: u16) {
+    if tag == "ink-static" {
+        return;
+    }
+    if let Some(children) = bridge::__ink_get_node_children(node_id) {
+        for &child_id in &children {
+            render_node(child_id, buf, area, x, y);
         }
     }
 }
 
 /// Render a box node (ink-box)
 fn render_box(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
-    let mut block = Block::default();
+    let props_json = bridge::__ink_get_node_props_json(node_id).unwrap_or_default();
+    let prop_hash = compute_hash(&props_json);
 
-    // Handle border styles
-    block = apply_border_styles(node_id, block);
+    let block = BLOCK_CACHE.with(|cache| {
+        let mut c = cache.borrow_mut();
+        if let Some(b) = c.get(&(node_id, prop_hash)) {
+            b.clone()
+        } else {
+            let b = build_block(node_id);
+            c.insert((node_id, prop_hash), b.clone());
+            b
+        }
+    });
 
-    // Handle padding
-    block = apply_padding(node_id, block);
-
-    // Handle title
-    if let Some(title) = bridge::__ink_get_node_prop(node_id, "title")
-        .map(|s| s.trim_matches('"').to_string())
-    {
-        block = block.title(title);
-    }
-
-    // Handle background color
     let bg_color = bridge::__ink_get_node_prop(node_id, "backgroundColor")
         .map(|s| s.trim_matches('"').to_string())
         .and_then(|s| parse_color(&s));
@@ -112,93 +136,102 @@ fn render_box(node_id: u32, buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16) {
     let rect = Rect::new(x, y, w, h);
 
     if let Some(bg) = bg_color {
-        block = block.style(Style::default().bg(bg));
+        let block = block.style(Style::default().bg(bg));
         fill_background(buf, rect, bg);
+        block.render(rect, buf);
+    } else {
+        block.render(rect, buf);
     }
+}
 
-    block.render(rect, buf);
+fn compute_hash(s: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn build_block(node_id: u32) -> Block<'static> {
+    let mut block = Block::default();
+    block = apply_border_styles(node_id, block);
+    block = apply_padding(node_id, block);
+    if let Some(title) = bridge::__ink_get_node_prop(node_id, "title")
+        .map(|s| s.trim_matches('"').to_string())
+    {
+        block = block.title(title);
+    }
+    block
 }
 
 /// Apply border styles to a block
-#[allow(clippy::complexity, clippy::too_many_lines)]
-fn apply_border_styles(node_id: u32, mut block: Block) -> Block {
+fn apply_border_styles(node_id: u32, mut block: Block<'static>) -> Block<'static> {
     let border_style = bridge::__ink_get_node_prop(node_id, "borderStyle")
         .map(|s| s.trim_matches('"').to_string());
 
-    let border_top = matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "borderTop"),
-        Some(PropValue::Bool(true))
-    );
-    let border_bottom = matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "borderBottom"),
-        Some(PropValue::Bool(true))
-    );
-    let border_left = matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "borderLeft"),
-        Some(PropValue::Bool(true))
-    );
-    let border_right = matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "borderRight"),
-        Some(PropValue::Bool(true))
-    );
+    let has_individual_borders = has_any_individual_border(node_id);
 
-    let border_color = bridge::__ink_get_node_prop(node_id, "borderColor")
-        .map(|s| s.trim_matches('"').to_string())
-        .and_then(|s| parse_color(&s));
-    let _border_dim_color = bridge::__ink_get_node_prop(node_id, "borderDimColor")
-        .map(|s| s.trim_matches('"').to_string())
-        .and_then(|s| parse_color(&s));
+    if !has_individual_borders && border_style.is_none() {
+        return block;
+    }
 
-    let has_individual_borders = border_top || border_bottom || border_left || border_right;
+    let border_type = parse_border_type(&border_style);
+    let borders = build_borders(node_id, has_individual_borders);
+    block = block.borders(borders).border_type(border_type);
 
-    if has_individual_borders || border_style.is_some() {
-        let border_type = border_style
-            .as_ref()
-            .map(|s| match s.as_str() {
-                "round" => BorderType::Rounded,
-                "bold" => BorderType::Thick,
-                "double" => BorderType::Double,
-                _ => BorderType::Plain,
-            })
-            .unwrap_or(BorderType::Plain);
-
-        let borders = if has_individual_borders {
-            let mut b = Borders::empty();
-            if border_top {
-                b.insert(Borders::TOP);
-            }
-            if border_bottom {
-                b.insert(Borders::BOTTOM);
-            }
-            if border_left {
-                b.insert(Borders::LEFT);
-            }
-            if border_right {
-                b.insert(Borders::RIGHT);
-            }
-            b
-        } else {
-            Borders::ALL
-        };
-
-        block = block.borders(borders).border_type(border_type);
-
-        // Apply border color
-        let mut border_sty = Style::default();
-        if let Some(color) = border_color {
-            border_sty = border_sty.fg(color);
-        }
-        // Note: borderDimColor is partially supported due to ratatui limitations
-        if border_sty != Style::default() {
-            block = block.border_style(border_sty);
-        }
+    if let Some(color) = parse_border_color(node_id) {
+        block = block.border_style(Style::default().fg(color));
     }
 
     block
 }
 
+fn has_any_individual_border(node_id: u32) -> bool {
+    ["borderTop", "borderBottom", "borderLeft", "borderRight"]
+        .iter()
+        .any(|prop| matches!(bridge::__ink_get_node_prop_raw(node_id, prop), Some(PropValue::Bool(true))))
+}
+
+fn parse_border_type(border_style: &Option<String>) -> BorderType {
+    border_style
+        .as_ref()
+        .map(|s| match s.as_str() {
+            "round" => BorderType::Rounded,
+            "bold" => BorderType::Thick,
+            "double" => BorderType::Double,
+            _ => BorderType::Plain,
+        })
+        .unwrap_or(BorderType::Plain)
+}
+
+fn build_borders(node_id: u32, has_individual: bool) -> Borders {
+    if !has_individual {
+        return Borders::ALL;
+    }
+    let mut b = Borders::empty();
+    if matches!(bridge::__ink_get_node_prop_raw(node_id, "borderTop"), Some(PropValue::Bool(true))) {
+        b.insert(Borders::TOP);
+    }
+    if matches!(bridge::__ink_get_node_prop_raw(node_id, "borderBottom"), Some(PropValue::Bool(true))) {
+        b.insert(Borders::BOTTOM);
+    }
+    if matches!(bridge::__ink_get_node_prop_raw(node_id, "borderLeft"), Some(PropValue::Bool(true))) {
+        b.insert(Borders::LEFT);
+    }
+    if matches!(bridge::__ink_get_node_prop_raw(node_id, "borderRight"), Some(PropValue::Bool(true))) {
+        b.insert(Borders::RIGHT);
+    }
+    b
+}
+
+fn parse_border_color(node_id: u32) -> Option<Color> {
+    bridge::__ink_get_node_prop(node_id, "borderColor")
+        .map(|s| s.trim_matches('"').to_string())
+        .and_then(|s| parse_color(&s))
+}
+
 /// Apply padding to a block
-fn apply_padding(node_id: u32, block: Block) -> Block {
+fn apply_padding(node_id: u32, block: Block<'static>) -> Block<'static> {
     if let Some(PropValue::Number(padding)) = bridge::__ink_get_node_prop_raw(node_id, "padding") {
         let p = padding as u16;
         if p > 0 {
@@ -276,66 +309,42 @@ fn apply_text_wrap(node_id: u32) -> Option<Wrap> {
 
 /// Apply text styling props
 fn apply_text_style(node_id: u32, mut style: Style) -> Style {
+    style = apply_text_colors(node_id, style);
+    style = apply_text_modifiers(node_id, style);
+    style
+}
+
+fn apply_text_colors(node_id: u32, mut style: Style) -> Style {
     if let Some(color) = bridge::__ink_get_node_prop(node_id, "color")
         .map(|s| s.trim_matches('"').to_string())
         .and_then(|s| parse_color(&s))
     {
         style = style.fg(color);
     }
-
     if let Some(bg_color) = bridge::__ink_get_node_prop(node_id, "backgroundColor")
         .map(|s| s.trim_matches('"').to_string())
         .and_then(|s| parse_color(&s))
     {
         style = style.bg(bg_color);
     }
+    style
+}
 
-    // Check prop value, not just presence.  Using .is_some() would enable
-    // modifiers for ANY prop value including "false" and 0.
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "bold"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::BOLD);
+fn apply_text_modifiers(node_id: u32, mut style: Style) -> Style {
+    let mods = [
+        ("bold", Modifier::BOLD),
+        ("dimColor", Modifier::DIM),
+        ("italic", Modifier::ITALIC),
+        ("strikethrough", Modifier::CROSSED_OUT),
+        ("underline", Modifier::UNDERLINED),
+        ("inverse", Modifier::REVERSED),
+        ("small", Modifier::DIM),
+    ];
+    for (prop, modifier) in mods {
+        if matches!(bridge::__ink_get_node_prop_raw(node_id, prop), Some(PropValue::Bool(true))) {
+            style = style.add_modifier(modifier);
+        }
     }
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "dimColor"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::DIM);
-    }
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "italic"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::ITALIC);
-    }
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "strikethrough"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::CROSSED_OUT);
-    }
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "underline"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::UNDERLINED);
-    }
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "inverse"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::REVERSED);
-    }
-    // small text - rendered as dim (terminals don't have small font)
-    if matches!(
-        bridge::__ink_get_node_prop_raw(node_id, "small"),
-        Some(PropValue::Bool(true))
-    ) {
-        style = style.add_modifier(Modifier::DIM);
-    }
-
     style
 }
 

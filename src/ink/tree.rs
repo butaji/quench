@@ -85,31 +85,14 @@ pub fn remove_child(runtime: &mut crate::ink::InkRuntime, parent_id: u32, child_
 }
 
 /// Insert child before another child
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn insert_before(
     runtime: &mut crate::ink::InkRuntime,
     parent_id: u32,
     child_id: u32,
     before_id: u32,
 ) -> Result<()> {
-    let (insert_idx, old_parent_id, child_ptrs) = {
-        let parent = runtime
-            .get_node(parent_id)
-            .ok_or(InkError::NodeNotFound(parent_id))?;
-        let insert_idx = parent
-            .children
-            .iter()
-            .position(|&id| id == before_id)
-            .ok_or(InkError::InsertBeforeError(before_id))?;
-        let old_parent_id = runtime.get_node(child_id).and_then(|c| c.parent);
-        let child_ptrs: Vec<(*mut Node, u32)> = parent
-            .children
-            .iter()
-            .filter(|&&id| id != child_id)
-            .filter_map(|&id| runtime.get_node(id).map(|n| (&n.yoga as *const Node as *mut Node, id)))
-            .collect();
-        (insert_idx, old_parent_id, child_ptrs)
-    };
+    let (insert_idx, old_parent_id, child_ptrs) =
+        gather_insert_info(runtime, parent_id, child_id, before_id)?;
 
     let parent = runtime
         .get_node_mut(parent_id)
@@ -124,13 +107,7 @@ pub fn insert_before(
     parent.children.retain(|&id| id != child_id);
     parent.children.insert(insert_idx, child_id);
 
-    for (i, &(ptr, _)) in child_ptrs.iter().enumerate() {
-        unsafe {
-            parent.yoga.insert_child(&mut *ptr, i);
-        }
-    }
-
-    let _ = parent;
+    reinsert_yoga_children(parent, &child_ptrs);
 
     if let Some(old_pid) = old_pid_for_later {
         if let Some(old_parent) = runtime.get_node_mut(old_pid) {
@@ -146,7 +123,44 @@ pub fn insert_before(
     Ok(())
 }
 
-/// Commit an update to a node's props
+fn gather_insert_info(
+    runtime: &crate::ink::InkRuntime,
+    parent_id: u32,
+    child_id: u32,
+    before_id: u32,
+) -> Result<(usize, Option<u32>, Vec<(*mut Node, u32)>)> {
+    let parent = runtime
+        .get_node(parent_id)
+        .ok_or(InkError::NodeNotFound(parent_id))?;
+    let insert_idx = parent
+        .children
+        .iter()
+        .position(|&id| id == before_id)
+        .ok_or(InkError::InsertBeforeError(before_id))?;
+    let old_parent_id = runtime.get_node(child_id).and_then(|c| c.parent);
+    let child_ptrs: Vec<(*mut Node, u32)> = parent
+        .children
+        .iter()
+        .filter(|&&id| id != child_id)
+        .filter_map(|&id| {
+            runtime
+                .get_node(id)
+                .map(|n| (&n.yoga as *const Node as *mut Node, id))
+        })
+        .collect();
+    Ok((insert_idx, old_parent_id, child_ptrs))
+}
+
+fn reinsert_yoga_children(parent: &mut InkNode, child_ptrs: &[(*mut Node, u32)]) {
+    for (i, &(ptr, _)) in child_ptrs.iter().enumerate() {
+        unsafe {
+            parent.yoga.insert_child(&mut *ptr, i);
+        }
+    }
+}
+
+/// Commit an update to a node's props.
+/// Short-circuits if the JSON representation is identical to the last one.
 pub fn commit_update(
     runtime: &mut crate::ink::InkRuntime,
     node_id: u32,
@@ -155,7 +169,19 @@ pub fn commit_update(
     let node = runtime
         .get_node_mut(node_id)
         .ok_or(InkError::NodeNotFound(node_id))?;
+
+    // One-shot prop signature comparison (Task 113)
+    let json = crate::ink::node::props_to_json(&props);
+    let json_bytes = json.as_bytes().to_vec();
+    if let Some(ref last) = node.last_props_json {
+        if last == &json_bytes {
+            return Ok(());
+        }
+    }
+
     node.apply_props(&props);
+    node.props_json_cache = Some(json);
+    node.last_props_json = Some(json_bytes);
     runtime.dirty = true;
     Ok(())
 }

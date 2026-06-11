@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run tests
+        run: cargo test --release --locked
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build release
+        run: cargo build --release --locked
+      - name: Smoke test binary
+        run: |
+          timeout 2s ./target/release/quench examples/counter.js || true
