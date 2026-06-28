@@ -1,0 +1,52 @@
+{
+  "tasks": [
+    {
+      "id": "01",
+      "title": "Audit JS surface and define AST/value model",
+      "file": "tasks/01-audit-ast-value.md",
+      "status": "pending"
+    },
+    {
+      "id": "02",
+      "title": "Integrate swc parser and lower to runtime AST",
+      "file": "tasks/02-lexer-parser.md",
+      "status": "pending"
+    },
+    {
+      "id": "03",
+      "title": "Implement scope, closures, and interpreter eval loop",
+      "file": "tasks/03-interpreter-env.md",
+      "status": "pending"
+    },
+    {
+      "id": "04",
+      "title": "Add built-ins: Object, Array, JSON, Math, Date, console, Map, Set",
+      "file": "tasks/04-builtins.md",
+      "status": "pending"
+    },
+    {
+      "id": "05",
+      "title": "Wire bridge host functions and Ink globals into the runtime",
+      "file": "tasks/05-bridge-host.md",
+      "status": "pending"
+    },
+    {
+      "id": "06",
+      "title": "Integrate timers and terminal events with the interpreter",
+      "file": "tasks/06-event-loop.md",
+      "status": "pending"
+    },
+    {
+      "id": "07",
+      "title": "Adapt runtime.js and remove rquickjs from the project",
+      "file": "tasks/07-drop-rquickjs.md",
+      "status": "pending"
+    },
+    {
+      "id": "08",
+      "title": "Run parity tests and example apps",
+      "file": "tasks/08-verify.md",
+      "status": "pending"
+    }
+  ]
+}
