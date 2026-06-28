@@ -4,12 +4,23 @@ Replace the `rquickjs` dependency with an in-house interpreter that supports the
 
 ## Approach
 
-- Use **swc** to parse JS/TSX-compiled output into `swc_ecma_ast`, then lower it to a small runtime AST under `src/js_runtime/`. Do not write a custom lexer/parser.
-- Implement the interpreter (`src/js_runtime/`) with scope/closure, values, built-ins, and the selected support crates.
-- Expose the existing bridge FFI functions as host functions (`__ink_call`, `__ink_call_fast`) and Ink component tags as globals (`Box`, `Text`, etc.).
-- Keep the reconciler/hooks implementation in `src/runtime.js` but rewrite any unsupported JS constructs to the supported subset.
-- Swap `rquickjs::Context` for `js_runtime::Context` in `src/main.rs` and `src/event_loop.rs`, then remove `rquickjs` from dependencies.
-- Validate with `cargo test` and the existing example apps.
+We are building a **custom JS execution engine**, not a custom JS parser or a from-scratch standard library. Use battle-tested crates for everything that is not the engine's core job.
+
+- **Parsing:** use **swc** (`swc_ecma_parser` + `swc_ecma_ast`) to parse JS source, then lower to a small runtime AST. Do not write a lexer or parser by hand.
+- **Engine core:** implement only what makes this runtime *custom* — the value model, scope/closure machinery, eval loop, host-function bridge, and Ink integration — under `src/js_runtime/`.
+- **Support primitives:** use crates for interned strings, ordered maps, bigints/decimals, shape flags, and fast HashMaps instead of writing them.
+- **Bridge:** expose existing FFI functions as host functions (`__ink_call`, `__ink_call_fast`) and Ink component tags as globals (`Box`, `Text`, etc.).
+- **Runtime JS:** keep the reconciler/hooks implementation in `src/runtime.js` but rewrite unsupported JS constructs to the supported subset.
+- **Swap:** replace `rquickjs::Context` with `js_runtime::Context` in `src/main.rs` and `src/event_loop.rs`, then remove `rquickjs` from dependencies.
+- **Validate:** run `cargo test` and the existing example apps.
+
+## Principles
+
+- **Custom engine, not custom parsers.** swc handles lexing/parsing.
+- **Custom engine, not custom collections.** `indexmap`, `hashbrown`, `lasso`, `string_cache` handle data structures.
+- **Custom engine, not custom numeric types.** `num-bigint` and `rust_decimal` handle BigInt/decimal.
+- **Custom engine, not custom shape metadata.** `bitflags` handles object shape flags.
+- **No unnecessary code changes outside the engine.** The bridge, renderer, compiler, and Ink runtime stay untouched.
 
 ## Tech stack
 

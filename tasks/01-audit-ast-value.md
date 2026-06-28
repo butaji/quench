@@ -2,7 +2,7 @@
 
 ## Goal
 
-Decide exactly which JS features the interpreter must support, add the required dependencies, and create the core AST and value types that everything else builds on.
+Decide exactly which JS features the interpreter must support, add the required dependencies, and create the core AST and value types that the custom execution engine builds on. Parsing is out of scope — swc will handle that in Task 02.
 
 ## Files
 
