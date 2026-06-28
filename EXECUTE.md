@@ -5,6 +5,8 @@ Replace the `rquickjs` dependency with an in-house interpreter that supports the
 The runtime lives in a dedicated crate, **`quench-runtime`**, so the main `quench` binary only contains glue code.
 
 > **One-line rule:** We write the **execution engine** (values, scopes, eval loop, host-function API). We do **not** write parsers, lexers, ordered maps, interned-string tables, big-int/decimal libraries, or bitflags — those come from crates.
+>
+> **Parser rule:** **Use swc. Do not write a lexer. Do not write a parser. swc parses JS; we only lower `swc_ecma_ast` to our runtime AST.**
 
 ## Approach
 
@@ -26,6 +28,10 @@ We are building a **custom JS execution engine**, not a custom JS parser or a fr
 - **Custom engine, not custom numeric types.** `num-bigint` and `rust_decimal` handle BigInt/decimal.
 - **Custom engine, not custom shape metadata.** `bitflags` handles object shape flags.
 - **No unnecessary code changes outside the engine.** The bridge, renderer, compiler, and Ink runtime stay untouched.
+
+## Parser rule
+
+**swc and only swc.** `quench-runtime` will depend on `swc_ecma_parser` + `swc_ecma_ast` to turn source text into a typed AST. We will never implement tokenization, a lexer, or a recursive-descent parser by hand. The only parser-related code we write is the lowering pass from `swc_ecma_ast` to our smaller runtime AST.
 
 ## Tech stack
 

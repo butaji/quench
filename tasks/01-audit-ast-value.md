@@ -21,7 +21,7 @@ Create the dedicated `quench-runtime` crate, add its dependencies, and define th
    - Add `quench-runtime = { path = "crates/quench-runtime" }` under `[dependencies]`.
    - Remove `rquickjs` later in Task 07; leave it for now.
 2. Create `crates/quench-runtime/Cargo.toml` with dependencies:
-   - `swc_common`, `swc_ecma_parser`, `swc_ecma_ast`
+   - `swc_common`, `swc_ecma_parser`, `swc_ecma_ast` — **the parser is swc; do not write a custom lexer/parser**
    - `string_cache` and `lasso`
    - `indexmap`
    - `num-bigint`, `rust_decimal`
