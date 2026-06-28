@@ -4,6 +4,8 @@
 
 Provide the standard-library objects that `runtime.js` and compiled apps rely on, inside `quench-runtime`.
 
+> **Custom vs crate:** We write the built-in objects because they are part of the engine's observable JS environment. `JSON.stringify`/`JSON.parse` delegate to `serde_json` instead of a custom serializer.
+
 ## Files
 
 - Create: `crates/quench-runtime/src/builtins.rs`

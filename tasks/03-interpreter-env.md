@@ -4,6 +4,8 @@
 
 Evaluate the AST produced by Task 02 with proper variable scoping and first-class functions, all inside the `quench-runtime` crate.
 
+> **Custom vs crate:** This task writes the core execution engine (scope chain, closures, eval loop). No replacement crate is used here — this is the custom part of the runtime.
+
 ## Files
 
 - Create: `crates/quench-runtime/src/env.rs`

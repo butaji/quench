@@ -4,6 +4,8 @@
 
 Create the dedicated `quench-runtime` crate, add its dependencies, and define the core AST and value types that the custom execution engine builds on. Parsing is out of scope — swc will handle that in Task 02.
 
+> **Custom vs crate:** This task writes the AST and value model. It does **not** write string interning, ordered maps, big-int/decimal, or bitflags — those are declared as crate dependencies and used here.
+
 ## Files
 
 - Modify: `Cargo.toml` (root) — add workspace and `quench-runtime` path dependency

@@ -4,6 +4,8 @@
 
 Confirm the custom runtime behaves the same as the old QuickJS-based build for the supported examples.
 
+> **Custom vs crate:** This task adds tests. If a test fails because of a missing engine feature, add that feature to `quench-runtime` rather than changing unrelated code.
+
 ## Files
 
 - Create: `crates/quench-runtime/tests/` smoke tests

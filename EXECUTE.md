@@ -4,6 +4,8 @@ Replace the `rquickjs` dependency with an in-house interpreter that supports the
 
 The runtime lives in a dedicated crate, **`quench-runtime`**, so the main `quench` binary only contains glue code.
 
+> **One-line rule:** We write the **execution engine** (values, scopes, eval loop, host-function API). We do **not** write parsers, lexers, ordered maps, interned-string tables, big-int/decimal libraries, or bitflags — those come from crates.
+
 ## Approach
 
 We are building a **custom JS execution engine**, not a custom JS parser or a from-scratch standard library. Use battle-tested crates for everything that is not the engine's core job.

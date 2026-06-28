@@ -4,6 +4,8 @@
 
 Expose the existing Rust bridge to the interpreter by registering host functions and Ink globals from `src/main.rs`, without letting `quench-runtime` depend on `quench` internals.
 
+> **Custom vs crate:** The host-function API is custom. The bridge implementation stays in `src/bridge/`; we only register closures that call it.
+
 ## Files
 
 - Modify: `src/main.rs`

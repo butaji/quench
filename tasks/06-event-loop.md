@@ -4,6 +4,8 @@
 
 Make the event loop drive JS callbacks through the `quench-runtime` interpreter instead of rquickjs.
 
+> **Custom vs crate:** This task writes the glue between the existing event loop and `quench-runtime`. It does not rewrite timers, signals, or hot-reload logic.
+
 ## Files
 
 - Modify: `src/event_loop.rs`

@@ -4,6 +4,8 @@
 
 Cut the QuickJS dependency out of the build and make `runtime.js` run on the `quench-runtime` interpreter.
 
+> **Custom vs crate:** This task removes `rquickjs` and wires the workspace. It does not add new custom code beyond the minimal glue already planned.
+
 ## Files
 
 - Modify: `src/runtime.js`

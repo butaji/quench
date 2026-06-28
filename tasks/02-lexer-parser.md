@@ -4,6 +4,8 @@
 
 Use swc inside the `quench-runtime` crate to parse JS source, then lower `swc_ecma_ast` into the runtime AST defined in Task 01. Do not write a custom lexer or parser.
 
+> **Custom vs crate:** This task is almost entirely crate work. We write only the thin lowering layer from `swc_ecma_ast` to our runtime AST.
+
 ## Files
 
 - Create: `crates/quench-runtime/src/swc_parse.rs`
