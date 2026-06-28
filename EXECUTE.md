@@ -2,16 +2,19 @@
 
 Replace the `rquickjs` dependency with an in-house interpreter that supports the JS subset used by the Quench compiler and `runtime.js`, while preserving the existing Rust bridge, Ink node tree, timer/event-loop, and parity tests.
 
+The runtime lives in a dedicated crate, **`quench-runtime`**, so the main `quench` binary only contains glue code.
+
 ## Approach
 
 We are building a **custom JS execution engine**, not a custom JS parser or a from-scratch standard library. Use battle-tested crates for everything that is not the engine's core job.
 
-- **Parsing:** use **swc** (`swc_ecma_parser` + `swc_ecma_ast`) to parse JS source, then lower to a small runtime AST. Do not write a lexer or parser by hand.
-- **Engine core:** implement only what makes this runtime *custom* — the value model, scope/closure machinery, eval loop, host-function bridge, and Ink integration — under `src/js_runtime/`.
+- **Crate layout:** create `crates/quench-runtime/` as a workspace member. The main `quench` crate depends on it via path.
+- **Parsing:** use **swc** (`swc_ecma_parser` + `swc_ecma_ast`) to parse JS source, then lower to a small runtime AST inside `quench-runtime`. Do not write a lexer or parser by hand.
+- **Engine core:** implement only what makes this runtime *custom* — the value model, scope/closure machinery, eval loop, and host-function API — inside `crates/quench-runtime/src/`.
 - **Support primitives:** use crates for interned strings, ordered maps, bigints/decimals, shape flags, and fast HashMaps instead of writing them.
-- **Bridge:** expose existing FFI functions as host functions (`__ink_call`, `__ink_call_fast`) and Ink component tags as globals (`Box`, `Text`, etc.).
+- **Bridge glue:** in the main `quench` crate, register existing FFI functions as host functions (`__ink_call`, `__ink_call_fast`) and Ink component tags as globals (`Box`, `Text`, etc.). `quench-runtime` exposes a generic host-function registration API so it never depends on `quench` bridge internals.
 - **Runtime JS:** keep the reconciler/hooks implementation in `src/runtime.js` but rewrite unsupported JS constructs to the supported subset.
-- **Swap:** replace `rquickjs::Context` with `js_runtime::Context` in `src/main.rs` and `src/event_loop.rs`, then remove `rquickjs` from dependencies.
+- **Swap:** replace `rquickjs::Context` with `quench_runtime::Context` in `src/main.rs` and `src/event_loop.rs`, then remove `rquickjs` from dependencies.
 - **Validate:** run `cargo test` and the existing example apps.
 
 ## Principles
@@ -43,18 +46,19 @@ We are building a **custom JS execution engine**, not a custom JS parser or a fr
 
 These modules must stay unchanged except where the task explicitly says to call into them from the new engine:
 
-- `src/bridge/` — node, tree, timers, I/O, props, FFI dispatch tables. Only host bindings in `src/js_runtime/host.rs` may call `crate::bridge::*`.
+- `src/bridge/` — node, tree, timers, I/O, props, FFI dispatch tables. Only `src/main.rs` glue may call `crate::bridge::*` when registering host functions.
 - `src/ink/` — the native Ink runtime and Yoga layout code.
 - `src/render/` — text measurement, keycode mapping, color, render tree.
 - `src/compiler/` — the TSX/TS compiler and its JS output format.
 - `src/cli.rs`, `src/signals.rs`, `src/hotreload.rs` — CLI, signal, and hot-reload plumbing.
 
 Allowed glue points:
-- `src/js_runtime/` — new custom engine.
-- `src/main.rs` — runtime initialization, loading `runtime.js`, and user code.
+- `crates/quench-runtime/` — the new custom engine crate.
+- `src/main.rs` — runtime initialization, host-function registration, loading `runtime.js`, and user code.
 - `src/event_loop.rs` — only the JS context type and the calls into JS dispatch functions.
 - `src/ink_js.rs` — only rquickjs-specific code may be removed/replaced with interpreter registration.
-- `Cargo.toml`, `build.rs` — only remove the `rquickjs` dependency and QuickJS bytecode references.
+- Root `Cargo.toml` — add workspace, `quench-runtime` path dependency, and remove `rquickjs`.
+- `build.rs` — only remove QuickJS bytecode references.
 
 ## Task index
 

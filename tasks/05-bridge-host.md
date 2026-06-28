@@ -1,33 +1,37 @@
-# Task 05: Wire bridge host functions and Ink globals into the runtime
+# Task 05: Register bridge host functions and Ink globals from the main crate
 
 ## Goal
 
-Expose the existing Rust bridge to the interpreter so JS code can call `__ink_call`, `__ink_call_fast`, and use Ink component tags.
+Expose the existing Rust bridge to the interpreter by registering host functions and Ink globals from `src/main.rs`, without letting `quench-runtime` depend on `quench` internals.
 
 ## Files
 
-- Create: `src/js_runtime/host.rs`
 - Modify: `src/main.rs`
 - Modify or delete: `src/ink_js.rs` (currently rquickjs-specific)
 
 ## Steps
 
-1. In `src/js_runtime/host.rs` define helper `register_ink_host_functions(ctx: &mut Context)`:
-   - `__ink_call(method: string, args_json: string) -> string` forwards to `crate::bridge::call_ink_ffi`.
-   - `__ink_call_fast(method_id_or_name, a, b, c, d, e) -> f64` forwards to `crate::bridge::call_ink_ffi_fast`.
-2. Register globals:
+1. In `quench-runtime`, ensure `Context` already exposes:
+   - `register_native_function(name, callback: Box<dyn Fn(&[Value]) -> Result<Value>>)`
+   - `set_global(name, value)`
+   - `eval(source)`
+2. In `src/main.rs` create a helper `register_ink_host_functions(ctx: &mut quench_runtime::Context)`:
+   - Register `__ink_call` as a native function that forwards `(method, args_json)` to `crate::bridge::call_ink_ffi` and returns the result string.
+   - Register `__ink_call_fast` as a native function that forwards `(method_id_or_name, a, b, c, d, e)` to `crate::bridge::call_ink_ffi_fast`.
+3. Register globals:
    - `Box`, `Text`, `Static`, `Newline`, `Spacer` as strings (`"ink-box"`, etc.).
    - `ink` namespace object containing the same tags.
-3. Replace `src/ink_js.rs` with a thin module that returns the tag constants and a `register(ctx: &mut Context)` helper, or delete it and move the constants into `host.rs`.
-4. Update `src/main.rs` `setup_runtime` to:
-   - create the custom `Context`
+4. Replace `src/ink_js.rs` with a thin module that exports the tag constants and a `register(ctx: &mut quench_runtime::Context)` helper, or delete it and keep the constants in `src/main.rs`.
+5. Update `src/main.rs` `setup_runtime` to:
+   - create the `quench_runtime::Context`
    - register host functions and globals
    - load `runtime.js`
    - inject bridge config via eval
 
 ## Boundaries
 
-- Only add host bindings and globals. Do not change `src/bridge/ffi.rs`, `src/bridge/node.rs`, `src/bridge/tree.rs`, or any other bridge internals.
+- Only add host bindings and globals in the main crate. Do not change `src/bridge/ffi.rs`, `src/bridge/node.rs`, `src/bridge/tree.rs`, or any other bridge internals.
+- `quench-runtime` must remain independent of `quench` bridge code; all bridge closures live in `src/main.rs`.
 - Call existing bridge functions exactly as `src/main.rs` currently does through `rquickjs`; do not redesign the FFI contract.
 
 ## Acceptance criteria
@@ -39,6 +43,6 @@ Expose the existing Rust bridge to the interpreter so JS code can call `__ink_ca
 ## Verification
 
 ```bash
-cargo test js_runtime::host
+cargo test -p quench-runtime
 cargo run -- examples/simple.js
 ```

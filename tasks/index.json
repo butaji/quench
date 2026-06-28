@@ -2,7 +2,7 @@
   "tasks": [
     {
       "id": "01",
-      "title": "Audit JS surface and define AST/value model",
+      "title": "Create quench-runtime crate and define AST/value model",
       "file": "tasks/01-audit-ast-value.md",
       "status": "pending"
     },
@@ -26,7 +26,7 @@
     },
     {
       "id": "05",
-      "title": "Wire bridge host functions and Ink globals into the runtime",
+      "title": "Register bridge host functions and Ink globals from the main crate",
       "file": "tasks/05-bridge-host.md",
       "status": "pending"
     },

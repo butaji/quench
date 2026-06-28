@@ -2,12 +2,12 @@
 
 ## Goal
 
-Provide the standard-library objects that `runtime.js` and compiled apps rely on.
+Provide the standard-library objects that `runtime.js` and compiled apps rely on, inside `quench-runtime`.
 
 ## Files
 
-- Create: `src/js_runtime/builtins.rs`
-- Modify: `src/js_runtime/mod.rs` to inject built-ins into every new context.
+- Create: `crates/quench-runtime/src/builtins.rs`
+- Modify: `crates/quench-runtime/src/lib.rs` to inject built-ins into every new context.
 
 ## Steps
 
@@ -29,11 +29,11 @@ Provide the standard-library objects that `runtime.js` and compiled apps rely on
 
 ## Acceptance criteria
 
-- `cargo test js_runtime::builtins` passes.
+- `cargo test -p quench-runtime builtins` passes.
 - A JS program can create `new Map()`, `JSON.parse('[1,2]')`, and call `[1,2,3].map(x => x*2)`.
 
 ## Verification
 
 ```bash
-cargo test js_runtime::builtins
+cargo test -p quench-runtime builtins
 ```

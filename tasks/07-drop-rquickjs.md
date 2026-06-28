@@ -2,15 +2,16 @@
 
 ## Goal
 
-Cut the QuickJS dependency out of the build and make `runtime.js` run on the new interpreter.
+Cut the QuickJS dependency out of the build and make `runtime.js` run on the `quench-runtime` interpreter.
 
 ## Files
 
 - Modify: `src/runtime.js`
-- Modify: `Cargo.toml`
+- Modify: root `Cargo.toml`
 - Modify: `build.rs`
 - Modify: `src/main.rs`
 - Modify or delete: `src/ink_js.rs`
+- Delete if present: `src/js_runtime/` (superseded by `crates/quench-runtime/`)
 
 ## Steps
 
@@ -20,14 +21,17 @@ Cut the QuickJS dependency out of the build and make `runtime.js` run on the new
    - Replace template literals with string concatenation.
    - Replace optional chaining/spread if used.
    - Keep `Map`/`Set` if Task 04 implemented them; otherwise polyfill or rewrite.
-2. Remove from `Cargo.toml`:
-   - `rquickjs = { ... }` dependency
-   - update `description` if it still mentions rquickjs
+2. Update root `Cargo.toml`:
+   - Ensure `[workspace]` includes `crates/quench-runtime`.
+   - Ensure `quench-runtime = { path = "crates/quench-runtime" }` is in `[dependencies]`.
+   - Remove `rquickjs = { ... }`.
+   - Update `description` if it still mentions rquickjs.
 3. Update `build.rs`:
    - Remove the QuickJS bytecode placeholder (`generate_bytecode_bundle` can stay but must not reference QuickJS APIs; make it bundle plain JS only).
 4. Remove all `use rquickjs::...` imports from `src/main.rs`, `src/event_loop.rs`, `src/ink_js.rs`, `src/bridge_config.rs`.
 5. Delete `src/ink_js.rs` if its only purpose was rquickjs registration; otherwise keep the tag constants.
-6. Search the repository for remaining `rquickjs` or `quickjs` references and eliminate them.
+6. Delete any leftover `src/js_runtime/` directory from earlier experiments.
+7. Search the repository for remaining `rquickjs` or `quickjs` references and eliminate them.
 
 ## Boundaries
 
