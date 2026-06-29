@@ -1,6 +1,6 @@
 //! Build script for Quench
 //!
-//! 1. Compiles JavaScript to QuickJS bytecode (placeholder).
+//! 1. Bundles JavaScript for optional deployment.
 //! 2. Lints Rust sources against project rules:
 //!    - File length: max 500 lines
 //!    - Function length: max 40 lines

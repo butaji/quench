@@ -260,17 +260,30 @@ globalThis.__ink_drain_microtasks = function() {
 // 1. Element Factory (JSX target)
 // ===================================================================
 
-function createElement(type, props, ...children) {
+function createElement(type, props) {
   props = props || {};
-  const flatChildren = children
-    .flat(Infinity)
-    .filter(c => c !== null && c !== undefined && c !== false);
+  // Collect children from arguments[2+] since rest params aren't supported
+  var flatChildren = [];
+  for (var i = 2; i < arguments.length; i++) {
+    var child = arguments[i];
+    if (child === null || child === undefined || child === false) continue;
+    if (Array.isArray(child)) {
+      for (var j = 0; j < child.length; j++) {
+        var inner = child[j];
+        if (inner !== null && inner !== undefined && inner !== false) {
+          flatChildren.push(inner);
+        }
+      }
+    } else {
+      flatChildren.push(child);
+    }
+  }
   if (flatChildren.length === 1) {
     props.children = flatChildren[0];
   } else if (flatChildren.length > 1) {
     props.children = flatChildren;
   }
-  return { type, props };
+  return { type: type, props: props };
 }
 
 // ===================================================================
@@ -402,7 +415,9 @@ function useContext(ctx) {
 function createContext(defaultValue) {
   return {
     _currentValue: defaultValue,
-    Provider: function Provider({ value, children }) {
+    Provider: function Provider(props) {
+      var value = props && props.value;
+      var children = props && props.children;
       this._currentValue = value !== undefined ? value : defaultValue;
       return children;
     }
@@ -492,7 +507,11 @@ function useStderr() {
 }
 
 // useFocus — Ink accepts { isActive, autoFocus, id }, returns { isFocused, focus }
-function useFocus({ isActive = true, autoFocus = false, id: customId } = {}) {
+function useFocus(props) {
+  props = props || {};
+  var isActive = props.isActive !== undefined ? props.isActive : true;
+  var autoFocus = props.autoFocus !== undefined ? props.autoFocus : false;
+  var customId = props.id;
   const state = getHookState();
   if (state.type === 'empty') {
     state.type = 'focus';
@@ -734,7 +753,9 @@ function useBoxMetrics(ref) {
 }
 
 // Transform component - transforms string output of children
-function Transform({ children, transform }) {
+function Transform(props) {
+  var children = props && props.children;
+  var transform = props && props.transform;
   // Transform is a special component that intercepts text output
   // In Quench, we implement it by wrapping children and applying
   // the transform function to the final text output
@@ -1257,7 +1278,7 @@ if (!globalThis.process) {
 //
 // (See helper below.)
 //
-// QuickJS ignores the `options` argument of `toLocaleTimeString` and falls
+// The JS runtime ignores the `options` argument of `toLocaleTimeString` and falls
 // back to the full 12-hour format ("09:38:13 AM").  Ink apps commonly pass
 // `{ hour: '2-digit', minute: '2-digit', hour12: false }` to get a tidy
 // "09:38" — so we implement just enough of the spec to honour the
@@ -1424,7 +1445,12 @@ function findMouseHandlerAt(x, y) {
   const rootId = globalThis.__ink_get_root_id();
   if (!rootId) return null;
 
-  const { nodeId: targetNodeId, depthMap } = findDeepestNodeAt(x, y, rootId);
+  var targetNodeId, depthMap;
+  {
+    var __dest = findDeepestNodeAt(x, y, rootId);
+    targetNodeId = __dest.nodeId;
+    depthMap = __dest.depthMap;
+  }
   if (!targetNodeId) return null;
 
   // Find handlers whose node is an ancestor of (or equal to) the target
@@ -1482,7 +1508,8 @@ globalThis.__tb_dispatch_mouse = function() {
     shift: globalThis.__pending_mouse_shift,
     alt: globalThis.__pending_mouse_alt,
   };
-  const { column, row } = event;
+  var column = event.column;
+  var row = event.row;
   
   // Find the deepest handler at this position using hit-testing
   const handler = findMouseHandlerAt(column, row);
@@ -1537,7 +1564,11 @@ const ink = {
 
 // Fragment helper - used for JSX fragments
 // esbuild calls Fragment(props, ...children) where props may be null or {key: ...}
-const Fragment = function(props, ...children) {
+const Fragment = function(props) {
+  var children = [];
+  for (var i = 1; i < arguments.length; i++) {
+    children.push(arguments[i]);
+  }
   if (children.length === 1) {
     return children[0];
   }
