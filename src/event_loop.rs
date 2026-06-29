@@ -5,7 +5,7 @@
 use crate::bridge;
 use crate::cli::CliArgs;
 use crate::render::{keycode_to_ink_name, render_tree};
-use crate::js_runtime::Context;
+use quench_runtime::Context;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::Terminal;
@@ -135,8 +135,8 @@ fn handle_event(
 
 fn dispatch_resize(ctx: &mut Context, cols: u16, rows: u16) -> bool {
     // Set globals for the resize handler
-    ctx.set_global("__pending_resize_cols".to_string(), crate::js_runtime::value::Value::Number(cols as f64));
-    ctx.set_global("__pending_resize_rows".to_string(), crate::js_runtime::value::Value::Number(rows as f64));
+    ctx.set_global("__pending_resize_cols".to_string(), quench_runtime::Value::Number(cols as f64));
+    ctx.set_global("__pending_resize_rows".to_string(), quench_runtime::Value::Number(rows as f64));
 
     if let Err(e) = ctx.call_function("__tb_dispatch_resize", vec![]) {
         tracing::trace!("No resize handler: {}", e);
@@ -167,11 +167,11 @@ fn handle_key_event(
     }
 
     // Set globals so the shim can read them
-    ctx.set_global("__pending_key".to_string(), crate::js_runtime::value::Value::String(key_str));
-    ctx.set_global("__pending_ctrl".to_string(), crate::js_runtime::value::Value::Boolean(ctrl));
-    ctx.set_global("__pending_shift".to_string(), crate::js_runtime::value::Value::Boolean(shift));
-    ctx.set_global("__pending_alt".to_string(), crate::js_runtime::value::Value::Boolean(alt));
-    ctx.set_global("__pending_meta".to_string(), crate::js_runtime::value::Value::Boolean(meta));
+    ctx.set_global("__pending_key".to_string(), quench_runtime::Value::String(key_str));
+    ctx.set_global("__pending_ctrl".to_string(), quench_runtime::Value::Boolean(ctrl));
+    ctx.set_global("__pending_shift".to_string(), quench_runtime::Value::Boolean(shift));
+    ctx.set_global("__pending_alt".to_string(), quench_runtime::Value::Boolean(alt));
+    ctx.set_global("__pending_meta".to_string(), quench_runtime::Value::Boolean(meta));
 
     // Call the function
     if let Err(e) = ctx.call_function("__tb_dispatch_key", vec![]) {
@@ -193,13 +193,13 @@ fn handle_mouse_event(
 
     tracing::trace!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
 
-    ctx.set_global("__pending_mouse_col".to_string(), crate::js_runtime::value::Value::Number(mouse.column as f64));
-    ctx.set_global("__pending_mouse_row".to_string(), crate::js_runtime::value::Value::Number(mouse.row as f64));
-    ctx.set_global("__pending_mouse_kind".to_string(), crate::js_runtime::value::Value::String(kind_str.to_string()));
-    ctx.set_global("__pending_mouse_button".to_string(), crate::js_runtime::value::Value::Number(button as f64));
-    ctx.set_global("__pending_mouse_ctrl".to_string(), crate::js_runtime::value::Value::Boolean(ctrl));
-    ctx.set_global("__pending_mouse_shift".to_string(), crate::js_runtime::value::Value::Boolean(shift));
-    ctx.set_global("__pending_mouse_alt".to_string(), crate::js_runtime::value::Value::Boolean(alt));
+    ctx.set_global("__pending_mouse_col".to_string(), quench_runtime::Value::Number(mouse.column as f64));
+    ctx.set_global("__pending_mouse_row".to_string(), quench_runtime::Value::Number(mouse.row as f64));
+    ctx.set_global("__pending_mouse_kind".to_string(), quench_runtime::Value::String(kind_str.to_string()));
+    ctx.set_global("__pending_mouse_button".to_string(), quench_runtime::Value::Number(button as f64));
+    ctx.set_global("__pending_mouse_ctrl".to_string(), quench_runtime::Value::Boolean(ctrl));
+    ctx.set_global("__pending_mouse_shift".to_string(), quench_runtime::Value::Boolean(shift));
+    ctx.set_global("__pending_mouse_alt".to_string(), quench_runtime::Value::Boolean(alt));
 
     // Call the function
     if let Err(e) = ctx.call_function("__tb_dispatch_mouse", vec![]) {
@@ -252,13 +252,13 @@ fn poll_timers(ctx: &mut Context) -> bool {
 
         if !ids.is_empty() {
             // Create array of timer IDs
-            let timer_array = crate::js_runtime::value::Object::new_array(ids.len());
+            let timer_array = quench_runtime::Object::new_array(ids.len());
             let timer_array = std::rc::Rc::new(std::cell::RefCell::new(timer_array));
             for (i, &id) in ids.iter().enumerate() {
-                timer_array.borrow_mut().set(&i.to_string(), crate::js_runtime::value::Value::Number(id as f64));
+                timer_array.borrow_mut().set(&i.to_string(), quench_runtime::Value::Number(id as f64));
             }
 
-            if let Err(e) = ctx.call_function("__tb_invoke_timers", vec![crate::js_runtime::value::Value::Object(timer_array)]) {
+            if let Err(e) = ctx.call_function("__tb_invoke_timers", vec![quench_runtime::Value::Object(timer_array)]) {
                 tracing::trace!("No timer handler: {}", e);
             }
         }
@@ -282,10 +282,11 @@ fn handle_hot_reload(
     if let Some(ref path) = script_path {
         if let Ok(new_code) = std::fs::read_to_string(path) {
             // Create a fresh context for hot reload
-            match crate::js_runtime::Context::new() {
+            match quench_runtime::Context::new() {
                 Ok(mut new_ctx) => {
                     // Load runtime and new code
-                    if let Err(e) = new_ctx.load_runtime() {
+                    let runtime_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.js");
+                    if let Err(e) = new_ctx.load_runtime_from(&runtime_path) {
                         tracing::error!("Failed to load runtime for hot reload: {:?}", e);
                         return false;
                     }

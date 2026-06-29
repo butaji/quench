@@ -1603,14 +1603,11 @@ dependencies = [
  "notify-debouncer-mini",
  "once_cell",
  "ordered-float",
+ "quench-runtime",
  "ratatui",
  "serde",
  "serde_json",
  "serial_test",
- "swc_atoms",
- "swc_common",
- "swc_ecma_ast",
- "swc_ecma_parser",
  "tempfile",
  "textwrap",
  "thiserror",
@@ -1620,6 +1617,18 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "yoga",
+]
+
+[[package]]
+name = "quench-runtime"
+version = "0.1.0"
+dependencies = [
+ "swc_atoms",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_parser",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

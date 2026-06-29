@@ -3,10 +3,10 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use crate::js_runtime::value::{Value, JsError, Object, ObjectKind, NativeFunction, to_js_string, to_number, to_bool};
+use crate::value::{Value, JsError, Object, ObjectKind, NativeFunction, to_js_string, to_number, to_bool};
 
 /// Register built-in globals into the environment
-pub fn register_builtins(ctx: &mut crate::js_runtime::Context) {
+pub fn register_builtins(ctx: &mut crate::Context) {
     // console
     register_console(ctx);
     

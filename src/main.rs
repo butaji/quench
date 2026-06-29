@@ -21,8 +21,8 @@ mod event_loop;
 mod render;
 mod signals;
 
-// Our custom JavaScript runtime
-mod js_runtime;
+// Our custom JavaScript runtime (from quench-runtime crate)
+use quench_runtime as js_runtime;
 
 use anyhow::Result;
 use bridge_config::BridgeConfig;
@@ -100,6 +100,9 @@ fn init_runtime() -> Result<js_runtime::Context> {
     let (cols, rows) = get_terminal_size();
     bridge::__ink_set_terminal_size(cols, rows);
 
+    // Register host functions (FFI bridge)
+    register_bridge_functions(&mut ctx);
+    
     // Setup the runtime
     setup_runtime(&mut ctx)?;
     Ok(ctx)
@@ -142,12 +145,11 @@ fn compile_and_load(
 
 /// Setup the runtime with runtime.js
 fn setup_runtime(ctx: &mut js_runtime::Context) -> Result<()> {
-    // Register host functions (FFI bridge) first
-    js_runtime::host::register_host_functions(ctx);
-    tracing::debug!("Host functions registered");
+    tracing::debug!("Setting up runtime.js");
     
     // Load runtime.js
-    if let Err(e) = ctx.load_runtime() {
+    let runtime_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.js");
+    if let Err(e) = ctx.load_runtime_from(&runtime_path) {
         tracing::error!("Runtime load error: {:?}", e);
         return Err(anyhow::anyhow!("Failed to load runtime.js: {}", e));
     }
@@ -159,7 +161,373 @@ fn setup_runtime(ctx: &mut js_runtime::Context) -> Result<()> {
     Ok(())
 }
 
-fn inject_bridge_config(ctx: &mut js_runtime::Context) -> Result<()> {
+/// Register bridge FFI functions as host functions
+fn register_bridge_functions(ctx: &mut js_runtime::Context) {
+    use std::rc::Rc;
+    use js_runtime::{Value, NativeFunction, Object, ObjectKind};
+    
+    // Helper to convert value to string
+    fn to_js_string(v: &Value) -> String {
+        match v {
+            Value::Undefined => "undefined".to_string(),
+            Value::Null => "null".to_string(),
+            Value::Boolean(b) => b.to_string(),
+            Value::Number(n) => n.to_string(),
+            Value::String(s) => s.clone(),
+            Value::Object(_) => "[object Object]".to_string(),
+            Value::Function(_) => "[Function]".to_string(),
+            Value::NativeFunction(_) => "[Function]".to_string(),
+            Value::Symbol(s) => format!("Symbol({})", s),
+        }
+    }
+    
+    fn to_number(v: &Value) -> f64 {
+        match v {
+            Value::Undefined => f64::NAN,
+            Value::Null => 0.0,
+            Value::Boolean(true) => 1.0,
+            Value::Boolean(false) => 0.0,
+            Value::Number(n) => *n,
+            Value::String(s) => s.trim().parse().unwrap_or(f64::NAN),
+            _ => f64::NAN,
+        }
+    }
+    
+    // __ink_call - generic bridge call
+    ctx.register_native("__ink_call", move |args| {
+        let method = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let args_json = args.get(1).map(|v| to_js_string(v)).unwrap_or_else(|| "[]".to_string());
+        let result = crate::bridge::ffi::call_ink_ffi(&method, &args_json);
+        Ok(Value::String(result))
+    });
+    
+    // __ink_call_fast - fast path FFI
+    ctx.register_native("__ink_call_fast", move |args| {
+        let method_or_id = args.first().cloned().unwrap_or(Value::Undefined);
+        let a = args.get(1).map(|v| to_number(v)).unwrap_or(0.0);
+        let b = args.get(2).map(|v| to_number(v)).unwrap_or(0.0);
+        let c = args.get(3).map(|v| to_number(v)).unwrap_or(0.0);
+        let d = args.get(4).map(|v| to_number(v)).unwrap_or(0.0);
+        let e = args.get(5).map(|v| to_number(v)).unwrap_or(0.0);
+        
+        let result = if let Value::Number(id) = method_or_id {
+            crate::bridge::ffi::call_ink_ffi_fast(id as u32, a, b, c, d, e)
+        } else {
+            let method_name = to_js_string(&method_or_id);
+            if let Some(id) = crate::bridge::ffi::get_fast_method_id(&method_name) {
+                crate::bridge::ffi::call_ink_ffi_fast(id, a, b, c, d, e)
+            } else {
+                0.0
+            }
+        };
+        
+        Ok(Value::Number(result))
+    });
+    
+    // Node creation functions
+    ctx.register_native("__ink_create_root", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("create_root", "[]");
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    ctx.register_native("__ink_destroy_root", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let _ = crate::bridge::ffi::call_ink_ffi("destroy_root", &format!("[{}]", id));
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_create_node", move |args| {
+        let tag = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let props = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("create_node", &format!("[\"{}\",{}]", tag, props));
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    ctx.register_native("__ink_create_text_node", move |args| {
+        let text = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("create_text_node", &format!("[\"{}\"]", text));
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    // DOM manipulation
+    ctx.register_native("__ink_append_child", move |args| {
+        let parent = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let child = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("append_child", &format!("[{},{}]", parent, child));
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_remove_child", move |args| {
+        let parent = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let child = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("remove_child", &format!("[{},{}]", parent, child));
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_insert_before", move |args| {
+        let parent = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let child = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let before = args.get(2).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("insert_before", &format!("[{},{},{}]", parent, child, before));
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_commit_update", move |args| {
+        let id = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let props = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("commit_update", &format!("[\"{}\",{}]", id, props));
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_set_text", move |args| {
+        let id = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let text = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("set_text", &format!("[\"{}\",\"{}\"]", id, text));
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_commit", move |_args| {
+        let _ = crate::bridge::ffi::call_ink_ffi("commit", "[]");
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_is_dirty", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("is_dirty", "[]");
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_clear_dirty", move |_args| {
+        let _ = crate::bridge::ffi::call_ink_ffi("clear_dirty", "[]");
+        Ok(Value::Undefined)
+    });
+    
+    // Text measurement
+    ctx.register_native("__ink_measure_text", move |args| {
+        let text = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let width = args.get(1).map(|v| to_number(v) as u32).unwrap_or(80);
+        let result = crate::bridge::ffi::call_ink_ffi("measure_text", &format!("[\"{}\",{}]", text, width));
+        
+        let parts: Vec<&str> = result.split(',').collect();
+        let w = parts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        let h = parts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        
+        let obj = Object::new(ObjectKind::Ordinary);
+        let obj = Rc::new(std::cell::RefCell::new(obj));
+        obj.borrow_mut().set("width", Value::Number(w));
+        obj.borrow_mut().set("height", Value::Number(h));
+        Ok(Value::Object(obj))
+    });
+    
+    ctx.register_native("__ink_measure_element", move |args| {
+        let id = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("measure_element", &format!("[{}]", id));
+        
+        if result == "null" {
+            return Ok(Value::Null);
+        }
+        
+        let parts: Vec<&str> = result.split(',').collect();
+        let w = parts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        let h = parts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        
+        let obj = Object::new(ObjectKind::Ordinary);
+        let obj = Rc::new(std::cell::RefCell::new(obj));
+        obj.borrow_mut().set("width", Value::Number(w));
+        obj.borrow_mut().set("height", Value::Number(h));
+        Ok(Value::Object(obj))
+    });
+    
+    // Terminal control
+    ctx.register_native("__ink_exit", move |args| {
+        let code = args.first().map(|v| to_number(v) as i32).unwrap_or(0);
+        let _ = crate::bridge::ffi::call_ink_ffi("exit", &format!("[{}]", code));
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_should_exit", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("should_exit", "[]");
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_get_exit_code", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("get_exit_code", "[]");
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    ctx.register_native("__ink_reset_exit", move |_args| {
+        let _ = crate::bridge::ffi::call_ink_ffi("reset_exit", "[]");
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_set_exit_requested", move |_args| {
+        let _ = crate::bridge::ffi::call_ink_ffi("set_exit_requested", "[]");
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_set_terminal_size", move |args| {
+        let width = args.first().map(|v| to_number(v) as u32).unwrap_or(80);
+        let height = args.get(1).map(|v| to_number(v) as u32).unwrap_or(24);
+        let _ = crate::bridge::ffi::call_ink_ffi("set_terminal_size", &format!("[{},{}]", width, height));
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__ink_get_terminal_size", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("get_terminal_size", "[]");
+        let parts: Vec<&str> = result.split(',').collect();
+        let w = parts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(80.0);
+        let h = parts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(24.0);
+        
+        let obj = Object::new(ObjectKind::Ordinary);
+        let obj = Rc::new(std::cell::RefCell::new(obj));
+        obj.borrow_mut().set("width", Value::Number(w));
+        obj.borrow_mut().set("height", Value::Number(h));
+        Ok(Value::Object(obj))
+    });
+    
+    // Node introspection
+    ctx.register_native("__ink_get_node_tag", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let result = crate::bridge::ffi::call_ink_ffi("get_node_tag", &format!("[{}]", id));
+        if result == "null" {
+            Ok(Value::Null)
+        } else {
+            Ok(Value::String(result.trim_matches('"').to_string()))
+        }
+    });
+    
+    ctx.register_native("__ink_get_node_text", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let result = crate::bridge::ffi::call_ink_ffi("get_node_text", &format!("[{}]", id));
+        if result == "null" {
+            Ok(Value::Null)
+        } else {
+            Ok(Value::String(result.trim_matches('"').to_string()))
+        }
+    });
+    
+    ctx.register_native("__ink_get_node_children", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let result = crate::bridge::ffi::call_ink_ffi("get_node_children", &format!("[{}]", id));
+        
+        if result == "null" {
+            return Ok(Value::Null);
+        }
+        
+        let nums: Vec<f64> = result.trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f64>().ok())
+            .collect();
+        
+        Ok(Value::Object(Rc::new(std::cell::RefCell::new(Object::new_array(nums.len())))))
+    });
+    
+    ctx.register_native("__ink_get_node_prop", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let prop = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("get_node_prop", &format!("[{},\"{}\"]", id, prop));
+        if result == "null" {
+            Ok(Value::Null)
+        } else {
+            Ok(Value::String(result.trim_matches('"').to_string()))
+        }
+    });
+    
+    ctx.register_native("__ink_get_root_id", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("get_root_id", "[]");
+        if result == "null" {
+            Ok(Value::Null)
+        } else {
+            Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+        }
+    });
+    
+    ctx.register_native("__ink_calculate_layout", move |_args| {
+        let result = crate::bridge::ffi::call_ink_ffi("calculate_layout", "[]");
+        Ok(Value::Boolean(result == "true"))
+    });
+    
+    ctx.register_native("__ink_get_layout", move |args| {
+        let id = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let result = crate::bridge::ffi::call_ink_ffi("get_layout", &format!("[{}]", id));
+        
+        if result == "null" {
+            return Ok(Value::Null);
+        }
+        
+        let parts: Vec<&str> = result.split(',').collect();
+        let x = parts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        let y = parts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        let w = parts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        let h = parts.get(3).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+        
+        let obj = Object::new(ObjectKind::Ordinary);
+        let obj = Rc::new(std::cell::RefCell::new(obj));
+        obj.borrow_mut().set("left", Value::Number(x));
+        obj.borrow_mut().set("top", Value::Number(y));
+        obj.borrow_mut().set("width", Value::Number(w));
+        obj.borrow_mut().set("height", Value::Number(h));
+        Ok(Value::Object(obj))
+    });
+    
+    // Timers
+    ctx.register_native("__ink_set_timeout", move |args| {
+        let callback = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let delay = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
+        let result = crate::bridge::ffi::call_ink_ffi("set_timeout", &format!("[\"{}\",{}]", callback, delay));
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    ctx.register_native("__ink_set_interval", move |args| {
+        let callback = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let interval = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
+        let result = crate::bridge::ffi::call_ink_ffi("set_interval", &format!("[\"{}\",{}]", callback, interval));
+        Ok(Value::Number(result.parse::<f64>().unwrap_or(0.0)))
+    });
+    
+    ctx.register_native("__ink_clear_timer", move |args| {
+        let id = args.first().map(|v| to_number(v) as u32).unwrap_or(0);
+        let _ = crate::bridge::ffi::call_ink_ffi("clear_timer", &format!("[{}]", id));
+        Ok(Value::Undefined)
+    });
+    
+    // Event dispatch stubs (called from event_loop.rs via globals)
+    ctx.register_native("__tb_dispatch_key", move |_args| {
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__tb_dispatch_mouse", move |_args| {
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__tb_dispatch_resize", move |_args| {
+        Ok(Value::Undefined)
+    });
+    
+    ctx.register_native("__tb_invoke_timers", move |_args| {
+        Ok(Value::Undefined)
+    });
+    
+    // Register Ink component tags
+    ctx.set_global("Box".to_string(), Value::String("ink-box".to_string()));
+    ctx.set_global("Text".to_string(), Value::String("ink-text".to_string()));
+    ctx.set_global("Static".to_string(), Value::String("ink-static".to_string()));
+    ctx.set_global("Newline".to_string(), Value::String("ink-newline".to_string()));
+    ctx.set_global("Spacer".to_string(), Value::String("ink-spacer".to_string()));
+    
+    // ink namespace
+    let ink_ns = Object::new(ObjectKind::Ordinary);
+    let ink = Rc::new(std::cell::RefCell::new(ink_ns));
+    ink.borrow_mut().set("Box", Value::String("ink-box".to_string()));
+    ink.borrow_mut().set("Text", Value::String("ink-text".to_string()));
+    ink.borrow_mut().set("Static", Value::String("ink-static".to_string()));
+    ink.borrow_mut().set("Newline", Value::String("ink-newline".to_string()));
+    ink.borrow_mut().set("Spacer", Value::String("ink-spacer".to_string()));
+    ctx.set_global("ink".to_string(), Value::Object(ink));
+    
+    tracing::debug!("Bridge functions registered");
+}
+
+fn inject_bridge_config(ctx: &mut quench_runtime::Context) -> Result<()> {
     let bridge_config = BridgeConfig::default();
     let config_js = bridge_config.to_js_injection();
     if let Err(e) = ctx.eval(&config_js) {
@@ -170,7 +538,7 @@ fn inject_bridge_config(ctx: &mut js_runtime::Context) -> Result<()> {
 
 /// Load and execute user JavaScript code
 fn load_user_code(
-    ctx: &mut js_runtime::Context,
+    ctx: &mut quench_runtime::Context,
     cli_args: &cli::CliArgs,
 ) -> Result<Option<u32>> {
     if let Some(ref script) = cli_args.script {
@@ -194,7 +562,7 @@ fn load_user_code(
 
 /// Setup terminal and run event loop
 fn setup_terminal(
-    ctx: &mut js_runtime::Context,
+    ctx: &mut quench_runtime::Context,
     cli_args: cli::CliArgs,
     root_id: Option<u32>,
 ) -> Result<()> {
