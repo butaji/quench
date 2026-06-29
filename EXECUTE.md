@@ -7,10 +7,18 @@
 ## Current state
 
 - `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and basic built-ins.
-- Recent progress: computed member access (`obj[key]`), optional chaining (`obj?.prop`), the `arguments` object, shared `Array.prototype`, event-loop microtask draining, hot-reload re-registration, and the missing bridge host functions `__ink_get_node_parent` / `__ink_set_raw_mode` are in place.
-- `runtime.js` parses and loads only because unsupported statements (`for...of`, `for...in`, `??`, getters/setters, etc.) are silently dropped. It does **not** yet run correctly for any example that relies on those features.
-- `examples/simple.js` is expected to work because it avoids the missing features.
-- `examples/counter.js`, `use-bridge.tsx`, and `animations.tsx` are still blocked on the remaining runtime gaps.
+- Recent progress:
+  - Parser/lowering: `for...of`/`for...in`, nullish coalescing (`??`), optional chaining member access (`obj?.prop`, `obj?.[expr]`), and computed property access (`obj[expr]`) are implemented.
+  - Built-ins: `JSON.parse` actually parses; a shared `Array.prototype` shell is wired up.
+  - Bridge/event loop: missing host functions `__ink_get_node_parent` and `__ink_set_raw_mode` are registered, `__ink_get_node_children` populates elements, props are serialized as JSON, microtasks are drained, and hot reload re-registers bridge functions.
+  - Compiler: hooks are no longer incorrectly prefixed inside `createElement` calls.
+- Still missing (blocking real examples):
+  - Parser: module/script fallback, template literal expressions, rest parameters, spread, optional calls (`?.()`), real getter/setter metadata.
+  - Interpreter: `arguments` object, rest-parameter binding, spread expansion, getter/setter invocation, `typeof` on undeclared identifiers.
+  - Built-ins: real mutating Array methods, `Map`/`Set` collections+iterators, `Promise`, `Date.prototype`, `String`/`Number`/`Boolean`/`Object.prototype`.
+  - Prototype model: shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, `Function`; `new` for built-in constructors.
+- `runtime.js` parses and loads, but many unsupported constructs are still silently dropped.
+- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` remain blocked.
 
 ## Approach
 
