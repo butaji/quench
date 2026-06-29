@@ -400,7 +400,18 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                     }
                     swc::Pat::Array(arr) => {
                         // Array destructuring: [a, b] = expr
+                        // Use a temp variable to ensure the source expression is evaluated once
                         let mut stmts = Vec::new();
+                        
+                        // Create a temp variable for the source expression
+                        let temp_var_name = format!("__arr_src_{}", decls.len());
+                        stmts.push(Statement::VarDeclaration {
+                            kind: VarKind::Const, // Temp is always const
+                            name: temp_var_name.clone(),
+                            init: init_expr.clone(),
+                        });
+                        
+                        // Create member accesses from the temp variable
                         for (i, elem) in arr.elems.iter().enumerate() {
                             match elem {
                                 Some(elem) => {
@@ -408,11 +419,11 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                     match elem_ref {
                                         swc::Pat::Ident(id) => {
                                             let name = atom_to_string(&id.id.sym);
-                                            // Create member access: expr[i]
+                                            // Use computed=false with Number property for constant indices
                                             let member = Expression::Member {
-                                                object: Box::new(init_expr.clone().unwrap_or(Expression::Undefined)),
+                                                object: Box::new(Expression::Identifier(temp_var_name.clone())),
                                                 property: PropertyKey::Number(i as f64),
-                                                computed: true,
+                                                computed: false,
                                             };
                                             stmts.push(Statement::VarDeclaration {
                                                 kind,
@@ -421,20 +432,20 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                             });
                                         }
                                         _ => {
-                                            // Nested pattern - need to create temp variable
-                                            let temp_name = format!("__arr_temp_{}", i);
+                                            // Nested pattern - create a temp for this element
+                                            let elem_temp_name = format!("__arr_elem_{}", i);
                                             let member = Expression::Member {
-                                                object: Box::new(init_expr.clone().unwrap_or(Expression::Undefined)),
+                                                object: Box::new(Expression::Identifier(temp_var_name.clone())),
                                                 property: PropertyKey::Number(i as f64),
-                                                computed: true,
+                                                computed: false,
                                             };
                                             stmts.push(Statement::VarDeclaration {
-                                                kind,
-                                                name: temp_name.clone(),
+                                                kind: VarKind::Const,
+                                                name: elem_temp_name.clone(),
                                                 init: Some(member),
                                             });
                                             // Then handle the nested pattern
-                                            let nested_stmts = expand_nested_pattern(kind, elem_ref, &temp_name);
+                                            let nested_stmts = expand_nested_pattern(kind, elem_ref, &elem_temp_name);
                                             stmts.extend(nested_stmts);
                                         }
                                     }
@@ -444,11 +455,21 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                 }
                             }
                         }
-                        decls.extend(stmts);
+                        decls.push(Statement::Block(stmts));
                     }
                     swc::Pat::Object(obj) => {
                         // Object destructuring: {a, b} = expr
+                        // Use a temp variable to ensure the source expression is evaluated once
                         let mut stmts = Vec::new();
+                        
+                        // Create a temp variable for the source expression
+                        let temp_var_name = format!("__obj_src_{}", decls.len());
+                        stmts.push(Statement::VarDeclaration {
+                            kind: VarKind::Const, // Temp is always const
+                            name: temp_var_name.clone(),
+                            init: init_expr.clone(),
+                        });
+                        
                         for prop in &obj.props {
                             match prop {
                                 swc::ObjectPatProp::KeyValue(kv) => {
@@ -467,7 +488,7 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                     };
                                     
                                     let member = Expression::Member {
-                                        object: Box::new(init_expr.clone().unwrap_or(Expression::Undefined)),
+                                        object: Box::new(Expression::Identifier(temp_var_name.clone())),
                                         property: PropertyKey::String(key_str.clone()),
                                         computed: false,
                                     };
@@ -482,23 +503,23 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                         }
                                         swc::Pat::Object(nested_obj) => {
                                             // Create temp and recurse
-                                            let temp_name = format!("__obj_temp_{}", key_str);
+                                            let nested_temp_name = format!("__obj_prop_{}", key_str);
                                             stmts.push(Statement::VarDeclaration {
-                                                kind,
-                                                name: temp_name.clone(),
+                                                kind: VarKind::Const,
+                                                name: nested_temp_name.clone(),
                                                 init: Some(member),
                                             });
-                                            let nested_stmts = expand_nested_object_pattern(kind, nested_obj, &temp_name);
+                                            let nested_stmts = expand_nested_object_pattern(kind, nested_obj, &nested_temp_name);
                                             stmts.extend(nested_stmts);
                                         }
                                         swc::Pat::Array(nested_arr) => {
-                                            let temp_name = format!("__obj_temp_{}", key_str);
+                                            let nested_temp_name = format!("__obj_prop_{}", key_str);
                                             stmts.push(Statement::VarDeclaration {
-                                                kind,
-                                                name: temp_name.clone(),
+                                                kind: VarKind::Const,
+                                                name: nested_temp_name.clone(),
                                                 init: Some(member),
                                             });
-                                            let nested_stmts = expand_nested_array_pattern(kind, nested_arr, &temp_name);
+                                            let nested_stmts = expand_nested_array_pattern(kind, nested_arr, &nested_temp_name);
                                             stmts.extend(nested_stmts);
                                         }
                                         _ => {
@@ -514,7 +535,7 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                     // Handle default: { a = 5 }
                                     let var_name = atom_to_string(&assign.key.sym);
                                     let member = Expression::Member {
-                                        object: Box::new(init_expr.clone().unwrap_or(Expression::Undefined)),
+                                        object: Box::new(Expression::Identifier(temp_var_name.clone())),
                                         property: PropertyKey::Ident(var_name.clone()),
                                         computed: false,
                                     };
@@ -530,17 +551,20 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                                 }
                             }
                         }
-                        decls.extend(stmts);
+                        decls.push(Statement::Block(stmts));
                     }
                     _ => continue,
                 }
             }
             
-            if decls.len() == 1 {
-                Some(decls.pop().unwrap())
-            } else if decls.is_empty() {
+            // Handle the declarations - wrap everything in a Block to ensure sequential evaluation
+            // This ensures all declarations (including destructuring) are evaluated in order
+            if decls.is_empty() {
                 Some(Statement::Empty)
+            } else if decls.len() == 1 {
+                Some(decls.into_iter().next().unwrap())
             } else {
+                // Multiple declarations - wrap in a block
                 Some(Statement::Block(decls))
             }
         }

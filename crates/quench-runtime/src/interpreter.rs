@@ -10,7 +10,7 @@ use crate::env::Environment;
 
 // Thread-local storage for current "this" binding when calling native functions
 thread_local! {
-    static CURRENT_THIS: Cell<Option<Value>> = Cell::new(None);
+    static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
 
 /// Set the current "this" binding for native function calls
@@ -397,30 +397,30 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                                         Ok(Value::String(s.chars().nth(idx).map(|c| c.to_string()).unwrap_or_default()))
                                     }
                                     "indexOf" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)))
                                     }
                                     "toUpperCase" => Ok(Value::String(s.to_uppercase())),
                                     "toLowerCase" => Ok(Value::String(s.to_lowercase())),
                                     "trim" => Ok(Value::String(s.trim().to_string())),
                                     "includes" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.contains(&needle)))
                                     }
                                     "startsWith" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.starts_with(&needle)))
                                     }
                                     "endsWith" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.ends_with(&needle)))
                                     }
                                     "concat" => {
-                                        let sep = args.iter().map(|v| to_js_string(v)).collect::<Vec<_>>().join("");
+                                        let sep = args.iter().map(to_js_string).collect::<Vec<_>>().join("");
                                         Ok(Value::String(format!("{}{}", s, sep)))
                                     }
                                     "split" => {
-                                        let sep = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let sep = args.first().map(to_js_string).unwrap_or_default();
                                         let parts: Vec<Value> = if sep.is_empty() {
                                             s.chars().map(|c| Value::String(c.to_string())).collect()
                                         } else {
@@ -446,12 +446,12 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                                         Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
                                     }
                                     "match" => {
-                                        let pattern = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let pattern = args.first().map(to_js_string).unwrap_or_default();
                                         // Simple regex matching - just check if pattern is in string
                                         Ok(Value::Boolean(s.contains(&pattern)))
                                     }
                                     "search" => {
-                                        let pattern = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let pattern = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Number(s.find(&pattern).map(|i| i as f64).unwrap_or(-1.0)))
                                     }
                                     _ => Ok(Value::Undefined),
@@ -753,22 +753,22 @@ fn eval_callee_with_this(callee: &Expression, env: &Rc<RefCell<Environment>>) ->
                                         Ok(Value::String(s.chars().nth(idx).map(|c| c.to_string()).unwrap_or_default()))
                                     }
                                     "indexOf" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)))
                                     }
                                     "toUpperCase" => Ok(Value::String(s.to_uppercase())),
                                     "toLowerCase" => Ok(Value::String(s.to_lowercase())),
                                     "trim" => Ok(Value::String(s.trim().to_string())),
                                     "includes" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.contains(&needle)))
                                     }
                                     "startsWith" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.starts_with(&needle)))
                                     }
                                     "endsWith" => {
-                                        let needle = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+                                        let needle = args.first().map(to_js_string).unwrap_or_default();
                                         Ok(Value::Boolean(s.ends_with(&needle)))
                                     }
                                     _ => Ok(Value::Undefined),
