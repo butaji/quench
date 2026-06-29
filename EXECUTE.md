@@ -7,18 +7,19 @@
 ## Current state
 
 - `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and basic built-ins.
-- `src/main.rs` registers many bridge host functions and loads `runtime.js`.
-- `src/event_loop.rs` dispatches keyboard/mouse/resize/timer events through the interpreter.
-- The build compiles, but `runtime.js` and the examples fail at runtime because several JS features and built-ins are incomplete or missing.
+- Recent progress: computed member access (`obj[key]`), optional chaining (`obj?.prop`), the `arguments` object, shared `Array.prototype`, event-loop microtask draining, hot-reload re-registration, and the missing bridge host functions `__ink_get_node_parent` / `__ink_set_raw_mode` are in place.
+- `runtime.js` parses and loads only because unsupported statements (`for...of`, `for...in`, `??`, getters/setters, etc.) are silently dropped. It does **not** yet run correctly for any example that relies on those features.
+- `examples/simple.js` is expected to work because it avoids the missing features.
+- `examples/counter.js`, `use-bridge.tsx`, and `animations.tsx` are still blocked on the remaining runtime gaps.
 
 ## Approach
 
-1. **Fix parser/lowering bugs** — move stray test code, support module/script parsing, fix computed member access, template literal expressions, optional chaining, rest parameters, `for...of`/`for...in`, nullish coalescing, getters/setters.
-2. **Complete standard-library objects** — real `Array.prototype`, `Map`/`Set` methods and iterators, `Promise`, `String.prototype.repeat`/`padStart`, `Date.prototype`, `Object.prototype.hasOwnProperty`, `arguments` object.
-3. **Fix the value/prototype model** — make prototype chains, constructors, `new`, and method dispatch work for built-ins and user functions.
-4. **Fix bridge host functions** — add missing `__ink_get_node_parent` and `__ink_set_raw_mode`, fix `__ink_get_node_children` to actually populate the array, and ensure timer callbacks round-trip correctly.
+1. **Fix parser/lowering bugs** — support module/script parsing, fix computed member access, template literal expressions, optional chaining, rest parameters, `for...of`/`for...in`, nullish coalescing, getters/setters.
+2. **Complete standard-library objects** — real mutating `Array.prototype`, `Map`/`Set` methods and iterators, `Promise`, `String.prototype.repeat`/`padStart`, `Date.prototype`, `Object.prototype.hasOwnProperty`.
+3. **Fix the value/prototype model** — install shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, and `Function`, and make `new`/prototype lookup work for all built-ins.
+4. **Fix bridge host functions** — done; keep host functions aligned if the FFI contract changes.
 5. **Keep `runtime.js` compatible** — only rewrite constructs that are cheaper to change in JS than to add to the engine (document any such rewrites).
-6. **Verify** — run `cargo test` and the example apps (`simple.js`, `counter.js`, `use-bridge.tsx`, `animations.tsx`).
+6. **Verify** — run `cargo test` and the example apps; `simple.js` should work now, the rest after the runtime gaps are closed.
 
 ## Boundaries — do not touch
 
@@ -55,6 +56,11 @@ See `tasks/index.json`.
 cargo check
 cargo test
 cargo run -- examples/simple.js
+```
+
+After Tasks 01–04 and 07 are truly complete:
+
+```bash
 cargo run -- examples/counter.js
 cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
 cargo run -- examples/animations.tsx
