@@ -23,9 +23,6 @@ pub fn get_native_this() -> Option<Value> {
     CURRENT_THIS.with(|cell| cell.take())
 }
 
-/// Special identifier name for "this"
-const THIS_NAME: &str = "__this__";
-
 /// Evaluate a complete program with hoisting
 pub fn eval_program(program: &Program, env: &mut Rc<RefCell<Environment>>) -> Result<Value, JsError> {
     match program {
