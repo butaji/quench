@@ -55,6 +55,13 @@
       "file": "tasks/08-verify.md",
       "status": "in_progress",
       "notes": "simple.js expected to work. counter.js, use-bridge.tsx, and animations.tsx blocked on runtime gaps. Unit/parity tests still need to be added."
+    },
+    {
+      "id": "09",
+      "title": "Extend build.rs linter to quench-runtime and enforce limits",
+      "file": "tasks/09-linter.md",
+      "status": "pending",
+      "notes": "build.rs currently only lints src/. It must also lint crates/quench-runtime/src/ and all new runtime code must pass: file <= 500 lines, function <= 40 lines, cyclomatic complexity <= 10."
     }
   ]
 }

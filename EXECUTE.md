@@ -19,6 +19,7 @@
   - Prototype model: shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, `Function`; `new` for built-in constructors.
 - `runtime.js` parses and loads, but many unsupported constructs are still silently dropped.
 - `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` remain blocked.
+- The `build.rs` linter currently only checks `src/`; `crates/quench-runtime/src/` is not linted. All new runtime code must still obey the project limits (file ≤ 500 lines, function ≤ 40 lines, complexity ≤ 10) and the linter must be extended to cover the runtime crate.
 
 ## Approach
 
