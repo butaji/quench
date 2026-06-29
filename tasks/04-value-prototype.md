@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make the value/prototype system consistent so built-in constructors (`Array`, `Map`, `Set`, `Date`, `String`, `Number`, `Boolean`, `Function`, `Object`) and user constructors work with `new`, method dispatch, and prototype lookup.
+Make the value/prototype system consistent so built-in constructors and user constructors work with `new`, method dispatch, and prototype lookup.
 
 ## Files
 
@@ -10,26 +10,24 @@ Make the value/prototype system consistent so built-in constructors (`Array`, `M
 - `crates/quench-runtime/src/interpreter.rs`
 - `crates/quench-runtime/src/builtins.rs`
 
-## Current issues
+## Done
 
-- Built-in objects do not share a single prototype chain; each object is standalone.
-- `Array` instances do not inherit from `Array.prototype`, so `[].map` is missing unless added to every array.
-- `Object.prototype` is not installed on ordinary objects, breaking `Object.prototype.hasOwnProperty.call(obj, k)`.
-- `Function.prototype` is not installed on function values, though `Function.prototype` methods are not heavily used.
-- `new Date()` creates an object with `_timestamp` but no prototype methods.
-- `new String()`, `new Number()`, `new Boolean()` are not needed but boxing should at least not crash.
-- Prototype lookup in `Object::get` exists but is not wired to shared built-in prototypes.
+- Shared `Object.prototype`, `Array.prototype`, `Map.prototype`, `Set.prototype`, `Date.prototype`, and `String.prototype` are created and installed.
+- `Object::new_array`, `Object::new_map`, `Object::new_set`, and ordinary object creation link to the shared prototypes.
+- `New` expression evaluation looks up `Constructor.prototype`, creates an object with that prototype, calls the constructor with `this`, and returns the object.
+- `ValueFunction` carries a prototype cell for user functions.
+
+## Still to do
+
+- Install a shared `Function.prototype` on function values and wire `Function.prototype.call`/`apply` consistently.
+- Support boxing constructors: `new String(...)`, `new Number(...)`, `new Boolean(...)`.
+- Ensure prototype fallback works for all object kinds after `builtins.rs` is split into submodules.
 
 ## Steps
 
-1. In `Context::new`, create shared prototype objects for:
-   - `Object.prototype` (with `hasOwnProperty`, `toString`)
-   - `Array.prototype` (with all Array methods from Task 02)
-   - `Map.prototype`, `Set.prototype`, `Date.prototype`, `String.prototype`, `Function.prototype`
-2. Ensure `Object::new(kind)` sets the appropriate prototype for `Array`, `Map`, `Set`, `Date`, and ordinary objects.
-3. Ensure `ValueFunction::get_prototype` uses `Function.prototype` as its prototype's prototype.
-4. Ensure `new Constructor(...)` looks up `Constructor.prototype`, creates an object with that prototype, calls the constructor with `this`, and returns the new object.
-5. Ensure member access falls back to the prototype chain correctly.
+1. Create a shared `Function.prototype` and install it on every function value.
+2. Make `String`, `Number`, and `Boolean` callable as constructors that produce boxed objects (or at least primitive wrappers).
+3. Add tests that exercise prototype chains for all built-in objects.
 
 ## Boundaries
 
@@ -39,9 +37,8 @@ Make the value/prototype system consistent so built-in constructors (`Array`, `M
 
 ## Acceptance criteria
 
-- `new Map()` has `set`, `get`, `has`, `forEach`, `size`.
-- `new Set()` has `add`, `has`, `forEach`, `size`.
-- `[]` has `push`, `map`, `filter`, `forEach`.
+- `(function(){}).call(null, 1)` works.
+- `new String("x")` does not crash and behaves like a string object.
 - `Object.prototype.hasOwnProperty.call({a:1}, 'a')` returns `true`.
 - `function Foo() { this.x = 1; }; new Foo().x` returns `1`.
 

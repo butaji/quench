@@ -5,28 +5,28 @@
       "title": "Fix parser and lowering bugs in quench-runtime",
       "file": "tasks/01-fix-parser-lower.md",
       "status": "in_progress",
-      "notes": "for...of/for...in, ??, ?. member access, computed property access are implemented. Still missing: module/script fallback, template literal expressions, rest parameters, spread, optional calls (?.()), real getter/setter metadata."
+      "notes": "Computed member access, template literal expressions, optional chaining (member and call), for...of/for...in, rest params, ?? are implemented. Still missing: module/script fallback, real getter/setter metadata, object/array spread."
     },
     {
       "id": "02",
       "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
       "file": "tasks/02-complete-builtins.md",
       "status": "in_progress",
-      "notes": "JSON.parse fixed; Array.prototype shell with stub methods exists and is shared. Still missing: real mutating Array methods, Map/Set collections and iterators, Promise, Date.prototype, String/Number/Boolean/Object.prototype."
+      "notes": "Array.prototype methods, Map/Set constructors and methods, String/Date/Object.prototype, JSON.parse, native Error constructors are implemented. Still missing: Promise, iterable Map/Set (Symbol.iterator / Array.from), Array.from on iterables, Date.prototype.toLocaleTimeString."
     },
     {
       "id": "03",
       "title": "Add missing language features to the interpreter",
       "file": "tasks/03-language-features.md",
       "status": "in_progress",
-      "notes": "for...of/for...in, ??, ?. member access implemented. Still missing: rest parameters, spread calls, template literal expressions, getter/setter invocation, arguments object, typeof undeclared identifiers."
+      "notes": "for...of/for...in, ??, optional chaining, rest params, template literal expressions, arguments object are implemented. Still missing: spread in calls/literals, getter/setter invocation, typeof undeclared identifiers."
     },
     {
       "id": "04",
       "title": "Fix value and prototype model",
       "file": "tasks/04-value-prototype.md",
       "status": "in_progress",
-      "notes": "Shared Array.prototype wired. Still missing: Object.prototype, Map/Set/Date/String/Function.prototype, new Constructor for built-ins."
+      "notes": "Shared Object.prototype, Array.prototype, Map/Set/Date/String prototypes and new Constructor wiring are implemented. Still missing: shared Function.prototype, boxing String/Number/Boolean."
     },
     {
       "id": "05",
@@ -54,21 +54,21 @@
       "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
       "status": "in_progress",
-      "notes": "simple.js expected to work. counter.js, use-bridge.tsx, and animations.tsx blocked on runtime gaps. Unit/parity tests still need to be added."
+      "notes": "simple.js expected to work; counter.js/use-bridge.tsx/animations.tsx now depend mainly on spread, iterable Map/Set, Promise, getters/setters, and typeof undeclared. Unit/parity tests still need to be added."
     },
     {
       "id": "09",
       "title": "Extend build.rs linter to quench-runtime and enforce limits",
       "file": "tasks/09-linter.md",
-      "status": "pending",
-      "notes": "build.rs currently only lints src/. It must also lint crates/quench-runtime/src/ and all new runtime code must pass: file <= 500 lines, function <= 40 lines, cyclomatic complexity <= 10."
+      "status": "in_progress",
+      "notes": "builtins.rs, interpreter.rs, lower.rs, and value.rs currently exceed the 500-line file limit. The linter must be extended and files split/refactored to comply before it can be turned on."
     },
     {
       "id": "10",
       "title": "Architecture hardening: split builtins and guard recursion",
       "file": "tasks/10-architecture.md",
-      "status": "pending",
-      "notes": "builtins.rs should be split into submodules; interpreter needs a recursion guard or iterative eval to avoid stack overflow on deeply nested JSX."
+      "status": "in_progress",
+      "notes": "Recursion guard is implemented. builtins.rs still needs splitting into submodules; value model still uses std HashMap."
     }
   ]
 }

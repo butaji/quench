@@ -6,20 +6,20 @@
 
 ## Current state
 
-- `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and basic built-ins.
+- `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and built-ins.
 - Recent progress:
-  - Parser/lowering: `for...of`/`for...in`, nullish coalescing (`??`), optional chaining member access (`obj?.prop`, `obj?.[expr]`), and computed property access (`obj[expr]`) are implemented.
-  - Built-ins: `JSON.parse` actually parses; a shared `Array.prototype` shell is wired up.
-  - Bridge/event loop: missing host functions `__ink_get_node_parent` and `__ink_set_raw_mode` are registered, `__ink_get_node_children` populates elements, props are serialized as JSON, microtasks are drained, and hot reload re-registers bridge functions.
+  - Parser/lowering: computed member access, template literal expressions, optional chaining member and call (`?.prop`, `?.[expr]`, `?.()`), `for...of`/`for...in`, rest parameters, nullish coalescing (`??`), `in`, `instanceof`.
+  - Built-ins: most `Array.prototype` methods, `Map`/`Set` constructors and methods, `String.prototype` methods (`repeat`, `padStart`, etc.), `Date.prototype` getters, `Object.prototype` (`hasOwnProperty`, etc.), real `JSON.parse`, native `Error` constructors.
+  - Interpreter: recursion-depth guard, `arguments` object, rest-param binding, `Function.prototype.call/apply`, `New` expression wiring, bound methods.
+  - Bridge/event loop: `__ink_get_node_parent`, `__ink_set_raw_mode`, `__ink_stdin_is_raw`, populated `__ink_get_node_children`, JSON props serialization, microtask draining, hot-reload re-registration.
   - Compiler: hooks are no longer incorrectly prefixed inside `createElement` calls.
-- Still missing (blocking real examples):
-  - Parser: module/script fallback, template literal expressions, rest parameters, spread, optional calls (`?.()`), real getter/setter metadata.
-  - Interpreter: `arguments` object, rest-parameter binding, spread expansion, getter/setter invocation, `typeof` on undeclared identifiers.
-  - Built-ins: real mutating Array methods, `Map`/`Set` collections+iterators, `Promise`, `Date.prototype`, `String`/`Number`/`Boolean`/`Object.prototype`.
-  - Prototype model: shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, `Function`; `new` for built-in constructors.
-- `runtime.js` parses and loads, but many unsupported constructs are still silently dropped.
-- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` remain blocked.
-- The `build.rs` linter currently only checks `src/`; `crates/quench-runtime/src/` is not linted. All new runtime code must still obey the project limits (file ≤ 500 lines, function ≤ 40 lines, complexity ≤ 10) and the linter must be extended to cover the runtime crate.
+- Still missing (now the main blockers for real examples):
+  - Parser: module/script fallback, real getter/setter metadata, object/array spread.
+  - Interpreter: spread expansion, getter/setter invocation, `typeof` on undeclared identifiers.
+  - Built-ins: `Promise`, iterable `Map`/`Set` for `for...of` and `Array.from`, `Date.prototype.toLocaleTimeString`, shared `Function.prototype`, boxing constructors.
+  - Code health: `builtins.rs`, `interpreter.rs`, `lower.rs`, and `value.rs` exceed the 500-line file limit; `build.rs` linter does not yet cover the runtime crate.
+- `runtime.js` now parses most of its constructs instead of silently dropping them.
+- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` are now blocked mainly by spread, iterable Map/Set, Promise, getters/setters, and `typeof` undeclared.
 
 ## Approach
 

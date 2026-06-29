@@ -10,28 +10,28 @@ Add the JS language features required by `runtime.js` and compiled TSX that the 
 - `crates/quench-runtime/src/lower.rs`
 - `crates/quench-runtime/src/ast.rs`
 
-## Required features
+## Done
 
-1. **`for...of` loops** — iterate over arrays, Map, Set, and other iterables.
-2. **`for...in` loops** — iterate over enumerable property keys of an object.
-3. **Nullish coalescing (`??`)** — return left operand if it is not `null`/`undefined`, otherwise right.
-4. **Optional chaining (`?.`)** — lowered to a null-check + access; the interpreter may not need direct support if lowering handles it.
-5. **Rest parameters** — `function(cb, ...args)` binds `args` to the trailing arguments.
-6. **Spread in function calls** — `cb(...args)` expands an iterable into positional arguments.
-7. **Template literal expressions** — `` `Count: ${count}` `` evaluates to the concatenated string.
-8. **Getters and setters** — property access invokes getters; assignment invokes setters.
-9. **`arguments` object** — every non-arrow function has a local `arguments` array-like object (used heavily by the console polyfill and `Fragment`).
-10. **`typeof` for undeclared identifiers** — currently throws `ReferenceError`; `typeof foo` should return `"undefined"` when `foo` is undeclared.
+- `for...of` and `for...in` loops (with identifier and destructuring bindings).
+- Nullish coalescing (`??`).
+- Optional chaining for member and call (`obj?.prop`, `obj?.[expr]`, `obj?.()`).
+- Computed property access (`obj[expr]`).
+- Rest parameters (`function(a, ...rest)`).
+- Template literal expressions (`` `a ${b}` ``).
+- `arguments` object in non-arrow function calls.
+- `in` and `instanceof` binary operators.
+
+## Still to do
+
+- Spread in function calls (`cb(...args)`) and array/object literals (`[...arr]`, `{...obj}`).
+- Getter/setter invocation on property access and assignment.
+- `typeof` on undeclared identifiers (`typeof notDeclared` must return `"undefined"`).
 
 ## Steps
 
-1. Add AST nodes for `ForOf` and `ForIn` and lower them from swc.
-2. Add `BinaryOp::NullishCoalescing` and implement it in `eval_binary_op`.
-3. Ensure optional chaining is lowered in Task 01; here, verify the generated conditional evaluates correctly.
-4. In function calls, bind a rest parameter to the remaining arguments and support spread calls.
-5. In `eval_program`/`eval_statements`, for every function call, declare an `arguments` local that is an array-like object containing the actual arguments.
-6. Implement getter/setter invocation in member access and assignment.
-7. Make `typeof` handle undeclared identifiers gracefully.
+1. Implement spread expansion in `eval_call` and array/object literal construction.
+2. Implement getter invocation in member access and setter invocation in assignment.
+3. Make `typeof` return `"undefined"` for undeclared identifiers instead of throwing `ReferenceError`.
 
 ## Boundaries
 
@@ -41,12 +41,10 @@ Add the JS language features required by `runtime.js` and compiled TSX that the 
 
 ## Acceptance criteria
 
-- `for (const x of [1,2,3])` sums to `6`.
-- `for (const k in {a:1,b:2})` collects keys `a` and `b`.
-- `null ?? 'fallback'` returns `'fallback'`; `0 ?? 'fallback'` returns `0`.
-- `function f(a, ...rest) { return rest; } f(1,2,3)` returns `[2,3]`.
-- `function g() { return arguments.length; } g(1,2)` returns `2`.
+- `cb(...[1,2,3])` calls `cb` with three arguments.
+- `[...[1,2], 3]` evaluates to `[1,2,3]`.
 - `({ get x() { return 42; } }).x` returns `42`.
+- `({ set x(v) { this._x = v; } }).x = 5` stores `5`.
 - `typeof notDeclared` returns `"undefined"` without throwing.
 
 ## Verification

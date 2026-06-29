@@ -2,15 +2,20 @@
 
 ## Goal
 
-Keep the runtime architecture healthy as it grows: split the monolithic built-ins file and add a safety guard for the recursive interpreter.
+Keep the runtime architecture healthy as it grows: split the monolithic built-ins file, finish defensive limits, and track structural debt.
 
 ## Files
 
 - `crates/quench-runtime/src/builtins.rs`
 - `crates/quench-runtime/src/interpreter.rs`
+- `crates/quench-runtime/src/value.rs`
 - New directory: `crates/quench-runtime/src/builtins/`
 
-## Steps
+## Done
+
+- Recursion guard is implemented in the interpreter (depth limit with a clear `JsError::StackOverflow`).
+
+## Still to do
 
 1. **Split `builtins.rs` into submodules.** Create:
    - `crates/quench-runtime/src/builtins/mod.rs` — registration dispatcher.
@@ -24,11 +29,8 @@ Keep the runtime architecture healthy as it grows: split the monolithic built-in
    - `crates/quench-runtime/src/builtins/json.rs` — `JSON.stringify`/`JSON.parse`.
    - `crates/quench-runtime/src/builtins/math.rs` — `Math` object.
    - `crates/quench-runtime/src/builtins/global.rs` — globals like `setTimeout`, `parseInt`, `encodeURIComponent`.
-2. **Add a recursion guard to the interpreter.** Introduce a `thread_local` depth counter in `interpreter.rs`:
-   - Increment before each `eval_expression`/`eval_statement` recursive call.
-   - If depth exceeds a configurable limit (e.g., 1024), return a `JsError::StackOverflow` instead of crashing.
-   - Reset on error or when unwinding.
-3. Keep behavior identical; this is purely structural and defensive.
+2. **Evaluate ordered maps for object property enumeration.** If `for...in` order or JSON serialization order becomes observable, migrate `Object` internals from `std::collections::HashMap` to `indexmap` or a similar ordered map.
+3. Keep behavior identical during refactoring.
 
 ## Boundaries
 
