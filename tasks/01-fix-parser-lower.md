@@ -37,6 +37,7 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 
 - Work only in `crates/quench-runtime/src/`.
 - Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

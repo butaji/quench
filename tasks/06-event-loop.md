@@ -24,6 +24,7 @@ Make sure the event loop correctly drives JS callbacks and drains any JS microta
 
 - Only modify `src/event_loop.rs` and, if needed, a small helper in `src/main.rs`.
 - Do not change timer implementation in `src/bridge/timers.rs`, signals, or hot-reload file watcher.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

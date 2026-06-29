@@ -45,6 +45,7 @@ However, it currently only scans `src/`, so `crates/quench-runtime/src/` is not 
 - Only modify `build.rs` and `crates/quench-runtime/src/` for refactoring/lint compliance.
 - Do not change behavior while refactoring.
 - Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

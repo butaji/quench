@@ -67,6 +67,7 @@ Prototype methods used by `runtime.js` and examples:
 
 - Only modify `crates/quench-runtime/src/`.
 - Do not change compiler output or example source.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

@@ -32,6 +32,7 @@ Register all bridge functions that `runtime.js` and the examples call from JS, a
 - Only modify `src/main.rs` (and optionally `src/ink_js.rs`).
 - Do not change `src/bridge/` internals; only call existing `call_ink_ffi` / `call_ink_ffi_fast` methods.
 - Do not touch `src/ink/`, `src/render/`, `src/compiler/`.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

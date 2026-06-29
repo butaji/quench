@@ -35,6 +35,7 @@ Make the value/prototype system consistent so built-in constructors (`Array`, `M
 
 - Only modify `crates/quench-runtime/src/`.
 - Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 

@@ -37,6 +37,7 @@ Add the JS language features required by `runtime.js` and compiled TSX that the 
 
 - Only modify `crates/quench-runtime/src/`.
 - Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
+- `examples/` are immutable.
 
 ## Acceptance criteria
 
