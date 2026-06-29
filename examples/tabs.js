@@ -35,7 +35,7 @@ function TabContent(props) {
           { type: Text, props: { bold: true, children: 'About' }},
           { type: Text, props: { children: '' }},
           { type: Text, props: { children: 'Quench v0.1.0' }},
-          { type: Text, props: { children: 'Built with Rust + rquickjs + ratatui' }},
+          { type: Text, props: { children: 'Built with Rust + custom JS runtime + ratatui' }},
           { type: Text, props: { children: 'Yoga layout engine for flexbox' }}
         ]
       }

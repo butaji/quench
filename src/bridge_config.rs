@@ -1,7 +1,7 @@
 //! Bridge Configuration — Propagate props from Rust to Ink/JS runtime
 //!
 //! Provides `BridgeConfig` to inject CLI flags, platform info, and terminal
-//! capabilities into the QuickJS VM before user code runs.
+//! capabilities into the JS runtime before user code runs.
 //!
 //! **IMPORTANT:** Keep `BRIDGE_GLOBAL` in sync with `runtime.js`.
 //! See `src/runtime.js:BRIDGE_GLOBAL`.
