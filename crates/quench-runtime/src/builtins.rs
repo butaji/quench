@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use serde::ser::{SerializeMap, SerializeSeq};
 
 use crate::value::{Value, JsError, Object, ObjectKind, NativeFunction, to_js_string, to_number, to_bool};
 use crate::Context;
@@ -414,10 +415,29 @@ impl serde::Serialize for JsValueProxy<'_> {
             Value::Boolean(b) => serializer.serialize_bool(*b),
             Value::Number(n) => serializer.serialize_f64(*n),
             Value::String(s) => serializer.serialize_str(s),
-            Value::Object(_) => {
-                // Simple object serialization - just serialize properties as JSON string
-                let s = to_js_string(self.0);
-                serializer.serialize_str(&s)
+            Value::Object(obj_rc) => {
+                let obj = obj_rc.borrow();
+                
+                // Check if it's an array (has numeric indices and length)
+                if obj.kind == ObjectKind::Array || obj.elements.len() > 0 {
+                    // Serialize as array
+                    let mut seq = serializer.serialize_seq(Some(obj.elements.len()))?;
+                    for val in &obj.elements {
+                        seq.serialize_element(&JsValueProxy(val))?;
+                    }
+                    seq.end()
+                } else {
+                    // Serialize as object - collect own properties only
+                    let mut map = serializer.serialize_map(Some(obj.properties.len()))?;
+                    for (key, val) in &obj.properties {
+                        // Skip internal properties
+                        if key.starts_with("__") || key == "constructor" || key == "prototype" {
+                            continue;
+                        }
+                        map.serialize_entry(key, &JsValueProxy(val))?;
+                    }
+                    map.end()
+                }
             }
             Value::Function(_) => serializer.serialize_str("[Function]"),
             Value::NativeFunction(_) => serializer.serialize_str("[Function]"),
