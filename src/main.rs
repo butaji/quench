@@ -164,7 +164,7 @@ fn setup_runtime(ctx: &mut js_runtime::Context) -> Result<()> {
 /// Register bridge FFI functions as host functions
 fn register_bridge_functions(ctx: &mut js_runtime::Context) {
     use std::rc::Rc;
-    use js_runtime::{Value, NativeFunction, Object, ObjectKind};
+    use js_runtime::{Value, Object, ObjectKind};
     
     // Helper to convert value to string
     fn to_js_string(v: &Value) -> String {

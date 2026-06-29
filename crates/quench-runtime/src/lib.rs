@@ -28,6 +28,7 @@ pub mod env;
 pub mod interpreter;
 pub mod lower;
 pub mod swc_parse;
+pub mod builtins;
 pub mod host;
 
 use std::collections::HashMap;
@@ -75,6 +76,14 @@ impl Context {
         module_obj.borrow_mut().set("exports", Value::Object(Rc::clone(&exports_rc)));
         self.set_global("exports".to_string(), Value::Object(Rc::clone(&exports_rc)));
         self.set_global("module".to_string(), Value::Object(module_obj));
+        
+        // JavaScript globals - globalThis is the global object itself
+        let global_obj = Object::new(ObjectKind::Global);
+        let global_obj = Rc::new(RefCell::new(global_obj));
+        self.set_global("globalThis".to_string(), Value::Object(Rc::clone(&global_obj)));
+        self.set_global("undefined".to_string(), Value::Undefined);
+        self.set_global("Infinity".to_string(), Value::Number(f64::INFINITY));
+        self.set_global("NaN".to_string(), Value::Number(f64::NAN));
 
         Ok(())
     }

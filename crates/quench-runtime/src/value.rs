@@ -11,11 +11,6 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-// Forward declarations to avoid circular dependencies
-mod sealed {
-    pub trait Sealed {}
-}
-
 // =============================================================================
 // Value - The core runtime type
 // =============================================================================
