@@ -12,12 +12,11 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 
 ## Current issues
 
-- `swc_parse.rs` has test functions placed outside the `#[cfg(test)]` block (lines 129–187), which will cause a compile error for non-test builds.
 - `parse_swc` uses `parse_script` only; compiled TSX may arrive as an ES module, so support both `parse_script` and `parse_module` (auto-detect or expose `parse_module`).
 - `lower_member_prop` for computed properties returns an empty `PropertyKey::String` instead of lowering the inner expression.
 - `lower_template_literal` joins the static `quasis` and drops embedded expressions entirely.
 - `lower_expr` rejects `OptChain` (`?.`) with an error.
-- `lower_expr` rejects `Tpl` expressions? Actually `Tpl` is lowered but incorrectly.
+- `lower_expr` handles `Tpl` but drops embedded expressions.
 - `lower_decl` / arrow/function params map non-identifier and rest params to `"arg"`, dropping rest args.
 - `lower_stmt` returns `None` for `ForIn` and `ForOf`, silently deleting loops.
 - `lower_bin_op` does not handle `NullishCoalescing` (`??`).
@@ -25,15 +24,14 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 
 ## Steps
 
-1. Move stray tests in `swc_parse.rs` inside `mod tests`.
-2. Add `parse_module` (or auto-detect) and make `Context::eval` fall back to module parsing when script parsing fails.
-3. Fix `lower_member_prop` to lower computed expressions into `PropertyKey::Computed`.
-4. Fix `lower_template_literal` to interleave `quasis` and lowered expressions into a binary `+` expression.
-5. Lower optional chaining (`a?.b`) to a conditional expression that checks `a != null` before accessing `a.b`.
-6. Add rest-parameter support: represent rest as a special param marker or expand `function(cb, ...args)` so `args` is bound to `Array.prototype.slice.call(arguments, n)`.
-7. Add AST support and lowering for `for...of` and `for...in` loops.
-8. Add `BinaryOp::NullishCoalescing` and handle it in the interpreter (return left if not null/undefined, else right).
-9. Preserve getter/setter metadata in object literals so the interpreter can invoke them on property access.
+1. Add `parse_module` (or auto-detect) and make `Context::eval` fall back to module parsing when script parsing fails.
+2. Fix `lower_member_prop` to lower computed expressions into `PropertyKey::Computed`.
+3. Fix `lower_template_literal` to interleave `quasis` and lowered expressions into a binary `+` expression.
+4. Lower optional chaining (`a?.b`) to a conditional expression that checks `a != null` before accessing `a.b`.
+5. Add rest-parameter support: represent rest as a special param marker or expand `function(cb, ...args)` so `args` is bound to `Array.prototype.slice.call(arguments, n)`.
+6. Add AST support and lowering for `for...of` and `for...in` loops.
+7. Add `BinaryOp::NullishCoalescing` and handle it in the interpreter (return left if not null/undefined, else right).
+8. Preserve getter/setter metadata in object literals so the interpreter can invoke them on property access.
 
 ## Boundaries
 
