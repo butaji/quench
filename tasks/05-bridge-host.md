@@ -1,50 +1,47 @@
-# Task 05: Register bridge host functions and Ink globals from the main crate
+# Task 05: Fix bridge host functions and Ink globals in main crate
 
 ## Goal
 
-Expose the existing Rust bridge to the interpreter by registering host functions and Ink globals from `src/main.rs`, without letting `quench-runtime` depend on `quench` internals.
-
-> **Custom vs crate:** The host-function API is custom. The bridge implementation stays in `src/bridge/`; we only register closures that call it.
+Register all bridge functions that `runtime.js` and the examples call from JS, and fix the existing registrations that return wrong shapes.
 
 ## Files
 
-- Modify: `src/main.rs`
-- Modify or delete: `src/ink_js.rs` (currently rquickjs-specific)
+- `src/main.rs`
+- `src/ink_js.rs` (optional; constants already registered in `main.rs`)
+
+## Missing host functions
+
+- `__ink_get_node_parent(id)` — called by `runtime.js` mouse hit-testing. Forward to `crate::bridge::ffi::call_ink_ffi("get_node_parent", ...)`, parse the result, and return a number or `null`.
+- `__ink_set_raw_mode(enabled)` — called by the `process.stdin` polyfill in `runtime.js`. Forward to `crate::bridge::ffi::call_ink_ffi("set_raw_mode", ...)`.
+
+## Broken host functions
+
+- `__ink_get_node_children(id)` currently creates an empty array of the right length but never fills it. Populate the elements with the parsed IDs.
+- `__ink_set_timeout` and `__ink_set_interval` currently expect a function as the first argument and serialize it with `to_js_string`. Runtime.js actually calls them with a numeric JS timer ID and a delay. Verify and adjust so the first argument is treated as the callback ID/number passed to the bridge.
 
 ## Steps
 
-1. In `quench-runtime`, ensure `Context` already exposes:
-   - `register_native_function(name, callback: Box<dyn Fn(&[Value]) -> Result<Value>>)`
-   - `set_global(name, value)`
-   - `eval(source)`
-2. In `src/main.rs` create a helper `register_ink_host_functions(ctx: &mut quench_runtime::Context)`:
-   - Register `__ink_call` as a native function that forwards `(method, args_json)` to `crate::bridge::call_ink_ffi` and returns the result string.
-   - Register `__ink_call_fast` as a native function that forwards `(method_id_or_name, a, b, c, d, e)` to `crate::bridge::call_ink_ffi_fast`.
-3. Register globals:
-   - `Box`, `Text`, `Static`, `Newline`, `Spacer` as strings (`"ink-box"`, etc.).
-   - `ink` namespace object containing the same tags.
-4. Replace `src/ink_js.rs` with a thin module that exports the tag constants and a `register(ctx: &mut quench_runtime::Context)` helper, or delete it and keep the constants in `src/main.rs`.
-5. Update `src/main.rs` `setup_runtime` to:
-   - create the `quench_runtime::Context`
-   - register host functions and globals
-   - load `runtime.js`
-   - inject bridge config via eval
+1. Add `ctx.register_native("__ink_get_node_parent", ...)` in `register_bridge_functions`.
+2. Add `ctx.register_native("__ink_set_raw_mode", ...)`.
+3. Fix `__ink_get_node_children` to set each element of the returned array.
+4. Verify `__ink_set_timeout` / `__ink_set_interval` signatures match runtime.js usage (`globalThis.__ink_set_timeout(jsId, delay)`).
+5. Keep all other host functions unchanged unless they are clearly wrong.
 
 ## Boundaries
 
-- Only add host bindings and globals in the main crate. Do not change `src/bridge/ffi.rs`, `src/bridge/node.rs`, `src/bridge/tree.rs`, or any other bridge internals.
-- `quench-runtime` must remain independent of `quench` bridge code; all bridge closures live in `src/main.rs`.
-- Call existing bridge functions exactly as `src/main.rs` currently does through `rquickjs`; do not redesign the FFI contract.
+- Only modify `src/main.rs` (and optionally `src/ink_js.rs`).
+- Do not change `src/bridge/` internals; only call existing `call_ink_ffi` / `call_ink_ffi_fast` methods.
+- Do not touch `src/ink/`, `src/render/`, `src/compiler/`.
 
 ## Acceptance criteria
 
-- A JS snippet evaluated through the interpreter can call `__ink_call('create_root', '[]')` and receive `"1"`.
-- `globalThis.ink.Box === 'ink-box'`.
-- `cargo run -- examples/simple.js` reaches the render path (it may still fail on runtime.js features not yet implemented).
+- `runtime.js` can call `__ink_get_node_parent(id)` and `__ink_set_raw_mode(bool)` without `undefined is not a function`.
+- `__ink_get_node_children(rootId)` returns an array of child IDs with correct elements.
+- Timer registration round-trips: `setTimeout(cb, 0)` results in `__tb_invoke_timers` being called with the matching rust timer ID.
 
 ## Verification
 
 ```bash
-cargo test -p quench-runtime
+cargo check
 cargo run -- examples/simple.js
 ```

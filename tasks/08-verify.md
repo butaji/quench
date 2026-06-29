@@ -1,45 +1,46 @@
-# Task 08: Run parity tests and example apps
+# Task 08: Verify with parity tests and example apps
 
 ## Goal
 
-Confirm the custom runtime behaves the same as the old QuickJS-based build for the supported examples.
-
-> **Custom vs crate:** This task adds tests. If a test fails because of a missing engine feature, add that feature to `quench-runtime` rather than changing unrelated code.
+Confirm the custom runtime is fully working for the supported JS/TSX examples.
 
 ## Files
 
-- Create: `crates/quench-runtime/tests/` smoke tests
-- Modify: `tests/parity.rs`
-- Reference: `examples/simple.js`, `examples/counter.js`, `examples/animations.tsx` or similar
+- `tests/parity.rs`
+- `crates/quench-runtime/tests/` (add more unit tests as needed)
+- Examples: `examples/simple.js`, `examples/counter.js`, `examples/use-bridge.tsx`, `examples/animations.tsx`
 
 ## Steps
 
-1. Add unit tests in `crates/quench-runtime/tests/` that:
-   - evaluate a small JS program through the interpreter and assert the result
-   - exercise built-ins and closures
-2. Add integration tests in `tests/parity.rs` that:
-   - evaluate a JS snippet calling a bridge host function and assert the return value
+1. Add or update tests in `tests/parity.rs`:
+   - Evaluate a small JS snippet through the interpreter and assert the result.
+   - Call a bridge host function from JS and assert the return value.
+   - Run `examples/simple.js` and check output contains expected text.
+2. Add unit tests in `crates/quench-runtime/tests/` for the features added in Tasks 01–04.
 3. Run the existing parity tests:
    - `test_simple_js_ffi`
    - `test_counter_jsx_compiles`
    - `test_binary_exists`
-4. Run interactive examples manually and verify rendering:
+4. Run the example apps manually:
    - `cargo run -- examples/simple.js`
    - `cargo run -- examples/counter.js`
-   - `cargo run -- examples/animations.tsx` if supported
-5. Run `cargo clippy` and fix warnings related to the new `quench-runtime` crate.
+   - `cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin`
+   - `cargo run -- examples/animations.tsx`
+5. Run `cargo clippy` and fix warnings in `crates/quench-runtime/`.
 
 ## Boundaries
 
-- Add tests only. Do not fix example apps by changing compiler output or bridge behavior; if an example fails because the interpreter is missing a feature, add that feature to `crates/quench-runtime/`.
+- Add tests only. If an example fails because of a missing engine feature, implement that feature in `crates/quench-runtime/` rather than changing the example or unrelated code.
 - Do not modify `src/bridge/`, `src/ink/`, `src/render/`, or `src/compiler/` to make tests pass.
 
 ## Acceptance criteria
 
 - `cargo test` passes.
-- `cargo run -- examples/simple.js` renders "Hello, Quench!" or equivalent output.
-- `cargo run -- examples/counter.js` increments a counter.
-- No warnings from `cargo clippy` in the `quench-runtime` crate.
+- `examples/simple.js` renders "Hello, Quench!" or equivalent.
+- `examples/counter.js` increments a counter.
+- `examples/use-bridge.tsx` renders the platform and terminal info.
+- `examples/animations.tsx` renders the animation demo.
+- `cargo clippy -- -W clippy::all` produces no warnings in `crates/quench-runtime/`.
 
 ## Verification
 
@@ -47,5 +48,7 @@ Confirm the custom runtime behaves the same as the old QuickJS-based build for t
 cargo test
 cargo run -- examples/simple.js
 cargo run -- examples/counter.js
+cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
+cargo run -- examples/animations.tsx
 cargo clippy -- -W clippy::all
 ```

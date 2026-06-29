@@ -2,59 +2,51 @@
   "tasks": [
     {
       "id": "01",
-      "title": "Create quench-runtime crate and define AST/value model",
-      "file": "tasks/01-audit-ast-value.md",
-      "status": "completed",
-      "notes": "Implemented in src/js_runtime/ast.rs, value.rs with Value, Object, ObjectKind, JsError types"
+      "title": "Fix parser and lowering bugs in quench-runtime",
+      "file": "tasks/01-fix-parser-lower.md",
+      "status": "pending"
     },
     {
       "id": "02",
-      "title": "Integrate swc parser and lower to runtime AST",
-      "file": "tasks/02-lexer-parser.md",
-      "status": "completed",
-      "notes": "Implemented in src/js_runtime/swc_parse.rs and lower.rs - uses swc_ecma_parser"
+      "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
+      "file": "tasks/02-complete-builtins.md",
+      "status": "pending"
     },
     {
       "id": "03",
-      "title": "Implement scope, closures, and interpreter eval loop",
-      "file": "tasks/03-interpreter-env.md",
-      "status": "completed",
-      "notes": "Implemented in src/js_runtime/env.rs and interpreter.rs with Environment, closures, call frames"
+      "title": "Add missing language features to the interpreter",
+      "file": "tasks/03-language-features.md",
+      "status": "pending"
     },
     {
       "id": "04",
-      "title": "Add built-ins: Object, Array, JSON, Math, Date, console, Map, Set",
-      "file": "tasks/04-builtins.md",
-      "status": "completed",
-      "notes": "Implemented in src/js_runtime/builtins.rs with full built-in support"
+      "title": "Fix value and prototype model",
+      "file": "tasks/04-value-prototype.md",
+      "status": "pending"
     },
     {
       "id": "05",
-      "title": "Register bridge host functions and Ink globals from the main crate",
+      "title": "Fix bridge host functions and Ink globals in main crate",
       "file": "tasks/05-bridge-host.md",
-      "status": "completed",
-      "notes": "Implemented in src/js_runtime/host.rs - registers __ink_call, __ink_call_fast, and all bridge functions"
+      "status": "pending"
     },
     {
       "id": "06",
-      "title": "Integrate timers and terminal events with the interpreter",
+      "title": "Integrate event loop microtasks and verify dispatch",
       "file": "tasks/06-event-loop.md",
-      "status": "completed",
-      "notes": "Implemented in src/event_loop.rs using Context for JS execution with timer/mouse/keyboard dispatch"
+      "status": "pending"
     },
     {
       "id": "07",
-      "title": "Adapt runtime.js and remove rquickjs from the project",
-      "file": "tasks/07-drop-rquickjs.md",
-      "status": "completed",
-      "notes": "Modified runtime.js to avoid destructuring (Transform, Provider, useFocus) and rest params (createElement, Fragment)"
+      "title": "runtime.js compatibility tweaks",
+      "file": "tasks/07-runtime-js.md",
+      "status": "pending"
     },
     {
       "id": "08",
-      "title": "Run parity tests and example apps",
+      "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
-      "status": "completed",
-      "notes": "All 65 tests pass (62 unit + 3 parity). Examples simple.js and counter.tsx work."
+      "status": "pending"
     }
   ]
 }

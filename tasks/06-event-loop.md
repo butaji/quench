@@ -1,40 +1,39 @@
-# Task 06: Integrate timers and terminal events with the interpreter
+# Task 06: Integrate event loop microtasks and verify dispatch
 
 ## Goal
 
-Make the event loop drive JS callbacks through the `quench-runtime` interpreter instead of rquickjs.
-
-> **Custom vs crate:** This task writes the glue between the existing event loop and `quench-runtime`. It does not rewrite timers, signals, or hot-reload logic.
+Make sure the event loop correctly drives JS callbacks and drains any JS microtasks that runtime.js defines.
 
 ## Files
 
-- Modify: `src/event_loop.rs`
-- Modify: `src/main.rs` if signature changes are needed.
+- `src/event_loop.rs`
+- `src/main.rs` (for hot-reload context setup)
+
+## Current issues
+
+- `runtime.js` defines `globalThis.__tb_invoke_microtasks()` but `src/event_loop.rs` never calls it. `setImmediate` and `process.nextTick` callbacks therefore never run.
+- Hot reload creates a fresh `quench_runtime::Context` and loads `runtime.js` + new code, but it does not re-register the bridge host functions. The reloaded context lacks `__ink_call`, etc.
 
 ## Steps
 
-1. Replace every `rquickjs::Context` parameter/usage in `src/event_loop.rs` with `quench_runtime::Context`.
-2. Keep the same pending-event globals pattern but set them via `ctx.set_global`:
-   - `__pending_key`, `__pending_ctrl`, `__pending_shift`, `__pending_alt`, `__pending_meta`
-   - `__pending_mouse_col`, `__pending_mouse_row`, `__pending_mouse_kind`, `__pending_mouse_button`, `__pending_mouse_ctrl`, `__pending_mouse_shift`, `__pending_mouse_alt`
-3. Replace function lookup/call with `ctx.call_function("__tb_dispatch_key", vec![])`, etc.
-4. In `poll_timers`, after collecting fired timer IDs, call `ctx.call_function("__tb_invoke_timers", vec![Value::Array(ids)])`.
-5. For hot reload, recreate a fresh `quench_runtime::Context` and eval the new file contents.
+1. In `poll_timers`, after processing timers, call `ctx.call_function("__tb_invoke_microtasks", vec![])` if the function exists.
+2. In `handle_hot_reload`, after creating `new_ctx`, call the same bridge-registration helper used at startup before loading `runtime.js` and the new user code.
+3. Ensure `__tb_dispatch_key`, `__tb_dispatch_mouse`, `__tb_dispatch_resize`, and `__tb_invoke_timers` are still called correctly.
 
 ## Boundaries
 
-- Only change the JS runtime interaction layer in `src/event_loop.rs`. Keep all timer, bridge, terminal, and hot-reload logic exactly as is.
-- Do not modify `src/bridge/timers.rs`, `src/signals.rs`, or `src/hotreload.rs`.
+- Only modify `src/event_loop.rs` and, if needed, a small helper in `src/main.rs`.
+- Do not change timer implementation in `src/bridge/timers.rs`, signals, or hot-reload file watcher.
 
 ## Acceptance criteria
 
-- `cargo check` passes after removing rquickjs types from `event_loop.rs`.
-- `cargo run -- examples/counter.js` counts up on timer ticks.
-- Keyboard/mouse/resize events do not panic and call the matching JS dispatch function.
+- `cargo run -- examples/counter.js` increments the counter on timer ticks.
+- Keyboard events call `__tb_dispatch_key` and update the render tree.
+- `setImmediate`/`process.nextTick` callbacks are drained during the event loop.
+- Hot reload re-registers bridge functions and evaluates the new file.
 
 ## Verification
 
 ```bash
-cargo check
 cargo run -- examples/counter.js
 ```
