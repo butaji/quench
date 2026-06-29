@@ -1,13 +1,11 @@
-//! Ink API exposed to JavaScript via rquickjs
+//! Ink API exposed to JavaScript via the custom JS runtime
 //!
 //! The full reconciler runtime (hooks, render, reconciliation) lives in
 //! src/runtime.js, which is loaded after register().
 //!
-//! This module provides native rquickjs bindings for Ink constants.
-//! Functionality can be moved from runtime.js into native Rust here
-//! incrementally as needed.
+//! This module provides the Ink tag constants and registration helpers.
 
-use rquickjs::{Ctx, Result as JsResult};
+use crate::js_runtime::Context;
 
 // ============================================================================
 // Component Tags (Task 011)
@@ -23,30 +21,28 @@ pub const SPACER: &str = "ink-spacer";
 // Module Registration (Task 009)
 // ============================================================================
 
-/// Register all Ink API globals in the QuickJS context.
+/// Register all Ink API globals in the custom JS context.
 ///
 /// The full render/hooks implementation is loaded from runtime.js after
-/// this call.  This function establishes the constants and namespace so
+/// this call. This function establishes the constants and namespace so
 /// that simple-hello.js (and other plain-element scripts) work even if
 /// runtime.js is not loaded.
-pub fn register<'js>(ctx: Ctx<'js>) -> JsResult<()> {
-    let globals = ctx.globals();
-
+pub fn register(ctx: &mut Context) {
     // Component tags
-    globals.set("Box", BOX)?;
-    globals.set("Text", TEXT)?;
-    globals.set("Static", STATIC)?;
-    globals.set("Newline", NEWLINE)?;
-    globals.set("Spacer", SPACER)?;
+    ctx.set_global("Box".to_string(), crate::js_runtime::value::Value::String(BOX.to_string()));
+    ctx.set_global("Text".to_string(), crate::js_runtime::value::Value::String(TEXT.to_string()));
+    ctx.set_global("Static".to_string(), crate::js_runtime::value::Value::String(STATIC.to_string()));
+    ctx.set_global("Newline".to_string(), crate::js_runtime::value::Value::String(NEWLINE.to_string()));
+    ctx.set_global("Spacer".to_string(), crate::js_runtime::value::Value::String(SPACER.to_string()));
 
     // Ink namespace for compatibility
-    let ink_ns = rquickjs::Object::new(ctx)?;
-    ink_ns.set("Box", BOX)?;
-    ink_ns.set("Text", TEXT)?;
-    ink_ns.set("Static", STATIC)?;
-    ink_ns.set("Newline", NEWLINE)?;
-    ink_ns.set("Spacer", SPACER)?;
-    globals.set("ink", ink_ns)?;
+    let ink_ns = crate::js_runtime::value::Object::new(crate::js_runtime::value::ObjectKind::Ordinary);
+    let ink_ns = std::rc::Rc::new(std::cell::RefCell::new(ink_ns));
+    ink_ns.borrow_mut().set("Box", crate::js_runtime::value::Value::String(BOX.to_string()));
+    ink_ns.borrow_mut().set("Text", crate::js_runtime::value::Value::String(TEXT.to_string()));
+    ink_ns.borrow_mut().set("Static", crate::js_runtime::value::Value::String(STATIC.to_string()));
+    ink_ns.borrow_mut().set("Newline", crate::js_runtime::value::Value::String(NEWLINE.to_string()));
+    ink_ns.borrow_mut().set("Spacer", crate::js_runtime::value::Value::String(SPACER.to_string()));
 
-    Ok(())
+    ctx.set_global("ink".to_string(), crate::js_runtime::value::Value::Object(ink_ns));
 }

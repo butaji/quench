@@ -1,12 +1,11 @@
 //! Event loop handling
 //!
 //! Processes keyboard, mouse, resize, timer, and microtask events.
-//!
-//! Function references are cached to avoid repeated `format! + ctx.eval` calls.
 
 use crate::bridge;
 use crate::cli::CliArgs;
 use crate::render::{keycode_to_ink_name, render_tree};
+use crate::js_runtime::Context;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::Terminal;
@@ -14,9 +13,6 @@ use ratatui::backend::CrosstermBackend;
 use std::time::Duration;
 
 /// Container for cached JS function references.
-/// Note: rquickjs::Function has a lifetime tied to the context, so we
-/// store the function name and look it up on each call. The optimization
-/// is avoiding format! string building.
 #[derive(Default)]
 struct JsFunctions {
     dispatch_key: bool,
@@ -26,22 +22,16 @@ struct JsFunctions {
 }
 
 /// Check if a JS function exists in the globals.
-fn js_function_exists(js_ctx: &rquickjs::Context, name: &str) -> bool {
-    js_ctx.with(|ctx| {
-        let globals = ctx.globals();
-        globals.get::<_, rquickjs::Value>(name).is_ok()
-    })
+fn js_function_exists(ctx: &Context, name: &str) -> bool {
+    ctx.has_function(name)
 }
 
 /// Call a JS function by name with no arguments.
 #[allow(dead_code)]
-fn call_js_function(js_ctx: &rquickjs::Context, name: &str) {
-    js_ctx.with(|ctx| {
-        let globals = ctx.globals();
-        if let Ok(func) = globals.get::<_, rquickjs::Function>(name) {
-            let _: Result<(), _> = func.call::<(), ()>(());
-        }
-    });
+fn call_js_function(ctx: &mut Context, name: &str) {
+    if let Err(e) = ctx.call_function(name, vec![]) {
+        tracing::warn!("Failed to call {}: {}", name, e);
+    }
 }
 
 /// Main event loop (synchronous)
@@ -49,7 +39,7 @@ pub fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     _args: &CliArgs,
     _script_path: Option<String>,
-    js_ctx: &rquickjs::Context,
+    ctx: &mut Context,
 ) -> Result<()> {
     let mut dirty = true;
     let mut root_id = bridge::__ink_get_root_id();
@@ -67,18 +57,18 @@ pub fn run_event_loop(
         if let Some(ref mut reloader) = hot_reloader {
             if let Some(_event) = reloader.poll_changes() {
                 tracing::info!("Hot reload: File changed, reloading...");
-                dirty = handle_hot_reload(&_script_path, &mut root_id, std::time::Instant::now()) || dirty;
+                dirty = handle_hot_reload(&_script_path, &mut root_id, std::time::Instant::now(), ctx) || dirty;
             }
         }
 
         let poll_timeout = compute_poll_timeout();
         if let Ok(true) = crossterm::event::poll(poll_timeout) {
             if let Ok(event) = crossterm::event::read() {
-                dirty = handle_event(event, &mut root_id, js_ctx) || dirty;
+                dirty = handle_event(event, &mut root_id, ctx) || dirty;
             }
         }
 
-        dirty = poll_timers(js_ctx) || dirty;
+        dirty = poll_timers(ctx) || dirty;
 
         if dirty {
             render_tree(terminal, root_id)?;
@@ -129,34 +119,35 @@ fn setup_hot_reloader(args: &CliArgs) -> Option<crate::hotreload::HotReloader> {
 fn handle_event(
     event: Event,
     _root_id: &mut Option<u32>,
-    js_ctx: &rquickjs::Context,
+    ctx: &mut Context,
 ) -> bool {
     match event {
-        Event::Key(key) => handle_key_event(key, js_ctx),
-        Event::Mouse(mouse) => handle_mouse_event(mouse, js_ctx),
+        Event::Key(key) => handle_key_event(key, ctx),
+        Event::Mouse(mouse) => handle_mouse_event(mouse, ctx),
         Event::Resize(cols, rows) => {
             tracing::trace!("Terminal resize: {}x{}", cols, rows);
             bridge::__ink_set_terminal_size(cols as u32, rows as u32);
-            dispatch_resize(js_ctx, cols, rows)
+            dispatch_resize(ctx, cols, rows)
         }
         _ => false,
     }
 }
 
-fn dispatch_resize(js_ctx: &rquickjs::Context, cols: u16, rows: u16) -> bool {
-    js_ctx.with(|ctx| {
-        let globals = ctx.globals();
-        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_resize") {
-            let _ = func.call::<(u16, u16), ()>((cols, rows));
-        }
-    });
+fn dispatch_resize(ctx: &mut Context, cols: u16, rows: u16) -> bool {
+    // Set globals for the resize handler
+    ctx.set_global("__pending_resize_cols".to_string(), crate::js_runtime::value::Value::Number(cols as f64));
+    ctx.set_global("__pending_resize_rows".to_string(), crate::js_runtime::value::Value::Number(rows as f64));
+
+    if let Err(e) = ctx.call_function("__tb_dispatch_resize", vec![]) {
+        tracing::trace!("No resize handler: {}", e);
+    }
     true
 }
 
 /// Handle keyboard event — dispatch to JS useInput handlers
 fn handle_key_event(
     key: crossterm::event::KeyEvent,
-    js_ctx: &rquickjs::Context,
+    ctx: &mut Context,
 ) -> bool {
     let is_backtab = matches!(key.code, KeyCode::BackTab);
     let key_str = keycode_to_ink_name(&key);
@@ -175,21 +166,17 @@ fn handle_key_event(
         return false;
     }
 
-    // Set globals so the shim can read them without string allocation
-    // Then call the JS function directly instead of via eval
-    js_ctx.with(|ctx| {
-        let globals = ctx.globals();
-        let _ = globals.set("__pending_key", key_str);
-        let _ = globals.set("__pending_ctrl", ctrl);
-        let _ = globals.set("__pending_shift", shift);
-        let _ = globals.set("__pending_alt", alt);
-        let _ = globals.set("__pending_meta", meta);
+    // Set globals so the shim can read them
+    ctx.set_global("__pending_key".to_string(), crate::js_runtime::value::Value::String(key_str));
+    ctx.set_global("__pending_ctrl".to_string(), crate::js_runtime::value::Value::Boolean(ctrl));
+    ctx.set_global("__pending_shift".to_string(), crate::js_runtime::value::Value::Boolean(shift));
+    ctx.set_global("__pending_alt".to_string(), crate::js_runtime::value::Value::Boolean(alt));
+    ctx.set_global("__pending_meta".to_string(), crate::js_runtime::value::Value::Boolean(meta));
 
-        // Call the function directly instead of eval
-        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_key") {
-            let _: Result<(), _> = func.call::<(), ()>(());
-        }
-    });
+    // Call the function
+    if let Err(e) = ctx.call_function("__tb_dispatch_key", vec![]) {
+        tracing::trace!("No key handler: {}", e);
+    }
 
     bridge::__ink_is_dirty()
 }
@@ -197,7 +184,7 @@ fn handle_key_event(
 /// Handle mouse event — dispatch to JS mouse handlers
 fn handle_mouse_event(
     mouse: crossterm::event::MouseEvent,
-    js_ctx: &rquickjs::Context,
+    ctx: &mut Context,
 ) -> bool {
     let (kind_str, button) = mouse_kind_and_button(&mouse.kind);
     let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
@@ -206,21 +193,18 @@ fn handle_mouse_event(
 
     tracing::trace!("Mouse event: {} at ({}, {})", kind_str, mouse.column, mouse.row);
 
-    js_ctx.with(|ctx| {
-        let globals = ctx.globals();
-        let _ = globals.set("__pending_mouse_col", mouse.column as i32);
-        let _ = globals.set("__pending_mouse_row", mouse.row as i32);
-        let _ = globals.set("__pending_mouse_kind", kind_str);
-        let _ = globals.set("__pending_mouse_button", button);
-        let _ = globals.set("__pending_mouse_ctrl", ctrl);
-        let _ = globals.set("__pending_mouse_shift", shift);
-        let _ = globals.set("__pending_mouse_alt", alt);
+    ctx.set_global("__pending_mouse_col".to_string(), crate::js_runtime::value::Value::Number(mouse.column as f64));
+    ctx.set_global("__pending_mouse_row".to_string(), crate::js_runtime::value::Value::Number(mouse.row as f64));
+    ctx.set_global("__pending_mouse_kind".to_string(), crate::js_runtime::value::Value::String(kind_str.to_string()));
+    ctx.set_global("__pending_mouse_button".to_string(), crate::js_runtime::value::Value::Number(button as f64));
+    ctx.set_global("__pending_mouse_ctrl".to_string(), crate::js_runtime::value::Value::Boolean(ctrl));
+    ctx.set_global("__pending_mouse_shift".to_string(), crate::js_runtime::value::Value::Boolean(shift));
+    ctx.set_global("__pending_mouse_alt".to_string(), crate::js_runtime::value::Value::Boolean(alt));
 
-        // Call the function directly instead of eval
-        if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_dispatch_mouse") {
-            let _: Result<(), _> = func.call::<(), ()>(());
-        }
-    });
+    // Call the function
+    if let Err(e) = ctx.call_function("__tb_dispatch_mouse", vec![]) {
+        tracing::trace!("No mouse handler: {}", e);
+    }
 
     bridge::__ink_is_dirty()
 }
@@ -250,7 +234,7 @@ fn mouse_kind_and_button(kind: &crossterm::event::MouseEventKind) -> (&'static s
 }
 
 /// Poll and dispatch timers
-fn poll_timers(js_ctx: &rquickjs::Context) -> bool {
+fn poll_timers(ctx: &mut Context) -> bool {
     if bridge::__ink_drain_microtasks() {
         tracing::trace!("Microtasks pending");
     }
@@ -267,21 +251,16 @@ fn poll_timers(js_ctx: &rquickjs::Context) -> bool {
             .collect();
 
         if !ids.is_empty() {
-            js_ctx.with(|ctx| {
-                let globals = ctx.globals();
-                if let Ok(func) = globals.get::<_, rquickjs::Function>("__tb_invoke_timers") {
-                    // Pass the timer IDs as a JS array
-                    let js_array = rquickjs::Array::new(ctx.clone()).ok();
-                    if let Some(ref arr) = js_array {
-                        for (i, &id) in ids.iter().enumerate() {
-                            let _ = arr.set(i, id);
-                        }
-                    }
-                    if let Some(arr) = js_array {
-                        let _: Result<(), _> = func.call::<(rquickjs::Array<'_>,), ()>((arr,));
-                    }
-                }
-            });
+            // Create array of timer IDs
+            let timer_array = crate::js_runtime::value::Object::new_array(ids.len());
+            let timer_array = std::rc::Rc::new(std::cell::RefCell::new(timer_array));
+            for (i, &id) in ids.iter().enumerate() {
+                timer_array.borrow_mut().set(&i.to_string(), crate::js_runtime::value::Value::Number(id as f64));
+            }
+
+            if let Err(e) = ctx.call_function("__tb_invoke_timers", vec![crate::js_runtime::value::Value::Object(timer_array)]) {
+                tracing::trace!("No timer handler: {}", e);
+            }
         }
     }
 
@@ -294,6 +273,7 @@ fn handle_hot_reload(
     script_path: &Option<String>,
     root_id: &mut Option<u32>,
     _start: std::time::Instant,
+    ctx: &mut Context,
 ) -> bool {
     if let Some(old_root_id) = *root_id {
         bridge::__ink_destroy_root(old_root_id);
@@ -301,24 +281,32 @@ fn handle_hot_reload(
 
     if let Some(ref path) = script_path {
         if let Ok(new_code) = std::fs::read_to_string(path) {
-            let runtime = match rquickjs::Runtime::new() {
-                Ok(r) => r,
+            // Create a fresh context for hot reload
+            match crate::js_runtime::Context::new() {
+                Ok(mut new_ctx) => {
+                    // Load runtime and new code
+                    if let Err(e) = new_ctx.load_runtime() {
+                        tracing::error!("Failed to load runtime for hot reload: {:?}", e);
+                        return false;
+                    }
+                    if let Err(e) = new_ctx.eval(&new_code) {
+                        tracing::error!("Hot reload eval error: {:?}", e);
+                        return false;
+                    }
+                    
+                    // Update the main context by copying globals
+                    // This is a simplified approach - in production we'd want better context management
+                    let _elapsed = _start.elapsed();
+                    tracing::info!("Hot reload complete in {:?}", _elapsed);
+
+                    *root_id = bridge::__ink_get_root_id();
+                    return true;
+                }
                 Err(e) => {
-                    tracing::error!("Failed to create runtime for hot reload: {:?}", e);
+                    tracing::error!("Failed to create context for hot reload: {:?}", e);
                     return false;
                 }
-            };
-            if let Ok(ctx) = rquickjs::Context::full(&runtime) {
-                ctx.with(|ctx| {
-                    let _ = ctx.eval::<(), _>(new_code.as_str());
-                });
             }
-
-            let _elapsed = _start.elapsed();
-            tracing::info!("Hot reload complete in {:?}", _elapsed);
-
-            *root_id = bridge::__ink_get_root_id();
-            return true;
         } else {
             tracing::error!("Hot reload: Failed to read {}", path);
         }

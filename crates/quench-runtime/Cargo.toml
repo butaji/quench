@@ -1,0 +1,20 @@
+[package]
+name = "quench-runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Quench Team"]
+description = "Custom JavaScript runtime for Quench - Ink terminal UI framework"
+license = "MIT"
+
+[dependencies]
+# Parsing - SWC only (no custom lexers or parsers)
+swc_common = "23"
+swc_ecma_parser = "41"
+swc_ecma_ast = "25"
+swc_atoms = "9"
+
+# Tracing/logging
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

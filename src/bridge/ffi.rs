@@ -532,7 +532,7 @@ fn get_handlers() -> FxHashMap<&'static str, HandlerFn> {
 static HANDLERS: once_cell::sync::Lazy<FxHashMap<&'static str, HandlerFn>> =
     once_cell::sync::Lazy::new(get_handlers);
 
-/// Main dispatch function — catches panics so they don't propagate into QuickJS C code.
+/// Main dispatch function — catches panics so they don't propagate into the JS runtime.
 /// Panics in any FFI handler would otherwise cause UB by unwinding through
 /// foreign (C) stack frames.
 pub fn call_ink_ffi(method: &str, args_json: &str) -> String {

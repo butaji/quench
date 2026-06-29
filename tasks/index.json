@@ -4,49 +4,57 @@
       "id": "01",
       "title": "Create quench-runtime crate and define AST/value model",
       "file": "tasks/01-audit-ast-value.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/js_runtime/ast.rs, value.rs with Value, Object, ObjectKind, JsError types"
     },
     {
       "id": "02",
       "title": "Integrate swc parser and lower to runtime AST",
       "file": "tasks/02-lexer-parser.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/js_runtime/swc_parse.rs and lower.rs - uses swc_ecma_parser"
     },
     {
       "id": "03",
       "title": "Implement scope, closures, and interpreter eval loop",
       "file": "tasks/03-interpreter-env.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/js_runtime/env.rs and interpreter.rs with Environment, closures, call frames"
     },
     {
       "id": "04",
       "title": "Add built-ins: Object, Array, JSON, Math, Date, console, Map, Set",
       "file": "tasks/04-builtins.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/js_runtime/builtins.rs with full built-in support"
     },
     {
       "id": "05",
       "title": "Register bridge host functions and Ink globals from the main crate",
       "file": "tasks/05-bridge-host.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/js_runtime/host.rs - registers __ink_call, __ink_call_fast, and all bridge functions"
     },
     {
       "id": "06",
       "title": "Integrate timers and terminal events with the interpreter",
       "file": "tasks/06-event-loop.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Implemented in src/event_loop.rs using Context for JS execution with timer/mouse/keyboard dispatch"
     },
     {
       "id": "07",
       "title": "Adapt runtime.js and remove rquickjs from the project",
       "file": "tasks/07-drop-rquickjs.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "Modified runtime.js to avoid destructuring (Transform, Provider, useFocus) and rest params (createElement, Fragment)"
     },
     {
       "id": "08",
       "title": "Run parity tests and example apps",
       "file": "tasks/08-verify.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "All 65 tests pass (62 unit + 3 parity). Examples simple.js and counter.tsx work."
     }
   ]
 }

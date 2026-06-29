@@ -3,7 +3,7 @@ name = "quench"
 version = "0.1.0"
 edition = "2021"
 authors = ["Vitaly Baum <vitaly.baum@gmail.com>"]
-description = "Run Ink (React for terminals) using rquickjs + Rust"
+description = "Run Ink (React for terminals) using custom JS runtime + Rust"
 license = "MIT"
 
 [features]
@@ -11,8 +11,11 @@ default = []
 hotreload = ["notify", "notify-debouncer-mini"]
 
 [dependencies]
-# JavaScript runtime
-rquickjs = { version = "0.7", default-features = false, features = ["loader", "full"] }
+# JavaScript runtime - custom interpreter (swc for parsing)
+swc_common = "23"
+swc_ecma_parser = "41"
+swc_ecma_ast = "25"
+swc_atoms = "9"
 
 # Terminal UI
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
