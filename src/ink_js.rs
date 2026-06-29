@@ -5,7 +5,7 @@
 //!
 //! This module provides the Ink tag constants and registration helpers.
 
-use crate::js_runtime::Context;
+use quench_runtime::Context;
 
 // ============================================================================
 // Component Tags (Task 011)
@@ -29,20 +29,20 @@ pub const SPACER: &str = "ink-spacer";
 /// runtime.js is not loaded.
 pub fn register(ctx: &mut Context) {
     // Component tags
-    ctx.set_global("Box".to_string(), crate::js_runtime::value::Value::String(BOX.to_string()));
-    ctx.set_global("Text".to_string(), crate::js_runtime::value::Value::String(TEXT.to_string()));
-    ctx.set_global("Static".to_string(), crate::js_runtime::value::Value::String(STATIC.to_string()));
-    ctx.set_global("Newline".to_string(), crate::js_runtime::value::Value::String(NEWLINE.to_string()));
-    ctx.set_global("Spacer".to_string(), crate::js_runtime::value::Value::String(SPACER.to_string()));
+    ctx.set_global("Box".to_string(), quench_runtime::Value::String(BOX.to_string()));
+    ctx.set_global("Text".to_string(), quench_runtime::Value::String(TEXT.to_string()));
+    ctx.set_global("Static".to_string(), quench_runtime::Value::String(STATIC.to_string()));
+    ctx.set_global("Newline".to_string(), quench_runtime::Value::String(NEWLINE.to_string()));
+    ctx.set_global("Spacer".to_string(), quench_runtime::Value::String(SPACER.to_string()));
 
     // Ink namespace for compatibility
-    let ink_ns = crate::js_runtime::value::Object::new(crate::js_runtime::value::ObjectKind::Ordinary);
+    let ink_ns = quench_runtime::Object::new(quench_runtime::ObjectKind::Ordinary);
     let ink_ns = std::rc::Rc::new(std::cell::RefCell::new(ink_ns));
-    ink_ns.borrow_mut().set("Box", crate::js_runtime::value::Value::String(BOX.to_string()));
-    ink_ns.borrow_mut().set("Text", crate::js_runtime::value::Value::String(TEXT.to_string()));
-    ink_ns.borrow_mut().set("Static", crate::js_runtime::value::Value::String(STATIC.to_string()));
-    ink_ns.borrow_mut().set("Newline", crate::js_runtime::value::Value::String(NEWLINE.to_string()));
-    ink_ns.borrow_mut().set("Spacer", crate::js_runtime::value::Value::String(SPACER.to_string()));
+    ink_ns.borrow_mut().set("Box", quench_runtime::Value::String(BOX.to_string()));
+    ink_ns.borrow_mut().set("Text", quench_runtime::Value::String(TEXT.to_string()));
+    ink_ns.borrow_mut().set("Static", quench_runtime::Value::String(STATIC.to_string()));
+    ink_ns.borrow_mut().set("Newline", quench_runtime::Value::String(NEWLINE.to_string()));
+    ink_ns.borrow_mut().set("Spacer", quench_runtime::Value::String(SPACER.to_string()));
 
-    ctx.set_global("ink".to_string(), crate::js_runtime::value::Value::Object(ink_ns));
+    ctx.set_global("ink".to_string(), quench_runtime::Value::Object(ink_ns));
 }
