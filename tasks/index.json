@@ -4,49 +4,57 @@
       "id": "01",
       "title": "Fix parser and lowering bugs in quench-runtime",
       "file": "tasks/01-fix-parser-lower.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "Computed member access and optional chaining are lowered. Still missing: module/script fallback, for...of/for...in, nullish coalescing, rest params, spread calls, template literal expressions, getters/setters."
     },
     {
       "id": "02",
       "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
       "file": "tasks/02-complete-builtins.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "Array.prototype skeleton and shared prototype are wired; methods are mostly stubs. Map/Set/Promise are not implemented. JSON.parse still returns the raw string. String.repeat/padStart, Date.prototype, and Object.prototype.hasOwnProperty are missing."
     },
     {
       "id": "03",
       "title": "Add missing language features to the interpreter",
       "file": "tasks/03-language-features.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "arguments object is implemented. Still missing: for...of/for...in, nullish coalescing, rest params, spread calls, template literal expressions, getter/setter invocation, typeof undeclared identifiers."
     },
     {
       "id": "04",
       "title": "Fix value and prototype model",
       "file": "tasks/04-value-prototype.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "Shared Array.prototype is wired. Object.prototype, Map.prototype, Set.prototype, Date.prototype, String.prototype, and Function.prototype are not installed."
     },
     {
       "id": "05",
       "title": "Fix bridge host functions and Ink globals in main crate",
       "file": "tasks/05-bridge-host.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "All __ink_* functions are registered, including __ink_get_node_parent and __ink_set_raw_mode. __ink_get_node_children now populates elements."
     },
     {
       "id": "06",
       "title": "Integrate event loop microtasks and verify dispatch",
       "file": "tasks/06-event-loop.md",
-      "status": "pending"
+      "status": "completed",
+      "notes": "__tb_invoke_microtasks is called after timers; hot reload re-registers bridge functions on the fresh context."
     },
     {
       "id": "07",
       "title": "runtime.js compatibility tweaks",
       "file": "tasks/07-runtime-js.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "runtime.js loads only because unsupported statements are silently dropped. normalizeChildren was rewritten to avoid flat/filter. No other manual rewrites."
     },
     {
       "id": "08",
       "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
-      "status": "pending"
+      "status": "in_progress",
+      "notes": "simple.js is expected to work. counter.js, use-bridge.tsx, and animations.tsx are blocked until runtime gaps (Map/Set, for...of, real Array methods, ??) are closed."
     }
   ]
 }
