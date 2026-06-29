@@ -62,6 +62,13 @@
       "file": "tasks/09-linter.md",
       "status": "pending",
       "notes": "build.rs currently only lints src/. It must also lint crates/quench-runtime/src/ and all new runtime code must pass: file <= 500 lines, function <= 40 lines, cyclomatic complexity <= 10."
+    },
+    {
+      "id": "10",
+      "title": "Architecture hardening: split builtins and guard recursion",
+      "file": "tasks/10-architecture.md",
+      "status": "pending",
+      "notes": "builtins.rs should be split into submodules; interpreter needs a recursion guard or iterative eval to avoid stack overflow on deeply nested JSX."
     }
   ]
 }

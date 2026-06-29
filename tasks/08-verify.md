@@ -35,7 +35,7 @@ Confirm the custom runtime is fully working for the supported JS/TSX examples. D
 
 ## Boundaries
 
-- Add tests only. If an example fails because of a missing engine feature, implement that feature in `crates/quench-runtime/` rather than changing the example or unrelated code.
+- `examples/` are immutable. If an example fails because of a missing engine feature, implement that feature in `crates/quench-runtime/` rather than changing the example or unrelated code.
 - Do not modify `src/bridge/`, `src/ink/`, `src/render/`, or `src/compiler/` to make tests pass.
 
 ## Acceptance criteria

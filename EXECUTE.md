@@ -37,12 +37,30 @@
 - `src/render/` — render pipeline.
 - `src/compiler/` — compiler output format.
 - `src/cli.rs`, `src/signals.rs`, `src/hotreload.rs`.
+- **`examples/` are immutable.** If an example fails, fix the runtime; do not edit the example.
 
 Allowed glue points:
 - `crates/quench-runtime/src/`
 - `src/main.rs` — host-function registration and runtime setup
 - `src/event_loop.rs` — JS dispatch calls
-- `src/runtime.js` — targeted compatibility rewrites
+- `src/runtime.js` — targeted compatibility rewrites only; do not change example semantics
+
+## Architecture review
+
+The current architecture is a good fit for replacing `rquickjs` with a minimal, Ink-focused runtime:
+
+- **Dedicated crate (`crates/quench-runtime/`)** keeps the engine isolated from the main binary and bridge.
+- **swc-based parser/lowering** avoids writing a lexer/parser and gives us TS/JS/TSX support for free.
+- **Generic host-function API** lets `src/main.rs` register bridge closures without `quench-runtime` depending on `quench` internals.
+- **Shared prototype objects** (started for `Array.prototype`) are the right way to implement JS prototype semantics.
+
+### Known architectural limitations to address
+
+1. **Recursive interpreter** — `eval_expression`/`eval_statement` call themselves recursively. Deeply nested JSX can overflow the Rust stack. The best long-term fix is an iterative interpreter with an explicit evaluation stack, but that is a large rewrite. For now, keep functions small and avoid unbounded recursion in user code.
+2. **Monolithic built-ins** — `crates/quench-runtime/src/builtins.rs` mixes Array, Map, Set, Promise, JSON, Math, Object, String, Date, and globals. As it grows it should be split into `builtins/array.rs`, `builtins/map.rs`, `builtins/promise.rs`, etc., which also helps satisfy the build.rs linter.
+3. **Value model uses `std::collections::HashMap`** — JS object property enumeration order is not guaranteed by `HashMap`. If `for...in` order or object serialization order becomes observable, switch to `indexmap` or a similar ordered map.
+4. **No module system** — `parse_swc` only handles scripts. Compiled TSX with external imports is out of scope for now, but supporting ES modules would require a module loader.
+5. **No garbage collector** — values are `Rc<RefCell<...>>` with cycle risk. The current Ink usage does not create obvious cycles, but this should be monitored.
 
 ## Tech stack
 

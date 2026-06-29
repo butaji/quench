@@ -29,6 +29,7 @@ Keep `runtime.js` running on the custom interpreter. Prefer adding features to t
 
 - Only modify `src/runtime.js`.
 - Do not touch `crates/quench-runtime/src/` in this task.
+- `examples/` are immutable. Any runtime.js change must preserve the original example semantics; do not rewrite examples to work around runtime bugs.
 
 ## Acceptance criteria
 
