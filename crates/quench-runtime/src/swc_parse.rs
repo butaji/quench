@@ -118,7 +118,8 @@ mod tests {
 
     #[test]
     fn test_parse_runtime_js() {
-        let source = std::fs::read_to_string("src/runtime.js").unwrap();
+        // Path is relative to the crate root, go up to workspace root
+        let source = std::fs::read_to_string("../../src/runtime.js").unwrap();
         let result = parse_swc(&source);
         assert!(result.is_ok(), "Failed to parse runtime.js: {:?}", result);
     }

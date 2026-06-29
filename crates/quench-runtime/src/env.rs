@@ -31,11 +31,12 @@ impl Scope {
     }
 
     pub fn set(&mut self, name: String, value: Value) -> bool {
-        if self.bindings.contains_key(&name) {
-            self.bindings.insert(name, value);
-            true
-        } else {
-            false
+        match self.bindings.entry(name) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                e.insert(value);
+                true
+            }
+            std::collections::hash_map::Entry::Vacant(_) => false,
         }
     }
 
