@@ -1,6 +1,6 @@
 # Task 02: Complete Array, Map, Set, Promise, String, and Date built-ins
 
-**Status: COMPLETED** - All acceptance criteria met.
+**Status: IN_PROGRESS** - Core built-ins exist; several methods, constructors, and iteration semantics still missing or broken.
 
 ## Goal
 

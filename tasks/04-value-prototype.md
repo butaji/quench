@@ -1,6 +1,6 @@
 # Task 04: Fix value and prototype model
 
-**Status: COMPLETED** - All acceptance criteria met.
+**Status: IN_PROGRESS** - Shared prototypes and New wiring exist; callable boxing constructors, instanceof, ==, and Symbol truthiness still need work.
 
 ## Goal
 

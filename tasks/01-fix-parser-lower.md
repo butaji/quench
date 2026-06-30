@@ -1,6 +1,6 @@
 # Task 01: Fix parser and lowering bugs in quench-runtime
 
-**Status: COMPLETED** - All acceptance criteria met.
+**Status: IN_PROGRESS** - Core lowering works; many JS/TS constructs still missing (see notes).
 
 ## Goal
 

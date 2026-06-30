@@ -50,24 +50,23 @@ cargo test -p quench-runtime --test conformance -- expressions
 
 - `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and built-ins.
 - Major modules have been split into subdirectories: `builtins/`, `lower/`, `interpreter/`, `value/`, `context/`, `eval_stmt/`.
-- Recent progress:
+- What works at a basic level:
   - Parser/lowering: computed member access, template literal expressions, `for...of`/`for...in`, object/array spread, rest parameters in function declarations, nullish coalescing (`??`), `in`, `instanceof`, getters/setters, module/script fallback, destructuring declarations.
-  - Built-ins: most `Array.prototype` methods, `Map`/`Set` constructors and prototype methods, `String.prototype` methods (`repeat`, `padStart`, etc.), `Date.prototype` getters and `toLocaleTimeString`, `Object.prototype`, real `JSON.parse`, native `Error` constructors, `Function.prototype.call/apply`, global `Infinity`/`NaN`/`undefined`.
-  - Interpreter: recursion-depth guard, rest-param binding, `Function.prototype.call/apply`, `New` expression wiring, bound methods, spread expansion in calls/literals, getter/setter invocation, `typeof` on undeclared identifiers.
+  - Built-ins: most `Array.prototype` methods, `Map`/`Set` constructors and prototype methods, `String.prototype` methods (`repeat`, `padStart`, etc.), `Date.prototype` getters and `toLocaleTimeString`, `Object.prototype`, real `JSON.parse`, native `Error` constructors, global `Infinity`/`NaN`/`undefined`.
+  - Interpreter: recursion-depth guard, rest-param binding, `New` expression wiring, bound methods, spread expansion in calls/literals, getter/setter invocation, `typeof` on undeclared identifiers.
   - Bridge/event loop: `__ink_get_node_parent`, `__ink_set_raw_mode`, `__ink_stdin_is_raw`, populated `__ink_get_node_children`, JSON props serialization, hot-reload re-registration.
   - Compiler: hooks are no longer incorrectly prefixed inside `createElement` calls.
-  - Build hygiene: `build.rs` lints `src/` and `crates/quench-runtime/src/` but only panics for `src/compiler/` violations; other modules get warnings. It must be updated to enforce the 500/40/10 limits on every `*.rs` file and fail the build on any violation.
-- Remaining blockers (tracked in Task 14):
-  - Optional chaining (`obj?.prop`, `obj?.()`) is rejected by the lowerer.
-  - Destructuring assignment and destructuring function/arrow parameters are not supported.
-  - Rest parameters in arrow functions are ignored.
-  - `arguments` object is not injected for ordinary JS-to-JS calls.
-  - `Promise.resolve`/`all`/`race` are installed on `Promise.prototype`, not the constructor.
-  - `Array.from` does not consume `Set`/`Map` iterables.
-  - `new Array()` and `new Object()` are not callable.
-  - Event loop does not invoke `__tb_invoke_microtasks`; `setImmediate`/`process.nextTick` callbacks do not run.
-  - `Map` iteration order follows `HashMap`, not insertion order.
-- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` are blocked until Task 14 is done.
+  - Build hygiene: `build.rs` lints `src/` and `crates/quench-runtime/src/` but only panics for `src/compiler/` violations; other modules get warnings.
+- Major gaps and blockers are documented in **Task 26**. The highest-impact ones are:
+  - Event-loop dispatch calls registered stubs instead of `runtime.js` handlers; Promise microtasks are never drained.
+  - Hot reload creates a new context and discards it.
+  - Array instances from builtins lack `Array.prototype`; `String.prototype.split` returns empty arrays.
+  - `==` and `instanceof` are wrong for objects/functions.
+  - `break`/`continue` are dropped or ignored; arrow functions use call-site `this`.
+  - Optional chaining, class lowering, async/await, import/export, `delete`/unary `+` are missing.
+  - `Date.now`, `Number.prototype.toFixed`, `Date.prototype.toTimeString`, trig/log Math functions, iterable `Array.from`, Set insertion order are missing/broken.
+  - `build.rs` does not yet fail the build on every `*.rs` lint violation.
+- `examples/simple.js` may work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` are blocked until the Rank 1/2 gaps are fixed.
 
 ## Approach
 

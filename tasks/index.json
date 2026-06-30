@@ -4,71 +4,71 @@
       "id": "01",
       "title": "Fix parser and lowering bugs in quench-runtime",
       "file": "tasks/01-fix-parser-lower.md",
-      "status": "completed",
-      "notes": "Computed access, template literals, for...of/in, spread, getters/setters, ??, in, instanceof, module fallback, lower/ submodules done. Still missing: optional chaining, destructuring assignment, destructuring function/arrow params, arrow rest params, class, delete/unary+."
+      "status": "in_progress",
+      "notes": "Computed access, template literals, for...of/in, spread, getters/setters, ??, in, instanceof, module fallback, lower/ submodules done. Still missing: break/continue, class, async/await, import/export, do...while, destructuring in for heads, rest patterns, TS parser mode, delete/unary+, optional chaining, BigInt, computed property names, private fields."
     },
     {
       "id": "02",
       "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
       "file": "tasks/02-complete-builtins.md",
-      "status": "completed",
-      "notes": "Array methods, Map/Set methods, String/Date/Object.prototype, JSON.parse, Error, Function.prototype done. Still missing: Array.from iterables, Promise statics on constructor (resolve/all/race), callable new Array()/new Object(), Map insertion-order iteration."
+      "status": "in_progress",
+      "notes": "Array methods, Map/Set methods, String/Date/Object.prototype, JSON.parse, Error, Function.prototype exist. Still missing or broken: Array.from iterables, Promise statics on constructor, callable new Array()/new Object(), Map insertion-order iteration, Set insertion order, Date.now, Date.toTimeString, Math trig/log functions, Number.prototype.toFixed, String/Number/Boolean boxing constructors."
     },
     {
       "id": "03",
       "title": "Add missing language features to the interpreter",
       "file": "tasks/03-language-features.md",
-      "status": "completed",
-      "notes": "Spread, getters/setters, typeof undeclared, for...of/in, ??, template literals done. Still missing: arguments object in JS-to-JS calls, optional chaining (depends on lowering), arrow rest params, destructuring params."
+      "status": "in_progress",
+      "notes": "Spread, getters/setters, typeof undeclared, for...of/in, ??, template literals work. Still missing: arguments object in JS-to-JS calls, optional chaining (depends on lowering), arrow rest params, destructuring params, break/continue propagation in loops, real Function.prototype.call/apply, inherited getters/setters."
     },
     {
       "id": "04",
       "title": "Fix value and prototype model",
       "file": "tasks/04-value-prototype.md",
-      "status": "completed",
-      "notes": "Shared prototypes and New wiring done. Still missing: callable Array/Object constructors, boxing String/Number/Boolean."
+      "status": "in_progress",
+      "notes": "Shared prototypes and New wiring exist. Still missing: callable Array/Object constructors, boxing String/Number/Boolean constructors, correct instanceof prototype-chain walk, loose equality for objects/functions, Symbol truthy."
     },
     {
       "id": "05",
       "title": "Fix bridge host functions and Ink globals in main crate",
       "file": "tasks/05-bridge-host.md",
-      "status": "completed",
-      "notes": "All __ink_* functions registered, including __ink_get_node_parent and __ink_set_raw_mode. __ink_get_node_children populates elements; props are serialized as JSON."
+      "status": "in_progress",
+      "notes": "All __ink_* functions are registered, including __ink_get_node_parent and __ink_set_raw_mode. Still needed: typed argument extraction helpers, safe JSON serialization in bridge functions, native function this binding."
     },
     {
       "id": "06",
       "title": "Integrate event loop microtasks and verify dispatch",
       "file": "tasks/06-event-loop.md",
-      "status": "completed",
-      "notes": "Hot reload re-registers bridge functions. Microtask draining still incomplete; tracked in Task 14."
+      "status": "in_progress",
+      "notes": "Hot reload re-registers bridge functions on fresh context. Still broken: event-loop dispatch calls registered stubs instead of runtime.js handlers, Promise microtasks are never drained, __tb_invoke_microtasks not wired."
     },
     {
       "id": "07",
       "title": "runtime.js compatibility tweaks",
-      "file": "tasks/07-runtime-js.md",
-      "status": "completed",
-      "notes": "normalizeChildren rewritten to avoid unimplemented Array.prototype.flat; runtime.js loads."
+      "file": "tasks/07-runtime.js.md",
+      "status": "in_progress",
+      "notes": "normalizeChildren rewritten to avoid unimplemented Array.prototype.flat; runtime.js loads. Still needed: resolve native bridge function vs JS wrapper layering, fix compiler const reassignment in SHIMS, fix multi-line import handling."
     },
     {
       "id": "08",
       "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
-      "status": "completed",
-      "notes": "All examples compile and run correctly: simple.js works fully; counter.js, use-bridge.tsx, animations.tsx compile and run (exit early in non-TTY environments, which is expected). 56 runtime tests + 34 bridge tests + 4 parity tests all pass."
+      "status": "pending",
+      "notes": "simple.js may work; counter.js, use-bridge.tsx, animations.tsx are blocked by runtime gaps tracked in Task 14 and Task 26. Verification cannot be claimed until those are fixed."
     },
     {
       "id": "09",
       "title": "Make build.rs enforce project lint rules on every *.rs file",
       "file": "tasks/09-linter.md",
-      "status": "completed",
-      "notes": "Fixed all lint warnings: added #![allow(unknown_lints)] to build.rs, lib.rs, context/tests.rs, main.rs, hotreload.rs, signals.rs, bridge/ffi/dispatch.rs, bridge_reg.rs; fixed unused_mut in cli.rs and unused_assignments in event_loop.rs. Build is now warning-free."
+      "status": "in_progress",
+      "notes": "build.rs lints src/ and crates/quench-runtime/src/ but currently warns for non-compiler modules. Main crate still has file-length/function-length/complexity violations. Needs to be switched to panic on all *.rs violations and cover all directories."
     },
     {
       "id": "10",
       "title": "Architecture hardening: split builtins and guard recursion",
       "file": "tasks/10-architecture.md",
       "status": "completed",
-      "notes": "Recursion guard implemented; lower/, eval_stmt/, builtins/, value/, interpreter/ split into submodules."
+      "notes": "Recursion guard implemented; lower/, eval_stmt/, builtins/, value/, interpreter/ split into submodules. HIR redesign is future work (Task 22)."
     },
     {
       "id": "11",
@@ -82,98 +82,98 @@
       "title": "Fix hook replacement in compiler (substring collision)",
       "file": "tasks/12-fix-hook-replacement.md",
       "status": "completed",
-      "notes": "prefix_hooks now uses regex word boundaries. Verification claims depend on full runtime gaps being closed."
+      "notes": "prefix_hooks now uses regex word boundaries."
     },
     {
       "id": "13",
       "title": "Fix Array.prototype.flat bug and missing globals",
       "file": "tasks/13-fix-flat-bug.md",
       "status": "completed",
-      "notes": "flat() preserves non-array objects and returned array prototype; Infinity/NaN/undefined globals added. Verification claims depend on full runtime gaps being closed."
+      "notes": "flat() preserves non-array objects and returned array prototype; Infinity/NaN/undefined globals added."
     },
     {
       "id": "14",
       "title": "Close remaining runtime gaps",
       "file": "tasks/14-close-runtime-gaps.md",
-      "status": "completed",
-      "notes": "All runtime gaps closed: optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics, Array.from iterables, callable Array/Object constructors, microtask invocation in event loop, Map order."
+      "status": "in_progress",
+      "notes": "Not yet closed: optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics on constructor, Array.from iterables, callable Array/Object constructors, microtask invocation in event loop, Map insertion-order iteration. See Task 26 for additional blockers."
     },
     {
       "id": "15",
       "title": "Add TypeScript conformance submodule and test harness",
       "file": "tasks/15-typescript-submodule.md",
       "status": "pending",
-      "notes": "Add tests/typescript as a shallow submodule; create a runner that parses conformance .ts/.tsx files natively and interprets them in quench-runtime. No compile step."
+      "notes": "Submodule added; harness design documented. Implementation of the runner is now Task 28."
     },
     {
       "id": "16",
       "title": "Audit TypeScript conformance tests and categorize runtime failures",
       "file": "tasks/16-conformance-audit.md",
       "status": "pending",
-      "notes": "Run the conformance harness, bucket failures by feature (expressions, statements, functions, classes, iterators, modules, async), and produce a prioritized backlog."
+      "notes": "Blocked until Task 28 harness is implemented."
     },
     {
       "id": "17",
       "title": "Pass TypeScript expression and statement conformance tests",
       "file": "tasks/17-conformance-expressions.md",
       "status": "pending",
-      "notes": "Fix runtime gaps for arithmetic, logical, bitwise, comparison, assignment, var/let/const, if/switch/loops, try/catch, labels, and with (ignore with)."
+      "notes": "Blocked until parser/lowering gaps from Task 01 are closed."
     },
     {
       "id": "18",
       "title": "Pass TypeScript function and class conformance tests",
       "file": "tasks/18-conformance-functions-classes.md",
       "status": "pending",
-      "notes": "Fix runtime gaps for default params, rest params, destructuring params, classes, inheritance, super, static members, accessors."
+      "notes": "Blocked until class lowering, destructuring params, and rest params are implemented."
     },
     {
       "id": "19",
       "title": "Pass TypeScript iterator, module, and async conformance tests",
       "file": "tasks/19-conformance-iterators-modules-async.md",
       "status": "pending",
-      "notes": "Fix runtime gaps for for...of, generators (if tested), spread, import/export execution, Promise, async/await."
+      "notes": "Blocked until import/export lowering, Map/Set iteration order, and async/await are implemented."
     },
     {
       "id": "20",
       "title": "Stabilize conformance results and document supported subset",
       "file": "tasks/20-conformance-stabilize.md",
       "status": "pending",
-      "notes": "Fix regressions, add CI job, publish conformance pass/fail percentages, and document intentionally unsupported features."
+      "notes": "Final phase after Tasks 17-19 pass."
     },
     {
       "id": "21",
       "title": "Strip TypeScript syntax in the lowerer",
       "file": "tasks/21-typescript-stripping.md",
       "status": "pending",
-      "notes": "Runtime must parse .ts/.tsx natively: strip type annotations, interfaces, type aliases, enum-as-value handling, namespaces, import equals, export assignment, as/non-null/type assertions."
+      "notes": "Blocked until swc is configured to parse TypeScript syntax (Task 01) and the HIR can represent stripped constructs."
     },
     {
       "id": "22",
       "title": "Stabilize the HIR for runtime and future AOT",
       "file": "tasks/22-hir-for-aot.md",
       "status": "pending",
-      "notes": "Define a single high-level IR consumed by the interpreter today and by a future AOT compiler. HIR should be language-agnostic, well-typed, and free of swc-specific details."
+      "notes": "Future architecture work; current runtime uses a conventional JS AST."
     },
     {
       "id": "23",
       "title": "Improve diagnostics and error messages",
       "file": "tasks/23-diagnostics.md",
       "status": "pending",
-      "notes": "Parser, lowering, runtime, and bridge errors must include file/line/column, a human-readable message, and actionable guidance. No silent drops or raw panics."
+      "notes": "Future correctness/UX work; many lowering paths currently silently drop nodes."
     },
     {
       "id": "24",
       "title": "Reactive execution engine over the HIR",
       "file": "tasks/24-reactive-engine.md",
       "status": "pending",
-      "notes": "Build the dependency graph from Signal/Memo/Effect/Render nodes; propagate changes; schedule re-renders and effects."
+      "notes": "Future work; depends on Task 22 HIR."
     },
     {
       "id": "25",
       "title": "Apply researched interpreter/AOT/JIT best practices",
       "file": "tasks/25-research-best-practices.md",
       "status": "pending",
-      "notes": "Use swc front-end, Cranelift for AOT/JIT, hidden classes + ICs, NaN-boxed values, string interning, indexmap, bumpalo; do not write a parser/LLVM backend from scratch."
+      "notes": "Use swc front-end; interpreter-level optimizations first. AOT/JIT via Cranelift is future work."
     },
     {
       "id": "26",
@@ -187,7 +187,7 @@
       "title": "Establish TDD baseline and unit test coverage",
       "file": "tasks/27-tdd-baseline.md",
       "status": "pending",
-      "notes": "Add regression/unit tests for every Rank 1 and Rank 2 finding from Task 26 before fixing them; create the test harness layout in crates/quench-runtime/tests/."
+      "notes": "Add regression/unit tests for Rank 1 and Rank 2 findings from Task 26 before fixing them; create the test harness layout in crates/quench-runtime/tests/."
     },
     {
       "id": "28",
@@ -201,14 +201,14 @@
       "title": "Run TypeScript conformance harness over whitelist and report results",
       "file": "tasks/29-conformance-run-report.md",
       "status": "pending",
-      "notes": "Execute the curated conformance whitelist, categorize pass/fail/skip, and produce a prioritized backlog linking failures to existing tasks."
+      "notes": "Blocked until Task 28 is done."
     },
     {
       "id": "30",
       "title": "Run TypeScript's own conformance runner for reference",
       "file": "tasks/30-typescript-runner-reference.md",
       "status": "pending",
-      "notes": "Use the TypeScript repo's compilerRunner to generate/verify baselines and confirm expected output for cases where Quench baselines are unclear."
+      "notes": "Reference-only; not blocking."
     }
   ]
 }

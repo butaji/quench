@@ -1,5 +1,7 @@
 # Task 07: runtime.js compatibility tweaks
 
+**Status: IN_PROGRESS** - runtime.js loads; bridge wrapper layering, compiler SHIMS const bug, and multi-line imports still need resolution.
+
 ## Goal
 
 Keep `runtime.js` running on the custom interpreter. Prefer adding features to the engine, but document any unavoidable runtime.js rewrites.

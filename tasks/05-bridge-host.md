@@ -1,5 +1,7 @@
 # Task 05: Fix bridge host functions and Ink globals in main crate
 
+**Status: IN_PROGRESS** - Functions are registered; API still needs typed argument extraction and safe JSON serialization.
+
 ## Goal
 
 Register all bridge functions that `runtime.js` and the examples call from JS, and fix the existing registrations that return wrong shapes.

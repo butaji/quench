@@ -1,5 +1,7 @@
 # Task 09: Make build.rs enforce project lint rules on every *.rs file
 
+**Status: IN_PROGRESS** - build.rs checks sizes and complexity but still warns for non-compiler modules; main crate violations remain.
+
 ## Goal
 
 `build.rs` must enforce the project limits on **all** Rust source files, not just the `src/compiler/` directory or the runtime crate. Every `*.rs` file in the project must pass:

@@ -1,6 +1,6 @@
 # Task 08: Verify with parity tests and example apps
 
-**Status: COMPLETED** - All examples run successfully.
+**Status: PENDING** - Verification blocked by runtime gaps; simple.js may run, counter/use-bridge/animations are not yet working end-to-end.
 
 ## Goal
 

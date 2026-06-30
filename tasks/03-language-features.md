@@ -1,6 +1,6 @@
 # Task 03: Add missing language features to the interpreter
 
-**Status: COMPLETED** - All acceptance criteria met.
+**Status: IN_PROGRESS** - Core features work; arguments, optional chaining, rest/destructuring params, break/continue, Function.call/apply, inherited getters/setters still missing.
 
 ## Goal
 

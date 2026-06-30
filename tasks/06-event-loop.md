@@ -1,5 +1,7 @@
 # Task 06: Integrate event loop microtasks and verify dispatch
 
+**Status: IN_PROGRESS** - Hot reload re-registers bridge functions on a fresh context; event dispatch and microtask draining still broken.
+
 ## Goal
 
 Make sure the event loop correctly drives JS callbacks and drains any JS microtasks that runtime.js defines.

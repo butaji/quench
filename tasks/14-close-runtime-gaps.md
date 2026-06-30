@@ -1,5 +1,7 @@
 # Task 14: Close remaining runtime gaps
 
+**Status: IN_PROGRESS** - Gaps are identified but not yet fixed; see Task 26 for the full ranked list.
+
 ## Goal
 
 Fix the specific interpreter and built-in gaps that block real Ink examples from running end-to-end.
