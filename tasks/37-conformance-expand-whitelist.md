@@ -45,7 +45,7 @@ Keep the conformance whitelist in sync with runtime capabilities. Add new catego
 ## Acceptance criteria
 
 - Each new category added to the whitelist has at least one passing case.
-- The CI threshold (Task 36) is updated when categories are added.
+- The local pass-rate gate (Task 36) is updated when categories are added.
 
 ## Timeout note
 
