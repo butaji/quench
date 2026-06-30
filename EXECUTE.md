@@ -135,9 +135,10 @@ cargo run -- examples/animations.tsx
 To measure runtime correctness beyond Ink examples, the official TypeScript repo is added as a shallow submodule at `tests/typescript/`.
 
 - Use `tests/typescript/tests/cases/conformance/**/*.ts` as the corpus.
-- Compile each `.ts` file to JS (via `tsc` or the existing Quench compiler) and execute the emitted JS in `quench-runtime`.
+- Parse each `.ts` file **directly** in `quench-runtime` using TypeScript syntax mode and strip type annotations during lowering. No separate compile step.
+- Execute the resulting runtime AST directly in the interpreter.
 - Record pass/fail per category (expressions, statements, functions, classes, iterators, modules, async).
-- Fix failures by implementing the missing runtime feature; do not modify the TypeScript fixtures.
+- Fix failures by implementing the missing runtime feature or adding type-stripping support in the lowerer; do not modify the TypeScript fixtures.
 
 The target is **not** to pass 100% of conformance tests (many are type-check only). The target is to pass all runtime-relevant cases and to use failures as a prioritized backlog.
 
