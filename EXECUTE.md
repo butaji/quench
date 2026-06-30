@@ -130,15 +130,11 @@ Once the runtime is functionally correct, the following interpreter-level optimi
 6. **Explicit evaluation stack / trampoline** — replace recursive `eval_expression`/`eval_statement` with an explicit stack of frames to avoid native stack overflow, improve cache locality, and enable `try/catch/finally` and generators.
 7. **Faster maps and regex** — use `rustc-hash`/`foldhash` for atom-keyed maps; use `regress` for a pure-Rust ECMAScript regex engine and `num-bigint` for `BigInt`.
 
-### Bytecode / AOT / JIT roadmap
+### Future AOT/JIT direction (out of scope for now)
 
-After the AST/HIR interpreter is correct, the path to higher performance is staged:
+Once the HIR interpreter is fast enough and Ink apps run smoothly, the next long-term step is native code generation. The research points to **Cranelift** (`cranelift-module`, `cranelift-object`, `cranelift-jit`) as the best first backend — smaller and faster to embed than LLVM/`inkwell`. The HIR is intentionally designed so it can be consumed directly by a future AOT compiler without a separate bytecode layer.
 
-1. **Bytecode compiler** — lower the HIR to a stack-based or accumulator-based bytecode with fixed-width instructions and external constant tables. Start with a simple interpreter loop; use direct-threaded dispatch if portable.
-2. **Inline caches in bytecode** — cache shape-checked property offsets and call targets at bytecode instructions; fall back to slow path on shape mismatch.
-3. **Baseline JIT via Cranelift** — compile hot bytecode functions to machine code using `cranelift-jit`. Keep deoptimization paths back to the interpreter for shape misses.
-4. **AOT via Cranelift Object** — use `cranelift-module` + `cranelift-object` to emit object files ahead of time, then link them with the host binary. This matches the Hermes model (AOT bytecode) and avoids shipping a compiler in the runtime.
-5. **LLVM fallback** — only consider `inkwell` if Cranelift cannot deliver the required optimization quality or target support.
+For the current phase, focus only on interpreter-level optimizations and a clean HIR. Do not add a bytecode VM or Cranelift backend yet.
 
 ### Performance crates to evaluate
 
