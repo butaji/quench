@@ -167,6 +167,13 @@
       "file": "tasks/24-reactive-engine.md",
       "status": "pending",
       "notes": "Build the dependency graph from Signal/Memo/Effect/Render nodes; propagate changes; schedule re-renders and effects."
+    },
+    {
+      "id": "25",
+      "title": "Apply researched interpreter/AOT/JIT best practices",
+      "file": "tasks/25-research-best-practices.md",
+      "status": "pending",
+      "notes": "Use swc front-end, Cranelift for AOT/JIT, hidden classes + ICs, NaN-boxed values, string interning, indexmap, bumpalo; do not write a parser/LLVM backend from scratch."
     }
   ]
 }
