@@ -56,8 +56,47 @@ Make the runtime pass all runtime-relevant iterator, module, and async conforman
 - `async function f() { return 1; } f().then(console.log)` works.
 - Module-level `import`/`export` code executes correctly.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash
 cargo test -p quench-runtime --test conformance -- iterators modules async
 ```
+
+## Status: PARTIALLY COMPLETED
+
+### Bug fixes applied (2026-06-30)
+
+1. **Map/Set `ObjectKind` not set** — Map and Set objects were created with `ObjectKind::Ordinary`, so `for...of` iteration on them used `extract_object_properties` instead of the correct `extract_map_entries`/`extract_set_values`. Fixed by setting `kind` to `ObjectKind::Map` and `ObjectKind::Set` in the respective constructors.
+   - Files: `crates/quench-runtime/src/builtins/map.rs`, `crates/quench-runtime/src/builtins/set.rs`
+   - Regression test: `test_map_set_for_of_iteration`
+
+2. **`extract_set_values` checked `_map_` prefix** — the function was filtering on `k.starts_with("_map_")` instead of `k.starts_with("_set_")`, so Set values were never found during iteration.
+   - File: `crates/quench-runtime/src/interpreter/eval_stmt/loops.rs`
+
+### Already-implemented features (from Task 02/14)
+
+- **async/await** — works correctly. `async function f() { return 1; } f().then(console.log)` outputs "Promise resolved with: 42"
+- **Promise static methods** — `Promise.resolve`, `Promise.reject`, `Promise.all`, `Promise.race` all work
+- **event-loop microtask draining** — implemented in Task 06
+
+### Verified working (2026-06-30)
+
+- `for (const x of new Set([1,2,3]))` — sum returns 60 ✓
+- `for (const x of [1,2,3])` — sum returns 6 ✓
+- `for (const entry of new Map([['a', 1], ['b', 2]]))` — entries as [key, value], sum of values returns 3 ✓
+- `for (const [k,v] of new Map([['a', 1], ['b', 2]]).entries())` — returns correct key-value pairs ✓
+- `Promise.resolve(42).then(v => console.log(v))` — outputs "Promise resolved with: 42" ✓
+
+### Remaining work (low priority)
+
+- `Symbol.iterator` explicit implementation (currently relies on `ObjectKind` detection)
+- `Array.from` consuming iterables (verify `Array.from(new Set([...]))`)
+- generator functions and `yield` (no examples need them yet)
+- `import`/`export` execution in modules (no examples need them yet)

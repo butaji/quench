@@ -40,6 +40,13 @@ Run the JSON-driven project specs in `tests/typescript/tests/cases/project/` and
 - At least one CommonJS project spec runs end-to-end without crashing.
 - AMD/System-only specs are skipped with a clear reason.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

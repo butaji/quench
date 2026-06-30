@@ -1,5 +1,7 @@
 # Goal: Finish the custom TS/JS/TSX runtime and make it fully Ink-compatible
 
+Use sub-agents to work in parallel.
+
 `quench-runtime` already exists as a dedicated workspace crate under `crates/quench-runtime/`, and `rquickjs` has been removed from the main crate. The remaining work is to close the interpreter gaps so that `runtime.js`, TSX/JSX source, all Ink examples, and a meaningful subset of the TypeScript conformance test suite run correctly without touching the bridge, renderer, compiler, or native Ink runtime.
 
 > **One-line rule:** We write the **execution engine** (parser lowering, value model, eval loop, built-ins, host-function glue). We do **not** write a parser — **swc** parses JS/TS/TSX. We use crates for parsing; standard-library objects are implemented in Rust because they are the engine's observable JS environment.
@@ -35,16 +37,20 @@ All work in `crates/quench-runtime/` follows TDD:
 
 ### Test commands
 
+All commands must be run with a timeout because a hanging interpreter can block CI:
+
 ```bash
 # Run the runtime unit tests
-cargo test -p quench-runtime
+timeout 120 cargo test -p quench-runtime
 
 # Run integration/parity tests
-cargo test
+timeout 120 cargo test
 
 # Run a specific conformance category (when harness exists)
-cargo test -p quench-runtime --test conformance -- expressions
+timeout 300 cargo test -p quench-runtime --test conformance -- expressions
 ```
+
+Use `./scripts/run_tests.sh` (Task 31) when available.
 
 ## Current state
 
@@ -212,10 +218,12 @@ See `tasks/index.json`.
 
 ## Verification
 
+All test and example commands below must run with a timeout because interpreter bugs or unsupported constructs can hang:
+
 ```bash
 cargo check
-cargo test
-cargo run -- examples/simple.js
+timeout 120 cargo test
+timeout 60 cargo run -- examples/simple.js
 ```
 
 After Task 09 is complete, `cargo build` must fail if any `*.rs` file exceeds 500 lines, any function body exceeds 40 lines, or any function exceeds cyclomatic complexity 10.
@@ -223,10 +231,12 @@ After Task 09 is complete, `cargo build` must fail if any `*.rs` file exceeds 50
 After Tasks 01–04, 07, and 14 are truly complete:
 
 ```bash
-cargo run -- examples/counter.js
-cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
-cargo run -- examples/animations.tsx
+timeout 60 cargo run -- examples/counter.js
+timeout 60 cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
+timeout 60 cargo run -- examples/animations.tsx
 ```
+
+Use `./scripts/run_tests.sh` (Task 31) as the preferred wrapper when available.
 
 ## TypeScript conformance test suite
 
@@ -242,9 +252,17 @@ The target is **not** to pass 100% of conformance tests (many are type-check onl
 
 ### Verification for conformance
 
+All conformance test commands must run with a timeout (interpreter bugs or unsupported constructs can hang):
+
 ```bash
 git submodule update --init tests/typescript
-cargo test -p quench-runtime --test conformance -- --test-threads=1
+timeout 300 cargo test -p quench-runtime --test conformance -- --test-threads=1
+```
+
+Or use the wrapper if available:
+
+```bash
+./scripts/run_tests.sh test_conformance
 ```
 
 ## Execution options

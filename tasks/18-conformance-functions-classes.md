@@ -55,6 +55,13 @@ Make the runtime pass all runtime-relevant function and class conformance cases.
 - `class Foo extends Bar { ... }` and `new Foo()` work.
 - `function f({x}, ...rest) {}` binds patterns and rest correctly.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

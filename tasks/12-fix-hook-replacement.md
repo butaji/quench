@@ -60,6 +60,13 @@ fn prefix_hooks(js: &str) -> String {
 - `Cargo.toml`: Added `regex = "1"` dependency
 - `src/compiler/mod.rs`: Rewrote `prefix_hooks` to use regex with word boundaries
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 - All 60+ examples now run successfully (including `mouse-app.tsx` which was failing)

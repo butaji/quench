@@ -55,6 +55,13 @@ Register all bridge functions that `runtime.js` and the examples call from JS, a
 - `__ink_get_node_children(rootId)` returns an array of child IDs with correct elements.
 - Timer registration round-trips: `setTimeout(cb, 0)` results in `__tb_invoke_timers` being called with the matching rust timer ID.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

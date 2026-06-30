@@ -114,6 +114,13 @@ crates/quench-runtime/src/
 - ✅ `cargo test -p quench-runtime` passes.
 - ✅ A deeply nested expression (e.g., 2000 nested binary operations) returns a clear stack-overflow error instead of a Rust panic.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

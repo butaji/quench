@@ -63,6 +63,13 @@ npx hereby baseline-accept
 - The commands above run successfully for at least one conformance test.
 - A note exists explaining how to regenerate baselines when the submodule is updated.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

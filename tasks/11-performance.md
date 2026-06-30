@@ -95,6 +95,13 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
 - `cargo run -- examples/animations.tsx` runs without crashing and renders smoothly.
 - A microbenchmark (e.g., 10,000 tight loop iterations) shows measurable improvement after each phase.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 ```bash

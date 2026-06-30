@@ -219,6 +219,13 @@ Capture the findings from five focused read-only review rounds (architecture/HIR
 - Do not modify `examples/` or `tests/typescript/`.
 - Fix the Rank 1 and Rank 2 items before touching Rank 4 architecture work.
 
+## Timeout note
+
+- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
+- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
+- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
+
+
 ## Verification
 
 After each batch of fixes:
