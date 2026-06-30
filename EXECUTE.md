@@ -11,6 +11,40 @@
 3. **Work example-to-example.** Prioritize gaps based on what the next failing example actually needs, rather than implementing features in abstract spec order.
 4. **Document deferrals.** Every postponed feature gets a note or a dedicated follow-up task so it is not forgotten.
 5. **Clear diagnostics.** Every parser, lowering, runtime, and bridge error must tell the user what went wrong, where (file/line/column), and what to do about it. No silent drops, no raw panics, no obscure internal names exposed to users.
+6. **Test-driven development.** Every bug fix, feature, and refactor starts with a failing unit test. We follow the red-green-refactor cycle: write the test, watch it fail for the expected reason, write the minimal code to pass, then refactor while keeping tests green. No production code without a failing test first.
+7. **Comprehensive unit-test coverage.** Runtime behavior must be pinned with unit tests in `crates/quench-runtime/tests/` (and `tests/` for the main crate) before it is considered done. Integration tests run the example apps; unit tests exercise edge cases that the examples do not hit.
+
+## Test-driven development process
+
+All work in `crates/quench-runtime/` follows TDD:
+
+1. **Red** — write a minimal unit test that demonstrates the missing behavior or bug.
+2. **Verify red** — run the test and confirm it fails for the expected reason.
+3. **Green** — write the smallest amount of code that makes the test pass.
+4. **Verify green** — run the test suite and confirm the new test passes without breaking existing tests.
+5. **Refactor** — clean up duplication, improve names, split functions; keep tests green.
+6. **Repeat** for the next behavior.
+
+### Unit-test requirements
+
+- Every bug fix from Task 26 must be accompanied by a regression test.
+- Every new language feature (optional chaining, destructuring, class, async, modules, etc.) must have unit tests covering the happy path and representative edge cases.
+- Built-ins must be tested against the ECMAScript-style expectations used by the TypeScript conformance suite where possible.
+- Tests live in `crates/quench-runtime/tests/` and mirror the module structure of the source.
+- Examples (`examples/`) are integration tests, not replacements for unit tests.
+
+### Test commands
+
+```bash
+# Run the runtime unit tests
+cargo test -p quench-runtime
+
+# Run integration/parity tests
+cargo test
+
+# Run a specific conformance category (when harness exists)
+cargo test -p quench-runtime --test conformance -- expressions
+```
 
 ## Current state
 
