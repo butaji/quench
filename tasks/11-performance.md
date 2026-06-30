@@ -2,7 +2,7 @@
 
 ## Goal
 
-Once the runtime is functionally correct, apply staged optimizations so it can run Ink apps at acceptable speed, ending with a path to bytecode and AOT/JIT compilation.
+Once the runtime is functionally correct, apply interpreter-level optimizations so it can run Ink apps at acceptable speed. AOT/JIT and bytecode compilation are explicitly out of scope for now.
 
 > **Prerequisite:** Complete Tasks 01–08 first. This task is deliberately `pending` until the runtime passes the example suite.
 
@@ -15,13 +15,13 @@ Once the runtime is functionally correct, apply staged optimizations so it can r
 ## Research-backed recommendations
 
 - **Do not write a parser or lexer from scratch.** `swc` is the right front-end; it is already in use.
-- **Prefer Cranelift over LLVM for the first AOT/JIT backend.** Cranelift (`cranelift-module`, `cranelift-object`, `cranelift-jit`) compiles faster, has a smaller dependency footprint, and is easier to embed than LLVM/`inkwell`. Move to LLVM only if optimization quality or target support is insufficient.
-- **Use a bytecode VM as the stepping stone.** A fully optimized AST interpreter is still 10–30× slower than a bytecode VM. The HIR should lower cleanly to bytecode with fixed-width instructions and external constant tables.
+- **Prefer interpreter-level wins first.** AOT/JIT and bytecode are future work; the immediate gains are NaN-boxed values, string interning, object shapes + inline caches, slot-indexed environments, arena allocation, and an explicit eval stack.
 - **Adopt hidden-class-style object shapes + inline caches (ICs).** This is the single most important JS-specific optimization (used by V8, SpiderMonkey, Hermes, Boa, etc.). Cache `(expected_shape, offset)` on hot property/member/call sites.
 - **NaN-box primitives.** Pack `f64`, object pointer, string pointer, and small tags into a single `u64` so `Value` is `Copy` and 64-bit.
 - **Intern identifiers and property names.** Use `lasso` or `string-interner` so property maps have integer keys and fast hashing.
 - **Use `indexmap` for object properties** when deterministic enumeration order is required; otherwise use `rustc-hash`/`foldhash` with atom keys.
 - **Arena-allocate short-lived state** with `bumpalo`; consider `mimalloc`/`tikv-jemallocator` as the global allocator.
+- **Use existing crates for diagnostics** (`thiserror`, `miette`/`ariadne`) instead of hand-rolling a formatter.
 
 ## Files
 
@@ -32,7 +32,7 @@ Once the runtime is functionally correct, apply staged optimizations so it can r
 - `crates/quench-runtime/src/ast.rs` (HIR nodes)
 - `Cargo.toml`
 
-## Phase 1 — Interpreter-level wins (no bytecode yet)
+## Steps
 
 1. **NaN-boxed / tagged `Value`**
    - Make `Value` a `Copy` 64-bit type.
@@ -70,33 +70,17 @@ Once the runtime is functionally correct, apply staged optimizations so it can r
    - Use `rustc-hash`/`foldhash` for atom-keyed maps.
    - Add `regress` for ECMAScript regex and `num-bigint` for `BigInt`.
 
-## Phase 2 — Bytecode VM
+## Future direction (not in this task)
 
-8. **Bytecode HIR lowering**
-   - Lower the HIR to a stack-based or accumulator-based bytecode.
-   - Use fixed-width instructions and external constant/identifier tables.
-   - Add a simple interpreter loop; switch to direct-threaded dispatch if portable enough.
-
-9. **Bytecode inline caches**
-   - Encode IC slots in bytecode instructions for property access and calls.
-   - On shape miss, run a slow path that updates the IC slot.
-
-## Phase 3 — AOT / JIT
-
-10. **Baseline JIT with Cranelift**
-    - Compile hot bytecode functions to machine code with `cranelift-jit`.
-    - Keep deoptimization paths back to the interpreter for shape misses.
-
-11. **AOT with Cranelift Object**
-    - Use `cranelift-module` + `cranelift-object` to emit object files at build time.
-    - Link them into the host binary; ship precompiled HIR/bytecode without a runtime compiler.
-    - Fall back to `inkwell` only if Cranelift is insufficient.
+- AOT/JIT via Cranelift (`cranelift-module`, `cranelift-object`, `cranelift-jit`) can be added later, consuming the same HIR directly.
+- Bytecode compilation is also future work; the HIR should stay high-level enough to avoid needing it as an intermediate step.
 
 ## Boundaries
 
 - Only modify `crates/quench-runtime/src/` and `Cargo.toml`.
 - Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
 - `examples/` are immutable; measure performance against existing examples.
+- Do not add a bytecode VM or Cranelift backend in this task.
 
 ## Acceptance criteria
 

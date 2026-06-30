@@ -58,7 +58,7 @@ At runtime these nodes build a reactive dependency graph. At AOT time they let t
 6. Rename module/doc references from “runtime AST” to **HIR**.
 7. Add `serde` derives behind a feature flag.
 8. Add unit tests for `source -> swc -> HIR -> eval` and `source -> swc -> HIR -> serialize -> deserialize -> eval`.
-9. Ensure the HIR can be lowered to bytecode (Phase 2 of Task 11) and eventually to Cranelift for AOT/JIT (Phase 3 of Task 11).
+9. Keep the HIR high-level enough for the interpreter but structured enough that a future AOT backend (e.g., Cranelift) can consume it directly. Do not add a bytecode layer now.
 
 ## Boundaries
 

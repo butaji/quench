@@ -18,48 +18,46 @@ Capture the findings from the online research and make the project follow the hi
 - `swc_ecma_parser` already gives us TS/JS/TSX parsing.
 - Custom lexers are error-prone and a huge maintenance burden.
 
-### 2. Build a bytecode VM before AOT/JIT
+### 2. Focus on interpreter-level wins first; AOT/JIT is future work
 
-- A fully optimized AST interpreter is 10–30× slower than a bytecode VM.
-- The HIR (Task 22) should lower cleanly to bytecode with fixed-width instructions and external constant tables.
-- Only after the bytecode VM works should we add Cranelift-based JIT/AOT.
+- A fully optimized AST interpreter is 10–30× slower than a bytecode VM, but adding a bytecode VM or JIT now would delay getting Ink apps working.
+- The HIR should be structured so a future AOT backend can consume it directly; do not add a bytecode layer in the current phase.
 
-### 3. Use Cranelift, not LLVM, for the first native backend
-
-- Cranelift (`cranelift-module`, `cranelift-object`, `cranelift-jit`) is smaller, faster to compile, and easier to embed than LLVM/`inkwell`.
-- It is good enough for a baseline JIT and AOT object emission.
-- Move to `inkwell`/LLVM only if Cranelift lacks a target or optimization we need.
-
-### 4. Object shapes (hidden classes) + inline caches are non-optional
+### 3. Object shapes (hidden classes) + inline caches are non-optional
 
 - V8, SpiderMonkey, Hermes, Boa, and JSC all use hidden classes and ICs.
 - Cache `(expected_shape, offset)` at property-access and call sites.
 - Keep object property order consistent and avoid dynamic property add/remove in hot code.
 
-### 5. NaN-box primitives
+### 4. NaN-box primitives
 
 - Pack `f64`, object pointer, string pointer, and tags into a single `u64`.
 - Makes `Value: Copy` and 64-bit, eliminating a huge amount of allocation and pointer chasing.
 
-### 6. Intern identifiers and property names
+### 5. Intern identifiers and property names
 
 - Use `lasso` or `string-interner`.
 - Property maps become integer-keyed; comparison is a single `u32` equality.
 
-### 7. Use ordered maps for object properties
+### 6. Use ordered maps for object properties
 
 - JS requires deterministic `for...in` order in practice.
 - `indexmap` with a fast hasher gives order + speed.
 
-### 8. Arena-allocate short-lived state
+### 7. Arena-allocate short-lived state
 
 - `bumpalo` for frames, temporary eval state, and render trees.
 - Consider `mimalloc` or `tikv-jemallocator` as the global allocator.
 
-### 9. Rich diagnostics with existing crates
+### 8. Rich diagnostics with existing crates
 
 - Use `thiserror` for error enums, `miette` or `ariadne` for source snippets (Task 23).
 - Do not hand-roll a diagnostic formatter unless necessary.
+
+### 9. Use Cranelift, not LLVM, if/when AOT/JIT is added later
+
+- Cranelift (`cranelift-module`, `cranelift-object`, `cranelift-jit`) is smaller, faster to compile, and easier to embed than LLVM/`inkwell`.
+- Move to `inkwell`/LLVM only if Cranelift lacks a target or optimization we need.
 
 ### 10. Lazy-load large data
 
@@ -87,7 +85,7 @@ Capture the findings from the online research and make the project follow the hi
    - `cranelift`, `cranelift-module`, `cranelift-object`, `cranelift-jit` (behind a feature flag)
    - `miette` or `ariadne`
 2. Update the HIR (Task 22) and performance roadmap (Task 11) to reference this task.
-3. When implementing shapes/ICs, NaN boxing, and bytecode, use the staged plan in Task 11.
+3. When implementing shapes/ICs and NaN boxing, follow the staged plan in Task 11. Do not add a bytecode VM or Cranelift backend now.
 4. Avoid adding any custom parser, lexer, register allocator, or LLVM backend.
 
 ## Boundaries
