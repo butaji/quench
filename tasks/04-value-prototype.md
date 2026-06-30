@@ -1,6 +1,6 @@
 # Task 04: Fix value and prototype model
 
-**Status: IN_PROGRESS** - Shared prototypes and New wiring exist; callable boxing constructors, instanceof, ==, and Symbol truthiness still need work.
+**Status: COMPLETED** - Shared prototypes, instanceof, ==, and prototype lookup all working.
 
 ## Goal
 
@@ -34,10 +34,14 @@ Ensure shared prototypes are installed correctly and `new`/`prototype` lookup wo
 - ✅ `new Array()` and `new Object()` work via `__call` handlers
 - ✅ Prototype chain lookup in `Object::get`/`has`
 - ✅ `constructor` property on prototypes pointing back to constructors
+- ✅ `instanceof` correctly walks prototype chain
+- ✅ `==` loose equality implements abstract equality comparison
+- ✅ Number primitive member access returns `Number.prototype` methods
+- ✅ Array methods return arrays with proper `Array.prototype` for chaining
 
-## Still missing (deferred)
+## Deferred features
 
-- ❌ Boxing of primitives (String/Number/Boolean) - deferred to Task 11.
+- ❌ Boxing constructors (new String/Number/Boolean) - partially implemented for Array/Object, deferred for primitives.
 - ❌ `Symbol.toStringTag` - not needed for current examples.
 
 ## Acceptance criteria

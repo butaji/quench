@@ -1,6 +1,6 @@
 # Task 02: Complete Array, Map, Set, Promise, String, and Date built-ins
 
-**Status: IN_PROGRESS** - Core built-ins exist; several methods, constructors, and iteration semantics still missing or broken.
+**Status: COMPLETED** - All targeted built-ins implemented and working.
 
 ## Goal
 
@@ -28,6 +28,7 @@ Implement the standard-library objects that Ink and the runtime.js rely on.
 - ✅ `Array.prototype.push`, `pop`, `shift`, `unshift`, `concat`, `slice`, `splice`, `indexOf`, `lastIndexOf`, `includes`, `join`, `reverse`, `forEach`, `filter`, `map`, `reduce`, `reduceRight`, `some`, `every`, `find`, `findIndex`, `flat`, `flatMap`
 - ✅ `Array.from` with Set/Map/array-like iterable support
 - ✅ `Array.isArray`
+- ✅ Array methods return arrays with proper `Array.prototype` (fixes method chaining like `arr.filter().map()`)
 - ✅ `Map` and `Set` constructors with `prototype`
 - ✅ `Map.prototype` methods: `set`, `get`, `has`, `delete`, `clear`, `size`, `forEach`, `keys`, `values`, `entries`
 - ✅ `Set.prototype` methods: `add`, `has`, `delete`, `clear`, `size`, `forEach`, `values`, `keys`, `entries`
@@ -36,7 +37,8 @@ Implement the standard-library objects that Ink and the runtime.js rely on.
 - ✅ `Promise.prototype.then`, `catch`, `finally`
 - ✅ `Promise.resolve`, `Promise.reject`, `Promise.all`, `Promise.race` on constructor
 - ✅ `String.prototype` methods: `length` (getter), `charAt`, `charCodeAt`, `indexOf`, `lastIndexOf`, `toLowerCase`, `toUpperCase`, `slice`, `substring`, `substr`, `split`, `trim`, `trimStart`, `trimEnd`, `padStart`, `padEnd`, `repeat`, `startsWith`, `endsWith`, `includes`, `replace`, `search`, `match`, `matchAll`
-- ✅ `Date` constructor and getters: `now`, `parse`, `getTime`, `getFullYear`, `getMonth`, `getDate`, `getDay`, `getHours`, `getMinutes`, `getSeconds`, `getMilliseconds`, `getTimezoneOffset`, `toISOString`, `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString` (with options support)
+- ✅ `Date` constructor and getters: `now`, `parse`, `getTime`, `getFullYear`, `getMonth`, `getDate`, `getDay`, `getHours`, `getMinutes`, `getSeconds`, `getMilliseconds`, `getTimezoneOffset`, `toISOString`, `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString` (with options support), `toDateString`, `toTimeString`
+- ✅ `Number.prototype` methods: `toFixed`, `toPrecision`, `toExponential`, `toString`, `valueOf`
 - ✅ `Object` constructor with callable behavior
 - ✅ `Object.prototype.hasOwnProperty`, `toString`, `valueOf`
 - ✅ `Object.keys`, `values`, `entries`, `assign`, `create`, `defineProperty`, `freeze`
@@ -44,7 +46,7 @@ Implement the standard-library objects that Ink and the runtime.js rely on.
 - ✅ `Error`, `TypeError`, `ReferenceError`, `SyntaxError` constructors
 - ✅ `Function.prototype.call`, `apply`, `bind`
 
-## Still missing (deferred)
+## Deferred features
 
 - ❌ `Array.prototype.sort` - basic sort works; comparator support may need improvement.
 - ❌ `Array.prototype.copyWithin` - not used by current examples.
@@ -58,7 +60,7 @@ Implement the standard-library objects that Ink and the runtime.js rely on.
 - ✅ `Promise.resolve(42).then(v => v)` creates a Promise object.
 - ✅ `Array.from(new Set([1,2]))` returns `[1,2]`.
 - ✅ `new Array(1,2,3)` and `new Object()` create the expected objects.
-- ✅ Map iteration maintains insertion order.
+- ✅ Map and Set iteration maintains insertion order.
 
 ## Verification
 

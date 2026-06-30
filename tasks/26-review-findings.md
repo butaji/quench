@@ -27,18 +27,18 @@ Capture the findings from five focused read-only review rounds (architecture/HIR
    - Issue: `handle_hot_reload` builds a new context, loads `runtime.js`, evaluates the file, logs success, and throws the context away. The main loop keeps using the old context. The new context also lacks bridge functions, and raw TSX files fail to parse.
    - Fix: Actually swap the running context, re-register bridge functions, compile TSX/JSX if needed, and refresh `root_id`.
 
-4. **Array.prototype methods return arrays with no prototype**
-   - Files: `crates/quench-runtime/src/builtins/array_methods.rs:141,167,247,403,436`, `builtins/array.rs:89-94`, `value/json.rs:64`, `interpreter/call.rs:124,135`
-   - Issue: `Object::new_array_from` creates arrays whose `prototype` is `None`, so chaining like `arr.slice().map(...)` fails. Breaks `scroll-view.tsx`, `chat-ui.js`, `log-viewer.tsx`, `multi-select.tsx`, `tabs.js`, `todo-list.js`.
-   - Fix: Set `__Array_prototype__` on every array created by builtins, JSON parsing, rest params, and `arguments`.
+4. **✅ FIXED: Array.prototype methods return arrays with no prototype**
+   - Files: `crates/quench-runtime/src/builtins/array_methods.rs`, `builtins/array.rs`, `value/mod.rs`, `interpreter/call.rs`
+   - Issue: `Object::new_array_from` creates arrays whose `prototype` is `None`, so chaining like `arr.slice().map(...)` fails.
+   - Fix: Added thread-local pending prototype storage in `value/mod.rs` and modified `Object::new_array_from` to use it. Updated all array method creators in `builtins/array_methods.rs` to use `make_array_with_proto` helper.
 
-5. **`==` loose equality is broken for object/function references**
-   - File: `crates/quench-runtime/src/interpreter/binary_ops.rs:14-15`
-   - Issue: `BinaryOp::Eq` uses `Value == Value`, which returns `false` for all non-primitives. `obj == obj`, `fn == fn`, `[] == []` are all false.
-   - Fix: Implement full JS abstract equality (SameValue + coercion + reference equality).
+5. **✅ FIXED: `==` loose equality is broken for object/function references**
+   - File: `crates/quench-runtime/src/interpreter/binary_ops.rs`
+   - Issue: `BinaryOp::Eq` uses `Value == Value`, which returns `false` for all non-primitives.
+   - Fix: Implemented full JS abstract equality comparison with object-to-primitive coercion.
 
-6. **`instanceof` does not walk the prototype chain**
-   - File: `crates/quench-runtime/src/interpreter/binary_ops.rs:108-123`
+6. **✅ FIXED: `instanceof` does not walk the prototype chain**
+   - File: `crates/quench-runtime/src/interpreter/binary_ops.rs`
    - Issue: It checks `left.constructor.prototype` pointer equality to `right.prototype` and never walks `left.[[Prototype]]`.
    - Fix: Walk the prototype chain iteratively and compare each link to `right.prototype`.
 

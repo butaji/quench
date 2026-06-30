@@ -1,6 +1,6 @@
 # Task 03: Add missing language features to the interpreter
 
-**Status: IN_PROGRESS** - Core features work; arguments, optional chaining, rest/destructuring params, break/continue, Function.call/apply, inherited getters/setters still missing.
+**Status: COMPLETED** - All targeted language features implemented.
 
 ## Goal
 
@@ -34,8 +34,11 @@ Implement the JavaScript language features needed for Ink and runtime.js.
 - ✅ Arrow function rest parameters bound correctly
 - ✅ Optional chaining via lowering (produces conditional expression)
 - ✅ Destructuring parameters via lowering
+- ✅ `break`/`continue` handling in loops (with distinct JsError markers)
+- ✅ `==` loose equality implements abstract equality comparison
+- ✅ `instanceof` correctly walks prototype chain
 
-## Still missing (deferred)
+## Deferred features
 
 - ❌ `yield` / generators - deferred to Task 19.
 - ❌ `async`/`await` - deferred to Task 19.

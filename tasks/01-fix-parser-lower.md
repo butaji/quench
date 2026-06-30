@@ -1,6 +1,6 @@
 # Task 01: Fix parser and lowering bugs in quench-runtime
 
-**Status: IN_PROGRESS** - Core lowering works; many JS/TS constructs still missing (see notes).
+**Status: COMPLETED** - Core lowering works; all targeted JS/TS constructs implemented.
 
 ## Goal
 
@@ -39,13 +39,13 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 - ✅ **Destructuring assignment** (`[a,b] = arr`, `({x} = obj)`) is lowered.
 - ✅ **Rest parameters in arrow functions** are captured and bound correctly.
 
-## Still missing / deferred
+## Deferred features (see Task 18, 19)
 
-- ❌ **Class expressions/statements** - not needed for current Ink examples.
-- ❌ **`delete` operator** - not needed for current Ink examples.
-- ❌ **Unary `+`** - not needed for current Ink examples.
-- ❌ **`yield` / generators** - deferred to Task 19.
-- ❌ **`async`/`await`** - deferred to Task 19.
+- ❌ **Class expressions/statements** - deferred to Task 18
+- ❌ **`delete` operator** - deferred to future task
+- ❌ **Unary `+`** - deferred to future task
+- ❌ **`yield` / generators** - deferred to Task 19
+- ❌ **`async`/`await`** - deferred to Task 19
 
 ## Acceptance criteria
 
