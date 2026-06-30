@@ -66,9 +66,29 @@ The current architecture is a good fit for replacing `rquickjs` with a minimal, 
 
 - **Dedicated crate (`crates/quench-runtime/`)** keeps the engine isolated from the main binary and bridge.
 - **swc-based parser/lowering** avoids writing a lexer/parser and gives us TS/JS/TSX support for free.
-- **HIR layer** — the lowerer produces a single high-level, language-agnostic IR that is consumed by the interpreter today and can be consumed by a future AOT compiler without re-parsing source.
+- **HIR layer** — the lowerer produces a single high-level, language-agnostic, **functional and reactive** IR. It is consumed by the interpreter today and can be consumed by a future AOT compiler without re-parsing source.
 - **Generic host-function API** lets `src/main.rs` register bridge closures without `quench-runtime` depending on `quench` internals.
 - **Shared prototype objects** (started for `Array.prototype`) are the right way to implement JS prototype semantics.
+
+### HIR design: functional + reactive
+
+The HIR is intentionally designed to make both interpretation and future AOT compilation efficient:
+
+- **Functional core.** The IR is expression-oriented and close to A-normal form (ANF): most operations produce a single value bound to a name, and values are immutable by default. This makes constant folding, dead-code elimination, common-subexpression elimination, and inlining straightforward.
+- **Explicit effects.** Mutations (`Assign`, property set, `delete`), I/O, and rendering are explicit effect nodes. Pure sub-expressions can be memoized or reordered; effect nodes anchor sequencing.
+- **Reactive primitives.** The HIR includes first-class nodes for the reactive primitives that Ink/Quench actually uses:
+  - `Signal { id, initial }` — a mutable reactive cell (e.g., `useState`).
+  - `Memo { deps_expr, compute }` — a cached derived value (e.g., `useMemo`).
+  - `Effect { deps_expr, callback }` — a scheduled side effect (e.g., `useEffect`).
+  - `Render { component, props }` — a reactive render boundary.
+- **Dependency tracking.** Each `Memo`/`Effect`/`Render` node declares its dependencies explicitly. At runtime the engine builds a reactive graph so that when a `Signal` changes, only the memos, effects, and components that actually depend on it are re-evaluated.
+- **Component functions are pure functions of props + signals.** A component call becomes a `Render` node whose body is a pure function plus an explicit dependency list. This lets the AOT backend compile components to efficient reactive code and lets the interpreter skip unchanged subtrees.
+- **Closures and control flow.** Functions, arrow functions, and closures are first-class HIR values. `if`, loops, `try/catch`, `break`, `continue`, and `return` are represented explicitly so the interpreter can execute them and the AOT backend can lower them to branches or CPS without re-parsing source.
+- **Optimization-friendly shape.** Because the HIR is high-level but side-effect-free except at explicit nodes, the AOT backend can:
+  - inline small pure functions,
+  - fold constants across pure operations,
+  - hoist memos out of render loops,
+  - eliminate unused signals and dead branches.
 
 ### Known architectural limitations to address
 
