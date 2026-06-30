@@ -4,6 +4,13 @@
 
 Make every Quench error — parser, lowering, runtime, or bridge — as clear and helpful as possible. A user should always know what went wrong, where, and what to do next.
 
+## TDD & testing note
+
+- Follow the red-green-refactor cycle: write a failing unit test first, then the minimal code to pass it, then refactor.
+- Add a regression test for every bug fix and edge case covered by this task.
+- Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
+
+
 ## Files
 
 - `crates/quench-runtime/src/swc_parse.rs`

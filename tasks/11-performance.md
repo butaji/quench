@@ -12,6 +12,13 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
 - Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
 - Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
 
+## TDD & testing note
+
+- Follow the red-green-refactor cycle: write a failing unit test first, then the minimal code to pass it, then refactor.
+- Add a regression test for every bug fix and edge case covered by this task.
+- Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
+
+
 ## Research-backed recommendations
 
 - **Do not write a parser or lexer from scratch.** `swc` is the right front-end; it is already in use.

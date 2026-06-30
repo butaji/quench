@@ -4,6 +4,13 @@
 
 Implement the runtime side of the reactive HIR: build a dependency graph from `Signal`, `Memo`, `Effect`, and `Render` nodes and propagate changes efficiently.
 
+## TDD & testing note
+
+- Follow the red-green-refactor cycle: write a failing unit test first, then the minimal code to pass it, then refactor.
+- Add a regression test for every bug fix and edge case covered by this task.
+- Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
+
+
 ## Files
 
 - `crates/quench-runtime/src/interpreter/mod.rs`

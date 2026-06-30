@@ -182,6 +182,13 @@
       "file": "tasks/26-review-findings.md",
       "status": "pending",
       "notes": "Ranked findings from architecture/HIR, parser/lowering, interpreter/value, built-ins/host, and bridge/compiler reviews. Top blockers: event-loop dispatch, microtasks, hot reload, array prototypes, ==/instanceof."
+    },
+    {
+      "id": "27",
+      "title": "Establish TDD baseline and unit test coverage",
+      "file": "tasks/27-tdd-baseline.md",
+      "status": "pending",
+      "notes": "Add regression/unit tests for every Rank 1 and Rank 2 finding from Task 26 before fixing them; create the test harness layout in crates/quench-runtime/tests/."
     }
   ]
 }

@@ -8,6 +8,13 @@ Define and stabilize a single **high-level intermediate representation (HIR)** i
 2. **Reactive** — first-class support for signals, memos, effects, and render boundaries.
 3. **AOT-ready** — clean enough for the interpreter today and for a future AOT compiler later.
 
+## TDD & testing note
+
+- Follow the red-green-refactor cycle: write a failing unit test first, then the minimal code to pass it, then refactor.
+- Add a regression test for every bug fix and edge case covered by this task.
+- Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
+
+
 ## Files
 
 - `crates/quench-runtime/src/ast.rs` (rename to `hir.rs` or keep `ast.rs` as the HIR module)
