@@ -103,7 +103,7 @@
       "title": "Add TypeScript conformance submodule and test harness",
       "file": "tasks/15-typescript-submodule.md",
       "status": "pending",
-      "notes": "Add tests/typescript as a shallow submodule; create a runner that compiles conformance .ts files and executes them in quench-runtime."
+      "notes": "Add tests/typescript as a shallow submodule; create a runner that parses conformance .ts/.tsx files natively and interprets them in quench-runtime. No compile step."
     },
     {
       "id": "16",

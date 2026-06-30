@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime.js` and compiled TSX output without compile-time or lowering errors.
+Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime.js` and TSX/JSX source directly, without any pre-compilation step.
 
 ## Files
 

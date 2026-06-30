@@ -1,6 +1,6 @@
 # Goal: Finish the custom TS/JS/TSX runtime and make it fully Ink-compatible
 
-`quench-runtime` already exists as a dedicated workspace crate under `crates/quench-runtime/`, and `rquickjs` has been removed from the main crate. The remaining work is to close the interpreter gaps so that `runtime.js`, compiled TSX/JSX output, all Ink examples, and a meaningful subset of the TypeScript conformance test suite run correctly without touching the bridge, renderer, compiler, or native Ink runtime.
+`quench-runtime` already exists as a dedicated workspace crate under `crates/quench-runtime/`, and `rquickjs` has been removed from the main crate. The remaining work is to close the interpreter gaps so that `runtime.js`, TSX/JSX source, all Ink examples, and a meaningful subset of the TypeScript conformance test suite run correctly without touching the bridge, renderer, compiler, or native Ink runtime.
 
 > **One-line rule:** We write the **execution engine** (parser lowering, value model, eval loop, built-ins, host-function glue). We do **not** write a parser — **swc** parses JS/TS/TSX. We use crates for parsing; standard-library objects are implemented in Rust because they are the engine's observable JS environment.
 

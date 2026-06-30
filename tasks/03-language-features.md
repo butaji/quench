@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add the JS language features required by `runtime.js` and compiled TSX that the current interpreter does not yet support.
+Add the JS/TS language features required by `runtime.js` and TSX source that the current interpreter does not yet support.
 
 ## Files
 

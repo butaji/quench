@@ -2,7 +2,7 @@
 
 ## Goal
 
-Bring the official TypeScript test corpus into the repo and build a runner that can compile and execute conformance cases in `quench-runtime`.
+Bring the official TypeScript test corpus into the repo and build a runner that can parse and interpret conformance cases natively in `quench-runtime`.
 
 ## Files
 
@@ -26,7 +26,7 @@ Bring the official TypeScript test corpus into the repo and build a runner that 
    - Evaluates the resulting runtime AST directly in a fresh `quench_runtime::Context`.
    - Captures runtime errors and console output.
    - Compares against baseline output in `tests/typescript/tests/baselines/reference/` when available.
-4. Add a single sanity test that compiles and runs one trivial conformance file (e.g., `tests/cases/conformance/expressions/additionOperator/additionOperatorWithNumberAndDate.ts` if it exists) to prove the harness works.
+4. Add a single sanity test that parses and runs one trivial conformance file (e.g., `tests/cases/conformance/expressions/additionOperator/additionOperatorWithNumberAndDate.ts` if it exists) to prove the harness works.
 5. Document how to initialize the submodule in `EXECUTE.md` and `README.md`.
 
 ## Boundaries
