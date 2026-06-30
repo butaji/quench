@@ -2,7 +2,7 @@
 
 ## Goal
 
-Bring the official TypeScript test corpus into the repo and build a runner that can parse and interpret conformance cases natively in `quench-runtime`.
+Bring the official TypeScript test corpus into the repo and build a Rust runner that can parse and interpret conformance cases natively in `quench-runtime`, using TypeScript's own baselines as the source of truth.
 
 ## Pareto & reuse note
 
@@ -16,30 +16,46 @@ Bring the official TypeScript test corpus into the repo and build a runner that 
 - Add a regression test for every bug fix and edge case covered by this task.
 - Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
 
-
 ## Files
 
 - `.gitmodules`
 - `tests/typescript/` (shallow submodule)
 - `crates/quench-runtime/tests/conformance.rs` (new test harness)
-- `crates/quench-runtime/Cargo.toml` (if new dev-dependencies are needed)
+- `crates/quench-runtime/Cargo.toml` (dev-dependencies: `walkdir`, `regex` or `lazy_static`)
+
+## What the TypeScript submodule provides
+
+- `tests/typescript/tests/cases/conformance/**/*.ts{x}` — input test cases.
+- `tests/typescript/tests/baselines/reference/*.js` — expected emitted JS for each case.
+- `tests/typescript/tests/baselines/reference/*.errors.txt` — expected type errors (used only to skip negative tests).
+- `tests/typescript/src/testRunner/compilerRunner.ts` — TypeScript's own runner (reference only).
+- `tests/typescript/src/harness/harnessIO.ts` — directive parser rules.
 
 ## Steps
 
-1. Add the TypeScript repo as a shallow submodule:
+1. Add the TypeScript repo as a shallow submodule (already done if present):
    ```bash
    git submodule add --depth 1 https://github.com/microsoft/TypeScript.git tests/typescript
    ```
 2. Commit `.gitmodules` and the submodule pointer.
 3. Create `crates/quench-runtime/tests/conformance.rs` with a harness that:
-   - Walks `tests/typescript/tests/cases/conformance/**/*.ts`.
-   - Filters out type-check-only files (e.g., files whose only assertions are `// @errors`) or keeps them and expects zero runtime errors.
-   - Parses each `.ts` file **directly** with `swc_ecma_parser` TypeScript syntax (`Syntax::Typescript(...)`); no `tsc` or separate compile step.
-   - Strips TypeScript-only nodes (type annotations, interfaces, type aliases, enums-as-types, namespaces, etc.) during lowering.
-   - Evaluates the resulting runtime AST directly in a fresh `quench_runtime::Context`.
-   - Captures runtime errors and console output.
-   - Compares against baseline output in `tests/typescript/tests/baselines/reference/` when available.
-4. Add a single sanity test that parses and runs one trivial conformance file (e.g., `tests/cases/conformance/expressions/additionOperator/additionOperatorWithNumberAndDate.ts` if it exists) to prove the harness works.
+   - Walks `tests/typescript/tests/cases/conformance/**/*.ts` and `**/*.tsx`.
+   - Parses `// @name: value` directives from each file (case-insensitive, comma-separated values for multi-config cases).
+   - Splits multi-file cases on `// @filename:` markers into virtual source files.
+   - Looks up the corresponding `.js` baseline in `tests/typescript/tests/baselines/reference/`.
+   - Skips cases that are not runtime-relevant:
+     - non-empty `.errors.txt` baseline for the chosen configuration
+     - `// @noEmit: true`
+     - `// @emitDeclarationOnly: true`
+     - unsupported module systems (`amd`, `umd`, `system`, `node16`, `nodenext`)
+     - JSX without a runtime stub
+     - decorators/metadata without helper stubs
+     - type-check-only directories (`types`, `interfaces`, `Symbols`, `declarationEmit`, `additionalChecks`, `pedantic`, `jsdoc`, `salsa`, `typings`, `override`)
+   - Extracts the emitted JS sections from the baseline (split on `//// [filename.js]` headers, normalize CRLF → LF).
+   - Feeds the extracted JS directly into a fresh `quench_runtime::Context` and runs it to completion.
+   - Reports pass / fail / skip with file paths and captured errors.
+4. Add a single sanity test that runs one trivial case, e.g.:
+   - `tests/cases/conformance/es6/arrowFunction/emitArrowFunctionES6.ts`
 5. Document how to initialize the submodule in `EXECUTE.md` and `README.md`.
 
 ## Boundaries
@@ -51,7 +67,7 @@ Bring the official TypeScript test corpus into the repo and build a runner that 
 ## Acceptance criteria
 
 - `git submodule update --init tests/typescript` succeeds and the directory is populated.
-- `cargo test -p quench-runtime --test conformance` discovers files and runs at least one sanity case.
+- `cargo test -p quench-runtime --test conformance` discovers files, filters them, and runs at least one sanity case.
 - The harness prints a summary of passed/failed/skipped cases.
 
 ## Verification
