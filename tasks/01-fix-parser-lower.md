@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime.js` and TSX/JSX source directly, without any pre-compilation step.
+Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime.js` and TSX/JSX source directly, without any pre-compilation step, and produce a clean HIR that is suitable for both interpretation and future AOT compilation.
 
 ## Pareto & reuse note
 
@@ -40,7 +40,8 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 
 - `cargo check -p quench-runtime` and `cargo test -p quench-runtime` pass.
 - `ctx.eval(include_str!("../../../src/runtime.js"))` parses without lowering errors.
-- A snippet using spread, getters/setters, and ES module syntax parses and lowers.
+- A snippet using spread, getters/setters, and ES module syntax parses and lowers to HIR.
+- The HIR is documented well enough that a future AOT backend can pattern-match on it without re-parsing source.
 
 ## Verification
 

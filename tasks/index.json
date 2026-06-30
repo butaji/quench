@@ -146,6 +146,13 @@
       "file": "tasks/21-typescript-stripping.md",
       "status": "pending",
       "notes": "Runtime must parse .ts/.tsx natively: strip type annotations, interfaces, type aliases, enum-as-value handling, namespaces, import equals, export assignment, as/non-null/type assertions."
+    },
+    {
+      "id": "22",
+      "title": "Stabilize the HIR for runtime and future AOT",
+      "file": "tasks/22-hir-for-aot.md",
+      "status": "pending",
+      "notes": "Define a single high-level IR consumed by the interpreter today and by a future AOT compiler. HIR should be language-agnostic, well-typed, and free of swc-specific details."
     }
   ]
 }

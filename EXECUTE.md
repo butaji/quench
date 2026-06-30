@@ -36,12 +36,13 @@
 
 ## Approach
 
-1. **Fix parser/lowering bugs** — support module/script parsing, fix computed member access, template literal expressions, optional chaining, rest parameters, `for...of`/`for...in`, nullish coalescing, getters/setters.
-2. **Complete standard-library objects** — real mutating `Array.prototype`, `Map`/`Set` methods and iterators, `Promise`, `String.prototype.repeat`/`padStart`, `Date.prototype`, `Object.prototype.hasOwnProperty`.
-3. **Fix the value/prototype model** — install shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, and `Function`, and make `new`/prototype lookup work for all built-ins.
-4. **Fix bridge host functions** — done; keep host functions aligned if the FFI contract changes.
-5. **Keep `runtime.js` compatible** — only rewrite constructs that are cheaper to change in JS than to add to the engine (document any such rewrites).
-6. **Verify** — run `cargo test` and the example apps; `simple.js` should work now, the rest after the runtime gaps are closed.
+1. **HIR-first design** — `swc` parses TS/JS/TSX and the lowerer strips types to produce a **high-level, unified HIR**. The interpreter executes the HIR today; a future AOT compiler can consume the same HIR.
+2. **Fix parser/lowering bugs** — support module/script parsing, computed member access, template literal expressions, optional chaining, rest parameters, `for...of`/`for...in`, nullish coalescing, getters/setters.
+3. **Complete standard-library objects** — real mutating `Array.prototype`, `Map`/`Set` methods and iterators, `Promise`, `String.prototype.repeat`/`padStart`, `Date.prototype`, `Object.prototype.hasOwnProperty`.
+4. **Fix the value/prototype model** — install shared prototypes for `Object`, `Map`, `Set`, `Date`, `String`, and `Function`, and make `new`/prototype lookup work for all built-ins.
+5. **Fix bridge host functions** — done; keep host functions aligned if the FFI contract changes.
+6. **Keep `runtime.js` compatible** — only rewrite constructs that are cheaper to change in JS than to add to the engine (document any such rewrites).
+7. **Verify** — run `cargo test` and the example apps; `simple.js` should work now, the rest after the runtime gaps are closed.
 
 ## Boundaries — do not touch
 
@@ -60,10 +61,11 @@ Allowed glue points:
 
 ## Architecture review
 
-The current architecture is a good fit for replacing `rquickjs` with a minimal, Ink-focused runtime:
+The current architecture is a good fit for replacing `rquickjs` with a minimal, Ink-focused runtime, and it is designed to evolve into an AOT-compilable engine:
 
 - **Dedicated crate (`crates/quench-runtime/`)** keeps the engine isolated from the main binary and bridge.
 - **swc-based parser/lowering** avoids writing a lexer/parser and gives us TS/JS/TSX support for free.
+- **HIR layer** — the lowerer produces a single high-level, language-agnostic IR that is consumed by the interpreter today and can be consumed by a future AOT compiler without re-parsing source.
 - **Generic host-function API** lets `src/main.rs` register bridge closures without `quench-runtime` depending on `quench` internals.
 - **Shared prototype objects** (started for `Array.prototype`) are the right way to implement JS prototype semantics.
 
