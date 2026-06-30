@@ -80,6 +80,16 @@ Fix the specific interpreter and built-in gaps that block real Ink examples from
 - `async`/`await` syntax
 - ES modules (`import`/`export`)
 
+## Known limitation: Stack overflow with deeply nested code
+
+The recursive interpreter can overflow the Rust stack with very deeply nested closures
+(e.g., counter.js with useEffect, setInterval, and multiple nested callbacks). This is
+a known architectural limitation documented in Task 11 (performance roadmap). The fix
+is to convert to an iterative interpreter with an explicit evaluation stack.
+
+Workaround: Keep JS code functions small and avoid excessive nesting of callbacks.
+The tests that trigger this are ignored with `#[ignore]` annotations.
+
 ## Boundaries
 
 - Only modify `crates/quench-runtime/src/` and `src/event_loop.rs`.
