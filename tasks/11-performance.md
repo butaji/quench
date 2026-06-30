@@ -6,6 +6,12 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
 
 > **Prerequisite:** Complete Tasks 01–08 first. This task is deliberately `pending` until the runtime passes the example suite.
 
+## Pareto & reuse note
+
+- Prefer existing crates, the Rust standard library, and OS features over custom code.
+- Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
+- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
+
 ## Files
 
 - `crates/quench-runtime/src/value.rs`

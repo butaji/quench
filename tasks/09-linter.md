@@ -8,6 +8,12 @@
 - Function length: max 40 lines
 - Cyclomatic complexity: max 10
 
+## Pareto & reuse note
+
+- Prefer existing crates, the Rust standard library, and OS features over custom code.
+- Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
+- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
+
 ## Files
 
 - `build.rs`

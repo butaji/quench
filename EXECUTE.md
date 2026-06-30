@@ -4,6 +4,13 @@
 
 > **One-line rule:** We write the **execution engine** (parser lowering, value model, eval loop, built-ins, host-function glue). We do **not** write a parser — **swc** parses JS/TS/TSX. We use crates for parsing; standard-library objects are implemented in Rust because they are the engine's observable JS environment.
 
+## Principles
+
+1. **Reuse before rewriting.** Prefer existing crates, the Rust standard library, and OS features over custom implementations. Examples: `swc` for parsing, `serde_json` for JSON, `regex` for text matching, `indexmap` if order matters, `num-bigint` for BigInt, `regress` for regex, `bumpalo`/`mimalloc` for memory. Only write custom code when no suitable crate exists or when the feature is the runtime's unique value.
+2. **80/20 Pareto rule.** Target the ~20% of features that unblock ~80% of the examples and conformance tests first. Edge cases and full spec compliance are explicitly deferred but must be documented in the task notes — never silently ignored.
+3. **Work example-to-example.** Prioritize gaps based on what the next failing example actually needs, rather than implementing features in abstract spec order.
+4. **Document deferrals.** Every postponed feature gets a note or a dedicated follow-up task so it is not forgotten.
+
 ## Current state
 
 - `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and built-ins.
