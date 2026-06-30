@@ -129,7 +129,9 @@ cargo test
 cargo run -- examples/simple.js
 ```
 
-After Tasks 01–04 and 07 are truly complete:
+After Task 09 is complete, `cargo build` must fail if any `*.rs` file exceeds 500 lines, any function body exceeds 40 lines, or any function exceeds cyclomatic complexity 10.
+
+After Tasks 01–04, 07, and 14 are truly complete:
 
 ```bash
 cargo run -- examples/counter.js
