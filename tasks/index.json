@@ -258,6 +258,55 @@
       "file": "tasks/37-conformance-expand-whitelist.md",
       "status": "pending",
       "notes": "Add modules, async/await, generators, decorators, JSX, and other categories to the whitelist once the runtime supports them."
+    },
+    {
+      "id": "38",
+      "title": "Support multi-file conformance cases with // @filename:",
+      "file": "tasks/38-conformance-multifile.md",
+      "status": "pending",
+      "notes": "Split single .ts inputs on // @filename: markers and evaluate all emitted JS sections together in one context."
+    },
+    {
+      "id": "39",
+      "title": "Resolve configuration-specific baselines by directives",
+      "file": "tasks/39-conformance-config-baselines.md",
+      "status": "pending",
+      "notes": "Build (target=...,module=...,jsx=...) suffixes from directives and pick the correct .js baseline, matching TypeScript's runner naming."
+    },
+    {
+      "id": "40",
+      "title": "Provide TypeScript emit helpers in conformance context",
+      "file": "tasks/40-conformance-emit-helpers.md",
+      "status": "pending",
+      "notes": "Preload __extends, __assign, __awaiter, __decorate, __importStar, etc. so emitted baselines run without ReferenceError."
+    },
+    {
+      "id": "41",
+      "title": "Tighten conformance skip rules for non-runnable cases",
+      "file": "tasks/41-conformance-skip-rules.md",
+      "status": "pending",
+      "notes": "Skip noEmit, emitDeclarationOnly, diagnostic-only .errors.txt, unsupported module loaders, and @importHelpers without tslib."
+    },
+    {
+      "id": "42",
+      "title": "Generate machine-readable conformance report",
+      "file": "tasks/42-conformance-json-report.md",
+      "status": "pending",
+      "notes": "Emit a JSON report with per-case pass/fail/skip, categories, and failure messages for CI and trend tracking."
+    },
+    {
+      "id": "43",
+      "title": "Validate conformance results with TypeScript's own runner",
+      "file": "tasks/43-conformance-typescript-runner.md",
+      "status": "pending",
+      "notes": "Use npx hereby runtests --runners=conformance --tests=<name> --dirty to generate local baselines and confirm expected output."
+    },
+    {
+      "id": "44",
+      "title": "Document the conformance harness architecture and workflow",
+      "file": "tasks/44-conformance-docs.md",
+      "status": "pending",
+      "notes": "Add docs/conformance.md explaining how the harness works, how to run it, how to interpret reports, and how to update baselines."
     }
   ]
 }
