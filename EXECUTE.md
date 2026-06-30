@@ -61,6 +61,7 @@ The current architecture is a good fit for replacing `rquickjs` with a minimal, 
 3. **Value model uses `std::collections::HashMap`** — JS object property enumeration order is not guaranteed by `HashMap`. If `for...in` order or object serialization order becomes observable, switch to `indexmap` or a similar ordered map.
 4. **No module system** — `parse_swc` only handles scripts. Compiled TSX with external imports is out of scope for now, but supporting ES modules would require a module loader.
 5. **No garbage collector** — values are `Rc<RefCell<...>>` with cycle risk. The current Ink usage does not create obvious cycles, but this should be monitored.
+6. **Primitive boxing** — `Value` is not `Copy`; primitives are heap-allocated. This is acceptable for correctness work but should be replaced with NaN boxing or tagged pointers before the runtime is considered production-ready.
 
 ## Tech stack
 
@@ -72,6 +73,36 @@ The current architecture is a good fit for replacing `rquickjs` with a minimal, 
 | `tracing` | Logging. |
 
 The value model currently uses `std::collections::HashMap`. The ordered-map/string-interning/bigint crates discussed earlier are not wired in yet; they can be adopted later if performance or enumeration-order correctness becomes a problem.
+
+## Performance roadmap
+
+Once the runtime is functionally correct, the following interpreter-level optimizations are the biggest wins for a pure AST interpreter (no JIT/AOT required):
+
+1. **NaN-boxed / tagged `Value`** — make `Value: Copy` and 64-bit. Pack `f64`, object pointers, string pointers, and tags (`null`, `undefined`, `true`, `false`, int31) into a single `u64`. Avoid `Box<Value>`/`Rc<Value>` for primitives.
+2. **String interning** — convert every identifier and property name into a `u32` atom. Use `lasso` (`Rodeo`/`ThreadedRodeo`) or `string-interner`. Object property maps then become `HashMap<Atom, Value>`/`IndexMap<Atom, Value>` with integer hashing.
+3. **Object shapes (hidden classes) + inline caches** — attach a `ShapeId` to every object; cache `(expected_shape, offset)` on hot AST nodes (member expressions, calls, identifiers) so the fast path is an indexed array access instead of a hash lookup.
+4. **Slot-indexed environments** — run a scope-analysis pass before execution, assign each local a stack slot (`u32`), and store locals in a dense `Vec<Value>` per frame. No HashMap lookups for variable access.
+5. **Arena allocation** — use `bumpalo` for call frames, temporary eval state, and short-lived objects. Consider `mimalloc` or `jemalloc` as the global allocator.
+6. **Explicit evaluation stack / trampoline** — replace recursive `eval_expression`/`eval_statement` with an explicit stack of frames to avoid native stack overflow, improve cache locality, and enable `try/catch/finally` and generators.
+7. **Faster maps and regex** — use `rustc-hash`/`foldhash` for atom-keyed maps; use `regress` for a pure-Rust ECMAScript regex engine and `num-bigint` for `BigInt`.
+
+### Performance crates to evaluate
+
+| Crate | Purpose |
+|-------|---------|
+| `nanbox` or hand-rolled | NaN-boxed / tagged `Value` representation. |
+| `lasso` | String interning (single-threaded `Rodeo`, multi-threaded `ThreadedRodeo`). |
+| `string-interner` | Alternative interner with `DefaultSymbol`/`serde` support. |
+| `compact_str` / `smol_str` | Small-string optimized non-interned payloads. |
+| `indexmap` | Ordered property storage with `rustc-hash` hasher. |
+| `rustc-hash` / `foldhash` | Fast HashMap for integer (atom) keys. |
+| `bumpalo` | Arena allocation for frames and temporary objects. |
+| `smallvec` | Stack-allocated argument/local vectors. |
+| `regress` | Pure-Rust ECMAScript regex engine. |
+| `num-bigint` | `BigInt` implementation. |
+| `mimalloc` / `tikv-jemallocator` | High-performance global allocator. |
+
+> **Note:** A fully optimized AST interpreter is still expected to be 10–30× slower than a bytecode VM. The next leap after these optimizations is a single-pass bytecode compiler with direct-threaded dispatch, but that is explicitly out of scope until the AST interpreter is correct and fast enough.
 
 ## Task index
 

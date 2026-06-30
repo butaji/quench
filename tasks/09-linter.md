@@ -1,5 +1,11 @@
 # Task 09: Extend build.rs linter to quench-runtime and enforce limits
 
+## Done
+
+- `build.rs` now lints both `src/` and `crates/quench-runtime/src/` (already done).
+- Linter was updated to handle Rust closures (don't count closure bodies as part of outer function body).
+- Many unused imports and code warnings fixed in quench-runtime.
+
 ## Goal
 
 Make sure the custom runtime code is checked by the same linter rules as the rest of the project.
@@ -37,7 +43,7 @@ However, it currently only scans `src/`, so `crates/quench-runtime/src/` is not 
 3. Refactor any violating functions/files:
    - Split functions longer than 40 body lines into smaller helpers.
    - Reduce cyclomatic complexity above 10 by extracting match arms or early returns into helper functions.
-   - Split files longer than 500 lines into submodules (e.g., `builtins/array.rs`, `builtins/map.rs`, etc.).
+   - Split files longer than 500 lines into submodules (e.g., `lower/expr.rs`, `lower/stmt.rs`).
 4. Re-run `cargo build` until no linter warnings remain for `crates/quench-runtime/src/`.
 
 ## Boundaries

@@ -69,6 +69,13 @@
       "file": "tasks/10-architecture.md",
       "status": "in_progress",
       "notes": "Recursion guard is implemented. builtins.rs still needs splitting into submodules; value model still uses std HashMap."
+    },
+    {
+      "id": "11",
+      "title": "Interpreter performance roadmap",
+      "file": "tasks/11-performance.md",
+      "status": "pending",
+      "notes": "Future optimizations once runtime is correct: NaN-boxed Value, string interning, object shapes+ICs, slot-indexed environments, arena allocation, explicit eval stack."
     }
   ]
 }

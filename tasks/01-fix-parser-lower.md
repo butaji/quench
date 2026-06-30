@@ -18,6 +18,8 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 - `for...of` and `for...in` loops (including destructuring loop heads) are lowered.
 - Rest parameters are extracted from function/arrow signatures.
 - `??`, `in`, and `instanceof` binary operators are lowered.
+- Getter/setter properties (`get prop()`, `set prop(v)`) are lowered correctly.
+- Object and array spread (`{...obj}`, `[...arr]`) is lowered.
 
 ## Still to do
 
