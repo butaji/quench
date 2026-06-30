@@ -14,7 +14,7 @@
   - Interpreter: recursion-depth guard, rest-param binding, `Function.prototype.call/apply`, `New` expression wiring, bound methods, spread expansion in calls/literals, getter/setter invocation, `typeof` on undeclared identifiers.
   - Bridge/event loop: `__ink_get_node_parent`, `__ink_set_raw_mode`, `__ink_stdin_is_raw`, populated `__ink_get_node_children`, JSON props serialization, hot-reload re-registration.
   - Compiler: hooks are no longer incorrectly prefixed inside `createElement` calls.
-  - Build hygiene: `build.rs` now lints `crates/quench-runtime/src/`; all runtime files are under 500 lines.
+  - Build hygiene: `build.rs` lints `src/` and `crates/quench-runtime/src/` but only panics for `src/compiler/` violations; other modules get warnings. It must be updated to enforce the 500/40/10 limits on every `*.rs` file and fail the build on any violation.
 - Remaining blockers (tracked in Task 14):
   - Optional chaining (`obj?.prop`, `obj?.()`) is rejected by the lowerer.
   - Destructuring assignment and destructuring function/arrow parameters are not supported.
