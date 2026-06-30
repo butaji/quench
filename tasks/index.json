@@ -97,6 +97,48 @@
       "file": "tasks/14-close-runtime-gaps.md",
       "status": "in_progress",
       "notes": "Collects optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics, Array.from iterables, callable Array/Object constructors, microtask invocation, Map order."
+    },
+    {
+      "id": "15",
+      "title": "Add TypeScript conformance submodule and test harness",
+      "file": "tasks/15-typescript-submodule.md",
+      "status": "pending",
+      "notes": "Add tests/typescript as a shallow submodule; create a runner that compiles conformance .ts files and executes them in quench-runtime."
+    },
+    {
+      "id": "16",
+      "title": "Audit TypeScript conformance tests and categorize runtime failures",
+      "file": "tasks/16-conformance-audit.md",
+      "status": "pending",
+      "notes": "Run the conformance harness, bucket failures by feature (expressions, statements, functions, classes, iterators, modules, async), and produce a prioritized backlog."
+    },
+    {
+      "id": "17",
+      "title": "Pass TypeScript expression and statement conformance tests",
+      "file": "tasks/17-conformance-expressions.md",
+      "status": "pending",
+      "notes": "Fix runtime gaps for arithmetic, logical, bitwise, comparison, assignment, var/let/const, if/switch/loops, try/catch, labels, and with (ignore with)."
+    },
+    {
+      "id": "18",
+      "title": "Pass TypeScript function and class conformance tests",
+      "file": "tasks/18-conformance-functions-classes.md",
+      "status": "pending",
+      "notes": "Fix runtime gaps for default params, rest params, destructuring params, classes, inheritance, super, static members, accessors."
+    },
+    {
+      "id": "19",
+      "title": "Pass TypeScript iterator, module, and async conformance tests",
+      "file": "tasks/19-conformance-iterators-modules-async.md",
+      "status": "pending",
+      "notes": "Fix runtime gaps for for...of, generators (if tested), spread, import/export execution, Promise, async/await."
+    },
+    {
+      "id": "20",
+      "title": "Stabilize conformance results and document supported subset",
+      "file": "tasks/20-conformance-stabilize.md",
+      "status": "pending",
+      "notes": "Fix regressions, add CI job, publish conformance pass/fail percentages, and document intentionally unsupported features."
     }
   ]
 }

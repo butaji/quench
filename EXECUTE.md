@@ -1,6 +1,6 @@
 # Goal: Finish the custom TS/JS/TSX runtime and make it fully Ink-compatible
 
-`quench-runtime` already exists as a dedicated workspace crate under `crates/quench-runtime/`, and `rquickjs` has been removed from the main crate. The remaining work is to close the interpreter gaps so that `runtime.js`, compiled TSX/JSX output, and all Ink examples run correctly without touching the bridge, renderer, compiler, or native Ink runtime.
+`quench-runtime` already exists as a dedicated workspace crate under `crates/quench-runtime/`, and `rquickjs` has been removed from the main crate. The remaining work is to close the interpreter gaps so that `runtime.js`, compiled TSX/JSX output, all Ink examples, and a meaningful subset of the TypeScript conformance test suite run correctly without touching the bridge, renderer, compiler, or native Ink runtime.
 
 > **One-line rule:** We write the **execution engine** (parser lowering, value model, eval loop, built-ins, host-function glue). We do **not** write a parser — **swc** parses JS/TS/TSX. We use crates for parsing; standard-library objects are implemented in Rust because they are the engine's observable JS environment.
 
@@ -128,6 +128,24 @@ After Tasks 01–04 and 07 are truly complete:
 cargo run -- examples/counter.js
 cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
 cargo run -- examples/animations.tsx
+```
+
+## TypeScript conformance test suite
+
+To measure runtime correctness beyond Ink examples, the official TypeScript repo is added as a shallow submodule at `tests/typescript/`.
+
+- Use `tests/typescript/tests/cases/conformance/**/*.ts` as the corpus.
+- Compile each `.ts` file to JS (via `tsc` or the existing Quench compiler) and execute the emitted JS in `quench-runtime`.
+- Record pass/fail per category (expressions, statements, functions, classes, iterators, modules, async).
+- Fix failures by implementing the missing runtime feature; do not modify the TypeScript fixtures.
+
+The target is **not** to pass 100% of conformance tests (many are type-check only). The target is to pass all runtime-relevant cases and to use failures as a prioritized backlog.
+
+### Verification for conformance
+
+```bash
+git submodule update --init tests/typescript
+cargo test -p quench-runtime --test conformance -- --test-threads=1
 ```
 
 ## Execution options
