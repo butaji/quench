@@ -7,19 +7,25 @@
 ## Current state
 
 - `crates/quench-runtime/` has a working skeleton: swc parser, runtime AST, interpreter, value/object model, and built-ins.
+- Major modules have been split into subdirectories: `builtins/`, `lower/`, `interpreter/`, `value/`, `context/`, `eval_stmt/`.
 - Recent progress:
-  - Parser/lowering: computed member access, template literal expressions, optional chaining member and call (`?.prop`, `?.[expr]`, `?.()`), `for...of`/`for...in`, rest parameters, nullish coalescing (`??`), `in`, `instanceof`.
-  - Built-ins: most `Array.prototype` methods, `Map`/`Set` constructors and methods, `String.prototype` methods (`repeat`, `padStart`, etc.), `Date.prototype` getters, `Object.prototype` (`hasOwnProperty`, etc.), real `JSON.parse`, native `Error` constructors.
-  - Interpreter: recursion-depth guard, `arguments` object, rest-param binding, `Function.prototype.call/apply`, `New` expression wiring, bound methods.
-  - Bridge/event loop: `__ink_get_node_parent`, `__ink_set_raw_mode`, `__ink_stdin_is_raw`, populated `__ink_get_node_children`, JSON props serialization, microtask draining, hot-reload re-registration.
+  - Parser/lowering: computed member access, template literal expressions, `for...of`/`for...in`, object/array spread, rest parameters in function declarations, nullish coalescing (`??`), `in`, `instanceof`, getters/setters, module/script fallback, destructuring declarations.
+  - Built-ins: most `Array.prototype` methods, `Map`/`Set` constructors and prototype methods, `String.prototype` methods (`repeat`, `padStart`, etc.), `Date.prototype` getters and `toLocaleTimeString`, `Object.prototype`, real `JSON.parse`, native `Error` constructors, `Function.prototype.call/apply`, global `Infinity`/`NaN`/`undefined`.
+  - Interpreter: recursion-depth guard, rest-param binding, `Function.prototype.call/apply`, `New` expression wiring, bound methods, spread expansion in calls/literals, getter/setter invocation, `typeof` on undeclared identifiers.
+  - Bridge/event loop: `__ink_get_node_parent`, `__ink_set_raw_mode`, `__ink_stdin_is_raw`, populated `__ink_get_node_children`, JSON props serialization, hot-reload re-registration.
   - Compiler: hooks are no longer incorrectly prefixed inside `createElement` calls.
-- Still missing (now the main blockers for real examples):
-  - Parser: module/script fallback, real getter/setter metadata, object/array spread.
-  - Interpreter: spread expansion, getter/setter invocation, `typeof` on undeclared identifiers.
-  - Built-ins: `Promise`, iterable `Map`/`Set` for `for...of` and `Array.from`, `Date.prototype.toLocaleTimeString`, shared `Function.prototype`, boxing constructors.
-  - Code health: `builtins.rs`, `interpreter.rs`, `lower.rs`, and `value.rs` exceed the 500-line file limit; `build.rs` linter does not yet cover the runtime crate.
-- `runtime.js` now parses most of its constructs instead of silently dropping them.
-- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` are now blocked mainly by spread, iterable Map/Set, Promise, getters/setters, and `typeof` undeclared.
+  - Build hygiene: `build.rs` now lints `crates/quench-runtime/src/`; all runtime files are under 500 lines.
+- Remaining blockers (tracked in Task 14):
+  - Optional chaining (`obj?.prop`, `obj?.()`) is rejected by the lowerer.
+  - Destructuring assignment and destructuring function/arrow parameters are not supported.
+  - Rest parameters in arrow functions are ignored.
+  - `arguments` object is not injected for ordinary JS-to-JS calls.
+  - `Promise.resolve`/`all`/`race` are installed on `Promise.prototype`, not the constructor.
+  - `Array.from` does not consume `Set`/`Map` iterables.
+  - `new Array()` and `new Object()` are not callable.
+  - Event loop does not invoke `__tb_invoke_microtasks`; `setImmediate`/`process.nextTick` callbacks do not run.
+  - `Map` iteration order follows `HashMap`, not insertion order.
+- `examples/simple.js` is expected to work; `counter.js`, `use-bridge.tsx`, and `animations.tsx` are blocked until Task 14 is done.
 
 ## Approach
 

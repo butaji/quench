@@ -5,28 +5,28 @@
       "title": "Fix parser and lowering bugs in quench-runtime",
       "file": "tasks/01-fix-parser-lower.md",
       "status": "in_progress",
-      "notes": "Computed member access, template literal expressions, optional chaining (member and call), for...of/for...in, rest params, ?? are implemented. Still missing: module/script fallback, real getter/setter metadata, object/array spread."
+      "notes": "Computed access, template literals, for...of/in, spread, getters/setters, ??, in, instanceof, module fallback, lower/ submodules done. Still missing: optional chaining, destructuring assignment, destructuring function/arrow params, arrow rest params, class, delete/unary+."
     },
     {
       "id": "02",
       "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
       "file": "tasks/02-complete-builtins.md",
       "status": "in_progress",
-      "notes": "Array.prototype methods, Map/Set constructors and methods, String/Date/Object.prototype, JSON.parse, native Error constructors are implemented. Still missing: Promise, iterable Map/Set (Symbol.iterator / Array.from), Array.from on iterables, Date.prototype.toLocaleTimeString."
+      "notes": "Array methods, Map/Set methods, String/Date/Object.prototype, JSON.parse, Error, Function.prototype done. Still missing: Array.from iterables, Promise statics on constructor (resolve/all/race), callable new Array()/new Object(), Map insertion-order iteration."
     },
     {
       "id": "03",
       "title": "Add missing language features to the interpreter",
       "file": "tasks/03-language-features.md",
       "status": "in_progress",
-      "notes": "for...of/for...in, ??, optional chaining, rest params, template literal expressions, arguments object are implemented. Still missing: spread in calls/literals, getter/setter invocation, typeof undeclared identifiers."
+      "notes": "Spread, getters/setters, typeof undeclared, for...of/in, ??, template literals done. Still missing: arguments object in JS-to-JS calls, optional chaining (depends on lowering), arrow rest params, destructuring params."
     },
     {
       "id": "04",
       "title": "Fix value and prototype model",
       "file": "tasks/04-value-prototype.md",
       "status": "in_progress",
-      "notes": "Shared Object.prototype, Array.prototype, Map/Set/Date/String prototypes and new Constructor wiring are implemented. Still missing: shared Function.prototype, boxing String/Number/Boolean."
+      "notes": "Shared prototypes and New wiring done. Still missing: callable Array/Object constructors, boxing String/Number/Boolean."
     },
     {
       "id": "05",
@@ -40,7 +40,7 @@
       "title": "Integrate event loop microtasks and verify dispatch",
       "file": "tasks/06-event-loop.md",
       "status": "completed",
-      "notes": "Microtasks drained via __tb_invoke_microtasks after timers; hot reload re-registers bridge functions on the fresh context."
+      "notes": "Hot reload re-registers bridge functions. Microtask draining still incomplete; tracked in Task 14."
     },
     {
       "id": "07",
@@ -54,21 +54,21 @@
       "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
       "status": "in_progress",
-      "notes": "simple.js expected to work; counter.js/use-bridge.tsx/animations.tsx now depend mainly on spread, iterable Map/Set, Promise, getters/setters, and typeof undeclared. Unit/parity tests still need to be added."
+      "notes": "simple.js expected to work. counter.js/use-bridge.tsx/animations.tsx blocked on gaps in Task 14. Verification claims need to be confirmed by actually running examples."
     },
     {
       "id": "09",
       "title": "Extend build.rs linter to quench-runtime and enforce limits",
       "file": "tasks/09-linter.md",
-      "status": "in_progress",
-      "notes": "builtins.rs, interpreter.rs, lower.rs, and value.rs currently exceed the 500-line file limit. The linter must be extended and files split/refactored to comply before it can be turned on."
+      "status": "completed",
+      "notes": "build.rs lints src/ and crates/quench-runtime/src/. File-length violations resolved by splitting modules. array_methods.rs and eval_expr/helpers.rs are near 500-line limit; watch for future splitting."
     },
     {
       "id": "10",
       "title": "Architecture hardening: split builtins and guard recursion",
       "file": "tasks/10-architecture.md",
-      "status": "in_progress",
-      "notes": "Recursion guard is implemented. builtins.rs still needs splitting into submodules; value model still uses std HashMap."
+      "status": "completed",
+      "notes": "Recursion guard implemented; lower/, eval_stmt/, builtins/, value/, interpreter/ split into submodules."
     },
     {
       "id": "11",
@@ -76,6 +76,27 @@
       "file": "tasks/11-performance.md",
       "status": "pending",
       "notes": "Future optimizations once runtime is correct: NaN-boxed Value, string interning, object shapes+ICs, slot-indexed environments, arena allocation, explicit eval stack."
+    },
+    {
+      "id": "12",
+      "title": "Fix hook replacement in compiler (substring collision)",
+      "file": "tasks/12-fix-hook-replacement.md",
+      "status": "completed",
+      "notes": "prefix_hooks now uses regex word boundaries. Verification claims depend on full runtime gaps being closed."
+    },
+    {
+      "id": "13",
+      "title": "Fix Array.prototype.flat bug and missing globals",
+      "file": "tasks/13-fix-flat-bug.md",
+      "status": "completed",
+      "notes": "flat() preserves non-array objects and returned array prototype; Infinity/NaN/undefined globals added. Verification claims depend on full runtime gaps being closed."
+    },
+    {
+      "id": "14",
+      "title": "Close remaining runtime gaps",
+      "file": "tasks/14-close-runtime-gaps.md",
+      "status": "in_progress",
+      "notes": "Collects optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics, Array.from iterables, callable Array/Object constructors, microtask invocation, Map order."
     }
   ]
 }

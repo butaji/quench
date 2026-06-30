@@ -6,38 +6,28 @@ Add the JS language features required by `runtime.js` and compiled TSX that the 
 
 ## Files
 
-- `crates/quench-runtime/src/interpreter.rs`
-- `crates/quench-runtime/src/lower.rs`
+- `crates/quench-runtime/src/interpreter/`
+- `crates/quench-runtime/src/lower/`
 - `crates/quench-runtime/src/ast.rs`
 
-## Done
+## Done ✓
 
 - `for...of` and `for...in` loops (with identifier and destructuring bindings).
 - Nullish coalescing (`??`).
-- Optional chaining for member and call (`obj?.prop`, `obj?.[expr]`, `obj?.()`).
 - Computed property access (`obj[expr]`).
-- Rest parameters (`function(a, ...rest)`).
 - Template literal expressions (`` `a ${b}` ``).
-- `arguments` object in non-arrow function calls.
 - `in` and `instanceof` binary operators.
+- **Spread in function calls** (`cb(...args)`).
+- **Spread in array/object literals** (`[...arr]`, `{...obj}`).
+- **Getter/setter invocation** on property access and assignment.
+- **`typeof` on undeclared identifiers** returns `"undefined"` instead of throwing.
 
-## Still to do
+## Still missing / caveats
 
-- Spread in function calls (`cb(...args)`) and array/object literals (`[...arr]`, `{...obj}`).
-- Getter/setter invocation on property access and assignment.
-- `typeof` on undeclared identifiers (`typeof notDeclared` must return `"undefined"`).
-
-## Steps
-
-1. Implement spread expansion in `eval_call` and array/object literal construction.
-2. Implement getter invocation in member access and setter invocation in assignment.
-3. Make `typeof` return `"undefined"` for undeclared identifiers instead of throwing `ReferenceError`.
-
-## Boundaries
-
-- Only modify `crates/quench-runtime/src/`.
-- Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
-- `examples/` are immutable.
+- **Optional chaining** depends on Task 01; it is currently rejected by the lowerer.
+- **`arguments` object is not injected by the interpreter's normal JS-to-JS call path** — it is only created by `Context::call_function`.
+- **Rest parameters in arrow functions** are ignored by the lowerer.
+- **Destructuring function/arrow parameters** are not bound correctly; params are renamed to `"arg"`.
 
 ## Acceptance criteria
 

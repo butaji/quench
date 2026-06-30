@@ -6,10 +6,10 @@ Implement the standard-library surface that `runtime.js` and the Ink examples ac
 
 ## Files
 
-- `crates/quench-runtime/src/builtins.rs` (to be split into `crates/quench-runtime/src/builtins/*.rs` as part of Task 10)
+- `crates/quench-runtime/src/builtins/` (split into submodules)
 - `crates/quench-runtime/src/value.rs`
 
-## Done
+## Done ✓
 
 - Shared `Array.prototype` with `push`, `pop`, `shift`, `unshift`, `splice`, `slice`, `forEach`, `map`, `filter`, `find`, `indexOf`, `includes`, `join`, `flat`, `some`, `every`, `reduce`, `concat`, `reverse`, `sort`.
 - `Array.isArray`, `Array.from` (arrays only), `Array.of`.
@@ -19,20 +19,16 @@ Implement the standard-library surface that `runtime.js` and the Ink examples ac
 - Shared `Object.prototype` with `hasOwnProperty`, `toString`, `valueOf`.
 - Real `JSON.parse` via `serde_json`.
 - Native `Error`, `TypeError`, `ReferenceError`, `SyntaxError` constructors with prototypes.
-
-## Still to do
-
-- `Promise` (`new Promise(executor)`, `Promise.resolve`, `.then`).
-- Make `Map`/`Set` iterable so `for...of` and `Array.from(mapOrSet)` work (requires `Symbol.iterator` or special-case handling).
-- `Array.from` on iterables and array-like objects.
+- `Promise` (`new Promise(executor)`, `.then`, `.catch`, `.finally`).
 - `Date.prototype.toLocaleTimeString` (used by the runtime.js date patch).
-- Shared `Function.prototype` and boxing prototypes for `String`/`Number`/`Boolean`.
+- Shared `Function.prototype` and wiring for `Function.prototype.call`/`apply`.
 
-## Boundaries
+## Still missing / caveats
 
-- Only modify `crates/quench-runtime/src/`.
-- Do not change compiler output or example source.
-- `examples/` are immutable.
+- **`Array.from` does not consume iterables** — it only clones `.elements`, so `Array.from(new Set([1,2]))` returns `[]`.
+- **`Promise.resolve`/`all`/`race` are on the prototype**, not the constructor object, so `Promise.resolve(42)` does not work.
+- **`new Array()` and `new Object()` are not callable** — the constructor objects lack `__call`/`constructor` wiring.
+- **Map iteration order** follows `HashMap`, not insertion order.
 
 ## Acceptance criteria
 

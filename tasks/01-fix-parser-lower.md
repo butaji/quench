@@ -7,37 +7,28 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 ## Files
 
 - `crates/quench-runtime/src/swc_parse.rs`
-- `crates/quench-runtime/src/lower.rs`
-- `crates/quench-runtime/src/ast.rs` (only if new AST nodes are needed)
+- `crates/quench-runtime/src/lower/` (now split into submodules)
+- `crates/quench-runtime/src/ast.rs`
 
-## Done
+## Done ✓
 
 - Computed member property access (`obj[expr]`) lowers correctly.
 - Template literal expressions are interleaved into binary `+` trees.
-- Optional chaining for member and call (`obj?.prop`, `obj?.[expr]`, `obj?.()`) is lowered.
 - `for...of` and `for...in` loops (including destructuring loop heads) are lowered.
-- Rest parameters are extracted from function/arrow signatures.
 - `??`, `in`, and `instanceof` binary operators are lowered.
-- Getter/setter properties (`get prop()`, `set prop(v)`) are lowered correctly.
+- Getter/setter properties (`get prop() {}`, `set prop(v) {}`) are lowered correctly.
 - Object and array spread (`{...obj}`, `[...arr]`) is lowered.
+- **Module/script fallback**: `parse_swc` now tries module syntax first if `import`/`export` is present.
+- **lower.rs split into submodules**: `lower/mod.rs`, `lower/decl.rs`, `lower/expr.rs`, `lower/stmt.rs`, `lower/helpers.rs`, `lower/patterns.rs`
 
-## Still to do
+## Still missing / caveats
 
-- Add module/script fallback: `parse_swc` uses `parse_script` only; compiled TSX may arrive as an ES module.
-- Preserve real getter/setter metadata in object literals so the interpreter can invoke them.
-- Add lowering for object/array spread syntax (`{...obj}`, `[...arr]`).
-
-## Steps
-
-1. Add `parse_module` (or auto-detect) and make `Context::eval` fall back to module parsing when script parsing fails.
-2. Add AST nodes for getter/setter properties and lower `get prop() {}` / `set prop(v) {}` correctly.
-3. Add AST nodes for spread expressions and lower them in array/object literals and function calls.
-
-## Boundaries
-
-- Work only in `crates/quench-runtime/src/`.
-- Do not touch `src/bridge/`, `src/ink/`, `src/render/`, `src/compiler/`.
-- `examples/` are immutable.
+- **Optional chaining** (`obj?.prop`, `obj?.[expr]`, `obj?.()`) is currently rejected by the lowerer.
+- **Destructuring assignment** (`[a, b] = arr`, `({x} = obj)`) is not lowered.
+- **Destructuring function/arrow parameters** are renamed to `"arg"`; patterns are dropped.
+- **Rest parameters in arrow functions** are ignored.
+- **Class expressions** are rejected.
+- **`delete` operator** and unary `+` are rejected.
 
 ## Acceptance criteria
 

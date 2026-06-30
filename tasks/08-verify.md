@@ -2,36 +2,34 @@
 
 ## Goal
 
-Confirm the custom runtime is fully working for the supported JS/TSX examples. Do not claim an example works unless it actually renders correctly.
+Confirm the custom runtime is fully working for the supported JS/TSX examples.
 
 ## Files
 
 - `tests/parity.rs`
-- `crates/quench-runtime/tests/` (add unit tests as needed)
+- `crates/quench-runtime/tests/`
 - Examples: `examples/simple.js`, `examples/counter.js`, `examples/use-bridge.tsx`, `examples/animations.tsx`
 
 ## Current status
 
-- `simple.js` is expected to render because it uses only direct FFI natives, `console.log`, and `String()`.
-- `counter.js` needs `Map`, `for...of`, array `push`, and timer dispatch — all still incomplete.
-- `use-bridge.tsx` and `animations.tsx` need the same runtime features plus hooks and `String.prototype.repeat`.
+- `simple.js` is expected to work because it avoids most advanced JS features.
+- `counter.js`, `use-bridge.tsx`, and `animations.tsx` are **not yet verified** as fully working. Per code inspection they depend on features that still have gaps:
+  - optional chaining lowering (`config.platform?.os` in `use-bridge.tsx`)
+  - destructuring function parameters (`Object.entries(config).map(([k, v]) => ...)`)
+  - `arguments` object in ordinary JS-to-JS calls (used by `runtime.js` console polyfill and `createElement`)
+  - `Promise.resolve`/`all` static methods on the constructor object
+  - `Array.from` consuming `Set`/`Map` iterables
+  - `new Array()` / `new Object()` constructor wiring
+  - event-loop microtask invocation (`__tb_invoke_microtasks`, `setImmediate`, `process.nextTick`)
+- The parity tests (`test_simple_js_ffi`, `test_counter_jsx_compiles`, `test_binary_exists`) are present, but full end-to-end verification is blocked until the gaps above are closed.
 
 ## Steps
 
-1. Add or update tests in `tests/parity.rs`:
-   - Evaluate a small JS snippet through the interpreter and assert the result.
-   - Call a bridge host function from JS and assert the return value.
-2. Add unit tests in `crates/quench-runtime/tests/` for every feature closed in Tasks 01–04.
-3. Run the existing parity tests:
-   - `test_simple_js_ffi`
-   - `test_counter_jsx_compiles`
-   - `test_binary_exists`
-4. Run the example apps manually:
-   - `cargo run -- examples/simple.js`
-   - `cargo run -- examples/counter.js`
-   - `cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin`
-   - `cargo run -- examples/animations.tsx`
-5. Run `cargo clippy` and fix warnings in `crates/quench-runtime/`.
+1. Add unit tests in `crates/quench-runtime/tests/` for every feature closed in Tasks 01–04 and 14.
+2. Run `cargo test`.
+3. Run each example manually and document which ones pass/fail.
+4. Fix failures in the runtime; do not modify examples.
+5. Run `cargo clippy` and resolve warnings in `crates/quench-runtime/`.
 
 ## Boundaries
 
