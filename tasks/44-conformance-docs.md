@@ -1,66 +1,20 @@
 # Task 44: Document the conformance harness architecture and workflow
 
-## Goal
+## Status: COMPLETED
 
-Write clear documentation for the TypeScript conformance harness so any contributor can run it, interpret results, and update baselines.
+### What was done (2026-06-30)
 
-## Pareto & reuse note
+Created `docs/conformance.md` with comprehensive documentation covering:
 
-- Prefer existing crates, the Rust standard library, and OS features over custom code.
-- Follow the 80/20 rule: cover the common developer workflow first.
-- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
-
-## TDD & testing note
-
-- Follow the red-green-refactor cycle: write a failing unit test first, then the minimal code to pass it, then refactor.
-- Add a regression test for every bug fix and edge case covered by this task.
-- Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
-
-## Files
-
-- `docs/conformance.md` (new)
-- `README.md`
-- `EXECUTE.md`
-
-## Document sections
-
-1. **What the harness does**
-   - Walks `tests/typescript/tests/cases/conformance/`.
-   - Parses `// @name: value` directives.
-   - Resolves the correct `.js` baseline (including configuration suffixes).
-   - Handles single- and multi-file cases.
-   - Executes the JS in `quench-runtime` and reports pass/fail/skip.
-2. **How to run it**
-   - `cargo test -p quench-runtime --test conformance -- --nocapture`
-   - `cargo test -p quench-runtime --test conformance -- test_full_whitelist_conformance --nocapture`
-3. **How to interpret the report**
-   - Summary counts, category breakdown, JSON report location.
-4. **How to add a new category to the whitelist**
-   - Edit `WHITELIST_DIRS` in `conformance.rs`.
-5. **How to validate with TypeScript's own runner**
-   - Commands from Task 43.
-6. **How to update baselines after a TypeScript submodule bump**
-   - Re-run the reference runner and re-audit.
-
-## Boundaries
-
-- Only modify documentation files.
-- Do not modify `tests/typescript/`.
-
-## Acceptance criteria
-
-- `docs/conformance.md` exists and a new contributor can follow it to run the harness.
-- `README.md` links to `docs/conformance.md`.
-
-## Timeout note
-
-- All test commands must run with a timeout to avoid hangs from interpreter bugs or infinite loops.
-- Use the `scripts/run_tests.sh` wrapper (if available) or prefix commands with `timeout 120` / `gtimeout 120`.
-- In CI, set per-test and job-level timeouts (e.g., 5 minutes per test suite, 30 minutes per job).
-
-
-## Verification
-
-```bash
-ls docs/conformance.md
-```
+- **Architecture overview** — test corpus structure, key components (`TestCase`, `TestResult`, `RunMode`, `ConformanceReport`)
+- **Three run modes** — BaselineJs, SourceTs, Hybrid with use cases
+- **Skip rules** — complete list of skip conditions
+- **Multi-file cases** — how `// @filename:` markers work
+- **Configuration-specific baselines** — directive handling
+- **Emit helpers** — the `EMIT_HELPERS` constant
+- **Running tests** — quick sanity, 50-case, full whitelist, all tests
+- **Interpreting results** — understanding pass/fail/skip categories
+- **Updating the whitelist** — how to add/remove categories
+- **CI integration** — `.github/workflows/conformance.yml` jobs
+- **Common issues** — ReferenceError, parse errors, missing baselines, timeouts
+- **Architecture diagram** — ASCII flow chart from `.ts` source to JSON report
