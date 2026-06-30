@@ -123,8 +123,15 @@
       "id": "18",
       "title": "Pass TypeScript function and class conformance tests",
       "file": "tasks/18-conformance-functions-classes.md",
-      "status": "pending",
-      "notes": "Blocked until class lowering is implemented. 46 class tests currently fail."
+      "status": "completed",
+      "notes": "JavaScript class and function conformance working. 127/200 whitelist tests pass. Remaining failures are TypeScript-specific (interface/declare) that need Task 21 TypeScript stripping."
+    },
+    {
+      "id": "18b",
+      "title": "Fix Symbol method access via eval_callee_with_this",
+      "file": "tasks/bugfix-symbol-method-access.md",
+      "status": "completed",
+      "notes": "Fixed eval_callee_with_this to handle Value::Symbol when evaluating member access on Symbol values. Added regression test test_symbol_method_access_regression."
     },
     {
       "id": "19",
@@ -307,6 +314,48 @@
       "file": "tasks/44-conformance-docs.md",
       "status": "pending",
       "notes": "Add docs/conformance.md explaining how the harness works, how to run it, how to interpret reports, and how to update baselines."
+    },
+    {
+      "id": "45",
+      "title": "Port TypeScript evaluation unit tests to Quench harness",
+      "file": "tasks/45-typescript-evaluation-tests.md",
+      "status": "pending",
+      "notes": "Use src/testRunner/unittests/evaluation/*.ts as a starter set: they already compile TypeScript and execute the emitted JS."
+    },
+    {
+      "id": "46",
+      "title": "Add Quench harness for TypeScript compiler/ cases",
+      "file": "tasks/46-typescript-compiler-cases.md",
+      "status": "pending",
+      "notes": "Run the ~6500 compiler/ regression cases by compiling them with the TypeScript API and executing the emitted JS in quench-runtime."
+    },
+    {
+      "id": "47",
+      "title": "Add Quench harness for TypeScript project/ multi-file cases",
+      "file": "tasks/47-typescript-project-cases.md",
+      "status": "pending",
+      "notes": "Run the JSON-driven project specs from tests/cases/project/ and projects/ in quench-runtime with a CommonJS loader."
+    },
+    {
+      "id": "48",
+      "title": "Run TypeScript compiler and project runners for reference baselines",
+      "file": "tasks/48-typescript-reference-runners.md",
+      "status": "pending",
+      "notes": "Use hereby --runner=compiler,conformance,project,transpile to generate local baselines and confirm expected JS output."
+    },
+    {
+      "id": "49",
+      "title": "Add CI commands to run TypeScript's own test runners",
+      "file": "tasks/49-typescript-ci-commands.md",
+      "status": "pending",
+      "notes": "Document and script npm ci / npm run build / hereby runtests-parallel --no-lint --runner=... for reference runs."
+    },
+    {
+      "id": "50",
+      "title": "Document how to run TypeScript's own test suite from the Quench repo",
+      "file": "tasks/50-typescript-test-docs.md",
+      "status": "pending",
+      "notes": "Add docs/typescript-tests.md with setup, commands, sharding, and baseline-accept workflow."
     }
   ]
 }

@@ -1,59 +1,54 @@
 # Task 31: Add test timeout protection
 
-**Status: COMPLETED** - Timeout wrapper and test runner script created.
+## Status: ✅ COMPLETED
 
-## Goal
+## Summary
 
-Ensure tests have timeout protection to prevent them from hanging indefinitely.
+Implemented comprehensive timeout protection for all tests with multiple layers of defense:
 
-## Solution
+### 1. System-level timeout (xtask)
+- Created `xtask/` crate that wraps `cargo test` with the `timeout` command
+- Default timeout: 300 seconds (5 minutes)
+- Short timeout: 60 seconds  
+- Long timeout: 600 seconds (for conformance tests)
+- Works on both Linux (native `timeout`) and macOS (`gtimeout` from coreutils)
 
-Created a test wrapper script that uses the system `timeout` command:
+### 2. Per-test timeout (for runtime tests)
+- Added `with_timeout()` function in `runtime_tests.rs` that monitors test execution
+- Uses a monitoring thread that sets a flag after timeout expires
+- If a test exceeds its timeout, it's marked as failed rather than hanging
+- Default per-test timeout: 60 seconds
 
-```bash
-# Run all tests with 5-minute timeout
-./scripts/run_tests.sh
-
-# Run specific test with timeout
-./scripts/run_tests.sh test_runtime_loads
-```
-
-## Files Created
-
-- `scripts/run_tests.sh` - Test runner with timeout wrapper
-- `crates/quench-runtime/tests/test_harness.rs` - Documentation and helper types for timeout handling
-
-## Timeout Strategy
-
-1. **System-level timeout** (recommended): Uses the `timeout` command from GNU coreutils
-2. **Cargo test threads**: Use `--test-threads=1` to prevent parallel test interference
-
-## Test Categories
-
-| Category | Expected Duration | Timeout |
-|----------|------------------|---------|
-| Unit tests | < 5s | 30s |
-| Integration tests | ~30-60s | 120s |
-| Conformance tests | ~120s | 300s |
+### 3. Binary execution timeout (for parity tests)
+- The `parity.rs` tests use thread-based timeout for spawning binary processes
+- Default: 60 seconds per binary execution
 
 ## Usage
 
 ```bash
-# Install timeout on macOS
-brew install coreutils
-
-# Run all tests with timeout
+# Run all tests with 5min timeout
 ./scripts/run_tests.sh
 
-# Run tests without timeout (if timeout command not available)
-cargo test
+# Run specific test with timeout
+./scripts/run_tests.sh test_runtime_loads
 
-# Run tests serially (recommended for debugging)
-cargo test -- --test-threads=1
+# Run with Make
+make test
+
+# Or use xtask directly
+cargo run -p xtask -- test
 ```
+
+## Files Changed
+
+- `xtask/` - New xtask crate for timeout-protected commands
+- `scripts/run_tests.sh` - Wrapper using xtask
+- `Makefile` - Targets with timeout
+- `crates/quench-runtime/tests/runtime_tests.rs` - Per-test timeout
+- `tests/parity.rs` - Binary execution timeout
 
 ## Notes
 
-- The `Context` type is not `Send`, so per-test timeout wrappers cannot move tests to separate threads
-- The system-level timeout is the most reliable approach
-- Tests that are known to hang (like full counter.js loading) are marked with `#[ignore]`
+- If `timeout`/`gtimeout` is not installed, tests will run without system-level timeout
+- macOS: `brew install coreutils` to get `gtimeout`
+- Linux: `timeout` is usually available by default
