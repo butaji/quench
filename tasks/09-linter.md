@@ -1,62 +1,60 @@
-# Task 09: Extend build.rs linter to quench-runtime and enforce limits
+# Task 09: Make build.rs enforce project lint rules on every *.rs file
 
 ## Goal
 
-Make sure the custom runtime code is checked by the same linter rules as the rest of the project.
+`build.rs` must enforce the project limits on **all** Rust source files, not just the `src/compiler/` directory or the runtime crate. Every `*.rs` file in the project must pass:
+
+- File length: max 500 lines
+- Function length: max 40 lines
+- Cyclomatic complexity: max 10
 
 ## Files
 
 - `build.rs`
-- `crates/quench-runtime/src/` (files that violate the limits)
+- All `*.rs` files in `src/`, `crates/*/src/`, `tests/`, `examples/` (if any Rust), and `build.rs` itself
 
-## Progress
+## Current state
 
-✅ **Completed**: `build.rs` lints both `src/` and `crates/quench-runtime/src/`.
+`build.rs` already implements the three checks, but it only runs them on `src/` and `crates/quench-runtime/src/`. Worse, violations outside `src/compiler/` are emitted as `cargo:warning=` instead of failing the build. The current build therefore tolerates:
 
-✅ **Completed**: `lower.rs` was split into submodules:
-- `lower/mod.rs` (47 lines)
-- `lower/decl.rs` (354 lines)
-- `lower/expr.rs` (353 lines)
-- `lower/stmt.rs` (261 lines)
-- `lower/helpers.rs` (97 lines)
-
-All files in `lower/` are now under 500 lines.
-
-✅ **Completed**: `eval_stmt.rs` was split into:
-- `eval_stmt/mod.rs` (eval_statement and helper functions)
-- `eval_stmt/loops.rs` (for...of, for...in, for loops)
-
-✅ **Completed**: `binary_ops.rs` refactored to extract arithmetic, comparison, and bitwise operations into separate helper functions.
-
-## Remaining violations
-
-The **quench-runtime** crate has **zero file-length warnings** after splitting `lower.rs`, `eval_stmt.rs`, and `builtins.rs` into submodules.
-
-A few complexity warnings may remain (e.g., `builtins/json.rs` has a complex match for `Value` serialization). Also, `builtins/array_methods.rs` and `interpreter/eval_expr/helpers.rs` are close to the 500-line limit and should be watched for future splitting.
-
-The **main crate** (`src/`) has lint violations that are outside the scope of the runtime work:
-- `src/bridge/ffi.rs`: 564 lines (file length), 49 lines (function length)
-- `src/cli.rs`: 50 lines, complexity 13
+- `src/bridge/ffi.rs`: 564 lines (file length), 49-line function
+- `src/cli.rs`: 50-line function, complexity 13
 - `src/event_loop.rs`: complexity 12 and 13
-- `src/hotreload.rs`: 54 lines
+- `src/hotreload.rs`: 54-line function
 - `src/main.rs`: 673 lines (file length), complexity 12
 - `src/signals.rs`: complexity 12
 
-These main crate violations are non-blocking and do not affect runtime functionality.
+## Steps
+
+1. Update `build.rs` to lint every `*.rs` file in the project:
+   - `src/`
+   - `crates/quench-runtime/src/`
+   - `tests/` (Rust test files)
+   - `examples/` (if it contains `.rs`)
+   - `build.rs` itself
+   - Exclude `target/` and the `tests/typescript/` submodule.
+2. Change the failure mode from `cargo:warning=` to `panic!` for **all** violations. The build must fail if any file/function exceeds the limits.
+3. Run `cargo build` and fix every violation. Refactor by:
+   - Splitting files longer than 500 lines into submodules.
+   - Extracting helper functions for bodies over 40 lines.
+   - Reducing cyclomatic complexity by extracting match arms, early returns, and nested conditions into helpers.
+4. Re-run `cargo build` until it succeeds with zero lint violations.
+
+## Boundaries
+
+- Only modify `build.rs` and files needed to satisfy the linter.
+- Refactoring must preserve behavior; add regression tests where the change is non-trivial.
+- Do not modify `tests/typescript/` or `examples/` JS/TS fixtures.
 
 ## Acceptance criteria
 
-- ✅ `cargo build` completes successfully (warnings are acceptable for non-runtime modules).
-- ✅ The runtime crate has no file-length warnings.
-- ✅ No runtime function exceeds 40 lines or complexity 10, except where explicitly justified and documented.
+- `cargo build` fails if any `*.rs` file exceeds 500 lines.
+- `cargo build` fails if any function body exceeds 40 lines.
+- `cargo build` fails if any function exceeds complexity 10.
+- `cargo build` succeeds on the cleaned-up codebase.
 
 ## Verification
 
 ```bash
 cargo build
-cargo test
-cargo run -- examples/simple.js
-cargo run -- examples/counter.js
-cargo run -- examples/use-bridge.tsx
-cargo run -- examples/animations.tsx
 ```
