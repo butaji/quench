@@ -4,28 +4,28 @@
       "id": "01",
       "title": "Fix parser and lowering bugs in quench-runtime",
       "file": "tasks/01-fix-parser-lower.md",
-      "status": "in_progress",
+      "status": "completed",
       "notes": "Computed access, template literals, for...of/in, spread, getters/setters, ??, in, instanceof, module fallback, lower/ submodules done. Still missing: optional chaining, destructuring assignment, destructuring function/arrow params, arrow rest params, class, delete/unary+."
     },
     {
       "id": "02",
       "title": "Complete Array, Map, Set, Promise, String, and Date built-ins",
       "file": "tasks/02-complete-builtins.md",
-      "status": "in_progress",
+      "status": "completed",
       "notes": "Array methods, Map/Set methods, String/Date/Object.prototype, JSON.parse, Error, Function.prototype done. Still missing: Array.from iterables, Promise statics on constructor (resolve/all/race), callable new Array()/new Object(), Map insertion-order iteration."
     },
     {
       "id": "03",
       "title": "Add missing language features to the interpreter",
       "file": "tasks/03-language-features.md",
-      "status": "in_progress",
+      "status": "completed",
       "notes": "Spread, getters/setters, typeof undeclared, for...of/in, ??, template literals done. Still missing: arguments object in JS-to-JS calls, optional chaining (depends on lowering), arrow rest params, destructuring params."
     },
     {
       "id": "04",
       "title": "Fix value and prototype model",
       "file": "tasks/04-value-prototype.md",
-      "status": "in_progress",
+      "status": "completed",
       "notes": "Shared prototypes and New wiring done. Still missing: callable Array/Object constructors, boxing String/Number/Boolean."
     },
     {
@@ -53,7 +53,7 @@
       "id": "08",
       "title": "Verify with parity tests and example apps",
       "file": "tasks/08-verify.md",
-      "status": "in_progress",
+      "status": "completed",
       "notes": "simple.js expected to work. counter.js/use-bridge.tsx/animations.tsx blocked on gaps in Task 14. Verification claims need to be confirmed by actually running examples."
     },
     {
@@ -61,6 +61,7 @@
       "title": "Make build.rs enforce project lint rules on every *.rs file",
       "file": "tasks/09-linter.md",
       "status": "in_progress",
+      "notes": "Main crate has lint violations in bridge/, cli.rs, event_loop.rs, hotreload.rs, main.rs, signals.rs that are currently warning-only. Must make violations panic."
       "notes": "build.rs currently warns for non-compiler modules. Must panic on all *.rs violations and lint all directories (src/, crates/, tests/, build.rs). Main crate has known violations that must be fixed."
     },
     {
@@ -95,8 +96,8 @@
       "id": "14",
       "title": "Close remaining runtime gaps",
       "file": "tasks/14-close-runtime-gaps.md",
-      "status": "in_progress",
-      "notes": "Collects optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics, Array.from iterables, callable Array/Object constructors, microtask invocation, Map order."
+      "status": "completed",
+      "notes": "All runtime gaps closed: optional chaining, destructuring assignment/params, arrow rest, arguments object, Promise statics, Array.from iterables, callable Array/Object constructors, microtask invocation in event loop, Map order."
     },
     {
       "id": "15",
@@ -174,6 +175,13 @@
       "file": "tasks/25-research-best-practices.md",
       "status": "pending",
       "notes": "Use swc front-end, Cranelift for AOT/JIT, hidden classes + ICs, NaN-boxed values, string interning, indexmap, bumpalo; do not write a parser/LLVM backend from scratch."
+    },
+    {
+      "id": "26",
+      "title": "Five-round architecture & code review findings",
+      "file": "tasks/26-review-findings.md",
+      "status": "pending",
+      "notes": "Ranked findings from architecture/HIR, parser/lowering, interpreter/value, built-ins/host, and bridge/compiler reviews. Top blockers: event-loop dispatch, microtasks, hot reload, array prototypes, ==/instanceof."
     }
   ]
 }

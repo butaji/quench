@@ -57,6 +57,7 @@ Fix the specific interpreter and built-in gaps that block real Ink examples from
 
 9. **Event-loop microtask invocation**
    - ✅ `src/runtime.js` provides `setImmediate`, `process.nextTick` via microtaskCallbacks queue.
+   - ✅ `src/event_loop.rs` now calls `__tb_invoke_microtasks` when microtasks are pending.
    - ✅ `eval_identifier` in `helpers.rs` now falls back to `globalThis` for unresolved identifiers.
 
 10. **Map insertion-order iteration**

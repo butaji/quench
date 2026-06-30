@@ -1,5 +1,7 @@
 # Task 02: Complete Array, Map, Set, Promise, String, and Date built-ins
 
+**Status: COMPLETED** - All acceptance criteria met.
+
 ## Goal
 
 Implement the standard-library objects that Ink and the runtime.js rely on.

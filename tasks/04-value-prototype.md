@@ -1,5 +1,7 @@
 # Task 04: Fix value and prototype model
 
+**Status: COMPLETED** - All acceptance criteria met.
+
 ## Goal
 
 Ensure shared prototypes are installed correctly and `new`/`prototype` lookup works for all built-ins.

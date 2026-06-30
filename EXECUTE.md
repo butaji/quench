@@ -156,6 +156,23 @@ For the current phase, focus only on interpreter-level optimizations and a clean
 
 > **Note:** A fully optimized AST interpreter is still expected to be 10–30× slower than a bytecode VM. The leap to bytecode + ICs is the first major performance milestone; AOT/JIT come after that.
 
+## Review findings
+
+A five-round read-only review (architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration) produced a ranked list of issues. The full list is in **Task 26**. The highest-impact blockers are:
+
+1. **Event-loop dispatch calls stubs**, not the real `runtime.js` handlers, and Promise microtasks are never drained.
+2. **Hot reload creates a new context and discards it** instead of swapping the running context.
+3. **Array instances created by builtins lack `Array.prototype`**, breaking chained array methods.
+4. **`==` and `instanceof` are incorrect** for objects and do not walk the prototype chain.
+5. **Unsafe raw-pointer traversal** in environment and prototype chains.
+6. **`break`/`continue` are dropped or ignored** in lowering and loops.
+7. **Arrow functions use call-site `this`**, not lexical `this`.
+8. **Missing built-ins**: `Date.now`, `Number.prototype.toFixed`, `Date.prototype.toTimeString`, trig/log Math functions, iterable `Array.from`, `Object.keys` for arrays, broken Set insertion order.
+9. **Compiler issues**: `const` reassignment in SHIMS, multi-line import handling.
+10. **Architecture drift**: the current "runtime AST" is a conventional JS AST, not the documented functional + reactive HIR.
+
+Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
+
 ## Task index
 
 See `tasks/index.json`.

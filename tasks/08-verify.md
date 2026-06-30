@@ -1,5 +1,7 @@
 # Task 08: Verify with parity tests and example apps
 
+**Status: COMPLETED** - All examples run successfully.
+
 ## Goal
 
 Verify that the quench-runtime works correctly with real Ink examples and the runtime.js.

@@ -1,5 +1,7 @@
 # Task 01: Fix parser and lowering bugs in quench-runtime
 
+**Status: COMPLETED** - All acceptance criteria met.
+
 ## Goal
 
 Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime.js` and TSX/JSX source directly, without any pre-compilation step, and produce a clean HIR that is suitable for both interpretation and future AOT compilation.

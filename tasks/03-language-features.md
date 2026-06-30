@@ -1,5 +1,7 @@
 # Task 03: Add missing language features to the interpreter
 
+**Status: COMPLETED** - All acceptance criteria met.
+
 ## Goal
 
 Implement the JavaScript language features needed for Ink and runtime.js.
