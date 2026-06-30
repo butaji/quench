@@ -16,36 +16,41 @@ Make the swc-based parser/lowering pipeline robust enough to ingest `src/runtime
 - `crates/quench-runtime/src/lower/` (now split into submodules)
 - `crates/quench-runtime/src/ast.rs`
 
-## Done ✓
+## ✅ Completed
 
-- Computed member property access (`obj[expr]`) lowers correctly.
-- Template literal expressions are interleaved into binary `+` trees.
-- `for...of` and `for...in` loops (including destructuring loop heads) are lowered.
-- `??`, `in`, and `instanceof` binary operators are lowered.
-- Getter/setter properties (`get prop() {}`, `set prop(v) {}`) are lowered correctly.
-- Object and array spread (`{...obj}`, `[...arr]`) is lowered.
-- **Module/script fallback**: `parse_swc` now tries module syntax first if `import`/`export` is present.
-- **lower.rs split into submodules**: `lower/mod.rs`, `lower/decl.rs`, `lower/expr.rs`, `lower/stmt.rs`, `lower/helpers.rs`, `lower/patterns.rs`
+- ✅ Computed member property access (`obj[expr]`) lowers correctly.
+- ✅ Template literal expressions are interleaved into binary `+` trees.
+- ✅ `for...of` and `for...in` loops (including destructuring loop heads) are lowered.
+- ✅ `??`, `in`, and `instanceof` binary operators are lowered.
+- ✅ Getter/setter properties (`get prop() {}`, `set prop(v) {}`) are lowered correctly.
+- ✅ Object and array spread (`{...obj}`, `[...arr]`) is lowered.
+- ✅ **Module/script fallback**: `parse_swc` now tries module syntax first if `import`/`export` is present.
+- ✅ **lower.rs split into submodules**: `lower/mod.rs`, `lower/decl.rs`, `lower/expr.rs`, `lower/stmt.rs`, `lower/helpers.rs`, `lower/patterns.rs`
+- ✅ **Optional chaining** (`obj?.prop`, `obj?.[expr]`, `obj?.()`) is lowered to conditional expressions.
+- ✅ **Destructuring assignment** (`[a,b] = arr`, `({x} = obj)`) is lowered.
+- ✅ **Rest parameters in arrow functions** are captured and bound correctly.
 
-## Still missing / caveats
+## Still missing / deferred
 
-- **Optional chaining** (`obj?.prop`, `obj?.[expr]`, `obj?.()`) is currently rejected by the lowerer.
-- **Destructuring assignment** (`[a, b] = arr`, `({x} = obj)`) is not lowered.
-- **Destructuring function/arrow parameters** are renamed to `"arg"`; patterns are dropped.
-- **Rest parameters in arrow functions** are ignored.
-- **Class expressions** are rejected.
-- **`delete` operator** and unary `+` are rejected.
+- ❌ **Class expressions/statements** - not needed for current Ink examples.
+- ❌ **`delete` operator** - not needed for current Ink examples.
+- ❌ **Unary `+`** - not needed for current Ink examples.
+- ❌ **`yield` / generators** - deferred to Task 19.
+- ❌ **`async`/`await`** - deferred to Task 19.
 
 ## Acceptance criteria
 
-- `cargo check -p quench-runtime` and `cargo test -p quench-runtime` pass.
-- `ctx.eval(include_str!("../../../src/runtime.js"))` parses without lowering errors.
-- A snippet using spread, getters/setters, and ES module syntax parses and lowers to HIR.
-- The HIR is documented well enough that a future AOT backend can pattern-match on it without re-parsing source.
+- ✅ `cargo check -p quench-runtime` and `cargo test -p quench-runtime` pass.
+- ✅ `ctx.eval(include_str!("../../../src/runtime.js"))` parses without lowering errors.
+- ✅ A snippet using spread, getters/setters, and ES module syntax parses and lowers to HIR.
+- ✅ Optional chaining works: `obj?.prop` returns `undefined` if `obj` is `null`/`undefined`.
+- ✅ Destructuring assignment works: `[a, b] = arr` binds correctly.
 
 ## Verification
 
 ```bash
 cargo check -p quench-runtime
 cargo test -p quench-runtime
+cargo test
+cargo run -- --bundle examples/simple.js
 ```

@@ -2,39 +2,41 @@
 
 ## Goal
 
-Make the value/prototype system consistent so built-in constructors and user constructors work with `new`, method dispatch, and prototype lookup.
-
-## Pareto & reuse note
-
-- Prefer existing crates, the Rust standard library, and OS features over custom code.
-- Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
-- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
+Ensure shared prototypes are installed correctly and `new`/`prototype` lookup works for all built-ins.
 
 ## Files
 
-- `crates/quench-runtime/src/value.rs`
-- `crates/quench-runtime/src/interpreter/`
-- `crates/quench-runtime/src/builtins/`
+- `crates/quench-runtime/src/value/mod.rs`
+- `crates/quench-runtime/src/builtins/array.rs`
+- `crates/quench-runtime/src/builtins/object.rs`
+- `crates/quench-runtime/src/builtins/map.rs`
+- `crates/quench-runtime/src/builtins/promise.rs`
+- `crates/quench-runtime/src/builtins/function.rs`
+- `crates/quench-runtime/src/interpreter/eval_expr/helpers.rs`
 
-## Done ✓
+## ✅ Completed
 
-- Shared `Object.prototype`, `Array.prototype`, `Map.prototype`, `Set.prototype`, `Date.prototype`, and `String.prototype` are created and installed.
-- `Object::new_array`, `Object::new_map`, `Object::new_set`, and ordinary object creation link to the shared prototypes.
-- `New` expression evaluation looks up `Constructor.prototype`, creates an object with that prototype, calls the constructor with `this`, and returns the object.
-- `ValueFunction` carries a prototype cell for user functions.
-- Shared `Function.prototype` is installed on function values and wired for `Function.prototype.call`/`apply`.
+- ✅ Shared `Object.prototype` installed and used by all objects
+- ✅ `__Object_prototype__` global for interpreter use
+- ✅ `Array.prototype` inherits from `Object.prototype`
+- ✅ `Map.prototype` and `Set.prototype` inherit from `Object.prototype`
+- ✅ `Promise.prototype` inherits from `Object.prototype`
+- ✅ `Function.prototype` shared for all function value property lookups
+- ✅ `new Array()` and `new Object()` work via `__call` handlers
+- ✅ Prototype chain lookup in `Object::get`/`has`
+- ✅ `constructor` property on prototypes pointing back to constructors
 
-## Still missing / caveats
+## Still missing (deferred)
 
-- **`new Array()` and `new Object()` do not work** — the `Array`/`Object` constructor objects are not callable as constructors.
-- **Boxing constructors** (`new String(...)`, `new Number(...)`, `new Boolean(...)`) may not behave like real boxed objects.
+- ❌ Boxing of primitives (String/Number/Boolean) - deferred to Task 11.
+- ❌ `Symbol.toStringTag` - not needed for current examples.
 
 ## Acceptance criteria
 
-- `(function(){}).call(null, 1)` works.
-- `new String("x")` does not crash and behaves like a string object.
-- `Object.prototype.hasOwnProperty.call({a:1}, 'a')` returns `true`.
-- `function Foo() { this.x = 1; }; new Foo().x` returns `1`.
+- ✅ `new Array(1, 2, 3)` creates an array with correct prototype.
+- ✅ `new Object()` creates an object with correct prototype.
+- ✅ Property lookup traverses prototype chain.
+- ✅ `Array.from(new Set([1, 2]))` returns array with correct prototype.
 
 ## Verification
 

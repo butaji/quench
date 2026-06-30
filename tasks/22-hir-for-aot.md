@@ -1,8 +1,12 @@
-# Task 22: Stabilize the HIR for runtime and future AOT
+# Task 22: Stabilize the functional + reactive HIR for runtime and future AOT
 
 ## Goal
 
-Define and stabilize a single **high-level intermediate representation (HIR)** inside `quench-runtime` that is used by the interpreter today and can be consumed by a future AOT compiler later.
+Define and stabilize a single **high-level intermediate representation (HIR)** inside `quench-runtime` that is:
+
+1. **Functional** — expression-oriented, close to A-normal form (ANF), with explicit effects.
+2. **Reactive** — first-class support for signals, memos, effects, and render boundaries.
+3. **AOT-ready** — clean enough for the interpreter today and for a future AOT compiler later.
 
 ## Files
 
@@ -13,25 +17,47 @@ Define and stabilize a single **high-level intermediate representation (HIR)** i
 
 ## HIR requirements
 
-1. **Language-agnostic.** After lowering, the HIR must contain no TypeScript-, JSX-, or swc-specific nodes. Type annotations, interfaces, namespaces, and JSX are gone.
-2. **Self-contained.** A future AOT backend should be able to read the HIR without keeping the original source or the swc AST around.
-3. **Stable node set.** The node enum should cover:
-   - literals, identifiers, member access, calls, `new`, unary/binary operators, assignments
-   - function declarations/expressions/arrow functions, parameters (with rest/destructuring support)
-   - statements: block, var/let/const, if/while/do-while/for/for...of/for...in/switch/try-catch-finally/return/break/continue/throw/labeled
-   - object/array literals with getters/setters/spread
-   - template literals
-   - module import/export execution semantics
-4. **Serializable (optional but recommended).** Derive `serde::Serialize`/`Deserialize` so the HIR can be cached on disk and loaded by an AOT backend.
-5. **Source-location preserving.** Each node should carry a `Span` or line/column for diagnostics, but the AOT backend does not need it.
+### Functional core
+
+- **ANF-like shape.** Most operations produce a single value bound to a name; sub-expressions are simple (literal, variable, parameter, global). Complex nested expressions are flattened during lowering.
+- **Immutable values by default.** Mutations are explicit `Assign`, `SetProp`, `Delete`, or reactive `SignalSet` nodes.
+- **Explicit effects.** I/O, bridge calls, rendering, and `Effect` nodes are marked so pure sub-expressions can be memoized, folded, or reordered safely.
+- **First-class functions and closures.** `Function`/`ArrowFunction` nodes carry captured variables so closures work without re-parsing.
+
+### Reactive primitives
+
+The HIR should include nodes for the primitives that Quench/Ink actually uses:
+
+- `Signal { id, initial }` — mutable reactive cell (maps to `useState`).
+- `SignalGet { signal }` — read a signal inside a computation.
+- `SignalSet { signal, value }` — write a signal.
+- `Memo { id, deps, compute }` — cached derived value (maps to `useMemo`).
+- `Effect { id, deps, callback }` — scheduled side effect (maps to `useEffect`).
+- `Render { id, component, props }` — reactive component boundary; re-evaluates only when props or used signals change.
+
+At runtime these nodes build a reactive dependency graph. At AOT time they let the backend generate efficient incremental update code.
+
+### Language-agnostic surface
+
+- After lowering, the HIR must contain no TypeScript-, JSX-, or swc-specific nodes. Type annotations, interfaces, namespaces, and JSX are gone.
+- A future AOT backend should read the HIR without the original source or swc AST.
+- Node set covers literals, identifiers, member access, calls, `new`, unary/binary operators, assignments, control flow, object/array literals with getters/setters/spread, template literals, and module import/export execution semantics.
+
+### Serialization and diagnostics
+
+- Derive `serde::Serialize`/`Deserialize` (behind a feature flag) so the HIR can be cached on disk and loaded by an AOT backend.
+- Each node carries a `Span` (file, start/end line/col) for diagnostics; the AOT backend may discard spans.
 
 ## Steps
 
-1. Audit `crates/quench-runtime/src/ast.rs`. Ensure every variant is something an AOT compiler could lower further (e.g., to bytecode or machine code) without re-parsing source.
-2. Remove or lower any swc-specific leaks (e.g., swc atoms, swc spans as the primary key, raw swc node types).
-3. Add `serde` derives behind a feature flag if binary size is a concern.
-4. Rename the module/doc references from “runtime AST” to **HIR** so the architecture is explicit.
-5. Add unit tests that round-trip a simple program through `source -> swc -> HIR -> eval`.
+1. Audit `crates/quench-runtime/src/ast.rs`. Ensure every variant is AOT-lowering friendly.
+2. Refactor nested expressions into ANF-style `Let` bindings during lowering.
+3. Add `Signal`, `SignalGet`, `SignalSet`, `Memo`, `Effect`, and `Render` HIR nodes.
+4. Detect hook calls (`useState`, `useMemo`, `useEffect`) and component calls during lowering and emit the corresponding reactive nodes.
+5. Remove or lower any swc-specific leaks (swc atoms, raw swc node types).
+6. Rename module/doc references from “runtime AST” to **HIR**.
+7. Add `serde` derives behind a feature flag.
+8. Add unit tests for `source -> swc -> HIR -> eval` and `source -> swc -> HIR -> serialize -> deserialize -> eval`.
 
 ## Boundaries
 
@@ -41,15 +67,17 @@ Define and stabilize a single **high-level intermediate representation (HIR)** i
 
 ## Pareto & reuse note
 
-- Prefer existing `swc` only at the front door (parsing). The HIR itself should be plain Rust enums/structs with no swc dependency.
-- Do not design a full bytecode VM in this task; keep the HIR high-level enough for the interpreter but structured enough for AOT.
-- Defer low-level optimizations (constant folding, SSA, register allocation) to the AOT backend.
+- Use `swc` only for parsing. The HIR must be plain Rust enums/structs.
+- Do not build a full bytecode VM here; keep the HIR high-level.
+- Defer SSA conversion, register allocation, and machine-code generation to the AOT backend.
+- The reactive graph can be built lazily at runtime; do not require static analysis to be perfect before the interpreter can run.
 
 ## Acceptance criteria
 
 - The interpreter executes the HIR, not the swc AST.
-- A documented HIR node reference exists (in `crates/quench-runtime/src/ast.rs` docs or a new `docs/hir.md`).
-- A simple program can be parsed, lowered to HIR, and evaluated without touching the swc AST after lowering.
+- A documented HIR node reference exists.
+- A simple component using `useState` lowers to `Signal`/`SignalGet`/`SignalSet` nodes.
+- A simple program round-trips through `source -> swc -> HIR -> eval`.
 
 ## Verification
 

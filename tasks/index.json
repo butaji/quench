@@ -160,6 +160,13 @@
       "file": "tasks/23-diagnostics.md",
       "status": "pending",
       "notes": "Parser, lowering, runtime, and bridge errors must include file/line/column, a human-readable message, and actionable guidance. No silent drops or raw panics."
+    },
+    {
+      "id": "24",
+      "title": "Reactive execution engine over the HIR",
+      "file": "tasks/24-reactive-engine.md",
+      "status": "pending",
+      "notes": "Build the dependency graph from Signal/Memo/Effect/Render nodes; propagate changes; schedule re-renders and effects."
     }
   ]
 }

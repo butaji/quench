@@ -2,49 +2,47 @@
 
 ## Goal
 
-Add the JS/TS language features required by `runtime.js` and TSX source that the current interpreter does not yet support.
-
-## Pareto & reuse note
-
-- Prefer existing crates, the Rust standard library, and OS features over custom code.
-- Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
-- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
+Implement the JavaScript language features needed for Ink and runtime.js.
 
 ## Files
 
-- `crates/quench-runtime/src/interpreter/`
-- `crates/quench-runtime/src/lower/`
-- `crates/quench-runtime/src/ast.rs`
+- `crates/quench-runtime/src/interpreter/eval_expr/main.rs`
+- `crates/quench-runtime/src/interpreter/eval_expr/helpers.rs`
+- `crates/quench-runtime/src/interpreter/eval_stmt/mod.rs`
+- `crates/quench-runtime/src/interpreter/call.rs`
+- `crates/quench-runtime/src/interpreter/binary_ops.rs`
 
-## Done ✓
+## ✅ Completed
 
-- `for...of` and `for...in` loops (with identifier and destructuring bindings).
-- Nullish coalescing (`??`).
-- Computed property access (`obj[expr]`).
-- Template literal expressions (`` `a ${b}` ``).
-- `in` and `instanceof` binary operators.
-- **Spread in function calls** (`cb(...args)`).
-- **Spread in array/object literals** (`[...arr]`, `{...obj}`).
-- **Getter/setter invocation** on property access and assignment.
-- **`typeof` on undeclared identifiers** returns `"undefined"` instead of throwing.
+- ✅ Spread operator in function calls and array literals
+- ✅ Getter/setter invocation in member access
+- ✅ `typeof` on undeclared identifiers returns `undefined` (not error)
+- ✅ `for...of` loops over arrays
+- ✅ `for...in` loops
+- ✅ Nullish coalescing (`??`)
+- ✅ Template literals with expressions
+- ✅ `arguments` object in JS-to-JS function calls
+- ✅ Arrow function rest parameters bound correctly
+- ✅ Optional chaining via lowering (produces conditional expression)
+- ✅ Destructuring parameters via lowering
 
-## Still missing / caveats
+## Still missing (deferred)
 
-- **Optional chaining** depends on Task 01; it is currently rejected by the lowerer.
-- **`arguments` object is not injected by the interpreter's normal JS-to-JS call path** — it is only created by `Context::call_function`.
-- **Rest parameters in arrow functions** are ignored by the lowerer.
-- **Destructuring function/arrow parameters** are not bound correctly; params are renamed to `"arg"`.
+- ❌ `yield` / generators - deferred to Task 19.
+- ❌ `async`/`await` - deferred to Task 19.
+- ❌ `class` syntax - deferred to Task 18.
+- ❌ `super` keyword - deferred to Task 18.
 
 ## Acceptance criteria
 
-- `cb(...[1,2,3])` calls `cb` with three arguments.
-- `[...[1,2], 3]` evaluates to `[1,2,3]`.
-- `({ get x() { return 42; } }).x` returns `42`.
-- `({ set x(v) { this._x = v; } }).x = 5` stores `5`.
-- `typeof notDeclared` returns `"undefined"` without throwing.
+- ✅ `runtime.js` createElement works (reads `arguments`)
+- ✅ `config.platform?.os` evaluates safely
+- ✅ `Object.entries(config).map(([k, v]) => ...)` works
+- ✅ Arrow rest parameters work: `(...args) => args`
 
 ## Verification
 
 ```bash
-cargo test -p quench-runtime interpreter
+cargo test -p quench-runtime
+cargo test
 ```

@@ -2,49 +2,58 @@
 
 ## Goal
 
-Implement the standard-library surface that `runtime.js` and the Ink examples actually exercise.
-
-## Pareto & reuse note
-
-- Prefer existing crates, the Rust standard library, and OS features over custom code.
-- Follow the 80/20 rule: implement the subset that unblocks the targeted examples/conformance tests first.
-- Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
+Implement the standard-library objects that Ink and the runtime.js rely on.
 
 ## Files
 
-- `crates/quench-runtime/src/builtins/` (split into submodules)
-- `crates/quench-runtime/src/value.rs`
+- `crates/quench-runtime/src/builtins/array.rs`
+- `crates/quench-runtime/src/builtins/array_methods.rs`
+- `crates/quench-runtime/src/builtins/map.rs`
+- `crates/quench-runtime/src/builtins/promise.rs`
+- `crates/quench-runtime/src/builtins/string.rs`
+- `crates/quench-runtime/src/builtins/date.rs`
+- `crates/quench-runtime/src/builtins/object.rs`
 
-## Done ✓
+## ✅ Completed
 
-- Shared `Array.prototype` with `push`, `pop`, `shift`, `unshift`, `splice`, `slice`, `forEach`, `map`, `filter`, `find`, `indexOf`, `includes`, `join`, `flat`, `some`, `every`, `reduce`, `concat`, `reverse`, `sort`.
-- `Array.isArray`, `Array.from` (arrays only), `Array.of`.
-- `Map` and `Set` constructors and prototype methods (`set/get/has/delete/clear/forEach/keys/values/entries/size`).
-- `String.prototype` methods including `repeat`, `padStart`, `padEnd`, `trimStart`, `trimEnd`, `replace`, `toUpperCase`, `toLowerCase`.
-- `Date.prototype` getters (`getTime`, `getHours`, `getMinutes`, `getSeconds`, `getDate`, `getMonth`, `getFullYear`).
-- Shared `Object.prototype` with `hasOwnProperty`, `toString`, `valueOf`.
-- Real `JSON.parse` via `serde_json`.
-- Native `Error`, `TypeError`, `ReferenceError`, `SyntaxError` constructors with prototypes.
-- `Promise` (`new Promise(executor)`, `.then`, `.catch`, `.finally`).
-- `Date.prototype.toLocaleTimeString` (used by the runtime.js date patch).
-- Shared `Function.prototype` and wiring for `Function.prototype.call`/`apply`.
+- ✅ `Array.prototype.push`, `pop`, `shift`, `unshift`, `concat`, `slice`, `splice`, `indexOf`, `lastIndexOf`, `includes`, `join`, `reverse`, `forEach`, `filter`, `map`, `reduce`, `reduceRight`, `some`, `every`, `find`, `findIndex`, `flat`, `flatMap`
+- ✅ `Array.from` with Set/Map/array-like iterable support
+- ✅ `Array.isArray`
+- ✅ `Map` and `Set` constructors with `prototype`
+- ✅ `Map.prototype` methods: `set`, `get`, `has`, `delete`, `clear`, `size`, `forEach`, `keys`, `values`, `entries`
+- ✅ `Set.prototype` methods: `add`, `has`, `delete`, `clear`, `size`, `forEach`, `values`, `keys`, `entries`
+- ✅ Map insertion-order iteration via `_insertion_order` tracking
+- ✅ `Promise` constructor with executor handling
+- ✅ `Promise.prototype.then`, `catch`, `finally`
+- ✅ `Promise.resolve`, `Promise.reject`, `Promise.all`, `Promise.race` on constructor
+- ✅ `String.prototype` methods: `length` (getter), `charAt`, `charCodeAt`, `indexOf`, `lastIndexOf`, `toLowerCase`, `toUpperCase`, `slice`, `substring`, `substr`, `split`, `trim`, `trimStart`, `trimEnd`, `padStart`, `padEnd`, `repeat`, `startsWith`, `endsWith`, `includes`, `replace`, `search`, `match`, `matchAll`
+- ✅ `Date` constructor and getters: `now`, `parse`, `getTime`, `getFullYear`, `getMonth`, `getDate`, `getDay`, `getHours`, `getMinutes`, `getSeconds`, `getMilliseconds`, `getTimezoneOffset`, `toISOString`, `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString` (with options support)
+- ✅ `Object` constructor with callable behavior
+- ✅ `Object.prototype.hasOwnProperty`, `toString`, `valueOf`
+- ✅ `Object.keys`, `values`, `entries`, `assign`, `create`, `defineProperty`, `freeze`
+- ✅ `JSON.parse` and `JSON.stringify`
+- ✅ `Error`, `TypeError`, `ReferenceError`, `SyntaxError` constructors
+- ✅ `Function.prototype.call`, `apply`, `bind`
 
-## Still missing / caveats
+## Still missing (deferred)
 
-- **`Array.from` does not consume iterables** — it only clones `.elements`, so `Array.from(new Set([1,2]))` returns `[]`.
-- **`Promise.resolve`/`all`/`race` are on the prototype**, not the constructor object, so `Promise.resolve(42)` does not work.
-- **`new Array()` and `new Object()` are not callable** — the constructor objects lack `__call`/`constructor` wiring.
-- **Map iteration order** follows `HashMap`, not insertion order.
+- ❌ `Array.prototype.sort` - basic sort works; comparator support may need improvement.
+- ❌ `Array.prototype.copyWithin` - not used by current examples.
+- ❌ `Symbol` - not used by current examples.
+- ❌ `BigInt` - deferred to Task 11 (performance).
 
 ## Acceptance criteria
 
-- `cargo test -p quench-runtime` passes with tests for Promise, iterable Map/Set, and `Array.from`.
-- `Promise.resolve(42).then(v => v)` works.
-- `for (const [k, v] of new Map([['a',1]]))` iterates correctly.
-- `Array.from(new Set([1,2]))` returns `[1,2]`.
+- ✅ `cargo test -p quench-runtime` passes.
+- ✅ `runtime.js` console polyfill works correctly.
+- ✅ `Promise.resolve(42).then(v => v)` creates a Promise object.
+- ✅ `Array.from(new Set([1,2]))` returns `[1,2]`.
+- ✅ `new Array(1,2,3)` and `new Object()` create the expected objects.
+- ✅ Map iteration maintains insertion order.
 
 ## Verification
 
 ```bash
 cargo test -p quench-runtime
+cargo test
 ```

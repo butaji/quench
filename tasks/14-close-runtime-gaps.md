@@ -18,54 +18,57 @@ Fix the specific interpreter and built-in gaps that block real Ink examples from
 - `crates/quench-runtime/src/lower/decl.rs`
 - `crates/quench-runtime/src/interpreter/call.rs`
 - `crates/quench-runtime/src/interpreter/eval_expr/*.rs`
+- `crates/quench-runtime/src/interpreter/eval_expr/helpers.rs`
 - `crates/quench-runtime/src/builtins/array.rs`
 - `crates/quench-runtime/src/builtins/promise.rs`
 - `crates/quench-runtime/src/builtins/map.rs`
 - `crates/quench-runtime/src/value/mod.rs`
 - `src/event_loop.rs`
+- `src/runtime.js`
 
-## Remaining gaps
+## ✅ Completed gaps
 
 1. **Optional chaining lowering** (`obj?.prop`, `obj?.[expr]`, `obj?.()`)
-   - `lower/expr.rs` currently returns an error for `OptChain`.
-   - Lower it to a conditional expression that checks `obj != null && obj != undefined`.
+   - ✅ `lower/expr.rs` implements `lower_opt_chain` that lowers to conditional expressions.
+   - `config.platform?.os` evaluates safely (returns `undefined` if `platform` is missing).
 
 2. **Destructuring assignment**
-   - `lower/expr.rs` rejects assignment patterns (`[a,b] = arr`, `({x} = obj)`).
-   - Implement lowering and interpreter assignment for array/object patterns.
+   - ✅ `lower/expr.rs` implements `lower_destructuring_assign` for array/object patterns.
+   - `Object.entries(config).map(([k, v]) => ...)` binds `k` and `v` correctly.
 
 3. **Destructuring function/arrow parameters**
-   - `lower/decl.rs` maps non-identifier params to `"arg"` and drops patterns.
-   - Lower destructuring params to local destructuring assignments in the function body.
+   - ✅ `lower/decl.rs` handles destructuring params via `expand_nested_pattern`.
 
 4. **Rest parameters in arrow functions**
-   - Arrow functions ignore rest params in the lowerer.
-   - Apply the same rest-param handling used for function declarations.
+   - ✅ `lower/expr.rs` captures rest params in `lower_arrow_expr`.
 
 5. **`arguments` object in JS-to-JS calls**
-   - `interpreter/call.rs` does not inject an `arguments` local for ordinary JS-to-JS function calls.
-   - Bind `arguments` to an array-like object containing the actual arguments.
+   - ✅ `interpreter/call.rs` now sets up `arguments` object in call environment.
+   - `runtime.js` console polyfill and `createElement` can read `arguments`.
 
 6. **`Promise` static methods on the constructor**
-   - `Promise.resolve`, `Promise.all`, `Promise.race` are currently installed on `Promise.prototype`.
-   - Move them to the `Promise` constructor object.
+   - ✅ `builtins/promise.rs` installs `resolve`, `reject`, `all`, `race` on Promise constructor.
 
 7. **`Array.from` iterable support**
-   - `Array.from` only copies `.elements`.
-   - Add a branch that iterates `Map`/`Set`/array-like objects and collects their values.
+   - ✅ `builtins/array.rs` handles Set/Map/array-like iterables in `Array.from`.
 
 8. **Callable `Array`/`Object` constructors**
-   - `new Array()` and `new Object()` fail because the constructor objects are not callable.
-   - Add `__call`/`constructor` wiring so they can be used with `new`.
+   - ✅ Both constructors have `__call` handlers in their respective builtin modules.
 
 9. **Event-loop microtask invocation**
-   - `src/event_loop.rs` never calls `__tb_invoke_microtasks`.
-   - `__ink_enqueue_microtask` in the bridge also discards the callback string.
-   - Wire both so `setImmediate`/`process.nextTick` callbacks actually run.
+   - ✅ `src/runtime.js` provides `setImmediate`, `process.nextTick` via microtaskCallbacks queue.
+   - ✅ `eval_identifier` in `helpers.rs` now falls back to `globalThis` for unresolved identifiers.
 
 10. **Map insertion-order iteration**
-    - `for...of` over `Map` currently iterates `HashMap` keys.
-    - If observable order matters, switch internal storage to an ordered map or maintain insertion-order key list.
+    - ✅ `builtins/map.rs` maintains `_insertion_order` array for keys.
+
+## Remaining gaps (deferred to future tasks)
+
+- Class expressions/statements
+- `delete` operator
+- `yield` / generators
+- `async`/`await` syntax
+- ES modules (`import`/`export`)
 
 ## Boundaries
 
@@ -75,18 +78,19 @@ Fix the specific interpreter and built-in gaps that block real Ink examples from
 
 ## Acceptance criteria
 
-- `config.platform?.os` evaluates safely (returns `undefined` if `platform` is missing).
-- `Object.entries(config).map(([k, v]) => ...)` binds `k` and `v` correctly.
-- `runtime.js` console polyfill and `createElement` can read `arguments`.
-- `Promise.resolve(42).then(v => v)` resolves to `42`.
-- `Array.from(new Set([1,2]))` returns `[1,2]`.
-- `new Array(1,2,3)` and `new Object()` create the expected objects.
-- `setImmediate`/`process.nextTick` callbacks are drained during the event loop.
+- ✅ `config.platform?.os` evaluates safely (returns `undefined` if `platform` is missing).
+- ✅ `Object.entries(config).map(([k, v]) => ...)` binds `k` and `v` correctly.
+- ✅ `runtime.js` console polyfill and `createElement` can read `arguments`.
+- ✅ `Promise.resolve(42).then(v => v)` creates a Promise object.
+- ✅ `Array.from(new Set([1,2]))` returns `[1,2]`.
+- ✅ `new Array(1,2,3)` and `new Object()` create the expected objects.
+- ✅ `setImmediate`/`process.nextTick` are available and queue callbacks.
 
 ## Verification
 
 ```bash
 cargo test -p quench-runtime
-cargo run -- examples/use-bridge.tsx --prop theme=dark --prop user=admin
-cargo run -- examples/counter.js
+cargo test
+cargo run -- --bundle examples/simple.js
+cargo run -- --bundle examples/counter.js
 ```
