@@ -104,9 +104,17 @@ The HIR is intentionally designed to make both interpretation and future AOT com
 | Crate | Purpose |
 |-------|---------|
 | `swc_common`, `swc_ecma_parser`, `swc_ecma_ast`, `swc_atoms` | Parse TS/JS/TSX source via swc. |
-| `serde`, `serde_json` | JSON serialization for built-ins and bridge data. |
+| `serde`, `serde_json` | JSON serialization for built-ins and bridge data; HIR caching for AOT. |
 | `urlencoding` | `encodeURIComponent` / `decodeURIComponent`. |
 | `tracing` | Logging. |
+| `thiserror` / `miette` / `ariadne` | Structured errors and rich source diagnostics. |
+| `cranelift` / `cranelift-module` / `cranelift-object` / `cranelift-jit` | Future AOT/JIT code generation (preferred over LLVM for size and speed of compilation). |
+| `inkwell` | Alternative LLVM bindings if Cranelift is insufficient later. |
+| `lasso` / `string-interner` | String interning for property names and identifiers. |
+| `indexmap` | Ordered object property maps with deterministic iteration. |
+| `bumpalo` | Arena allocation for short-lived HIR nodes, frames, and render trees. |
+| `regress` / `regex` | ECMAScript regex engine. |
+| `num-bigint` / `rust_decimal` | `BigInt` and decimal arithmetic. |
 
 The value model currently uses `std::collections::HashMap`. The ordered-map/string-interning/bigint crates discussed earlier are not wired in yet; they can be adopted later if performance or enumeration-order correctness becomes a problem.
 
@@ -121,6 +129,16 @@ Once the runtime is functionally correct, the following interpreter-level optimi
 5. **Arena allocation** — use `bumpalo` for call frames, temporary eval state, and short-lived objects. Consider `mimalloc` or `jemalloc` as the global allocator.
 6. **Explicit evaluation stack / trampoline** — replace recursive `eval_expression`/`eval_statement` with an explicit stack of frames to avoid native stack overflow, improve cache locality, and enable `try/catch/finally` and generators.
 7. **Faster maps and regex** — use `rustc-hash`/`foldhash` for atom-keyed maps; use `regress` for a pure-Rust ECMAScript regex engine and `num-bigint` for `BigInt`.
+
+### Bytecode / AOT / JIT roadmap
+
+After the AST/HIR interpreter is correct, the path to higher performance is staged:
+
+1. **Bytecode compiler** — lower the HIR to a stack-based or accumulator-based bytecode with fixed-width instructions and external constant tables. Start with a simple interpreter loop; use direct-threaded dispatch if portable.
+2. **Inline caches in bytecode** — cache shape-checked property offsets and call targets at bytecode instructions; fall back to slow path on shape mismatch.
+3. **Baseline JIT via Cranelift** — compile hot bytecode functions to machine code using `cranelift-jit`. Keep deoptimization paths back to the interpreter for shape misses.
+4. **AOT via Cranelift Object** — use `cranelift-module` + `cranelift-object` to emit object files ahead of time, then link them with the host binary. This matches the Hermes model (AOT bytecode) and avoids shipping a compiler in the runtime.
+5. **LLVM fallback** — only consider `inkwell` if Cranelift cannot deliver the required optimization quality or target support.
 
 ### Performance crates to evaluate
 
@@ -137,8 +155,10 @@ Once the runtime is functionally correct, the following interpreter-level optimi
 | `regress` | Pure-Rust ECMAScript regex engine. |
 | `num-bigint` | `BigInt` implementation. |
 | `mimalloc` / `tikv-jemallocator` | High-performance global allocator. |
+| `cranelift` / `cranelift-module` / `cranelift-object` / `cranelift-jit` | Bytecode-to-native code generation for JIT and AOT. |
+| `inkwell` | LLVM bindings if Cranelift is insufficient. |
 
-> **Note:** A fully optimized AST interpreter is still expected to be 10–30× slower than a bytecode VM. The next leap after these optimizations is a single-pass bytecode compiler with direct-threaded dispatch, but that is explicitly out of scope until the AST interpreter is correct and fast enough.
+> **Note:** A fully optimized AST interpreter is still expected to be 10–30× slower than a bytecode VM. The leap to bytecode + ICs is the first major performance milestone; AOT/JIT come after that.
 
 ## Task index
 
