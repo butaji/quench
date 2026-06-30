@@ -139,6 +139,13 @@
       "file": "tasks/20-conformance-stabilize.md",
       "status": "pending",
       "notes": "Fix regressions, add CI job, publish conformance pass/fail percentages, and document intentionally unsupported features."
+    },
+    {
+      "id": "21",
+      "title": "Strip TypeScript syntax in the lowerer",
+      "file": "tasks/21-typescript-stripping.md",
+      "status": "pending",
+      "notes": "Runtime must parse .ts/.tsx natively: strip type annotations, interfaces, type aliases, enum-as-value handling, namespaces, import equals, export assignment, as/non-null/type assertions."
     }
   ]
 }

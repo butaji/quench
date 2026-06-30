@@ -21,8 +21,9 @@ Bring the official TypeScript test corpus into the repo and build a runner that 
 3. Create `crates/quench-runtime/tests/conformance.rs` with a harness that:
    - Walks `tests/typescript/tests/cases/conformance/**/*.ts`.
    - Filters out type-check-only files (e.g., files whose only assertions are `// @errors`) or keeps them and expects zero runtime errors.
-   - Compiles each `.ts` file to JS. Prefer using the existing `swc` infrastructure in `quench-runtime`; fall back to invoking `tsc` if swc cannot handle a file.
-   - Evaluates the emitted JS in a fresh `quench_runtime::Context`.
+   - Parses each `.ts` file **directly** with `swc_ecma_parser` TypeScript syntax (`Syntax::Typescript(...)`); no `tsc` or separate compile step.
+   - Strips TypeScript-only nodes (type annotations, interfaces, type aliases, enums-as-types, namespaces, etc.) during lowering.
+   - Evaluates the resulting runtime AST directly in a fresh `quench_runtime::Context`.
    - Captures runtime errors and console output.
    - Compares against baseline output in `tests/typescript/tests/baselines/reference/` when available.
 4. Add a single sanity test that compiles and runs one trivial conformance file (e.g., `tests/cases/conformance/expressions/additionOperator/additionOperatorWithNumberAndDate.ts` if it exists) to prove the harness works.
