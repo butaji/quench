@@ -197,18 +197,23 @@ For the current phase, focus only on interpreter-level optimizations and a clean
 
 ## Review findings
 
-A five-round read-only review (architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration) produced a ranked list of issues. The full list is in **Task 26**. The highest-impact blockers are:
+Two five-round read-only reviews produced ranked lists of issues.
 
-1. **Event-loop dispatch calls stubs**, not the real `runtime.js` handlers, and Promise microtasks are never drained.
-2. **Hot reload creates a new context and discards it** instead of swapping the running context.
-3. **Array instances created by builtins lack `Array.prototype`**, breaking chained array methods.
-4. **`==` and `instanceof` are incorrect** for objects and do not walk the prototype chain.
-5. **Unsafe raw-pointer traversal** in environment and prototype chains.
-6. **`break`/`continue` are dropped or ignored** in lowering and loops.
-7. **Arrow functions use call-site `this`**, not lexical `this`.
-8. **Missing built-ins**: `Date.now`, `Number.prototype.toFixed`, `Date.prototype.toTimeString`, trig/log Math functions, iterable `Array.from`, `Object.keys` for arrays, broken Set insertion order.
-9. **Compiler issues**: `const` reassignment in SHIMS, multi-line import handling.
-10. **Architecture drift**: the current "runtime AST" is a conventional JS AST, not the documented functional + reactive HIR.
+- **First review (Task 26)** — architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration.
+- **Second review (Task 51)** — repeated after the first big implementation push, focusing on what still blocks end-to-end examples.
+
+The highest-impact blockers from the second review are:
+
+1. **`useApp()` is called inside event handlers**, but it is a render-only hook that throws outside render.
+2. **CLI `--prop` values are parsed but never injected** into the JS runtime.
+3. **Hot reload creates a new context and discards it** instead of swapping the running context.
+4. **Promise `.then`/`.catch` handlers registered before resolution are silently dropped**.
+5. **Microtasks are not drained** by the event loop (`process.nextTick`, `setImmediate`, Promise queue).
+6. **`new Date()` returns `undefined`**.
+7. **`Array.from` does not support array-like objects** or the mapping function.
+8. **ES module `import`/`export` declarations are silently dropped** during lowering.
+9. **JSX/TSX nodes are rejected during lowering** even though the parser accepts them.
+10. **Environment/closure scope mutation**, getter `this` binding, `globalThis` disconnect, and built-in prototype chain issues.
 
 Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
 
