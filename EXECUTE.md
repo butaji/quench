@@ -15,7 +15,9 @@ Use sub-agents to work in parallel.
 5. **Clear diagnostics.** Every parser, lowering, runtime, and bridge error must tell the user what went wrong, where (file/line/column), and what to do about it. No silent drops, no raw panics, no obscure internal names exposed to users.
 6. **No cross-compilation.** `.ts/.js/.tsx/.jsx` source is parsed and executed natively by `quench-runtime` using swc transforms. The main binary does not shell out to `esbuild`, `tsc`, `babel`, or any external compiler.
 
-7. **Test-driven development.** Every bug fix, feature, and refactor starts with a failing unit test. We follow the red-green-refactor cycle: write the test, watch it fail for the expected reason, write the minimal code to pass, then refactor while keeping tests green. No production code without a failing test first.
+7. **Strict build-time linting.** The build script enforces hard limits on every `*.rs` file in the workspace: max 500 lines per file, max 40 lines per function, max cyclomatic complexity of 10. `#[allow(...)]` attributes are not honored by the build linter. Any violation fails the build.
+
+8. **Test-driven development.** Every bug fix, feature, and refactor starts with a failing unit test. We follow the red-green-refactor cycle: write the test, watch it fail for the expected reason, write the minimal code to pass, then refactor while keeping tests green. No production code without a failing test first.
 8. **Comprehensive unit-test coverage.** Runtime behavior must be pinned with unit tests in `crates/quench-runtime/tests/` (and `tests/` for the main crate) before it is considered done. Integration tests run the example apps; unit tests exercise edge cases that the examples do not hit.
 
 ## Test-driven development process
