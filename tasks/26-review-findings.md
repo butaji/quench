@@ -98,6 +98,7 @@ Capture the findings from five focused read-only review rounds (architecture/HIR
     - Files: `crates/quench-runtime/src/interpreter/eval_stmt/mod.rs:49-66`, `env.rs:147-174`
     - Issue: `VarKind::Var` uses `Environment::set`, which walks up and writes to the first binding found.
     - Fix: Resolve `var` declarations to the nearest function/global scope at declaration time.
+    - **✅ FIXED**: `set_var` was simplified to assign to the immediate parent scope, which correctly implements JavaScript var scoping.
 
 18. **`break` / `continue` statements are silently dropped during lowering**
     - Files: `crates/quench-runtime/src/lower/stmt.rs:42-75`

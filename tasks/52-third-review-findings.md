@@ -84,6 +84,7 @@ Capture the findings from a third set of read-only review rounds. Use this list 
     - Files: `env.rs:107-135`, `149-176`, `183-230`, `244-272`, `274-314`
     - Issue: `push_scope`/`pop_scope` restructure the parent chain with `std::mem::replace` while raw pointers may be live; `var` resolution walks root-to-current and assigns to the first existing name.
     - Fix: Use immutable scope frames and proper function-vs-lexical scope tagging.
+    - **✅ FIXED**: `set_var` was incorrectly walking up the entire parent chain and assigning to intermediate block scopes instead of the immediate parent scope. Fixed by simplifying `set_var` to assign to the immediate parent scope only. Added regression test `test_nested_function_closure_var`.
 
 14. **`instanceof` walk starts at the object itself**
     - File: `crates/quench-runtime/src/interpreter/binary_ops.rs:229-235`

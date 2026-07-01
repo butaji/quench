@@ -69,6 +69,7 @@ Capture the findings from a second set of read-only review rounds run after the 
     - Files: `crates/quench-runtime/src/env.rs:274-314`, `crates/quench-runtime/src/value/function.rs:28`
     - Issue: `push_scope`/`pop_scope` mutate the captured parent chain in place, so closures observe post-pop state.
     - Fix: Make scope chains immutable; `push_scope` creates a new frame without mutating parents.
+    - **Note**: `set_var` was also fixed to correctly assign to the immediate parent scope instead of walking up the entire chain.
 
 11. **Thread-local `RETURN_VALUE` / `THROWN_VALUE` hold only one value**
     - Files: `crates/quench-runtime/src/value/error.rs:9-16`, `222-276`

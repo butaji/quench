@@ -197,26 +197,25 @@ For the current phase, focus only on interpreter-level optimizations and a clean
 
 ## Review findings
 
-Three five-round read-only reviews produced ranked lists of issues.
+Four five-round read-only reviews produced ranked lists of issues.
 
 - **First review (Task 26)** — architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration.
 - **Second review (Task 51)** — repeated after the first big implementation push, focusing on what still blocks end-to-end examples.
 - **Third review (Task 52)** — repeated after the next implementation push, focusing on remaining runtime correctness and architecture gaps.
+- **Fourth review (Task 58)** — repeated after the JSX/switch/deletion/export fixes landed, focusing on the remaining Promise, timer, hot-reload, and correctness gaps.
 
-The highest-impact blockers from the third review are:
+The highest-impact blockers from the fourth review are:
 
-1. **Reactive HIR nodes are decorative** — hooks run entirely in `runtime.js`; the interpreter rejects `Signal`/`Memo`/`Effect`/`Render`.
-2. **JSX/TSX nodes are rejected during lowering** even though the parser accepts them.
-3. **ES module `import`/`export` declarations are silently dropped** during lowering.
-4. **`Math.random()` returns values in ~[0, 0.233)** instead of [0, 1).
-5. **Promise `.then`/`.catch`/`all`/`race`/`finally` are broken or stubs**.
-6. **Microtasks are not drained** by the event loop (`process.nextTick`, `setImmediate`, Promise reactions).
-7. **Hot reload creates a fresh context without bridge functions** and discards it.
-8. **Compiler SHIMS overwrite the runtime.js `process` polyfill** and break stdout/exit.
-9. **Recursive interpreter has no uniform stack guard**; deep expressions can overflow the Rust stack.
-10. **`in` operator operands are swapped**, `object_to_primitive` cannot find methods, native prototypes are isolated from `Object.prototype`, and environment/scope handling is unsafe.
-
-Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
+1. **Promise `.then`/`.catch`/`all`/`race`/`finally` are broken or stubs**.
+2. **Microtasks are not drained correctly** — `__ink_enqueue_microtask` only sets a Rust flag; JS callbacks are never stored.
+3. **Native constructor prototypes are isolated from `Object.prototype`**.
+4. **Hot reload does not compile / `--hot` is disabled** by feature flag.
+5. **`__ink_set_timeout` JSON-stringifies function callbacks**, so timers never fire.
+6. **`setTimeout`/`setInterval` are non-functional stubs**.
+7. **Real mouse events are never received** — crossterm mouse capture is not enabled.
+8. **Assignment / compound-assignment / update re-evaluate the left-hand side** (`a[i++] += 1` uses the wrong index).
+9. **`Function.prototype.call`/`apply` semantics are broken**.
+10. **Object destructuring defaults/rest are ignored**, and lowering still silently swallows errors.
 
 Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
 
