@@ -16,6 +16,7 @@ See `docs/superpowers/plans/2026-06-28-test262-conformance-plan.md`.
 
 - Run only tests that do **not** require: ES modules, async/Promise, strict-mode enforcement, generators, classes, Symbol, RegExp, BigInt, Proxy, Reflect, WeakMap/WeakSet, TypedArray, spread, `for...of`, `do...while`, `delete`, unary `+`, optional chaining, tagged templates, private names, JSX.
 - Start with `test/language/expressions/` and `test/built-ins/Array/`.
+- **All harness code is Rust only.** Test262 test files themselves are JS, but helpers, runner, and regression tests are Rust.
 - Skip unsupported features/flags explicitly.
 
 ## Out-of-scope
