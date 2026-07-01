@@ -193,50 +193,6 @@ fn run_baseline_isolated_inner(
     Ok(Outcome::Pass)
 }
 
-/// Run a single test case using the baseline JS with a fresh context
-fn run_baseline_isolated(path: &Path, directives: &Directives) -> Outcome {
-    // Create a fresh context for each test case to prevent state leakage
-    let mut ctx = match Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => return Outcome::Fail { error: format!("Failed to create context: {}", e) },
-    };
-    
-    // Register emit helpers
-    for (name, code) in EMIT_HELPERS.iter() {
-        if let Err(e) = ctx.eval(code) {
-            return Outcome::Fail { error: format!("Failed to register helper {}: {}", name, e) };
-        }
-    }
-    
-    // Find and load the baseline
-    let baseline_js = match find_baseline(path) {
-        Some(js) => js,
-        None => return Outcome::Skip { reason: "No baseline found".to_string() },
-    };
-    
-    // Extract JS from the baseline file (handles the TS-emit format)
-    let code = match extract_js_from_baseline(&baseline_js) {
-        Ok(c) => c,
-        Err(e) => return Outcome::Fail { error: format!("Failed to extract JS: {}", e) },
-    };
-    
-    // Handle multi-file cases
-    let units = split_units(&code, directives);
-    
-    for (filename, unit_code) in units {
-        match ctx.eval(&unit_code) {
-            Ok(_) => {}
-            Err(e) => return Outcome::Fail { 
-                error: format!("Error in {}: {}", filename, e) 
-            },
-        }
-    }
-    
-    Outcome::Pass
-}
-
-
-
 /// Run mode for the TypeScript conformance suite
 #[derive(Debug, Clone, Copy)]
 pub enum RunMode {
