@@ -10,6 +10,7 @@ pub mod map;
 pub mod date;
 pub mod error;
 pub mod function;
+pub mod number;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -92,6 +93,8 @@ pub fn register_builtins(ctx: &mut Context) {
     object::register_object(ctx);
     array::register_array(ctx);
     map::register_map_and_set(ctx);
+    // Number must be registered before Date (for timestamp conversion)
+    number::register_number(ctx);
     date::register_global_functions(ctx);
     function::register_function(ctx);
     error::register_error(ctx);

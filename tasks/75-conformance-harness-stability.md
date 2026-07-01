@@ -31,33 +31,70 @@ This caused double-counting of depth. Fixed by:
 - Added `Value::NativeConstructor` handling to `call_value_with_this`
 - This fixed `new Date()`, `new Error()`, `new TypeError()` etc.
 
-### 5. Ignored Full Suite Tests
-- `test_typescript_conformance_sanity` - causes stack overflow on full suite
-- Requires per-case isolation or iterative interpreter to run full suite
-- Small subsets work correctly
+### 5. Thread-Based Isolation for TypeScript Conformance
+
+**Added in this update:**
+
+#### Isolation Strategy
+- Each test case runs in a fresh `Context` (prevents state leakage)
+- `reset_depth()` is called before each test (resets recursion counter)
+- Tests run in a spawned thread (prevents stack overflow from crashing harness)
+
+#### Implementation
+- Added `run_case_isolated()` function that spawns a thread per test
+- Added `run_baseline_isolated_inner()` for thread-safe test execution
+- Thread isolation catches panics and returns them as Fail outcomes
+- Added `test_conformance_isolation_with_small_subset` test to verify isolation works
+
+#### Tests Added
+- `test_conformance_isolation_with_small_subset` - verifies isolation with 5 test cases
+- `test_depth_reset_after_context_creation` - verifies depth is reset in threaded context
+
+### 6. Updated Ignored Tests
+- `test_typescript_conformance_sanity` now uses a 100-case limit with isolation
+- Test documentation updated to explain isolation mechanism
 
 ## Current Status
 
 **All tests pass:**
 - 55 unit tests pass
-- 6 depth limit tests pass
+- 7 depth limit tests pass (added `test_depth_reset_after_context_creation`)
 - 20 runtime issue tests pass
 - 34 main crate tests pass
 - 3 parity tests pass
+- 4 conformance tests pass (2 ignored for submodule/suite size)
 
-**Ignored tests (require isolation):**
-- `test_typescript_conformance_sanity` - stack overflow on full suite
-- `test262_*` tests - require test262 submodule
+**Isolation tests (new):**
+- `test_conformance_isolation_with_small_subset` - verifies thread isolation
+- `test_depth_reset_after_context_creation` - verifies depth reset in threads
 
 ## Verification
 
 ```bash
-cargo test           # 37 tests pass
-cargo test -p quench-runtime  # All 90+ tests pass
+# Run all tests
+cargo test
+
+# Run conformance tests with single thread
+cargo test -p quench-runtime --test conformance -- --test-threads=1
+
+# Run depth limit tests
+cargo test -p quench-runtime --test depth_limit
+
+# Enable full conformance (100 cases with isolation)
+cargo test -p quench-runtime --test conformance test_typescript_conformance_sanity -- --ignored
 ```
+
+## Isolation Mechanism
+
+The thread-based isolation ensures that if a test case causes:
+- Stack overflow: The thread dies, harness returns Fail outcome
+- Panic: Caught by `handle.join()`, harness returns Fail outcome
+- Hang: Currently blocks (timeout not implemented - can be added with channels)
+
+This allows the harness to process hundreds of test cases even if some crash.
 
 ## Deferred
 
-- Full conformance suite runs require per-case context isolation
-- This is a harness design issue, not a runtime correctness issue
-- Individual conformance cases work correctly
+- Full conformance suite runs (thousands of cases) - requires more isolation or iterative interpreter
+- Timeout support for individual tests - requires channels-based implementation
+- test262 harness already has `catch_unwind` but could benefit from thread isolation

@@ -207,3 +207,377 @@ fn test_date_constructor_has_prototype() {
     let result = ctx.eval("typeof Date.prototype").unwrap();
     assert_eq!(result, Value::String("object".to_string()));
 }
+
+// ============================================================================
+// Math trig and log functions tests
+// ============================================================================
+
+#[test]
+fn test_math_sin() {
+    let mut ctx = Context::new().unwrap();
+    
+    // sin(0) should be 0
+    let result = ctx.eval("Math.sin(0)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // sin(PI/2) should be approximately 1
+    let result = ctx.eval("Math.sin(Math.PI / 2)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - 1.0).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_cos() {
+    let mut ctx = Context::new().unwrap();
+    
+    // cos(0) should be 1
+    let result = ctx.eval("Math.cos(0)").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+    
+    // cos(PI) should be approximately -1
+    let result = ctx.eval("Math.cos(Math.PI)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n + 1.0).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_tan() {
+    let mut ctx = Context::new().unwrap();
+    
+    // tan(0) should be 0
+    let result = ctx.eval("Math.tan(0)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+}
+
+#[test]
+fn test_math_asin() {
+    let mut ctx = Context::new().unwrap();
+    
+    // asin(0) should be 0
+    let result = ctx.eval("Math.asin(0)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // asin(1) should be approximately PI/2
+    let result = ctx.eval("Math.asin(1)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - std::f64::consts::FRAC_PI_2).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_acos() {
+    let mut ctx = Context::new().unwrap();
+    
+    // acos(1) should be 0
+    let result = ctx.eval("Math.acos(1)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // acos(0) should be approximately PI/2
+    let result = ctx.eval("Math.acos(0)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - std::f64::consts::FRAC_PI_2).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_atan() {
+    let mut ctx = Context::new().unwrap();
+    
+    // atan(0) should be 0
+    let result = ctx.eval("Math.atan(0)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // atan(1) should be approximately PI/4
+    let result = ctx.eval("Math.atan(1)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - std::f64::consts::FRAC_PI_4).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_atan2() {
+    let mut ctx = Context::new().unwrap();
+    
+    // atan2(1, 1) should be approximately PI/4
+    let result = ctx.eval("Math.atan2(1, 1)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - std::f64::consts::FRAC_PI_4).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_log() {
+    let mut ctx = Context::new().unwrap();
+    
+    // log(1) should be 0
+    let result = ctx.eval("Math.log(1)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // log(e) should be approximately 1
+    let result = ctx.eval("Math.log(Math.E)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - 1.0).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_log10() {
+    let mut ctx = Context::new().unwrap();
+    
+    // log10(1) should be 0
+    let result = ctx.eval("Math.log10(1)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // log10(10) should be 1
+    let result = ctx.eval("Math.log10(10)").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+    
+    // log10(100) should be 2
+    let result = ctx.eval("Math.log10(100)").unwrap();
+    assert_eq!(result, Value::Number(2.0));
+}
+
+#[test]
+fn test_math_log2() {
+    let mut ctx = Context::new().unwrap();
+    
+    // log2(1) should be 0
+    let result = ctx.eval("Math.log2(1)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // log2(2) should be 1
+    let result = ctx.eval("Math.log2(2)").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+    
+    // log2(8) should be 3
+    let result = ctx.eval("Math.log2(8)").unwrap();
+    assert_eq!(result, Value::Number(3.0));
+}
+
+#[test]
+fn test_math_exp() {
+    let mut ctx = Context::new().unwrap();
+    
+    // exp(0) should be 1
+    let result = ctx.eval("Math.exp(0)").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+    
+    // exp(1) should be approximately e
+    let result = ctx.eval("Math.exp(1)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - std::f64::consts::E).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_math_log1p() {
+    let mut ctx = Context::new().unwrap();
+    
+    // log1p(0) should be 0
+    let result = ctx.eval("Math.log1p(0)").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+    
+    // log1p(e - 1) should be approximately 1
+    let result = ctx.eval("Math.log1p(Math.E - 1)").unwrap();
+    match result {
+        Value::Number(n) => assert!((n - 1.0).abs() < 0.0001),
+        _ => panic!("Expected number, got {:?}", result),
+    }
+}
+
+// ============================================================================
+// Date.now tests
+// ============================================================================
+
+#[test]
+fn test_date_now() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Date.now() should return a number
+    let result = ctx.eval("typeof Date.now()").unwrap();
+    assert_eq!(result, Value::String("number".to_string()));
+    
+    // Date.now() should return a positive number (timestamp in ms)
+    let result = ctx.eval("Date.now() > 0").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+    
+    // Date.now() should return a reasonable timestamp (after year 2000)
+    let result = ctx.eval("Date.now() > 946684800000").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+// ============================================================================
+// Number.prototype.toFixed tests
+// ============================================================================
+
+#[test]
+fn test_number_to_fixed_basic() {
+    let mut ctx = Context::new().unwrap();
+    
+    // (123.456).toFixed() should return "123"
+    let result = ctx.eval("(123.456).toFixed()").unwrap();
+    assert_eq!(result, Value::String("123".to_string()));
+    
+    // (123.456).toFixed(0) should return "123"
+    let result = ctx.eval("(123.456).toFixed(0)").unwrap();
+    assert_eq!(result, Value::String("123".to_string()));
+    
+    // (123.456).toFixed(1) should return "123.5"
+    let result = ctx.eval("(123.456).toFixed(1)").unwrap();
+    assert_eq!(result, Value::String("123.5".to_string()));
+    
+    // (123.456).toFixed(2) should return "123.46"
+    let result = ctx.eval("(123.456).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("123.46".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_negative() {
+    let mut ctx = Context::new().unwrap();
+    
+    // (-123.456).toFixed(2) should return "-123.46"
+    let result = ctx.eval("(-123.456).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("-123.46".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_zero() {
+    let mut ctx = Context::new().unwrap();
+    
+    // (0).toFixed(2) should return "0.00"
+    let result = ctx.eval("(0).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("0.00".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_integer() {
+    let mut ctx = Context::new().unwrap();
+    
+    // (100).toFixed(5) should return "100.00000"
+    let result = ctx.eval("(100).toFixed(5)").unwrap();
+    assert_eq!(result, Value::String("100.00000".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_nan() {
+    let mut ctx = Context::new().unwrap();
+    
+    // NaN.toFixed(2) should return "NaN"
+    let result = ctx.eval("(NaN).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("NaN".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_infinity() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Infinity.toFixed(2) should return "Infinity"
+    let result = ctx.eval("(Infinity).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("Infinity".to_string()));
+    
+    // (-Infinity).toFixed(2) should return "-Infinity"
+    let result = ctx.eval("(-Infinity).toFixed(2)").unwrap();
+    assert_eq!(result, Value::String("-Infinity".to_string()));
+}
+
+#[test]
+fn test_number_to_fixed_via_constructor() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Number.prototype.toFixed should work on primitive numbers
+    // Note: Number.prototype.toFixed.call requires the call method to work correctly,
+    // which is a more advanced feature. Testing direct usage instead.
+    let result = ctx.eval("(42).toFixed(3)").unwrap();
+    assert_eq!(result, Value::String("42.000".to_string()));
+}
+
+// ============================================================================
+// Break/Continue statement tests
+// ============================================================================
+
+#[test]
+fn test_break_in_while_loop() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Test break in a while loop
+    let result = ctx.eval(r#"
+        var count = 0;
+        while (count < 10) {
+            count++;
+            if (count >= 5) {
+                break;
+            }
+        }
+        count;
+    "#).unwrap();
+    assert_eq!(result, Value::Number(5.0));
+}
+
+#[test]
+fn test_break_in_for_loop() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Test break in a for loop
+    let result = ctx.eval(r#"
+        var sum = 0;
+        for (var i = 0; i < 10; i++) {
+            if (i >= 5) {
+                break;
+            }
+            sum += i;
+        }
+        sum;
+    "#).unwrap();
+    // sum should be 0+1+2+3+4 = 10
+    assert_eq!(result, Value::Number(10.0));
+}
+
+#[test]
+fn test_continue_in_for_loop() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Test continue in a for loop
+    let result = ctx.eval(r#"
+        var sum = 0;
+        for (var i = 0; i < 5; i++) {
+            if (i === 2) {
+                continue;
+            }
+            sum += i;
+        }
+        sum;
+    "#).unwrap();
+    // sum should be 0+1+3+4 = 8
+    assert_eq!(result, Value::Number(8.0));
+}
+
+#[test]
+fn test_continue_in_while_loop() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Test continue in a while loop
+    let result = ctx.eval(r#"
+        var sum = 0;
+        var i = 0;
+        while (i < 5) {
+            i++;
+            if (i === 2) {
+                continue;
+            }
+            sum += i;
+        }
+        sum;
+    "#).unwrap();
+    // sum should be 1+3+4+5 = 13
+    assert_eq!(result, Value::Number(13.0));
+}

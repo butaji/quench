@@ -504,3 +504,219 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
         _ => false,
     }
 }
+
+/// Loose equality comparison (==)
+/// 
+/// Implements the ECMAScript Abstract Equality Comparison algorithm:
+/// - undefined == null returns true (and vice versa)
+/// - Number == String compares as Number(String)
+/// - Boolean == Any compares as Number(Boolean) == Any
+/// - Object == Primitive compares as ToPrimitive(Object) == Primitive
+pub fn loose_eq(a: &Value, b: &Value) -> bool {
+    // Helper to convert value to primitive for comparison
+    fn to_primitive_for_compare(v: &Value) -> Value {
+        match v {
+            // Primitives stay as-is
+            Value::Undefined => Value::Undefined,
+            Value::Null => Value::Null,
+            Value::Boolean(b) => Value::Boolean(*b),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+            // Symbol stays as-is
+            Value::Symbol(s) => Value::Symbol(s.clone()),
+            // Objects need conversion
+            Value::Object(obj) => {
+                // Try valueOf first
+                if let Some(method) = obj.borrow().get("valueOf") {
+                    if let Value::NativeFunction(nf) = method {
+                        if let Ok(result) = nf.call(vec![]) {
+                            if !matches!(result, Value::Object(_)) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+                // Fall back to toString
+                if let Some(method) = obj.borrow().get("toString") {
+                    if let Value::NativeFunction(nf) = method {
+                        if let Ok(result) = nf.call(vec![]) {
+                            if !matches!(result, Value::Object(_)) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+                // Last resort: "[object Object]"
+                Value::String("[object Object]".to_string())
+            }
+            // Functions stay as-is (treated like objects)
+            Value::Function(_) => Value::String("[object Function]".to_string()),
+            Value::NativeFunction(_) => Value::String("[object Function]".to_string()),
+            Value::NativeConstructor(_) => Value::String("[object Function]".to_string()),
+        }
+    }
+
+    // Step 1: If Type(x) is the same as Type(y), return StrictEqualityComparison(x, y)
+    // This handles null == null, undefined == undefined, etc.
+    if std::mem::discriminant(a) == std::mem::discriminant(b) {
+        return strict_eq(a, b);
+    }
+
+    // Step 2: If x is null and y is undefined, return true
+    // Step 3: If x is undefined and y is null, return true
+    match (a, b) {
+        (Value::Undefined, Value::Null) | (Value::Null, Value::Undefined) => return true,
+        _ => {}
+    }
+
+    // Step 4: If Type(x) is Number and Type(y) is String, return comparison x == ToNumber(y)
+    // Step 5: If Type(x) is String and Type(y) is Number, return comparison ToNumber(x) == y
+    // ToNumber("") returns 0, ToNumber(" ") returns 0, ToNumber("  ") returns 0
+    fn string_to_number(s: &str) -> Option<f64> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            Some(0.0)  // Empty or whitespace-only strings convert to 0
+        } else {
+            trimmed.parse::<f64>().ok()
+        }
+    }
+    
+    match (a, b) {
+        (Value::Number(n), Value::String(s)) => {
+            if let Some(parsed) = string_to_number(s) {
+                return *n == parsed;
+            }
+            return false;
+        }
+        (Value::String(s), Value::Number(n)) => {
+            if let Some(parsed) = string_to_number(s) {
+                return parsed == *n;
+            }
+            return false;
+        }
+        _ => {}
+    }
+
+    // Step 6: If Type(x) is Boolean, return comparison ToNumber(x) == y
+    // Step 7: If Type(y) is Boolean, return comparison x == ToNumber(y)
+    match (a, b) {
+        (Value::Boolean(bv), other) => {
+            let num = if *bv { 1.0 } else { 0.0 };
+            return loose_eq(&Value::Number(num), other);
+        }
+        (other, Value::Boolean(bv)) => {
+            let num = if *bv { 1.0 } else { 0.0 };
+            return loose_eq(other, &Value::Number(num));
+        }
+        _ => {}
+    }
+
+    // Step 8: If Type(x) is String or Number and Type(y) is Object, return comparison x == ToPrimitive(y)
+    // Step 9: If Type(x) is Object and Type(y) is String or Number, return comparison ToPrimitive(x) == y
+    match (a, b) {
+        (Value::Object(_), Value::Number(_) | Value::String(_)) => {
+            let prim = to_primitive_for_compare(a);
+            return loose_eq(&prim, b);
+        }
+        (Value::Number(_) | Value::String(_), Value::Object(_)) => {
+            let prim = to_primitive_for_compare(b);
+            return loose_eq(a, &prim);
+        }
+        (Value::Object(_), _) => {
+            let prim = to_primitive_for_compare(a);
+            return loose_eq(&prim, b);
+        }
+        (_, Value::Object(_)) => {
+            let prim = to_primitive_for_compare(b);
+            return loose_eq(a, &prim);
+        }
+        _ => {}
+    }
+
+    false
+}
+
+// =============================================================================
+// ToPrimitive - Unified value-to-primitive conversion
+// =============================================================================
+
+/// Hint for ToPrimitive conversion
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrimitiveHint {
+    /// Prefer numeric conversion (try valueOf first, then toString)
+    Number,
+    /// Prefer string conversion (try toString first, then valueOf)
+    String,
+}
+
+/// Convert a Value to a primitive using JavaScript's ToPrimitive abstract operation.
+///
+/// This implements the ECMAScript ToPrimitive algorithm:
+/// - For primitives (undefined, null, boolean, number, string), returns the value as-is
+/// - For objects, calls valueOf() or toString() based on the hint:
+///   - Hint::Number: try valueOf first, then toString
+///   - Hint::String: try toString first, then valueOf
+/// - If no hint is provided, defaults to Hint::Number (except for Date objects)
+///
+/// Note: This simplified implementation doesn't handle all edge cases like
+/// Symbol.toPrimitive or Date objects with special string preference.
+pub fn to_primitive(value: &Value, hint: Option<&str>) -> Value {
+    // Primitives are returned as-is
+    match value {
+        Value::Undefined => Value::Undefined,
+        Value::Null => Value::Null,
+        Value::Boolean(b) => Value::Boolean(*b),
+        Value::Number(n) => Value::Number(*n),
+        Value::String(s) => Value::String(s.clone()),
+        Value::Symbol(s) => Value::Symbol(s.clone()),
+        // For objects, we need to try valueOf/toString
+        Value::Object(obj) => {
+            let hint = match hint {
+                Some("string") => PrimitiveHint::String,
+                Some("number") | None => PrimitiveHint::Number,
+                _ => PrimitiveHint::Number,
+            };
+
+            // For objects, try valueOf first (for numeric preference)
+            if hint == PrimitiveHint::Number || hint == PrimitiveHint::String {
+                // Try the order based on hint
+                let (first, second) = match hint {
+                    PrimitiveHint::Number => ("valueOf", "toString"),
+                    PrimitiveHint::String => ("toString", "valueOf"),
+                };
+
+                // Try first method
+                if let Some(method) = obj.borrow().get(first) {
+                    if let Value::NativeFunction(nf) = &method {
+                        if let Ok(result) = nf.call(vec![]) {
+                            if !matches!(result, Value::Object(_)) {
+                                return result;
+                            }
+                        }
+                    } else if let Value::Function(_) = &method {
+                        // For JS functions, we'd need to call them
+                        // Simplified: just use toString
+                    }
+                }
+
+                // Try second method
+                if let Some(method) = obj.borrow().get(second) {
+                    if let Value::NativeFunction(nf) = &method {
+                        if let Ok(result) = nf.call(vec![]) {
+                            if !matches!(result, Value::Object(_)) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: use to_js_string
+            Value::String(to_js_string(value))
+        }
+        // For functions, return them as-is (can't convert to primitive)
+        Value::Function(_) => Value::String("[Function]".to_string()),
+        Value::NativeFunction(_) => Value::String("[Function]".to_string()),
+        Value::NativeConstructor(_) => Value::String("[Function]".to_string()),
+    }
+}
