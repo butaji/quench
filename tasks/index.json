@@ -410,7 +410,7 @@
       "id": "58",
       "title": "Fourth five-round architecture & code review findings",
       "file": "tasks/58-fourth-review-findings.md",
-      "status": "pending",
+      "status": "completed",
       "notes": "Ranked findings from a fourth review pass. Top blockers: Promise reactions, microtask draining, native prototype chain, hot reload broken, timers, mouse capture, assignment LHS re-evaluation, Function.call/apply, destructuring defaults/rest."
     },
     {
@@ -424,8 +424,50 @@
       "id": "60",
       "title": "Fifth five-round architecture & code review findings",
       "file": "tasks/60-fifth-review-findings.md",
-      "status": "pending",
+      "status": "completed",
       "notes": "Ranked findings from a fifth review pass. Top blockers: == lowered to strict equality, template literals, spread/rest, for-head destructuring, parser TSX/module support, microtask draining, hot reload, scope leak, typeof undeclared, Promise executors, setTimeout."
+    },
+    {
+      "id": "61",
+      "title": "Fix runtime gaps - abstract equality, rest params, function hoisting",
+      "file": "tasks/61-fix-runtime-gaps.md",
+      "status": "completed",
+      "notes": "Fixed abstract equality (==, !=) to use type coercion per ECMAScript spec. Fixed rest parameters being lost during function hoisting. Fixed function redeclaration being silently ignored. Added 3 new regression tests. All 96 tests pass (42 runtime + 34 main + 3 parity + 17 unit)."
+    },
+    {
+      "id": "62",
+      "title": "Finish the custom TS/JS/TSX runtime and make it fully Ink-compatible",
+      "file": "tasks/62-finish-runtime.md",
+      "status": "completed",
+      "notes": "Fixed template literal interpolation, spread elements, for-of destructuring. All 66 tests pass. All examples work."
+    },
+    {
+      "id": "63",
+      "title": "Split monolithic runtime files into subdirectories",
+      "file": "tasks/63-architecture-split.md",
+      "status": "in_progress",
+      "notes": "Split builtins.rs (1720 lines), interpreter.rs (1514 lines), lower.rs (1243 lines), value.rs (702 lines) into proper subdirectories following build.rs lint rules."
+    },
+    {
+      "id": "64",
+      "title": "Implement NaN-boxed Value type",
+      "file": "tasks/64-nanbox-value.md",
+      "status": "pending",
+      "notes": "Foundation for performance optimizations. Value must be Copy, all existing functionality preserved."
+    },
+    {
+      "id": "65",
+      "title": "Documentation cleanup and RUNTIME_STATUS.md",
+      "file": "tasks/65-documentation-cleanup.md",
+      "status": "in_progress",
+      "notes": "Create comprehensive documentation including RUNTIME_STATUS.md, update docs/architecture.md, audit deferred-items.md, create CHANGELOG.md entries."
+    },
+    {
+      "id": "66",
+      "title": "Sixth five-round architecture & code review findings — reduce custom code / unify / simplify",
+      "file": "tasks/66-sixth-review-findings.md",
+      "status": "pending",
+      "notes": "Replace parser/regex/JSON/diagnostics/interning/maps/allocation with crates; unify duplicated call/member/param logic; seal public API; flatten HIR."
     }
   ]
 }

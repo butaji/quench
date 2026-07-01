@@ -197,28 +197,31 @@ For the current phase, focus only on interpreter-level optimizations and a clean
 
 ## Review findings
 
-Five five-round read-only reviews produced ranked lists of issues.
+Six five-round read-only reviews produced ranked lists of issues.
 
 - **First review (Task 26)** — architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration.
 - **Second review (Task 51)** — repeated after the first big implementation push, focusing on what still blocks end-to-end examples.
 - **Third review (Task 52)** — repeated after the next implementation push, focusing on remaining runtime correctness and architecture gaps.
 - **Fourth review (Task 58)** — repeated after the JSX/switch/deletion/export fixes landed, focusing on the remaining Promise, timer, hot-reload, and correctness gaps.
 - **Fifth review (Task 60)** — repeated after the iterative interpreter/stack-overflow fix, focusing on the remaining parser, lowering, scope, Promise, and integration gaps.
+- **Sixth review (Task 66)** — focused on reducing custom code, unifying duplicated logic, and replacing hand-rolled subsystems with established crates.
 
-The highest-impact blockers from the fifth review are:
+The sixth review recommends replacing:
 
-1. **`==` and `!=` are lowered to strict equality**, breaking JS abstract equality.
-2. **Template literal interpolations are silently discarded**.
-3. **Spread elements are lowered incorrectly or rejected**.
-4. **Rest parameters are silently dropped**.
-5. **For-of/for-in with destructuring is rejected**.
-6. **Main parser entry only supports plain JS scripts**, blocking `.ts`/`.tsx`/JSX/modules.
-7. **Microtask queue is never drained at the JS layer**.
-8. **Hot reload rebuilds a context without bridge natives/config**.
-9. **Function-call scope leaks** because scopes are not popped on early return.
-10. **`typeof` on undeclared identifiers throws**, arrow functions bind their own `this`, and assignment to undeclared names silently creates local bindings.
+1. **Parser** — adopt `oxc_parser` or swc transforms instead of a custom lowerer for parsing/TS stripping/JSX.
+2. **JSON** — use `serde_json` for both parse and stringify.
+3. **Regex** — use `regress` for ECMAScript-compatible regex.
+4. **Diagnostics** — use `miette`/`ariadne` for source locations and snippets.
+5. **String interning** — use `lasso` or `string-interner`.
+6. **Ordered maps** — use `indexmap` for object properties and Map/Set order.
+7. **BigInt/decimal** — use `num-bigint` / `rust_decimal`.
+8. **Allocation** — use `bumpalo` for frames and temporaries.
+9. **Fast hashing** — use `rustc-hash` / `foldhash` for integer-keyed maps.
+10. **Errors** — use `thiserror` for all error enums.
 
-Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
+It also recommends unifying call paths, member access, parameter binding, and module representation; sealing the public API; flattening the HIR to ANF; and replacing the compiler's string-based hook rewrite with an AST transform.
+
+Fix Rank 1 crate replacements before adding more custom code.
 
 ## Task index
 
