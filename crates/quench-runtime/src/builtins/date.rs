@@ -61,12 +61,6 @@ pub fn register_global_functions(ctx: &mut Context) {
         Ok(Value::String(decoded))
     });
 
-    let number_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let n = args.first().map(to_number).unwrap_or(0.0);
-        Ok(Value::Number(n))
-    })));
-    ctx.set_global("Number".to_string(), number_fn);
-
     let string_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let s = args.first().map(to_js_string).unwrap_or_default();
         Ok(Value::String(s))
@@ -103,7 +97,7 @@ pub fn register_date(ctx: &mut Context) {
         Ok(Value::Number(chrono_now() as f64))
     }))));
 
-    // Date constructor - returns a Date object
+    // Date constructor - returns a Date object when called with new, string when called as function
     let date_proto_clone = Rc::clone(&date_proto_rc);
     let date_constructor = NativeConstructor::new(
         move |_args| {
@@ -114,8 +108,25 @@ pub fn register_date(ctx: &mut Context) {
             date.borrow_mut().set("_timestamp", Value::Number(now));
             Ok(Value::Object(date))
         },
-        date_proto_rc,
+        date_proto_rc.clone(),
     );
 
-    ctx.set_global("Date".to_string(), Value::NativeConstructor(Rc::new(date_constructor)));
+    // Create an Object wrapper that holds the constructor AND static methods
+    // This allows Date() to be called directly and Date.now to be accessible
+    let date_wrapper = Object::new(ObjectKind::Ordinary);
+    let date_wrapper_rc = Rc::new(RefCell::new(date_wrapper));
+    
+    // Set the constructor as a property
+    date_wrapper_rc.borrow_mut().set("constructor", Value::NativeConstructor(Rc::new(date_constructor)));
+    
+    // Set the prototype
+    date_wrapper_rc.borrow_mut().set("prototype", Value::Object(Rc::clone(&date_proto_rc)));
+    
+    // Add Date.now() as a static method
+    date_wrapper_rc.borrow_mut().set("now", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::Number(chrono_now() as f64))
+    }))));
+    
+    // Register Date as an Object so it has properties
+    ctx.set_global("Date".to_string(), Value::Object(date_wrapper_rc));
 }

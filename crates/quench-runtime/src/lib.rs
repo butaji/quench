@@ -66,6 +66,15 @@ impl Context {
         Ok(ctx)
     }
 
+    /// Reset the context to a clean state (useful for testing)
+    pub fn reset(&mut self) -> Result<(), JsError> {
+        interpreter::reset_depth(); // Reset depth counter
+        self.env = Rc::new(RefCell::new(Environment::new()));
+        self.globals.clear();
+        self.init_builtins()?;
+        Ok(())
+    }
+
     /// Initialize built-in globals and functions
     fn init_builtins(&mut self) -> Result<(), JsError> {
         // Use the builtins module

@@ -284,6 +284,7 @@ fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
 }
 
 /// Lower a swc Stmt to our Statement
+#[allow(unreachable_patterns)]
 fn lower_stmt(stmt: &swc::Stmt) -> Option<Statement> {
     match stmt {
         swc::Stmt::Empty(_) => Some(Statement::Empty),
@@ -291,6 +292,8 @@ fn lower_stmt(stmt: &swc::Stmt) -> Option<Statement> {
             let stmts: Vec<Statement> = block.stmts.iter().filter_map(|s| lower_stmt(s)).collect();
             Some(Statement::Block(stmts))
         }
+        swc::Stmt::Break(_) => Some(Statement::Break(None)),
+        swc::Stmt::Continue(_) => Some(Statement::Continue(None)),
         swc::Stmt::Debugger(_) => Some(Statement::Empty),
         swc::Stmt::With(_) => None,
         swc::Stmt::Decl(decl) => lower_decl(decl),
@@ -355,6 +358,7 @@ fn lower_stmt(stmt: &swc::Stmt) -> Option<Statement> {
             let expr = lower_expr(&expr_stmt.expr).ok()?;
             Some(Statement::Expression(Box::new(expr)))
         }
+        // Other statement types we don't support yet
         _ => None,
     }
 }
@@ -923,14 +927,17 @@ fn lower_bin_op(op: &swc::BinaryOp) -> Result<BinaryOp, LowerError> {
         swc::BinaryOp::LtEq => Ok(BinaryOp::Le),
         swc::BinaryOp::Gt => Ok(BinaryOp::Gt),
         swc::BinaryOp::GtEq => Ok(BinaryOp::Ge),
-        swc::BinaryOp::EqEq | swc::BinaryOp::EqEqEq => Ok(BinaryOp::StrictEq),
-        swc::BinaryOp::NotEq | swc::BinaryOp::NotEqEq => Ok(BinaryOp::StrictNeq),
+        swc::BinaryOp::EqEq => Ok(BinaryOp::Eq),
+        swc::BinaryOp::EqEqEq => Ok(BinaryOp::StrictEq),
+        swc::BinaryOp::NotEq => Ok(BinaryOp::Neq),
+        swc::BinaryOp::NotEqEq => Ok(BinaryOp::StrictNeq),
         swc::BinaryOp::BitAnd => Ok(BinaryOp::BitAnd),
         swc::BinaryOp::BitXor => Ok(BinaryOp::BitXor),
         swc::BinaryOp::BitOr => Ok(BinaryOp::BitOr),
         swc::BinaryOp::LogicalAnd => Ok(BinaryOp::And),
         swc::BinaryOp::LogicalOr => Ok(BinaryOp::Or),
-        swc::BinaryOp::In => Ok(BinaryOp::Eq),
+        swc::BinaryOp::In => Ok(BinaryOp::In),
+        swc::BinaryOp::InstanceOf => Ok(BinaryOp::Instanceof),
         _ => Err(LowerError::new(format!("Unsupported binary operator: {:?}", op))),
     }
 }

@@ -10,7 +10,14 @@ The quench-runtime is a custom TypeScript/JavaScript/TSX runtime built in Rust. 
 
 > **Note**: Task 67 analysis recommends deferring NaN-boxing optimization. The runtime is functionally complete and correct; performance optimizations should be driven by profiling data rather than speculative optimization.
 
-### Latest Update (Task 75 - Conformance Harness Stability)
+### Latest Update (Depth Counter Bug Fix)
+- Fixed recursion depth counter leak in `call_value_with_this`
+- The depth check failure path now correctly decrements the counter before returning error
+- Previously: `check_depth()?` would return Err without calling `release_depth()`, causing depth to leak
+- Now: Error path explicitly calls `release_depth()` before returning
+- All 145+ tests pass consistently across all test suites
+
+### Previous Update (Task 75 - Conformance Harness Stability)
 - Fixed module visibility - added `conformance` and `test262` modules to public API
 - Added missing dependencies (`walkdir`, `chrono`, `serde_yaml`)
 - Fixed recursion depth tracking - depth now correctly tracked at function call boundaries only

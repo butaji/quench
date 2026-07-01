@@ -229,3 +229,88 @@ fn test_depth_reset_after_context_creation() {
     set_max_call_depth(1000);
     reset_depth();
 }
+
+/// Regression test: depth counter must not leak when recursion limit is hit.
+/// Previously, if check_depth() failed, the counter was incremented but not
+/// decremented before returning, causing subsequent tests to fail with
+/// "Maximum call stack size exceeded" even for simple operations.
+#[serial]
+#[test]
+fn test_depth_counter_does_not_leak_on_limit_hit() {
+    use quench_runtime::interpreter::reset_depth;
+    
+    // Set a very low depth limit
+    set_max_call_depth(3);
+    reset_depth();
+    
+    // First eval: trigger depth limit (should fail)
+    {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function f(n) { if (n > 0) return f(n-1); return 1; }
+            f(10); // Will exceed depth limit
+        "#);
+        assert!(result.is_err(), "First eval should fail due to depth limit");
+        assert!(result.unwrap_err().0.contains("Maximum call stack size exceeded"));
+    }
+    
+    // Second eval: after the first failed, depth counter should be 0.
+    // If the counter leaked, this simple eval would also fail.
+    {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("1 + 2");
+        assert!(result.is_ok(), "Second eval should succeed - depth counter should be clean. Got: {:?}", result);
+        assert_eq!(result.unwrap(), quench_runtime::Value::Number(3.0));
+    }
+    
+    // Third eval: test a native function call (should work even with low limit)
+    {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("Math.sin(0)");
+        assert!(result.is_ok(), "Native function call should succeed - depth counter should be clean. Got: {:?}", result);
+        assert_eq!(result.unwrap(), quench_runtime::Value::Number(0.0));
+    }
+    
+    // Reset to default
+    set_max_call_depth(1000);
+    reset_depth();
+}
+
+/// Regression test: multiple consecutive depth limit hits should not compound.
+/// Each hit should cleanly reset the counter.
+#[serial]
+#[test]
+fn test_multiple_depth_limit_hits_do_not_compound() {
+    set_max_call_depth(3);
+    reset_depth();
+    
+    // Hit depth limit multiple times in sequence
+    for i in 0..5 {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(&format!(r#"
+            function f(n) {{ if (n > 0) return f(n-1); return 1; }}
+            f(10); // Attempt {}
+        "#, i));
+        
+        assert!(result.is_err(), "Attempt {} should fail due to depth limit", i);
+        let err = result.unwrap_err();
+        assert!(
+            err.0.contains("Maximum call stack size exceeded"),
+            "Attempt {} error should be depth limit. Got: {}",
+            i,
+            err.0
+        );
+    }
+    
+    // After all those failures, a simple eval should still work
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Math.cos(0)");
+    assert!(
+        result.is_ok(),
+        "Simple eval should succeed after multiple failures. Got: {:?}",
+        result
+    );
+    
+    set_max_call_depth(1000);
+    reset_depth();
+}

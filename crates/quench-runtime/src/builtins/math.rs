@@ -36,6 +36,24 @@ pub fn register_math(ctx: &mut Context) {
     math_fn!("ceil", f64::ceil);
     math_fn!("round", f64::round);
     math_fn!("sqrt", f64::sqrt);
+    math_fn!("sin", f64::sin);
+    math_fn!("cos", f64::cos);
+    math_fn!("tan", f64::tan);
+    math_fn!("asin", f64::asin);
+    math_fn!("acos", f64::acos);
+    math_fn!("atan", f64::atan);
+    // atan2 takes two arguments (y, x)
+    math.borrow_mut().set("atan2", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+        let y = args.first().map(to_number).unwrap_or(0.0);
+        let x = args.get(1).map(to_number).unwrap_or(0.0);
+        Ok(Value::Number(y.atan2(x)))
+    }))));
+    math_fn!("log", f64::ln);
+    math_fn!("log10", f64::log10);
+    math_fn!("log2", f64::log2);
+    math_fn!("exp", f64::exp);
+    // log1p(x) = ln(1 + x), with special handling for accuracy near 0
+    math_fn!("log1p", f64::ln_1p);
     math.borrow_mut().set("pow", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let base = args.first().map(to_number).unwrap_or(0.0);
         let exp = args.get(1).map(to_number).unwrap_or(1.0);

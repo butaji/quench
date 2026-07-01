@@ -6,8 +6,30 @@ use std::cell::RefCell;
 use std::cell::Cell;
 
 use crate::ast::*;
-use crate::value::{Value, JsError, Object, ObjectKind, ValueFunction, NativeFunction, to_js_string, to_bool, to_number, strict_eq};
+use crate::value::{Value, JsError, Object, ObjectKind, ValueFunction, NativeFunction, to_js_string, to_bool, to_number, strict_eq, loose_eq};
 use crate::env::Environment;
+
+/// Control flow for break/continue statements
+#[derive(Debug, Clone, Copy)]
+enum ControlFlow {
+    Break,
+    Continue,
+}
+
+// Control flow flag for break/continue propagation
+thread_local! {
+    static CONTROL_FLOW: Cell<Option<ControlFlow>> = const { Cell::new(None) };
+}
+
+/// Set the control flow flag
+fn set_control_flow(cf: ControlFlow) {
+    CONTROL_FLOW.with(|cell| cell.set(Some(cf)));
+}
+
+/// Get and clear the control flow flag
+fn take_control_flow() -> Option<ControlFlow> {
+    CONTROL_FLOW.with(|cell| cell.take())
+}
 
 /// Maximum recursion depth to prevent stack overflow
 const DEFAULT_MAX_RECURSION_DEPTH: usize = 10000;
@@ -46,10 +68,14 @@ pub fn get_native_this() -> Option<Value> {
 }
 
 /// Increment depth and check against maximum
+/// NOTE: This function ALWAYS increments the counter. On failure, the caller
+/// MUST call release_depth() to decrement. On success, caller also calls
+/// release_depth() when done.
 fn check_depth() -> Result<(), JsError> {
     let depth = CURRENT_DEPTH.fetch_add(1, Ordering::SeqCst);
     if depth >= get_max_depth() {
-        CURRENT_DEPTH.fetch_sub(1, Ordering::SeqCst);
+        // DO NOT decrement here - caller must call release_depth()
+        // This allows caller to always release on both success and error paths
         Err(JsError("Maximum call stack size exceeded".to_string()))
     } else {
         Ok(())
@@ -146,6 +172,11 @@ pub fn eval_statements(stmts: &[Statement], env: &Rc<RefCell<Environment>>, is_e
     let mut last_value = Value::Undefined;
     for stmt in stmts {
         last_value = eval_statement(stmt, env, is_expr_body)?;
+        // Check if a break/continue was set - if so, stop executing statements
+        // We need to check WITHOUT clearing the flag, so use get()
+        if CONTROL_FLOW.with(|cell| cell.get().is_some()) {
+            break;
+        }
     }
     Ok(last_value)
 }
@@ -197,8 +228,24 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
 
         Statement::While { condition, body } => {
             let mut last = Value::Undefined;
+            let mut iter_count = 0;
             while to_bool(&eval_expression(condition, env)?) {
+                iter_count += 1;
+                if iter_count > 10 {
+                    return Err(JsError("while loop ran too many times".to_string()));
+                }
+                // Clear any previous control flow
+                let _ = take_control_flow();
+                
                 last = eval_statement(body.as_ref(), env, _is_expr_body)?;
+                
+                // Check for break or continue
+                let cf = take_control_flow();
+                match cf {
+                    Some(ControlFlow::Break) => break,
+                    Some(ControlFlow::Continue) => {}
+                    None => {}
+                }
             }
             Ok(last)
         }
@@ -226,7 +273,23 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
                 }
             };
             while check_condition() {
+                // Clear any previous control flow
+                take_control_flow();
+                
                 let _ = eval_statement(body.as_ref(), env, _is_expr_body)?;
+                
+                // Check for break or continue
+                match take_control_flow() {
+                    Some(ControlFlow::Break) => {
+                        // Break out of the loop
+                        break;
+                    }
+                    Some(ControlFlow::Continue) => {
+                        // Continue - execute update and loop again
+                    }
+                    None => {}
+                }
+                
                 if let Some(update) = update {
                     let _ = eval_expression(update, env)?;
                 }
@@ -256,8 +319,14 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
 
         Statement::Empty => Ok(Value::Undefined),
 
-        Statement::Break(_) => Ok(Value::Undefined),
-        Statement::Continue(_) => Ok(Value::Undefined),
+        Statement::Break(_) => {
+            set_control_flow(ControlFlow::Break);
+            Ok(Value::Undefined)
+        }
+        Statement::Continue(_) => {
+            set_control_flow(ControlFlow::Continue);
+            Ok(Value::Undefined)
+        }
 
         Statement::TryCatch { body, param, handler } => {
             match eval_statement(body.as_ref(), env, _is_expr_body) {
@@ -536,6 +605,14 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                         Ok(Value::Object(Rc::new(RefCell::new(proto))))
                     } else if prop_name == "length" {
                         Ok(Value::Number(0.0))
+                    } else if prop_name == "call" {
+                        // NativeFunction.call - returns the function itself
+                        // (In JavaScript, func.call(thisArg, ...args) calls func with thisArg as this)
+                        Ok(Value::NativeFunction(Rc::clone(nf)))
+                    } else if prop_name == "apply" {
+                        // NativeFunction.apply - returns the function itself
+                        // (In JavaScript, func.apply(thisArg, argsArray) calls func with thisArg as this)
+                        Ok(Value::NativeFunction(Rc::clone(nf)))
                     } else {
                         Ok(Value::Undefined)
                     }
@@ -553,8 +630,24 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                         Ok(Value::Undefined)
                     }
                 }
+                Value::Number(_) => {
+                    // Number primitives need to look up Number.prototype
+                    // Try to get Number.prototype from global scope
+                    if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
+                        let num_obj = num_obj.borrow();
+                        if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
+                            // Look up the property on Number.prototype
+                            let proto_obj = proto.borrow();
+                            if let Some(val) = proto_obj.get(&prop_name) {
+                                return Ok(val);
+                            }
+                        }
+                    }
+                    // Fallback: return undefined for unknown properties
+                    Ok(Value::Undefined)
+                }
                 _ => {
-                    // For other value types (Number, Boolean, etc.), return undefined
+                    // For other value types (Boolean, etc.), return undefined
                     // In JavaScript, accessing properties on primitives returns undefined
                     Ok(Value::Undefined)
                 }
@@ -591,6 +684,19 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                 .collect();
             let args = args?;
             
+            // If the constructor is an Object, look up its "constructor" property
+            let actual_constructor = match &constructor_val {
+                Value::Object(o) => {
+                    let obj = o.borrow();
+                    if let Some(constructor) = obj.get("constructor") {
+                        constructor.clone()
+                    } else {
+                        return Err(JsError("Object is not a constructor".to_string()));
+                    }
+                }
+                other => other.clone(),
+            };
+            
             // Get the prototype from the constructor
             let prototype: Option<Rc<RefCell<Object>>> = match &constructor_val {
                 Value::Object(o) => {
@@ -619,7 +725,7 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             let new_obj_rc = Rc::new(RefCell::new(new_obj));
             
             // Call the constructor with "this" bound to the new object
-            let result = call_value_with_this(constructor_val, args, Value::Object(Rc::clone(&new_obj_rc)))?;
+            let result = call_value_with_this(actual_constructor, args, Value::Object(Rc::clone(&new_obj_rc)))?;
             
             // If the constructor returns an object, return that; otherwise return the new object
             match result {
@@ -677,8 +783,70 @@ fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, Js
         BinaryOp::Div => Ok(Value::Number(to_number(left) / to_number(right))),
         BinaryOp::Mod => Ok(Value::Number(to_number(left) % to_number(right))),
 
-        BinaryOp::Eq => Ok(Value::Boolean(left == right)),
-        BinaryOp::Neq => Ok(Value::Boolean(left != right)),
+        BinaryOp::Eq => Ok(Value::Boolean(loose_eq(left, right))),
+        BinaryOp::Neq => Ok(Value::Boolean(!loose_eq(left, right))),
+
+        BinaryOp::In => {
+            // The `in` operator: left is property name, right is object
+            let prop_name = to_js_string(left);
+            match right {
+                Value::Object(obj) => Ok(Value::Boolean(obj.borrow().has(&prop_name))),
+                Value::String(s) => {
+                    // String has indexed properties
+                    if let Ok(idx) = prop_name.parse::<usize>() {
+                        Ok(Value::Boolean(idx < s.chars().count()))
+                    } else {
+                        Ok(Value::Boolean(false))
+                    }
+                }
+                _ => Ok(Value::Boolean(false)),
+            }
+        }
+
+        BinaryOp::Instanceof => {
+            // The `instanceof` operator: left is object, right is constructor
+            // Walk the prototype chain of left, checking if any prototype equals constructor's prototype
+            
+            // Helper to walk prototype chain and check for match
+            fn check_instanceof(obj: &Rc<RefCell<Object>>, target_proto: &Rc<RefCell<Object>>) -> bool {
+                let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(obj));
+                while let Some(obj_rc) = current {
+                    if Rc::ptr_eq(&obj_rc, target_proto) {
+                        return true;
+                    }
+                    let obj_ref = obj_rc.borrow();
+                    current = obj_ref.prototype.as_ref().map(Rc::clone);
+                }
+                false
+            }
+            
+            match (left, right) {
+                (_, Value::Undefined) | (_, Value::Null) => Ok(Value::Boolean(false)),
+                (Value::Object(obj), Value::Function(ctor)) => {
+                    // Get constructor's prototype
+                    let ctor_proto = ctor.get_prototype();
+                    let result = check_instanceof(obj, &ctor_proto);
+                    Ok(Value::Boolean(result))
+                }
+                (Value::Object(obj), Value::NativeConstructor(ctor)) => {
+                    // NativeConstructor: check if object's prototype chain contains ctor.prototype
+                    let result = check_instanceof(obj, &ctor.prototype);
+                    Ok(Value::Boolean(result))
+                }
+                (Value::Object(obj), Value::Object(ctor)) => {
+                    // Try to get prototype from constructor object
+                    let ctor_ref = ctor.borrow();
+                    if let Some(Value::Object(proto)) = ctor_ref.get("prototype") {
+                        drop(ctor_ref);
+                        let result = check_instanceof(obj, &proto);
+                        Ok(Value::Boolean(result))
+                    } else {
+                        Ok(Value::Boolean(false))
+                    }
+                }
+                _ => Ok(Value::Boolean(false)),
+            }
+        }
         BinaryOp::StrictEq => Ok(Value::Boolean(strict_eq(left, right))),
         BinaryOp::StrictNeq => Ok(Value::Boolean(!strict_eq(left, right))),
 
@@ -843,6 +1011,20 @@ fn eval_callee_with_this(callee: &Expression, env: &Rc<RefCell<Environment>>) ->
                         _ => Value::Undefined,
                     }
                 }
+                Value::Number(_) => {
+                    // Number prototype methods - look up Number.prototype from global scope
+                    let _num_val = obj_val.clone();
+                    if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
+                        let num_obj = num_obj.borrow();
+                        if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
+                            let proto_obj = proto.borrow();
+                            if let Some(val) = proto_obj.get(&prop_name) {
+                                return Ok((val, obj_val));
+                            }
+                        }
+                    }
+                    Value::Undefined
+                }
                 _ => Value::Undefined,
             };
             
@@ -860,7 +1042,14 @@ fn eval_callee_with_this(callee: &Expression, env: &Rc<RefCell<Environment>>) ->
 /// Call a value as a function with an explicit "this" binding
 pub fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> Result<Value, JsError> {
     // Check recursion depth (function calls add to call stack)
-    check_depth()?;
+    // If check fails, we MUST release the depth we just incremented before returning
+    match check_depth() {
+        Ok(_) => {}
+        Err(e) => {
+            release_depth(); // Counter was incremented by check_depth even on failure
+            return Err(e);
+        }
+    }
     
     let result = match func {
         Value::Function(f) => {
