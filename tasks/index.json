@@ -75,8 +75,7 @@
       "title": "Interpreter performance roadmap",
       "file": "tasks/11-performance.md",
       "status": "in_progress",
-      "notes": "rustc-hash and indexmap added. Benchmarks created in tests/benchmarks.rs. Remaining: NaN-boxing, string interning, object shapes, slot-indexed environments."
-      "notes": "Future optimizations once runtime is correct: NaN-boxed Value, string interning, object shapes+ICs, slot-indexed environments, arena allocation."
+      "notes": "rustc-hash and indexmap added. Benchmarks created in tests/benchmarks.rs. Remaining: NaN-boxing, string interning, object shapes, slot-indexed environments. Future optimizations once runtime is correct: NaN-boxed Value, string interning, object shapes+ICs, slot-indexed environments, arena allocation."
     },
     {
       "id": "12",
@@ -181,8 +180,7 @@
       "title": "Apply researched interpreter/AOT/JIT best practices",
       "file": "tasks/25-research-best-practices.md",
       "status": "completed",
-      "notes": "Documented in docs/performance-research.md. Crate recommendations documented."
-      "notes": "Use swc front-end; interpreter-level optimizations first. AOT/JIT via Cranelift is future work."
+      "notes": "Documented in docs/performance-research.md. Crate recommendations documented. Use swc front-end; interpreter-level optimizations first. AOT/JIT via Cranelift is future work."
     },
     {
       "id": "26",
@@ -322,16 +320,14 @@
       "title": "Port TypeScript evaluation unit tests to Quench harness",
       "file": "tasks/45-typescript-evaluation-tests.md",
       "status": "completed",
-      "notes": "Created tests/evaluation.rs with discover, parse, run functions. Discovers tests from tests/typescript/src/testRunner/unittests/evaluation/."
-      "notes": "Use src/testRunner/unittests/evaluation/*.ts as a starter set: they already compile TypeScript and execute the emitted JS."
+      "notes": "Created tests/evaluation.rs with discover, parse, run functions. Discovers tests from tests/typescript/src/testRunner/unittests/evaluation/. Use src/testRunner/unittests/evaluation/*.ts as a starter set: they already compile TypeScript and execute the emitted JS."
     },
     {
       "id": "46",
       "title": "Add Quench harness for TypeScript compiler/ cases",
       "file": "tasks/46-typescript-compiler-cases.md",
       "status": "completed",
-      "notes": "Created tests/compiler_cases.rs with directive parsing, case discovery, and runtime execution for tests/typescript/tests/cases/compiler/."
-      "notes": "Run the ~6500 compiler/ regression cases by compiling them with the TypeScript API and executing the emitted JS in quench-runtime."
+      "notes": "Created tests/compiler_cases.rs with directive parsing, case discovery, and runtime execution for tests/typescript/tests/cases/compiler/. Run the ~6500 compiler/ regression cases by compiling them with the TypeScript API and executing the emitted JS in quench-runtime."
     },
     {
       "id": "47",
@@ -360,7 +356,6 @@
       "file": "tasks/50-typescript-test-docs.md",
       "status": "completed",
       "notes": "Created docs/typescript-tests.md with setup, commands, sharding, and baseline-accept workflow."
-      "notes": "Add docs/typescript-tests.md with setup, commands, sharding, and baseline-accept workflow."
     },
     {
       "id": "51",
@@ -417,6 +412,20 @@
       "file": "tasks/58-fourth-review-findings.md",
       "status": "pending",
       "notes": "Ranked findings from a fourth review pass. Top blockers: Promise reactions, microtask draining, native prototype chain, hot reload broken, timers, mouse capture, assignment LHS re-evaluation, Function.call/apply, destructuring defaults/rest."
+    },
+    {
+      "id": "59",
+      "title": "Fix stack overflow in interpreter",
+      "file": "tasks/59-fix-stack-overflow.md",
+      "status": "completed",
+      "notes": "Converted recursive interpreter to iterative with explicit depth tracking. Added MAX_RECURSION_DEPTH=10000 to prevent stack overflow on deeply nested JSX. Added arguments object support."
+    },
+    {
+      "id": "60",
+      "title": "Fifth five-round architecture & code review findings",
+      "file": "tasks/60-fifth-review-findings.md",
+      "status": "pending",
+      "notes": "Ranked findings from a fifth review pass. Top blockers: == lowered to strict equality, template literals, spread/rest, for-head destructuring, parser TSX/module support, microtask draining, hot reload, scope leak, typeof undeclared, Promise executors, setTimeout."
     }
   ]
 }
