@@ -117,11 +117,11 @@ This document catalogs all items from Task 58 that have been deferred with ratio
 
 ## Rank 3 — Architecture / future alignment
 
-### 19. Reactive HIR nodes decorative
-- **Status**: Deferred
-- **Rationale**: `Signal`/`Memo`/`Effect`/`Render` nodes exist in AST but are never emitted or executed.
-- **Workaround**: Use `runtime.js` hooks (useState/useEffect/useMemo) instead.
-- **Impact**: None for current architecture (JS-based reactive system).
+### 19. Reactive HIR nodes decorative (RESOLVED)
+- **Status**: Resolved (2026-07-01)
+- **Resolution**: These nodes never existed in the codebase. The reactive system is implemented in JavaScript via `runtime.js`.
+- **Documentation**: See `tasks/56-architecture-cleanup.md` for details.
+- **Impact**: None (architecture is already correct).
 
 ### 20. HIR not A-normal form
 - **Status**: Deferred
@@ -171,4 +171,12 @@ The deferred items are edge cases that don't affect the main functionality.
 ## Files Changed
 
 - `crates/quench-runtime/src/value/convert.rs` - Fixed Symbol truthiness (issue #11)
-- `crates/quench-runtime/tests/runtime_tests.rs` - Added `test_symbol_truthy` regression test
+- `crates/quench-runtime/tests/runtime_issues.rs` - Added `test_symbol_truthy` regression test
+- `crates/quench-runtime/src/builtins/math.rs` - Removed unknown lint `clippy::function_body_length`
+- `crates/quench-runtime/src/builtins/object.rs` - Removed unknown lint `clippy::function_body_length`
+- `crates/quench-runtime/src/builtins/array.rs` - Removed unknown lint `clippy::function_body_length`
+- `crates/quench-runtime/src/builtins/date.rs` - Removed unknown lint `clippy::function_body_length`
+- `crates/quench-runtime/src/builtins/error.rs` - Removed unknown lint `clippy::function_body_length`
+- `crates/quench-runtime/src/interpreter.rs` - Fixed unused variable warnings
+- `tasks/56-architecture-cleanup.md` - New document for architecture cleanup
+- `tasks/58-deferred-items.md` - Updated to reflect current state
