@@ -119,6 +119,10 @@ pub enum BinaryOp {
     Lt, Gt, Le, Ge,
     Add, Sub, Mul, Div, Mod,
     BitAnd, BitOr, BitXor, Shl, Shr, Ushr,
+    /// The `in` operator - checks if property exists in object
+    In,
+    /// The `instanceof` operator - checks if object is instance of constructor
+    Instanceof,
 }
 
 impl BinaryOp {
@@ -131,6 +135,7 @@ impl BinaryOp {
             BinaryOp::BitAnd => 5,
             BinaryOp::Eq | BinaryOp::Neq | BinaryOp::StrictEq | BinaryOp::StrictNeq => 6,
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => 7,
+            BinaryOp::In | BinaryOp::Instanceof => 7,
             BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Ushr => 8,
             BinaryOp::Add | BinaryOp::Sub => 9,
             BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => 10,

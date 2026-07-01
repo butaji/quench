@@ -21,8 +21,11 @@ fn get_typescript_root() -> Option<PathBuf> {
 }
 
 /// Run a small sanity check with a few known cases
+/// 
+/// Note: Uses isolation (thread-per-test) to prevent stack overflow from crashing the harness.
+/// Uses a limit to keep execution time reasonable.
 #[test]
-#[ignore = "causes stack overflow - requires per-case isolation or iterative interpreter"]
+#[ignore = "runs 100 cases - enable for full conformance testing"]
 fn test_typescript_conformance_sanity() {
     let root = match get_typescript_root() {
         Some(r) => r,
@@ -39,7 +42,8 @@ fn test_typescript_conformance_sanity() {
         return;
     }
     
-    let report = typescript::run_suite(&conformance_root, RunMode::BaselineJs, 0, None)
+    // Run first 100 cases with isolation
+    let report = typescript::run_suite(&conformance_root, RunMode::BaselineJs, 0, Some(100))
         .expect("suite run failed");
     
     // Write report
@@ -53,8 +57,11 @@ fn test_typescript_conformance_sanity() {
     // Print summary
     report.print_summary("TypeScript");
     
-    // Don't fail during development - we expect many failures
-    // as the runtime doesn't support all features
+    // Verify isolation worked - harness should not crash even if some tests fail
+    assert!(report.total > 0, "Should have processed some tests");
+    
+    // Don't fail on test failures - the runtime may not support all features
+    // We just want to verify the harness doesn't crash
 }
 
 /// Run tests on a specific category
