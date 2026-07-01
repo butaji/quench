@@ -1,4 +1,4 @@
-#![allow(clippy::function_length)]
+#![allow(unknown_lints, clippy::function_length)]
 
 //! Build script for Quench
 //!

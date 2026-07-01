@@ -1,3 +1,4 @@
+#![allow(unknown_lints, file_length)]
 //! Built-in JavaScript objects and functions
 
 use std::rc::Rc;
@@ -6,6 +7,17 @@ use serde::ser::{SerializeMap, SerializeSeq};
 
 use crate::value::{Value, JsError, Object, ObjectKind, NativeFunction, to_js_string, to_number, to_bool};
 use crate::Context;
+use crate::interpreter::{get_native_this, call_value_with_this};
+
+// Thread-local storage for Array.prototype (used by interpreter for array literal creation)
+thread_local! {
+    static ARRAY_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = RefCell::new(None);
+}
+
+/// Get the Array.prototype object (for use by interpreter)
+pub fn get_array_prototype() -> Option<Rc<RefCell<Object>>> {
+    ARRAY_PROTOTYPE.with(|ap| ap.borrow().clone())
+}
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
@@ -16,6 +28,7 @@ pub fn register_builtins(ctx: &mut Context) {
     register_array(ctx);
     register_map_and_set(ctx);
     register_global_functions(ctx);
+    register_function(ctx);
     register_error(ctx);
 }
 
@@ -28,19 +41,19 @@ fn register_console(ctx: &mut Context) {
     let console = Rc::new(RefCell::new(console));
     
     console.borrow_mut().set("log", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let msg = args.iter().map(|v| to_js_string(v)).collect::<Vec<_>>().join(" ");
+        let msg = args.iter().map(to_js_string).collect::<Vec<_>>().join(" ");
         println!("{}", msg);
         Ok(Value::Undefined)
     }))));
     
     console.borrow_mut().set("error", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let msg = args.iter().map(|v| to_js_string(v)).collect::<Vec<_>>().join(" ");
+        let msg = args.iter().map(to_js_string).collect::<Vec<_>>().join(" ");
         eprintln!("{}", msg);
         Ok(Value::Undefined)
     }))));
     
     console.borrow_mut().set("warn", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let msg = args.iter().map(|v| to_js_string(v)).collect::<Vec<_>>().join(" ");
+        let msg = args.iter().map(to_js_string).collect::<Vec<_>>().join(" ");
         println!("{}", msg);
         Ok(Value::Undefined)
     }))));
@@ -63,7 +76,7 @@ fn register_json(ctx: &mut Context) {
     }))));
     
     json.borrow_mut().set("parse", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let text = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let text = args.first().map(to_js_string).unwrap_or_default();
         Ok(Value::String(text))
     }))));
     
@@ -81,7 +94,7 @@ fn register_math(ctx: &mut Context) {
     macro_rules! math_fn {
         ($name:expr, $fn:expr) => {
             math.borrow_mut().set($name, Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-                let x = args.first().map(|v| to_number(v)).unwrap_or(0.0);
+                let x = args.first().map(to_number).unwrap_or(0.0);
                 Ok(Value::Number($fn(x)))
             }))));
         };
@@ -93,18 +106,18 @@ fn register_math(ctx: &mut Context) {
     math_fn!("round", f64::round);
     math_fn!("sqrt", f64::sqrt);
     math.borrow_mut().set("pow", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let base = args.first().map(|v| to_number(v)).unwrap_or(0.0);
-        let exp = args.get(1).map(|v| to_number(v)).unwrap_or(1.0);
+        let base = args.first().map(to_number).unwrap_or(0.0);
+        let exp = args.get(1).map(to_number).unwrap_or(1.0);
         Ok(Value::Number(base.powf(exp)))
     }))));
     
     math.borrow_mut().set("max", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let max = args.iter().map(|v| to_number(v)).fold(f64::NEG_INFINITY, f64::max);
+        let max = args.iter().map(to_number).fold(f64::NEG_INFINITY, f64::max);
         Ok(Value::Number(max))
     }))));
     
     math.borrow_mut().set("min", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let min = args.iter().map(|v| to_number(v)).fold(f64::INFINITY, f64::min);
+        let min = args.iter().map(to_number).fold(f64::INFINITY, f64::min);
         Ok(Value::Number(min))
     }))));
     
@@ -196,11 +209,9 @@ fn register_object(ctx: &mut Context) {
             Object::new(ObjectKind::Ordinary)
         };
         
-        if let Some(props) = args.get(1) {
-            if let Value::Object(props_obj) = props {
-                for (k, v) in props_obj.borrow().properties.iter() {
-                    obj.set(k, v.clone());
-                }
+        if let Some(Value::Object(props_obj)) = args.get(1) {
+            for (k, v) in props_obj.borrow().properties.iter() {
+                obj.set(k, v.clone());
             }
         }
         
@@ -209,7 +220,7 @@ fn register_object(ctx: &mut Context) {
     
     object.borrow_mut().set("defineProperty", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let obj = args.first().cloned().unwrap_or(Value::Undefined);
-        let prop = args.get(1).map(|v| to_js_string(v)).unwrap_or_default();
+        let prop = args.get(1).map(to_js_string).unwrap_or_default();
         let value = args.get(2).and_then(|v| {
             if let Value::Object(o) = v {
                 o.borrow().properties.get("value").cloned()
@@ -231,6 +242,11 @@ fn register_object(ctx: &mut Context) {
     object.borrow_mut().set("isFrozen", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         Ok(Value::Boolean(false))
     }))));
+    
+    // Create Object.prototype and attach to Object
+    let object_proto = Object::new(ObjectKind::Ordinary);
+    let object_proto_rc = Rc::new(RefCell::new(object_proto));
+    object.borrow_mut().set("prototype", Value::Object(Rc::clone(&object_proto_rc)));
     
     ctx.set_global("Object".to_string(), Value::Object(object));
 }
@@ -265,6 +281,478 @@ fn register_array(ctx: &mut Context) {
         Ok(Value::Object(Rc::new(RefCell::new(arr))))
     }))));
     
+    // Create Array.prototype and attach to Array
+    let array_proto = Object::new(ObjectKind::Array);
+    let array_proto_rc = Rc::new(RefCell::new(array_proto));
+    let get_this_array = || -> Result<Vec<Value>, JsError> {
+        match get_native_this() {
+            Some(Value::Object(o)) => {
+                let arr = o.borrow();
+                if arr.kind == ObjectKind::Array {
+                    Ok(arr.elements.clone())
+                } else {
+                    Err(JsError("Array.prototype method called on non-array".to_string()))
+                }
+            }
+            _ => Err(JsError("Array.prototype method called on non-object".to_string())),
+        }
+    };
+    
+    // Helper to set the array's elements
+    let set_this_elements = |new_elements: Vec<Value>| -> Result<Value, JsError> {
+        match get_native_this() {
+            Some(Value::Object(o)) => {
+                o.borrow_mut().elements = new_elements.clone();
+                Ok(Value::Number(new_elements.len() as f64))
+            }
+            _ => Err(JsError("Array.prototype method called on non-object".to_string())),
+        }
+    };
+    
+    // Helper to create result array object
+    let make_array = |elements: Vec<Value>| -> Value {
+        let arr = Object::new_array_from(elements);
+        Value::Object(Rc::new(RefCell::new(arr)))
+    };
+    
+    // length property getter
+    array_proto_rc.borrow_mut().set("length", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        match get_native_this() {
+            Some(Value::Object(o)) => Ok(Value::Number(o.borrow().elements.len() as f64)),
+            _ => Ok(Value::Undefined),
+        }
+    }))));
+    
+    // Array.prototype.map(callback, thisArg?)
+    array_proto_rc.borrow_mut().set("map", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        let mut result = Vec::new();
+        for (i, elem) in elements.iter().enumerate() {
+            let mapped = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    // Call the callback with (element, index, array)
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    call_value_with_this(callback.clone(), callback_args, Value::Undefined)
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    nf.call(callback_args)
+                }
+                _ => Err(JsError("Callback is not a function".to_string())),
+            }?;
+            result.push(mapped);
+        }
+        Ok(make_array(result))
+    }))));
+    
+    // Array.prototype.filter(callback, thisArg?)
+    array_proto_rc.borrow_mut().set("filter", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        let mut result = Vec::new();
+        for (i, elem) in elements.iter().enumerate() {
+            let keep = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    let res = call_value_with_this(callback.clone(), callback_args, Value::Undefined)?;
+                    to_bool(&res)
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    let res = nf.call(callback_args)?;
+                    to_bool(&res)
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+            if keep {
+                result.push(elem.clone());
+            }
+        }
+        Ok(make_array(result))
+    }))));
+    
+    // Array.prototype.reduce(callback, initialValue?)
+    array_proto_rc.borrow_mut().set("reduce", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        let initial = args.get(1).cloned();
+        
+        let mut accumulator: Value;
+        let start_idx: usize;
+        
+        if let Some(init) = initial {
+            accumulator = init;
+            start_idx = 0;
+        } else if elements.is_empty() {
+            return Err(JsError("Reduce of empty array with no initial value".to_string()));
+        } else {
+            accumulator = elements[0].clone();
+            start_idx = 1;
+        }
+        
+        for i in start_idx..elements.len() {
+            let elem = &elements[i];
+            accumulator = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        accumulator.clone(),
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        accumulator.clone(),
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    nf.call(callback_args)?
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+        }
+        Ok(accumulator)
+    }))));
+    
+    // Array.prototype.forEach(callback, thisArg?)
+    array_proto_rc.borrow_mut().set("forEach", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        for (i, elem) in elements.iter().enumerate() {
+            match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    let _ = call_value_with_this(callback.clone(), callback_args, Value::Undefined);
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    let _ = nf.call(callback_args);
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+        }
+        Ok(Value::Undefined)
+    }))));
+    
+    // Array.prototype.push(...items)
+    array_proto_rc.borrow_mut().set("push", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        elements.extend(args);
+        set_this_elements(elements)
+    }))));
+    
+    // Array.prototype.pop()
+    array_proto_rc.borrow_mut().set("pop", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        let mut elements = get_this_array()?;
+        let popped = elements.pop();
+        set_this_elements(elements)?;
+        Ok(popped.unwrap_or(Value::Undefined))
+    }))));
+    
+    // Array.prototype.shift()
+    array_proto_rc.borrow_mut().set("shift", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        let mut elements = get_this_array()?;
+        let shifted = elements.remove(0);
+        set_this_elements(elements)?;
+        Ok(shifted)
+    }))));
+    
+    // Array.prototype.unshift(...items)
+    array_proto_rc.borrow_mut().set("unshift", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let mut new_items: Vec<Value> = args.to_vec();
+        new_items.extend(elements);
+        set_this_elements(new_items)
+    }))));
+    
+    // Array.prototype.slice(start?, end?)
+    array_proto_rc.borrow_mut().set("slice", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let len = elements.len() as f64;
+        let start = args.first().map(to_number).unwrap_or(0.0);
+        let end = args.get(1).map(to_number).unwrap_or(len);
+        
+        let start_idx = if start < 0.0 {
+            ((len + start) as isize).max(0).min(len as isize) as usize
+        } else {
+            (start as usize).min(len as usize)
+        };
+        let end_idx = if end < 0.0 {
+            ((len + end) as isize).max(0).min(len as isize) as usize
+        } else {
+            (end as usize).min(len as usize)
+        };
+        
+        let result: Vec<Value> = elements[start_idx..end_idx].to_vec();
+        Ok(make_array(result))
+    }))));
+    
+    // Array.prototype.concat(...arrays)
+    array_proto_rc.borrow_mut().set("concat", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        for arg in args {
+            match arg {
+                Value::Object(o) if o.borrow().kind == ObjectKind::Array => {
+                    elements.extend(o.borrow().elements.clone());
+                }
+                _ => elements.push(arg),
+            }
+        }
+        Ok(make_array(elements))
+    }))));
+    
+    // Array.prototype.join(separator?)
+    array_proto_rc.borrow_mut().set("join", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let sep = args.first().map(to_js_string).unwrap_or_else(|| ",".to_string());
+        let parts: Vec<String> = elements.iter().map(|v| to_js_string(v)).collect();
+        Ok(Value::String(parts.join(&sep)))
+    }))));
+    
+    // Array.prototype.indexOf(searchElement, fromIndex?)
+    array_proto_rc.borrow_mut().set("indexOf", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let search = args.first().cloned().unwrap_or(Value::Undefined);
+        let from_idx = args.get(1).map(|v| to_number(v) as usize).unwrap_or(0);
+        
+        for i in from_idx..elements.len() {
+            if crate::value::strict_eq(&elements[i], &search) {
+                return Ok(Value::Number(i as f64));
+            }
+        }
+        Ok(Value::Number(-1.0))
+    }))));
+    
+    // Array.prototype.includes(searchElement, fromIndex?)
+    array_proto_rc.borrow_mut().set("includes", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let search = args.first().cloned().unwrap_or(Value::Undefined);
+        let from_idx = args.get(1).map(|v| to_number(v) as usize).unwrap_or(0);
+        
+        for i in from_idx..elements.len() {
+            if crate::value::strict_eq(&elements[i], &search) {
+                return Ok(Value::Boolean(true));
+            }
+        }
+        Ok(Value::Boolean(false))
+    }))));
+    
+    // Array.prototype.find(predicate, thisArg?)
+    array_proto_rc.borrow_mut().set("find", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        
+        for (i, elem) in elements.iter().enumerate() {
+            let result = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    nf.call(callback_args)?
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+            if to_bool(&result) {
+                return Ok(elem.clone());
+            }
+        }
+        Ok(Value::Undefined)
+    }))));
+    
+    // Array.prototype.flat(depth?)
+    array_proto_rc.borrow_mut().set("flat", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let depth = args.first().map(|v| to_number(v) as i32).unwrap_or(1) as i32;
+        
+        fn flatten(arr: Vec<Value>, depth: i32) -> Vec<Value> {
+            if depth <= 0 {
+                return arr;
+            }
+            let mut result = Vec::new();
+            for elem in arr {
+                match elem {
+                    Value::Object(o) if o.borrow().kind == ObjectKind::Array => {
+                        let inner = o.borrow().elements.clone();
+                        result.extend(flatten(inner, depth - 1));
+                    }
+                    _ => result.push(elem),
+                }
+            }
+            result
+        }
+        
+        Ok(make_array(flatten(elements, depth)))
+    }))));
+    
+    // Array.prototype.some(callback, thisArg?)
+    array_proto_rc.borrow_mut().set("some", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        
+        for (i, elem) in elements.iter().enumerate() {
+            let result = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    nf.call(callback_args)?
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+            if to_bool(&result) {
+                return Ok(Value::Boolean(true));
+            }
+        }
+        Ok(Value::Boolean(false))
+    }))));
+    
+    // Array.prototype.every(callback, thisArg?)
+    array_proto_rc.borrow_mut().set("every", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let callback = args.first().cloned().unwrap_or(Value::Undefined);
+        
+        for (i, elem) in elements.iter().enumerate() {
+            let result = match callback {
+                #[allow(unused_variables)] Value::Function(_) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+                }
+                Value::NativeFunction(ref nf) => {
+                    let callback_args = vec![
+                        elem.clone(),
+                        Value::Number(i as f64),
+                        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.clone())))),
+                    ];
+                    nf.call(callback_args)?
+                }
+                _ => return Err(JsError("Callback is not a function".to_string())),
+            };
+            if !to_bool(&result) {
+                return Ok(Value::Boolean(false));
+            }
+        }
+        Ok(Value::Boolean(true))
+    }))));
+    
+    // Array.prototype.reverse()
+    array_proto_rc.borrow_mut().set("reverse", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        let mut elements = get_this_array()?;
+        elements.reverse();
+        set_this_elements(elements.clone())?;
+        Ok(make_array(elements))
+    }))));
+    
+    // Array.prototype.sort(compareFn?)
+    array_proto_rc.borrow_mut().set("sort", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let _compare_fn = args.first().cloned();
+        
+        // Simple string comparison sort
+        elements.sort_by(|a, b| {
+            let a_str = to_js_string(a);
+            let b_str = to_js_string(b);
+            a_str.cmp(&b_str)
+        });
+        
+        set_this_elements(elements.clone())?;
+        Ok(make_array(elements))
+    }))));
+    
+    // Array.prototype.splice(start, deleteCount?, ...items)
+    array_proto_rc.borrow_mut().set("splice", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let mut elements = get_this_array()?;
+        let start = args.first().map(|v| to_number(v) as isize).unwrap_or(0) as isize;
+        let delete_count = args.get(1).map(|v| to_number(v) as usize).unwrap_or(elements.len());
+        let items: Vec<Value> = args[2..].to_vec();
+        
+        let len = elements.len() as isize;
+        let mut start_idx = if start < 0 { (len + start).max(0).min(len) as usize } else { (start as usize).min(len as usize) };
+        let delete_count = delete_count.min(len as usize - start_idx);
+        
+        let removed: Vec<Value> = elements.drain(start_idx..start_idx + delete_count).collect();
+        
+        // Insert new items
+        for item in items {
+            elements.insert(start_idx, item);
+            start_idx += 1;
+        }
+        
+        set_this_elements(elements)?;
+        Ok(make_array(removed))
+    }))));
+    
+    // Array.prototype.toString()
+    array_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        let elements = get_this_array()?;
+        let parts: Vec<String> = elements.iter().map(|v| to_js_string(v)).collect();
+        Ok(Value::String(parts.join(",")))
+    }))));
+    
+    array.borrow_mut().set("prototype", Value::Object(Rc::clone(&array_proto_rc)));
+    
+    // Store Array.prototype globally for interpreter to use when creating array literals
+    let global_proto = Rc::new(RefCell::new(Object::new(ObjectKind::Array)));
+    // Copy all properties from array_proto_rc to global_proto
+    let proto_props = array_proto_rc.borrow().properties.clone();
+    for (k, v) in proto_props {
+        global_proto.borrow_mut().set(&k, v);
+    }
+    ARRAY_PROTOTYPE.with(|ap| {
+        *ap.borrow_mut() = Some(global_proto);
+    });
+    
     ctx.set_global("Array".to_string(), Value::Object(array));
 }
 
@@ -295,13 +783,13 @@ fn register_map_and_set(ctx: &mut Context) {
 
 fn register_global_functions(ctx: &mut Context) {
     ctx.register_native("setTimeout", |args| {
-        let _callback = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let _callback = args.first().map(to_js_string).unwrap_or_default();
         let _delay = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
         Ok(Value::Number(1.0))
     });
     
     ctx.register_native("setInterval", |args| {
-        let _callback = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let _callback = args.first().map(to_js_string).unwrap_or_default();
         let _interval = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
         Ok(Value::Number(1.0))
     });
@@ -310,65 +798,90 @@ fn register_global_functions(ctx: &mut Context) {
     ctx.register_native("clearInterval", |_args| Ok(Value::Undefined));
     
     ctx.register_native("parseInt", |args| {
-        let s = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let s = args.first().map(to_js_string).unwrap_or_default();
         let n = s.trim().parse::<i64>().ok().map(|n| n as f64).unwrap_or(f64::NAN);
         Ok(Value::Number(n))
     });
     
     ctx.register_native("parseFloat", |args| {
-        let s = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let s = args.first().map(to_js_string).unwrap_or_default();
         let n = s.trim().parse::<f64>().unwrap_or(f64::NAN);
         Ok(Value::Number(n))
     });
     
     ctx.register_native("isNaN", |args| {
-        let n = args.first().map(|v| to_number(v)).unwrap_or(f64::NAN);
+        let n = args.first().map(to_number).unwrap_or(f64::NAN);
         Ok(Value::Boolean(n.is_nan()))
     });
     
     ctx.register_native("isFinite", |args| {
-        let n = args.first().map(|v| to_number(v)).unwrap_or(f64::NAN);
+        let n = args.first().map(to_number).unwrap_or(f64::NAN);
         Ok(Value::Boolean(n.is_finite()))
     });
     
     ctx.register_native("encodeURIComponent", |args| {
-        let s = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let s = args.first().map(to_js_string).unwrap_or_default();
         Ok(Value::String(urlencoding::encode(&s).to_string()))
     });
     
     ctx.register_native("decodeURIComponent", |args| {
-        let s = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let s = args.first().map(to_js_string).unwrap_or_default();
         let decoded = urlencoding::decode(&s).map(|d| d.to_string()).unwrap_or(s);
         Ok(Value::String(decoded))
     });
     
     let number_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let n = args.first().map(|v| to_number(v)).unwrap_or(0.0);
+        let n = args.first().map(to_number).unwrap_or(0.0);
         Ok(Value::Number(n))
     })));
     ctx.set_global("Number".to_string(), number_fn);
     
     let string_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let s = args.first().map(|v| to_js_string(v)).unwrap_or_default();
+        let s = args.first().map(to_js_string).unwrap_or_default();
         Ok(Value::String(s))
     })));
     ctx.set_global("String".to_string(), string_fn);
     
     let boolean_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let b = args.first().map(|v| to_bool(v)).unwrap_or(false);
+        let b = args.first().map(to_bool).unwrap_or(false);
         Ok(Value::Boolean(b))
     })));
     ctx.set_global("Boolean".to_string(), boolean_fn);
     
-    let date_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+    // Helper to get current timestamp
+    fn chrono_now() -> i64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as f64;
-        let date_obj = Object::new(ObjectKind::Date);
-        let date = Rc::new(RefCell::new(date_obj));
-        date.borrow_mut().set("_timestamp", Value::Number(now));
-        Ok(Value::Object(date))
-    })));
-    ctx.set_global("Date".to_string(), date_fn);
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
+    }
+    
+    // Create Date.prototype first
+    let date_proto = Object::new(ObjectKind::Date);
+    let date_proto_rc = Rc::new(RefCell::new(date_proto));
+    // Add toString to Date.prototype
+    date_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let date_str = format!("Date @ {}", chrono_now());
+        Ok(Value::String(date_str))
+    }))));
+    // Add valueOf to Date.prototype
+    date_proto_rc.borrow_mut().set("valueOf", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::Number(chrono_now() as f64))
+    }))));
+    
+    // Date constructor - returns a Date object
+    let date_proto_clone = Rc::clone(&date_proto_rc);
+    let date_fn = NativeFunction::with_prototype(
+        move |_args| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as f64;
+            let date_obj = Object::with_prototype(ObjectKind::Date, Rc::clone(&date_proto_clone));
+            let date = Rc::new(RefCell::new(date_obj));
+            date.borrow_mut().set("_timestamp", Value::Number(now));
+            Ok(Value::Object(date))
+        },
+        date_proto_rc,
+    );
+    
+    ctx.set_global("Date".to_string(), Value::NativeFunction(Rc::new(date_fn)));
 }
 
 // ============================================================================
@@ -376,19 +889,120 @@ fn register_global_functions(ctx: &mut Context) {
 // ============================================================================
 
 fn register_error(ctx: &mut Context) {
-    let error = Object::new(ObjectKind::Ordinary);
-    let error = Rc::new(RefCell::new(error));
-    error.borrow_mut().set("message", Value::String(String::new()));
-    ctx.set_global("Error".to_string(), Value::Object(error));
+    // Create Error prototype
+    let error_proto = Object::new(ObjectKind::Ordinary);
+    let error_proto_rc = Rc::new(RefCell::new(error_proto));
+    // Add toString to Error.prototype
+    error_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::String("Error".to_string()))
+    }))));
     
-    let type_error = Object::new(ObjectKind::Ordinary);
-    ctx.set_global("TypeError".to_string(), Value::Object(Rc::new(RefCell::new(type_error))));
+    let error_proto_clone = Rc::clone(&error_proto_rc);
+    // Error constructor function with prototype
+    let error_constructor = NativeFunction::with_prototype(
+        move |args| {
+            let message = args.first().cloned().unwrap_or(Value::Undefined);
+            let error_obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&error_proto_clone));
+            let error_rc = Rc::new(RefCell::new(error_obj));
+            error_rc.borrow_mut().set("message", message);
+            Ok(Value::Object(error_rc))
+        },
+        Rc::clone(&error_proto_rc),
+    );
+    ctx.set_global("Error".to_string(), Value::NativeFunction(Rc::new(error_constructor)));
     
-    let ref_error = Object::new(ObjectKind::Ordinary);
-    ctx.set_global("ReferenceError".to_string(), Value::Object(Rc::new(RefCell::new(ref_error))));
+    // TypeError
+    let type_error_proto = Object::new(ObjectKind::Ordinary);
+    let type_error_proto_rc = Rc::new(RefCell::new(type_error_proto));
+    // Add toString to TypeError.prototype
+    type_error_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::String("TypeError".to_string()))
+    }))));
     
-    let syntax_error = Object::new(ObjectKind::Ordinary);
-    ctx.set_global("SyntaxError".to_string(), Value::Object(Rc::new(RefCell::new(syntax_error))));
+    let type_error_proto_clone = Rc::clone(&type_error_proto_rc);
+    let type_error_constructor = NativeFunction::with_prototype(
+        move |args| {
+            let message = args.first().cloned().unwrap_or(Value::Undefined);
+            let error_obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&type_error_proto_clone));
+            let error_rc = Rc::new(RefCell::new(error_obj));
+            error_rc.borrow_mut().set("message", message);
+            Ok(Value::Object(error_rc))
+        },
+        Rc::clone(&type_error_proto_rc),
+    );
+    ctx.set_global("TypeError".to_string(), Value::NativeFunction(Rc::new(type_error_constructor)));
+    
+    // ReferenceError
+    let ref_error_proto = Object::new(ObjectKind::Ordinary);
+    let ref_error_proto_rc = Rc::new(RefCell::new(ref_error_proto));
+    // Add toString to ReferenceError.prototype
+    ref_error_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::String("ReferenceError".to_string()))
+    }))));
+    
+    let ref_error_proto_clone = Rc::clone(&ref_error_proto_rc);
+    let ref_error_constructor = NativeFunction::with_prototype(
+        move |args| {
+            let message = args.first().cloned().unwrap_or(Value::Undefined);
+            let error_obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&ref_error_proto_clone));
+            let error_rc = Rc::new(RefCell::new(error_obj));
+            error_rc.borrow_mut().set("message", message);
+            Ok(Value::Object(error_rc))
+        },
+        Rc::clone(&ref_error_proto_rc),
+    );
+    ctx.set_global("ReferenceError".to_string(), Value::NativeFunction(Rc::new(ref_error_constructor)));
+    
+    // SyntaxError
+    let syntax_error_proto = Object::new(ObjectKind::Ordinary);
+    let syntax_error_proto_rc = Rc::new(RefCell::new(syntax_error_proto));
+    // Add toString to SyntaxError.prototype
+    syntax_error_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::String("SyntaxError".to_string()))
+    }))));
+    
+    let syntax_error_proto_clone = Rc::clone(&syntax_error_proto_rc);
+    let syntax_error_constructor = NativeFunction::with_prototype(
+        move |args| {
+            let message = args.first().cloned().unwrap_or(Value::Undefined);
+            let error_obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&syntax_error_proto_clone));
+            let error_rc = Rc::new(RefCell::new(error_obj));
+            error_rc.borrow_mut().set("message", message);
+            Ok(Value::Object(error_rc))
+        },
+        Rc::clone(&syntax_error_proto_rc),
+    );
+    ctx.set_global("SyntaxError".to_string(), Value::NativeFunction(Rc::new(syntax_error_constructor)));
+    
+    // Link prototype chains: TypeError.prototype -> Error.prototype
+    type_error_proto_rc.borrow_mut().set("__proto__", Value::Object(Rc::clone(&error_proto_rc)));
+    ref_error_proto_rc.borrow_mut().set("__proto__", Value::Object(Rc::clone(&error_proto_rc)));
+    syntax_error_proto_rc.borrow_mut().set("__proto__", Value::Object(Rc::clone(&error_proto_rc)));
+}
+
+// ============================================================================
+// Function
+// ============================================================================
+
+fn register_function(ctx: &mut Context) {
+    // Function.prototype - the object that is the prototype of all function objects
+    let function_proto = Object::new(ObjectKind::Function);
+    let function_proto_rc = Rc::new(RefCell::new(function_proto));
+    let function_proto_clone = Rc::clone(&function_proto_rc);
+    
+    // Function constructor with prototype
+    let function_constructor = NativeFunction::with_prototype(
+        move |_args| {
+            // Function constructor creates a new function from arguments
+            // In practice, we just return an empty function
+            let func = Object::with_prototype(ObjectKind::Function, Rc::clone(&function_proto_clone));
+            let func_rc = Rc::new(RefCell::new(func));
+            Ok(Value::Object(func_rc))
+        },
+        function_proto_rc,
+    );
+    
+    ctx.set_global("Function".to_string(), Value::NativeFunction(Rc::new(function_constructor)));
 }
 
 // ============================================================================
@@ -419,7 +1033,7 @@ impl serde::Serialize for JsValueProxy<'_> {
                 let obj = obj_rc.borrow();
                 
                 // Check if it's an array (has numeric indices and length)
-                if obj.kind == ObjectKind::Array || obj.elements.len() > 0 {
+                if obj.kind == ObjectKind::Array || !obj.elements.is_empty() {
                     // Serialize as array
                     let mut seq = serializer.serialize_seq(Some(obj.elements.len()))?;
                     for val in &obj.elements {
@@ -439,7 +1053,7 @@ impl serde::Serialize for JsValueProxy<'_> {
                     map.end()
                 }
             }
-            Value::Function(_) => serializer.serialize_str("[Function]"),
+            #[allow(unused_variables)] Value::Function(_) => serializer.serialize_str("[Function]"),
             Value::NativeFunction(_) => serializer.serialize_str("[Function]"),
             Value::Symbol(s) => serializer.serialize_str(&format!("Symbol({})", s)),
         }
