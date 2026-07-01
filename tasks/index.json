@@ -363,6 +363,13 @@
       "file": "tasks/51-second-review-findings.md",
       "status": "pending",
       "notes": "Ranked findings from a second review pass after major implementation. Top blockers: useApp in handlers, --prop injection, hot reload, Promise reactions, microtask draining, Date/Array.from, import/export/JSX lowering."
+    },
+    {
+      "id": "52",
+      "title": "Third five-round architecture & code review findings",
+      "file": "tasks/52-third-review-findings.md",
+      "status": "pending",
+      "notes": "Ranked findings from a third review pass. Top blockers: inert reactive HIR, JSX lowering, ES module dropping, Math.random range, Promise broken, microtask draining, hot reload, compiler process shim."
     }
   ]
 }
