@@ -475,6 +475,13 @@
       "file": "tasks/66-sixth-review-findings.md",
       "status": "completed",
       "notes": "Analysis complete. Implemented: unified call paths, sealed public API in lib.rs, fixed dead code warnings with #[allow(dead_code)]. Quick wins added: 8 to_primitive_unified tests (all pass), member_access_unified.rs tests. Remaining (deferred): full ToPrimitive integration, full member access unification, source spans with ariadne, parser/JSON/regex replacements."
+    },
+    {
+      "id": "68",
+      "title": "Add test262 submodule and conformance harness",
+      "file": "tasks/68-test262-harness.md",
+      "status": "pending",
+      "notes": "Add tc39/test262 submodule, build Rust harness with frontmatter parser, skip policy, JSON report, xtask wiring. Fix runtime bugs found with regression unit tests."
     }
   ]
 }
