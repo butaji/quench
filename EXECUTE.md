@@ -8,7 +8,7 @@ Use sub-agents to work in parallel.
 
 ## Principles
 
-1. **Reuse before rewriting.** Prefer existing crates, the Rust standard library, and OS features over custom implementations. Examples: `swc` for parsing, `serde_json` for JSON, `regex` for text matching, `indexmap` if order matters, `num-bigint` for BigInt, `regress` for regex, `bumpalo`/`mimalloc` for memory. Only write custom code when no suitable crate exists or when the feature is the runtime's unique value.
+1. **Reuse before rewriting.** Prefer existing crates, the Rust standard library, and OS features over custom implementations. The mandatory crate choices are: `swc` (parsing/lowering), `serde_json` (JSON), `regress` (regex), `miette`/`ariadne` (diagnostics), `lasso` (string interning), `indexmap` (ordered maps), `num-bigint`/`rust_decimal` (BigInt/decimal), `bumpalo` (arena allocation), `rustc-hash`/`foldhash` (fast maps), and `thiserror` (error enums). Only write custom code when no suitable crate exists or when the feature is the runtime's unique value.
 2. **80/20 Pareto rule.** Target the ~20% of features that unblock ~80% of the examples and conformance tests first. Edge cases and full spec compliance are explicitly deferred but must be documented in the task notes — never silently ignored.
 3. **Work example-to-example.** Prioritize gaps based on what the next failing example actually needs, rather than implementing features in abstract spec order.
 4. **Document deferrals.** Every postponed feature gets a note or a dedicated follow-up task so it is not forgotten.
@@ -142,18 +142,20 @@ The HIR is intentionally designed to make both interpretation and future AOT com
 
 | Crate | Purpose |
 |-------|---------|
-| `swc_common`, `swc_ecma_parser`, `swc_ecma_ast`, `swc_atoms` | Parse TS/JS/TSX source via swc. |
-| `serde`, `serde_json` | JSON serialization for built-ins and bridge data; HIR caching for AOT. |
+| `swc_common`, `swc_ecma_parser`, `swc_ecma_ast`, `swc_ecma_transforms_*`, `swc_atoms` | Parse, strip TypeScript, transform JSX, and lower TS/JS/TSX via swc. |
+| `serde`, `serde_json` | JSON serialization for built-ins and bridge data; HIR caching for AOT. `serde_json` is the only allowed JSON engine. |
 | `urlencoding` | `encodeURIComponent` / `decodeURIComponent`. |
 | `tracing` | Logging. |
-| `thiserror` / `miette` / `ariadne` | Structured errors and rich source diagnostics. |
+| `thiserror` | All runtime error enums. |
+| `miette` / `ariadne` | Rich source diagnostics with file/line/column and snippets. |
 | `cranelift` / `cranelift-module` / `cranelift-object` / `cranelift-jit` | Future AOT/JIT code generation (preferred over LLVM for size and speed of compilation). |
 | `inkwell` | Alternative LLVM bindings if Cranelift is insufficient later. |
-| `lasso` / `string-interner` | String interning for property names and identifiers. |
-| `indexmap` | Ordered object property maps with deterministic iteration. |
+| `lasso` | String interning for property names and identifiers (single-threaded `Rodeo`, multi-threaded `ThreadedRodeo`). |
+| `indexmap` | Ordered object property maps and Map/Set iteration order. |
 | `bumpalo` | Arena allocation for short-lived HIR nodes, frames, and render trees. |
-| `regress` / `regex` | ECMAScript regex engine. |
+| `regress` | Pure-Rust ECMAScript regex engine; the only allowed regex engine. |
 | `num-bigint` / `rust_decimal` | `BigInt` and decimal arithmetic. |
+| `rustc-hash` / `foldhash` | Fast `HashMap`/`HashSet` for integer (atom) keys. |
 
 The value model currently uses `std::collections::HashMap`. The ordered-map/string-interning/bigint crates discussed earlier are not wired in yet; they can be adopted later if performance or enumeration-order correctness becomes a problem.
 
