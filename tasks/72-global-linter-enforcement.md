@@ -1,3 +1,5 @@
+> **Status:** enforced. The build now fails until the listed violations are fixed.
+
 # Task 72: Enforce linter rules on every `*.rs` file
 
 ## Goal
@@ -10,21 +12,27 @@ The build script enforces the project limits on every Rust source file in the wo
 - **Function length:** max 40 lines.
 - **Cyclomatic complexity:** max 10.
 
-## Scope
+## Implementation
 
-- All `*.rs` files under the repository root are linted.
+- `build.rs` uses `syn` to parse every `*.rs` file in the workspace.
 - Skipped directories: `.git/`, `target/`, `node_modules/`, `dist/`, and the conformance submodules `tests/test262/` and `tests/typescript/`.
-- `build.rs` itself is linted and must comply with the same rules.
+- `#[allow(file_length)]`, `#[allow(clippy::function_length)]`, `#[allow(clippy::complexity)]`, `#[allow(unknown_lints)]`, etc. are **not honored**.
+- `build.rs` itself is also linted and must comply with the same rules.
 
-## No opt-outs
+## Current violations (as of latest run)
 
-- `#[allow(file_length)]`, `#[allow(clippy::function_length)]`, `#[allow(clippy::complexity)]`, `#[allow(unknown_lints)]`, and similar attributes are **not honored** by the build linter.
-- Files that currently exceed the limits will cause `cargo check` / `cargo build` to fail until they are refactored or split.
+`cargo check` currently reports **48 files scanned**, with the following categories of violations:
+
+- **File length:** `builtins.rs` (1061), `interpreter.rs` (1022), `lower.rs` (977), `src/bridge/ffi.rs` (565), `src/main.rs` (633).
+- **Function length:** multiple functions in `builtins.rs`, `interpreter.rs`, `lower.rs`, `src/bridge_reg.rs`, `src/main.rs`, `xtask/src/main.rs`, and several test files exceed 40 lines.
+- **Complexity:** multiple functions exceed complexity 10, especially `register_builtins`, `eval_expression`, `lower_expr`, and `main`.
+
+Run `cargo check` for the full, exact list.
 
 ## Fixing violations
 
 - Refactor oversized files into smaller modules.
-- Split long functions into helper functions that each do one thing.
+- Split long functions into helpers that each do one thing.
 - Reduce complexity by extracting early returns, helper functions, or match arms.
 - Do not add new `#[allow(...)]` attributes to bypass the linter.
 
@@ -35,4 +43,4 @@ cargo check
 cargo check -p quench-runtime
 ```
 
-If the build fails, the error message lists every violating file with the rule and measured value.
+The build will succeed only when all violations are resolved.
