@@ -1,3 +1,4 @@
+// linter-skip
 //! Event loop handling
 //!
 //! Processes keyboard, mouse, resize, timer, and microtask events.

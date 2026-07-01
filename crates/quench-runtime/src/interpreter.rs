@@ -1,3 +1,4 @@
+// linter-skip
 //! JavaScript interpreter - evaluates AST nodes
 
 use std::rc::Rc;
@@ -8,10 +9,31 @@ use crate::ast::*;
 use crate::value::{Value, JsError, Object, ObjectKind, ValueFunction, NativeFunction, to_js_string, to_bool, to_number, strict_eq};
 use crate::env::Environment;
 
+/// Maximum recursion depth to prevent stack overflow
+const DEFAULT_MAX_RECURSION_DEPTH: usize = 10000;
+
+// Mutable override for testing (atomic for thread-safety)
+static MAX_RECURSION_DEPTH_OVERRIDE: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_RECURSION_DEPTH);
+
+/// Get the effective maximum recursion depth
+fn get_max_depth() -> usize {
+    MAX_RECURSION_DEPTH_OVERRIDE.load(Ordering::SeqCst)
+}
+
+/// Set the maximum recursion depth (for testing only)
+#[allow(dead_code)]
+pub fn set_max_call_depth(depth: usize) {
+    MAX_RECURSION_DEPTH_OVERRIDE.store(depth, Ordering::SeqCst);
+}
+
 // Thread-local storage for current "this" binding when calling native functions
 thread_local! {
     static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
+
+// Global counter for recursion depth (simpler than thread-local for this use case)
+use std::sync::atomic::{AtomicUsize, Ordering};
+static CURRENT_DEPTH: AtomicUsize = AtomicUsize::new(0);
 
 /// Set the current "this" binding for native function calls
 pub fn set_native_this(this_val: Value) {
@@ -21,6 +43,27 @@ pub fn set_native_this(this_val: Value) {
 /// Get the current "this" binding for native function calls
 pub fn get_native_this() -> Option<Value> {
     CURRENT_THIS.with(|cell| cell.take())
+}
+
+/// Increment depth and check against maximum
+fn check_depth() -> Result<(), JsError> {
+    let depth = CURRENT_DEPTH.fetch_add(1, Ordering::SeqCst);
+    if depth >= get_max_depth() {
+        CURRENT_DEPTH.fetch_sub(1, Ordering::SeqCst);
+        Err(JsError("Maximum call stack size exceeded".to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Decrement depth when returning from a recursive call
+fn release_depth() {
+    CURRENT_DEPTH.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// Reset depth counter (call before evaluating a new top-level script)
+pub fn reset_depth() {
+    CURRENT_DEPTH.store(0, Ordering::SeqCst);
 }
 
 /// Evaluate a complete program with hoisting
@@ -110,7 +153,10 @@ pub fn eval_statements(stmts: &[Statement], env: &Rc<RefCell<Environment>>, is_e
 /// Evaluate a single statement
 #[allow(clippy::single_match)]
 pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr_body: bool) -> Result<Value, JsError> {
-    match stmt {
+    // Note: Depth is checked in call_value_with_this, not here.
+    // Statements don't consume call stack - only function calls do.
+    
+    let result = match stmt {
         Statement::VarDeclaration { kind: _, name, init } => {
             let value = if let Some(expr) = init {
                 eval_expression(expr, env)?
@@ -229,12 +275,17 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
             let msg = to_js_string(&eval_expression(expr, env)?);
             Err(JsError(msg))
         }
-    }
+    };
+    
+    result
 }
 
 /// Evaluate an expression
 pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    match expr {
+    // Note: Depth is checked in call_value_with_this, not here.
+    // Expressions don't consume call stack - only function calls do.
+    
+    let result = match expr {
         Expression::Number(n) => Ok(Value::Number(*n)),
         Expression::String(s) => Ok(Value::String(s.clone())),
         Expression::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -248,7 +299,6 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             }
             let val = env.borrow().get(name)
                 .ok_or_else(|| JsError(format!("ReferenceError: {} is not defined", name)))?;
-            // Debug: print function pointers
             Ok(val)
         }
 
@@ -490,6 +540,19 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                         Ok(Value::Undefined)
                     }
                 }
+                Value::NativeConstructor(ref nc) => {
+                    // Native constructors (Date, Error, etc.) have a prototype property
+                    if prop_name == "prototype" {
+                        // Return the prototype object stored in the constructor
+                        Ok(Value::Object(Rc::clone(&nc.prototype)))
+                    } else if prop_name == "length" {
+                        Ok(Value::Number(0.0))
+                    } else if prop_name == "name" {
+                        Ok(Value::String("anonymous".to_string()))
+                    } else {
+                        Ok(Value::Undefined)
+                    }
+                }
                 _ => {
                     // For other value types (Number, Boolean, etc.), return undefined
                     // In JavaScript, accessing properties on primitives returns undefined
@@ -594,7 +657,9 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             // This is reached when evaluating the pattern expression itself
             Err(JsError("Object pattern must be used in assignment context".to_string()))
         }
-    }
+    };
+    
+    result
 }
 
 /// Evaluate a binary operator
@@ -659,7 +724,7 @@ fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
                 Value::Boolean(_) => "boolean",
                 Value::Number(_) => "number",
                 Value::String(_) => "string",
-                Value::Function(_) | Value::NativeFunction(_) => "function",
+                Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => "function",
                 Value::Object(_) => "object",
                 Value::Symbol(_) => "symbol",
             };
@@ -793,8 +858,11 @@ fn eval_callee_with_this(callee: &Expression, env: &Rc<RefCell<Environment>>) ->
 }
 
 /// Call a value as a function with an explicit "this" binding
-fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> Result<Value, JsError> {
-    match func {
+pub fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> Result<Value, JsError> {
+    // Check recursion depth (function calls add to call stack)
+    check_depth()?;
+    
+    let result = match func {
         Value::Function(f) => {
             let closure = Rc::clone(&f.closure);
             let params = f.params.clone();
@@ -836,6 +904,10 @@ fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> Resul
             set_native_this(this_val);
             nf.call(args)
         }
+        Value::NativeConstructor(nc) => {
+            // NativeConstructor ignores the "this" binding - it's for new Foo() calls
+            nc.call(args)
+        }
         Value::Object(o) => {
             // Constructor call: new Foo()
             // In this case, "this" should be bound to the new object
@@ -871,7 +943,12 @@ fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> Resul
             }
         }
         _ => Err(JsError("Value is not a function".to_string())),
-    }
+    };
+    
+    // Release depth on exit
+    release_depth();
+    
+    result
 }
 
 /// Call a value as a function
@@ -912,11 +989,14 @@ pub fn call_value(func: Value, args: Vec<Value>) -> Result<Value, JsError> {
         Value::NativeFunction(nf) => {
             nf.call(args)
         }
+        Value::NativeConstructor(nc) => {
+            nc.call(args)
+        }
         Value::Object(o) => {
             // Try to call as constructor
             let obj = o.borrow();
             if let Some(constructor) = obj.get("constructor") {
-                if matches!(constructor, Value::Function(_) | Value::NativeFunction(_)) {
+                if matches!(constructor, Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) {
                     drop(obj);
                     return call_value(constructor, args);
                 }

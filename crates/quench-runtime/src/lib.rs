@@ -30,6 +30,8 @@ pub mod lower;
 pub mod swc_parse;
 pub mod builtins;
 pub mod host;
+pub mod conformance;
+pub mod test262;
 
 use std::collections::HashMap;
 use std::fs;
@@ -54,6 +56,7 @@ pub struct Context {
 impl Context {
     /// Create a new runtime context
     pub fn new() -> Result<Self, JsError> {
+        interpreter::reset_depth(); // Reset depth for new context
         let env = Environment::new();
         let mut ctx = Context {
             env: Rc::new(RefCell::new(env)),
@@ -90,6 +93,7 @@ impl Context {
 
     /// Evaluate a JavaScript source string
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
+        interpreter::reset_depth(); // Reset depth for each top-level eval
         let program = self.parse(source)?;
         interpreter::eval_program(&program, &mut self.env)
     }
@@ -215,5 +219,35 @@ mod tests {
         let ctx = Context::new().unwrap();
         let console = ctx.get_global("console");
         assert!(console.is_some());
+    }
+
+    #[test]
+    fn test_global_this_assignment() {
+        let mut ctx = Context::new().unwrap();
+        // Test that globalThis exists and is an object
+        let result = ctx.eval("typeof globalThis");
+        assert!(result.is_ok(), "typeof globalThis failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("object".to_string()));
+        
+        // Test that we can assign to globalThis
+        let result = ctx.eval("globalThis.testProp = 42");
+        assert!(result.is_ok(), "globalThis assignment failed: {:?}", result);
+        
+        // Test that we can read back the property
+        let result = ctx.eval("globalThis.testProp");
+        assert!(result.is_ok(), "globalThis read failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::Number(42.0));
+    }
+
+    #[test]
+    fn test_date_prototype_access() {
+        let mut ctx = Context::new().unwrap();
+        // Test Date.prototype access
+        let result = ctx.eval("Date.prototype");
+        assert!(result.is_ok(), "Date.prototype failed: {:?}", result);
+        
+        // Test Date.prototype.toLocaleTimeString
+        let result = ctx.eval("Date.prototype.toLocaleTimeString");
+        assert!(result.is_ok(), "Date.prototype.toLocaleTimeString failed: {:?}", result);
     }
 }

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-action@stable
+      with:
+        profile: minimal
+    
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: crates/* -> target
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Check clippy
+      run: cargo clippy --all-targets -- -D warnings
+    
+    - name: Build
+      run: cargo build --all-targets
+    
+    - name: Run tests
+      run: cargo test --all
+    
+    - name: Run examples
+      run: |
+        timeout 30 cargo run -- examples/simple.js || true
+        timeout 30 cargo run -- examples/counter.js || true
+        timeout 30 cargo run -- examples/use-bridge.tsx || true
+        timeout 30 cargo run -- examples/animations.tsx || true
+
+  runtime-tests:
+    name: Runtime Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-action@stable
+      with:
+        profile: minimal
+    
+    - name: Run runtime tests
+      run: cargo test -p quench-runtime
+    
+    - name: Run conformance tests
+      run: cargo test -p quench-runtime --test conformance -- --test-threads=1

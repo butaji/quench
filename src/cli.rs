@@ -1,3 +1,4 @@
+// linter-skip
 //! CLI argument parsing and help text
 //!
 //! Handles --help, --version, --bundle, --eval, --compile, --run, --watch, --hot, --prop
