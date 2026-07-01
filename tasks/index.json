@@ -489,6 +489,13 @@
       "file": "tasks/69-typescript-conformance-harness.md",
       "status": "pending",
       "notes": "Replace Node-based scripts/run_typescript_runner.sh with Rust harness. Phase 1: baseline-JS mode with native emit helpers. Phase 2: source-direct TS via Context::eval_ts. Unified with test262 harness."
+    },
+    {
+      "id": "70",
+      "title": "Native support for .ts/.js/.tsx/.jsx and React optimizations",
+      "file": "tasks/70-native-ts-jsx-support.md",
+      "status": "pending",
+      "notes": "No esbuild/npx cross-compilation. swc transforms strip TS and lower JSX to ink.createElement/ink.Fragment. Add eval_file dispatch by extension. Regression tests for native extensions."
     }
   ]
 }
