@@ -168,3 +168,52 @@ fn test_typescript_specific_cases() {
         }
     }
 }
+
+/// Test that the isolation mechanism works - run a small subset with isolation
+/// This test is always enabled to verify the isolation doesn't break normal operation
+#[test]
+fn test_conformance_isolation_with_small_subset() {
+    use quench_runtime::conformance::report::Outcome;
+    
+    let root = match get_typescript_root() {
+        Some(r) => r,
+        None => {
+            eprintln!("TypeScript submodule not found. Run: git submodule update --init tests/typescript");
+            return;
+        }
+    };
+    
+    let conformance_root = root.join("tests").join("cases").join("conformance");
+    
+    if !conformance_root.exists() {
+        eprintln!("Conformance directory not found: {:?}", conformance_root);
+        return;
+    }
+    
+    // Run only 5 tests to verify isolation works
+    let report = typescript::run_suite(&conformance_root, RunMode::BaselineJs, 0, Some(5))
+        .expect("suite run failed");
+    
+    // Verify report has correct structure
+    assert!(report.total > 0, "Should have processed some tests");
+    assert_eq!(report.results.len(), report.total);
+    
+    // All outcomes should be valid (Pass, Fail, or Skip)
+    for result in &report.results {
+        match &result.outcome {
+            Outcome::Pass => {}
+            Outcome::Fail { error } => {
+                // Fail is OK - the runtime may not support all features
+                // Just verify it's not empty
+                assert!(!error.is_empty(), "Fail outcome should have error message");
+            }
+            Outcome::Skip { reason } => {
+                // Skip is OK - some tests are not applicable
+                assert!(!reason.is_empty(), "Skip outcome should have reason");
+            }
+        }
+    }
+    
+    eprintln!("Isolation test passed: {} total, {} passed, {} failed, {} skipped",
+        report.total, report.passed, report.failed, report.skipped);
+}

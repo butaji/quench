@@ -165,3 +165,67 @@ fn test_native_functions_above_recursion_limit() {
     set_max_call_depth(1000);
     reset_depth();
 }
+
+/// Test that depth reset works correctly after multiple contexts
+/// This verifies the isolation mechanism resets state properly
+#[serial]
+#[test]
+fn test_depth_reset_after_context_creation() {
+    use std::thread;
+    use std::sync::mpsc;
+    
+    // Set a low depth limit
+    set_max_call_depth(5);
+    
+    // Test 1: First thread - should fail with deep recursion
+    let (tx1, rx1) = mpsc::channel();
+    let handle1 = thread::spawn(move || {
+        reset_depth();
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function f(n) { if (n > 0) return f(n-1); return 1; }
+            f(10);
+        "#);
+        tx1.send(result.is_err()).unwrap();
+    });
+    
+    let first_fails = rx1.recv().unwrap();
+    handle1.join().unwrap();
+    assert!(first_fails, "First thread should fail with depth=5 and f(10)");
+    
+    // Test 2: Second thread - should also fail with same depth
+    let (tx2, rx2) = mpsc::channel();
+    let handle2 = thread::spawn(move || {
+        reset_depth();
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function g(n) { if (n > 0) return g(n-1); return 1; }
+            g(10);
+        "#);
+        tx2.send(result.is_err()).unwrap();
+    });
+    
+    let second_fails = rx2.recv().unwrap();
+    handle2.join().unwrap();
+    assert!(second_fails, "Second thread should also fail with depth=5 and g(10)");
+    
+    // Test 3: Shallow recursion should still work
+    let (tx3, rx3) = mpsc::channel();
+    let handle3 = thread::spawn(move || {
+        reset_depth();
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function h(n) { if (n > 0) return h(n-1); return 1; }
+            h(2);
+        "#);
+        tx3.send(result.is_ok()).unwrap();
+    });
+    
+    let third_succeeds = rx3.recv().unwrap();
+    handle3.join().unwrap();
+    assert!(third_succeeds, "Shallow recursion h(2) should succeed with depth=5");
+    
+    // Reset to default
+    set_max_call_depth(1000);
+    reset_depth();
+}
