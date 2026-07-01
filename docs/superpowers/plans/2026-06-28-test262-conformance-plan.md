@@ -6,7 +6,7 @@
 
 **Goal:** Add the official test262 ECMAScript conformance suite as a submodule and create a harness that runs selected test262 tests against `quench-runtime`, reports results, and drives regression tests for bugs found.
 
-**Architecture:** A new integration test `crates/quench-runtime/tests/test262.rs` uses a helper module (`src/test262/`) to walk the submodule, parse frontmatter, inject minimal harness helpers, evaluate tests through `Context::eval`, and write a JSON report. Tests are skipped by feature/flag until the runtime supports them.
+**Architecture:** A new integration test `crates/quench-runtime/tests/test262.rs` uses a helper module (`src/test262/`) to walk the submodule, parse frontmatter, register Rust native harness helpers, evaluate tests through `Context::eval`, and write a JSON report. Tests are skipped by feature/flag until the runtime supports them. No JS helper strings are injected.
 
 **Tech Stack:** Rust, `serde_yaml`, `walkdir`, `quench-runtime`, test262 harness files.
 
@@ -163,10 +163,12 @@ git commit -m "feat(test262): parse test262 frontmatter metadata"
 
 ---
 
-## Task 3: Build minimal harness helpers
+## Task 3: Build minimal harness helpers as Rust native functions
 
 **Files:**
 - Create: `crates/quench-runtime/src/test262/harness.rs`
+
+All harness helpers are Rust native functions. No JS helper strings are injected.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -179,7 +181,7 @@ use quench_runtime::test262::harness::inject_harness;
 #[test]
 fn harness_assert_same_value_passes() {
     let mut ctx = Context::new().unwrap();
-    inject_harness(&mut ctx).unwrap();
+    inject_harness(&mut ctx);
     let result = ctx.eval("assert.sameValue(1 + 1, 2, 'addition');");
     assert!(result.is_ok(), "{result:?}");
 }
@@ -187,7 +189,7 @@ fn harness_assert_same_value_passes() {
 #[test]
 fn harness_assert_same_value_fails() {
     let mut ctx = Context::new().unwrap();
-    inject_harness(&mut ctx).unwrap();
+    inject_harness(&mut ctx);
     let result = ctx.eval("assert.sameValue(1 + 1, 3, 'addition');");
     assert!(result.is_err());
 }
@@ -201,38 +203,114 @@ cargo test -p quench-runtime --test test262_harness -- --nocapture
 
 Expected: FAIL with "assert is not defined".
 
-- [ ] **Step 3: Implement harness injection**
+- [ ] **Step 3: Implement native harness helpers**
 
 Create `crates/quench-runtime/src/test262/harness.rs`:
 
 ```rust
-use crate::{Context, Value, JsError};
+use crate::{Context, Value, JsError, Object, ObjectKind};
 
-pub const HARNESS_ASSERT: &str = r#"
-function Test262Error(message) { this.message = message || ""; }
-function $DONOTEVALUATE() { throw new Test262Error("This statement should not be evaluated."); }
-function assert(mustBeTrue, message) { if (mustBeTrue !== true) throw new Test262Error(message); }
-assert.sameValue = function (a, b, message) { if (a !== b) throw new Test262Error(message); };
-assert.notSameValue = function (a, b, message) { if (a === b) throw new Test262Error(message); };
-assert.throws = function (ExpectedError, fn, message) {
-  try { fn(); } catch (e) {
-    if (e instanceof ExpectedError || String(e).includes(ExpectedError.name)) return;
-    throw new Test262Error(message);
-  }
-  throw new Test262Error(message);
-};
-"#;
+fn test262_error(args: Vec<Value>) -> Result<Value, JsError> {
+    let message = args.get(0).and_then(|v| v.to_js_string()).unwrap_or_default();
+    let mut obj = Object::new();
+    obj.set("message".to_string(), Value::String(message));
+    Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(obj))))
+}
 
-pub const HARNESS_DONE: &str = r#"
-function $DONE(error) { if (error) throw error; }
-"#;
+fn donotevaluate(_args: Vec<Value>) -> Result<Value, JsError> {
+    Err(JsError("Test262: This statement should not be evaluated.".to_string()))
+}
 
-pub fn inject_harness(ctx: &mut Context) -> Result<(), JsError> {
-    ctx.eval(HARNESS_ASSERT)?;
-    ctx.eval(HARNESS_DONE)?;
-    Ok(())
+fn assert_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let must_be_true = args.get(0).map(|v| v.to_bool()).unwrap_or(false);
+    if !must_be_true {
+        let message = args.get(1).and_then(|v| v.to_js_string()).unwrap_or_default();
+        return Err(JsError(format!("Assertion failed: {message}")));
+    }
+    Ok(Value::Undefined)
+}
+
+fn assert_same_value(args: Vec<Value>) -> Result<Value, JsError> {
+    let a = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !Value::strict_eq(&a, &b) {
+        let message = args.get(2).and_then(|v| v.to_js_string()).unwrap_or_default();
+        return Err(JsError(format!("sameValue failed: {message}")));
+    }
+    Ok(Value::Undefined)
+}
+
+fn assert_not_same_value(args: Vec<Value>) -> Result<Value, JsError> {
+    let a = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if Value::strict_eq(&a, &b) {
+        let message = args.get(2).and_then(|v| v.to_js_string()).unwrap_or_default();
+        return Err(JsError(format!("notSameValue failed: {message}")));
+    }
+    Ok(Value::Undefined)
+}
+
+fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
+    let expected_name = args.get(0).and_then(|v| v.to_js_string()).unwrap_or_default();
+    let fn_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = args.get(2).and_then(|v| v.to_js_string()).unwrap_or_default();
+    match fn_value {
+        Value::Function(_) | Value::NativeFunction(_) => {
+            // call fn_value with no args and no this
+            let result = crate::call_value(fn_value, vec![]);
+            match result {
+                Err(e) => {
+                    let err_msg = format!("{e:?}");
+                    if err_msg.contains(&expected_name) {
+                        Ok(Value::Undefined)
+                    } else {
+                        Err(JsError(format!("assert.throws: expected {expected_name} but got {err_msg}: {message}")))
+                    }
+                }
+                Ok(_) => Err(JsError(format!("assert.throws: expected {expected_name} but no exception thrown: {message}"))),
+            }
+        }
+        _ => Err(JsError(format!("assert.throws: expected function but got {fn_value:?}: {message}"))),
+    }
+}
+
+fn done(args: Vec<Value>) -> Result<Value, JsError> {
+    if let Some(err) = args.get(0) {
+        if !matches!(err, Value::Undefined) {
+            return Err(JsError(format!("$DONE received error: {err:?}")));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn print(args: Vec<Value>) -> Result<Value, JsError> {
+    let msg = args.get(0).and_then(|v| v.to_js_string()).unwrap_or_default();
+    eprintln!("[test262] {msg}");
+    Ok(Value::Undefined)
+}
+
+pub fn inject_harness(ctx: &mut Context) {
+    ctx.set_global("Test262Error".to_string(), Value::NativeFunction(NativeFunction { name: "Test262Error".to_string(), func: test262_error }));
+    ctx.set_global("$DONOTEVALUATE".to_string(), Value::NativeFunction(NativeFunction { name: "$DONOTEVALUATE".to_string(), func: donotevaluate }));
+    let assert_obj = {
+        let mut obj = Object::new();
+        obj.set("sameValue".to_string(), Value::NativeFunction(NativeFunction { name: "assert.sameValue".to_string(), func: assert_same_value }));
+        obj.set("notSameValue".to_string(), Value::NativeFunction(NativeFunction { name: "assert.notSameValue".to_string(), func: assert_not_same_value }));
+        obj.set("throws".to_string(), Value::NativeFunction(NativeFunction { name: "assert.throws".to_string(), func: assert_throws }));
+        Value::Object(std::rc::Rc::new(std::cell::RefCell::new(obj)))
+    };
+    ctx.set_global("assert".to_string(), Value::NativeFunction(NativeFunction { name: "assert".to_string(), func: assert_impl }));
+    // attach properties to the assert function object if the runtime supports it
+    // otherwise expose helper globals below
+    ctx.set_global("assert_sameValue".to_string(), Value::NativeFunction(NativeFunction { name: "assert.sameValue".to_string(), func: assert_same_value }));
+    ctx.set_global("assert_notSameValue".to_string(), Value::NativeFunction(NativeFunction { name: "assert.notSameValue".to_string(), func: assert_not_same_value }));
+    ctx.set_global("assert_throws".to_string(), Value::NativeFunction(NativeFunction { name: "assert.throws".to_string(), func: assert_throws }));
+    ctx.set_global("$DONE".to_string(), Value::NativeFunction(NativeFunction { name: "$DONE".to_string(), func: done }));
+    ctx.set_global("print".to_string(), Value::NativeFunction(NativeFunction { name: "print".to_string(), func: print }));
 }
 ```
+
+Note: the exact `Value`/`NativeFunction` constructors must match the runtime's current API; adjust imports as needed.
 
 - [ ] **Step 4: Update module entry**
 

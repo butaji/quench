@@ -33,7 +33,7 @@ The harness will:
 
 1. Parse each test's `/*--- ... ---*/` frontmatter with `serde_yaml`.
 2. Decide whether to run, skip, or expect failure based on `flags`, `features`, and `negative`.
-3. Load required harness helpers from `tests/test262/harness/` in declaration order.
+3. Register all required harness helpers as **Rust native functions** in the `Context` (no injected JS helper strings). The `includes` list is checked only to ensure no unsupported helper is required.
 4. Prepend `"use strict";` for `onlyStrict` tests (and record as expected failure until strict mode works).
 5. Call `Context::eval()` and compare the outcome to the expected outcome.
 6. Write `target/test262_report.json` with per-test results.
@@ -53,17 +53,22 @@ The harness will:
 | Negative runtime | `ctx.eval(test)` returns `Err` whose message contains `negative.type`. | Message contains expected type. |
 | `onlyStrict` | Same as normal/negative, but source wrapped in `"use strict";`. | Initially recorded as expected failure. |
 
-## Built-in harness helpers (minimal)
+## Built-in harness helpers (Rust native functions)
 
-```js
-function Test262Error(message) { this.message = message || ""; }
-function $DONOTEVALUATE() { throw new Test262Error("This statement should not be evaluated."); }
-function assert(mustBeTrue, message) { if (mustBeTrue !== true) throw new Test262Error(message); }
-assert.sameValue = function (a, b, message) { if (a !== b) throw new Test262Error(message); };
-assert.notSameValue = function (a, b, message) { if (a === b) throw new Test262Error(message); };
-assert.throws = function (ExpectedError, fn, message) { try { fn(); } catch (e) { if (e instanceof ExpectedError || String(e).includes(ExpectedError.name)) return; throw new Test262Error(message); } throw new Test262Error(message); };
-function $DONE(error) { if (error) throw error; }
-```
+All harness helpers are implemented in Rust and registered as native globals in the `Context`. No JS helper strings are injected.
+
+Required native globals:
+
+- `Test262Error(message)` — constructor returning an error object.
+- `$DONOTEVALUATE()` — throws a `Test262Error`.
+- `assert(mustBeTrue, message)` — throws if `mustBeTrue` is not `true`.
+- `assert.sameValue(a, b, message)` — strict equality check.
+- `assert.notSameValue(a, b, message)` — strict inequality check.
+- `assert.throws(ExpectedError, fn, message)` — calls `fn()` and verifies the thrown error matches the expected constructor/name.
+- `$DONE(error)` — no-op for synchronous tests; throws if an error is passed.
+- `print(msg)` — no-op or captured to stderr.
+
+These are registered via `Context::set_global(name, Value::NativeFunction(...))` or `Context::register_native`.
 
 ## Skip policy
 
