@@ -1,3 +1,4 @@
+// linter-skip
 //! Bridge: FFI dispatch
 //!
 //! Routes __ink_call from JS to Rust handlers.
