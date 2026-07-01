@@ -13,8 +13,10 @@ Use sub-agents to work in parallel.
 3. **Work example-to-example.** Prioritize gaps based on what the next failing example actually needs, rather than implementing features in abstract spec order.
 4. **Document deferrals.** Every postponed feature gets a note or a dedicated follow-up task so it is not forgotten.
 5. **Clear diagnostics.** Every parser, lowering, runtime, and bridge error must tell the user what went wrong, where (file/line/column), and what to do about it. No silent drops, no raw panics, no obscure internal names exposed to users.
-6. **Test-driven development.** Every bug fix, feature, and refactor starts with a failing unit test. We follow the red-green-refactor cycle: write the test, watch it fail for the expected reason, write the minimal code to pass, then refactor while keeping tests green. No production code without a failing test first.
-7. **Comprehensive unit-test coverage.** Runtime behavior must be pinned with unit tests in `crates/quench-runtime/tests/` (and `tests/` for the main crate) before it is considered done. Integration tests run the example apps; unit tests exercise edge cases that the examples do not hit.
+6. **No cross-compilation.** `.ts/.js/.tsx/.jsx` source is parsed and executed natively by `quench-runtime` using swc transforms. The main binary does not shell out to `esbuild`, `tsc`, `babel`, or any external compiler.
+
+7. **Test-driven development.** Every bug fix, feature, and refactor starts with a failing unit test. We follow the red-green-refactor cycle: write the test, watch it fail for the expected reason, write the minimal code to pass, then refactor while keeping tests green. No production code without a failing test first.
+8. **Comprehensive unit-test coverage.** Runtime behavior must be pinned with unit tests in `crates/quench-runtime/tests/` (and `tests/` for the main crate) before it is considered done. Integration tests run the example apps; unit tests exercise edge cases that the examples do not hit.
 
 ## Test-driven development process
 
@@ -104,7 +106,7 @@ Allowed glue points:
 The current architecture is a good fit for replacing `rquickjs` with a minimal, Ink-focused runtime, and it is designed to evolve into an AOT-compilable engine:
 
 - **Dedicated crate (`crates/quench-runtime/`)** keeps the engine isolated from the main binary and bridge.
-- **swc-based parser/lowering** avoids writing a lexer/parser and gives us TS/JS/TSX support for free.
+- **Native swc-based parser/lowering** avoids writing a lexer/parser and executes `.ts/.js/.tsx/.jsx` directly via swc transforms. No external cross-compilation (`esbuild`/`npx`) is used; JSX is lowered to `ink.createElement`/`ink.Fragment` inside the runtime.
 - **HIR layer** — the lowerer produces a single high-level, language-agnostic, **functional and reactive** IR. It is consumed by the interpreter today and can be consumed by a future AOT compiler without re-parsing source.
 - **Generic host-function API** lets `src/main.rs` register bridge closures without `quench-runtime` depending on `quench` internals.
 - **Shared prototype objects** (started for `Array.prototype`) are the right way to implement JS prototype semantics.
