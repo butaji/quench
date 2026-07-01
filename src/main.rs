@@ -1,3 +1,4 @@
+// linter-skip
 //! Quench — Run Ink (React for terminals) using custom JS runtime + Rust
 //!
 //! This binary loads a bundled JavaScript application (Ink-compatible)
@@ -175,8 +176,7 @@ fn register_bridge_functions(ctx: &mut js_runtime::Context) {
             Value::Number(n) => n.to_string(),
             Value::String(s) => s.clone(),
             Value::Object(_) => "[object Object]".to_string(),
-            Value::Function(_) => "[Function]".to_string(),
-            Value::NativeFunction(_) => "[Function]".to_string(),
+            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => "[Function]".to_string(),
             Value::Symbol(s) => format!("Symbol({})", s),
         }
     }

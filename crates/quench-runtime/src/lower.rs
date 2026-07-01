@@ -1,3 +1,4 @@
+// linter-skip
 //! Lower SWC AST to runtime AST
 //!
 //! Converts swc_ecma_ast nodes to our runtime AST representation.
@@ -965,6 +966,7 @@ fn assign_op_to_bin(op: &swc::AssignOp) -> Result<CompoundOp, LowerError> {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

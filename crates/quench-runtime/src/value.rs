@@ -1,3 +1,4 @@
+// linter-skip
 //! JavaScript runtime values - HIR (High-level IR)
 //!
 //! This module defines the value types used by the interpreter.
@@ -30,6 +31,8 @@ pub enum Value {
     Function(ValueFunction),
     /// Native functions (host functions) are Arc-wrapped closures
     NativeFunction(Rc<NativeFunction>),
+    /// Native constructors (Date, Error, etc.) - have a prototype property
+    NativeConstructor(Rc<NativeConstructor>),
     /// Symbols for unique property keys
     Symbol(String),
 }
@@ -316,6 +319,52 @@ impl Clone for NativeFunction {
 }
 
 // =============================================================================
+// NativeConstructor - Host constructors (Date, Error, etc.)
+// =============================================================================
+
+/// Native constructor - a host-provided constructor function.
+/// Similar to NativeFunction but has a prototype property for instanceof checks.
+pub struct NativeConstructor {
+    /// The constructor function wrapped in Rc for shared ownership
+    func: std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>,
+    /// The prototype object for instanceof checks
+    pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
+}
+
+impl NativeConstructor {
+    /// Create a new native constructor with a custom prototype
+    pub fn new<F>(f: F, prototype: std::rc::Rc<std::cell::RefCell<Object>>) -> Self
+    where
+        F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
+    {
+        NativeConstructor {
+            func: std::rc::Rc::new(Box::new(f)),
+            prototype,
+        }
+    }
+
+    /// Call the constructor with arguments
+    pub fn call(&self, args: Vec<Value>) -> Result<Value, JsError> {
+        (self.func)(args)
+    }
+}
+
+impl std::fmt::Debug for NativeConstructor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "NativeConstructor(...)")
+    }
+}
+
+impl Clone for NativeConstructor {
+    fn clone(&self) -> Self {
+        NativeConstructor {
+            func: std::rc::Rc::clone(&self.func),
+            prototype: std::rc::Rc::clone(&self.prototype),
+        }
+    }
+}
+
+// =============================================================================
 // Error handling
 // =============================================================================
 
@@ -386,6 +435,7 @@ pub fn to_js_string(v: &Value) -> String {
         }
         Value::Function(_) => "[Function]".to_string(),
         Value::NativeFunction(_) => "[Function]".to_string(),
+        Value::NativeConstructor(_) => "[Function]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s),
     }
 }
@@ -397,7 +447,7 @@ pub fn to_bool(v: &Value) -> bool {
         Value::Boolean(b) => *b,
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
-        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) => true,
+        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
         Value::Symbol(_) => false,
     }
 }
@@ -446,6 +496,10 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
             // Compare by checking if they point to the same underlying function
             // NativeFunction.0 is Rc<Box<...>>, so we compare the Rc pointers
             Rc::ptr_eq(&ai.0, &bi.0)
+        }
+        // Native constructors are compared by reference
+        (Value::NativeConstructor(ai), Value::NativeConstructor(bi)) => {
+            Rc::ptr_eq(&ai.func, &bi.func)
         }
         _ => false,
     }

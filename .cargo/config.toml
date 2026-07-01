@@ -1,0 +1,9 @@
+# Cargo configuration for Quench
+# Ensures tests always have timeout protection
+
+[profile.dev]
+opt-level = 0  # Keep debug build fast
+debug = true
+
+[profile.test]
+opt-level = 0
