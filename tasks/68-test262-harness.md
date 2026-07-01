@@ -6,11 +6,13 @@ Add the official ECMAScript test262 suite (`https://github.com/tc39/test262`) as
 
 ## Design
 
-See `docs/superpowers/specs/2026-06-28-test262-conformance-design.md`.
+- `docs/superpowers/specs/2026-06-28-test262-conformance-design.md` (test262-specific)
+- `docs/superpowers/specs/2026-06-28-unified-conformance-harness-design.md` (combined test262 + TypeScript)
 
 ## Implementation plan
 
-See `docs/superpowers/plans/2026-06-28-test262-conformance-plan.md`.
+- `docs/superpowers/plans/2026-06-28-test262-conformance-plan.md` (test262-specific)
+- `docs/superpowers/plans/2026-06-28-unified-conformance-harness-plan.md` (combined)
 
 ## Scope (first phase)
 

@@ -481,7 +481,14 @@
       "title": "Add test262 submodule and conformance harness",
       "file": "tasks/68-test262-harness.md",
       "status": "pending",
-      "notes": "Add tc39/test262 submodule, build Rust harness with frontmatter parser, skip policy, JSON report, xtask wiring. Fix runtime bugs found with regression unit tests."
+      "notes": "Add tc39/test262 submodule, build Rust harness with frontmatter parser, skip policy, JSON report, xtask wiring. Fix runtime bugs found with regression unit tests. Unified with TypeScript harness in docs/superpowers/specs/2026-06-28-unified-conformance-harness-design.md."
+    },
+    {
+      "id": "69",
+      "title": "Run TypeScript submodule conformance from Rust",
+      "file": "tasks/69-typescript-conformance-harness.md",
+      "status": "pending",
+      "notes": "Replace Node-based scripts/run_typescript_runner.sh with Rust harness. Phase 1: baseline-JS mode with native emit helpers. Phase 2: source-direct TS via Context::eval_ts. Unified with test262 harness."
     }
   ]
 }
