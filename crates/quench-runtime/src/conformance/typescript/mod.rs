@@ -29,6 +29,7 @@ use baseline::{find_baseline, extract_js_from_baseline, split_units};
 use helpers::EMIT_HELPERS;
 
 /// Default timeout for each test case (30 seconds)
+#[allow(dead_code)]
 const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run a single test case in an isolated thread with timeout
@@ -152,19 +153,8 @@ pub fn run_suite(root: &Path, mode: RunMode, start: usize, limit: Option<usize>)
 /// Uses a thread to isolate crashes, preventing one test from crashing
 /// the entire harness.
 fn run_case(path: &Path, directives: &Directives, mode: RunMode) -> Outcome {
-    // Reset depth before running this test
-    reset_depth();
-    
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_baseline_isolated(path, directives)
-    }));
-    
-    match result {
-        Ok(outcome) => outcome,
-        Err(_) => Outcome::Fail { 
-            error: format!("Test case crashed: {}", path.display()) 
-        },
-    }
+    // Use the isolated version which runs in a spawned thread
+    run_case_isolated(path, directives, mode)
 }
 
 /// Run a single test case using the baseline JS with a fresh context
