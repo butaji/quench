@@ -197,25 +197,26 @@ For the current phase, focus only on interpreter-level optimizations and a clean
 
 ## Review findings
 
-Four five-round read-only reviews produced ranked lists of issues.
+Five five-round read-only reviews produced ranked lists of issues.
 
 - **First review (Task 26)** — architecture/HIR, parser/lowering, interpreter/value model, built-ins/host functions, bridge/compiler integration.
 - **Second review (Task 51)** — repeated after the first big implementation push, focusing on what still blocks end-to-end examples.
 - **Third review (Task 52)** — repeated after the next implementation push, focusing on remaining runtime correctness and architecture gaps.
 - **Fourth review (Task 58)** — repeated after the JSX/switch/deletion/export fixes landed, focusing on the remaining Promise, timer, hot-reload, and correctness gaps.
+- **Fifth review (Task 60)** — repeated after the iterative interpreter/stack-overflow fix, focusing on the remaining parser, lowering, scope, Promise, and integration gaps.
 
-The highest-impact blockers from the fourth review are:
+The highest-impact blockers from the fifth review are:
 
-1. **Promise `.then`/`.catch`/`all`/`race`/`finally` are broken or stubs**.
-2. **Microtasks are not drained correctly** — `__ink_enqueue_microtask` only sets a Rust flag; JS callbacks are never stored.
-3. **Native constructor prototypes are isolated from `Object.prototype`**.
-4. **Hot reload does not compile / `--hot` is disabled** by feature flag.
-5. **`__ink_set_timeout` JSON-stringifies function callbacks**, so timers never fire.
-6. **`setTimeout`/`setInterval` are non-functional stubs**.
-7. **Real mouse events are never received** — crossterm mouse capture is not enabled.
-8. **Assignment / compound-assignment / update re-evaluate the left-hand side** (`a[i++] += 1` uses the wrong index).
-9. **`Function.prototype.call`/`apply` semantics are broken**.
-10. **Object destructuring defaults/rest are ignored**, and lowering still silently swallows errors.
+1. **`==` and `!=` are lowered to strict equality**, breaking JS abstract equality.
+2. **Template literal interpolations are silently discarded**.
+3. **Spread elements are lowered incorrectly or rejected**.
+4. **Rest parameters are silently dropped**.
+5. **For-of/for-in with destructuring is rejected**.
+6. **Main parser entry only supports plain JS scripts**, blocking `.ts`/`.tsx`/JSX/modules.
+7. **Microtask queue is never drained at the JS layer**.
+8. **Hot reload rebuilds a context without bridge natives/config**.
+9. **Function-call scope leaks** because scopes are not popped on early return.
+10. **`typeof` on undeclared identifiers throws**, arrow functions bind their own `this`, and assignment to undeclared names silently creates local bindings.
 
 Fix Rank 1 and Rank 2 correctness issues before returning to HIR architecture work.
 
