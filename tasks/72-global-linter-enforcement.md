@@ -1,12 +1,14 @@
 > **Status:** enforced. The build now fails until the listed violations are fixed.
 
+> **Canonical rules are in `docs/linter-rules.md` (read-only).** This task tracks the implementation and cleanup work.
+
 # Task 72: Enforce linter rules on every `*.rs` file
 
 ## Goal
 
 The build script enforces the project limits on every Rust source file in the workspace. No `#[allow(...)]` attribute or other opt-out bypasses the linter. Any violation blocks the build.
 
-## Rules
+## Rules (see `docs/linter-rules.md`)
 
 - **File length:** max 500 lines.
 - **Function length:** max 40 lines.
