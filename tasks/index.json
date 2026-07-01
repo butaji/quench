@@ -481,14 +481,14 @@
       "title": "Add test262 submodule and conformance harness",
       "file": "tasks/68-test262-harness.md",
       "status": "completed",
-      "notes": "Added test262 submodule and full Rust harness: metadata.rs (frontmatter parsing), harness.rs (native helpers), runner.rs (skip policy, execution, reporting). 33 unit tests pass. xtask wired with test-test262 command. Documentation created in docs/test262.md."
+      "notes": "Harness runs. test262_expressions: total=435 passed=31 failed=31 skipped=373. Full language run (expressions+statements+builtins/Array) overflows stack on builtins/Array subset \u2014 needs runtime recursion fix or per-test isolation."
     },
     {
       "id": "69",
       "title": "Run TypeScript submodule conformance from Rust",
       "file": "tasks/69-typescript-conformance-harness.md",
       "status": "completed",
-      "notes": "TypeScript conformance harness implemented in crates/quench-runtime/src/conformance/. Supports baseline-JS mode. Added directive parsing, baseline lookup, skip rules, emit helpers. Integration test suite created. scripts/run_tests.sh updated."
+      "notes": "Harness runs. expressions subset: total=376 passed=131 failed=208 skipped=37 (34.8% pass). Full conformance sanity crashes with stack overflow on a case outside expressions \u2014 needs isolation of crashing test. Specific known cases pass."
     },
     {
       "id": "70",
@@ -510,6 +510,27 @@
       "file": "tasks/72-global-linter-enforcement.md",
       "status": "completed",
       "notes": "build.rs now walks the whole workspace and panics on any file/function/complexity violation. build.rs itself was refactored to comply. Remaining opt-out files tracked for gradual cleanup."
+    },
+    {
+      "id": "73",
+      "title": "Runtime fixes and test stabilization",
+      "file": "tasks/73-runtime-fix-summary.md",
+      "status": "completed",
+      "notes": "Fixed compilation errors (missing dependencies, test API changes). Added prototype support to NativeFunction. Fixed Date/Error/Function prototype chains. All 126 tests pass. All examples work."
+    },
+    {
+      "id": "74",
+      "title": "Runtime completion - final fixes",
+      "file": "tasks/74-runtime-completion.md",
+      "status": "completed",
+      "notes": "Fixed prefix_hooks bug (regex word boundaries), implemented Array.prototype methods (map, filter, etc.), fixed array prototype chain. 60/61 examples pass."
+    },
+    {
+      "id": "75",
+      "title": "Make conformance harnesses stable for full-suite runs",
+      "file": "tasks/75-conformance-harness-stability.md",
+      "status": "pending",
+      "notes": "test262 and TypeScript harnesses crash with stack overflow on larger subsets. Add recursion budget, run cases in fresh contexts, and skip/document remaining crashers."
     }
   ]
 }
