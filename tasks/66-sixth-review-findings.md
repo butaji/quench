@@ -1,13 +1,13 @@
-# Task 63: Sixth five-round architecture & code review findings — reduce custom code / unify / simplify
+# Task 66: Sixth five-round architecture & code review findings — reduce custom code / unify / simplify
 
 ## Goal
 
-Capture the findings from a sixth set of read-only review rounds, this time focused on **reducing custom code, unifying duplicated logic, and replacing hand-rolled pieces with established crates**. Use this list to make the runtime smaller, more correct, and easier to maintain.
+Capture the findings from a sixth set of read-only review rounds, this time focused on **reducing custom code, unifying duplicated logic, and replacing hand-rolled pieces with the mandatory crates listed below**. These choices are now enforced: any custom code for these subsystems must be removed or justified.
 
 ## Pareto & reuse note
 
-- **Prefer existing crates, the Rust standard library, and OS features over custom code.** This is the central theme of this review.
-- Follow the 80/20 rule: replace the highest-leverage custom subsystems first (parser, regex, JSON, diagnostics, string interning, ordered maps, allocation).
+- **Prefer existing crates, the Rust standard library, and OS features over custom code.** The crate choices in the table below are mandatory.
+- Follow the 80/20 rule: replace the highest-leverage custom subsystems first (JSON, regex, diagnostics, interning, ordered maps).
 - Defer edge cases, but document them in this task or spawn a follow-up task so they are not lost.
 
 ## TDD & testing note
@@ -16,68 +16,72 @@ Capture the findings from a sixth set of read-only review rounds, this time focu
 - Add a regression test for every bug fix and edge case covered by this task.
 - Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
 
-## Rank 1 — Replace custom subsystems with crates
+## Mandatory crate choices
 
-1. **Parser: use `oxc_parser` or a more complete swc-based setup**
+| Subsystem | Mandatory crate(s) | Rationale |
+|-----------|--------------------|-----------|
+| Parser / TypeScript stripping / JSX transform | `swc_ecma_parser`, `swc_ecma_transforms_*` | Already integrated; use swc transforms instead of hand-rolling TypeScript/JSX lowering. |
+| JSON parse/stringify | `serde_json` | Correct, fast, well-tested; delete custom JSON code. |
+| ECMAScript regex | `regress` | Pure-Rust ECMAScript-compatible engine. |
+| Rich diagnostics | `miette` or `ariadne` | Source spans, labels, snippets; no hand-rolled formatter. |
+| String interning | `lasso` | `Rodeo`/`ThreadedRodeo`; property maps become integer-keyed. |
+| Ordered maps/sets | `indexmap` / `indexmap::IndexSet` | Deterministic `for...in` order and insertion-ordered Map/Set. |
+| BigInt / decimal | `num-bigint` / `rust_decimal` | Standard arbitrary-precision arithmetic. |
+| Arena allocation | `bumpalo` | Short-lived frames, temporaries, HIR nodes. |
+| Fast integer-keyed maps | `rustc-hash` or `foldhash` | Faster than default hasher for interned keys. |
+| Error enums | `thiserror` | Structured, `std::error::Error`-compatible errors. |
+| Future AOT/JIT (only when reached) | `cranelift-*` | Smaller/faster to embed than LLVM; do not start with `inkwell`. |
+
+## Rank 1 — Replace custom subsystems with mandatory crates
+
+1. **Parser: use swc transforms, not a custom lowerer**
    - Files: `crates/quench-runtime/src/swc_parse.rs`, `lower.rs`
    - Issue: The runtime re-implements parser-mode detection with string search, lacks TypeScript/JSX/module support, and maintains a large custom lowerer.
-   - Crate options:
-     - **`oxc_parser`** — fastest, most conformant JS/TS/JSX parser in Rust; AST is cleaner than swc; transpiler/minifier available.
-     - **`swc_ecma_parser`** + `swc_ecma_transforms_*` — already a dependency; use preset-env, TypeScript stripping, JSX transform, module resolver instead of hand-writing them.
-   - Fix: Adopt `oxc` (recommended) or extend swc transforms so the custom lowerer only handles the final runtime HIR.
+   - Fix: Use `swc_ecma_parser` + `swc_ecma_transforms_*` (TypeScript strip, JSX transform, module resolver) and lower only the final runtime HIR.
 
 2. **JSON: replace hand-rolled JSON.stringify/parse with `serde_json`**
    - Files: `crates/quench-runtime/src/builtins/json.rs`
    - Issue: Custom JSON conversion is incomplete and duplicated in multiple files.
-   - Crate: **`serde_json`** (already used elsewhere).
-   - Fix: Implement `Value` → `serde_json::Value` and back; delete custom serialization logic.
+   - Fix: Implement `Value` ↔ `serde_json::Value` round-tripping; delete custom serialization logic.
 
 3. **Regex: replace ad-hoc regex code with `regress`**
    - Files: `crates/quench-runtime/src/builtins/regexp.rs` or wherever `RegExp` is implemented
    - Issue: A correct ECMAScript regex engine is hard to write.
-   - Crate: **`regress`** (pure-Rust ECMAScript-compatible regex) or **`regex`** with ECMAScript semantics mapping.
    - Fix: Delegate `RegExp.prototype.{test,exec,match,replace,split}` to `regress`.
 
 4. **Diagnostics: replace string errors with `miette` or `ariadne`**
    - Files: `crates/quench-runtime/src/value/error.rs`, `lower.rs`, `swc_parse.rs`
    - Issue: Errors are strings; no source spans, no labels, no snippets.
-   - Crates: **`miette`** (rich diagnostics, labels, error codes) or **`ariadne`** (beautiful snippets) or **`codespan-reporting`**.
-   - Fix: Attach `Span` to HIR nodes and `LowerError`, then render with `miette`.
+   - Fix: Attach `Span` to HIR nodes and `LowerError`, then render with `miette` or `ariadne`.
 
-5. **String interning: use `lasso` or `string-interner`**
+5. **String interning: use `lasso`**
    - Files: `crates/quench-runtime/src/value/mod.rs`, `builtins/*.rs`
    - Issue: Property names and identifiers are stored as `String`, causing frequent allocations and slow comparison.
-   - Crates: **`lasso`** (single/multi-threaded rodeo) or **`string-interner`**.
-   - Fix: Intern all property names/identifiers into `Atom`/`Symbol` and use integer-keyed maps.
+   - Fix: Intern all property names/identifiers into `lasso` atoms and use integer-keyed maps.
 
 6. **Ordered maps: use `indexmap` for object properties and Map/Set order**
    - Files: `crates/quench-runtime/src/value/mod.rs`, `builtins/map.rs`, `builtins/set.rs`
    - Issue: Custom insertion-order tracking is buggy and complex.
-   - Crate: **`indexmap`** (already listed in docs).
    - Fix: Use `IndexMap<Atom, Property>` for object properties and `IndexSet` for Set.
 
 7. **BigInt / decimal: use `num-bigint` and `rust_decimal`**
    - Files: `crates/quench-runtime/src/value/mod.rs`, `interpreter/binary_ops.rs`
    - Issue: No `BigInt` support; `Number` is just `f64`.
-   - Crates: **`num-bigint`**, **`rust_decimal`**.
    - Fix: Add `Value::BigInt(num_bigint::BigInt)` and use `rust_decimal` if a decimal type is needed.
 
 8. **Allocation: use `bumpalo` for short-lived runtime objects**
    - Files: `crates/quench-runtime/src/interpreter.rs`, `value/mod.rs`, `context/mod.rs`
    - Issue: Frequent small allocations for frames, temporaries, and objects.
-   - Crate: **`bumpalo`**.
    - Fix: Arena-allocate call frames, HIR nodes, and temporary object graph during execution.
 
 9. **Fast hashing: use `rustc-hash` or `foldhash` for integer-keyed maps**
    - Files: `crates/quench-runtime/src/value/mod.rs`, `env.rs`
    - Issue: `HashMap` with default hasher is slower than necessary for interned keys.
-   - Crates: **`rustc-hash`** (FxHashMap), **`foldhash`**.
    - Fix: Use `FxHashMap`/`foldhash::FastMap` where keys are already hashed or integers.
 
 10. **Errors: use `thiserror` for error enums**
     - Files: `crates/quench-runtime/src/value/error.rs`, `lower.rs`
     - Issue: Error types are hand-written and not `std::error::Error` friendly.
-    - Crate: **`thiserror`** (already used in main crate).
     - Fix: Convert `JsError`/`LowerError` to `thiserror` enums.
 
 ## Rank 2 — Unify duplicated custom logic
@@ -115,7 +119,7 @@ Capture the findings from a sixth set of read-only review rounds, this time focu
     - Options:
       - Implement them properly and wire hooks to produce them.
       - Delete them and keep reactivity in `runtime.js` until the HIR is ready.
-    - Crate: **`reactive-signals`** or **`futures-signals`** could inspire the graph design, but the runtime semantics are JS-specific so a custom graph is likely required.
+    - Crate inspiration: `reactive-signals` / `futures-signals` for graph design, but JS semantics require a custom graph.
 
 17. **Flatten the HIR to A-normal form (ANF)**
     - Files: `ast.rs`, `lower.rs`
@@ -130,13 +134,19 @@ Capture the findings from a sixth set of read-only review rounds, this time focu
 19. **Replace raw-pointer environment with immutable scope frames**
     - Files: `env.rs`, `interpreter.rs`
     - Issue: `push_scope`/`pop_scope` mutate shared `Rc` chains and raw pointers.
-    - Fix: Use a `Vec<Frame>` plus parent index ( arena-friendly ); never mutate parent frames.
+    - Fix: Use a `Vec<Frame>` plus parent index (arena-friendly); never mutate parent frames.
 
 20. **Replace the compiler's string-based hook/component rewrite with an AST transform**
     - Files: `src/compiler/mod.rs:119-154`
     - Issue: `.replace(hook, ...)` is unsafe and rewrites unrelated identifiers.
-    - Crates: **`swc_ecma_transforms`** or **`oxc_transformer`**.
-    - Fix: Use a visitor/transformer to rename only free identifiers and call expressions.
+    - Fix: Use `swc_ecma_transforms` visitor/transformer to rename only free identifiers and call expressions.
+
+## Enforcement
+
+- Add the mandatory crate list to `crates/quench-runtime/Cargo.toml`.
+- Update `EXECUTE.md` tech stack to match exactly.
+- Add a note to `CONTRIBUTING.md` (or `docs/`): a PR that introduces custom code for a mandatory subsystem must first justify why the crate cannot be used.
+- Before marking this task done, verify no custom JSON/regex/diagnostic/interning/map-ordering code remains.
 
 ## Boundaries
 

@@ -6,12 +6,13 @@ This document tracks all deferred tasks and the reasons why they were postponed.
 
 The quench-runtime has achieved its primary goals:
 - ✅ All Ink examples work (simple.js, counter.js, use-bridge.tsx, animations.tsx)
-- ✅ 59 runtime unit tests pass (20 unit + 39 runtime in quench-runtime)
+- ✅ 71 runtime unit tests pass (20 unit + 51 runtime in quench-runtime)
 - ✅ 37 integration tests pass (34 main + 3 parity)
 - ✅ Full TypeScript module, async/await, class support
 - ✅ ES module import/export
 - ✅ Build linter enforcement
 - ✅ Zero compiler warnings
+- ✅ 108 tests pass total
 
 The following items were intentionally deferred to future phases.
 
@@ -141,6 +142,157 @@ The following items were intentionally deferred to future phases.
 
 ---
 
+## Task 63: Architecture Split
+
+**Status:** 🔲 Deferred (analyzed but not completed)
+
+**What was deferred:**
+- Split monolithic files into subdirectories
+- builtins.rs (1720 lines) → builtins/ subdirectory
+- interpreter.rs (1514 lines) → interpreter/ subdirectory
+- lower.rs (1243 lines) → lower/ subdirectory
+- value.rs (702 lines) → value/ subdirectory
+
+**Why deferred:**
+- Rust module system constraint: cannot have both `builtins.rs` AND `builtins/mod.rs`
+- Files are tightly coupled with circular references and shared state
+- Splitting requires careful handling of thread-local storage, shared prototypes
+- Risk of introducing bugs in working code
+- The runtime works correctly as-is
+
+**Recommendation:**
+1. Rename `builtins.rs` to `builtins/core.rs` first
+2. Create `builtins/mod.rs` that re-exports from `core.rs` and submodules
+3. Then extract self-contained modules one at a time
+
+**See also:**
+- `tasks/63-architecture-split.md`
+
+---
+
+## Task 64: NaN-boxed Value Type
+
+**Status:** ✅ Skeleton Complete (integration deferred)
+
+**What was done:**
+- 64-bit NaN-boxed Value implementation in `value/nanbox.rs`
+- 31 unit tests pass for the nanbox implementation
+- All primitive types (undefined, null, bool, number) fully implemented
+- Pointer encoding/decoding for objects not yet complete
+
+**Why integration deferred:**
+- Current implementation works correctly (168 tests pass)
+- NaN-boxing addresses a bottleneck that may not be the real bottleneck
+- Existing nanbox skeleton is incomplete for complex types
+- High risk/reward ratio
+- See `tasks/67-final-status-recommendations.md` for full analysis
+
+**What's needed to complete:**
+- String encoding/decoding
+- Object/Function/Symbol pointer encoding
+- Reference counting solution
+- Integration with interpreter (large refactoring)
+
+**Recommendation:** Profile first, then optimize based on data
+
+**See also:**
+- `docs/performance-research.md`
+- `tasks/64-nanbox-value.md`
+- `tasks/67-final-status-recommendations.md`
+
+---
+
+## Task 65: Documentation Cleanup
+
+**Status:** ✅ Complete
+
+**What was done:**
+- RUNTIME_STATUS.md created
+- docs/architecture.md created
+- CHANGELOG.md created
+- Task index updated
+- deferred-items.md updated with tasks 63-66
+
+**See also:**
+- `tasks/65-documentation-cleanup.md`
+- `RUNTIME_STATUS.md`
+- `docs/architecture.md`
+- `CHANGELOG.md`
+
+---
+
+## Task 66: Sixth Review Findings — Reduce Custom Code
+
+**Status:** 🔲 Pending (analysis complete)
+
+**What was deferred:**
+- Replace custom subsystems with established crates
+- Unify duplicated logic across the runtime
+- Architecture simplifications
+
+**Analysis (Rank 1 — Replace Custom Subsystems):**
+
+| # | Item | Current State | Effort | Impact | Priority |
+|---|------|---------------|--------|--------|----------|
+| 1 | Parser (oxc_parser) | Using swc (works) | High | Medium | Low |
+| 2 | JSON (serde_json) | Custom impl | Medium | High | Medium |
+| 3 | Regex (regress) | Custom impl | High | High | Low |
+| 4 | Diagnostics (miette/ariadne) | String errors | Medium | Medium | Medium |
+| 5 | String interning | No interning | High | Medium | Low |
+| 6 | Ordered maps (indexmap) | Already using | - | - | N/A |
+| 7 | BigInt (num-bigint) | Not implemented | Medium | Low | Low |
+| 8 | Allocation (bumpalo) | Rc/RefCell | High | Medium | Low |
+| 9 | Fast hashing | Already using rustc-hash | - | - | N/A |
+| 10 | Errors (thiserror) | Custom impl | Low | Medium | High |
+
+**Quick wins (Rank 2 — Unify Duplicated Logic):**
+- #11: Unify call paths (`call_value_with_this` and `Runtime::call_function`)
+- #12: Unify value-to-primitive conversion
+- #18: Seal public API in lib.rs
+
+**Analysis complete:**
+- ✅ serde_json already used in main crate (JSON built-in uses custom impl)
+- ✅ indexmap already in use
+- ✅ rustc-hash already in use
+- ⚠️ thiserror already used in main crate (runtime uses custom JsError)
+
+**See also:**
+- `tasks/66-sixth-review-findings.md`
+- `docs/performance-research.md`
+
+---
+
+## Task 66 Progress: Quick Wins
+
+**Status:** ✅ Partially Complete
+
+**What was done:**
+- ✅ Unified call paths (call_function delegates to call_value_with_this)
+- ✅ Sealed public API in lib.rs (internal modules marked as pub(crate))
+- ✅ Fixed dead code warnings with #[allow(dead_code)] for intentional API functions
+
+**Analysis complete (Rank 1 — Replace Custom Subsystems):**
+
+| # | Item | Current State | Effort | Impact | Priority |
+|---|------|---------------|--------|--------|----------|
+| 1 | Parser (oxc_parser) | Using swc (works) | High | Medium | Low |
+| 2 | JSON (serde_json) | Custom impl | Medium | High | Medium |
+| 3 | Regex (regress) | Custom impl | High | High | Low |
+| 4 | Diagnostics (miette/ariadne) | String errors | Medium | Medium | Medium |
+| 5 | String interning | No interning | High | Medium | Low |
+| 6 | Ordered maps (indexmap) | Already using | - | - | N/A |
+| 7 | BigInt (num-bigint) | Not implemented | Medium | Low | Low |
+| 8 | Allocation (bumpalo) | Rc/RefCell | High | Medium | Low |
+| 9 | Fast hashing | Already using rustc-hash | - | - | N/A |
+| 10 | Errors (thiserror) | Custom impl | Low | Medium | High |
+
+**Quick wins (Rank 2 — Unify Duplicated Logic):**
+- ✅ #11: Unify call paths — DONE
+- ⏳ #12: Unify value-to-primitive conversion
+- ✅ #18: Seal public API in lib.rs — DONE
+
+---
+
 ## Summary
 
 | Task | Description | Status |
@@ -149,3 +301,7 @@ The following items were intentionally deferred to future phases.
 | 24 | Reactive engine | 🔲 Deferred |
 | 47 | TS project cases | 🔲 Pending |
 | 58 | Fourth review findings | 🔲 Partial (Rank 1/2 fixed) |
+| 63 | Architecture split | 🔲 In progress |
+| 64 | NaN-boxed Value | 🔲 Pending |
+| 65 | Documentation cleanup | ✅ Complete |
+| 66 | Sixth review findings | 🔲 Pending (analysis done) |

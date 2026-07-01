@@ -21,14 +21,15 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
 
 ## Research-backed recommendations
 
-- **Do not write a parser or lexer from scratch.** `swc` is the right front-end; it is already in use.
+- **Do not write a parser or lexer from scratch.** Use `swc_ecma_parser` + `swc_ecma_transforms_*` for parsing/TS stripping/JSX.
 - **Prefer interpreter-level wins first.** AOT/JIT and bytecode are future work; the immediate gains are NaN-boxed values, string interning, object shapes + inline caches, slot-indexed environments, arena allocation, and an explicit eval stack.
 - **Adopt hidden-class-style object shapes + inline caches (ICs).** This is the single most important JS-specific optimization (used by V8, SpiderMonkey, Hermes, Boa, etc.). Cache `(expected_shape, offset)` on hot property/member/call sites.
 - **NaN-box primitives.** Pack `f64`, object pointer, string pointer, and small tags into a single `u64` so `Value` is `Copy` and 64-bit.
-- **Intern identifiers and property names.** Use `lasso` or `string-interner` so property maps have integer keys and fast hashing.
-- **Use `indexmap` for object properties** when deterministic enumeration order is required; otherwise use `rustc-hash`/`foldhash` with atom keys.
+- **Intern identifiers and property names.** Use `lasso` so property maps have integer keys and fast hashing.
+- **Use `indexmap` for object properties** for deterministic enumeration order; use `rustc-hash`/`foldhash` with atom keys for fast unordered maps.
 - **Arena-allocate short-lived state** with `bumpalo`; consider `mimalloc`/`tikv-jemallocator` as the global allocator.
 - **Use existing crates for diagnostics** (`thiserror`, `miette`/`ariadne`) instead of hand-rolling a formatter.
+- **Use `regress` for regex**, `num-bigint` for `BigInt`, and `serde_json` for JSON. No custom implementations.
 
 ## Files
 
@@ -48,9 +49,9 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
    - Remove `Box<Value>`, `Rc<Value>`, and `RefCell<Value>` from hot paths; keep heap pointers only for objects, strings, and functions.
 
 2. **String interning**
-   - Add `lasso` (or `string-interner`) as a dependency.
+   - Add `lasso` as a dependency.
    - Intern every identifier and property name at parse/lowering time.
-   - Replace `HashMap<String, Value>` property storage with `HashMap<Atom, Value>` or `IndexMap<Atom, Value>`.
+   - Replace `HashMap<String, Value>` property storage with `IndexMap<Atom, Value>`.
    - Keep non-interned string payloads for user string values using `compact_str` or `smol_str` if desired.
 
 3. **Object shapes + inline caches**
