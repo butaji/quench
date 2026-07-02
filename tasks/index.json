@@ -111,6 +111,13 @@
       "file": "tasks/82-whole-suite-conformance-analysis.md",
       "status": "pending",
       "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Plan: stabilize, generate full reports, fix bugs with regression tests, expand supported features."
+    },
+    {
+      "id": "83",
+      "title": "Improve conformance harness reporting",
+      "file": "tasks/83-conformance-reporting.md",
+      "status": "completed",
+      "notes": "Added pass rate, top failure signatures, per-category breakdown, and Markdown reports for both test262 and TypeScript harnesses. Reports are written to target/*.md and target/*.json."
     }
   ]
 }
