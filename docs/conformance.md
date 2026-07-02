@@ -47,6 +47,20 @@ test262: only tiny subsets run; no recent full-subset report
 
 See `tasks/82-whole-suite-conformance-analysis.md` for the full analysis and phased plan.
 
+## Reports
+
+Each run writes two artifacts to `target/`:
+
+- `conformance_expressions_report.json` / `conformance_report.json` — full per-case JSON.
+- `conformance_expressions_report.md` / `conformance_report.md` — human-readable Markdown with pass rate, top failure signatures, and per-category pass rates.
+
+For test262:
+
+- `test262_report.json`
+- `test262_report.md`
+
+The printed summary also shows the overall pass rate, the top failure signatures, and the categories with the most failures so the next bug to fix is obvious.
+
 ## Adding regression tests
 
 When a harness case exposes a runtime bug:
