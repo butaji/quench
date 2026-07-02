@@ -61,12 +61,21 @@ For test262:
 
 The printed summary also shows the overall pass rate, the top failure signatures, and the categories with the most failures so the next bug to fix is obvious.
 
-## Adding regression tests
+## Fixing bugs from the harness
 
-When a harness case exposes a runtime bug:
+The harness is meant to drive development, not just measure it. Use it to find the next bug, fix it with a regression test, and verify the bucket shrinks.
 
-1. Reproduce it as a focused Rust unit test in `crates/quench-runtime/tests/`.
-2. Fix the runtime code.
-3. Run `cargo test -p quench-runtime`.
+1. Run a harness subset and open the Markdown report.
+2. Pick the highest-impact failure signature (count × clarity of root cause).
+3. Reduce the example path from the report to a minimal reproduction.
+4. Write a focused regression test in `crates/quench-runtime/tests/` that fails before the fix.
+5. Fix the smallest piece of runtime code that makes the test pass.
+6. Run `cargo test -p quench-runtime`.
+7. Re-run the harness subset and confirm the error signature count dropped.
+8. Move to the next bucket.
+
+See `tasks/84-conformance-driven-bug-fixing.md` for the full workflow.
+
+## Boundaries
 
 Do not modify files in `examples/`, `tests/test262/`, or `tests/typescript/`.
