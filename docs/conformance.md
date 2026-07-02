@@ -32,9 +32,9 @@ cargo test -p quench-runtime --test conformance -- --ignored --nocapture
 ## Latest results
 
 ```text
-TypeScript expressions (376 cases):  124 passed, 252 failed, 0 skipped (33%)
-TypeScript 100-case sanity:           12 passed,  49 failed, 39 skipped (12%)
-test262: only tiny subsets run; no recent full-subset report
+TypeScript expressions (376 cases):      149 passed, 227 failed, 0 skipped (39.6%)
+TypeScript 100-case sanity:               12 passed,  49 failed, 39 skipped (12%)
+test262 expressions subset (431 cases):   45 passed,  88 failed, 298 skipped (10.4%)
 ```
 
 ## Why whole-suite runs are not yet possible
@@ -46,6 +46,19 @@ test262: only tiny subsets run; no recent full-subset report
 5. **Runtime bugs.** Top failure signatures are `ReferenceError`, `Invalid computed property`, `is not a function`, and `Parse error`.
 
 See `tasks/82-whole-suite-conformance-analysis.md` for the full analysis and phased plan.
+
+## Current priorities
+
+Ranked by low effort / high impact:
+
+1. **Finish missing operators (Task 81)** — `??`, `?.`, unary `+`, `delete`, `||=`/`&&=`/`??=` are behind many top failures.
+2. **Skip "No baseline found" cases** — trivial; removes noise so reports show real runtime bugs.
+3. **Thread-local `CURRENT_DEPTH` + `MAX_JS_STACK` guard** — trivial/low effort; improves harness stability.
+4. **Fix the `ReferenceError: A is not defined` root cause** — likely a single class/namespace hoisting issue that removes dozens of failures.
+5. **Load test262 include files from the submodule** — medium effort; makes test262 results trustworthy.
+6. **Trampoline interpreter (Task 85)** — high effort; the proper long-term fix for stack overflow.
+
+See `tasks/86-implementation-priorities.md` for the full ranked rationale.
 
 ## Reports
 
