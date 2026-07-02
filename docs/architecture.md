@@ -58,6 +58,18 @@ The interpreter is currently recursive and uses `Rc<RefCell<...>>` for values. T
 2. **NaN-boxed `Value`**, string interning, and object shapes once correctness is solid.
 3. **Future AOT/JIT** via Cranelift, consuming the same HIR.
 
+## Direction validation
+
+Recent research confirms the current shape is the right one for an Ink-focused runtime:
+
+- **Recursive AST interpreter is the simplest path to correctness**, but every production engine (QuickJS, Boa, SpiderMonkey, V8 Ignition) uses an explicit stack or bytecode VM to avoid native stack overflow. The planned trampoline interpreter (Task 85) is the canonical fix.
+- **Boa passes ~92k of ~107k test262 tests** with an AST → bytecode VM pipeline, not a pure tree-walker. This justifies deferring bytecode until after the runtime is correct and stable.
+- **test262 runners load harness files from the submodule** (`assert.js`, `sta.js`, etc.) and run them in the engine before each test. We should do the same instead of stubbing helpers.
+- **Value representation can stay simple for now.** Boa and QuickJS use dedicated `JsValue` enums and reference counting early on; NaN-boxing and shapes are optimizations, not correctness prerequisites.
+- **String interning, object shapes, and ICs are the standard performance stack** once correctness is achieved, matching the roadmap in Task 11.
+
+Implication: keep prioritizing low-effort conformance wins and the trampoline interpreter over premature optimization.
+
 ## Pending work
 
 See `tasks/index.json` for the current task list.
