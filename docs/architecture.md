@@ -54,9 +54,20 @@ Allowed glue points:
 
 The interpreter is currently recursive and uses `Rc<RefCell<...>>` for values. The planned evolution is:
 
-1. **Trampoline interpreter** — explicit `Vec<CallFrame>` so JS recursion does not consume the native Rust stack.
+1. **Trampoline interpreter** — explicit `Vec<CallFrame>` so JS recursion does not consume the native Rust stack. Use `&mut Context` and slot-indexed storage to keep the hot loop borrow-checker friendly.
 2. **NaN-boxed `Value`**, string interning, and object shapes once correctness is solid.
 3. **Future AOT/JIT** via Cranelift, consuming the same HIR.
+
+## Rust-specific leverage
+
+Rust should be treated as an accelerator, not just a safe implementation language:
+
+- **Ownership as VM invariant enforcement.** Pass `&mut Context` through evaluation and store objects in a `Vec`/`SlotMap` indexed by `ObjectId`. This removes `Rc<RefCell>` overhead from the hot loop and makes use-after-free impossible at compile time.
+- **Zero-cost dispatch.** Keep `Value` as an enum and dispatch through `match`. Avoid `Box<dyn Trait>` / vtables in the interpreter.
+- **Explicit JS stack.** Model the JS call stack as `Vec<CallFrame>` in a trampoline loop. This decouples JS recursion from the native Rust stack and enables `MAX_JS_STACK`, `try/catch`, generators, and `async/await` later.
+- **Fearless concurrency for isolates.** Run each JS isolate in its own thread with no shared mutable state. Use channels for host communication. Parallelize the conformance runner with `rayon` and fresh contexts per test so one stack overflow does not kill the suite.
+- **Allocation discipline.** Use `bumpalo` for short-lived AST/HIR/bytecode, `lasso` for identifier/property interning, and switch the global allocator to `mimalloc`/`jemallocator` once benchmarking starts.
+- **Isolated `unsafe`.** Reserve `unsafe` for NaN-boxing and tightly encapsulated raw-pointer operations; verify with Miri. Do not use `unsafe` to bypass borrow-checker discomfort.
 
 ## Direction validation
 
@@ -66,7 +77,7 @@ Recent research confirms the current shape is the right one for an Ink-focused r
 - **Boa passes ~92k of ~107k test262 tests** with an AST → bytecode VM pipeline, not a pure tree-walker. This justifies deferring bytecode until after the runtime is correct and stable.
 - **test262 runners load harness files from the submodule** (`assert.js`, `sta.js`, etc.) and run them in the engine before each test. We should do the same instead of stubbing helpers.
 - **Value representation can stay simple for now.** Boa and QuickJS use dedicated `JsValue` enums and reference counting early on; NaN-boxing and shapes are optimizations, not correctness prerequisites.
-- **String interning, object shapes, and ICs are the standard performance stack** once correctness is achieved, matching the roadmap in Task 11.
+- **String interning, object shapes, and ICs are the standard performance stack** once correctness is achieved.
 
 Implication: keep prioritizing low-effort conformance wins and the trampoline interpreter over premature optimization.
 
