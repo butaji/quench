@@ -58,8 +58,7 @@ Do not edit `examples/`, `tests/test262/`, or `tests/typescript/`.
 
 ## Priorities
 
-See `tasks/index.json`. Active tasks:
+Pick the highest-impact, lowest-effort bucket from the Markdown report, fix it with a regression test, and re-run. Active tasks are in `tasks/index.json`:
 
-- **Task 81** — missing operators (`??`, `?.`, unary `+`, `delete`, logical assignment).
 - **Task 82** — whole-suite run blockers.
 - **Task 85** — trampoline interpreter to eliminate stack overflow.
