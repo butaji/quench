@@ -123,7 +123,7 @@
       "id": "84",
       "title": "Conformance-driven bug fixing workflow",
       "file": "tasks/84-conformance-driven-bug-fixing.md",
-      "status": "pending",
+      "status": "completed",
       "notes": "Documented workflow: run harness, pick top failure bucket, write focused regression test, fix runtime, verify bucket shrinks. Current top buckets include ReferenceError for class/namespace declarations, No baseline found, and is not a function."
     },
     {
@@ -137,7 +137,7 @@
       "id": "86",
       "title": "Implementation priorities — low effort / high impact",
       "file": "tasks/86-implementation-priorities.md",
-      "status": "pending",
+      "status": "completed",
       "notes": "Ranked findings: finish missing operators (Task 81), skip No-baseline cases, thread-local CURRENT_DEPTH, MAX_JS_STACK guard, fix ReferenceError root cause, load test262 includes, then trampoline/shape optimizations."
     }
   ]
