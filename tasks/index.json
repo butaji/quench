@@ -13,6 +13,13 @@
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
       "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Fixes native stack overflow, enables MAX_JS_STACK guard and tail-call optimization."
+    },
+    {
+      "id": "87",
+      "title": "Research validation",
+      "file": "tasks/87-research-validation.md",
+      "status": "completed",
+      "notes": "Validated direction against QuickJS, Boa, test262 harnesses, and trampoline literature. Confirmed: explicit stack is canonical, bytecode comes after correctness, real harness files should be loaded, value optimizations are deferred."
     }
   ]
 }
