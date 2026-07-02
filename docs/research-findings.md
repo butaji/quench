@@ -67,6 +67,7 @@ The project is architecturally sound: a dedicated Rust interpreter crate, SWC-ba
 ## Conformance harness best practices
 
 - **Load harness files from `tests/test262/harness/`**: `assert.js`, `sta.js`, `compareArray.js`, `propertyHelper.js`, etc. should be parsed and executed by the engine before each test. Stubbing them causes false failures.
+- **Execute every test262 test; do not pre-skip.** Unsupported features should fail and be bucketed, not skipped. This is the highest-impact harness change because it reveals the true pass rate and the largest failure buckets.
 - **Use fresh contexts per test** to avoid state leakage.
 - **Run cases in isolated threads** so a stack overflow in one case does not kill the runner.
 - **Report by feature/category** so progress is measurable.
