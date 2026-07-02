@@ -132,6 +132,13 @@
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
       "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Fixes native stack overflow, enables MAX_JS_STACK guard and tail-call optimization."
+    },
+    {
+      "id": "86",
+      "title": "Implementation priorities — low effort / high impact",
+      "file": "tasks/86-implementation-priorities.md",
+      "status": "pending",
+      "notes": "Ranked findings: finish missing operators (Task 81), skip No-baseline cases, thread-local CURRENT_DEPTH, MAX_JS_STACK guard, fix ReferenceError root cause, load test262 includes, then trampoline/shape optimizations."
     }
   ]
 }
