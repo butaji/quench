@@ -1,10 +1,12 @@
+> **See `docs/performance-research.md` for the full ranked analysis.**
+
 # Task 11: Interpreter performance roadmap
 
 ## Goal
 
-Once the runtime is functionally correct, apply interpreter-level optimizations so it can run Ink apps at acceptable speed. AOT/JIT and bytecode compilation are explicitly out of scope for now.
+Apply interpreter-level optimizations so the runtime can run Ink apps at acceptable speed. AOT/JIT and bytecode compilation are out of scope for now.
 
-> **Prerequisite:** Complete Tasks 01–08 first. This task is deliberately `pending` until the runtime passes the example suite.
+> **Prerequisite:** Runtime passes the example suite and core conformance subsets. Remains `pending` until then.
 
 ## Pareto & reuse note
 
@@ -19,17 +21,22 @@ Once the runtime is functionally correct, apply interpreter-level optimizations 
 - Keep tests in `crates/quench-runtime/tests/` and run `cargo test -p quench-runtime` before marking work done.
 
 
-## Research-backed recommendations
+## Ranked optimization choices
 
-- **Do not write a parser or lexer from scratch.** Use `swc_ecma_parser` + `swc_ecma_transforms_*` for parsing/TS stripping/JSX.
-- **Prefer interpreter-level wins first.** AOT/JIT and bytecode are future work; the immediate gains are NaN-boxed values, string interning, object shapes + inline caches, slot-indexed environments, arena allocation, and an explicit eval stack.
-- **Adopt hidden-class-style object shapes + inline caches (ICs).** This is the single most important JS-specific optimization (used by V8, SpiderMonkey, Hermes, Boa, etc.). Cache `(expected_shape, offset)` on hot property/member/call sites.
-- **NaN-box primitives.** Pack `f64`, object pointer, string pointer, and small tags into a single `u64` so `Value` is `Copy` and 64-bit.
-- **Intern identifiers and property names.** Use `lasso` so property maps have integer keys and fast hashing.
-- **Use `indexmap` for object properties** for deterministic enumeration order; use `rustc-hash`/`foldhash` with atom keys for fast unordered maps.
-- **Arena-allocate short-lived state** with `bumpalo`; consider `mimalloc`/`tikv-jemallocator` as the global allocator.
-- **Use existing crates for diagnostics** (`thiserror`, `miette`/`ariadne`) instead of hand-rolling a formatter.
-- **Use `regress` for regex**, `num-bigint` for `BigInt`, and `serde_json` for JSON. No custom implementations.
+From highest to lowest impact for a pure AST interpreter:
+
+1. **NaN-boxed `Value` + inline small strings** — `Value` as a `Copy` 64-bit word.
+2. **Object shapes (hidden classes)** — `shape_id → offset` instead of hashmap probing; inline 2–3 slots.
+3. **Flattened lexical environments** — `Vec<Value>` slots from SWC scope analysis.
+4. **Trampoline + operand stack** — explicit `Vec<Frame>` and `Vec<Value>` instead of recursive returns.
+5. **String interning** — `lasso` atoms for identifiers and property names.
+6. **Arena allocation** — `bumpalo` for frames and temporaries.
+7. **Inline caches on HIR nodes** — cache `(ShapeId, offset)` for hot member/call sites.
+8. **Fast maps & regex** — `indexmap`/`rustc-hash`, `regress`, `num-bigint`.
+9. **Zero-cost host calls** — host functions take `&mut [Value]` slices.
+10. **Global allocator** — `mimalloc` or `tikv-jemallocator`.
+
+See `docs/performance-research.md` for the full rationale and current gaps.
 
 ## Files
 
