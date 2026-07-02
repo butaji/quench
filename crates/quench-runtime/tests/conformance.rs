@@ -53,8 +53,9 @@ fn test_typescript_conformance_sanity() {
         .join("target");
     let report_path = target_dir.join("conformance_report.json");
     report.write_json(&report_path).expect("report write failed");
-    
-    // Print summary
+    report.write_markdown(&report_path.with_extension("md"), "TypeScript")
+        .expect("markdown report write failed");
+
     report.print_summary("TypeScript");
     
     // Verify isolation worked - harness should not crash even if some tests fail
@@ -96,7 +97,9 @@ fn test_typescript_conformance_expressions() {
         .join("target");
     let report_path = target_dir.join("conformance_expressions_report.json");
     report.write_json(&report_path).expect("report write failed");
-    
+    report.write_markdown(&report_path.with_extension("md"), "TypeScript expressions")
+        .expect("markdown report write failed");
+
     report.print_summary("TypeScript expressions");
 }
 
