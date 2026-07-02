@@ -50,6 +50,14 @@ Allowed glue points:
 - Example integration: `cargo run -- examples/counter.js`
 - Conformance: see `docs/conformance.md`
 
+## Performance direction
+
+The interpreter is currently recursive and uses `Rc<RefCell<...>>` for values. The planned evolution is:
+
+1. **Trampoline interpreter** — explicit `Vec<CallFrame>` so JS recursion does not consume the native Rust stack.
+2. **NaN-boxed `Value`**, string interning, and object shapes once correctness is solid.
+3. **Future AOT/JIT** via Cranelift, consuming the same HIR.
+
 ## Pending work
 
 See `tasks/index.json` for the current task list.
