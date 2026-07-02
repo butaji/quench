@@ -18,25 +18,34 @@ git submodule update --init tests/test262 tests/typescript
 ## Running the harnesses
 
 ```bash
-# test262 expressions subset
+# test262 tiny subsets
 ./scripts/run_tests.sh test-test262
 
 # TypeScript expressions subset
 ./scripts/run_tests.sh test-conformance
 
 # Direct cargo invocations
-cargo test -p quench-runtime --test test262 -- test262_expressions --ignored --nocapture
-cargo test -p quench-runtime --test conformance -- test_typescript_conformance_expressions --ignored --nocapture
+cargo test -p quench-runtime --test test262 -- --ignored --nocapture
+cargo test -p quench-runtime --test conformance -- --ignored --nocapture
 ```
 
 ## Latest results
 
 ```text
-test262_expressions:  total=431  passed=44  failed=89  skipped=298
-TypeScript expressions: total=376  passed=131 failed=208 skipped=37
+TypeScript expressions (376 cases):  124 passed, 252 failed, 0 skipped (33%)
+TypeScript 100-case sanity:           12 passed,  49 failed, 39 skipped (12%)
+test262: only tiny subsets run; no recent full-subset report
 ```
 
-Full-suite runs can still hit native stack overflow on crashers. The pending work is tracked in `tasks/index.json` (Task 75).
+## Why whole-suite runs are not yet possible
+
+1. **Recursive interpreter stack overflow.** Running more than a few hundred test files on the same thread exhausts the native Rust stack.
+2. **Global recursion counter.** `CURRENT_DEPTH` in `interpreter/control.rs` is a global `AtomicUsize`, so thread-per-case isolation in the TypeScript harness is undermined.
+3. **Large unsupported feature surface.** test262 skips 84 feature categories (Promise, async, generators, classes, BigInt, Symbol, Proxy, RegExp, modules, spread, destructuring, template literals, etc.).
+4. **Baseline/harness gaps.** Many TypeScript cases fail because no baseline is found or the baseline extractor mis-parses the file. test262 include files are stubbed, not loaded from the submodule.
+5. **Runtime bugs.** Top failure signatures are `ReferenceError`, `Invalid computed property`, `is not a function`, and `Parse error`.
+
+See `tasks/82-whole-suite-conformance-analysis.md` for the full analysis and phased plan.
 
 ## Adding regression tests
 
