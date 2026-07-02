@@ -47,43 +47,47 @@ See `docs/performance-research.md` for the full rationale and current gaps.
 - `crates/quench-runtime/src/ast.rs` (HIR nodes)
 - `Cargo.toml`
 
-## Steps
+## Implementation recipe
 
-1. **NaN-boxed / tagged `Value`**
-   - Make `Value` a `Copy` 64-bit type.
-   - Pack `f64`, object pointer, string pointer, and tags (`null`, `undefined`, `true`, `false`, int31) into a single `u64`.
-   - Use `nanbox` or hand-roll the bit-packing.
-   - Remove `Box<Value>`, `Rc<Value>`, and `RefCell<Value>` from hot paths; keep heap pointers only for objects, strings, and functions.
+The target is a QuickJS-competitive pure AST interpreter, not a bytecode VM.
 
-2. **String interning**
-   - Add `lasso` as a dependency.
-   - Intern every identifier and property name at parse/lowering time.
-   - Replace `HashMap<String, Value>` property storage with `IndexMap<Atom, Value>`.
-   - Keep non-interned string payloads for user string values using `compact_str` or `smol_str` if desired.
+1. **`Value` becomes `Copy` `u64`.**
+   - Quiet-NaN packing with 4-bit tag and 48-bit payload.
+   - Inline integers and small strings; heap pointers for objects/functions/large strings.
 
-3. **Object shapes + inline caches**
-   - Assign a `ShapeId` to every object. A shape stores property names as `Vec<Atom>` and a `HashMap<Atom, usize>` index.
-   - Use a side-table keyed by HIR node id to cache `(expected_shape, offset)` for `MemberExpr`, `CallExpr`, and identifier lookups.
-   - Fast path: `if obj.shape_id == cache.expected_shape { return obj.properties[cache.offset]; }`.
+2. **Strings become `Atom(u32)`.**
+   - Use `swc_atoms` or `lasso` at parse time.
+   - Property names and identifiers are never compared as byte strings at runtime.
 
-4. **Slot-indexed environments**
-   - Run a scope-analysis pass over the HIR before execution.
-   - Assign every local `let`/`const`/`var` a `u32` slot index.
-   - Store function-call locals in a dense `Vec<Value>`; access via `locals[slot_idx]`.
-   - Capture closures by reference into a flat `Environment` vector.
+3. **Execution becomes an explicit stack machine over the AST.**
+   - `Vm { stack: Vec<u64>, frames: Vec<Frame> }`.
+   - `eval_expr` pushes/pops the operand stack; no recursive `Value` returns.
+   - Function call: push args, push `Frame { fp, env, return_expr }`, eval body, pop frame, push result.
 
-5. **Arena allocation**
-   - Add `bumpalo`.
-   - Arena-allocate call frames, temporary eval state, and short-lived objects.
-   - Switch the global allocator to `mimalloc` or `tikv-jemallocator`.
+4. **Scopes become flat `Vec<u64>` arrays.**
+   - SWC scope analysis gives each local a `(scope, index)`.
+   - Access via `env.values[index]`; no `HashMap`, no `RefCell` in hot paths.
 
-6. **Explicit evaluation stack**
-   - Replace recursive `eval_expression`/`eval_statement` with an explicit `Vec<Frame>` and a trampoline loop.
-   - This also enables proper `try/catch/finally` and generators later.
+5. **Objects get shapes + inline slots.**
+   - `Object { shape: &Shape, proto: Option<&Object>, slots: [JsValue; 4], overflow: Option<&mut [JsValue]> }`.
+   - Shape transitions share structure; property lookup is `shape.index[atom]`.
+   - Dense arrays use a contiguous `Vec<Value>` for `0..length`.
 
-7. **Faster maps and regex**
-   - Use `rustc-hash`/`foldhash` for atom-keyed maps.
-   - Add `regress` for ECMAScript regex and `num-bigint` for `BigInt`.
+6. **Inline caches on HIR nodes.**
+   - `MemberExpr` carries `ic: Cell<Option<(&Shape, u32)>>`.
+   - Monomorphic fast path; slow path resolves and caches.
+
+7. **Specialized fast paths and host-call bridge.**
+   - Inline `int+int`, `string+string`, etc. before generic coercion.
+   - Host functions take `&mut [u64]` slices into the operand stack.
+
+8. **Arena allocation.**
+   - `bumpalo` for AST nodes, call frames, temporary values, and overflow slots.
+   - Optional global allocator: `mimalloc` / `tikv-jemallocator`.
+
+9. **Faster maps and built-ins.**
+   - `rustc-hash` for shape transitions; `indexmap` where order matters.
+   - `regress` for regex, `num-bigint` for `BigInt`.
 
 ## Future direction (not in this task)
 
