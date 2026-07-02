@@ -13,6 +13,8 @@ Understand why the test262 and TypeScript conformance harnesses cannot yet run t
 | test262 | `crates/quench-runtime/tests/test262.rs` | `src/test262/runner.rs` | Fresh `Context` per file; `catch_unwind`; same thread | Tiny hard-coded subsets (~40–343 files each) |
 | TypeScript | `crates/quench-runtime/tests/conformance.rs` | `src/conformance/typescript/mod.rs` | Fresh `Context` per case; **one thread per case** | `expressions/` subset (376 cases) + 100-case sanity |
 
+**Target state for test262:** execute **every** `.js` file under `tests/test262/test` with **zero skips**. Unsupported features must produce failures, not skips.
+
 Both harnesses register helpers as Rust native functions. No JS helper strings are injected.
 
 ## Suite sizes
@@ -40,7 +42,7 @@ Both harnesses register helpers as Rust native functions. No JS helper strings a
 - The TypeScript harness spawns one thread per case and calls `reset_depth()`. Because the counter is shared across threads, depth tracking is not actually isolated.
 - Fix: make `CURRENT_DEPTH` `thread_local!` (like `CONTROL_FLOW` already is).
 
-### 3. Huge unsupported feature surface
+### 3. test262 feature skip list prevents a true full-suite run
 
 test262 currently skips 84 feature categories, including:
 
@@ -52,7 +54,9 @@ test262 currently skips 84 feature categories, including:
 - Spread, destructuring, template literals, optional chaining, nullish coalescing, logical assignment
 - Many newer built-ins (`Object.hasOwn`, `Array.prototype.groupBy`, `String.prototype.replaceAll`, etc.)
 
-TypeScript conformance skips by policy:
+**This is a harness problem, not a runtime problem.** The harness must run every test and let failures be bucketed by root cause. Removing the skip list is a low-effort, high-impact change because it immediately reveals the real compatibility percentage and the largest failure buckets.
+
+TypeScript conformance skips by policy (acceptable for now):
 
 - `@noEmit`, `@emitDeclarationOnly`
 - Non-ES module systems (`amd`, `umd`, `system`, `node16`, `nodenext`, `none`)
@@ -83,22 +87,25 @@ Top TypeScript failure signatures:
 2. Fix `CURRENT_DEPTH` to be `thread_local!` as a short-term guard until the trampoline lands.
 3. Make the test262 runner spawn one thread per test file (matching TypeScript) as a belt-and-suspenders isolation measure. Use `rayon` for parallel test execution with a fresh isolate/context per test.
 
-### Phase 2: Coverage
+### Phase 2: Coverage with zero test262 skips
 
-1. Run the full test262 suite once to generate a complete failure report.
-2. Run the full TypeScript conformance suite once to generate a complete failure report.
-3. Bucket failures by root cause (missing built-in, parser gap, scope bug, object-model bug, stack overflow).
+1. Remove the test262 feature skip list entirely; run every `.js` file under `tests/test262/test`.
+2. Execute each test262 file in an isolated thread with a fresh context and a short per-test timeout.
+3. Generate a complete failure report with top failure signatures and per-feature pass rates.
+4. Run the full TypeScript conformance suite (policy skips remain) to generate a complete failure report.
+5. Bucket failures by root cause (missing built-in, parser gap, scope bug, object-model bug, stack overflow).
 
 ### Phase 3: Fix runtime bugs with regression tests
 
-1. For each bucket, write a focused Rust regression test in `crates/quench-runtime/tests/`.
-2. Fix the smallest runtime change that makes the regression test pass.
-3. Re-run the full suite and watch the bucket shrink.
+1. Pick the highest-count failure bucket.
+2. Write a focused Rust regression test in `crates/quench-runtime/tests/`.
+3. Fix the smallest runtime change that makes the regression test pass.
+4. Re-run the full suite and watch the bucket shrink.
 
 ### Phase 4: Expand supported features
 
-1. Remove features from the test262 skip list only after their runtime support is implemented.
-2. Remove TypeScript skip rules only after source-direct TS evaluation can handle those cases.
+1. As runtime support lands, observe feature buckets moving from failing to passing naturally.
+2. Remove TypeScript policy skip rules only after source-direct TS evaluation can handle those cases.
 
 ## Boundaries
 

@@ -16,7 +16,7 @@ git submodule update --init tests/test262 tests/typescript
 ## Run
 
 ```bash
-./scripts/run_tests.sh test-test262      # test262 subsets
+./scripts/run_tests.sh test-test262      # test262 full suite, no skips
 ./scripts/run_tests.sh test-conformance  # TypeScript expressions subset
 ```
 
@@ -27,12 +27,16 @@ cargo test -p quench-runtime --test test262 -- --ignored --nocapture
 cargo test -p quench-runtime --test conformance -- --ignored --nocapture
 ```
 
+## No-skip policy
+
+The test262 harness must execute **every** `.js` file under `tests/test262/test`. Tests are never pre-filtered or skipped because of an unsupported feature, a missing built-in, or an expected failure. Instead, each test runs in an isolated thread with a fresh context, and failures are bucketed by root cause. This gives a true compatibility percentage and makes the next high-impact fix obvious.
+
 ## Latest results
 
 ```text
 TypeScript expressions (376 cases):      149 passed, 227 failed, 0 skipped (39.6%)
 TypeScript 100-case sanity:               12 passed,  49 failed, 39 skipped (12%)
-test262 expressions subset (431 cases):   45 passed,  88 failed, 298 skipped (10.4%)
+test262 full suite (~53,683 cases):      TBD passed, TBD failed, 0 skipped (TBD%)
 ```
 
 ## Reports
