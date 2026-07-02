@@ -102,8 +102,8 @@
       "id": "81",
       "title": "Add missing JavaScript operators (nullish coalescing, optional chaining, unary plus)",
       "file": "tasks/81-missing-operators.md",
-      "status": "in_progress",
-      "notes": "Missing operators causing 250+ test failures in conformance suite. Need to add: (1) Nullish coalescing ??, (2) Optional chaining ?., (3) Unary plus +, (4) Delete operator, (5) Logical assignment operators ||=, &&=, ??="
+      "status": "completed",
+      "notes": "Added: (1) Nullish coalescing ??, (2) Optional chaining ?., (3) Unary plus +, (4) Delete operator, (5) Logical assignment operators ||=, &&=, ??=. test262 pass rate improved from 10.4% to 13.4% (16 more tests passing)."
     },
     {
       "id": "82",
@@ -118,6 +118,13 @@
       "file": "tasks/83-conformance-reporting.md",
       "status": "completed",
       "notes": "Added pass rate, top failure signatures, per-category breakdown, and Markdown reports for both test262 and TypeScript harnesses. Reports are written to target/*.md and target/*.json."
+    },
+    {
+      "id": "84",
+      "title": "Conformance-driven bug fixing workflow",
+      "file": "tasks/84-conformance-driven-bug-fixing.md",
+      "status": "pending",
+      "notes": "Documented workflow: run harness, pick top failure bucket, write focused regression test, fix runtime, verify bucket shrinks. Current top buckets include ReferenceError for class/namespace declarations, No baseline found, and is not a function."
     }
   ]
 }
