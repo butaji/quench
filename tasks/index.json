@@ -1,111 +1,6 @@
 {
   "tasks": [
     {
-      "id": "81",
-      "title": "Remove stale linter allow directives",
-      "file": "tasks/81-stale-allow-cleanup.md",
-      "status": "completed",
-      "notes": "Removed unnecessary #![allow(...)] directives from builtins/array.rs and builtins/object.rs since files are under 500 lines and lint passes. The build.rs linter does not use #[allow(...)] exemptions - it uses '// linter-skip' opt-out instead."
-    },
-    {
-      "id": "11",
-      "title": "Interpreter performance roadmap",
-      "file": "tasks/11-performance.md",
-      "status": "in_progress",
-      "notes": "rustc-hash and indexmap added. Benchmarks created in tests/benchmarks.rs. Remaining: NaN-boxing, string interning, object shapes, slot-indexed environments. Future optimizations once runtime is correct: NaN-boxed Value, string interning, object shapes+ICs, slot-indexed environments, arena allocation."
-    },
-    {
-      "id": "24",
-      "title": "Reactive execution engine over the HIR",
-      "file": "tasks/24-reactive-engine.md",
-      "status": "pending",
-      "notes": "Future work; depends on Task 22 HIR."
-    },
-    {
-      "id": "30",
-      "title": "Run TypeScript's own conformance runner for reference",
-      "file": "tasks/30-typescript-runner-reference.md",
-      "status": "pending",
-      "notes": "Reference-only; not blocking."
-    },
-    {
-      "id": "35",
-      "title": "Run TypeScript's own compiler runner for baseline validation",
-      "file": "tasks/35-typescript-compiler-runner.md",
-      "status": "pending",
-      "notes": "Use tests/typescript's compilerRunner/hereby to generate or verify .js baselines for categories where Quench results are unclear."
-    },
-    {
-      "id": "37",
-      "title": "Expand conformance whitelist as runtime support grows",
-      "file": "tasks/37-conformance-expand-whitelist.md",
-      "status": "pending",
-      "notes": "Add modules, async/await, generators, decorators, JSX, and other categories to the whitelist once the runtime supports them."
-    },
-    {
-      "id": "43",
-      "title": "Validate conformance results with TypeScript's own runner",
-      "file": "tasks/43-conformance-typescript-runner.md",
-      "status": "pending",
-      "notes": "Use npx hereby runtests --runners=conformance --tests=<name> --dirty to generate local baselines and confirm expected output."
-    },
-    {
-      "id": "48",
-      "title": "Run TypeScript compiler and project runners for reference baselines",
-      "file": "tasks/48-typescript-reference-runners.md",
-      "status": "pending",
-      "notes": "Use hereby --runner=compiler,conformance,project,transpile to generate local baselines and confirm expected JS output."
-    },
-    {
-      "id": "75",
-      "title": "Make conformance harnesses stable for full-suite runs",
-      "file": "tasks/75-conformance-harness-stability.md",
-      "status": "completed",
-      "notes": "Implemented per-case context isolation, depth reset, and timeout support. All tests pass. Full-suite runs still require per-case timeout isolation to prevent stack overflow."
-    },
-    {
-      "id": "76",
-      "title": "Fix Promise constructor and Math.imul bugs",
-      "file": "tasks/76-promise-math-fix.md",
-      "status": "completed",
-      "notes": "Fixed 12 failing tests: (1) Math.imul was casting to u32 first, losing sign on negative numbers - now casts to i32 first; (2) Promise constructor was being overwritten by eval with an object literal, making typeof Promise === 'object' instead of 'function' - restructured to store Promise as callable Object with __promise_constructor__ marker; (3) Promise objects returned from static methods and prototype methods lacked proper prototype chain for instanceof checks - added create_promise_with_prototype() and updated all creation sites."
-    },
-    {
-      "id": "77",
-      "title": "Split monolithic runtime files to meet 500 line/file limit",
-      "file": "tasks/77-module-splitting.md",
-      "status": "completed",
-      "notes": "Completed: Split value.rs into value/ module (✓ done). Split interpreter.rs (1081 lines) into interpreter/ module with control.rs, statement.rs, expression.rs, member.rs, operator.rs, call.rs. Split lower.rs (984 lines) into lower/ module with error.rs, helpers.rs, binding.rs, module.rs, statement.rs, expression.rs, operator.rs. All files are now under 500 lines (max is 338). All tests pass, examples work."
-    },
-    {
-      "id": "78",
-      "title": "Fix Array Destructuring and 'this' Binding in Constructor",
-      "file": "tasks/78-destructuring-this-fix.md",
-      "status": "completed",
-      "notes": "Fixed 3 critical bugs: (1) Array destructuring with numeric index was using computed=false instead of computed=true in lower.rs - fixed to correctly generate Member expressions; (2) The interpreter was not handling PropertyKey::Number when computed=true - added support for this case; (3) Block statements containing only VarDeclarations were creating unnecessary scopes, causing var declarations to be lost when scope was popped - fixed to not push scope for var-only blocks; (4) 'this' was undefined in constructor functions called with 'new' - fixed by setting this_val on call environment in call_value_with_this(). All examples (counter.js, use-bridge.tsx, animations.tsx) now work correctly."
-    },
-    {
-      "id": "79",
-      "title": "Fix Lint Violations and Line Count Limits",
-      "file": "tasks/79-lint-cleanup.md",
-      "status": "completed",
-      "notes": "Completed: (1) Split builtins/array.rs (527 lines) into array.rs (70 lines) and array_methods.rs (469 lines) to meet 500 line/file limit; (2) Removed invalid clippy lint names (clippy::function_body_length) from builtins files; (3) Fixed all clippy warnings: redundant_closure, needless_borrow, match_like_matches_macro, useless_format, get_first, map_identity, manual_clamp, unnecessary_cast, type_complexity. Added type aliases in promise.rs. All tests pass, examples work, zero clippy warnings."
-    },
-    {
-      "id": "80",
-      "title": "Fix Build-time Lint Violations from build.rs",
-      "file": "tasks/80-build-lint-fix.md",
-      "status": "completed",
-      "notes": "Fixed lint violations detected by build.rs: (1) array_methods.rs register_array_methods function (427 lines, complexity 72) - split into 22 small helper functions, each under 40 lines; (2) runtime_issues.rs (680 lines) - split into: runtime_issues_control_flow.rs (91), runtime_issues_math.rs (196), runtime_issues_number.rs (111), runtime_issues_prototypes.rs (193), runtime_issues_timers.rs (53); (3) depth_limit.rs function (58 lines) - split into smaller helper functions. All tests pass, build passes."
-    },
-    {
-      "id": "81",
-      "title": "Add missing JavaScript operators (nullish coalescing, optional chaining, unary plus)",
-      "file": "tasks/81-missing-operators.md",
-      "status": "completed",
-      "notes": "Added: (1) Nullish coalescing ??, (2) Optional chaining ?., (3) Unary plus +, (4) Delete operator, (5) Logical assignment operators ||=, &&=, ??=. test262 pass rate improved from 10.4% to 13.4% (16 more tests passing)."
-    },
-    {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
@@ -113,32 +8,11 @@
       "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Plan: stabilize, generate full reports, fix bugs with regression tests, expand supported features."
     },
     {
-      "id": "83",
-      "title": "Improve conformance harness reporting",
-      "file": "tasks/83-conformance-reporting.md",
-      "status": "completed",
-      "notes": "Added pass rate, top failure signatures, per-category breakdown, and Markdown reports for both test262 and TypeScript harnesses. Reports are written to target/*.md and target/*.json."
-    },
-    {
-      "id": "84",
-      "title": "Conformance-driven bug fixing workflow",
-      "file": "tasks/84-conformance-driven-bug-fixing.md",
-      "status": "completed",
-      "notes": "Documented workflow: run harness, pick top failure bucket, write focused regression test, fix runtime, verify bucket shrinks. Current top buckets include ReferenceError for class/namespace declarations, No baseline found, and is not a function."
-    },
-    {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
       "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Fixes native stack overflow, enables MAX_JS_STACK guard and tail-call optimization."
-    },
-    {
-      "id": "86",
-      "title": "Implementation priorities — low effort / high impact",
-      "file": "tasks/86-implementation-priorities.md",
-      "status": "completed",
-      "notes": "Ranked findings: finish missing operators (Task 81), skip No-baseline cases, thread-local CURRENT_DEPTH, MAX_JS_STACK guard, fix ReferenceError root cause, load test262 includes, then trampoline/shape optimizations."
     }
   ]
 }
