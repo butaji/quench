@@ -125,6 +125,13 @@
       "file": "tasks/84-conformance-driven-bug-fixing.md",
       "status": "pending",
       "notes": "Documented workflow: run harness, pick top failure bucket, write focused regression test, fix runtime, verify bucket shrinks. Current top buckets include ReferenceError for class/namespace declarations, No baseline found, and is not a function."
+    },
+    {
+      "id": "85",
+      "title": "Implement trampoline interpreter with explicit call stack",
+      "file": "tasks/85-trampoline-interpreter.md",
+      "status": "pending",
+      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Fixes native stack overflow, enables MAX_JS_STACK guard and tail-call optimization."
     }
   ]
 }

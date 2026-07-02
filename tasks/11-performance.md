@@ -63,6 +63,9 @@ The target is a QuickJS-competitive pure AST interpreter, not a bytecode VM.
    - `Vm { stack: Vec<u64>, frames: Vec<Frame> }`.
    - `eval_expr` pushes/pops the operand stack; no recursive `Value` returns.
    - Function call: push args, push `Frame { fp, env, return_expr }`, eval body, pop frame, push result.
+   - Use a trampoline loop so the Rust call stack stays at O(1) regardless of JS recursion depth.
+   - Add a configurable `MAX_JS_STACK` guard (e.g., 10,000) to throw JS `RangeError` instead of native stack overflow.
+   - Mark tail calls in the AST so tail-recursive JS functions reuse the current frame.
 
 4. **Scopes become flat `Vec<u64>` arrays.**
    - SWC scope analysis gives each local a `(scope, index)`.
