@@ -136,6 +136,67 @@ QuickJS wins through bytecode dispatch + shape-based objects + inline caching. A
 - String comparisons for property names — always use `Atom`.
 - Allocating inside loops — pre-allocate in `bumpalo`.
 
+## Trampoline interpreter: decouple JS stack from Rust stack
+
+The current recursive interpreter consumes native Rust stack for every JS call. The fix is an explicit heap-allocated call stack and a single trampoline loop.
+
+### Design
+
+```text
+Vec<CallFrame>  // heap stack
+  CallFrame {
+      func: FunctionId,
+      pc: usize,              // next AST node to execute
+      env: Environment,
+      operands: Vec<Value>,   // expression stack
+      return_to: Option<usize>, // parent frame index
+  }
+```
+
+`step_frame(frame, return_val)` executes one AST node and returns an `Action`:
+
+- `Action::Continue` — keep running the current frame.
+- `Action::Call { callee, args }` — push a new `CallFrame`.
+- `Action::TailCall { callee, args }` — replace the current frame (free TCO).
+- `Action::Return(value)` — pop the frame and pass the value to the caller.
+- `Action::Throw(error)` — begin exception unwinding.
+
+`run_trampoline(entry, args, global)` is the outer loop:
+
+```text
+loop {
+    match stack.last_mut() {
+        Some(frame) => match step_frame(frame, current_result) {
+            Action::Return(v) => { current_result = Some(v); stack.pop(); }
+            Action::Call { callee, args } => {
+                if stack.len() >= MAX_JS_STACK {
+                    throw RangeError("Maximum call stack size exceeded");
+                }
+                stack.push(CallFrame::new(callee, args));
+                current_result = None;
+            }
+            Action::TailCall { callee, args } => {
+                *frame = CallFrame::new(callee, args);
+                current_result = None;
+            }
+            // ...
+        },
+        None => break current_result.unwrap_or(Value::Undefined),
+    }
+}
+```
+
+### Why it matters
+
+- **No native stack overflow.** Infinite JS recursion becomes heap growth, bounded by `MAX_JS_STACK`.
+- **Free tail-call optimization.** Reuse the current frame for tail calls.
+- **Generators/async later.** `yield`/`await` become suspending the loop and saving the `Vec<CallFrame>`.
+- **Path to bytecode.** `Vec<CallFrame>` becomes the activation-record stack for a future bytecode VM.
+
+### Status
+
+This is the canonical fix for the stack-overflow blocker in Task 82.
+
 ## Future AOT/JIT
 
 Use `cranelift-*` rather than LLVM/`inkwell`. The HIR should remain high-level enough to feed a backend without introducing a separate bytecode layer.
