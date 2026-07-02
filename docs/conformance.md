@@ -62,3 +62,4 @@ Pick the highest-impact, lowest-effort bucket from the Markdown report, fix it w
 
 - **Task 82** — whole-suite run blockers.
 - **Task 85** — trampoline interpreter to eliminate stack overflow.
+- **Task 88** — Rust-specific runtime model (slot-indexed storage, isolate threads, allocator/interning strategy).

@@ -20,6 +20,13 @@
       "file": "tasks/87-research-validation.md",
       "status": "completed",
       "notes": "Validated direction against QuickJS, Boa, test262 harnesses, and trampoline literature. Confirmed: explicit stack is canonical, bytecode comes after correctness, real harness files should be loaded, value optimizations are deferred."
+    },
+    {
+      "id": "88",
+      "title": "Leverage Rust for runtime execution model",
+      "file": "tasks/88-rust-runtime-leverage.md",
+      "status": "pending",
+      "notes": "Apply Rust ownership/explicit-stack/ecosystem patterns: slot-indexed object storage, &mut Context, trampoline Vec<CallFrame>, isolated threads, lasso/bumpalo/rayon, controlled unsafe. Supports Task 85."
     }
   ]
 }

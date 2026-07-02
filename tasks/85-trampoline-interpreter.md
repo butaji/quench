@@ -14,6 +14,15 @@ The current interpreter calls itself recursively for every JS function call, loo
 - JS stack depth is tracked on the heap via `Vec<CallFrame>`.
 - Runaway recursion throws a controlled JS `RangeError` at `MAX_JS_STACK`.
 
+## Rust-specific design constraints
+
+The trampoline rewrite is the right place to remove `Rc<RefCell<...>>` from the hot path and let Rust's ownership model enforce VM safety:
+
+- Pass `&mut Context` through `step_frame`. The `Context` owns the object arena, global environment, and call stack.
+- Store JS objects in a slot-indexed arena (`Vec<Object>` or `SlotMap`) referenced by `ObjectId`. Property access becomes a bounds-checked array lookup, not a runtime borrow check.
+- Keep `Value` as a small enum with no vtables; dispatch through `match`.
+- Keep `unsafe` isolated to value representation (e.g., NaN boxing) and verify with Miri.
+
 ## Design
 
 ### `CallFrame`

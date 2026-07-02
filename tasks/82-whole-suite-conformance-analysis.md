@@ -79,9 +79,9 @@ Top TypeScript failure signatures:
 
 ### Phase 1: Stability
 
-1. **Implement the trampoline interpreter** (Task 85). This is the canonical fix: replace recursive `eval` with a heap-allocated `Vec<CallFrame>` and a single loop. Native stack overflow disappears; runaway JS recursion becomes a controllable `RangeError`.
+1. **Implement the trampoline interpreter** (Task 85). This is the canonical fix: replace recursive `eval` with a heap-allocated `Vec<CallFrame>` and a single loop, using `&mut Context` and slot-indexed object storage. Native stack overflow disappears; runaway JS recursion becomes a controllable `RangeError`.
 2. Fix `CURRENT_DEPTH` to be `thread_local!` as a short-term guard until the trampoline lands.
-3. Make the test262 runner spawn one thread per test file (matching TypeScript) as a belt-and-suspenders isolation measure.
+3. Make the test262 runner spawn one thread per test file (matching TypeScript) as a belt-and-suspenders isolation measure. Use `rayon` for parallel test execution with a fresh isolate/context per test.
 
 ### Phase 2: Coverage
 
