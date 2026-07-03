@@ -6,12 +6,19 @@
 //!    - Function length: max 40 lines
 //!    - Cyclomatic complexity: max 10
 //!
-//! **Enforcement:** Panic on any violation. No `#[allow(...)]` exemptions.
+//! **Enforcement:** Panic on any violation. Applies to every `*.rs` file in the
+//! workspace, including the Rust code that implements JS/TS/TSX/JSX semantics;
+//! no file or directory exemptions.
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use syn::spanned::Spanned;
+
+// =============================================================================
+// Lint limits: max 500 lines/file, 40 lines/function, complexity 10
+// Applies to all *.rs files in the workspace; no exemptions.
+// =============================================================================
 
 const MAX_FILE_LINES: usize = 500;
 const MAX_FUNCTION_LINES: usize = 40;
@@ -57,9 +64,9 @@ fn run_linter() {
     }
 }
 
-// ===================================================================
+// =============================================================================
 // Linter
-// ===================================================================
+// =============================================================================
 
 #[derive(Debug)]
 struct Violation {
@@ -93,7 +100,7 @@ fn is_skipped_dir(path: &Path, root: &Path) -> bool {
     }
     path.components().any(|c| {
         let name = c.as_os_str().as_encoded_bytes();
-        matches!(name, b".git" | b"target" | b"node_modules" | b"dist" | b"test262" | b"typescript")
+        matches!(name, b".git" | b"target" | b"node_modules" | b"dist")
     })
 }
 
@@ -102,7 +109,7 @@ fn collect_all_rs_files_rec(dir: &Path, root: &Path, files: &mut Vec<PathBuf>) -
         return Ok(());
     }
     let mut entries: Vec<_> = fs::read_dir(dir).map_err(|e| e.to_string())?.collect();
-    entries.sort_by(|a, b| a.as_ref().unwrap().file_name().cmp(&b.as_ref().unwrap().file_name()));
+    entries.sort_by_key(|a| a.as_ref().unwrap().file_name());
     for entry in entries {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_dir() {
@@ -116,13 +123,9 @@ fn collect_all_rs_files_rec(dir: &Path, root: &Path, files: &mut Vec<PathBuf>) -
 
 fn check_file(path: &Path, violations: &mut Vec<Violation>) -> Result<(), String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    
-    // Allow files to opt-out of linting with a special comment
-    if content.contains("// linter-skip") {
-        return Ok(());
-    }
-    
+
     let lines = content.lines().count();
+
     if lines > MAX_FILE_LINES {
         violations.push(Violation {
             file: path.to_path_buf(),
@@ -149,9 +152,9 @@ fn format_violations(violations: &[Violation]) -> String {
     msg
 }
 
-// ===================================================================
+// =============================================================================
 // Function scanning via syn
-// ===================================================================
+// =============================================================================
 
 fn check_functions(path: &Path, content: &str, violations: &mut Vec<Violation>) -> Result<(), String> {
     let file = syn::parse_file(content).map_err(|e| format!("{}: {e}", path.display()))?;
