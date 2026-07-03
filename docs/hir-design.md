@@ -558,40 +558,42 @@ struct Export {
 
 Module loading produces a `ModuleRecord` with resolved exports; the runtime links modules before execution.
 
-## 15. Implementation strategy — quick wins first, no stubs
+## 15. Implementation strategy — quick wins first, no stubs, granular tests
 
-Each phase below is ordered by effort vs. payoff. If a feature needed by the phase is not implemented, the runtime must throw a clear error; stubs and silent fallbacks are not allowed.
+Each phase below is ordered by effort vs. payoff. If a feature needed by the phase is not implemented, the runtime must throw a clear error; stubs and silent fallbacks are not allowed. **Every phase must be accompanied by focused unit tests:** one behavior per test, isolated, with a name that explains the invariant.
 
 1. **Fix runtime correctness quick wins** (Tasks 250, 253, 91, 97, 147, 191, etc.)
    - Preserve thrown values, load real test262 harness, tighten skip lists, fix small spec bugs.
-   - These unblock accurate measurement and remove silent failures before the HIR rewrite.
+   - Each fix adds a regression test in `crates/quench-runtime/tests/` named after the bug.
 
 2. **Value model + shape foundation**
    - Introduce `Object`, `Shape`, `StringInterner`, and a unified `FunctionObject`.
    - Keep the recursive interpreter running; only replace the value/containers layer.
-   - Any missing shape/lookup behavior must throw, not default to a HashMap path.
+   - Tests: shape interning, property slot lookup, prototype chain walks, function object identity.
 
 3. **Explicit call stack (trampoline)** (Task 85)
    - Replace recursive interpreter calls with `CallFrame` + trampoline loop.
-   - No-op or stub frame handling is forbidden; unsupported call modes panic.
+   - Tests: deep recursion without native stack overflow, tail-call-like frame reuse, exception unwind through frames.
 
 4. **HIR builder (untyped)**
    - Build HIR from the source AST alongside the recursive interpreter.
-   - Run HIR-only smoke tests; every unlowered AST node causes a compile-time panic in the builder.
+   - Tests: round-trip HIR builder smoke tests for each AST node; unlowered nodes panic in the builder.
 
 5. **Type extractor + typed HIR**
    - Collect TS annotations and inferred types.
-   - Emit type-specialized ops with guards; fallback ops must be fully implemented.
+   - Tests: type lattice inference, guard generation, deoptimization paths, unboxed-local boxing/unboxing.
 
 6. **Switch execution to typed HIR interpreter**
    - Run the existing suite through the HIR interpreter.
-   - Every unsupported HIR op throws at runtime until implemented.
+   - Tests: every HIR op has an isolated interpreter test; parity suite compares HIR vs. recursive interpreter output.
 
 7. **Retire recursive interpreter**
    - Remove the old evaluator once the HIR interpreter matches it.
+   - Tests: full existing suite passes with no recursive interpreter code paths remaining.
 
 8. **Bytecode VM** (future)
    - Lower HIR to bytecode when profiling justifies it.
+   - Tests: bytecode round-trip, register/stack correctness, parity with HIR interpreter.
 
 ## 16. Migration path (summary)
 
@@ -602,7 +604,14 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
 5. **Retire recursive interpreter** — once the HIR interpreter passes the existing test suite.
 6. **Bytecode VM** — lower HIR to bytecode when profiling shows it is worthwhile.
 
-## 16. Efficiency notes
+## 17. Testing strategy
+
+- **One behavior, one test.** Each HIR op, shape operation, scope rule, and type-specialized path gets its own `#[test]`.
+- **Parity tests.** For every interpreter-level change, run the same source through both the old and new execution paths and assert identical results.
+- **Regression tests.** Every bug fix from Phase 0 gets a test named after the task/issue and the observable failure.
+- **Fast feedback.** Tests must run with `cargo test -p quench-runtime <test_name>` in under a few seconds.
+
+## 18. Efficiency notes
 
 - **No HashMap in hot paths.** Scopes use slot arrays; shapes use slot arrays; strings are interned.
 - **Precomputed metadata.** Class tables, exception ranges, default-param expressions, and type-derived shapes are built once.
@@ -611,7 +620,7 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
 - **Unboxed locals for known primitives.** Numbers/booleans/strings avoid `Value` boxing inside typed functions.
 - **Control flow is data.** Branch targets are block indices, not string labels or pattern matches.
 
-## 17. Open questions
+## 19. Open questions
 
 - Should the HIR use basic blocks with φ-nodes for merges, or keep a simpler linear-block form with explicit temporaries?
 - Should `Value` use NaN boxing (Task 210) before or after the HIR interpreter is stable?
