@@ -18,13 +18,14 @@
 
 ## Scope
 
-- Every `*.rs` file in the workspace is linted.
+- Every `*.rs` file in the workspace is linted, including the Rust implementation of JavaScript, TypeScript, TSX, and JSX semantics.
 - Skipped directories: `.git/`, `target/`, `node_modules/`, `dist/`, `tests/test262/`, `tests/typescript/`.
 - `build.rs` itself is also linted and must comply.
 
 ## No exemptions
 
 - `#[allow(file_length)]`, `#[allow(clippy::function_length)]`, `#[allow(clippy::complexity)]`, `#[allow(unknown_lints)]`, and similar attributes are **not honored** by the build linter.
+- `// linter-skip` comments are **not honored** and have been removed from the codebase.
 - There are no special-case waivers for individual files.
 
 ## Implementation
