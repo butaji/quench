@@ -13,8 +13,20 @@ Finish the custom TS/JS/TSX runtime in `crates/quench-runtime/` and keep it Ink-
 5. **Strict build-time linting.** Max 500 lines/file, 40 lines/function, complexity 10. Applies to every `*.rs` file in the workspace, including the Rust code that implements JS/TS/TSX/JSX semantics; no `#[allow(...)]` or file exemptions.
 6. **Spec-compliant implementation.** JS/TS/TSX/JSX behavior must match ECMA-262, the TypeScript language spec, and the JSX spec. Gaps are tracked in `tasks/index.json` and verified via test262 / TypeScript harnesses.
 7. **No stubs.** If a feature is not implemented, the runtime must throw a clear error or panic. Do not silently return `undefined`, no-op, or use placeholder behavior.
-8. **Test-driven development.** Every bug fix and feature starts with a failing unit test.
+8. **Granular, test-driven development.** Every bug fix and feature starts with a failing unit test. Each test must be small, isolated, and named after the behavior it protects. Prefer `#[test]` units over broad integration tests; a regression must be reproducible by running a single test name.
 9. **Document deferrals.** Postponed features must be tracked in `tasks/index.json`.
+
+## Testing policy
+
+- One behavior, one test. A unit test should fail for exactly one reason.
+- Tests live next to the code they exercise (`crates/quench-runtime/tests/` for runtime behavior, inline `#[cfg(test)]` modules for internal data structures).
+- Every task in `tasks/index.json` must list the specific test file(s) or test name(s) added/modified in its acceptance criteria.
+- Before claiming a task complete, run:
+  ```bash
+  cargo test -p quench-runtime <test_name>
+  ```
+  and confirm the test fails before the fix and passes after.
+- Conformance gaps are tracked with test262 / TypeScript harness tests, but each fix must also have a focused Rust unit test that isolates the failure.
 
 ## Decision filter
 

@@ -1,53 +1,60 @@
 {
   "tasks": [
     {
+      "id": "279",
+      "title": "Enforce granular unit-test policy",
+      "file": "tasks/279-granular-unit-test-policy.md",
+      "status": "in_progress",
+      "notes": "Policy: one behavior, one test; tests are isolated and named after the invariant; every task acceptance criteria must list the test file/name added. Updated EXECUTE.md and docs/hir-design.md."
+    },
+    {
       "id": "256",
       "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
       "file": "tasks/256-split-large-files.md",
       "status": "in_progress",
-      "notes": "Enforce the 500/40/10 linter contract on every *.rs file in the workspace, including JS/TS/JSX/TSX spec-implementation code. No exemptions. cargo check lists remaining violations."
+      "notes": "Enforce the 500/40/10 linter contract on every *.rs file in the workspace, including JS/TS/JSX/TSX spec-implementation code. No exemptions. cargo check lists remaining violations. Tests: add a build.rs unit test that asserts limits and traversal scope."
     },
     {
       "id": "264",
       "title": "Implement the typed HIR execution model",
       "file": "tasks/264-typed-hir-implementation.md",
       "status": "pending",
-      "notes": "Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Quick-win spec fixes are Phase 0; foundation/value model/trampoline are Phases 1-3. No stubs — unimplemented features throw."
+      "notes": "Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Quick-win spec fixes are Phase 0; foundation/value model/trampoline are Phases 1-3. No stubs — unimplemented features throw. Tests: one test per HIR op, shape operation, type guard, and parity suite comparing HIR vs recursive interpreter."
     },
     {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
-      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR Phase 2."
+      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR Phase 2. Tests: deep recursion without native stack overflow, exception unwind through frames, frame allocation edge cases."
     },
     {
       "id": "88",
       "title": "Leverage Rust for runtime execution model",
       "file": "tasks/88-rust-runtime-leverage.md",
       "status": "pending",
-      "notes": "Apply Rust ownership/explicit-stack/ecosystem patterns. Supports Task 85 and 264."
+      "notes": "Apply Rust ownership/explicit-stack/ecosystem patterns. Supports Task 85 and 264. Tests: benchmark/regression tests for object shape lookups, scope chain walks, and value boxing overhead."
     },
     {
       "id": "251",
       "title": "Implement real Promise resolution and microtasks",
       "file": "tasks/251-implement-real-promise-resolution-and-microtasks.md",
       "status": "pending",
-      "notes": "Replace stub Promise with real thenable queue and microtask scheduling."
+      "notes": "Replace stub Promise with real thenable queue and microtask scheduling. Tests: then/catch ordering, microtask draining, rejection propagation, static methods (resolve/reject/all/race)."
     },
     {
       "id": "241",
       "title": "Implement native ES module support for Quench apps",
       "file": "tasks/241-native-es-module-support.md",
       "status": "pending",
-      "notes": "Load and link real ES modules instead of stripping imports/exports."
+      "notes": "Load and link real ES modules instead of stripping imports/exports. Tests: import/export binding resolution, cyclic module graphs, default/named/namespace imports, module-level scope isolation."
     },
     {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
       "status": "pending",
-      "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs."
+      "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Tests: per-feature test262 pass-rate tracking and regression alerts."
     }
   ]
 }
