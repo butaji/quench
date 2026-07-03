@@ -8,6 +8,13 @@
       "notes": "Policy: one behavior, one test; tests are isolated and named after the invariant; every task acceptance criteria must list the test file/name added. Updated EXECUTE.md and docs/hir-design.md."
     },
     {
+      "id": "280",
+      "title": "Add JS/TS scenario test harness",
+      "file": "tasks/280-js-ts-scenario-tests.md",
+      "status": "pending",
+      "notes": "Run real JavaScript and TypeScript snippets through the runtime from Rust unit tests. Scenarios live in tests/scenarios/<category>/. Harness asserts on results, console output, or thrown errors."
+    },
+    {
       "id": "256",
       "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
       "file": "tasks/256-split-large-files.md",
@@ -19,14 +26,14 @@
       "title": "Implement the typed HIR execution model",
       "file": "tasks/264-typed-hir-implementation.md",
       "status": "pending",
-      "notes": "Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Quick-win spec fixes are Phase 0; foundation/value model/trampoline are Phases 1-3. No stubs — unimplemented features throw. Tests: one test per HIR op, shape operation, type guard, and parity suite comparing HIR vs recursive interpreter."
+      "notes": "Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Quick-win spec fixes are Phase 0; foundation/value model/trampoline are Phases 1-3. No stubs — unimplemented features throw. Tests: one Rust unit test per HIR op/shape/type guard; JS/TS scenario tests for end-to-end parity."
     },
     {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
-      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR Phase 2. Tests: deep recursion without native stack overflow, exception unwind through frames, frame allocation edge cases."
+      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR Phase 2. Tests: deep recursion without native stack overflow, exception unwind through frames, frame allocation edge cases; JS recursion scenario tests."
     },
     {
       "id": "88",
@@ -40,21 +47,21 @@
       "title": "Implement real Promise resolution and microtasks",
       "file": "tasks/251-implement-real-promise-resolution-and-microtasks.md",
       "status": "pending",
-      "notes": "Replace stub Promise with real thenable queue and microtask scheduling. Tests: then/catch ordering, microtask draining, rejection propagation, static methods (resolve/reject/all/race)."
+      "notes": "Replace stub Promise with real thenable queue and microtask scheduling. Tests: then/catch ordering, microtask draining, rejection propagation, static methods; JS Promise scenario tests."
     },
     {
       "id": "241",
       "title": "Implement native ES module support for Quench apps",
       "file": "tasks/241-native-es-module-support.md",
       "status": "pending",
-      "notes": "Load and link real ES modules instead of stripping imports/exports. Tests: import/export binding resolution, cyclic module graphs, default/named/namespace imports, module-level scope isolation."
+      "notes": "Load and link real ES modules instead of stripping imports/exports. Tests: import/export binding resolution, cyclic module graphs, default/named/namespace imports, module-level scope isolation; JS module scenario tests."
     },
     {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
       "status": "pending",
-      "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Tests: per-feature test262 pass-rate tracking and regression alerts."
+      "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Tests: per-feature test262 pass-rate tracking, JS/TS scenario regression suite, and regression alerts."
     }
   ]
 }
