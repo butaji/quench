@@ -27,6 +27,7 @@ Finish the custom TS/JS/TSX runtime in `crates/quench-runtime/` and keep it Ink-
   ```
   and confirm the test fails before the fix and passes after.
 - Conformance gaps are tracked with test262 / TypeScript harness tests, but each fix must also have a focused Rust unit test that isolates the failure.
+- **JS/TS scenario tests.** In addition to pure-Rust unit tests, exercise runtime behavior through real JavaScript and TypeScript snippets evaluated by the runtime. These scenarios live in `crates/quench-runtime/tests/scenarios/` as `.js`/`.ts` files paired with Rust harness tests that assert on the evaluated result, console output, or thrown error.
 
 ## Decision filter
 

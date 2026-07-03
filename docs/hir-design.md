@@ -609,6 +609,7 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
 - **One behavior, one test.** Each HIR op, shape operation, scope rule, and type-specialized path gets its own `#[test]`.
 - **Parity tests.** For every interpreter-level change, run the same source through both the old and new execution paths and assert identical results.
 - **Regression tests.** Every bug fix from Phase 0 gets a test named after the task/issue and the observable failure.
+- **JS/TS scenario tests.** Real `.js` and `.ts` snippets are executed by the runtime through a Rust harness, asserting on returned values, console output, or thrown errors. These live in `crates/quench-runtime/tests/scenarios/`.
 - **Fast feedback.** Tests must run with `cargo test -p quench-runtime <test_name>` in under a few seconds.
 
 ## 18. Efficiency notes
