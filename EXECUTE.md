@@ -4,7 +4,7 @@
 
 # Goal
 
-Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crates/quench-runtime/`, executing `.ts/.tsx/.js/.jsx` natively, with the **minimum amount of code** and the **maximum possible performance**. Keep it Ink-compatible.
+Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crates/quench-runtime/`, executing `.ts/.tsx/.js/.jsx` natively, with the **minimum amount of code**, the **maximum possible performance**, and **complete coverage of fast Rust unit tests** so every spec behavior is verified and regressions are caught immediately. Keep it Ink-compatible.
 
 ## Principles
 
@@ -15,7 +15,7 @@ Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crate
 5. **Strict build-time linting.** Max 500 lines/file, 40 lines/function, complexity 10. Applies to every `*.rs` file in the workspace, including the Rust code that implements JS/TS/TSX/JSX semantics; no `#[allow(...)]` or file exemptions.
 6. **Spec-compliant implementation.** JS/TS/TSX/JSX behavior must match ECMA-262, the TypeScript language spec, and the JSX spec. Gaps are tracked in `tasks/index.json` and verified via test262 / TypeScript harnesses.
 7. **No stubs.** If a feature is not implemented, the runtime must throw a clear error or panic. Do not silently return `undefined`, no-op, or use placeholder behavior.
-8. **Granular, test-driven development.** Every bug fix and feature starts with a failing unit test. Each test must be small, isolated, and named after the behavior it protects. Prefer `#[test]` units over broad integration tests; a regression must be reproducible by running a single test name.
+8. **Granular, test-driven development.** Every bug fix and feature starts with a failing unit test. Each test must be small, isolated, and named after the behavior it protects. Prefer `#[test]` units over broad integration tests; a regression must be reproducible by running a single test name. The project must have complete coverage of fast Rust unit tests for every spec behavior.
 9. **Parallel sub-agents.** Dispatch independent exploration, planning, and implementation work to sub-agents running in parallel. Use the decision filter and task tracker to keep work aligned and avoid conflicts.
 10. **Minimum code, maximum performance.** Every feature is implemented with the smallest Rust surface that fully matches the spec. Avoid speculative abstractions, layers, and generic wrappers. Optimize the hot path; keep cold paths simple.
 11. **Document deferrals.** Postponed features must be tracked in `tasks/index.json`.

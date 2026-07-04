@@ -7,6 +7,7 @@
 - **100% spec compatibility.** Every observable JS/TS/TSX/JSX behavior works.
 - **Minimum code.** The smallest Rust implementation that matches the spec. No speculative layers.
 - **Maximum performance.** Hot paths use slots, shapes, interned strings, and explicit state. Cold paths stay simple.
+- **Complete fast test coverage.** Every spec behavior has a focused Rust unit test or fixture; regressions are caught in seconds.
 
 ## Current baseline
 

@@ -6,8 +6,9 @@ To reach 100% JS/TS/TSX/JSX compatibility we exercise the runtime against real l
 
 ## Goals
 
+- **Complete coverage.** Every JS/TS spec behavior that the runtime claims to support has a fixture.
 - **One behavior, one fixture.** A fixture should fail for exactly one reason.
-- **Fast.** Fixtures run as Rust unit tests via `cargo test -p quench-runtime spec_fixtures`.
+- **Fast.** Fixtures run as Rust unit tests via `cargo test -p quench-runtime spec_fixtures` and complete in seconds.
 - **Self-describing.** The expected result is encoded in the fixture file itself.
 - **Aligned with specs.** Every fixture maps to an ECMA-262 or TypeScript language section.
 
