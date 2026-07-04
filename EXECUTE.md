@@ -11,21 +11,21 @@ Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crate
 1. **High impact, low effort first.** Every decision is filtered by effort vs. payoff. Prefer the change that fixes the most failures, unblocks the most examples, or removes the biggest stability risk with the smallest patch.
 2. **Reuse before rewriting.** Prefer crates and stdlib. Mandatory crates: `swc`, `serde_json`, `regress`, `miette`/`ariadne`, `lasso`, `indexmap`, `num-bigint`/`rust_decimal`, `bumpalo`, `rustc-hash`/`foldhash`, `thiserror`.
 3. **80/20 Pareto.** Unblock examples and conformance tests first.
-4. **No cross-compilation / no transpilation.** Execute `.ts/.js/.tsx/.jsx` natively via `swc` parsing and lowering. No `esbuild`, `tsc`, or Deno step, and no `import`/`export` stripping. Full ES module support is tracked in Task 221.
+4. **No cross-compilation / no transpilation.** Execute `.ts/.js/.tsx/.jsx` natively via `swc` parsing and lowering. No `esbuild`, `tsc`, or Deno step, and no `import`/`export` stripping.
 5. **Strict build-time linting.** Max 500 lines/file, 40 lines/function, complexity 10. Applies to every `*.rs` file in the workspace, including the Rust code that implements JS/TS/TSX/JSX semantics; no `#[allow(...)]` or file exemptions.
-6. **Spec-compliant implementation.** JS/TS/TSX/JSX behavior must match ECMA-262, the TypeScript language spec, and the JSX spec. Gaps are tracked in `tasks/index.json` and verified via test262 / TypeScript harnesses.
+6. **Spec-compliant implementation.** JS/TS/TSX/JSX behavior must match ECMA-262, the TypeScript language spec, and the JSX spec. Verify gaps via test262 / TypeScript harnesses and focused Rust unit tests.
 7. **No stubs.** If a feature is not implemented, the runtime must throw a clear error or panic. Do not silently return `undefined`, no-op, or use placeholder behavior.
 8. **Granular, test-driven development.** Every bug fix and feature starts with a failing unit test. Each test must be small, isolated, and named after the behavior it protects. Prefer `#[test]` units over broad integration tests; a regression must be reproducible by running a single test name. The project must have complete coverage of fast Rust unit tests for every spec behavior.
 9. **Parallel sub-agents.** Dispatch independent exploration, planning, and implementation work to sub-agents running in parallel. Use the decision filter and task tracker to keep work aligned and avoid conflicts.
 10. **Minimum code, maximum performance.** Every feature is implemented with the smallest Rust surface that fully matches the spec. Avoid speculative abstractions, layers, and generic wrappers. Optimize the hot path; keep cold paths simple.
-11. **Document deferrals.** Postponed features must be tracked in `tasks/index.json`.
+11. **Document deferrals.** Postponed features and design decisions must be written down.
 
 ## Testing policy
 
 - One behavior, one test. A unit test should fail for exactly one reason.
 - Tests live next to the code they exercise (`crates/quench-runtime/tests/` for runtime behavior, inline `#[cfg(test)]` modules for internal data structures).
-- Every task in `tasks/index.json` must list the specific test file(s) or test name(s) added/modified in its acceptance criteria.
-- Before claiming a task complete, run:
+- Every fix or feature must list the specific test file(s) or test name(s) added/modified in its acceptance criteria.
+- Before claiming work complete, run:
   ```bash
   cargo test -p quench-runtime <test_name>
   ```
@@ -71,7 +71,3 @@ timeout 60 cargo run -- examples/animations.tsx
 ## Conformance
 
 See `docs/conformance.md` for running the test262 and TypeScript harnesses.
-
-## Tasks
-
-Current work is tracked in `tasks/index.json`.
