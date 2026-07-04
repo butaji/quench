@@ -1,4 +1,6 @@
 > **Execution contract for the Quench runtime.**
+>
+> Run sub-agents in parallel to move faster on independent tasks.
 
 # Goal
 
@@ -14,7 +16,8 @@ Finish the custom TS/JS/TSX runtime in `crates/quench-runtime/` and keep it Ink-
 6. **Spec-compliant implementation.** JS/TS/TSX/JSX behavior must match ECMA-262, the TypeScript language spec, and the JSX spec. Gaps are tracked in `tasks/index.json` and verified via test262 / TypeScript harnesses.
 7. **No stubs.** If a feature is not implemented, the runtime must throw a clear error or panic. Do not silently return `undefined`, no-op, or use placeholder behavior.
 8. **Granular, test-driven development.** Every bug fix and feature starts with a failing unit test. Each test must be small, isolated, and named after the behavior it protects. Prefer `#[test]` units over broad integration tests; a regression must be reproducible by running a single test name.
-9. **Document deferrals.** Postponed features must be tracked in `tasks/index.json`.
+9. **Parallel sub-agents.** Dispatch independent exploration, planning, and implementation work to sub-agents running in parallel. Use the decision filter and task tracker to keep work aligned and avoid conflicts.
+10. **Document deferrals.** Postponed features must be tracked in `tasks/index.json`.
 
 ## Testing policy
 
