@@ -1,13 +1,6 @@
 {
   "tasks": [
     {
-      "id": "287",
-      "title": "Runtime optimization roadmap review",
-      "file": "tasks/287-runtime-optimization-roadmap.md",
-      "status": "in_progress",
-      "notes": "Architecture/code/tasks review completed. Findings captured in docs/runtime-optimization-roadmap.md. This task tracks keeping the roadmap current as work progresses."
-    },
-    {
       "id": "281",
       "title": "Remove the while-loop 10-iteration cap",
       "file": "tasks/281-remove-while-loop-cap.md",
@@ -15,102 +8,109 @@
       "notes": "P0 correctness bug. Trivial fix. Requires regression test and JS scenario test."
     },
     {
-      "id": "282",
-      "title": "Share function bodies via Rc<[Statement]>",
-      "file": "tasks/282-share-function-body-rc.md",
+      "id": "286",
+      "title": "Remove redundant Context::globals HashMap",
+      "file": "tasks/286-remove-context-globals-duplicate.md",
       "status": "pending",
-      "notes": "P0 performance: stop cloning function bodies on every Value clone. Low effort, high impact."
+      "notes": "P1 cleanup: low effort, removes duplicated global storage and extra clones."
     },
     {
       "id": "283",
       "title": "Install String.prototype once instead of per-access closures",
       "file": "tasks/283-string-prototype-once.md",
       "status": "pending",
-      "notes": "P1 performance: every string property access currently allocates a closure. Build String.prototype once."
+      "notes": "P1 performance: low effort, high impact. Every string property access currently allocates a closure."
     },
     {
       "id": "284",
       "title": "Avoid cloning array elements in builtin methods",
       "file": "tasks/284-avoid-array-elements-clone.md",
       "status": "pending",
-      "notes": "P1 performance: array methods clone the elements vector. Operate on mutable borrow instead."
+      "notes": "P1 performance: low effort, high impact. Array methods clone the elements vector; operate on mutable borrow instead."
+    },
+    {
+      "id": "282",
+      "title": "Share function bodies via Rc<[Statement]>",
+      "file": "tasks/282-share-function-body-rc.md",
+      "status": "pending",
+      "notes": "P0 performance: low effort, high impact. Stop cloning function bodies on every Value clone."
     },
     {
       "id": "285",
       "title": "Make control flow and this explicit",
       "file": "tasks/285-explicit-control-flow-this.md",
       "status": "pending",
-      "notes": "P1 design: replace CONTROL_FLOW and CURRENT_THIS thread-locals with explicit enum/argument. Aligns with HIR."
-    },
-    {
-      "id": "286",
-      "title": "Remove redundant Context::globals HashMap",
-      "file": "tasks/286-remove-context-globals-duplicate.md",
-      "status": "pending",
-      "notes": "P1 cleanup: Context stores globals in two places. Use top-level Environment only."
+      "notes": "P1 design: medium effort, medium-high impact. Replace CONTROL_FLOW and CURRENT_THIS thread-locals with explicit enum/argument. Aligns with HIR."
     },
     {
       "id": "279",
       "title": "Enforce granular unit-test policy",
       "file": "tasks/279-granular-unit-test-policy.md",
       "status": "in_progress",
-      "notes": "Policy: one behavior, one test; tests are isolated and named after the invariant; every task acceptance criteria must list the test file/name added. Updated EXECUTE.md and docs/hir-design.md."
+      "notes": "High impact, low effort process change. Policy: one behavior, one test; tests isolated and named after the invariant; every task lists test file/name. Updated EXECUTE.md and docs/hir-design.md."
     },
     {
       "id": "280",
       "title": "Add JS/TS scenario test harness",
       "file": "tasks/280-js-ts-scenario-tests.md",
       "status": "pending",
-      "notes": "Run real JavaScript and TypeScript snippets through the runtime from Rust unit tests. Scenarios live in tests/scenarios/<category>/. Harness asserts on results, console output, or thrown errors."
+      "notes": "High impact, medium effort. Run real JavaScript and TypeScript snippets through the runtime from Rust unit tests. Scenarios live in tests/scenarios/<category>/."
+    },
+    {
+      "id": "287",
+      "title": "Runtime optimization roadmap",
+      "file": "tasks/287-runtime-optimization-roadmap.md",
+      "status": "in_progress",
+      "notes": "Tracking task for the optimization review. Findings in docs/runtime-optimization-roadmap.md. Keep current as work progresses."
     },
     {
       "id": "256",
       "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
       "file": "tasks/256-split-large-files.md",
       "status": "in_progress",
-      "notes": "Enforce the 500/40/10 linter contract on every *.rs file in the workspace, including JS/TS/JSX/TSX spec-implementation code. No exemptions. cargo check lists remaining violations. Tests: add a build.rs unit test that asserts limits and traversal scope."
-    },
-    {
-      "id": "264",
-      "title": "Implement the typed HIR execution model",
-      "file": "tasks/264-typed-hir-implementation.md",
-      "status": "pending",
-      "notes": "Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Quick-win spec fixes are Phase 0; foundation/value model/trampoline are Phases 1-3. No stubs — unimplemented features throw. Tests: one Rust unit test per HIR op/shape/type guard; JS/TS scenario tests for end-to-end parity."
+      "notes": "High impact, high effort. Enforce the 500/40/10 linter contract on every *.rs file. cargo check lists remaining violations. Best done incrementally between other tasks."
     },
     {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
-      "notes": "Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR Phase 2. Tests: deep recursion without native stack overflow, exception unwind through frames, frame allocation edge cases; JS recursion scenario tests."
+      "notes": "Very high impact, high effort. Replace recursive interpreter with heap-allocated Vec<CallFrame> and trampoline loop. Required by typed HIR."
     },
     {
       "id": "88",
       "title": "Leverage Rust for runtime execution model",
       "file": "tasks/88-rust-runtime-leverage.md",
       "status": "pending",
-      "notes": "Apply Rust ownership/explicit-stack/ecosystem patterns. Supports Task 85 and 264. Tests: benchmark/regression tests for object shape lookups, scope chain walks, and value boxing overhead."
+      "notes": "High impact, high effort. Apply Rust ownership/explicit-stack/ecosystem patterns. Supports Task 85 and 264."
     },
     {
       "id": "251",
       "title": "Implement real Promise resolution and microtasks",
       "file": "tasks/251-implement-real-promise-resolution-and-microtasks.md",
       "status": "pending",
-      "notes": "Replace stub Promise with real thenable queue and microtask scheduling. Tests: then/catch ordering, microtask draining, rejection propagation, static methods; JS Promise scenario tests."
+      "notes": "High impact, medium effort. Replace stub Promise with real thenable queue and microtask scheduling."
+    },
+    {
+      "id": "264",
+      "title": "Implement the typed HIR execution model",
+      "file": "tasks/264-typed-hir-implementation.md",
+      "status": "pending",
+      "notes": "Very high impact, very high effort. Type-aware HIR + trampoline interpreter aligned with JS/TS/JSX/TSX. Depends on Tasks 85 and quick-win cleanup."
     },
     {
       "id": "241",
       "title": "Implement native ES module support for Quench apps",
       "file": "tasks/241-native-es-module-support.md",
       "status": "pending",
-      "notes": "Load and link real ES modules instead of stripping imports/exports. Tests: import/export binding resolution, cyclic module graphs, default/named/namespace imports, module-level scope isolation; JS module scenario tests."
+      "notes": "High impact, high effort. Load and link real ES modules instead of stripping imports/exports."
     },
     {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
       "status": "pending",
-      "notes": "Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs. Tests: per-feature test262 pass-rate tracking, JS/TS scenario regression suite, and regression alerts."
+      "notes": "High impact, high effort analysis. Documented blockers: recursive interpreter stack overflow, global CURRENT_DEPTH counter, huge unsupported feature surface, baseline/harness gaps, runtime bugs."
     }
   ]
 }
