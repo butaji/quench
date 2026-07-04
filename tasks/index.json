@@ -5,7 +5,21 @@
       "title": "Reach 100% JS/TS/TSX/JSX compatibility with minimum code and maximum performance",
       "file": "tasks/296-100-percent-js-ts-compatibility.md",
       "status": "in_progress",
-      "notes": "North star. 100% test262 + TypeScript conformance, native execution, no bytecode/JIT. All work below is ordered low effort / high impact toward this goal."
+      "notes": "North star. 100% test262 + TypeScript conformance, native execution, no bytecode/JIT, minimum code, maximum performance. All work below is ordered low effort / high impact toward this goal, with complete fast Rust unit test coverage."
+    },
+    {
+      "id": "297",
+      "title": "Establish spec test fixtures",
+      "file": "tasks/297-spec-test-fixtures.md",
+      "status": "in_progress",
+      "notes": "Define fixture format and directory layout under tests/spec_fixtures/. Every compatibility task must reference the fixture files it adds/fixes. Contributes to complete fast Rust unit test coverage."
+    },
+    {
+      "id": "298",
+      "title": "Complete fast Rust unit test coverage",
+      "file": "tasks/298-complete-fast-unit-test-coverage.md",
+      "status": "in_progress",
+      "notes": "Ensure every JS/TS/TSX/JSX spec behavior has a focused Rust unit test or fixture. Regressions caught in seconds. No feature/fix without a test."
     },
     {
       "id": "253",
@@ -40,7 +54,7 @@
       "title": "typeof undeclared returns \"undefined\"",
       "file": "tasks/291-typeof-undeclared.md",
       "status": "pending",
-      "notes": "P1 quick win. Trivial fix, high impact. Many typeof tests and TS typeofOperator failures."
+      "notes": "P1 quick win. Trivial fix, high impact. Many typeof tests and TS typeofOperator failures. Fixture: tests/spec_fixtures/expressions/typeof_undeclared.js."
     },
     {
       "id": "281",
