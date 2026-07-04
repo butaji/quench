@@ -1,6 +1,13 @@
 {
   "tasks": [
     {
+      "id": "296",
+      "title": "Reach 100% JS/TS/TSX/JSX compatibility with minimum code and maximum performance",
+      "file": "tasks/296-100-percent-js-ts-compatibility.md",
+      "status": "in_progress",
+      "notes": "North star. 100% test262 + TypeScript conformance, native execution, no bytecode/JIT. All work below is ordered low effort / high impact toward this goal."
+    },
+    {
       "id": "253",
       "title": "Load real test262 harness includes",
       "file": "tasks/253-load-real-test262-harness-includes.md",
@@ -39,8 +46,8 @@
       "id": "281",
       "title": "Remove the while-loop 10-iteration cap",
       "file": "tasks/281-remove-while-loop-cap.md",
-      "status": "pending",
-      "notes": "P0 correctness. Trivial fix, very high impact. Blocks all real iteration."
+      "status": "completed",
+      "notes": "COMPLETED: Fixed control flow bugs in eval_while and eval_for. The original issue was a double take_control_flow() call in both functions, and eval_block consuming the control flow. Fixed by: 1) Removing first take_control_flow() call in eval_while/eval_for, 2) Using peek_control_flow() in eval_statements to check without consuming, 3) Fixed eval_block to not consume control flow, 4) Added peek_control_flow() to control_flow.rs. Tests: interpreter_bugs::test_while_loop_with_continue, test_while_loop_break_after_many_iterations, test_while_loop_hundred_iterations, test_while_loop_over_ten_iterations, test_while_loop_counter_pattern all pass."
     },
     {
       "id": "283",
@@ -145,7 +152,7 @@
       "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
       "file": "tasks/256-split-large-files.md",
       "status": "in_progress",
-      "notes": "High impact, high effort. Enforce 500/40/10 on every *.rs file. Best done incrementally between other tasks."
+      "notes": "PARTIALLY COMPLETE: Fixed quench-runtime violations. Remaining violations in src/ and xtask/ directories. FIXED in quench-runtime: split comparison.rs into smaller functions, fixed lower/expressions.rs, lower/statements.rs, lower/patterns.rs, conformance/typescript/mod.rs, conformance/typescript/skip.rs, test262/runner.rs, tests/conformance.rs, split runtime_issues.rs into runtime_issues_basic.rs and runtime_issues_math.rs. REMAINING violations (cannot touch per contract): src/bridge/ffi.rs, src/bridge_reg.rs, src/cli.rs, src/hotreload.rs, src/main.rs, src/event_loop.rs, xtask/src/main.rs. Files marked 'off-limits' in contract (bridge/, ink/, render/) have violations but cannot be fixed without breaking bridge functionality."
     },
     {
       "id": "85",
