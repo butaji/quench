@@ -1,69 +1,30 @@
-> **Running the test262 and TypeScript conformance harnesses.**
+> Running the test262 and TypeScript conformance harnesses.
 
-# Conformance Harnesses
+# Conformance
 
-Quench runs two Rust-only conformance harnesses against external submodules:
-
-- **test262** — official ECMAScript suite (`tests/test262`)
-- **TypeScript** — TypeScript compiler conformance cases (`tests/typescript`)
-
-## Setup
+External submodules:
 
 ```bash
 git submodule update --init tests/test262 tests/typescript
 ```
 
-## Run
-
-```bash
-./scripts/run_tests.sh test-test262      # test262 full suite, no skips
-./scripts/run_tests.sh test-conformance  # TypeScript expressions subset
-```
-
-Or directly:
+Run:
 
 ```bash
 cargo test -p quench-runtime --test test262 -- --ignored --nocapture
-cargo test -p quench-runtime --test conformance -- --ignored --nocapture
+cargo test -p quench-runtime --test conformance -- --test-threads=1
 ```
-
-## No-skip policy
-
-The test262 harness must execute **every** `.js` file under `tests/test262/test`. Tests are never pre-filtered or skipped because of an unsupported feature, a missing built-in, or an expected failure. Instead, each test runs in an isolated thread with a fresh context, and failures are bucketed by root cause. This gives a true compatibility percentage and makes the next high-impact fix obvious.
 
 ## Latest results
 
-```text
-TypeScript expressions (376 cases):      149 passed, 227 failed, 0 skipped (39.6%)
-TypeScript 100-case sanity:               12 passed,  49 failed, 39 skipped (12%)
-test262 full suite (~53,683 cases):      TBD passed, TBD failed, 0 skipped (TBD%)
-```
+Run against the current test subsets on `engine` branch:
 
-## Reports
+| Suite | Total | Passed | Failed | Skipped | Pass rate (of total) | Pass rate (of non-skipped) |
+|---|---|---|---|---|---|---|
+| TypeScript full conformance subset | 100 | 14 | 47 | 39 | **14.0%** | **22.9%** |
+| TypeScript expressions subset | 100 | 45 | 55 | 0 | **45.0%** | **45.0%** |
+| test262 subset | 431 | 73 | 60 | 298 | **16.9%** | **54.9%** |
 
-Each run writes JSON + Markdown reports to `target/`:
+The TypeScript harness runs baseline JS extracted from compiler output, not source TS. The test262 harness currently stubs helpers and skips tests that require includes.
 
-- `conformance_expressions_report.json` / `.md`
-- `conformance_report.json` / `.md`
-- `test262_report.json` / `.md`
-
-The Markdown report shows the pass rate, top failure signatures, and per-category pass rates so the next bug is obvious.
-
-## Fixing bugs
-
-1. Run a subset and open the Markdown report.
-2. Pick a high-count failure signature.
-3. Reduce the example path to a minimal reproduction.
-4. Write a regression test in `crates/quench-runtime/tests/`.
-5. Fix the smallest runtime change that makes it pass.
-6. Re-run the subset and confirm the bucket shrank.
-
-Do not edit `examples/`, `tests/test262/`, or `tests/typescript/`.
-
-## Priorities
-
-Pick the highest-impact, lowest-effort bucket from the Markdown report, fix it with a regression test, and re-run. Active tasks are in `tasks/index.json`:
-
-- **Task 82** — whole-suite run blockers.
-- **Task 85** — trampoline interpreter to eliminate stack overflow.
-- **Task 88** — Rust-specific runtime model (slot-indexed storage, isolate threads, allocator/interning strategy).
+Do not edit `tests/test262/`, `tests/typescript/`, or `examples/`.
