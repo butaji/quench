@@ -86,5 +86,6 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 
 Every item above must land with:
 - A focused Rust unit test.
+- A spec fixture in `crates/quench-runtime/tests/spec_fixtures/` (see `docs/spec-test-fixtures.md`) that exercises the real JS/TS snippet.
 - A JS/TS scenario test in `crates/quench-runtime/tests/scenarios/` where applicable.
 - A before/after conformance run showing the delta.
