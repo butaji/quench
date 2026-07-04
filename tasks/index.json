@@ -1,6 +1,55 @@
 {
   "tasks": [
     {
+      "id": "287",
+      "title": "Runtime optimization roadmap review",
+      "file": "tasks/287-runtime-optimization-roadmap.md",
+      "status": "in_progress",
+      "notes": "Architecture/code/tasks review completed. Findings captured in docs/runtime-optimization-roadmap.md. This task tracks keeping the roadmap current as work progresses."
+    },
+    {
+      "id": "281",
+      "title": "Remove the while-loop 10-iteration cap",
+      "file": "tasks/281-remove-while-loop-cap.md",
+      "status": "pending",
+      "notes": "P0 correctness bug. Trivial fix. Requires regression test and JS scenario test."
+    },
+    {
+      "id": "282",
+      "title": "Share function bodies via Rc<[Statement]>",
+      "file": "tasks/282-share-function-body-rc.md",
+      "status": "pending",
+      "notes": "P0 performance: stop cloning function bodies on every Value clone. Low effort, high impact."
+    },
+    {
+      "id": "283",
+      "title": "Install String.prototype once instead of per-access closures",
+      "file": "tasks/283-string-prototype-once.md",
+      "status": "pending",
+      "notes": "P1 performance: every string property access currently allocates a closure. Build String.prototype once."
+    },
+    {
+      "id": "284",
+      "title": "Avoid cloning array elements in builtin methods",
+      "file": "tasks/284-avoid-array-elements-clone.md",
+      "status": "pending",
+      "notes": "P1 performance: array methods clone the elements vector. Operate on mutable borrow instead."
+    },
+    {
+      "id": "285",
+      "title": "Make control flow and this explicit",
+      "file": "tasks/285-explicit-control-flow-this.md",
+      "status": "pending",
+      "notes": "P1 design: replace CONTROL_FLOW and CURRENT_THIS thread-locals with explicit enum/argument. Aligns with HIR."
+    },
+    {
+      "id": "286",
+      "title": "Remove redundant Context::globals HashMap",
+      "file": "tasks/286-remove-context-globals-duplicate.md",
+      "status": "pending",
+      "notes": "P1 cleanup: Context stores globals in two places. Use top-level Environment only."
+    },
+    {
       "id": "279",
       "title": "Enforce granular unit-test policy",
       "file": "tasks/279-granular-unit-test-policy.md",
