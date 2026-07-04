@@ -1,6 +1,12 @@
-> Roadmap to full ECMA-262 + TypeScript language compatibility for `.ts/.tsx/.js/.jsx` running natively in Quench. No bytecode, no JIT.
+> Roadmap to **100% ECMA-262 + TypeScript language compatibility** for `.ts/.tsx/.js/.jsx` running natively in Quench. No bytecode, no JIT. **Minimum code, maximum performance.**
 
 # JS/TS Compatibility Roadmap
+
+## North star
+
+- **100% spec compatibility.** Every observable JS/TS/TSX/JSX behavior works.
+- **Minimum code.** The smallest Rust implementation that matches the spec. No speculative layers.
+- **Maximum performance.** Hot paths use slots, shapes, interned strings, and explicit state. Cold paths stay simple.
 
 ## Current baseline
 
