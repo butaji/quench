@@ -17,11 +17,10 @@ Make Quench pass the full test262 and TypeScript conformance suites for all runt
 
 ## Current baseline
 
-| Suite | Pass rate (total) | Pass rate (non-skipped) |
-|---|---|---|
-| test262 subset | 16.9% | 54.9% |
-| TypeScript expressions | 45.0% | 45.0% |
-| TypeScript full | 14.0% | 22.9% |
+| Suite | Full spec size | Current subset | Pass rate (of subset) | True spec coverage |
+|---|---|---|---|---|
+| test262 | ~53,683 files | 431 | 10.9% | 0.09% |
+| TypeScript expressions | ~18,876 cases | 376 | 40.7% | 0.81% |
 
 ## Strategy
 
@@ -33,8 +32,8 @@ Make Quench pass the full test262 and TypeScript conformance suites for all runt
 
 ## Acceptance criteria
 
-- [ ] test262 language + built-ins core suites pass at 100%.
-- [ ] TypeScript runtime conformance passes at 100%.
+- [ ] 100% of the full test262 suite (~53,683 files) passes.
+- [ ] 100% of the full TypeScript runtime conformance suite (~18,876 cases) passes.
 - [ ] All examples run natively without transpilation.
 - [ ] Hot-path benchmarks improve with each architecture milestone.
 
