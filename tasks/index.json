@@ -5,14 +5,7 @@
       "title": "Reach 100% JS/TS/TSX/JSX compatibility with minimum code and maximum performance",
       "file": "tasks/296-100-percent-js-ts-compatibility.md",
       "status": "in_progress",
-      "notes": "North star. 100% test262 + TypeScript conformance, native execution, no bytecode/JIT, minimum code, maximum performance. All work below is ordered low effort / high impact toward this goal, with complete fast Rust unit test coverage."
-    },
-    {
-      "id": "297",
-      "title": "Establish spec test fixtures",
-      "file": "tasks/297-spec-test-fixtures.md",
-      "status": "in_progress",
-      "notes": "Define fixture format and directory layout under tests/spec_fixtures/. Every compatibility task must reference the fixture files it adds/fixes. Contributes to complete fast Rust unit test coverage."
+      "notes": "North star. 100% of full test262 (~53k files) + TypeScript (~18k cases) conformance, native execution, no bytecode/JIT, minimum code, maximum performance. All work below is ordered low effort / high impact, with complete fast Rust unit test coverage."
     },
     {
       "id": "298",
@@ -22,11 +15,18 @@
       "notes": "Ensure every JS/TS/TSX/JSX spec behavior has a focused Rust unit test or fixture. Regressions caught in seconds. No feature/fix without a test."
     },
     {
+      "id": "297",
+      "title": "Establish spec test fixtures",
+      "file": "tasks/297-spec-test-fixtures.md",
+      "status": "in_progress",
+      "notes": "Define fixture format and directory layout under tests/spec_fixtures/. Every compatibility task must reference the fixture files it adds/fixes. Contributes to complete fast Rust unit test coverage."
+    },
+    {
       "id": "253",
       "title": "Load real test262 harness includes",
       "file": "tasks/253-load-real-test262-harness-includes.md",
       "status": "pending",
-      "notes": "P0 measurement blocker. 298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort."
+      "notes": "P0 measurement blocker. ~298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort."
     },
     {
       "id": "91",
@@ -50,32 +50,11 @@
       "notes": "P0 measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison."
     },
     {
-      "id": "291",
-      "title": "typeof undeclared returns \"undefined\"",
-      "file": "tasks/291-typeof-undeclared.md",
-      "status": "pending",
-      "notes": "P1 quick win. Trivial fix, high impact. Many typeof tests and TS typeofOperator failures. Fixture: tests/spec_fixtures/expressions/typeof_undeclared.js."
-    },
-    {
-      "id": "281",
-      "title": "Remove the while-loop 10-iteration cap",
-      "file": "tasks/281-remove-while-loop-cap.md",
-      "status": "completed",
-      "notes": "COMPLETED: Fixed control flow bugs in eval_while and eval_for. The original issue was a double take_control_flow() call in both functions, and eval_block consuming the control flow. Fixed by: 1) Removing first take_control_flow() call in eval_while/eval_for, 2) Using peek_control_flow() in eval_statements to check without consuming, 3) Fixed eval_block to not consume control flow, 4) Added peek_control_flow() to control_flow.rs. Tests: interpreter_bugs::test_while_loop_with_continue, test_while_loop_break_after_many_iterations, test_while_loop_hundred_iterations, test_while_loop_over_ten_iterations, test_while_loop_counter_pattern all pass."
-    },
-    {
       "id": "283",
       "title": "Install String.prototype once instead of per-access closures",
       "file": "tasks/283-string-prototype-once.md",
       "status": "pending",
-      "notes": "P1 quick win. Low effort, high impact. Every string property access currently allocates a closure."
-    },
-    {
-      "id": "286",
-      "title": "Remove redundant Context::globals HashMap",
-      "file": "tasks/286-remove-context-globals-duplicate.md",
-      "status": "pending",
-      "notes": "P1 cleanup. Low effort, removes duplicated global storage and extra clones."
+      "notes": "P1 quick win. Low effort, high impact. Every string property access currently allocates a closure. Fixture: tests/spec_fixtures/expressions/optional_chaining.js."
     },
     {
       "id": "284",
@@ -96,28 +75,14 @@
       "title": "Complete expression syntax gaps",
       "file": "tasks/290-complete-expression-syntax-gaps.md",
       "status": "pending",
-      "notes": "P0 broad win. Medium effort, very high impact. Template literals, computed keys, spread, ??, ?., delete, unary +, for-of. Unblocks 100+ TS expression failures."
+      "notes": "P0 broad win. Medium effort, very high impact. Template literals, computed keys, spread, ??, ?., delete, unary +, for-of. Unblocks 100+ TS expression failures. Fixtures: tests/spec_fixtures/expressions/*."
     },
     {
       "id": "289",
       "title": "Register Array, Error, Date as constructors",
       "file": "tasks/289-register-native-constructors.md",
       "status": "pending",
-      "notes": "P0 broad win. Medium effort, very high impact. Blocks thousands of built-in tests and any new Array/Error."
-    },
-    {
-      "id": "292",
-      "title": "Implement var hoisting and let/const TDZ",
-      "file": "tasks/292-var-hoisting-tdz.md",
-      "status": "pending",
-      "notes": "P1 correctness. Medium effort, high impact. Fixes large swath of variable-scope tests and 'x is not defined' failures."
-    },
-    {
-      "id": "293",
-      "title": "Implement arguments object in functions",
-      "file": "tasks/293-arguments-object.md",
-      "status": "pending",
-      "notes": "P1 correctness. Medium effort, high impact. Legacy function-argument tests and TS functionCalls failures."
+      "notes": "P0 broad win. Medium effort, very high impact. Blocks thousands of built-in tests and any new Array/Error. Fixture: tests/spec_fixtures/objects/constructor_registration.js."
     },
     {
       "id": "141",
@@ -166,7 +131,7 @@
       "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
       "file": "tasks/256-split-large-files.md",
       "status": "in_progress",
-      "notes": "PARTIALLY COMPLETE: Fixed quench-runtime violations. Remaining violations in src/ and xtask/ directories. FIXED in quench-runtime: split comparison.rs into smaller functions, fixed lower/expressions.rs, lower/statements.rs, lower/patterns.rs, conformance/typescript/mod.rs, conformance/typescript/skip.rs, test262/runner.rs, tests/conformance.rs, split runtime_issues.rs into runtime_issues_basic.rs and runtime_issues_math.rs. REMAINING violations (cannot touch per contract): src/bridge/ffi.rs, src/bridge_reg.rs, src/cli.rs, src/hotreload.rs, src/main.rs, src/event_loop.rs, xtask/src/main.rs. Files marked 'off-limits' in contract (bridge/, ink/, render/) have violations but cannot be fixed without breaking bridge functionality."
+      "notes": "High impact, high effort. Enforce 500/40/10 on every *.rs file. Best done incrementally between other tasks."
     },
     {
       "id": "85",
