@@ -8,6 +8,16 @@ use std::rc::Rc;
 use crate::value::{to_js_string, JsError, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
+// Thread-local storage for Object.prototype (used by other builtins for prototype chains)
+thread_local! {
+    static OBJECT_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
+/// Get the Object.prototype object (for use by other builtins)
+pub fn get_object_prototype() -> Option<Rc<RefCell<Object>>> {
+    OBJECT_PROTOTYPE.with(|op| op.borrow().clone())
+}
+
 // ============================================================================
 // Object
 // ============================================================================
@@ -119,6 +129,11 @@ pub fn register_object(ctx: &mut Context) {
     let object_proto = Object::new(ObjectKind::Ordinary);
     let object_proto_rc = Rc::new(RefCell::new(object_proto));
     object.borrow_mut().set("prototype", Value::Object(Rc::clone(&object_proto_rc)));
+    
+    // Store Object.prototype globally for other builtins to use
+    OBJECT_PROTOTYPE.with(|op| {
+        *op.borrow_mut() = Some(Rc::clone(&object_proto_rc));
+    });
 
     ctx.set_global("Object".to_string(), Value::Object(object));
 }

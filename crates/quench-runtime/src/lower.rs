@@ -252,7 +252,7 @@ fn expand_nested_object_pattern(kind: VarKind, obj: &swc::ObjectPat, source_var:
 /// Lower a swc Module to our runtime Program
 pub fn lower_module(module: &swc::Module) -> Result<Program, LowerError> {
     let statements: Vec<Statement> = module.body.iter()
-        .filter_map(|item| lower_module_item(item))
+        .filter_map(lower_module_item)
         .collect();
     Ok(Program::Script(statements))
 }
@@ -260,7 +260,7 @@ pub fn lower_module(module: &swc::Module) -> Result<Program, LowerError> {
 /// Lower a swc Script to our runtime Program
 pub fn lower_script(script: &swc::Script) -> Result<Program, LowerError> {
     let statements: Vec<Statement> = script.body.iter()
-        .filter_map(|stmt| lower_stmt(stmt))
+        .filter_map(lower_stmt)
         .collect();
     Ok(Program::Script(statements))
 }
@@ -289,7 +289,7 @@ fn lower_stmt(stmt: &swc::Stmt) -> Option<Statement> {
     match stmt {
         swc::Stmt::Empty(_) => Some(Statement::Empty),
         swc::Stmt::Block(block) => {
-            let stmts: Vec<Statement> = block.stmts.iter().filter_map(|s| lower_stmt(s)).collect();
+            let stmts: Vec<Statement> = block.stmts.iter().filter_map(lower_stmt).collect();
             Some(Statement::Block(stmts))
         }
         swc::Stmt::Break(_) => Some(Statement::Break(None)),
@@ -346,13 +346,34 @@ fn lower_stmt(stmt: &swc::Stmt) -> Option<Statement> {
         }
         swc::Stmt::DoWhile(_) => None,
         swc::Stmt::For(for_stmt) => {
-            let init = for_stmt.init.as_ref().and_then(|i| lower_for_init(i));
+            let init = for_stmt.init.as_ref().and_then(lower_for_init);
             let condition = for_stmt.test.as_ref().and_then(|e| lower_expr(e).ok()).map(Box::new);
             let update = for_stmt.update.as_ref().and_then(|e| lower_expr(e).ok()).map(Box::new);
             let body = Box::new(lower_stmt(&for_stmt.body).unwrap_or(Statement::Empty));
             Some(Statement::For { init, condition, update, body })
         }
-        swc::Stmt::ForIn(_) | swc::Stmt::ForOf(_) => None,
+        swc::Stmt::ForIn(for_in_stmt) => {
+            // Lower the left-hand side
+            let left = lower_for_lhs(&for_in_stmt.left)?;
+            let iterable = lower_expr(&for_in_stmt.right).ok()?;
+            let body = Box::new(lower_stmt(&for_in_stmt.body).unwrap_or(Statement::Empty));
+            Some(Statement::Expression(Box::new(Expression::ForIn {
+                variable: Box::new(left),
+                object: Box::new(iterable),
+                body,
+            })))
+        }
+        swc::Stmt::ForOf(for_of_stmt) => {
+            // Lower the left-hand side
+            let left = lower_for_lhs(&for_of_stmt.left)?;
+            let iterable = lower_expr(&for_of_stmt.right).ok()?;
+            let body = Box::new(lower_stmt(&for_of_stmt.body).unwrap_or(Statement::Empty));
+            Some(Statement::Expression(Box::new(Expression::ForOf {
+                variable: Box::new(left),
+                iterable: Box::new(iterable),
+                body,
+            })))
+        }
         swc::Stmt::Expr(expr_stmt) => {
             // Expression statement: 1 + 2; -> Expression(1 + 2)
             let expr = lower_expr(&expr_stmt.expr).ok()?;
@@ -376,7 +397,7 @@ fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
                 }
             }).collect();
             let body = func_decl.function.body.as_ref()
-                .map(|b| b.stmts.iter().filter_map(|s| lower_stmt(s)).collect())
+                .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
             Some(Statement::FunctionDeclaration { name, params, body })
         }
@@ -587,7 +608,7 @@ fn lower_switch(switch: &swc::SwitchStmt) -> Option<Statement> {
     
     for case in switch.cases.iter().rev() {
         let case_body = case.cons.iter()
-            .filter_map(|s| lower_stmt(s))
+            .filter_map(lower_stmt)
             .collect::<Vec<_>>();
         
         let new_stmt = if let Some(test) = &case.test {
@@ -633,6 +654,34 @@ fn lower_for_init(init: &swc::VarDeclOrExpr) -> Option<ForInit> {
     }
 }
 
+/// Lower the left-hand side of a for-in/for-of loop
+fn lower_for_lhs(left: &swc::ForHead) -> Option<Expression> {
+    match left {
+        swc::ForHead::VarDecl(decl) => {
+            // for (var x of iterable) or for (let x of iterable)
+            let first = decl.decls.first()?;
+            match &first.name {
+                swc::Pat::Ident(ident) => {
+                    let name = atom_to_string(&ident.id.sym);
+                    // Return the identifier; the interpreter will handle declaration
+                    Some(Expression::Identifier(name))
+                }
+                _ => None,
+            }
+        }
+        swc::ForHead::Pat(pat) => {
+            // for (x of iterable) - no declaration
+            match pat.as_ref() {
+                swc::Pat::Ident(ident) => {
+                    Some(Expression::Identifier(atom_to_string(&ident.id.sym)))
+                }
+                _ => None, // Destructuring in for-of not supported yet
+            }
+        }
+        swc::ForHead::UsingDecl(_) => None,
+    }
+}
+
 /// Lower a swc Expr to our Expression
 fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
     match expr {
@@ -645,7 +694,7 @@ fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
             Ok(Expression::Array(elements))
         }
         swc::Expr::Object(obj) => {
-            let props: Vec<(PropertyKey, Expression)> = obj.props.iter()
+            let props: Vec<(PropertyKey, PropertyValue)> = obj.props.iter()
                 .filter_map(|prop| lower_prop_or_spread(prop).ok())
                 .collect();
             Ok(Expression::Object(props))
@@ -659,7 +708,7 @@ fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
                 }
             }).collect();
             let body = func.function.body.as_ref()
-                .map(|b| b.stmts.iter().filter_map(|s| lower_stmt(s)).collect())
+                .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
             Ok(Expression::FunctionExpression { name, params, body })
         }
@@ -769,7 +818,7 @@ fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
                 alternate: Box::new(alternate),
             })
         }
-        swc::Expr::OptChain(_) => Err(LowerError::new("Optional chaining not supported")),
+        swc::Expr::OptChain(opt_chain) => lower_opt_chain(opt_chain),
         swc::Expr::Lit(lit) => lower_literal(lit),
         swc::Expr::TaggedTpl(_) => Err(LowerError::new("Tagged templates not supported")),
         swc::Expr::Tpl(tpl) => lower_template_literal(tpl),
@@ -792,11 +841,139 @@ fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
     }
 }
 
+fn lower_opt_chain(opt_chain: &swc::OptChainExpr) -> Result<Expression, LowerError> {
+    // Handle optional chaining: obj?.prop or obj?.method()
+    // SWC's OptChainExpr has:
+    // - base: Box<OptChainBase> - the base expression and chain operations
+    // - OptChainBase::Member(MemberExpr) - for member access
+    // - OptChainBase::Call(OptCall) - for call expression (can contain nested OptChainExpr)
+    
+    fn process_opt_chain_base(base: &swc::OptChainBase, current_obj: Expression) -> Result<Expression, LowerError> {
+        match base {
+            swc::OptChainBase::Member(member) => {
+                let (property, computed) = lower_member_prop(&member.prop)?;
+                // Generate: (obj == null || obj == undefined) ? undefined : obj.prop
+                let member_expr = Expression::Member {
+                    object: Box::new(current_obj.clone()),
+                    property,
+                    computed,
+                };
+                make_optional_check(current_obj, member_expr)
+            }
+            swc::OptChainBase::Call(opt_call) => {
+                // The callee of the call could be another OptChainExpr
+                match &*opt_call.callee {
+                    swc::Expr::OptChain(nested) => {
+                        // obj?.().?() - nested optional chain
+                        // First process the inner chain with the current object as base
+                        let inner = process_opt_chain_expr(nested, current_obj)?;
+                        // Then apply the call args
+                        let args: Vec<Expression> = opt_call.args.iter()
+                            .filter_map(|arg| lower_expr(&arg.expr).ok())
+                            .collect();
+                        // For obj?.() - the callee would be obj, so this is just a direct call
+                        let call_expr = Expression::Call {
+                            callee: Box::new(inner),
+                            arguments: args,
+                        };
+                        // The outer call is already protected by the inner chain
+                        Ok(call_expr)
+                    }
+                    swc::Expr::Member(member) => {
+                        // obj?.method(args) - call on member of optional chain
+                        let inner_obj = lower_expr(&member.obj)?;
+                        let (property, computed) = lower_member_prop(&member.prop)?;
+                        // Wrap in optional check
+                        let inner_checked = make_optional_check(inner_obj, Expression::Member {
+                            object: Box::new(current_obj.clone()),
+                            property,
+                            computed,
+                        })?;
+                        let args: Vec<Expression> = opt_call.args.iter()
+                            .filter_map(|arg| lower_expr(&arg.expr).ok())
+                            .collect();
+                        let call_expr = Expression::Call {
+                            callee: Box::new(inner_checked),
+                            arguments: args,
+                        };
+                        // The call itself is also optional - if callee is undefined, return undefined
+                        make_optional_check(current_obj, call_expr)
+                    }
+                    swc::Expr::Ident(ident) => {
+                        // obj?.func(args) - direct call with optional object
+                        let args: Vec<Expression> = opt_call.args.iter()
+                            .filter_map(|arg| lower_expr(&arg.expr).ok())
+                            .collect();
+                        let callee = Expression::Identifier(atom_to_string(&ident.sym));
+                        let call_expr = Expression::Call {
+                            callee: Box::new(callee),
+                            arguments: args,
+                        };
+                        // Make the call itself optional
+                        make_optional_check(current_obj, call_expr)
+                    }
+                    _ => Err(LowerError::new("Unsupported optional call callee")),
+                }
+            }
+        }
+    }
+    
+    fn process_opt_chain_expr(expr: &swc::OptChainExpr, base_expr: Expression) -> Result<Expression, LowerError> {
+        // Process the OptChainBase with the given base expression
+        process_opt_chain_base(&expr.base, base_expr)
+    }
+    
+    // For a top-level optional chain, the base is the first expression
+    // The OptChainExpr's base contains the first operation
+    let base_expr = match &*opt_chain.base {
+        swc::OptChainBase::Member(member) => {
+            lower_expr(&member.obj)?
+        }
+        swc::OptChainBase::Call(opt_call) => {
+            // For obj?.(), the callee is the object
+            match &*opt_call.callee {
+                swc::Expr::Member(member) => lower_expr(&member.obj)?,
+                swc::Expr::Ident(ident) => Expression::Identifier(atom_to_string(&ident.sym)),
+                _ => return Err(LowerError::new("Unsupported optional call base")),
+            }
+        }
+    };
+    
+    // Now process the chain starting with the base expression
+    process_opt_chain_expr(opt_chain, base_expr)
+}
+
+/// Helper to create an optional check: (obj == null || obj == undefined) ? undefined : expr
+fn make_optional_check(obj: Expression, expr: Expression) -> Result<Expression, LowerError> {
+    let null_check = Expression::Binary {
+        op: BinaryOp::Or,
+        left: Box::new(Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left: Box::new(obj.clone()),
+            right: Box::new(Expression::Null),
+        }),
+        right: Box::new(Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left: Box::new(obj),
+            right: Box::new(Expression::Undefined),
+        }),
+    };
+    Ok(Expression::Conditional {
+        condition: Box::new(null_check),
+        consequent: Box::new(Expression::Undefined),
+        alternate: Box::new(expr),
+    })
+}
+
 fn lower_member_prop(prop: &swc::MemberProp) -> Result<(PropertyKey, bool), LowerError> {
     match prop {
         swc::MemberProp::Ident(ident) => Ok((PropertyKey::Ident(atom_to_string(&ident.sym)), false)),
         swc::MemberProp::PrivateName(_) => Err(LowerError::new("Private names not supported")),
-        swc::MemberProp::Computed(_) => Ok((PropertyKey::String(String::new()), true)),
+        swc::MemberProp::Computed(expr) => {
+            // Lower the computed expression
+            let expr = lower_expr(&expr.expr)?;
+            Ok((PropertyKey::Computed(Box::new(expr)), true))
+        }
     }
 }
 
@@ -819,7 +996,7 @@ fn lower_simple_assign_target(target: &swc::SimpleAssignTarget) -> Result<Expres
     }
 }
 
-fn lower_prop_or_spread(prop: &swc::PropOrSpread) -> Result<(PropertyKey, Expression), LowerError> {
+fn lower_prop_or_spread(prop: &swc::PropOrSpread) -> Result<(PropertyKey, PropertyValue), LowerError> {
     match prop {
         swc::PropOrSpread::Prop(prop) => lower_prop(prop),
         swc::PropOrSpread::Spread(_) => Err(LowerError::new("Spread not supported")),
@@ -839,41 +1016,74 @@ fn lower_literal(lit: &swc::Lit) -> Result<Expression, LowerError> {
 }
 
 fn lower_template_literal(tpl: &swc::Tpl) -> Result<Expression, LowerError> {
-    let mut parts: Vec<String> = Vec::new();
-    for elem in &tpl.quasis {
-        // elem.cooked is Option<Wtf8Atom>
-        if let Some(cooked) = &elem.cooked {
-            parts.push(wtf8_atom_to_string(cooked));
-        } else {
-            // Fallback: use raw
-            parts.push(String::new());
+    // If there are no expressions, just return the string parts joined together
+    if tpl.exprs.is_empty() {
+        let mut result = String::new();
+        for elem in &tpl.quasis {
+            if let Some(cooked) = &elem.cooked {
+                result.push_str(&wtf8_atom_to_string(cooked));
+            }
+        }
+        return Ok(Expression::String(result));
+    }
+    
+    // Build a sequence expression that concatenates all parts
+    let mut exprs: Vec<Expression> = Vec::new();
+    let quasi_count = tpl.quasis.len();
+    let expr_count = tpl.exprs.len();
+    
+    for i in 0..quasi_count {
+        // Add the quasi part (string before this position)
+        if let Some(cooked) = &tpl.quasis.get(i).and_then(|q| q.cooked.as_ref()) {
+            let s = wtf8_atom_to_string(cooked);
+            if !s.is_empty() {
+                exprs.push(Expression::String(s));
+            }
+        }
+        
+        // Add the corresponding expression (if any)
+        if i < expr_count {
+            exprs.push(lower_expr(&tpl.exprs[i])?);
         }
     }
-    if parts.len() == 1 {
-        Ok(Expression::String(parts.remove(0)))
-    } else {
-        Ok(Expression::String(parts.join("")))
+    
+    // If we have a single string, return it directly
+    if exprs.len() == 1 {
+        return Ok(exprs.remove(0));
     }
+    
+    // Build nested binary adds: ((s1 + e1) + s2) + e2 ...
+    let mut result = exprs.remove(0);
+    while !exprs.is_empty() {
+        let right = exprs.remove(0);
+        result = Expression::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(result),
+            right: Box::new(right),
+        };
+    }
+    
+    Ok(result)
 }
 
-fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, Expression), LowerError> {
+fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerError> {
     match prop {
         swc::Prop::Shorthand(ident) => {
             // Shorthand has just the ident
             let name = atom_to_string(&ident.sym);
-            Ok((PropertyKey::Ident(name.clone()), Expression::Identifier(name)))
+            Ok((PropertyKey::Ident(name.clone()), PropertyValue::Value(Expression::Identifier(name))))
         }
         swc::Prop::KeyValue(kv) => {
             let key = lower_prop_name(&kv.key)?;
             let value = lower_expr(&kv.value)?;
-            Ok((key, value))
+            Ok((key, PropertyValue::Value(value)))
         }
         swc::Prop::Getter(getter) => {
             let key = lower_prop_name(&getter.key)?;
             let body = getter.body.as_ref()
                 .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Ok((key, Expression::FunctionExpression { name: Some("get".to_string()), params: vec![], body }))
+            Ok((key, PropertyValue::Getter { params: vec![], body }))
         }
         swc::Prop::Setter(setter) => {
             let key = lower_prop_name(&setter.key)?;
@@ -884,7 +1094,7 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, Expression), LowerError>
             let body = setter.body.as_ref()
                 .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Ok((key, Expression::FunctionExpression { name: Some("set".to_string()), params: vec![param], body }))
+            Ok((key, PropertyValue::Setter { param, body }))
         }
         swc::Prop::Method(method) => {
             let key = lower_prop_name(&method.key)?;
@@ -897,7 +1107,7 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, Expression), LowerError>
             let body = method.function.body.as_ref()
                 .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Ok((key, Expression::FunctionExpression { name: None, params, body }))
+            Ok((key, PropertyValue::Value(Expression::FunctionExpression { name: None, params, body })))
         }
         swc::Prop::Assign(_) => Err(LowerError::new("Assignment property not supported")),
     }
@@ -936,6 +1146,7 @@ fn lower_bin_op(op: &swc::BinaryOp) -> Result<BinaryOp, LowerError> {
         swc::BinaryOp::BitOr => Ok(BinaryOp::BitOr),
         swc::BinaryOp::LogicalAnd => Ok(BinaryOp::And),
         swc::BinaryOp::LogicalOr => Ok(BinaryOp::Or),
+        swc::BinaryOp::NullishCoalescing => Ok(BinaryOp::NullishCoalescing),
         swc::BinaryOp::In => Ok(BinaryOp::In),
         swc::BinaryOp::InstanceOf => Ok(BinaryOp::Instanceof),
         _ => Err(LowerError::new(format!("Unsupported binary operator: {:?}", op))),

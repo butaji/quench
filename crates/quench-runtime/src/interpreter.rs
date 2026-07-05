@@ -372,17 +372,32 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
         }
 
         Expression::Object(props) => {
-            let obj = Object::new(ObjectKind::Ordinary);
-            let mut obj = obj;
-            for (key, value_expr) in props {
-                let value = eval_expression(value_expr, env)?;
+            let mut obj = Object::new(ObjectKind::Ordinary);
+            // Set prototype to Object.prototype if available
+            if let Some(prototype) = crate::builtins::get_object_prototype() {
+                obj.prototype = Some(prototype);
+            }
+            for (key, value) in props {
                 let key_str = match key {
                     PropertyKey::Ident(s) => s.clone(),
                     PropertyKey::String(s) => s.clone(),
                     PropertyKey::Number(n) => n.to_string(),
                     PropertyKey::Computed(e) => to_js_string(&eval_expression(e, env)?),
                 };
-                obj.set(&key_str, value);
+                match value {
+                    PropertyValue::Value(expr) => {
+                        let val = eval_expression(expr, env)?;
+                        obj.set(&key_str, val);
+                    }
+                    PropertyValue::Getter { params: _, body } => {
+                        // Store the getter body for later evaluation
+                        obj.set_getter(&key_str, body.clone());
+                    }
+                    PropertyValue::Setter { param, body } => {
+                        // Store the setter body for later evaluation, with the current closure
+                        obj.set_setter(&key_str, param.clone(), body.clone(), Rc::clone(env));
+                    }
+                }
             }
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
@@ -392,6 +407,10 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             for (i, elem_expr) in elements.iter().enumerate() {
                 let value = eval_expression(elem_expr, env)?;
                 arr.set(&i.to_string(), value);
+            }
+            // Set prototype to Array.prototype if available
+            if let Some(prototype) = crate::builtins::get_array_prototype() {
+                arr.prototype = Some(prototype);
             }
             Ok(Value::Object(Rc::new(RefCell::new(arr))))
         }
@@ -422,6 +441,15 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
         }
 
         Expression::Unary { op, argument } => {
+            // Special handling for typeof on undeclared variables
+            if *op == UnaryOp::Typeof {
+                if let Expression::Identifier(name) = argument.as_ref() {
+                    if name != "this" && !env.borrow().has(name) {
+                        // typeof on undeclared variable returns "undefined"
+                        return Ok(Value::String("undefined".to_string()));
+                    }
+                }
+            }
             let val = eval_expression(argument, env)?;
             eval_unary_op(*op, &val)
         }
@@ -471,11 +499,28 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             // Property access
             match obj_val {
                 Value::Object(o) => {
-                    let obj = o.borrow();
-                    if let Some(val) = obj.get(&prop_name) {
-                        Ok(val)
-                    } else {
-                        // Check if this is a global access that should fall back to environment
+                    // First check if there's a getter - getters take precedence
+                    {
+                        let obj = o.borrow();
+                        if let Some(getter_storage) = obj.get_getter(&prop_name) {
+                            // Clone the getter storage so we can release the borrow
+                            let getter_clone = getter_storage.clone();
+                            drop(obj);
+                            return call_getter(&o, &getter_clone, env);
+                        }
+                    }
+                    
+                    // Check regular properties
+                    {
+                        let obj = o.borrow();
+                        if let Some(val) = obj.get(&prop_name) {
+                            return Ok(val);
+                        }
+                    }
+                    
+                    // Check if this is a global access that should fall back to environment
+                    {
+                        let obj = o.borrow();
                         if obj.kind == ObjectKind::Global {
                             drop(obj);
                             // get returns Option<Value>, so we can use it directly
@@ -484,7 +529,10 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                             }
                             return Ok(Value::Undefined);
                         }
-                        // Handle Date.prototype - Date is an Object but should have a prototype
+                    }
+                    // Handle Date.prototype - Date is an Object but should have a prototype
+                    {
+                        let obj = o.borrow();
                         if obj.kind == ObjectKind::Date && prop_name == "prototype" {
                             let mut proto = Object::new(ObjectKind::Ordinary);
                             // Add constructor pointing to Date
@@ -492,10 +540,10 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                             proto.set("constructor", date_constructor);
                             return Ok(Value::Object(Rc::new(RefCell::new(proto))));
                         }
-                        // In JavaScript, accessing a non-existent property returns undefined
-                        // This is different from strict mode where it throws
-                        Ok(Value::Undefined)
                     }
+                    // In JavaScript, accessing a non-existent property returns undefined
+                    // This is different from strict mode where it throws
+                    Ok(Value::Undefined)
                 }
                 Value::String(s) => {
                     // String prototype methods
@@ -548,7 +596,7 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                                         Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(parts.len())))))
                                     }
                                     "substring" => {
-                                        let start = args.get(0).map(|v| to_number(v) as usize).unwrap_or(0);
+                                        let start = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
                                         let end = args.get(1).map(|v| to_number(v) as usize).unwrap_or(s.len());
                                         let start = start.min(s.len());
                                         let end = end.min(s.len());
@@ -556,7 +604,7 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                                         Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
                                     }
                                     "slice" => {
-                                        let start = args.get(0).map(|v| to_number(v) as i64).unwrap_or(0) as isize;
+                                        let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0) as isize;
                                         let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(s.len() as i64) as isize;
                                         let len = s.len() as isize;
                                         let start = if start < 0 { (len + start).max(0) as usize } else { start as usize }.min(len as usize);
@@ -763,6 +811,65 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             // This is reached when evaluating the pattern expression itself
             Err(JsError("Object pattern must be used in assignment context".to_string()))
         }
+        
+        Expression::ForOf { variable, iterable, body } => {
+            // for-of loop
+            let iter_value = eval_expression(iterable, env)?;
+            let items = get_iterator(&iter_value)?;
+            let mut last = Value::Undefined;
+            
+            for item in items {
+                // Assign the item to the loop variable
+                assign_to(variable, &item, env)?;
+                
+                // Execute body
+                last = eval_statement(body, env, false)?;
+                
+                // Check for break/continue
+                match take_control_flow() {
+                    Some(ControlFlow::Break) => {
+                        break;
+                    }
+                    Some(ControlFlow::Continue) => {
+                        // Continue - proceed to next iteration
+                    }
+                    None => {}
+                }
+            }
+            Ok(last)
+        }
+        
+        Expression::ForIn { variable, object, body } => {
+            // for-in loop
+            let obj_value = eval_expression(object, env)?;
+            let keys = get_enumerable_keys(&obj_value)?;
+            let mut last = Value::Undefined;
+            
+            for key in keys {
+                // Assign the key to the loop variable
+                assign_to(variable, &Value::String(key), env)?;
+                
+                // Execute body
+                last = eval_statement(body, env, false)?;
+                
+                // Check for break/continue
+                match take_control_flow() {
+                    Some(ControlFlow::Break) => {
+                        break;
+                    }
+                    Some(ControlFlow::Continue) => {
+                        // Continue - proceed to next iteration
+                    }
+                    None => {}
+                }
+            }
+            Ok(last)
+        }
+        
+        // Optional chaining expressions - should not be reached as they are lowered to Conditional
+        Expression::OptChain { .. } | Expression::OptChainCall { .. } => {
+            Err(JsError("Internal error: optional chaining not lowered".to_string()))
+        }
     };
     
     result
@@ -833,6 +940,13 @@ fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, Js
                     let result = check_instanceof(obj, &ctor.prototype);
                     Ok(Value::Boolean(result))
                 }
+                (Value::Function(func), Value::NativeConstructor(ctor)) => {
+                    // ValueFunction vs NativeConstructor: check if function's prototype 
+                    // is in the constructor's prototype chain
+                    let func_proto = func.get_prototype();
+                    let result = check_instanceof(&func_proto, &ctor.prototype);
+                    Ok(Value::Boolean(result))
+                }
                 (Value::Object(obj), Value::Object(ctor)) => {
                     // Try to get prototype from constructor object
                     let ctor_ref = ctor.borrow();
@@ -867,6 +981,13 @@ fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, Js
                 Ok(left.clone())
             } else {
                 Ok(right.clone())
+            }
+        }
+        BinaryOp::NullishCoalescing => {
+            // Nullish coalescing: returns right if left is null or undefined
+            match left {
+                Value::Undefined | Value::Null => Ok(right.clone()),
+                _ => Ok(left.clone()),
             }
         }
 
@@ -930,6 +1051,25 @@ fn assign_to(target: &Expression, value: &Value, env: &Rc<RefCell<Environment>>)
             };
 
             if let Value::Object(o) = obj_val {
+                // Check if there's a setter
+                let has_setter = {
+                    let obj_ref = o.borrow();
+                    obj_ref.get_setter(&prop_name).is_some()
+                };
+                
+                if has_setter {
+                    // Get the setter storage
+                    let setter_clone = {
+                        let obj_ref = o.borrow();
+                        obj_ref.get_setter(&prop_name).map(|s| s.clone())
+                    };
+                    if let Some(setter_storage) = setter_clone {
+                        // Call the setter with the value
+                        call_setter(&o, &setter_storage, value.clone(), env)?;
+                        return Ok(());
+                    }
+                }
+                // No setter, just set the property
                 o.borrow_mut().set(&prop_name, value.clone());
                 Ok(())
             } else {
@@ -1193,6 +1333,135 @@ pub fn call_value(func: Value, args: Vec<Value>) -> Result<Value, JsError> {
             Err(JsError("Object is not a function".to_string()))
         }
         _ => Err(JsError("Value is not a function".to_string())),
+    }
+}
+
+/// Call a getter function with the object as "this"
+fn call_getter(
+    obj: &Rc<RefCell<Object>>,
+    getter_storage: &crate::value::GetterStorage,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Use the current environment as the closure base
+    let closure = Rc::clone(env);
+    let body = getter_storage.body.clone();
+    
+    // Create new scope with the closure
+    let mut call_env = Environment::with_parent(Rc::clone(&closure));
+    // Set "this" to the object
+    call_env.current_scope_mut().set_this(Value::Object(Rc::clone(obj)));
+    
+    let call_env = Rc::new(RefCell::new(call_env));
+    
+    // Execute the getter body
+    if body.is_empty() {
+        Ok(Value::Undefined)
+    } else {
+        eval_statements(&body, &call_env, true)
+    }
+}
+
+/// Call a setter function with the object as "this" and the value as the parameter
+fn call_setter(
+    obj: &Rc<RefCell<Object>>,
+    setter_storage: &crate::value::SetterStorage,
+    value: Value,
+    _env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Use the closure environment stored with the setter (captured at object creation time)
+    let closure = Rc::clone(&setter_storage.closure);
+    let body = setter_storage.body.clone();
+    let param = setter_storage.param.clone();
+    
+    // Create new scope with the closure
+    let mut call_env = Environment::with_parent(Rc::clone(&closure));
+    // Set "this" to the object
+    call_env.current_scope_mut().set_this(Value::Object(Rc::clone(obj)));
+    // Set the parameter
+    call_env.define(param, value);
+    
+    let call_env = Rc::new(RefCell::new(call_env));
+    
+    // Execute the setter body
+    if body.is_empty() {
+        Ok(Value::Undefined)
+    } else {
+        eval_statements(&body, &call_env, false)
+    }
+}
+
+/// Get an iterator for for-of/for-in loops
+fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
+    match value {
+        Value::Object(o) => {
+            // Check if it's an array
+            {
+                let obj = o.borrow();
+                if obj.kind == ObjectKind::Array {
+                    // Return array elements
+                    let mut result = Vec::new();
+                    for elem in &obj.elements {
+                        result.push(elem.clone());
+                    }
+                    return Ok(result);
+                }
+            }
+            // Try to get Symbol.iterator
+            {
+                let obj = o.borrow();
+                if let Some(Value::Object(symbol_rc)) = obj.get("Symbol") {
+                    let iter_val: Option<Value> = {
+                        let symbol_obj = symbol_rc.borrow();
+                        symbol_obj.get("iterator").map(|v| v.clone())
+                    };
+                    if let Some(Value::Object(iter_fn)) = iter_val {
+                        drop(obj); // Release borrow
+                        let result = call_value(Value::Object(Rc::clone(&iter_fn)), vec![])?;
+                        // For simplicity, just iterate over the result
+                        return get_iterator(&result);
+                    }
+                }
+            }
+            // Fall back to iterating over numeric indices
+            {
+                let obj = o.borrow();
+                let mut result = Vec::new();
+                for elem in &obj.elements {
+                    result.push(elem.clone());
+                }
+                Ok(result)
+            }
+        }
+        Value::String(s) => {
+            // Iterate over characters
+            Ok(s.chars().map(|c| Value::String(c.to_string())).collect())
+        }
+        _ => Err(JsError("Value is not iterable".to_string())),
+    }
+}
+
+/// Get enumerable property keys for for-in loop
+fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
+    match value {
+        Value::Object(o) => {
+            let obj = o.borrow();
+            let mut keys: Vec<String> = Vec::new();
+            
+            // Collect own property keys (for simplicity, not using proper enumeration)
+            for key in obj.properties.keys() {
+                keys.push(key.clone());
+            }
+            for i in 0..obj.elements.len() {
+                keys.push(i.to_string());
+            }
+            
+            Ok(keys)
+        }
+        Value::String(s) => {
+            // for-in on string iterates over indices
+            Ok((0..s.len()).map(|i| i.to_string()).collect())
+        }
+        _ => Ok(vec![]),
     }
 }
 
