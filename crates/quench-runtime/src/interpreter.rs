@@ -188,13 +188,20 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
     // Statements don't consume call stack - only function calls do.
     
     let result = match stmt {
-        Statement::VarDeclaration { kind: _, name, init } => {
+        Statement::VarDeclaration { kind, name, init } => {
+            // First, declare the variable (puts it in TDZ for let/const)
+            env.borrow_mut().declare_var(name.clone(), kind.clone());
+            
+            // Then initialize it (for all var kinds)
             let value = if let Some(expr) = init {
                 eval_expression(expr, env)?
             } else {
                 Value::Undefined
             };
-            env.borrow_mut().define(name.clone(), value);
+            
+            // Check for const reassignment - need to track this differently
+            // For now, just initialize
+            env.borrow_mut().initialize_declared(name, value);
             Ok(Value::Undefined)
         }
 
@@ -257,9 +264,11 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
                     ForInit::Expression(expr) => {
                         let _ = eval_expression(expr, env)?;
                     }
-                    ForInit::VarDeclaration { kind: _, name, init } => {
+                    ForInit::VarDeclaration { kind, name, init } => {
+                        // First declare (puts in TDZ for let/const)
+                        env.borrow_mut().declare_var(name.clone(), kind.clone());
                         let value = init.as_ref().map(|e| eval_expression(e, env)).unwrap_or(Ok(Value::Undefined))?;
-                        env.borrow_mut().define(name.clone(), value);
+                        env.borrow_mut().initialize_declared(name, value);
                     }
                 }
             }
@@ -366,6 +375,14 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             if name == "this" {
                 return Ok(get_this_binding(env));
             }
+            
+            // Check for TDZ in the scope chain
+            for scope in env.borrow().scopes.iter().rev() {
+                if scope.is_tdz(name) {
+                    return Err(JsError(format!("ReferenceError: Cannot access '{}' before initialization", name)));
+                }
+            }
+            
             let val = env.borrow().get(name)
                 .ok_or_else(|| JsError(format!("ReferenceError: {} is not defined", name)))?;
             Ok(val)

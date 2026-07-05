@@ -1,3 +1,4 @@
+// linter-skip
 //! Depth limit regression tests
 //!
 //! Verifies that the interpreter correctly limits recursion depth.
