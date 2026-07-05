@@ -22,83 +22,6 @@
       "notes": "Define fixture format and directory layout under tests/spec_fixtures/. Every compatibility task must reference the fixture files it adds/fixes. Contributes to complete fast Rust unit test coverage."
     },
     {
-      "id": "309",
-      "title": "Expressions coverage",
-      "file": "tasks/309-expressions-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/expressions/ and TS expression tests pass. Covers typeof, delete, ??, ?., template literals, spread, computed keys. Depends on 290, 291, 289, 283."
-    },
-    {
-      "id": "310",
-      "title": "Statements coverage",
-      "file": "tasks/310-statements-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/statements/ and TS statement tests pass. Covers if/while/for/for-of/switch/try-catch/TDZ. Depends on 281, 292, 250, 141."
-    },
-    {
-      "id": "311",
-      "title": "Functions coverage",
-      "file": "tasks/311-functions-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/functions/ and TS function tests pass. Covers declarations, arrows, defaults, rest, arguments, call/apply/bind, closures. Depends on 293, 292, 305, 117, 124."
-    },
-    {
-      "id": "312",
-      "title": "Objects and prototypes coverage",
-      "file": "tasks/312-objects-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins/Object/, Reflect, and prototype-chain tests pass. Covers literals, property access, defineProperty, descriptors. Depends on 294, 295, 289."
-    },
-    {
-      "id": "313",
-      "title": "Arrays and built-ins coverage",
-      "file": "tasks/313-arrays-builtins-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins Array/String/Number/Boolean/Date/Error tests pass. Depends on 289, 283, 284, 147, 191, 132, 239."
-    },
-    {
-      "id": "314",
-      "title": "Classes coverage",
-      "file": "tasks/314-classes-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/class/ tests pass. Covers class syntax, super, extends, static fields. Depends on 182, 183, 187."
-    },
-    {
-      "id": "315",
-      "title": "Modules coverage",
-      "file": "tasks/315-modules-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/module-code/ and TS module tests pass. Covers import/export, cycles, scope isolation. Depends on 241."
-    },
-    {
-      "id": "316",
-      "title": "Errors and exceptions coverage",
-      "file": "tasks/316-errors-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of language/exceptions/ and built-ins/Error/ tests pass. Covers try/catch/finally, error types, thrown value preservation. Depends on 250, 132, 105, 112."
-    },
-    {
-      "id": "317",
-      "title": "Async / Promise / generator coverage",
-      "file": "tasks/317-async-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins/Promise/ and async-function tests pass. Covers Promise, microtasks, async/await. Depends on 251."
-    },
-    {
-      "id": "318",
-      "title": "TypeScript coverage",
-      "file": "tasks/318-typescript-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of TypeScript runtime conformance cases pass after type erasure. Covers enums, namespaces, type assertions, TSX transform. Depends on 290, 289, 241, 182."
-    },
-    {
-      "id": "319",
-      "title": "JSX / TSX coverage",
-      "file": "tasks/319-jsx-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of JSX/TSX examples and tests render correctly via Ink runtime. Depends on 318."
-    },
-    {
       "id": "253",
       "title": "Load real test262 harness includes",
       "file": "tasks/253-load-real-test262-harness-includes.md",
@@ -181,6 +104,83 @@
       "file": "tasks/294-property-descriptors.md",
       "status": "pending",
       "notes": "P1 correctness. High effort, high impact. Object semantics, getters/setters, built-in attribute checks."
+    },
+    {
+      "id": "309",
+      "title": "Expressions coverage",
+      "file": "tasks/309-expressions-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of test262 language/expressions/ and TS expression tests pass. Covers typeof, delete, ??, ?., template literals, spread, computed keys. Depends on 290, 291, 289, 283."
+    },
+    {
+      "id": "310",
+      "title": "Statements coverage",
+      "file": "tasks/310-statements-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of test262 language/statements/ and TS statement tests pass. Covers if/while/for/for-of/switch/try-catch/TDZ. Depends on 281, 292, 250, 141."
+    },
+    {
+      "id": "311",
+      "title": "Functions coverage",
+      "file": "tasks/311-functions-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of test262 language/functions/ and TS function tests pass. Covers declarations, arrows, defaults, rest, arguments, call/apply/bind, closures. Depends on 293, 292, 305, 117, 124."
+    },
+    {
+      "id": "312",
+      "title": "Objects and prototypes coverage",
+      "file": "tasks/312-objects-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of built-ins/Object/, Reflect, and prototype-chain tests pass. Covers literals, property access, defineProperty, descriptors. Depends on 294, 295, 289."
+    },
+    {
+      "id": "313",
+      "title": "Arrays and built-ins coverage",
+      "file": "tasks/313-arrays-builtins-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of built-ins Array/String/Number/Boolean/Date/Error tests pass. Depends on 289, 283, 284, 147, 191, 132, 239."
+    },
+    {
+      "id": "316",
+      "title": "Errors and exceptions coverage",
+      "file": "tasks/316-errors-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of language/exceptions/ and built-ins/Error/ tests pass. Covers try/catch/finally, error types, thrown value preservation. Depends on 250, 132, 105, 112."
+    },
+    {
+      "id": "314",
+      "title": "Classes coverage",
+      "file": "tasks/314-classes-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of test262 language/class/ tests pass. Covers class syntax, super, extends, static fields. Depends on 182, 183, 187."
+    },
+    {
+      "id": "315",
+      "title": "Modules coverage",
+      "file": "tasks/315-modules-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of test262 language/module-code/ and TS module tests pass. Covers import/export, cycles, scope isolation. Depends on 241."
+    },
+    {
+      "id": "317",
+      "title": "Async / Promise / generator coverage",
+      "file": "tasks/317-async-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of built-ins/Promise/ and async-function tests pass. Covers Promise, microtasks, async/await. Depends on 251."
+    },
+    {
+      "id": "318",
+      "title": "TypeScript coverage",
+      "file": "tasks/318-typescript-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of TypeScript runtime conformance cases pass after type erasure. Covers enums, namespaces, type assertions, TSX transform. Depends on 290, 289, 241, 182."
+    },
+    {
+      "id": "319",
+      "title": "JSX / TSX coverage",
+      "file": "tasks/319-jsx-coverage.md",
+      "status": "pending",
+      "notes": "Sub-task of 296. 100% of JSX/TSX examples and tests render correctly via Ink runtime. Depends on 318."
     },
     {
       "id": "279",
