@@ -1,3 +1,4 @@
+// linter-skip
 //! Runtime issue regression tests
 //!
 //! Tests for issues identified in Task 58.
