@@ -22,7 +22,7 @@ cargo test -p quench-runtime --test conformance -- --test-threads=1
 | test262 | ~53,683 `.js` files | 431 | **0.8%** |
 | TypeScript conformance | ~18,876 `.ts` cases | 376 | **2.0%** |
 
-The subsets are intentionally small so the harness runs in seconds while the runtime is still incomplete. Running the full suites now would produce tens of thousands of failures and hide the signal. The subset grows as features land.
+The subsets are intentionally small so the harness runs in seconds while the runtime is still incomplete. The **target is 100% of the full suites**: all ~53,683 test262 files and all ~18,876 TypeScript conformance cases. The subset grows as features land.
 
 ## Latest results on the current subset
 
