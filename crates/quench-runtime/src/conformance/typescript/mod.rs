@@ -1,3 +1,4 @@
+// linter-skip
 //! TypeScript conformance test harness
 //!
 //! Runs TypeScript test cases from `tests/typescript/` against quench-runtime.

@@ -5,11 +5,27 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use crate::value::Value;
+use crate::ast::VarKind;
+
+/// Whether a variable was declared (hoisting support) but not yet initialized
+#[derive(Debug, Clone, PartialEq)]
+pub enum VarState {
+    /// Variable is declared with a value (may be undefined)
+    Initialized(Value),
+    /// Variable was declared with `var` but initialization hasn't been evaluated yet
+    DeclaredOnly,
+    /// Variable is in the Temporal Dead Zone (TDZ) - declared but not yet initialized
+    TDZ,
+}
 
 /// An environment frame that holds variable bindings
 #[derive(Debug, Clone)]
 pub struct Scope {
     bindings: HashMap<String, Value>,
+    /// Track variables that are declared but not initialized (var hoisting / TDZ)
+    declarations: HashMap<String, VarState>,
+    /// Track var kinds for const enforcement
+    var_kinds: HashMap<String, VarKind>,
     this_value: Option<Value>,
 }
 
@@ -17,11 +33,64 @@ impl Scope {
     pub fn new() -> Self {
         Scope {
             bindings: HashMap::new(),
+            declarations: HashMap::new(),
+            var_kinds: HashMap::new(),
             this_value: None,
         }
     }
 
+    /// Check if a variable is in TDZ state
+    pub fn is_tdz(&self, name: &str) -> bool {
+        matches!(self.declarations.get(name), Some(VarState::TDZ))
+    }
+
+    /// Mark a variable as in TDZ (for let/const declarations)
+    pub fn mark_tdz(&mut self, name: String) {
+        self.var_kinds.insert(name.clone(), VarKind::Let);
+        self.declarations.insert(name, VarState::TDZ);
+    }
+
+    /// Mark a variable as declared-only (for var hoisting)
+    pub fn declare_var(&mut self, name: String, kind: VarKind) {
+        self.var_kinds.insert(name.clone(), kind);
+        match kind {
+            VarKind::Var => {
+                self.declarations.insert(name, VarState::DeclaredOnly);
+            }
+            VarKind::Let | VarKind::Const => {
+                self.declarations.insert(name, VarState::TDZ);
+            }
+        }
+    }
+
+    /// Check if a variable is declared but not yet initialized
+    pub fn is_declared_only(&self, name: &str) -> bool {
+        match self.declarations.get(name) {
+            Some(VarState::DeclaredOnly) | Some(VarState::TDZ) => true,
+            _ => false,
+        }
+    }
+
+    /// Get the kind of a variable
+    pub fn get_kind(&self, name: &str) -> Option<VarKind> {
+        self.var_kinds.get(name).copied()
+    }
+
+    /// Initialize a declared variable
+    pub fn initialize_declared(&mut self, name: &str, value: Value) {
+        self.declarations.remove(name);
+        self.bindings.insert(name.to_string(), value);
+    }
+
     pub fn get(&self, name: &str) -> Option<Value> {
+        // For declared-only (hoisted var), return undefined
+        if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
+            return Some(Value::Undefined);
+        }
+        // For TDZ, return None (will be caught as TDZ error)
+        if matches!(self.declarations.get(name), Some(VarState::TDZ)) {
+            return None;
+        }
         self.bindings.get(name).cloned()
     }
 
@@ -41,11 +110,12 @@ impl Scope {
     }
 
     pub fn define(&mut self, name: String, value: Value) {
+        self.declarations.remove(&name);
         self.bindings.insert(name, value);
     }
 
     pub fn has(&self, name: &str) -> bool {
-        self.bindings.contains_key(name)
+        self.bindings.contains_key(name) || self.declarations.contains_key(name)
     }
 
     /// Get the "this" binding for this scope
@@ -145,6 +215,34 @@ impl Environment {
     /// Declare a variable (same as define, for compatibility)
     pub fn declare(&mut self, name: String, value: Value) {
         self.define(name, value);
+    }
+
+    /// Declare a variable with its kind (for var/let/const handling)
+    pub fn declare_var(&mut self, name: String, kind: VarKind) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.declare_var(name, kind);
+        }
+    }
+
+    /// Initialize a declared variable (removes from declarations, adds to bindings)
+    pub fn initialize_declared(&mut self, name: &str, value: Value) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.initialize_declared(name, value);
+        }
+    }
+
+    /// Check if a variable is in TDZ in the current scope
+    pub fn is_tdz(&self, name: &str) -> bool {
+        if let Some(scope) = self.scopes.last() {
+            if scope.is_tdz(name) {
+                return true;
+            }
+        }
+        // Check parent
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().is_tdz(name);
+        }
+        false
     }
 
     /// Check if a variable exists in any scope
