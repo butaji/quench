@@ -11,9 +11,12 @@ pub mod date;
 pub mod error;
 pub mod function;
 pub mod number;
+pub mod symbol;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
+pub use object::get_object_prototype;
+pub use function::get_function_prototype;
 
 // Re-export get_native_this for use by submodules
 pub(crate) use crate::interpreter::get_native_this;
@@ -100,6 +103,8 @@ pub fn register_builtins(ctx: &mut Context) {
     error::register_error(ctx);
     // Date needs to be registered after global functions (for Number, String, etc.)
     date::register_date(ctx);
+    // Symbol needs to be registered for symbol support
+    symbol::register_symbol(ctx);
 }
 
 use crate::Context;

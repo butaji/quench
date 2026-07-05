@@ -66,9 +66,11 @@ impl Default for Scope {
 }
 
 /// An environment holds a scope chain for variable resolution
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Environment {
     pub scopes: Vec<Scope>,
+    /// Parent environment (for closures)
+    parent: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
@@ -76,23 +78,16 @@ impl Environment {
     pub fn new() -> Self {
         Environment {
             scopes: vec![Scope::new()],
+            parent: None,
         }
     }
 
     /// Create a new environment with a parent
     pub fn with_parent(parent: Rc<RefCell<Environment>>) -> Self {
-        let mut env = Environment {
+        Environment {
             scopes: vec![Scope::new()],
-        };
-        // Link to parent by storing it specially
-        // For simplicity, we'll copy parent bindings into current scope
-        let parent_env = parent.borrow();
-        for scope in &parent_env.scopes {
-            for (name, value) in &scope.bindings {
-                env.scopes.last_mut().unwrap().define(name.clone(), value.clone());
-            }
+            parent: Some(parent),
         }
-        env
     }
 
     /// Get a variable by name (lexical lookup)
@@ -102,6 +97,10 @@ impl Environment {
             if let Some(value) = scope.get(name) {
                 return Some(value);
             }
+        }
+        // Look up in parent if not found
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get(name);
         }
         None
     }
@@ -114,15 +113,24 @@ impl Environment {
                 return Some(Rc::new(value));
             }
         }
+        // Look up in parent if not found
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get_rc(name);
+        }
         None
     }
 
     /// Set a variable by name (assigns to existing binding)
+    /// If not found in current environment, tries to set in parent.
     pub fn set(&mut self, name: &str, value: Value) -> bool {
         for scope in self.scopes.iter_mut().rev() {
             if scope.set(name.to_string(), value.clone()) {
                 return true;
             }
+        }
+        // Try to set in parent
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().set(name, value);
         }
         false
     }
@@ -145,6 +153,10 @@ impl Environment {
             if scope.has(name) {
                 return true;
             }
+        }
+        // Look up in parent if not found
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().has(name);
         }
         false
     }
@@ -180,6 +192,17 @@ impl Environment {
 impl Default for Environment {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for Environment {
+    fn clone(&self) -> Self {
+        // Note: parent is not cloned - this creates a flat copy
+        // For closures that need the parent, use with_parent instead
+        Environment {
+            scopes: self.scopes.clone(),
+            parent: None,
+        }
     }
 }
 

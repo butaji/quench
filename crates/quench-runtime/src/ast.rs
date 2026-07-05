@@ -61,6 +61,16 @@ pub enum ForInit {
 pub enum VarKind { Var, Let, Const }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum PropertyValue {
+    /// Regular value expression
+    Value(Expression),
+    /// Getter property: { get x() { return 42; } }
+    Getter { params: Vec<String>, body: Vec<Statement> },
+    /// Setter property: { set x(v) { this._x = v; } }
+    Setter { param: String, body: Vec<Statement> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Number(f64),
     String(String),
@@ -68,7 +78,8 @@ pub enum Expression {
     Null,
     Undefined,
     Identifier(String),
-    Object(Vec<(PropertyKey, Expression)>),
+    /// Object with getter/setter support
+    Object(Vec<(PropertyKey, PropertyValue)>),
     Array(Vec<Expression>),
     FunctionExpression { name: Option<String>, params: Vec<String>, body: Vec<Statement> },
     ArrowFunction { params: Vec<String>, body: Box<ArrowBody> },
@@ -88,6 +99,14 @@ pub enum Expression {
     ArrayPattern(Vec<BindingElement>),
     /// Object destructuring pattern: {a, b} = expr
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
+    /// For-of loop: for (x of iterable) { ... }
+    ForOf { variable: Box<Expression>, iterable: Box<Expression>, body: Box<Statement> },
+    /// For-in loop: for (x in object) { ... }
+    ForIn { variable: Box<Expression>, object: Box<Expression>, body: Box<Statement> },
+    /// Optional chain member access: obj?.prop
+    OptChain { object: Box<Expression>, property: PropertyKey, computed: bool },
+    /// Optional chain call: obj?.method()
+    OptChainCall { object: Box<Expression>, property: PropertyKey, computed: bool, arguments: Vec<Expression> },
 }
 
 /// Binding element - can be a simple identifier or nested pattern
@@ -123,12 +142,14 @@ pub enum BinaryOp {
     In,
     /// The `instanceof` operator - checks if object is instance of constructor
     Instanceof,
+    /// Nullish coalescing: a ?? b (returns b if a is null/undefined)
+    NullishCoalescing,
 }
 
 impl BinaryOp {
     pub fn precedence(&self) -> u8 {
         match self {
-            BinaryOp::Or => 1,
+            BinaryOp::Or | BinaryOp::NullishCoalescing => 1,
             BinaryOp::And => 2,
             BinaryOp::BitOr => 3,
             BinaryOp::BitXor => 4,

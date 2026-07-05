@@ -1,0 +1,95 @@
+# Task 292: Implement var hoisting and let/const TDZ
+
+## Status: COMPLETED
+
+## Summary
+
+Implemented var hoisting, let/const temporal dead zone (TDZ), and const immutability enforcement for quench-runtime.
+
+## Changes Made
+
+### env.rs
+- Added `BindingState` enum (Uninitialized, Initialized) for TDZ tracking
+- Added `Mutability` enum (Mutable, Immutable) for const tracking
+- Added `Binding` struct to hold value, state, and mutability
+- Modified `Scope` to store `Binding` instead of raw `Value`
+- Added `define_uninitialized()` to create TDZ bindings
+- Added `initialize_binding()` to mark bindings as initialized
+- Added `is_uninitialized()` to check TDZ state
+- Added `has_binding()` to check if binding exists
+- Modified `set()` to check TDZ and const immutability
+- Added hoisting support methods
+
+### core.rs
+- Added `hoist_declarations()` to hoist var and let/const declarations
+- Added `collect_declarations()` to collect all declarations from statements
+- Modified `eval_var_declaration()` to handle var vs let/const differently
+- Modified `eval_block()` to hoist declarations in block scope
+- Added TDZ check in `eval_identifier()`
+- Added TDZ handling for typeof operator
+
+### call.rs
+- Added `hoist_function_body_declarations()` for function scope hoisting
+- Added `collect_declarations_from_body()` to collect function body declarations
+- Modified `call_js_function()` to hoist declarations before execution
+
+### expr.rs
+- Modified `eval_identifier()` to check TDZ before returning value
+- Modified `eval_unary_expr()` to handle typeof with TDZ variables
+
+### ops.rs
+- Modified `assign_to()` to use Result return type for error handling
+- Added proper error propagation for const reassignment
+
+## Tests Added
+
+### env.rs unit tests:
+- `test_var_hoisting` - Verifies var hoisting at environment level
+- `test_let_const_tdz` - Verifies TDZ state tracking
+- `test_const_immutability` - Verifies const reassignment error
+- `test_let_mutability` - Verifies let allows reassignment
+
+### runtime_issues_basic.rs integration tests:
+- `test_var_hoisting_basic` - Basic var hoisting
+- `test_var_hoisting_after_init` - Var value after initialization
+- `test_var_hoisting_in_function` - Var hoisting in function scope
+- `test_let_tdz_throws_reference_error` - TDZ throws ReferenceError
+- `test_let_tdz_message_contains_name` - TDZ error mentions variable name
+- `test_let_after_initialization` - Let works after initialization
+- `test_let_reassignment_allowed` - Let allows reassignment
+- `test_const_assignment_throws_type_error` - Const reassignment throws TypeError
+- `test_const_reassignment_error_message` - TypeError mentions 'constant'
+- `test_const_tdz_also_applies` - Const also has TDZ
+
+## Acceptance Criteria Status
+
+✅ `console.log(x); var x = 1;` logs `undefined` - VERIFIED
+✅ `x; let x = 1;` throws `ReferenceError` (TDZ) - VERIFIED
+✅ `const x = 1; x = 2;` throws `TypeError` - VERIFIED
+✅ Regression tests added - VERIFIED
+✅ JS scenario tests added - VERIFIED
+
+## Verification
+
+All tests pass:
+```
+cargo test -p quench-runtime 2>&1 | tail -20
+```
+
+Test output:
+- 49 passed in runtime_issues_basic.rs
+- 76 passed in lib tests
+- All integration tests pass
+
+## Files Modified
+
+- crates/quench-runtime/src/env.rs
+- crates/quench-runtime/src/interpreter/core.rs
+- crates/quench-runtime/src/interpreter/call.rs
+- crates/quench-runtime/src/interpreter/expr.rs
+- crates/quench-runtime/src/interpreter/ops.rs
+- crates/quench-runtime/tests/runtime_issues_basic.rs
+
+## Residual Risks
+
+- None identified. All acceptance criteria are met.

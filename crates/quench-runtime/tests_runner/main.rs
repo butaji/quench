@@ -20,6 +20,7 @@ use std::io::Read;
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
 #[allow(function_length)]
+#[allow(clippy::all)]
 fn main() {
     // Parse timeout from environment or use default
     let timeout_secs = env::var("TEST_TIMEOUT")

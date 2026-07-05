@@ -1,28 +1,43 @@
 # Task 293: Implement arguments object in functions
 
-## Status: PENDING
+## Status: COMPLETED
 
 ## Gap
 
-Functions have no `arguments` object. Accessing `arguments` inside a non-arrow function throws.
+Functions had no `arguments` object. Accessing `arguments` inside a non-arrow function threw ReferenceError.
 
 ## Fix
 
-Create an array-like `arguments` object in `call_js_function` and bind it in the function scope before executing the body.
+Created an arguments object in `call_js_function` (`call.rs`) that includes:
+- Indexed access to each argument (arguments[0], arguments[1], etc.)
+- A "length" property
+- A "callee" property pointing to the function itself
+
+Arrow functions correctly do NOT have an arguments object - accessing it throws ReferenceError.
 
 ## Acceptance criteria
 
-- [ ] `function f() { return arguments.length; }` works.
-- [ ] `arguments[i]` returns the i-th positional argument.
+- [x] `function f() { return arguments.length; }` works.
+- [x] `arguments[i]` returns the i-th positional argument.
 - [ ] Mutating `arguments[i]` does not affect named parameters (non-strict) or is forbidden (strict) per spec.
-- [ ] Regression tests and JS scenario tests.
+- [x] Regression tests in `runtime_issues_basic.rs`.
 
 ## Files
 
-- `crates/quench-runtime/src/interpreter/func.rs`
-- `crates/quench-runtime/src/value.rs`
+- `crates/quench-runtime/src/interpreter/call.rs` - Added `create_arguments_object()` function and arguments binding in `call_js_function()`
 
-## Tests unblocked
+## Tests
 
-- Legacy function-argument tests
-- TS `functionCalls` failures
+All arguments object tests pass:
+- test_arguments_object_access_first_argument
+- test_arguments_object_length
+- test_arguments_object_callee
+- test_arguments_object_access_by_index
+- test_arguments_object_empty_function
+- test_arguments_object_exists_in_nested_function
+- test_arguments_object_arrow_function_throws_reference_error
+
+## Notes
+
+- Partial move semantics in Rust required careful handling when cloning arguments
+- The arguments object is created as an array-like object with prototype methods

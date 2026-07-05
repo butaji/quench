@@ -73,6 +73,36 @@ pub enum ObjectKind {
     Global,     // Global object (fallback lookup)
 }
 
+/// Getter function representation - stores closure and body for lazy evaluation
+#[derive(Debug, Clone)]
+pub struct Getter {
+    pub closure: Rc<RefCell<crate::env::Environment>>,
+    pub body: Vec<crate::ast::Statement>,
+}
+
+/// Getter storage in object - stores body directly (closure is created at call time)
+#[derive(Debug, Clone)]
+pub struct GetterStorage {
+    pub body: Vec<crate::ast::Statement>,
+}
+
+/// Setter storage in object
+#[derive(Debug, Clone)]
+pub struct SetterStorage {
+    pub param: String,
+    pub body: Vec<crate::ast::Statement>,
+    /// Closure environment at the time the object was created
+    pub closure: std::rc::Rc<std::cell::RefCell<crate::env::Environment>>,
+}
+
+/// Setter function representation
+#[derive(Debug, Clone)]
+pub struct Setter {
+    pub closure: Rc<RefCell<crate::env::Environment>>,
+    pub param: String,
+    pub body: Vec<crate::ast::Statement>,
+}
+
 /// JavaScript object with prototype chain support.
 /// Uses HashMap for properties and Vec for array elements.
 #[derive(Debug, Clone)]
@@ -85,6 +115,10 @@ pub struct Object {
     pub kind: ObjectKind,
     /// Prototype object for inheritance chain (or null for end of chain)
     pub prototype: Option<Rc<RefCell<Object>>>,
+    /// Getter functions for properties (stores body for later evaluation)
+    getters: HashMap<String, GetterStorage>,
+    /// Setter functions for properties
+    setters: HashMap<String, SetterStorage>,
 }
 
 impl Object {
@@ -95,6 +129,8 @@ impl Object {
             elements: Vec::new(),
             kind,
             prototype: None,
+            getters: HashMap::new(),
+            setters: HashMap::new(),
         }
     }
 
@@ -105,6 +141,8 @@ impl Object {
             elements: Vec::new(),
             kind,
             prototype: Some(prototype),
+            getters: HashMap::new(),
+            setters: HashMap::new(),
         }
     }
 
@@ -136,6 +174,7 @@ impl Object {
     }
 
     /// Set a property value on this object only (no prototype chain)
+    /// If a setter exists, call it instead of setting directly
     pub fn set(&mut self, key: &str, value: Value) {
         if let Ok(idx) = key.parse::<usize>() {
             while self.elements.len() <= idx {
@@ -145,6 +184,52 @@ impl Object {
             self.properties.insert("length".to_string(), Value::Number(self.elements.len() as f64));
         }
         self.properties.insert(key.to_string(), value);
+    }
+
+    /// Set a getter function for a property (stores body for later evaluation)
+    pub fn set_getter(&mut self, key: &str, body: Vec<crate::ast::Statement>) {
+        self.getters.insert(key.to_string(), GetterStorage {
+            body,
+        });
+    }
+
+    /// Set a setter function for a property
+    pub fn set_setter(&mut self, key: &str, param: String, body: Vec<crate::ast::Statement>, closure: std::rc::Rc<std::cell::RefCell<crate::env::Environment>>) {
+        self.setters.insert(key.to_string(), SetterStorage {
+            param,
+            body,
+            closure,
+        });
+    }
+
+    /// Check if property has a getter
+    pub fn has_getter(&self, key: &str) -> bool {
+        self.getters.contains_key(key)
+    }
+
+    /// Check if property has a setter
+    pub fn has_setter(&self, key: &str) -> bool {
+        self.setters.contains_key(key)
+    }
+
+    /// Get the getter storage for a property
+    pub fn get_getter(&self, key: &str) -> Option<&GetterStorage> {
+        self.getters.get(key)
+    }
+
+    /// Get the setter storage for a property
+    pub fn get_setter(&self, key: &str) -> Option<&SetterStorage> {
+        self.setters.get(key)
+    }
+
+    /// Get all property keys (own properties only, including getters/setters)
+    pub fn own_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.properties.keys().cloned().collect();
+        keys.extend(self.getters.keys().cloned());
+        keys.extend(self.setters.keys().cloned());
+        keys.sort();
+        keys.dedup();
+        keys
     }
 
     /// Check if property exists (own or prototype chain)
@@ -267,6 +352,10 @@ impl ValueFunction {
         // Set constructor property to point back to this function
         // IMPORTANT: Use self.clone() so that the constructor refers to THIS function
         proto.set("constructor", Value::Function(self.clone()));
+        // Set the prototype of the function's prototype to Function.prototype
+        if let Some(func_proto) = crate::builtins::get_function_prototype() {
+            proto.prototype = Some(func_proto);
+        }
         let proto_rc = Rc::new(RefCell::new(proto));
         
         // Store in the shared proto_cell
