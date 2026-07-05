@@ -376,11 +376,9 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                 return Ok(get_this_binding(env));
             }
             
-            // Check for TDZ in the scope chain
-            for scope in env.borrow().scopes.iter().rev() {
-                if scope.is_tdz(name) {
-                    return Err(JsError(format!("ReferenceError: Cannot access '{}' before initialization", name)));
-                }
+            // Check for TDZ using the Environment's is_tdz method (handles parent chain)
+            if env.borrow().is_tdz(name) {
+                return Err(JsError(format!("ReferenceError: Cannot access '{}' before initialization", name)));
             }
             
             let val = env.borrow().get(name)
