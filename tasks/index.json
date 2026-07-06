@@ -5,13 +5,15 @@
       "title": "Reach 100% JS/TS/TSX/JSX compatibility with minimum code and maximum performance",
       "file": "tasks/296-100-percent-js-ts-compatibility.md",
       "status": "in_progress",
-      "notes": "North star. 100% of full test262 (~53k files) + TypeScript (~18k cases) conformance, native execution, no bytecode/JIT, minimum code, maximum performance. Split into concrete milestone tasks 309-319 below. All work ordered low effort / high impact with complete fast Rust unit test coverage."
+      "priority": "P0",
+      "notes": "North star. 100% of full test262 (~53k files) + TypeScript (~18k cases) conformance, native execution, no bytecode/JIT, minimum code, maximum performance. Split into concrete milestone tasks 309-319 below. All work ordered by priority, then effort/impact, with complete fast Rust unit test coverage."
     },
     {
       "id": "298",
       "title": "Complete fast Rust unit test coverage",
       "file": "tasks/298-complete-fast-unit-test-coverage.md",
       "status": "in_progress",
+      "priority": "P0",
       "notes": "Ensure every JS/TS/TSX/JSX spec behavior has a focused Rust unit test or fixture. Regressions caught in seconds. No feature/fix without a test."
     },
     {
@@ -19,6 +21,7 @@
       "title": "Establish spec test fixtures",
       "file": "tasks/297-spec-test-fixtures.md",
       "status": "in_progress",
+      "priority": "P0",
       "notes": "Define fixture format and directory layout under tests/spec_fixtures/. Every compatibility task must reference the fixture files it adds/fixes. Contributes to complete fast Rust unit test coverage."
     },
     {
@@ -26,34 +29,39 @@
       "title": "Load real test262 harness includes",
       "file": "tasks/253-load-real-test262-harness-includes.md",
       "status": "pending",
-      "notes": "P0 measurement blocker. ~298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort."
+      "priority": "P0",
+      "notes": "Measurement blocker. ~298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort."
     },
     {
       "id": "91",
       "title": "Audit and shrink test262 feature skip list",
       "file": "tasks/91-audit-test262-skip-list.md",
       "status": "pending",
-      "notes": "P0 measurement. Low effort, high impact. Remove outdated skip reasons so real failures surface and get fixed."
+      "priority": "P0",
+      "notes": "Measurement. Low effort, high impact. Remove outdated skip reasons so real failures surface and get fixed."
     },
     {
       "id": "250",
       "title": "Preserve thrown values in try/catch/throw",
       "file": "tasks/250-preserve-thrown-values-in-try-catch-throw.md",
       "status": "pending",
-      "notes": "P0 quick win. Low effort, high impact. Stop stringifying exceptions; negative tests need real error types."
+      "priority": "P0",
+      "notes": "Quick win. Low effort, high impact. Stop stringifying exceptions; negative tests need real error types."
     },
     {
       "id": "97",
       "title": "Improve negative-test matching by type and phase",
       "file": "tasks/97-precise-negative-test-matching.md",
       "status": "pending",
-      "notes": "P0 measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison."
+      "priority": "P0",
+      "notes": "Measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison."
     },
     {
       "id": "320",
       "title": "Fix object storage for array indices",
       "file": "tasks/320-fix-object-storage-array-indices.md",
       "status": "pending",
+      "priority": "P0",
       "notes": "New win. Numeric keys are stored in both elements and properties; delete/own_keys are wrong. Low effort, high impact."
     },
     {
@@ -61,6 +69,7 @@
       "title": "Make Boolean and Number real constructors",
       "file": "tasks/321-boolean-number-constructors.md",
       "status": "pending",
+      "priority": "P0",
       "notes": "New win. Boolean is NativeFunction only; Number constructor is discarded. Low effort, high impact."
     },
     {
@@ -68,6 +77,7 @@
       "title": "Add Object and Function prototype default methods",
       "file": "tasks/322-prototype-default-methods.md",
       "status": "pending",
+      "priority": "P0",
       "notes": "New win. Missing toString/valueOf/hasOwnProperty/call/apply/bind. Low-medium effort, high impact."
     },
     {
@@ -75,6 +85,7 @@
       "title": "Make object property enumeration insertion-ordered",
       "file": "tasks/323-insertion-order-enumeration.md",
       "status": "pending",
+      "priority": "P0",
       "notes": "New win. HashMap iteration is unordered; Object.keys must follow insertion order. Low-medium effort, high impact."
     },
     {
@@ -82,244 +93,279 @@
       "title": "Implement spec-correct parseInt and parseFloat",
       "file": "tasks/324-parseint-parsefloat-semantics.md",
       "status": "pending",
+      "priority": "P0",
       "notes": "New win. Current implementations use str::parse and ignore radix/whitespace/early termination. Low-medium effort, high impact."
-    },
-    {
-      "id": "325",
-      "title": "Remove debug eprintln! spam",
-      "file": "tasks/325-remove-debug-eprintln.md",
-      "status": "pending",
-      "notes": "New win. TDZ refactor left debug prints. Trivial effort, medium impact."
-    },
-    {
-      "id": "326",
-      "title": "String.prototype.length uses UTF-16 code units",
-      "file": "tasks/326-string-length-utf16.md",
-      "status": "pending",
-      "notes": "New win. Currently uses UTF-8 byte length. Trivial effort, medium impact."
-    },
-    {
-      "id": "327",
-      "title": "Fix JSON.stringify(undefined)",
-      "file": "tasks/327-json-stringify-undefined.md",
-      "status": "pending",
-      "notes": "New win. Undefined serializes as null. Trivial effort, medium impact."
-    },
-    {
-      "id": "328",
-      "title": "Fix for-of Symbol.iterator lookup",
-      "file": "tasks/328-fix-for-of-symbol-iterator.md",
-      "status": "pending",
-      "notes": "New win. for-of looks up property named 'Symbol' instead of Symbol.iterator. Low effort, medium impact."
-    },
-    {
-      "id": "329",
-      "title": "Delete dead scope.rs module",
-      "file": "tasks/329-delete-dead-scope-rs.md",
-      "status": "pending",
-      "notes": "New win. scope.rs is unused. Trivial effort, low impact."
-    },
-    {
-      "id": "283",
-      "title": "Install String.prototype once instead of per-access closures",
-      "file": "tasks/283-string-prototype-once.md",
-      "status": "pending",
-      "notes": "P1 quick win. Low effort, high impact. Every string property access currently allocates a closure. Fixture: tests/spec_fixtures/expressions/optional_chaining.js."
-    },
-    {
-      "id": "284",
-      "title": "Avoid cloning array elements in builtin methods",
-      "file": "tasks/284-avoid-array-elements-clone.md",
-      "status": "pending",
-      "notes": "P1 quick win. Low effort, high impact. Array methods clone the elements vector; operate on mutable borrow instead."
-    },
-    {
-      "id": "282",
-      "title": "Share function bodies via Rc<[Statement]>",
-      "file": "tasks/282-share-function-body-rc.md",
-      "status": "pending",
-      "notes": "P0 performance. Low effort, high impact. Stop cloning function bodies on every Value clone."
     },
     {
       "id": "290",
       "title": "Complete expression syntax gaps",
       "file": "tasks/290-complete-expression-syntax-gaps.md",
       "status": "pending",
-      "notes": "P0 broad win. Medium effort, very high impact. Template literals, computed keys, spread, ??, ?., delete, unary +, for-of. Unblocks 100+ TS expression failures. Fixtures: tests/spec_fixtures/expressions/*."
+      "priority": "P0",
+      "notes": "Broad win. Medium effort, very high impact. Template literals, computed keys, spread, ??, ?., delete, unary +, for-of. Unblocks 100+ TS expression failures. Fixtures: tests/spec_fixtures/expressions/*."
     },
     {
       "id": "289",
       "title": "Register Array, Error, Date as constructors",
       "file": "tasks/289-register-native-constructors.md",
       "status": "pending",
-      "notes": "P0 broad win. Medium effort, very high impact. Blocks thousands of built-in tests and any new Array/Error. Fixture: tests/spec_fixtures/objects/constructor_registration.js."
+      "priority": "P0",
+      "notes": "Broad win. Medium effort, very high impact. Blocks thousands of built-in tests and any new Array/Error. Fixture: tests/spec_fixtures/objects/constructor_registration.js."
     },
     {
       "id": "141",
       "title": "Arrow function use strict validation",
       "file": "tasks/141-use-strict-validation.md",
       "status": "pending",
-      "notes": "P1 correctness. Medium effort, high impact. Strict mode enforcement; unblocks onlyStrict tests and changes this/globals behavior."
+      "priority": "P1",
+      "notes": "Core semantics. Medium effort, high impact. Strict mode enforcement; unblocks onlyStrict tests and changes this/globals behavior."
     },
     {
       "id": "295",
       "title": "Use global object as environment record",
       "file": "tasks/295-global-object-environment.md",
       "status": "pending",
-      "notes": "P1 correctness. Medium effort, medium-high impact. globalThis/variable parity."
+      "priority": "P1",
+      "notes": "Core semantics. Medium effort, medium-high impact. globalThis/variable parity."
     },
     {
       "id": "294",
       "title": "Implement property descriptors and defineProperty",
       "file": "tasks/294-property-descriptors.md",
       "status": "pending",
-      "notes": "P1 correctness. High effort, high impact. Object semantics, getters/setters, built-in attribute checks."
-    },
-    {
-      "id": "309",
-      "title": "Expressions coverage",
-      "file": "tasks/309-expressions-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/expressions/ and TS expression tests pass. Covers typeof, delete, ??, ?., template literals, spread, computed keys. Depends on 290, 291, 289, 283."
-    },
-    {
-      "id": "310",
-      "title": "Statements coverage",
-      "file": "tasks/310-statements-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/statements/ and TS statement tests pass. Covers if/while/for/for-of/switch/try-catch/TDZ. Depends on 281, 292, 250, 141."
-    },
-    {
-      "id": "311",
-      "title": "Functions coverage",
-      "file": "tasks/311-functions-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/functions/ and TS function tests pass. Covers declarations, arrows, defaults, rest, arguments, call/apply/bind, closures. Depends on 293, 292, 305, 117, 124."
-    },
-    {
-      "id": "312",
-      "title": "Objects and prototypes coverage",
-      "file": "tasks/312-objects-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins/Object/, Reflect, and prototype-chain tests pass. Covers literals, property access, defineProperty, descriptors. Depends on 294, 295, 289."
-    },
-    {
-      "id": "313",
-      "title": "Arrays and built-ins coverage",
-      "file": "tasks/313-arrays-builtins-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins Array/String/Number/Boolean/Date/Error tests pass. Depends on 289, 283, 284, 147, 191, 132, 239."
-    },
-    {
-      "id": "316",
-      "title": "Errors and exceptions coverage",
-      "file": "tasks/316-errors-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of language/exceptions/ and built-ins/Error/ tests pass. Covers try/catch/finally, error types, thrown value preservation. Depends on 250, 132, 105, 112."
-    },
-    {
-      "id": "314",
-      "title": "Classes coverage",
-      "file": "tasks/314-classes-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/class/ tests pass. Covers class syntax, super, extends, static fields. Depends on 182, 183, 187."
-    },
-    {
-      "id": "315",
-      "title": "Modules coverage",
-      "file": "tasks/315-modules-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of test262 language/module-code/ and TS module tests pass. Covers import/export, cycles, scope isolation. Depends on 241."
-    },
-    {
-      "id": "317",
-      "title": "Async / Promise / generator coverage",
-      "file": "tasks/317-async-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of built-ins/Promise/ and async-function tests pass. Covers Promise, microtasks, async/await. Depends on 251."
-    },
-    {
-      "id": "318",
-      "title": "TypeScript coverage",
-      "file": "tasks/318-typescript-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of TypeScript runtime conformance cases pass after type erasure. Covers enums, namespaces, type assertions, TSX transform. Depends on 290, 289, 241, 182."
-    },
-    {
-      "id": "319",
-      "title": "JSX / TSX coverage",
-      "file": "tasks/319-jsx-coverage.md",
-      "status": "pending",
-      "notes": "Sub-task of 296. 100% of JSX/TSX examples and tests render correctly via Ink runtime. Depends on 318."
-    },
-    {
-      "id": "279",
-      "title": "Enforce granular unit-test policy",
-      "file": "tasks/279-granular-unit-test-policy.md",
-      "status": "in_progress",
-      "notes": "Process enabler. One behavior, one test; every task lists test file/name. Updated EXECUTE.md and docs/hir-design.md."
-    },
-    {
-      "id": "280",
-      "title": "Add JS/TS scenario test harness",
-      "file": "tasks/280-js-ts-scenario-tests.md",
-      "status": "pending",
-      "notes": "Process enabler. Run real JS/TS snippets from Rust tests. High impact, medium effort."
-    },
-    {
-      "id": "287",
-      "title": "Runtime optimization roadmap",
-      "file": "tasks/287-runtime-optimization-roadmap.md",
-      "status": "in_progress",
-      "notes": "Tracking task. Findings in docs/runtime-optimization-roadmap.md."
-    },
-    {
-      "id": "256",
-      "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
-      "file": "tasks/256-split-large-files.md",
-      "status": "in_progress",
-      "notes": "High impact, high effort. Enforce 500/40/10 on every *.rs file. Best done incrementally between other tasks."
+      "priority": "P1",
+      "notes": "Core semantics. High effort, high impact. Object semantics, getters/setters, built-in attribute checks."
     },
     {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
       "status": "pending",
-      "notes": "P0 architecture. Very high impact, high effort. Replaces recursive AST walker; required to run whole test262 suites."
+      "priority": "P1",
+      "notes": "Architecture. Very high impact, high effort. Replaces recursive AST walker; required to run whole test262 suites."
     },
     {
       "id": "241",
       "title": "Implement native ES module support for Quench apps",
       "file": "tasks/241-native-es-module-support.md",
       "status": "pending",
-      "notes": "P0 feature. High impact, high effort. Native import/export instead of stripping."
+      "priority": "P1",
+      "notes": "Feature. High impact, high effort. Native import/export instead of stripping."
     },
     {
       "id": "182",
       "title": "Class support and conformance skip fixes",
       "file": "tasks/182-class-support-and-skip-fixes.md",
       "status": "pending",
-      "notes": "P0 feature. Medium-high effort, very high impact. Classes, super, extends, static fields."
+      "priority": "P1",
+      "notes": "Feature. Medium-high effort, very high impact. Classes, super, extends, static fields."
     },
     {
       "id": "251",
       "title": "Implement real Promise resolution and microtasks",
       "file": "tasks/251-implement-real-promise-resolution-and-microtasks.md",
       "status": "pending",
-      "notes": "P0 feature. Medium effort, very high impact. Async/await/generators depend on this."
+      "priority": "P1",
+      "notes": "Feature. Medium effort, very high impact. Async/await/generators depend on this."
+    },
+    {
+      "id": "283",
+      "title": "Install String.prototype once instead of per-access closures",
+      "file": "tasks/283-string-prototype-once.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Perf quick win. Low effort, high impact. Every string property access currently allocates a closure. Fixture: tests/spec_fixtures/expressions/optional_chaining.js."
+    },
+    {
+      "id": "284",
+      "title": "Avoid cloning array elements in builtin methods",
+      "file": "tasks/284-avoid-array-elements-clone.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Perf quick win. Low effort, high impact. Array methods clone the elements vector; operate on mutable borrow instead."
+    },
+    {
+      "id": "282",
+      "title": "Share function bodies via Rc<[Statement]>",
+      "file": "tasks/282-share-function-body-rc.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Perf quick win. Low effort, high impact. Stop cloning function bodies on every Value clone."
+    },
+    {
+      "id": "325",
+      "title": "Remove debug eprintln! spam",
+      "file": "tasks/325-remove-debug-eprintln.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Cleanup. TDZ refactor left debug prints. Trivial effort, medium impact."
+    },
+    {
+      "id": "326",
+      "title": "String.prototype.length uses UTF-16 code units",
+      "file": "tasks/326-string-length-utf16.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Cleanup. Currently uses UTF-8 byte length. Trivial effort, medium impact."
+    },
+    {
+      "id": "327",
+      "title": "Fix JSON.stringify(undefined)",
+      "file": "tasks/327-json-stringify-undefined.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Cleanup. Undefined serializes as null. Trivial effort, medium impact."
+    },
+    {
+      "id": "328",
+      "title": "Fix for-of Symbol.iterator lookup",
+      "file": "tasks/328-fix-for-of-symbol-iterator.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Cleanup. for-of looks up property named 'Symbol' instead of Symbol.iterator. Low effort, medium impact."
+    },
+    {
+      "id": "329",
+      "title": "Delete dead scope.rs module",
+      "file": "tasks/329-delete-dead-scope-rs.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Cleanup. scope.rs is unused. Trivial effort, low impact."
+    },
+    {
+      "id": "309",
+      "title": "Expressions coverage",
+      "file": "tasks/309-expressions-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of test262 language/expressions/ and TS expression tests pass. Depends on 290, 291, 289, 283."
+    },
+    {
+      "id": "310",
+      "title": "Statements coverage",
+      "file": "tasks/310-statements-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of test262 language/statements/ and TS statement tests pass. Depends on 281, 292, 250, 141."
+    },
+    {
+      "id": "311",
+      "title": "Functions coverage",
+      "file": "tasks/311-functions-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of test262 language/functions/ and TS function tests pass. Depends on 293, 292, 305, 117, 124."
+    },
+    {
+      "id": "312",
+      "title": "Objects and prototypes coverage",
+      "file": "tasks/312-objects-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of built-ins/Object/, Reflect, and prototype-chain tests pass. Depends on 294, 295, 289."
+    },
+    {
+      "id": "313",
+      "title": "Arrays and built-ins coverage",
+      "file": "tasks/313-arrays-builtins-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of built-ins Array/String/Number/Boolean/Date/Error tests pass. Depends on 289, 283, 284, 147, 191, 132, 239."
+    },
+    {
+      "id": "316",
+      "title": "Errors and exceptions coverage",
+      "file": "tasks/316-errors-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of language/exceptions/ and built-ins/Error/ tests pass. Depends on 250, 132, 105, 112."
+    },
+    {
+      "id": "314",
+      "title": "Classes coverage",
+      "file": "tasks/314-classes-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of test262 language/class/ tests pass. Depends on 182, 183, 187."
+    },
+    {
+      "id": "315",
+      "title": "Modules coverage",
+      "file": "tasks/315-modules-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of test262 language/module-code/ and TS module tests pass. Depends on 241."
+    },
+    {
+      "id": "317",
+      "title": "Async / Promise / generator coverage",
+      "file": "tasks/317-async-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of built-ins/Promise/ and async-function tests pass. Depends on 251."
+    },
+    {
+      "id": "318",
+      "title": "TypeScript coverage",
+      "file": "tasks/318-typescript-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of TypeScript runtime conformance cases pass after type erasure. Depends on 290, 289, 241, 182."
+    },
+    {
+      "id": "319",
+      "title": "JSX / TSX coverage",
+      "file": "tasks/319-jsx-coverage.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Milestone of 296. 100% of JSX/TSX examples and tests render correctly via Ink runtime. Depends on 318."
+    },
+    {
+      "id": "279",
+      "title": "Enforce granular unit-test policy",
+      "file": "tasks/279-granular-unit-test-policy.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "Process. One behavior, one test; every task lists test file/name. Updated EXECUTE.md and docs/hir-design.md."
+    },
+    {
+      "id": "280",
+      "title": "Add JS/TS scenario test harness",
+      "file": "tasks/280-js-ts-scenario-tests.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Process. Run real JS/TS snippets from Rust tests. High impact, medium effort."
+    },
+    {
+      "id": "287",
+      "title": "Runtime optimization roadmap",
+      "file": "tasks/287-runtime-optimization-roadmap.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "Tracking. Findings in docs/runtime-optimization-roadmap.md."
+    },
+    {
+      "id": "256",
+      "title": "Address strict linting violations (500-line files, 40-line functions, complexity 10)",
+      "file": "tasks/256-split-large-files.md",
+      "status": "in_progress",
+      "priority": "P3",
+      "notes": "Large effort, high impact. Enforce 500/40/10 on every *.rs file. Best done incrementally between other tasks."
     },
     {
       "id": "88",
       "title": "Leverage Rust for runtime execution model",
       "file": "tasks/88-rust-runtime-leverage.md",
       "status": "pending",
-      "notes": "High impact, high effort. Rust ownership/explicit-stack patterns. Supports trampoline and HIR."
+      "priority": "P3",
+      "notes": "Large effort, high impact. Rust ownership/explicit-stack patterns. Supports trampoline and HIR."
     },
     {
       "id": "264",
       "title": "Implement the typed HIR execution model",
       "file": "tasks/264-typed-hir-implementation.md",
       "status": "pending",
+      "priority": "P3",
       "notes": "Very high impact, very high effort. Type-aware HIR + trampoline. Depends on Tasks 85 and quick-win cleanup."
     },
     {
@@ -327,7 +373,8 @@
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
       "status": "pending",
-      "notes": "High impact, high effort analysis. Whole-suite test262/TS runs and regression tracking."
+      "priority": "P3",
+      "notes": "Large effort, high impact analysis. Whole-suite test262/TS runs and regression tracking."
     }
   ]
 }
