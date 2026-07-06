@@ -50,6 +50,76 @@
       "notes": "P0 measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison."
     },
     {
+      "id": "320",
+      "title": "Fix object storage for array indices",
+      "file": "tasks/320-fix-object-storage-array-indices.md",
+      "status": "pending",
+      "notes": "New win. Numeric keys are stored in both elements and properties; delete/own_keys are wrong. Low effort, high impact."
+    },
+    {
+      "id": "321",
+      "title": "Make Boolean and Number real constructors",
+      "file": "tasks/321-boolean-number-constructors.md",
+      "status": "pending",
+      "notes": "New win. Boolean is NativeFunction only; Number constructor is discarded. Low effort, high impact."
+    },
+    {
+      "id": "322",
+      "title": "Add Object and Function prototype default methods",
+      "file": "tasks/322-prototype-default-methods.md",
+      "status": "pending",
+      "notes": "New win. Missing toString/valueOf/hasOwnProperty/call/apply/bind. Low-medium effort, high impact."
+    },
+    {
+      "id": "323",
+      "title": "Make object property enumeration insertion-ordered",
+      "file": "tasks/323-insertion-order-enumeration.md",
+      "status": "pending",
+      "notes": "New win. HashMap iteration is unordered; Object.keys must follow insertion order. Low-medium effort, high impact."
+    },
+    {
+      "id": "324",
+      "title": "Implement spec-correct parseInt and parseFloat",
+      "file": "tasks/324-parseint-parsefloat-semantics.md",
+      "status": "pending",
+      "notes": "New win. Current implementations use str::parse and ignore radix/whitespace/early termination. Low-medium effort, high impact."
+    },
+    {
+      "id": "325",
+      "title": "Remove debug eprintln! spam",
+      "file": "tasks/325-remove-debug-eprintln.md",
+      "status": "pending",
+      "notes": "New win. TDZ refactor left debug prints. Trivial effort, medium impact."
+    },
+    {
+      "id": "326",
+      "title": "String.prototype.length uses UTF-16 code units",
+      "file": "tasks/326-string-length-utf16.md",
+      "status": "pending",
+      "notes": "New win. Currently uses UTF-8 byte length. Trivial effort, medium impact."
+    },
+    {
+      "id": "327",
+      "title": "Fix JSON.stringify(undefined)",
+      "file": "tasks/327-json-stringify-undefined.md",
+      "status": "pending",
+      "notes": "New win. Undefined serializes as null. Trivial effort, medium impact."
+    },
+    {
+      "id": "328",
+      "title": "Fix for-of Symbol.iterator lookup",
+      "file": "tasks/328-fix-for-of-symbol-iterator.md",
+      "status": "pending",
+      "notes": "New win. for-of looks up property named 'Symbol' instead of Symbol.iterator. Low effort, medium impact."
+    },
+    {
+      "id": "329",
+      "title": "Delete dead scope.rs module",
+      "file": "tasks/329-delete-dead-scope-rs.md",
+      "status": "pending",
+      "notes": "New win. scope.rs is unused. Trivial effort, low impact."
+    },
+    {
       "id": "283",
       "title": "Install String.prototype once instead of per-access closures",
       "file": "tasks/283-string-prototype-once.md",
