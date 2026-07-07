@@ -36,6 +36,8 @@ Run with `cargo test -p quench-runtime`.
 5. Keep `MAX_RECURSION_DEPTH_OVERRIDE` as a global static (tests still set it), but read it inside the thread-local helper.
 6. Run `cargo test -p quench-runtime --test runtime_issues` to confirm 44/44 pass in parallel.
 
+**Status:** Fix landed by the background process; parallel `runtime_issues` tests pass.
+
 **Tracking:** Task 338.
 
 ### 2. Recursive interpreter consumes the native Rust stack
@@ -63,6 +65,8 @@ f(); // ReferenceError: x is not defined
 2. When entering a function body, call it and declare each name as `DeclaredOnly` in the function's local environment before evaluating statements.
 3. Do not initialize the values; leave them `undefined` until the `var` declaration statement executes.
 
+**Status:** Fix landed by the background process; function-scope `var` is hoisted.
+
 **Tracking:** Task 339.
 
 ### 4. `let` / `const` TDZ missing at script and block level
@@ -81,6 +85,8 @@ let z; z; let z = 1;           // should throw TDZ
 3. On read/write of a binding where `initialized == false`, throw `ReferenceError: Cannot access 'X' before initialization`.
 4. When the initializer expression finishes evaluating, set `initialized = true`.
 
+**Status:** Fix landed by the background process; TDZ and const assignment `TypeError` are enforced.
+
 **Tracking:** Task 340.
 
 ### 5. `const` assignment does not throw TypeError
@@ -96,6 +102,8 @@ const x = 1; x = 2; // no error
 1. In `crates/quench-runtime/src/interpreter.rs`, locate the `assign_to` (or equivalent) helper.
 2. Before writing, look up the binding's `VarKind`.
 3. If `VarKind::Const`, return `TypeError: Assignment to constant variable.`.
+
+**Status:** Fix landed by the background process; TDZ and const assignment `TypeError` are enforced.
 
 **Tracking:** Task 340.
 
@@ -132,6 +140,8 @@ typeof this // "undefined"
 
 ## Exit criteria for this status page
 
-- [ ] Task 338 closed: parallel `runtime_issues.rs` passes.
+- [x] Task 338 closed: parallel `runtime_issues.rs` passes.
 - [ ] Task 85 closed: recursive stress test (`f(100000)`) passes without native stack overflow.
-- [ ] Tasks 339–341 and 345 closed: `var_hoisting_tdz.rs` passes 17/17 in parallel.
+- [x] Task 339 closed: `var` hoisting inside functions works.
+- [x] Task 340 closed: `let`/`const` TDZ and const assignment `TypeError` enforced.
+- [ ] Tasks 341 and 345 closed: constructor `this` and script-level `typeof this` still pending.
