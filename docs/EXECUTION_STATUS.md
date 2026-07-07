@@ -44,7 +44,7 @@ Run with `cargo test -p quench-runtime`.
 
 **Root cause:** Each JS function call translates to multiple nested Rust calls (`eval_expr` → `call_value_with_this` → `eval_statements` → ...).
 
-**Exact fix:** Implement a trampoline interpreter with an explicit `Vec<CallFrame>` heap stack (Task 85). The recursive interpreter stays until Task 85 lands.
+**Exact fix (by design):** Replace recursion with a non-recursive state machine. Implement a trampoline loop over a heap-allocated `Vec<CallFrame>` (Task 85). JS function calls become `stack.push(...)`/`stack.pop(...)`, not nested Rust calls. The recursive interpreter stays until Task 85 lands.
 
 **Tracking:** Task 85.
 

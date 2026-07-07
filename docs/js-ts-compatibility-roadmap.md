@@ -92,7 +92,7 @@ Work is grouped into measurable batches. Each batch has a theme, a primary test-
 | Batch | Theme | Suite focus | Tasks (sample) | Exit signal |
 |-------|-------|-------------|----------------|-------------|
 | 0 | Truthful measurement | test262 / both | 91, 97, 250, 253, 344 | Harness helpers loaded; reports reflect real pass/fail/skip counts. |
-| 1 | VM / runtime foundation (P0) | runtime / both | 85, 88, 264, 285, 286, 287, 308, 333, 335, 338, 343 | Trampoline interpreter, explicit frames, thread-local depth, value-model unification, HIR execution model. This is the foundation for everything that follows. |
+| 1 | VM / runtime foundation (P0) | runtime / both | 85, 88, 264, 285, 286, 287, 308, 333, 335, 338, 343 | Trampoline interpreter, explicit frames, thread-local depth, value-model unification, HIR execution model. By design, JS recursion must not consume the native Rust stack. |
 | 2 | Quick syntax / builtin wins | both | 289, 290, 320–324, 336 | Expression, object, and constructor subsets reach 100%. |
 | 3 | Functions / core statements | both | 322, 281, 141, 291–293 | Function, statement, and basic semantic subsets reach 100%. |
 | 4 | Big language features | both | 182, 183, 187, 241, 251, 297, 298 | Modules, classes, promises, and test conventions unblock whole suite areas. |

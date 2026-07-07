@@ -14,6 +14,19 @@ The current interpreter calls itself recursively for every JS function call, loo
 - JS stack depth is tracked on the heap via `Vec<CallFrame>`.
 - Runaway recursion throws a controlled JS `RangeError` at `MAX_JS_STACK`.
 
+## Why recursion cannot be the final design
+
+A depth counter, a bigger native stack, or inlining a few functions can only delay the overflow. The only way to make deep JS recursion reliable by design is to stop mapping JS calls to Rust calls:
+
+| Approach | Why it fails |
+|----------|--------------|
+| Global/thread-local depth counter | Only catches runaway recursion; still consumes one Rust frame per JS call. |
+| Larger `RUST_MIN_STACK` | Platform-dependent and still finite; does not scale to whole test262 suites. |
+| Inlining / fewer helper frames | Reduces frames-per-JS-call but does not remove the linear relationship; deep enough JS recursion still wins. |
+| Trampoline with heap call stack | Rust stack is flat; JS recursion depth is bounded only by heap memory and an explicit `MAX_JS_STACK` check. |
+
+Therefore the interpreter must become a non-recursive state machine. Every JS function call, `try/catch` unwind, `yield`, and `await` is expressed as a transition on the heap stack, not as a nested Rust call.
+
 ## Rust-specific design constraints
 
 The trampoline rewrite is the right place to remove `Rc<RefCell<...>>` from the hot path and let Rust's ownership model enforce VM safety:
