@@ -122,3 +122,11 @@ cargo test -p quench-runtime
 ```
 
 A successful full-suite run produces `target/test262_report.json` and `target/conformance_report.json` without process aborts.
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 7
+- **Target subset:** Full `tests/test262` + `tests/typescript` conformance suites
+- **Blocked by:** 85, 88, 264
+- **Exit criteria:** Both full conformance suites run to completion and reports are regenerated with accurate pass/fail/skip counts.

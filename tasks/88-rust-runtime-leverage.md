@@ -47,6 +47,14 @@ Apply Rust's type system, ownership model, and ecosystem crates to make the inte
 - [ ] Global allocator switch is measured with `cargo bench` / Criterion before/after.
 - [ ] `unsafe` usage is documented and Miri-tested.
 
+## Targets
+
+- **Suite:** `runtime`
+- **Batch:** 6
+- **Target subset:** n/a (runtime execution model)
+- **Blocked by:** 85
+- **Exit criteria:** Trampoline interpreter uses `&mut Context` and slot-indexed object storage; conformance runner isolates tests.
+
 ## Related
 
 - Task 82 (whole-suite conformance)

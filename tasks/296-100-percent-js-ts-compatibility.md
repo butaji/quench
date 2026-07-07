@@ -45,3 +45,11 @@ cargo test -p quench-runtime --test conformance -- --test-threads=1
 timeout 60 cargo run -- examples/counter.js
 timeout 60 cargo run -- examples/use-bridge.tsx --prop theme=dark
 ```
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 7
+- **Target subset:** Full `tests/test262` + `tests/typescript` conformance suites
+- **Blocked by:** 82
+- **Exit criteria:** 100% of full test262 and TypeScript runtime conformance suites pass with zero spec skips.

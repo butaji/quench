@@ -9,3 +9,11 @@ The canonical fix for recursive-interpreter stack overflow is Task 85 (trampolin
 ## Exact Fix
 
 See Task 85 for the exact trampoline-interpreter implementation and Task 338 for the exact thread-local depth-counter change.
+
+## Targets
+
+- **Suite:** `runtime`
+- **Batch:** 6
+- **Target subset:** n/a (interpreter infrastructure)
+- **Blocked by:** 85, 338
+- **Exit criteria:** Closed as duplicate; no separate work.

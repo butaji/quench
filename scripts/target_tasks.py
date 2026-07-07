@@ -60,7 +60,7 @@ MANUAL_OVERRIDES = {
     "296": {
         "suite": "both",
         "category": "measurement",
-        "batch": 6,
+        "batch": 7,
         "target_subset": "Full tests/test262 (~53k files) + tests/typescript (~18k cases) conformance suites",
         "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips.",
     },
@@ -71,7 +71,7 @@ MANUAL_OVERRIDES = {
     "331": {"suite": "tooling", "category": "testing"},
     "332": {"suite": "tooling", "category": "testing"},
     "334": {"suite": "harness", "category": "measurement", "batch": 0},
-    "335": {"suite": "both", "category": "objects", "batch": 3},
+    "335": {"suite": "both", "category": "objects", "batch": 6},
     "336": {"suite": "both", "category": "built-ins", "batch": 1},
     "337": {"suite": "tooling", "category": "testing", "batch": 6},
     "342": {"suite": "tooling", "category": "testing"},
@@ -86,12 +86,27 @@ BATCH_OVERRIDES = {
     "250": 0,
     "97": 0,
     "344": 0,
-    "85": 3,
     "241": 3,
     "182": 3,
     "183": 3,
     "187": 3,
     "251": 3,
+    # VM/runtime hardening happens after the language-compat batches (1-5).
+    "85": 6,
+    "88": 6,
+    "264": 6,
+    "285": 6,
+    "286": 6,
+    "287": 6,
+    "308": 6,
+    "333": 6,
+    "335": 6,
+    "338": 6,
+    "343": 6,
+    # Full-suite / host-polish milestones come after VM hardening.
+    "82": 7,
+    "256": 7,
+    "296": 7,
 }
 
 

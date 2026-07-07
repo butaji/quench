@@ -68,3 +68,11 @@ The build succeeds only when the linter reports zero violations.
 
 - Prerequisite for Task 85 (trampoline interpreter) to avoid conflicts in already-large files.
 - Related to Task 88 (Rust runtime leverage).
+
+## Targets
+
+- **Suite:** `tooling`
+- **Batch:** 7
+- **Target subset:** n/a (code hygiene)
+- **Blocked by:** none
+- **Exit criteria:** All source files pass the 500-line / 40-function limits enforced by the pre-commit linter.

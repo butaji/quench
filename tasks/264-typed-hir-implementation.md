@@ -88,3 +88,11 @@ timeout 60 cargo run -- examples/use-bridge.tsx --prop theme=dark
 - Task 85 (trampoline interpreter) overlaps with Phase 2
 - Task 88 (Rust runtime leverage) supports Phases 1–2
 - Task 82 (whole-suite conformance analysis) is unblocked after Phase 5
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** n/a (HIR execution infrastructure)
+- **Blocked by:** 85, 88
+- **Exit criteria:** HIR interpreter passes the same tests as the recursive interpreter and the recursive interpreter is retired.

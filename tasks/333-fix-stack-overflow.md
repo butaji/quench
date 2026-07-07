@@ -31,3 +31,11 @@ cargo test -p quench-runtime
 - [ ] `animations.tsx` runs without stack overflow.
 - [ ] Deeply recursive JS (e.g. `f(100000)`) runs without native stack overflow.
 - [ ] All existing tests still pass.
+
+## Targets
+
+- **Suite:** `runtime`
+- **Batch:** 6
+- **Target subset:** n/a (interpreter infrastructure)
+- **Blocked by:** 85, 338
+- **Exit criteria:** Example apps and recursive stress tests run without stack overflow.

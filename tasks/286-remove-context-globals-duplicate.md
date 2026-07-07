@@ -27,3 +27,11 @@ Remove `Context::globals`; use the top-level `Environment` scope as the global o
 cargo test -p quench-runtime globals_via_env
 cargo test -p quench-runtime scenarios::global
 ```
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** n/a (runtime cleanup)
+- **Blocked by:** 85
+- **Exit criteria:** `Context::globals` removed; global reads/writes use the top-level environment.

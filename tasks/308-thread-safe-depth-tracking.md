@@ -45,3 +45,11 @@ The `MAX_RECURSION_DEPTH` remains a global atomic because tests need to set it f
 cargo test -p quench-runtime --test runtime_issues_basic  # 46 tests pass
 cargo test -p quench-runtime --test depth_limit  # 9 tests pass
 ```
+
+## Targets
+
+- **Suite:** `runtime`
+- **Batch:** 6
+- **Target subset:** n/a (interpreter infrastructure)
+- **Blocked by:** none
+- **Exit criteria:** Depth counter is thread-local; parallel `runtime_issues` tests pass consistently.
