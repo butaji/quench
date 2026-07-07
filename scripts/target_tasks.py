@@ -72,8 +72,8 @@ MANUAL_OVERRIDES = {
     "331": {"suite": "tooling", "category": "testing"},
     "332": {"suite": "tooling", "category": "testing"},
     "334": {"suite": "harness", "category": "measurement", "batch": 0},
-    "335": {"suite": "both", "category": "objects", "batch": 6, "priority": "P0"},
-    "336": {"suite": "both", "category": "built-ins", "batch": 1},
+    "335": {"suite": "both", "category": "objects", "batch": 1, "priority": "P0"},
+    "336": {"suite": "both", "category": "built-ins", "batch": 2},
     "337": {"suite": "tooling", "category": "testing", "batch": 6},
     "338": {"suite": "runtime", "category": "interpreter", "priority": "P0"},
     "342": {"suite": "tooling", "category": "testing"},
@@ -95,24 +95,27 @@ BATCH_OVERRIDES = {
     "250": 0,
     "97": 0,
     "344": 0,
-    "241": 3,
-    "182": 3,
-    "183": 3,
-    "187": 3,
-    "251": 3,
-    # VM/runtime hardening happens after the language-compat batches (1-5).
-    "85": 6,
-    "88": 6,
-    "264": 6,
-    "285": 6,
-    "286": 6,
-    "287": 6,
-    "308": 6,
-    "333": 6,
-    "335": 6,
-    "338": 6,
-    "343": 6,
-    # Full-suite / host-polish milestones come after VM hardening.
+    # VM/runtime foundation is Batch 1: build the proper runtime before the
+    # 100% language-compat crunch.
+    "85": 1,
+    "88": 1,
+    "264": 1,
+    "285": 1,
+    "286": 1,
+    "287": 1,
+    "308": 1,
+    "333": 1,
+    "335": 1,
+    "338": 1,
+    "343": 1,
+    # Big language features shift to Batch 4 (after VM foundation + syntax +
+    # functions/core-statements batches).
+    "241": 4,
+    "182": 4,
+    "183": 4,
+    "187": 4,
+    "251": 4,
+    # Full-suite / host-polish milestones come after language-compat crunch.
     "82": 7,
     "256": 7,
     "296": 7,
@@ -152,16 +155,18 @@ def infer_batch(task: dict) -> int:
     if priority == "P0":
         if category in {"harness", "measurement"}:
             return 0
+        # VM/runtime hardening is Batch 1 (the foundation). All language-compat
+        # P0 work is shifted one batch later.
         if category in {"expressions", "built-ins", "objects", "errors"}:
-            return 1
-        if category in {"statements", "functions", "modules"}:
             return 2
-        return 3
-    if priority == "P1":
+        if category in {"statements", "functions", "modules"}:
+            return 3
         return 4
-    if priority == "P2":
+    if priority == "P1":
         return 5
-    return 6
+    if priority == "P2":
+        return 6
+    return 7
 
 
 def target_subset_for(category: str, suite: str) -> str:
