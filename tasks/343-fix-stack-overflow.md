@@ -13,7 +13,7 @@ See Task 85 for the exact trampoline-interpreter implementation and Task 338 for
 ## Targets
 
 - **Suite:** `runtime`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (interpreter infrastructure)
 - **Blocked by:** 85, 338
 - **Exit criteria:** Closed as duplicate; no separate work.

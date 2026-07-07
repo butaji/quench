@@ -35,7 +35,7 @@ cargo test -p quench-runtime
 ## Targets
 
 - **Suite:** `runtime`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (interpreter infrastructure)
 - **Blocked by:** 85, 338
 - **Exit criteria:** Example apps and recursive stress tests run without stack overflow.

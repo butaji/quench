@@ -20,7 +20,7 @@ The current value model has custom branches for every callable/constructible kin
 ## Targets
 
 - **Suite:** `both`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** test262 + TypeScript function/constructor/object subsets
 - **Blocked by:** 85, 322
 - **Exit criteria:** Value model is unified and relevant function/constructor/object subsets reach 100%.

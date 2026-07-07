@@ -146,7 +146,7 @@ cargo test -p quench-runtime --test test262 test262_expressions -- --ignored --n
 ## Targets
 
 - **Suite:** `test262`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (interpreter infrastructure)
 - **Blocked by:** 338
 - **Exit criteria:** Recursive stress test (`f(100000)`) passes without native stack overflow and all existing tests pass.

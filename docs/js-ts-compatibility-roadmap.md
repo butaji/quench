@@ -24,11 +24,11 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 ## Strategy
 
 1. **Unblock measurement first.** Load the real test262 harness, implement the missing assert helpers, and remove the most aggressive skip reasons so we know what actually passes.
-2. **Quick syntax/builtin wins.** Fix the small expression/statement gaps and constructor registration that are causing hundreds of TS expression failures.
-3. **Core semantics.** Hoisting, TDZ, strict mode, `arguments`, `typeof` undeclared, arrow `this`, global object.
-4. **Big language features.** ES modules, classes, Promises/async/generators.
-5. **Object model.** Property descriptors, shapes, prototype chains, real built-in prototypes.
-6. **VM/runtime hardening (P0).** Trampoline interpreter, explicit `Vec<CallFrame>`, thread-local depth counter, unified value model, HIR execution model, explicit control flow/`this`. These tasks are marked **P0** in `tasks/index.json`; they are the highest-priority work after the language-compat focus, because the remaining language features and full conformance suites need a stable, explicit-stack runtime foundation.
+2. **VM/runtime foundation (P0).** Build the proper runtime first: trampoline interpreter, explicit `Vec<CallFrame>`, thread-local depth counter, unified value model, HIR execution model, explicit control flow/`this`. All VM tasks are marked **P0** in `tasks/index.json`; they are the foundation the 100% language-compat crunch will run on.
+3. **Quick syntax/builtin wins.** Fix the small expression/statement gaps and constructor registration that are causing hundreds of TS expression failures.
+4. **Core semantics.** Hoisting, TDZ, strict mode, `arguments`, `typeof` undeclared, arrow `this`, global object.
+5. **Big language features.** ES modules, classes, Promises/async/generators.
+6. **Object model.** Property descriptors, shapes, prototype chains, real built-in prototypes.
 
 ## P0 — Blockers / broadest wins
 
@@ -92,23 +92,23 @@ Work is grouped into measurable batches. Each batch has a theme, a primary test-
 | Batch | Theme | Suite focus | Tasks (sample) | Exit signal |
 |-------|-------|-------------|----------------|-------------|
 | 0 | Truthful measurement | test262 / both | 91, 97, 250, 253, 344 | Harness helpers loaded; reports reflect real pass/fail/skip counts. |
-| 1 | Quick syntax / builtin wins | both | 289, 290, 320–324 | Expression, object, and constructor subsets reach 100%. |
-| 2 | Functions / core statements | both | 322, 281, 141, 291–293 | Function, statement, and basic semantic subsets reach 100%. |
-| 3 | Big language features | both | 182, 183, 187, 241, 251, 297, 298 | Modules, classes, promises, and test conventions unblock whole suite areas. |
-| 4 | P1 correctness | both | 141, 294, 295 | Property descriptors, global object, and strict-mode subsets reach 100%. |
-| 5 | Granular language coverage | test262 / both | 105, 112, 117, 119, 124, 132, 147, 191, 239, 290a–g, 309–319 | Per-area coverage milestones (expressions, statements, functions, objects, arrays, classes, modules, errors, async, TypeScript, JSX) reach 100%. |
-| 6 | VM / runtime hardening (P0) | runtime / both | 85, 88, 264, 285, 286, 287, 308, 333, 335, 338, 343 | Trampoline interpreter, explicit frames, thread-local depth, value-model unification, HIR execution model. Highest priority after language compat.
+| 1 | VM / runtime foundation (P0) | runtime / both | 85, 88, 264, 285, 286, 287, 308, 333, 335, 338, 343 | Trampoline interpreter, explicit frames, thread-local depth, value-model unification, HIR execution model. This is the foundation for everything that follows. |
+| 2 | Quick syntax / builtin wins | both | 289, 290, 320–324, 336 | Expression, object, and constructor subsets reach 100%. |
+| 3 | Functions / core statements | both | 322, 281, 141, 291–293 | Function, statement, and basic semantic subsets reach 100%. |
+| 4 | Big language features | both | 182, 183, 187, 241, 251, 297, 298 | Modules, classes, promises, and test conventions unblock whole suite areas. |
+| 5 | P1 correctness | both | 141, 294, 295 | Property descriptors, global object, and strict-mode subsets reach 100%. |
+| 6 | Granular language coverage | test262 / both | 105, 112, 117, 119, 124, 132, 147, 191, 239, 290a–g, 309–319 | Per-area coverage milestones (expressions, statements, functions, objects, arrays, classes, modules, errors, async, TypeScript, JSX) reach 100%. |
 | 7 | Full suites / host polish | both / runtime | 82, 256, 296 | Entire test262 + TypeScript conformance suites pass; runtime/tooling guardrails prevent regression. |
 
 ## Order of attack (low effort / high impact first)
 
 1. **Measurement:** Tasks 253, 91, 250, 97, 344.
-2. **Syntax quick wins:** Task 290 (template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of`) and sub-tasks 290a–g.
-3. **Built-in constructors:** Task 289 (`Array`, `Error`, `Date` as constructors) and sub-tasks 289a–c.
-4. **Core semantics quick wins:** Tasks 291 (`typeof`), 292 (hoisting/TDZ), 293 (`arguments`), 141 (strict mode), 283 (primitive prototypes).
-5. **Big language features:** Tasks 241 (modules), 182/183/187 (classes), 251 (Promise).
-6. **Object model:** Tasks 294 (descriptors), 295 (global object), 88/264 (HIR/shapes preparation).
-7. **VM/runtime hardening (P0):** Tasks 85 (trampoline), 338 (thread-local depth), 335 (value model), 285/286/287/308 (runtime cleanup), 333/343 (stack-overflow closure). Highest-priority work after language compatibility; provides the foundation for the remaining object-model and full-suite milestones.
+2. **VM/runtime foundation (P0):** Tasks 85 (trampoline), 338 (thread-local depth), 335 (value model), 285/286/287/308 (runtime cleanup), 88/264 (HIR/Rust leverage), 333/343 (stack-overflow closure). Build the proper runtime foundation before the language-compat crunch.
+3. **Syntax quick wins:** Task 290 (template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of`) and sub-tasks 290a–g.
+4. **Built-in constructors:** Task 289 (`Array`, `Error`, `Date` as constructors) and sub-tasks 289a–c.
+5. **Core semantics quick wins:** Tasks 291 (`typeof`), 292 (hoisting/TDZ), 293 (`arguments`), 141 (strict mode), 283 (primitive prototypes).
+6. **Big language features:** Tasks 241 (modules), 182/183/187 (classes), 251 (Promise).
+7. **Object model:** Tasks 294 (descriptors), 295 (global object), 322a/322b (prototype default methods).
 
 ## Testing requirement
 

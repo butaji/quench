@@ -31,7 +31,7 @@ cargo test -p quench-runtime scenarios::global
 ## Targets
 
 - **Suite:** `both`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (runtime cleanup)
 - **Blocked by:** 85
 - **Exit criteria:** `Context::globals` removed; global reads/writes use the top-level environment.

@@ -62,7 +62,7 @@ Expected: 44 passed, 0 failed (parallel execution).
 ## Targets
 
 - **Suite:** `runtime`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (interpreter infrastructure)
 - **Blocked by:** none
 - **Exit criteria:** `runtime_issues.rs` passes in parallel with no `Maximum call stack size exceeded` errors.

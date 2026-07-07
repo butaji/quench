@@ -26,7 +26,7 @@ Complete the quick-win tasks (281–286) before larger HIR work. Update this tas
 ## Targets
 
 - **Suite:** `tooling`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (planning)
 - **Blocked by:** Task 85
 - **Exit criteria:** Roadmap is current and all P0/P1 items have concrete implementation tasks.

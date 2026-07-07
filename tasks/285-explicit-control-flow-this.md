@@ -33,7 +33,7 @@ cargo test -p quench-runtime scenarios::control_flow
 ## Targets
 
 - **Suite:** `runtime`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (interpreter cleanup)
 - **Blocked by:** 85
 - **Exit criteria:** `CONTROL_FLOW` and `CURRENT_THIS` thread-locals removed; control flow and `this` are explicit.

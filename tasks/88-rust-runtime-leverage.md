@@ -50,7 +50,7 @@ Apply Rust's type system, ownership model, and ecosystem crates to make the inte
 ## Targets
 
 - **Suite:** `runtime`
-- **Batch:** 6
+- **Batch:** 1
 - **Target subset:** n/a (runtime execution model)
 - **Blocked by:** 85
 - **Exit criteria:** Trampoline interpreter uses `&mut Context` and slot-indexed object storage; conformance runner isolates tests.
