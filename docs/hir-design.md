@@ -9,7 +9,7 @@ The HIR is the runtime-facing intermediate representation for JavaScript, TypeSc
 3. **Simplify the runtime** — the interpreter should not re-implement scoping, destructuring, optional chaining, or class construction on every evaluation.
 4. **Stay efficient** — prefer compact indices and arena storage over HashMap lookups and string re-computation.
 
-The HIR is *not* a bytecode. It is a structured IR with named operands and basic-block-style control flow. It can be executed directly by a trampoline interpreter or lowered to a stack/ register bytecode later.
+The HIR is *not* a bytecode. It is a structured IR with named operands and basic-block-style control flow. It is executed directly by the trampoline interpreter.
 
 ## 2. Design principles
 
@@ -591,10 +591,6 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
    - Remove the old evaluator once the HIR interpreter matches it.
    - Tests: full existing suite passes with no recursive interpreter code paths remaining.
 
-8. **Bytecode VM** (future)
-   - Lower HIR to bytecode when profiling justifies it.
-   - Tests: bytecode round-trip, register/stack correctness, parity with HIR interpreter.
-
 ## 16. Migration path (summary)
 
 1. **HIR builder** — implement a second lowering pass from source AST to HIR, keeping the recursive interpreter untouched initially.
@@ -602,7 +598,6 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
 3. **Value/frame refactor** — introduce the simplified object model, shapes, and explicit `CallFrame`.
 4. **Typed trampoline HIR interpreter** — replace `eval_program` with a loop over `CallFrame`s that uses specialized ops and guards.
 5. **Retire recursive interpreter** — once the HIR interpreter passes the existing test suite.
-6. **Bytecode VM** — lower HIR to bytecode when profiling shows it is worthwhile.
 
 ## 17. Testing strategy
 

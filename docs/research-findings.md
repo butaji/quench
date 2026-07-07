@@ -26,19 +26,19 @@ The project is architecturally sound: a dedicated Rust interpreter crate, SWC-ba
 
 ### 1. Explicit stack / trampoline is the canonical way to avoid native stack overflow
 
-- **QuickJS** uses bytecode + native C stack for locals, with a configurable max stack size.
-- **Boa** compiles AST to bytecode and runs it on an explicit VM stack.
-- **V8 Ignition** is a register-based bytecode interpreter with explicit frames.
+- **QuickJS** uses an explicit JS stack + native C stack for locals, with a configurable max stack size.
+- **Boa** compiles AST to an explicit VM stack (not the native Rust stack).
+- **V8 Ignition** is a register-based interpreter with explicit frames.
 - **Academic stackless designs** use CPS or a trampoline loop with a heap-allocated continuation stack.
 
 **Decision:** Implement Task 85 (trampoline interpreter) before any large performance work. A `Vec<CallFrame>` + loop decouples JS recursion from Rust recursion and makes `try/catch`, generators, and `async/await` straightforward later.
 
-### 2. AST → bytecode is the standard correctness/performance bridge
+### 2. HIR / explicit-stack interpreter is the correctness bridge
 
-- **Boa** parses to AST, compiles to bytecode, and passes >90% of test262.
-- A pure AST tree-walker is fine for bootstrapping correctness, but engines that care about speed move to bytecode or a register machine.
+- A pure AST tree-walker is the fastest path to bootstrapping correctness.
+- A typed HIR with an explicit `Vec<CallFrame>` loop gives us the same stack-safety and extension points as register-machine engines without adding a separate bytecode layer.
 
-**Decision:** Keep the HIR high-level and serializable so it can feed a future bytecode compiler or Cranelift backend without a rewrite.
+**Decision:** Keep the HIR high-level and serializable so it can feed future optimizations without a rewrite.
 
 ### 3. Object shapes (hidden classes) + inline caches are non-optional for fast property access
 
@@ -99,7 +99,7 @@ Rust is not just the implementation language — its type system and runtime mod
 - Object shapes separate shared layout from per-object values, so shape transitions and inline-cache checks are cheap integer/array operations.
 
 ### 3. Controlled memory and allocation
-- Use `bumpalo` for short-lived AST/HIR allocations and transient bytecode.
+- Use `bumpalo` for short-lived AST/HIR allocations.
 - Use `lasso` to intern identifiers and property names; this turns the most common comparison (property lookup) into a `u32` equality check.
 - Delay a tracing GC. Start with reference counting and move to a generational/Immix collector only when cyclic object graphs are measurable.
 - Switch the global allocator to `mimalloc` or `tikv-jemallocator`; JS workloads allocate heavily and this is a one-line win.
@@ -120,7 +120,7 @@ Rust is not just the implementation language — its type system and runtime mod
 
 ## What to avoid
 
-- **Premature bytecode/VM.** Build correctness first; bytecode is the next major milestone after the trampoline.
+- **Premature optimization.** Build correctness first; performance work comes only after the conformance suites pass.
 - **Custom parser/lexer.** swc and oxc already solve this; never hand-roll one.
 - **`RefCell` in hot paths.** Shapes and slot-indexed environments should use `&mut` arena access.
 - **String comparisons for property names.** Always use atoms once interning is in place.

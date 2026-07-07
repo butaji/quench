@@ -52,9 +52,9 @@ a(2)  // ❌ Stack overflow
 ### 📋 Recommendations for 100% Compatibility
 
 #### Option 1: Fully Iterative Interpreter (High Effort, High Impact)
-Convert all interpreter modules to use an explicit stack:
-- `eval_expr.rs` → Expression stack machine
-- `eval_stmt.rs` → Statement stack machine
+Convert all interpreter modules to use an explicit call-stack in a trampoline loop:
+- `eval_expr.rs` → Iterative expression evaluator
+- `eval_stmt.rs` → Iterative statement evaluator
 - `call.rs` → Already partially iterative via trampoline
 
 #### Option 2: Stack Overflow Catch & Retry (Medium Effort)
