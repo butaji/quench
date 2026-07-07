@@ -99,34 +99,6 @@
       "exit_criteria": "Relevant test262 interpreter subset passes at 100% with zero spec skips and the harness report is regenerated."
     },
     {
-      "id": "88",
-      "title": "Task 88 \u2014 Leverage Rust for runtime execution model",
-      "file": "tasks/88-rust-runtime-leverage.md",
-      "status": "pending",
-      "priority": "P0",
-      "notes": "Large effort, high impact. Rust ownership/explicit-stack patterns. Supports trampoline and HIR.",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "264",
-      "title": "Implement the typed HIR execution model",
-      "file": "tasks/264-typed-hir-implementation.md",
-      "status": "pending",
-      "priority": "P0",
-      "notes": "Very high impact, very high effort. Type-aware HIR + trampoline. Depends on Tasks 85 and quick-win cleanup.",
-      "category": "types",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
       "id": "285",
       "title": "Make control flow and this explicit",
       "file": "tasks/285-explicit-control-flow-this.md",
@@ -153,20 +125,6 @@
       "target_subset": "tests/test262 + tests/typescript objects/ subset",
       "blocked_by": [],
       "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
-    },
-    {
-      "id": "287",
-      "title": "Runtime optimization roadmap",
-      "file": "tasks/287-runtime-optimization-roadmap.md",
-      "status": "in_progress",
-      "priority": "P0",
-      "notes": "Tracking. Findings in docs/runtime-optimization-roadmap.md.",
-      "category": "refactor",
-      "suite": "tooling",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "308",
@@ -1409,6 +1367,48 @@
       "target_subset": "Full tests/test262 (~53k files) + tests/typescript (~18k cases) conformance suites",
       "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips.",
       "blocked_by": []
+    },
+    {
+      "id": "88",
+      "title": "Task 88 \u2014 Leverage Rust for runtime execution model",
+      "file": "tasks/88-rust-runtime-leverage.md",
+      "status": "pending",
+      "priority": "P0",
+      "notes": "Large effort, high impact. Rust ownership/explicit-stack patterns. Supports trampoline and HIR.",
+      "category": "interpreter",
+      "suite": "runtime",
+      "batch": 8,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
+      "id": "264",
+      "title": "Implement the typed HIR execution model",
+      "file": "tasks/264-typed-hir-implementation.md",
+      "status": "pending",
+      "priority": "P0",
+      "notes": "Very high impact, very high effort. Type-aware HIR + trampoline. Depends on Tasks 85 and quick-win cleanup.",
+      "category": "types",
+      "suite": "runtime",
+      "batch": 8,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
+      "id": "287",
+      "title": "Runtime optimization roadmap",
+      "file": "tasks/287-runtime-optimization-roadmap.md",
+      "status": "in_progress",
+      "priority": "P0",
+      "notes": "Tracking. Findings in docs/runtime-optimization-roadmap.md.",
+      "category": "refactor",
+      "suite": "tooling",
+      "batch": 8,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     }
   ]
 }

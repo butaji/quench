@@ -92,7 +92,7 @@ timeout 60 cargo run -- examples/use-bridge.tsx --prop theme=dark
 ## Targets
 
 - **Suite:** `both`
-- **Batch:** 1
+- **Batch:** 8
 - **Target subset:** n/a (HIR execution infrastructure)
 - **Blocked by:** 85, 88
 - **Exit criteria:** HIR interpreter passes the same tests as the recursive interpreter and the recursive interpreter is retired.

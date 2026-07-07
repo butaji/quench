@@ -49,7 +49,7 @@ Run `cargo check` for the live list. The latest run reported violations across `
 | `crates/quench-runtime/src/value.rs` | 515 | 20 |
 | `src/bridge_reg.rs` | 15 | 16 |
 
-## Recommended Approach
+## Exact approach
 
 1. Split files over 500 lines into focused submodules.
 2. Split the longest functions first; extract helpers.

@@ -95,19 +95,21 @@ BATCH_OVERRIDES = {
     "250": 0,
     "97": 0,
     "344": 0,
-    # VM/runtime foundation is Batch 1: build the proper runtime before the
-    # 100% language-compat crunch.
+    # Core VM/runtime foundation is Batch 1: build the proper runtime before
+    # the 100% language-compat crunch.
     "85": 1,
-    "88": 1,
-    "264": 1,
     "285": 1,
     "286": 1,
-    "287": 1,
     "308": 1,
     "333": 1,
     "335": 1,
     "338": 1,
     "343": 1,
+    # Advanced runtime / HIR / performance work stays until after 100%
+    # conformance (Batch 8).
+    "88": 8,
+    "264": 8,
+    "287": 8,
     # Big language features shift to Batch 4 (after VM foundation + syntax +
     # functions/core-statements batches).
     "241": 4,

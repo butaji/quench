@@ -9,8 +9,8 @@ quench (main binary)
   ├── Bridge / event loop / terminal UI
   └── quench-runtime  (interpreter engine)
         ├── swc_parse  — parse JS/TS/TSX with swc
-        ├── lower      — swc AST → HIR
-        ├── interpreter— execute HIR
+        ├── lower      — swc AST → runtime AST (future HIR post-conformance)
+        ├── interpreter— execute AST via trampoline
         ├── builtins   — JS standard library
         ├── value      — JS values and objects
         └── context    — globals, environment, modules
@@ -20,8 +20,9 @@ quench (main binary)
 
 1. `swc` parses `.js/.jsx/.ts/.tsx` source.
 2. swc transforms strip TypeScript annotations and lower JSX to `ink.createElement`/`ink.Fragment`.
-3. The lowerer produces a high-level IR (HIR).
-4. The interpreter executes the HIR.
+3. The lowerer produces the runtime AST.
+4. The interpreter executes the AST directly through the trampoline loop.
+5. A typed HIR and HIR interpreter are introduced only after the conformance suites pass; until then the AST interpreter is the execution model.
 
 ## Key design choices
 
