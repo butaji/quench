@@ -62,3 +62,11 @@ cargo test -p quench-runtime            # All tests pass
 - Error inheritance support unblocks tests expecting base Error class
 - Consolidated code is easier to maintain
 - Better error messages for debugging failures
+
+## Targets
+
+- **Suite:** `test262`
+- **Batch:** 0
+- **Target subset:** `target/test262_report.md` accuracy for negative tests.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** test262 negative tests match by expected error type and phase with inheritance support, and the harness report is regenerated.

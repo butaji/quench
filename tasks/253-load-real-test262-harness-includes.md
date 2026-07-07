@@ -77,3 +77,11 @@ cargo check -p quench-runtime
 - `crates/quench-runtime/src/test262/harness/harness_loader.rs` (new, ~400 lines)
 - `crates/quench-runtime/src/test262/harness.rs` (modified)
 - `crates/quench-runtime/src/test262/runner.rs` (modified)
+
+## Targets
+
+- **Suite:** `test262`
+- **Batch:** 0
+- **Target subset:** `tests/test262/harness/` helpers loaded into the runner.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** Real test262 harness includes (`assert.js`, `sta.js`, `compareArray.js`, etc.) load and run; no test is skipped solely because a helper is stubbed.
