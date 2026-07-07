@@ -1339,20 +1339,6 @@
       "target_subset": "Full tests/test262 (~53k files) + tests/typescript (~18k cases) conformance suites",
       "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips.",
       "blocked_by": []
-    },
-    {
-      "id": "337",
-      "title": "Evaluate oxc_parser as lower-weight alternative",
-      "file": "tasks/337-evaluate-oxc-parser.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "> **Minimum custom code.** Use the smallest, most modular parser dependency available.",
-      "category": "testing",
-      "suite": "tooling",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
     }
   ]
 }

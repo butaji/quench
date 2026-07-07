@@ -6,7 +6,7 @@
 
 Adopt mature Rust crates for the heavy lifting inside JavaScript built-ins, limiting custom code to ECMAScript-specific edge cases and error messages.
 
-## Proposed crate mapping
+## Exact crate mapping
 
 | Built-in area | Crate | Custom layer |
 |---------------|-------|--------------|
@@ -14,13 +14,17 @@ Adopt mature Rust crates for the heavy lifting inside JavaScript built-ins, limi
 | Date/Time | `chrono` (already used) | ECMAScript epoch/formatting rules |
 | RegExp | `regex` (already in workspace) | JS-syntax adapter, flags, prototype API |
 | Ordered objects | `indexmap` | Insertion-order enforcement |
-| String interning | `lasso` / `string-interner` | Atom table API |
-| Arena allocation | `bumpalo` | AST/HIR node allocation |
+| String interning | `lasso` | Atom table API |
+| Arena allocation | `bumpalo` | AST node allocation |
 | JSON | `serde_json` (already used) | Replacer/reviver, edge cases |
 
 ## Acceptance criteria
 
-- [ ] Each built-in delegates to a crate for core semantics where applicable.
+- [ ] `num-bigint`, `indexmap`, `lasso`, and `bumpalo` are added to `crates/quench-runtime/Cargo.toml`.
+- [ ] BigInt operations delegate to `num-bigint`.
+- [ ] Object property storage uses `indexmap` for insertion order.
+- [ ] Identifiers and property names are interned through `lasso`.
+- [ ] AST nodes are allocated via `bumpalo`.
 - [ ] Custom code only covers spec-mandated deviations (error messages, coercion order, etc.).
 - [ ] No new custom arithmetic, date, regex, or JSON parser code is added.
 

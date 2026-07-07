@@ -78,12 +78,12 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 
 The detailed strategy is in `docs/minimum-custom-code-strategy.md`. The short version:
 
-- **Reuse, don't rewrite:** `swc`/`oxc` for parsing, `test262-harness` for the runner, `indexmap`, `lasso`, `num-bigint`, `chrono`, `regex`, `serde_json` for built-ins.
+- **Reuse, don't rewrite:** keep `swc_ecma_parser` for parsing, adopt `test262-harness` for the runner, use `indexmap`, `lasso`, `num-bigint`, `chrono`, `regex`, and `serde_json` for built-ins.
 - **One object representation:** collapse `Function` / `NativeFunction` / `NativeConstructor` / `Array` into `Value::Object` with `[[Call]]` / `[[Construct]]` slots.
 - **AST → interpreter only:** no HIR, no bytecode, no JIT until 100% conformance is reached.
 - **Conformance suites are the backlog:** fix buckets reported by test262/TypeScript harnesses rather than writing spec tests from scratch.
 
-New tracking tasks: 334, 335, 336, 337.
+New tracking tasks: 334, 335, 336.
 
 ## Batched milestones
 
