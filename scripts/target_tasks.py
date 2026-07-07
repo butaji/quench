@@ -253,6 +253,13 @@ def main() -> int:
 
     data = json.loads(INDEX.read_text())
     tasks = data["tasks"]
+
+    # Prune entries whose markdown file no longer exists (e.g., renamed/removed tasks).
+    pruned = [t for t in tasks if Path(t["file"]).exists()]
+    if len(pruned) != len(tasks):
+        print(f"Pruned {len(tasks) - len(pruned)} missing task file(s).")
+        tasks = pruned
+
     by_id = {t["id"]: t for t in tasks}
 
     # Re-sync status and title from the task files so the registry stays honest.

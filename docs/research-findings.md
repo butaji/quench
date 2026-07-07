@@ -79,12 +79,12 @@ The project is architecturally sound: a dedicated Rust interpreter crate, SWC-ba
 
 | Area | Current | Validated alternative | Recommendation |
 |------|---------|----------------------|----------------|
-| Parser | swc | oxc-parser (~3× faster, passes test262 stage 4) | **Stay on swc for now** — switching is high effort with low correctness payoff. Re-evaluate after conformance is solid. |
-| String interning | none | `lasso` | Adopt with shapes. |
-| Regex | none | `regress` | Adopt when regex support is needed. |
-| BigInt | none | `num-bigint` | Adopt when BigInt support is needed. |
-| GC | `Rc<RefCell<Object>>` | Boa's `boa_gc`, Immix | Keep `Rc` for now; move to tracing GC only if cycles become a measurable problem. |
-| Global allocator | default | `mimalloc`, `tikv-jemallocator` | Easy win; add when benchmarking. |
+| Parser | swc | oxc-parser (~3× faster, passes test262 stage 4) | **Stay on swc.** Already integrated; switching adds migration risk with no correctness payoff before 100% conformance. |
+| String interning | none | `lasso` | **Adopt `lasso` now** for identifiers and property names. |
+| Regex | none | `regress`, `regex` | **Adopt `regex` crate** with a JS-syntax adapter when regex support is needed. |
+| BigInt | none | `num-bigint` | **Adopt `num-bigint`** when BigInt support is needed. |
+| GC | `Rc<RefCell<Object>>` | Boa's `boa_gc`, Immix | **Keep `Rc` for now.** Move to tracing GC only if cycles become a measurable problem. |
+| Global allocator | default | `mimalloc`, `tikv-jemallocator` | **Add when benchmarking starts**; not a correctness prerequisite. |
 
 ## Maximizing Rust as a runtime
 
