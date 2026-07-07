@@ -416,7 +416,7 @@ struct FunctionObject {
 
 ## 12. TypeScript-aware HIR optimizations
 
-TypeScript types are not erased blindly. The HIR builder extracts type information from annotations, `as const`, literal types, enum declarations, and simple inference, then uses it to emit faster, more specialized operations. Because TypeScript types are unsound, every specialization that could diverge from JS semantics is paired with a **runtime guard** or a **deoptimization path**.
+TypeScript types are not erased blindly. The HIR builder extracts type information from annotations, `as const`, literal types, enum declarations, and simple inference, then uses it to emit faster, more specialized operations. Because TypeScript types are unsound, every specialization that could diverge from JS semantics is paired with a **runtime guard** that falls back to the unspecialized operation when the assumption is violated.
 
 ### 12.1 Type lattice
 

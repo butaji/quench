@@ -8,7 +8,7 @@ Replace the recursive interpreter with a trampoline loop and a heap-allocated `V
 
 ## Why
 
-The current interpreter calls itself recursively for every JS function call, loop body, and nested expression. Running conformance subsets with more than a few hundred files causes native stack overflow. A trampoline interpreter fixes this by construction:
+The current interpreter calls itself recursively for every JS function call, loop body, and nested expression. Deep JS recursion exhausts the native Rust stack. Task 338 fixes the false stack-overflow errors caused by a global depth counter; this task fixes the real stack consumption by replacing recursion with a heap-allocated call stack.
 
 - Rust stack depth stays O(1).
 - JS stack depth is tracked on the heap via `Vec<CallFrame>`.
@@ -112,7 +112,7 @@ With an explicit stack, `yield` and `await` become saving the `Vec<CallFrame>` i
 - `crates/quench-runtime/src/interpreter/mod.rs`
 - `crates/quench-runtime/src/ast.rs` (tail-call marks)
 - `crates/quench-runtime/src/lower/` (tail-position analysis)
-- `crates/quench-runtime/src/interpreter/control.rs` (remove or repurpose global depth counter)
+- `crates/quench-runtime/src/interpreter.rs` (remove recursive eval once trampoline is complete; depth counter is handled by Task 338)
 
 ## Acceptance criteria
 

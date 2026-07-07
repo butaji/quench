@@ -46,6 +46,14 @@ The current direction is sound:
 - Use conformance reports to drive correctness fixes with regression tests.
 - Defer NaN-boxing / shapes / performance work until correctness and stability are solid.
 
+## Targets
+
+- **Suite:** `tooling`
+- **Batch:** 0
+- **Target subset:** n/a (research)
+- **Blocked by:** none
+- **Exit criteria:** Findings recorded and referenced by Task 85 and harness tasks.
+
 ## Status
 
 `completed`.

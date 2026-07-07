@@ -23,6 +23,14 @@ Track the architecture / code / tasks review findings and ensure the runtime mov
 
 Complete the quick-win tasks (281–286) before larger HIR work. Update this task and the roadmap doc as findings change.
 
+## Targets
+
+- **Suite:** `tooling`
+- **Batch:** 6
+- **Target subset:** n/a (planning)
+- **Blocked by:** Task 85
+- **Exit criteria:** Roadmap is current and all P0/P1 items have concrete implementation tasks.
+
 ## Verification
 
 - `docs/runtime-optimization-roadmap.md` is current.

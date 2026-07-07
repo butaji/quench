@@ -20,11 +20,11 @@ The current runtime is a recursive AST walker backed by `HashMap<String, Value>`
 
 | # | Issue | Files | Fix | Effort | Impact |
 |---|-------|-------|-----|--------|--------|
-| 1 | `while` loops hard-capped at 10 iterations | `interpreter.rs` | Remove the arbitrary cap; use a configurable JS instruction budget if needed | trivial | very high |
+| 1 | `while` loops hard-capped at 10 iterations | `interpreter.rs` | Remove the arbitrary 10-iteration cap in the `while` evaluator. Do not add an instruction budget unless a later task requires it. | trivial | very high |
 | 2 | Function bodies cloned on every `Value` clone | `value.rs`, `interpreter.rs` | Store bodies as `Rc<[Statement]>` | low | high |
-| 3 | Recursive interpreter + global atomic depth counter | `interpreter.rs` | Migrate to trampoline/`CallFrame` (Task 85); short term make depth per-`Context` | high | very high |
+| 3 | Recursive interpreter + global atomic depth counter | `interpreter.rs` | Migrate to trampoline/`CallFrame` via Task 85. Make the recursion depth thread-local via Task 338. | high | very high |
 | 4 | Variable lookup walks `HashMap<String, Value>` scopes | `env.rs`, `interpreter.rs` | Intern identifiers; use `Vec`-based locals / upvalues (HIR §9) | medium | very high |
-| 5 | Object properties stored in `HashMap<String, Value>` | `value.rs` | Intern property keys short term; implement shapes + slot arrays long term (HIR §11) | medium | very high |
+| 5 | Object properties stored in `HashMap<String, Value>` | `value.rs` | Intern property keys with `lasso`. Implement shapes + slot arrays only after Task 85 and value-model unification are closed. | medium | very high |
 
 ### P1 — Significant performance / design issues
 
@@ -47,14 +47,14 @@ The current runtime is a recursive AST walker backed by `HashMap<String, Value>`
 | # | Issue | Files | Fix | Effort | Impact |
 |---|-------|-------|-----|--------|--------|
 | 13 | Method-call binding duplicated | `interpreter.rs` | Single `get_property(obj, key) -> (value, this_binding)` helper | medium | medium |
-| 14 | Getters detected by function-name prefix | `interpreter.rs` | Real property descriptors or shape-based descriptor slots | medium | medium |
-| 15 | `lower.rs` expands destructuring into bloated AST | `lower.rs` | Interpret patterns directly or lower to HIR ops | medium | medium |
+| 14 | Getters detected by function-name prefix | `interpreter.rs` | Implement real property descriptors with `get`/`set` slots in `Object`; remove prefix detection. | medium | medium |
+| 15 | `lower.rs` expands destructuring into bloated AST | `lower.rs` | Interpret destructuring patterns directly in `interpreter.rs`; move to HIR ops only after Task 85 lands. | medium | medium |
 
 ### P3 — Minor / cleanup
 
 | # | Issue | Files | Fix | Effort | Impact |
 |---|-------|-------|-----|--------|--------|
-| 20 | Source re-parsed on every `Context::eval` | `lib.rs`, `swc_parse.rs` | Cache parsed `Program`s | medium | medium |
+| 20 | Source re-parsed on every `Context::eval` | `lib.rs`, `swc_parse.rs` | Cache parsed `Program`s in a `HashMap<String, Rc<Program>>` keyed by source text. | medium | medium |
 | 21 | test262 runner is single-threaded | `test262/runner.rs` | Parallelize with `rayon` | low | medium |
 | 22 | Array indices also stored as string keys | `value.rs` | Treat arrays as dense `elements` only | low | medium |
 | 23 | Dead/duplicated conversion helpers | `src/main.rs`, `builtins/object.rs` | Re-export `value::to_js_string`/`to_number`; fix formatting | trivial | low |

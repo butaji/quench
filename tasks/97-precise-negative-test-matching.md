@@ -6,7 +6,7 @@
 
 The original negative test matching in `test262/runner.rs` had:
 1. **Duplicated code**: Error matching logic was duplicated between `runner.rs` and `errors.rs`
-2. **Weak error type extraction**: Used `contains()` which could cause false positives
+2. **Weak error type extraction**: Used `contains()` which causes false positives
 3. **No error inheritance support**: Tests expecting base `Error` class couldn't match derived types like `TypeError`
 4. **Inconsistent parse error detection**: Used simple string matching
 

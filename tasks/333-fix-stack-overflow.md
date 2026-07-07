@@ -1,64 +1,19 @@
+> **Superseded by Task 85 (trampoline interpreter) and Task 338 (thread-local depth counter).**
+
 # Task 333: Fix Stack Overflow in Examples
 
-## Status: IN PROGRESS
+## Status: CLOSED
 
 ## Root Cause
 
-The stack overflow occurs because the JavaScript interpreter is recursive:
-- Each JavaScript function call creates multiple Rust stack frames
-- The hooks/reconciler in runtime.js causes deep call nesting
-- The Rust call stack is exhausted before the depth counter catches it
+The interpreter evaluates JavaScript by recursively calling Rust functions. Each JS call adds many Rust stack frames, so deep JS recursion exhausts the native Rust stack before any depth limit is reached. In addition, the global `CURRENT_DEPTH` counter used for runaway-recursion protection is shared across threads, so parallel tests report false stack-overflow errors.
 
-### Call Chain Example (counter.js)
-```
-render() 
-  → mountTree() 
-    → ComponentInstance.render()
-      → Counter function (calls hooks)
-        → mountTree() [recursive for children]
-```
+## Exact Fix
 
-### Current Depth Tracking
-- `check_depth()` is called at the start of each function call
-- Max depth is 10,000
-- But each JavaScript call creates ~50-100 Rust stack frames
-- So depth of 100 JavaScript calls = 5,000-10,000 Rust stack frames
-
-## Fix Options
-
-### Option 1: Increase Rust Stack Size
-Add `RUST_MIN_STACK` environment variable handling or linker flags.
-
-**Pros**: Quick fix
-**Cons**: Doesn't scale, platform-dependent
-
-### Option 2: Convert to Iterative Interpreter
-Use an explicit call stack instead of Rust recursion.
-
-**Pros**: Solves the problem at the root
-**Cons**: Significant refactoring, high effort
-
-### Option 3: Trampoline Pattern
-Convert tail-recursive calls to trampoline jumps.
-
-**Pros**: Moderate effort, maintains structure
-**Cons**: Only helps tail recursion, not general recursion
-
-### Option 4: Reduce Call Depth Per Frame
-Optimize the interpreter to use fewer stack frames per call.
-
-**Pros**: Lower effort than full iterative
-**Cons**: May not be enough for deep recursion
-
-## Recommended Approach
-
-**Start with Option 4** - reduce stack frames per call, then move to Option 2 if needed.
-
-### Specific Fixes:
-
-1. **Inline small functions**: Merge `eval_call` logic into `eval_expression` to reduce frame count
-2. **Avoid redundant depth checks**: Only check depth for actual function calls, not all expressions
-3. **Use tail-call optimization hints**: Mark functions that can be tail-call optimized
+1. **Eliminate native stack growth** — implement the trampoline interpreter described in Task 85. Replace recursive `eval_*` calls with a single `run_trampoline` loop over a heap-allocated `Vec<CallFrame>`. JS recursion must not consume the native Rust stack.
+2. **Eliminate false positives in parallel tests** — implement the thread-local depth counter described in Task 338. Replace `static CURRENT_DEPTH: AtomicUsize` with a `thread_local! { static CURRENT_DEPTH: Cell<usize> }` and helper functions `check_depth()`/`release_depth()`/`reset_depth()` that read and write the thread-local cell.
+3. **Keep runaway protection** — the trampoline loop checks `stack.len() >= MAX_JS_STACK` before pushing a new frame and throws a JS `RangeError: Maximum call stack size exceeded`.
+4. **Do not use any of the following inferior workarounds**: increasing `RUST_MIN_STACK`, inlining functions to reduce frame count, or partial tail-call optimization only.
 
 ## Verification
 
@@ -66,11 +21,13 @@ Optimize the interpreter to use fewer stack frames per call.
 timeout 60 cargo run -- examples/counter.js
 timeout 60 cargo run -- examples/counter.tsx
 timeout 60 cargo run -- examples/animations.tsx
+cargo test -p quench-runtime
 ```
 
 ## Acceptance Criteria
 
-- [ ] counter.js runs without stack overflow
-- [ ] counter.tsx runs without stack overflow  
-- [ ] animations.tsx runs without stack overflow
-- [ ] All existing tests still pass
+- [ ] `counter.js` runs without stack overflow.
+- [ ] `counter.tsx` runs without stack overflow.
+- [ ] `animations.tsx` runs without stack overflow.
+- [ ] Deeply recursive JS (e.g. `f(100000)`) runs without native stack overflow.
+- [ ] All existing tests still pass.

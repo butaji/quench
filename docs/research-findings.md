@@ -77,14 +77,14 @@ The project is architecturally sound: a dedicated Rust interpreter crate, SWC-ba
 
 ## Technology choices
 
-| Area | Current | Validated alternative | Recommendation |
-|------|---------|----------------------|----------------|
-| Parser | swc | oxc-parser (~3× faster, passes test262 stage 4) | **Stay on swc.** Already integrated; switching adds migration risk with no correctness payoff before 100% conformance. |
-| String interning | none | `lasso` | **Adopt `lasso` now** for identifiers and property names. |
-| Regex | none | `regress`, `regex` | **Adopt `regex` crate** with a JS-syntax adapter when regex support is needed. |
-| BigInt | none | `num-bigint` | **Adopt `num-bigint`** when BigInt support is needed. |
-| GC | `Rc<RefCell<Object>>` | Boa's `boa_gc`, Immix | **Keep `Rc` for now.** Move to tracing GC only if cycles become a measurable problem. |
-| Global allocator | default | `mimalloc`, `tikv-jemallocator` | **Add when benchmarking starts**; not a correctness prerequisite. |
+| Area | Current | Exact decision | When to implement |
+|------|---------|----------------|-------------------|
+| Parser | swc | **Stay on swc.** Do not switch to oxc-parser before 100% conformance. | Now; re-evaluate only after conformance suites pass. |
+| String interning | none | **Adopt `lasso`.** Use `ThreadedRodeo` for identifiers and property names; resolve via `RodeoResolver`. | With the shapes/value-model refactor (Tasks 88/336). |
+| Regex | none | **Adopt the `regex` crate** behind a JS-syntax adapter. | When regex support is added (future task). |
+| BigInt | none | **Adopt `num-bigint`.** | When BigInt support is added (future task). |
+| GC | `Rc<RefCell<Object>>` | **Keep `Rc`.** Do not add a tracing GC unless cyclic object graphs are measured as a real problem. | Now; re-evaluate only after conformance suites pass. |
+| Global allocator | default | **Add `mimalloc` or `tikv-jemallocator`.** | When benchmarking starts, after correctness is solid. |
 
 ## Maximizing Rust as a runtime
 

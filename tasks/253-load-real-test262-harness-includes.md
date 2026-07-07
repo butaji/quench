@@ -67,7 +67,7 @@ cargo check -p quench-runtime
 
 ## Impact
 
-- Previously skipped test262 tests (298) due to stubbed helpers can now potentially run
+- Previously skipped test262 tests (298) due to stubbed helpers can now run
 - Real JavaScript harness files are used instead of Rust approximations
 - Fallback to Rust stubs ensures tests still run even if some JS features aren't supported
 - Foundation for enabling more test262 conformance tests

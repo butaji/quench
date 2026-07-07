@@ -4,7 +4,7 @@
 
 ## Summary
 
-Implemented optional chaining operator (`?.`) for the quench runtime. This syntax allows safe property access and function calls on potentially null/undefined values.
+Implemented optional chaining operator (`?.`) for the quench runtime. This syntax allows safe property access and function calls on null or undefined values.
 
 ## Implementation
 
