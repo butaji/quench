@@ -35,7 +35,7 @@ These decisions are based on:
    Replace the separate `Function`, `NativeFunction`, `NativeConstructor`, and special-cased `Array` variants with a single `Value::Object` whose internal object record carries `[[Call]]` and `[[Construct]]` slots when applicable. This is the ECMAScript object model and removes the largest source of custom branching in the runtime.
 
 2. **Stay AST → interpreter only.**
-   Do not build a separate HIR or bytecode layer until 100% conformance is reached. The recursive AST interpreter is the minimum custom code path. Task 85 (trampoline interpreter) changes *how* the AST is walked, not the representation.
+   Do not build a separate HIR or bytecode layer until 100% conformance is reached. The trampoline AST interpreter is the minimum custom code path. Task 85 changes *how* the AST is walked (explicit `Vec<CallFrame>`), not the representation.
 
 3. **Delegate built-ins to crates.**
    `Date`, `RegExp`, `JSON.stringify`, `parseInt`, etc. delegate to the crates above. Custom code only enforces ECMAScript edge cases and error messages.

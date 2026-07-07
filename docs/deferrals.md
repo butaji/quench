@@ -1,121 +1,36 @@
+> **Living registry of intentional conformance deferrals.** Every entry must point to an open task with an exact fix and exit criteria.
+
 # Deferred Items
 
-This document tracks postponed features and design decisions for the Quench runtime.
+A test may be skipped only when the gap is tracked by an open task below. Do not use this file to record options or exploratory ideas.
 
-## High Priority (Should Address Soon)
+## How to add a deferral
 
-### 1. JSX/TSX Support
-- **Status**: Partial (TSX parsing works, examples run)
-- **Effort**: Medium
-- **Notes**: JSX parsing via swc works. Pre-existing stack overflow in runtime.js `ink.render` is unrelated.
+1. Create a task file in `tasks/` with the exact fix, target subset, and exit criteria.
+2. Add the feature/gap to the table below with the task ID.
+3. Update `tasks/index.json` by running `python3 scripts/target_tasks.py`.
 
-### 2. ES Module Import/Export
-- **Status**: Partial (ExportDefaultExpr handled, others return None)
-- **Blocking**: Many TypeScript examples use import/export
-- **Effort**: Medium
-- **Notes**: Need to implement full ES module support with import statements
+## Current deferrals
 
-### 3. Async/Await & Promises
-- **Status**: Partial (Promise constructor works)
-- **Blocking**: Timer effects, async operations in examples
-- **Effort**: High
-- **Notes**: Need event loop integration for microtasks and async function support
+| Feature / gap | Blocking? | Task | Exit criteria |
+|---------------|-----------|------|---------------|
+| ES module import/export | Yes | 241 | `tests/typescript` moduleResolution + `tests/test262/test/language/module-code/` subsets pass at 100%. |
+| Promise / async / await / microtasks | Yes | 251 | `tests/test262/test/language/expressions/async-arrow-function/`, `async-function/`, `async-generator/`, and promise built-in subsets pass at 100%. |
+| Generator functions and iterators | Yes | 251 | `tests/test262/test/language/statements/generators/`, `expressions/generators/`, and iterator protocol subsets pass at 100%. |
+| Proxy | No | — | Create a task before enabling any Proxy tests. |
+| TypedArray / ArrayBuffer / DataView | No | — | Create a task before enabling any TypedArray tests. |
+| WebAssembly host support | No | — | Out of scope until an example requires it. |
 
-### 4. Iterator/Generator Support
-- **Status**: Implemented (for-of loops work for arrays and strings)
-- **Effort**: Medium
-- **Notes**: Need proper Symbol.iterator support for Set/Map iteration
+## Resolved decisions (no longer pending)
 
-### 5. Symbol Support
-- **Status**: Implemented (Symbol global, typeof Symbol, Symbol uniqueness)
-- **Effort**: Medium
-- **Notes**: ✅ Complete
+| Decision | Resolution | Task |
+|----------|------------|------|
+| Recursive vs iterative interpreter | Iterative trampoline with explicit `Vec<CallFrame>`; no recursive `eval_*`. | 85 |
+| Parser choice | Stay on `swc_ecma_parser`; do not switch before 100% conformance. | 87 / docs/research-findings.md |
+| Bytecode / JIT / AOT | Not used until 100% conformance; interpreter-only at this stage. | docs/minimum-custom-code-strategy.md |
 
-## Medium Priority
+## Skips policy
 
-### 6. Getters/Setters on Objects
-- **Status**: Implemented (setters need work)
-- **Effort**: Medium
-- **Notes**: ✅ Getters work. Setters basic implementation.
-
-### 7. Proxy Support
-- **Status**: Not implemented
-- **Blocking**: Metaprogramming features
-- **Effort**: High
-- **Notes**: Low priority unless required by examples
-
-### 8. TypedArray Support
-- **Status**: Not implemented
-- **Blocking**: Binary data handling
-- **Effort**: Medium
-- **Notes**: ArrayBuffer, DataView, etc.
-
-### 9. BigInt Support
-- **Status**: Not implemented
-- **Blocking**: Big number operations
-- **Effort**: Medium
-- **Notes**: Use `num-bigint` crate as specified in principles
-
-### 10. Performance Optimizations
-- **Status**: Planned but not started
-- **Notes**: Per Task 11 - need to integrate `rustc-hash`, `indexmap`, add benchmarks
-
-## Low Priority
-
-### 11. WebAssembly Support
-- **Status**: Not planned
-- **Notes**: Only if required by examples
-
-### 12. Node.js Compatibility Layer
-- **Status**: Not planned
-- **Notes**: CommonJS already partially working
-
-## Design Decisions Pending
-
-### A. Recursive vs Iterative Interpreter
-- **Status**: Currently recursive (causes stack overflow)
-- **Issue**: Stack overflow in complex programs (pre-existing)
-- **Effort**: High
-- **Notes**: An agent was started on this but timed out
-
-### B. File Size Limits Refactoring
-- **Status**: Partially addressed (lint violations skipped with // linter-skip)
-- **Files exceeding limits**: builtins/array.rs, test262/runner.rs, etc.
-- **Effort**: Medium
-- **Notes**: Need to split large files into smaller modules
-
-## Completed Items
-
-### ✅ Symbol Global
-- `typeof Symbol` returns 'symbol'
-- `Symbol('test')` creates symbol
-- `Symbol('a') !== Symbol('a')` returns true
-
-### ✅ Optional Chaining
-- `obj?.a?.b` works with null short-circuit
-- `obj?.method?.()` works
-
-### ✅ Nullish Coalescing
-- `null ?? 'default'` returns 'default'
-- `undefined ?? 'default'` returns 'default'
-
-### ✅ Template Literals with Expressions
-- `` `a${1 + 2}b` `` returns "a3b"
-
-### ✅ typeof on Undeclared Variables
-- `typeof nonExistentVariable` returns 'undefined'
-
-### ✅ instanceof for Builtins
-- `[] instanceof Array` returns true
-- `({}) instanceof Object` returns true
-- `(function(){}) instanceof Function` returns true
-
-### ✅ for-of/for-in Loops
-- Arrays, strings, and objects work correctly
-
-### ✅ Array Index Access
-- `[1, 2, 3][1]` returns 2
-
-### ✅ TDZ for let/const
-- Accessing let before initialization throws ReferenceError
-- Error message: "Cannot access 'x' before initialization"
+- Every skip in the test262/TypeScript harnesses must reference either a task in the table above or a specific open task file.
+- "Not implemented yet" is not a justification without a task.
+- A deferral is removed when its task closes and the corresponding subset passes at 100%.
