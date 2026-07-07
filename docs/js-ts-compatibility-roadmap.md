@@ -74,13 +74,27 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 | 24 | existing | Hot reload does not replace running context |
 | 25 | existing | Parse caching and parallel conformance runner |
 
+## Batched milestones
+
+Work is grouped into measurable batches. Each batch has a theme, a primary test-suite focus, and an exit criterion: every task in the batch must make its `target_subset` pass at 100% with zero spec skips. The registry in `tasks/index.json` carries the authoritative `suite`, `category`, `batch`, `target_subset`, `blocked_by`, and `exit_criteria` for every task; regenerate it with `python3 scripts/target_tasks.py`.
+
+| Batch | Theme | Suite focus | Tasks (sample) | Exit signal |
+|-------|-------|-------------|----------------|-------------|
+| 0 | Truthful measurement | test262 / both | 91, 97, 250, 253, 344 | Harness helpers loaded; reports reflect real pass/fail/skip counts. |
+| 1 | Quick syntax / builtin wins | both | 289, 290, 320–324 | Expression, object, and constructor subsets reach 100%. |
+| 2 | Functions / core statements | both | 322, 281, 141, 291–293 | Function, statement, and basic semantic subsets reach 100%. |
+| 3 | Big architecture | both | 85, 182, 183, 187, 241, 251, 297, 298 | Trampoline, modules, classes, promises, and test harness unblock whole suite areas. |
+| 4 | P1 correctness | both | 141, 294, 295 | Property descriptors, global object, and strict-mode subsets reach 100%. |
+| 5 | Granular language coverage | test262 / both | 105, 112, 117, 119, 124, 132, 147, 191, 239, 290a–g, 309–319 | Per-area coverage milestones (expressions, statements, functions, objects, arrays, classes, modules, errors, async, TypeScript, JSX) reach 100%. |
+| 6 | Full suites / host polish | both / runtime | 82, 88, 256, 264, 296 | Entire test262 + TypeScript conformance suites pass; runtime/tooling guardrails prevent regression. |
+
 ## Order of attack (low effort / high impact first)
 
-1. **Measurement:** Tasks 253, 91, 250, 97.
-2. **Syntax quick wins:** Task 290 (template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of`).
-3. **Built-in constructors:** Task 289 (`Array`, `Error`, `Date` as constructors).
+1. **Measurement:** Tasks 253, 91, 250, 97, 344.
+2. **Syntax quick wins:** Task 290 (template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of`) and sub-tasks 290a–g.
+3. **Built-in constructors:** Task 289 (`Array`, `Error`, `Date` as constructors) and sub-tasks 289a–c.
 4. **Core semantics quick wins:** Tasks 291 (`typeof`), 292 (hoisting/TDZ), 293 (`arguments`), 141 (strict mode), 283 (primitive prototypes).
-5. **Big architecture:** Tasks 85 (trampoline), 241 (modules), 182/183 (classes), 251 (Promise).
+5. **Big architecture:** Tasks 85 (trampoline), 241 (modules), 182/183/187 (classes), 251 (Promise).
 6. **Object model:** Task 294 (descriptors), 88/264 (HIR/shapes).
 
 ## Testing requirement
