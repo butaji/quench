@@ -24,7 +24,7 @@ Apply Rust's type system, ownership model, and ecosystem crates to make the inte
 
 4. **Adopt Rust ecosystem crates at the right time**
    - `lasso` for identifier/property string interning (adopt with shapes).
-   - `bumpalo` for AST/HIR/bytecode scratch allocation.
+   - `bumpalo` for AST/HIR scratch allocation.
    - `slotmap` for object storage if generational IDs are needed.
    - `rayon` for parallel conformance runner (fresh isolate per test).
    - `mimalloc` or `tikv-jemallocator` as global allocator once benchmarking starts.

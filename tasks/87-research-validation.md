@@ -21,10 +21,9 @@ Confirm that the current architecture and task priorities are aligned with how s
    - A heap-allocated `Vec<CallFrame>` + loop eliminates stack overflow by construction and makes generators/async straightforward later.
    - This validates Task 85 (trampoline interpreter) as the right fix for the current top blocker.
 
-2. **AST → bytecode is the correctness/performance bridge, not a pure tree-walker.**
-   - Boa compiles AST to bytecode and passes >90% of test262.
-   - A pure AST interpreter is acceptable for correctness work but should evolve toward bytecode or a register-based VM after stabilization.
-   - Our plan to keep a high-level HIR that can feed a future bytecode/AOT backend is correct.
+2. **HIR / explicit-stack interpreter is the correctness bridge.**
+   - A pure AST tree-walker bootstraps correctness quickly.
+   - A typed HIR with an explicit `Vec<CallFrame>` loop gives the same stack-safety and extension points as register-machine engines without adding a separate bytecode layer.
 
 3. **test262 harnesses load helper files from the submodule.**
    - `assert.js`, `sta.js`, `compareArray.js`, `propertyHelper.js`, etc. are executed by the engine, not stubbed.
@@ -45,7 +44,7 @@ The current direction is sound:
 - Fix stack overflow with a trampoline interpreter (Task 85).
 - Load real test262 harness files.
 - Use conformance reports to drive correctness fixes with regression tests.
-- Defer NaN-boxing / shapes / AOT until correctness and stability are solid.
+- Defer NaN-boxing / shapes / performance work until correctness and stability are solid.
 
 ## Status
 

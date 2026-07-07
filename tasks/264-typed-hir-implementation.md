@@ -73,9 +73,6 @@ Run the full test suite through the typed HIR interpreter.
 ### Phase 6: Retire recursive interpreter
 Delete the old recursive evaluator once the HIR interpreter matches it.
 
-### Phase 7: Future bytecode VM
-Lower HIR to bytecode only when profiling shows it is worthwhile.
-
 ## Verification
 
 ```bash
