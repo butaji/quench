@@ -616,10 +616,10 @@ Each phase below is ordered by effort vs. payoff. If a feature needed by the pha
 - **Unboxed locals for known primitives.** Numbers/booleans/strings avoid `Value` boxing inside typed functions.
 - **Control flow is data.** Branch targets are block indices, not string labels or pattern matches.
 
-## 19. Open questions
+## 19. Decisions
 
-- Should the HIR use basic blocks with φ-nodes for merges, or keep a simpler linear-block form with explicit temporaries?
-- Should `Value` use NaN boxing (Task 210) before or after the HIR interpreter is stable?
-- How should host functions expose GC-safe references to the JS heap?
-- Should the first milestone support `with`, `eval`, and `arguments`, or defer them?
-- How aggressive should type-driven specialization be given TypeScript's unsoundness — guard every specialization, or only guard at module boundaries?
+- **Block form:** Use basic blocks with explicit temporaries; do not introduce φ-nodes in the first HIR.
+- **NaN boxing:** Adopt only after the HIR interpreter is stable and matches the AST interpreter (Task 210).
+- **Host GC references:** Expose through an explicit handle/rooting API; host code must root values before calling back into JS.
+- **`with` / `eval` / `arguments`:** Not in the first HIR milestone; each is tracked by a dedicated language-compat task and added only after the core HIR interpreter is solid.
+- **Type-driven specialization:** Guard every specialization that could diverge from JS semantics; fall back to the unspecialized operation when the assumption is violated.
