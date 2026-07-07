@@ -2,6 +2,8 @@
 
 # Research Findings
 
+For the actionable consequence of this research, see **`docs/minimum-custom-code-strategy.md`**.
+
 ## Executive summary
 
 The project is architecturally sound: a dedicated Rust interpreter crate, SWC-based parsing, a custom HIR, and conformance harnesses are exactly how modern embeddable JS engines are built. The research confirms three priorities:

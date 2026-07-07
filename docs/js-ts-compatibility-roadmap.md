@@ -74,6 +74,17 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 | 24 | existing | Hot reload does not replace running context |
 | 25 | existing | Parse caching and parallel conformance runner |
 
+## Minimum custom code
+
+The detailed strategy is in `docs/minimum-custom-code-strategy.md`. The short version:
+
+- **Reuse, don't rewrite:** `swc`/`oxc` for parsing, `test262-harness` for the runner, `indexmap`, `lasso`, `num-bigint`, `chrono`, `regex`, `serde_json` for built-ins.
+- **One object representation:** collapse `Function` / `NativeFunction` / `NativeConstructor` / `Array` into `Value::Object` with `[[Call]]` / `[[Construct]]` slots.
+- **AST → interpreter only:** no HIR, no bytecode, no JIT until 100% conformance is reached.
+- **Conformance suites are the backlog:** fix buckets reported by test262/TypeScript harnesses rather than writing spec tests from scratch.
+
+New tracking tasks: 334, 335, 336, 337.
+
 ## Batched milestones
 
 Work is grouped into measurable batches. Each batch has a theme, a primary test-suite focus, and an exit criterion: every task in the batch must make its `target_subset` pass at 100% with zero spec skips. The registry in `tasks/index.json` carries the authoritative `suite`, `category`, `batch`, `target_subset`, `blocked_by`, and `exit_criteria` for every task; regenerate it with `python3 scripts/target_tasks.py`.

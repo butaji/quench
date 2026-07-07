@@ -57,6 +57,20 @@
       "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
     },
     {
+      "id": "334",
+      "title": "Adopt test262-harness",
+      "file": "tasks/334-adopt-test262-harness.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Reuse the standard test262 runner instead of maintaining a custom one.",
+      "category": "measurement",
+      "suite": "harness",
+      "batch": 0,
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
+      "blocked_by": [],
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
+    },
+    {
       "id": "344",
       "title": "JS/TS Compatibility Harness",
       "file": "tasks/344-js-ts-compatibility-harness.md",
@@ -147,6 +161,20 @@
       "status": "pending",
       "priority": "P0",
       "notes": "New win. Current implementations use str::parse and ignore radix/whitespace/early termination. Low-medium effort, high impact.",
+      "category": "built-ins",
+      "suite": "both",
+      "batch": 1,
+      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+    },
+    {
+      "id": "336",
+      "title": "Use ecosystem crates for built-ins",
+      "file": "tasks/336-use-ecosystem-crates-for-builtins.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Delegate built-in semantics to proven Rust crates instead of reimplementing them.",
       "category": "built-ins",
       "suite": "both",
       "batch": 1,
@@ -279,6 +307,20 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
+      "id": "335",
+      "title": "Collapse value model into Value::Object with [[Call]] / [[Construct]] slots",
+      "file": "tasks/335-collapse-value-model.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Use the standard ECMAScript object model instead of custom variants.",
+      "category": "objects",
+      "suite": "both",
+      "batch": 3,
+      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
     },
     {
       "id": "141",
@@ -937,12 +979,12 @@
       "status": "pending",
       "priority": "P2",
       "notes": "Milestone of 296. 100% of built-ins/Object/, Reflect, and prototype-chain tests pass. Depends on 294, 295, 289.",
-      "category": "objects",
+      "category": "built-ins",
       "suite": "both",
       "batch": 5,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
     },
     {
       "id": "313",
@@ -1297,6 +1339,20 @@
       "target_subset": "Full tests/test262 (~53k files) + tests/typescript (~18k cases) conformance suites",
       "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips.",
       "blocked_by": []
+    },
+    {
+      "id": "337",
+      "title": "Evaluate oxc_parser as lower-weight alternative",
+      "file": "tasks/337-evaluate-oxc-parser.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Use the smallest, most modular parser dependency available.",
+      "category": "testing",
+      "suite": "tooling",
+      "batch": 6,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     }
   ]
 }
