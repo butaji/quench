@@ -2,6 +2,12 @@
 
 # Task 339: Fix var hoisting inside function scope
 
+## Status: COMPLETED
+
+## Verification
+
+Implementation landed by the background process; `var_hoisting_tdz` function-scope `var` tests pass.
+
 ## Problem
 
 `var` declarations inside a function body are not hoisted, so accessing the variable before its declaration throws `ReferenceError` instead of returning `undefined`.

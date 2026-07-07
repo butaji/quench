@@ -2,6 +2,12 @@
 
 # Task 340: Fix let/const TDZ and const assignment TypeError
 
+## Status: COMPLETED
+
+## Verification
+
+Implementation landed by the background process; `var_hoisting_tdz` TDZ and const-assignment tests pass.
+
 ## Problem
 
 `let` and `const` bindings do not enforce the temporal dead zone, and assignments to `const` bindings are silently accepted.

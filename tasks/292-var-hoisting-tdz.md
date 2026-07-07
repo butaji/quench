@@ -2,7 +2,7 @@
 
 # Task 292: Implement var hoisting and let/const TDZ
 
-## Status: PENDING
+## Status: COMPLETED
 
 ## Why reopened
 

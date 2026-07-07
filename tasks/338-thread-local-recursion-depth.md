@@ -2,6 +2,12 @@
 
 # Task 338: Make recursion depth counter thread-local
 
+## Status: COMPLETED
+
+## Verification
+
+Implementation landed by the background process; parallel `runtime_issues` tests no longer report false stack-overflow errors.
+
 ## Problem
 
 `CURRENT_DEPTH` in `crates/quench-runtime/src/interpreter.rs` is a global `static AtomicUsize`. When `cargo test` runs tests in parallel, threads share the counter and simple calls like `Math.log10(1)` or `clearTimeout(1)` exceed the limit.
