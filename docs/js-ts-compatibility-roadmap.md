@@ -26,8 +26,9 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 1. **Unblock measurement first.** Load the real test262 harness, implement the missing assert helpers, and remove the most aggressive skip reasons so we know what actually passes.
 2. **Quick syntax/builtin wins.** Fix the small expression/statement gaps and constructor registration that are causing hundreds of TS expression failures.
 3. **Core semantics.** Hoisting, TDZ, strict mode, `arguments`, `typeof` undeclared, arrow `this`, global object.
-4. **Big features.** Trampoline interpreter, ES modules, classes, Promises/async/generators.
+4. **Big language features.** ES modules, classes, Promises/async/generators.
 5. **Object model.** Property descriptors, shapes, prototype chains, real built-in prototypes.
+6. **VM/runtime hardening.** Trampoline interpreter, explicit `Vec<CallFrame>`, thread-local depth counter, unified value model, HIR execution model, explicit control flow/`this`. This is the highest-priority work after language compatibility is solid.
 
 ## P0 — Blockers / broadest wins
 
@@ -37,10 +38,9 @@ Most skipped test262 tests are blocked by stubbed harness helpers (`$262`, `asse
 | 2 | 91 | Audit and shrink test262 skip list | Many skips are outdated and hide real failures. |
 | 3 | 289 | Register `Array`, `Error`, `Date` as constructors | `new Array(3)`, `new Error("x")` fail; blocks thousands of built-in tests. |
 | 4 | 290 | Complete expression syntax gaps | Template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of` cause 100+ TS expression failures. |
-| 5 | 85 | Trampoline interpreter | Recursive AST walker exhausts native stack; required to run whole test262 suites. |
-| 6 | 241 | Native ES module loading | `import`/`export` are stripped; blocks module tests and TS moduleResolution baselines. |
-| 7 | 182 / 183 | Classes with `super` / `extends` / static fields | No class support blocks class/private-field suites. |
-| 8 | 251 | Real Promise + microtasks | Async functions, generators, `await`, and many modern APIs depend on this. |
+| 5 | 241 | Native ES module loading | `import`/`export` are stripped; blocks module tests and TS moduleResolution baselines. |
+| 6 | 182 / 183 | Classes with `super` / `extends` / static fields | No class support blocks class/private-field suites. |
+| 7 | 251 | Real Promise + microtasks | Async functions, generators, `await`, and many modern APIs depend on this. |
 
 ## P1 — High-impact correctness
 
@@ -94,10 +94,11 @@ Work is grouped into measurable batches. Each batch has a theme, a primary test-
 | 0 | Truthful measurement | test262 / both | 91, 97, 250, 253, 344 | Harness helpers loaded; reports reflect real pass/fail/skip counts. |
 | 1 | Quick syntax / builtin wins | both | 289, 290, 320–324 | Expression, object, and constructor subsets reach 100%. |
 | 2 | Functions / core statements | both | 322, 281, 141, 291–293 | Function, statement, and basic semantic subsets reach 100%. |
-| 3 | Big architecture | both | 85, 182, 183, 187, 241, 251, 297, 298 | Trampoline, modules, classes, promises, and test harness unblock whole suite areas. |
+| 3 | Big language features | both | 182, 183, 187, 241, 251, 297, 298 | Modules, classes, promises, and test conventions unblock whole suite areas. |
 | 4 | P1 correctness | both | 141, 294, 295 | Property descriptors, global object, and strict-mode subsets reach 100%. |
 | 5 | Granular language coverage | test262 / both | 105, 112, 117, 119, 124, 132, 147, 191, 239, 290a–g, 309–319 | Per-area coverage milestones (expressions, statements, functions, objects, arrays, classes, modules, errors, async, TypeScript, JSX) reach 100%. |
-| 6 | Full suites / host polish | both / runtime | 82, 88, 256, 264, 296 | Entire test262 + TypeScript conformance suites pass; runtime/tooling guardrails prevent regression. |
+| 6 | VM / runtime hardening | runtime / both | 85, 88, 264, 285, 286, 287, 308, 333, 335, 338, 343 | Trampoline interpreter, explicit frames, thread-local depth, value-model unification, HIR execution model. |
+| 7 | Full suites / host polish | both / runtime | 82, 256, 296 | Entire test262 + TypeScript conformance suites pass; runtime/tooling guardrails prevent regression. |
 
 ## Order of attack (low effort / high impact first)
 
@@ -105,8 +106,9 @@ Work is grouped into measurable batches. Each batch has a theme, a primary test-
 2. **Syntax quick wins:** Task 290 (template literals, computed keys, spread, `??`, `?.`, `delete`, unary `+`, `for-of`) and sub-tasks 290a–g.
 3. **Built-in constructors:** Task 289 (`Array`, `Error`, `Date` as constructors) and sub-tasks 289a–c.
 4. **Core semantics quick wins:** Tasks 291 (`typeof`), 292 (hoisting/TDZ), 293 (`arguments`), 141 (strict mode), 283 (primitive prototypes).
-5. **Big architecture:** Tasks 85 (trampoline), 241 (modules), 182/183/187 (classes), 251 (Promise).
-6. **Object model:** Task 294 (descriptors), 88/264 (HIR/shapes).
+5. **Big language features:** Tasks 241 (modules), 182/183/187 (classes), 251 (Promise).
+6. **Object model:** Tasks 294 (descriptors), 295 (global object), 88/264 (HIR/shapes preparation).
+7. **VM/runtime hardening:** Tasks 85 (trampoline), 338 (thread-local depth), 335 (value model), 285/286/287/308 (runtime cleanup), 333/343 (stack-overflow closure). Highest-priority work after language compatibility.
 
 ## Testing requirement
 
