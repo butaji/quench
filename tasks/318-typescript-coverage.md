@@ -25,3 +25,11 @@
 ## Dependencies
 
 - Tasks 290, 289, 241, 182
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/typescript/tests/cases/conformance`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** The full TypeScript conformance suite passes at 100% with zero spec skips.

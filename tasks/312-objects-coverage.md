@@ -24,3 +24,11 @@
 ## Dependencies
 
 - Tasks 294, 295, 289
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/built-ins/Object; tests/test262/test/built-ins/Reflect`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All test262 `built-ins/Object/` and `built-ins/Reflect/` files are active and pass at 100% with zero spec skips.

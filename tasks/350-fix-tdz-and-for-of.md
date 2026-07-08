@@ -105,3 +105,11 @@ test([1, 2, 3]);  // Outputs: 1, 2, 3
 ## Known Limitations
 
 The stack overflow issue in examples (e.g., counter.js) is a separate architectural problem. The interpreter is recursive and uses the native Rust call stack, which has limited size. This is tracked in Task 85 (trampoline interpreter) and Task 343 (fix stack overflow).
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/language/statements/for-of; tests/test262/test/language/block-scope`
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** test262 `language/statements/for-of/` and `language/block-scope/` subsets pass at 100% with zero spec skips.

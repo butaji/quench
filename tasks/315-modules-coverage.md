@@ -24,3 +24,11 @@
 ## Dependencies
 
 - Task 241
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/language/module-code; tests/test262/test/language/import; tests/test262/test/language/export`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All test262 module-code, import, and export areas are active and pass at 100% with zero spec skips.

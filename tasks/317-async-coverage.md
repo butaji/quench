@@ -24,3 +24,11 @@
 ## Dependencies
 
 - Task 251
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/built-ins/Promise; tests/test262/test/language/expressions/async-function; tests/test262/test/language/statements/async-function; tests/test262/test/built-ins/AsyncFunction; tests/test262/test/built-ins/GeneratorFunction; tests/test262/test/built-ins/GeneratorPrototype`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All Promise, async-function, and generator areas are active and pass at 100% with zero spec skips.

@@ -55,7 +55,7 @@ Every compatibility task must be targeted at a measurable subset of the spec sui
 | `blocked_by` | list of task IDs | Tasks that must close before this one can realistically close. |
 | `exit_criteria` | sentence | Verifiable 100% pass condition, e.g. "test262 language/expressions/ subset passes at 100% with zero spec skips." |
 
-No compatibility task may be marked complete without a regenerated harness report proving its `target_subset` is at 100% with zero spec skips. The batch taxonomy is in `docs/js-ts-compatibility-roadmap.md`.
+No compatibility task may be marked complete without a regenerated harness report proving its `target_subset` is at 100% with zero spec skips. The batch taxonomy is in `docs/js-ts-compatibility-roadmap.md`. The authoritative list of target areas is in `docs/conformance-coverage-matrix.md`; every area in that matrix must be active and passing before 100% compatibility is claimed.
 
 ## Completion guard rails
 

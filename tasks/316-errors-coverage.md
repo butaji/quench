@@ -23,3 +23,11 @@
 ## Dependencies
 
 - Tasks 250, 132, 105, 112
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All test262 `built-ins/Error/` and `built-ins/NativeErrors/` files are active and pass at 100% with zero spec skips.

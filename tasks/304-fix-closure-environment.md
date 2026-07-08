@@ -50,3 +50,11 @@ cargo run -- examples/animations.tsx  # Root node: Some(1)
 ## Test Files
 
 - `crates/quench-runtime/tests/depth_limit.rs` - All recursion depth tests pass
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/language/function-code`
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** Function-scope closure environment correctly inherits from the function closure; test262 `language/function-code/` subset passes at 100% with zero spec skips.

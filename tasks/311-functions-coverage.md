@@ -25,3 +25,11 @@
 ## Dependencies
 
 - Tasks 293, 292, 305 (rest), 119/117, 124/187
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/language/function-code; tests/test262/test/language/arguments-object; tests/test262/test/language/rest-parameters; tests/test262/test/language/statements/function; tests/test262/test/language/expressions/function`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All test262 function-related areas are active and pass at 100% with zero spec skips.

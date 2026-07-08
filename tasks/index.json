@@ -8,11 +8,11 @@
       "priority": "P0",
       "notes": "Measurement. Low effort, high impact. Remove outdated skip reasons so real failures surface and get fixed.",
       "category": "measurement",
-      "suite": "test262",
+      "suite": "harness",
       "batch": 0,
-      "target_subset": "target/test262_report.md and target/conformance_report.md accuracy",
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 measurement subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
     },
     {
       "id": "97",
@@ -22,11 +22,11 @@
       "priority": "P0",
       "notes": "Measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison.",
       "category": "measurement",
-      "suite": "test262",
+      "suite": "harness",
       "batch": 0,
       "target_subset": "target/test262_report.md and target/conformance_report.md accuracy",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 measurement subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 negative tests match by expected error type and phase with inheritance support, and the harness report is regenerated."
     },
     {
       "id": "250",
@@ -35,12 +35,12 @@
       "status": "pending",
       "priority": "P0",
       "notes": "Quick win. Low effort, high impact. Stop stringifying exceptions; negative tests need real error types.",
-      "category": "errors",
+      "category": "built-ins",
       "suite": "both",
       "batch": 0,
-      "target_subset": "tests/test262 + tests/typescript errors/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors",
       "blocked_by": [],
-      "exit_criteria": "Relevant both errors subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Error/ and built-ins/NativeErrors/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "253",
@@ -77,12 +77,12 @@
       "status": "pending",
       "priority": "P0",
       "notes": "> The canonical harness that runs the test262 and TypeScript submodule suites and reports the true JS/TS/TSX/JSX compatibility percentage.",
-      "category": "harness",
-      "suite": "both",
+      "category": "measurement",
+      "suite": "harness",
       "batch": 0,
-      "target_subset": "tests/test262 + tests/typescript harness/ subset",
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
       "blocked_by": [],
-      "exit_criteria": "Relevant both harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
     },
     {
       "id": "351",
@@ -99,6 +99,20 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
+      "id": "352",
+      "title": "Maintain the conformance coverage matrix",
+      "file": "tasks/352-compat-coverage-matrix.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Authoritative backlog: every spec area that must pass for 100% compat.**",
+      "category": "testing",
+      "suite": "tooling",
+      "batch": 0,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
@@ -106,11 +120,11 @@
       "priority": "P0",
       "notes": "Architecture. Very high impact, high effort. Replaces recursive AST walker; required to run whole test262 suites.",
       "category": "interpreter",
-      "suite": "test262",
+      "suite": "runtime",
       "batch": 1,
-      "target_subset": "tests/test262 interpreter/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 interpreter subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "285",
@@ -133,12 +147,12 @@
       "status": "pending",
       "priority": "P0",
       "notes": "`Context` maintains both `self.globals` and `self.env`, inserting globals into both maps. This duplicates storage and adds extra clones.",
-      "category": "objects",
-      "suite": "both",
+      "category": "interpreter",
+      "suite": "runtime",
       "batch": 1,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "308",
@@ -175,12 +189,12 @@
       "status": "pending",
       "priority": "P0",
       "notes": "> **Minimum custom code.** Use the standard ECMAScript object model instead of custom variants.",
-      "category": "objects",
-      "suite": "both",
+      "category": "interpreter",
+      "suite": "runtime",
       "batch": 1,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "338",
@@ -220,9 +234,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array; tests/test262/test/built-ins/Error; tests/test262/test/built-ins/Date",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Array/, built-ins/Error/, and built-ins/Date/ constructor subsets pass at 100% with zero spec skips."
     },
     {
       "id": "290",
@@ -234,9 +248,9 @@
       "category": "expressions",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/literals/template; tests/test262/test/language/computed-property-names; tests/test262/test/language/expressions/array; tests/test262/test/language/expressions/coalesce; tests/test262/test/language/expressions/delete; tests/test262/test/language/expressions/unary-plus; tests/test262/test/language/statements/for-of",
       "blocked_by": [],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All expression quick-win areas are active and pass at 100% with zero spec skips."
     },
     {
       "id": "320",
@@ -245,12 +259,12 @@
       "status": "pending",
       "priority": "P0",
       "notes": "New win. Numeric keys are stored in both elements and properties; delete/own_keys are wrong. Low effort, high impact.",
-      "category": "objects",
+      "category": "expressions",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Object/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "321",
@@ -262,9 +276,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Number",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Boolean/ and built-ins/Number/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "323",
@@ -276,9 +290,9 @@
       "category": "objects",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Object/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "324",
@@ -290,23 +304,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/parseInt; tests/test262/test/built-ins/parseFloat",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
-    },
-    {
-      "id": "336",
-      "title": "Use ecosystem crates for built-ins",
-      "file": "tasks/336-use-ecosystem-crates-for-builtins.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "> **Minimum custom code.** Delegate built-in semantics to proven Rust crates instead of reimplementing them.",
-      "category": "built-ins",
-      "suite": "both",
-      "batch": 2,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
-      "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/parseInt/ and built-ins/parseFloat/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "322",
@@ -318,9 +318,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 3,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object/prototype; tests/test262/test/built-ins/Function/prototype",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Object/prototype/ and built-ins/Function/prototype/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "182",
@@ -332,9 +332,9 @@
       "category": "classes",
       "suite": "both",
       "batch": 4,
-      "target_subset": "tests/test262 + tests/typescript classes/ subset",
+      "target_subset": "tests/test262/test/language/statements/class; tests/test262/test/language/expressions/class",
       "blocked_by": [],
-      "exit_criteria": "Relevant both classes subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 class declaration and expression subsets pass at 100% with zero spec skips."
     },
     {
       "id": "183",
@@ -346,9 +346,9 @@
       "category": "classes",
       "suite": "both",
       "batch": 4,
-      "target_subset": "tests/test262 + tests/typescript classes/ subset",
+      "target_subset": "tests/test262/test/language/statements/class/elements",
       "blocked_by": [],
-      "exit_criteria": "Relevant both classes subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/class/elements/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "187",
@@ -360,9 +360,9 @@
       "category": "classes",
       "suite": "both",
       "batch": 4,
-      "target_subset": "tests/test262 + tests/typescript classes/ subset",
+      "target_subset": "tests/test262/test/language/statements/class/subclass; tests/test262/test/language/expressions/class/subclass",
       "blocked_by": [],
-      "exit_criteria": "Relevant both classes subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 class subclass subsets pass at 100% with zero spec skips."
     },
     {
       "id": "241",
@@ -374,9 +374,9 @@
       "category": "modules",
       "suite": "both",
       "batch": 4,
-      "target_subset": "tests/test262 + tests/typescript modules/ subset",
+      "target_subset": "tests/test262/test/language/module-code; tests/test262/test/language/import; tests/test262/test/language/export",
       "blocked_by": [],
-      "exit_criteria": "Relevant both modules subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 module-code, import, and export subsets pass at 100% with zero spec skips."
     },
     {
       "id": "251",
@@ -388,9 +388,9 @@
       "category": "async",
       "suite": "both",
       "batch": 4,
-      "target_subset": "tests/test262 + tests/typescript async/ subset",
+      "target_subset": "tests/test262/test/built-ins/Promise",
       "blocked_by": [],
-      "exit_criteria": "Relevant both async subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Promise/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "297",
@@ -430,9 +430,9 @@
       "category": "statements",
       "suite": "both",
       "batch": 5,
-      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "target_subset": "tests/test262/test/language/expressions/arrow-function",
       "blocked_by": [],
-      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/arrow-function/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "294",
@@ -444,9 +444,9 @@
       "category": "objects",
       "suite": "both",
       "batch": 5,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object/defineProperty; tests/test262/test/built-ins/Object/getOwnPropertyDescriptor",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 property-descriptor subsets pass at 100% with zero spec skips."
     },
     {
       "id": "295",
@@ -458,9 +458,9 @@
       "category": "objects",
       "suite": "both",
       "batch": 5,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262/test/built-ins/global",
       "blocked_by": [],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/global/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "87",
@@ -486,9 +486,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error/prototype",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Error/prototype/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "112",
@@ -500,9 +500,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Error/ and built-ins/NativeErrors/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "117",
@@ -514,9 +514,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/language/function-code",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/function-code/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "119",
@@ -528,9 +528,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Function",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Function/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "124",
@@ -542,9 +542,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Function",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Function/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "132",
@@ -556,9 +556,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error/name",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Error/name/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "147",
@@ -570,9 +570,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array/prototype/flat",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Array/prototype/flat/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "191",
@@ -584,9 +584,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/String/prototype/toLocaleLowerCase; tests/test262/test/built-ins/String/prototype/toLocaleUpperCase",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 String locale case subsets pass at 100% with zero spec skips."
     },
     {
       "id": "239",
@@ -598,9 +598,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/String",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Boolean/ and built-ins/String/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "279",
@@ -623,12 +623,12 @@
       "status": "pending",
       "priority": "P2",
       "notes": "Process. Run real JS/TS snippets from Rust tests. High impact, medium effort.",
-      "category": "harness",
-      "suite": "typescript",
+      "category": "testing",
+      "suite": "harness",
       "batch": 6,
-      "target_subset": "tests/typescript harness/ subset",
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
       "blocked_by": [],
-      "exit_criteria": "Relevant typescript harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
     },
     {
       "id": "281",
@@ -651,12 +651,12 @@
       "status": "pending",
       "priority": "P2",
       "notes": "Perf quick win. Low effort, high impact. Stop cloning function bodies on every Value clone.",
-      "category": "statements",
-      "suite": "both",
+      "category": "interpreter",
+      "suite": "runtime",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "283",
@@ -668,9 +668,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/String/prototype",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/String/prototype/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "284",
@@ -682,9 +682,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array/prototype",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Array/prototype/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "289a",
@@ -696,11 +696,11 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array",
       "blocked_by": [
         "289"
       ],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Array/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "289b",
@@ -712,11 +712,11 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error",
       "blocked_by": [
         "289"
       ],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Error/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "289c",
@@ -728,11 +728,11 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Date",
       "blocked_by": [
         "289"
       ],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Date/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290a",
@@ -744,11 +744,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/literals/template",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/literals/template/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290b",
@@ -760,11 +760,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/computed-property-names",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/computed-property-names/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290c",
@@ -776,11 +776,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/array",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/array/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290d",
@@ -792,11 +792,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/coalesce",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/coalesce/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290e",
@@ -808,11 +808,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/delete",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/delete/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290f",
@@ -824,11 +824,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/unary-plus",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/unary-plus/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "290g",
@@ -840,11 +840,11 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/statements/for-of",
       "blocked_by": [
         "290"
       ],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/for-of/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "291",
@@ -856,9 +856,9 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/typeof",
       "blocked_by": [],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/typeof/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "292",
@@ -884,9 +884,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/language/arguments-object",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/arguments-object/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "299",
@@ -926,9 +926,9 @@
       "category": "statements",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "target_subset": "tests/test262/test/language/function-code",
       "blocked_by": [],
-      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Function-scope closure environment correctly inherits from the function closure; test262 language/function-code/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "305",
@@ -940,9 +940,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/language/rest-parameters",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/rest-parameters/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "306",
@@ -968,9 +968,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array/prototype/flat; tests/test262/test/built-ins/Array/prototype/flatMap",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Array/prototype/flat/ and flatMap/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "309",
@@ -982,9 +982,9 @@
       "category": "expressions",
       "suite": "test262",
       "batch": 6,
-      "target_subset": "tests/test262 expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 language/expressions/ files are active and pass at 100% with zero spec skips."
     },
     {
       "id": "310",
@@ -996,9 +996,9 @@
       "category": "statements",
       "suite": "test262",
       "batch": 6,
-      "target_subset": "tests/test262 statements/ subset",
+      "target_subset": "tests/test262/test/language/statements",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 language/statements/ files are active and pass at 100% with zero spec skips."
     },
     {
       "id": "311",
@@ -1010,9 +1010,9 @@
       "category": "functions",
       "suite": "test262",
       "batch": 6,
-      "target_subset": "tests/test262 functions/ subset",
+      "target_subset": "tests/test262/test/language/function-code; tests/test262/test/language/arguments-object; tests/test262/test/language/rest-parameters; tests/test262/test/language/statements/function; tests/test262/test/language/expressions/function",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 function-related areas are active and pass at 100% with zero spec skips."
     },
     {
       "id": "312",
@@ -1024,9 +1024,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object; tests/test262/test/built-ins/Reflect",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 built-ins/Object/ and built-ins/Reflect/ files are active and pass at 100% with zero spec skips."
     },
     {
       "id": "313",
@@ -1038,9 +1038,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Array; tests/test262/test/built-ins/String; tests/test262/test/built-ins/Number; tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Date; tests/test262/test/built-ins/Error",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All core built-in suites (Array, String, Number, Boolean, Date, Error) are active and pass at 100% with zero spec skips."
     },
     {
       "id": "314",
@@ -1052,9 +1052,9 @@
       "category": "classes",
       "suite": "test262",
       "batch": 6,
-      "target_subset": "tests/test262 classes/ subset",
+      "target_subset": "tests/test262/test/language/statements/class; tests/test262/test/language/expressions/class; tests/test262/test/language/computed-property-names/class",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 classes subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 class syntax areas are active and pass at 100% with zero spec skips."
     },
     {
       "id": "315",
@@ -1066,9 +1066,9 @@
       "category": "modules",
       "suite": "test262",
       "batch": 6,
-      "target_subset": "tests/test262 modules/ subset",
+      "target_subset": "tests/test262/test/language/module-code; tests/test262/test/language/import; tests/test262/test/language/export",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 modules subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 module-code, import, and export areas are active and pass at 100% with zero spec skips."
     },
     {
       "id": "316",
@@ -1080,9 +1080,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All test262 built-ins/Error/ and built-ins/NativeErrors/ files are active and pass at 100% with zero spec skips."
     },
     {
       "id": "317",
@@ -1094,9 +1094,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Promise; tests/test262/test/language/expressions/async-function; tests/test262/test/language/statements/async-function; tests/test262/test/built-ins/AsyncFunction; tests/test262/test/built-ins/GeneratorFunction; tests/test262/test/built-ins/GeneratorPrototype",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "All Promise, async-function, and generator areas are active and pass at 100% with zero spec skips."
     },
     {
       "id": "318",
@@ -1108,9 +1108,9 @@
       "category": "types",
       "suite": "typescript",
       "batch": 6,
-      "target_subset": "tests/typescript types/ subset",
+      "target_subset": "tests/typescript/tests/cases/conformance",
       "blocked_by": [],
-      "exit_criteria": "Relevant typescript types subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "The full TypeScript conformance suite passes at 100% with zero spec skips."
     },
     {
       "id": "319",
@@ -1136,11 +1136,11 @@
       "category": "objects",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript objects/ subset",
+      "target_subset": "tests/test262/test/built-ins/Object/prototype",
       "blocked_by": [
         "322"
       ],
-      "exit_criteria": "Relevant both objects subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Object/prototype/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "322b",
@@ -1152,11 +1152,11 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/built-ins/Function/prototype",
       "blocked_by": [
         "322"
       ],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/Function/prototype/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "325",
@@ -1165,12 +1165,12 @@
       "status": "pending",
       "priority": "P2",
       "notes": "Cleanup. TDZ refactor left debug prints. Trivial effort, medium impact.",
-      "category": "errors",
-      "suite": "both",
+      "category": "refactor",
+      "suite": "tooling",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript errors/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant both errors subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "326",
@@ -1182,9 +1182,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/String/prototype/length",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/String/prototype/length/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "327",
@@ -1196,9 +1196,9 @@
       "category": "built-ins",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript built-ins/ subset",
+      "target_subset": "tests/test262/test/built-ins/JSON",
       "blocked_by": [],
-      "exit_criteria": "Relevant both built-ins subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 built-ins/JSON/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "328",
@@ -1210,9 +1210,9 @@
       "category": "statements",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "target_subset": "tests/test262/test/language/statements/for-of",
       "blocked_by": [],
-      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/for-of/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "329",
@@ -1221,12 +1221,12 @@
       "status": "pending",
       "priority": "P2",
       "notes": "Cleanup. scope.rs is unused. Trivial effort, low impact.",
-      "category": "expressions",
-      "suite": "both",
+      "category": "refactor",
+      "suite": "tooling",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "330",
@@ -1271,6 +1271,20 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
+      "id": "336",
+      "title": "Use ecosystem crates for built-ins",
+      "file": "tasks/336-use-ecosystem-crates-for-builtins.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Delegate built-in semantics to proven Rust crates instead of reimplementing them.",
+      "category": "built-ins",
+      "suite": "both",
+      "batch": 6,
+      "target_subset": "tests/test262/test/built-ins/Array",
+      "blocked_by": [],
+      "exit_criteria": "test262 built-ins/Array/ subset passes at 100% with zero spec skips when using ecosystem crates."
+    },
+    {
       "id": "339",
       "title": "Fix var hoisting inside function scope",
       "file": "tasks/339-fix-var-hoisting-in-functions.md",
@@ -1280,9 +1294,9 @@
       "category": "functions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript functions/ subset",
+      "target_subset": "tests/test262/test/language/statements/variable",
       "blocked_by": [],
-      "exit_criteria": "Relevant both functions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/variable/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "340",
@@ -1294,9 +1308,9 @@
       "category": "errors",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript errors/ subset",
+      "target_subset": "tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
       "blocked_by": [],
-      "exit_criteria": "Relevant both errors subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/let/ and language/statements/const/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "341",
@@ -1308,9 +1322,9 @@
       "category": "expressions",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript expressions/ subset",
+      "target_subset": "tests/test262/test/language/expressions/new",
       "blocked_by": [],
-      "exit_criteria": "Relevant both expressions subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/expressions/new/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "342",
@@ -1350,9 +1364,9 @@
       "category": "statements",
       "suite": "both",
       "batch": 6,
-      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "target_subset": "tests/test262/test/language/statements/for-of; tests/test262/test/language/block-scope",
       "blocked_by": [],
-      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "test262 language/statements/for-of/ and language/block-scope/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "82",
@@ -1361,12 +1375,12 @@
       "status": "pending",
       "priority": "P3",
       "notes": "Large effort, high impact analysis. Whole-suite test262/TS runs and regression tracking.",
-      "category": "refactor",
-      "suite": "test262",
+      "category": "measurement",
+      "suite": "harness",
       "batch": 7,
-      "target_subset": "tests/test262 refactor/ subset",
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 refactor subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
     },
     {
       "id": "256",
@@ -1389,10 +1403,10 @@
       "status": "in_progress",
       "priority": "P0",
       "notes": "North star. 100% of full test262 (~53k files) + TypeScript (~18k cases) conformance, native execution, no bytecode/JIT, minimum code, maximum performance. Split into concrete milestone tasks 309-319 below. All work ordered by priority, then effort/impact, with complete fast Rust unit test coverage.",
-      "category": "measurement",
-      "suite": "both",
+      "category": "statements",
+      "suite": "test262",
       "batch": 7,
-      "target_subset": "Full tests/test262 (~53k files) + tests/typescript (~18k cases) conformance suites",
+      "target_subset": "tests/test262/test; tests/typescript/tests/cases/conformance",
       "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips.",
       "blocked_by": []
     },

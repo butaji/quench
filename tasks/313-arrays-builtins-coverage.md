@@ -23,3 +23,11 @@
 ## Dependencies
 
 - Tasks 289, 283, 284, 147, 191, 132, 239
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/built-ins/Array; tests/test262/test/built-ins/String; tests/test262/test/built-ins/Number; tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Date; tests/test262/test/built-ins/Error`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All core built-in suites (Array, String, Number, Boolean, Date, Error) are active and pass at 100% with zero spec skips.

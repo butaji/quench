@@ -89,6 +89,8 @@ New tracking tasks: 334, 335, 336.
 
 Work is grouped into measurable batches. Each batch has a theme, a primary test-suite focus, and an exit criterion: every task in the batch must make its `target_subset` pass at 100% with zero spec skips. The registry in `tasks/index.json` carries the authoritative `suite`, `category`, `batch`, `target_subset`, `blocked_by`, and `exit_criteria` for every task; regenerate it with `python3 scripts/target_tasks.py`.
 
+The `target_subset` of every compatibility task must be a concrete area from `docs/conformance-coverage-matrix.md`. A task is not allowed to close on unit tests alone; it must add that area to the active harness subset and produce a regenerated report showing 100% pass / 0 spec skips.
+
 | Batch | Theme | Suite focus | Tasks (sample) | Exit signal |
 |-------|-------|-------------|----------------|-------------|
 | 0 | Truthful measurement | test262 / both | 91, 97, 250, 253, 344 | Harness helpers loaded; reports reflect real pass/fail/skip counts. |
@@ -100,6 +102,10 @@ Work is grouped into measurable batches. Each batch has a theme, a primary test-
 | 6 | Granular language coverage | test262 / both | 105, 112, 117, 119, 124, 132, 147, 191, 239, 290a–g, 309–319 | Per-area coverage milestones (expressions, statements, functions, objects, arrays, classes, modules, errors, async, TypeScript, JSX) reach 100%. |
 | 7 | Full suites / host polish | both / runtime | 82, 256, 296 | Entire test262 + TypeScript conformance suites pass; runtime/tooling guardrails prevent regression. |
 | 8 | Advanced runtime / HIR / performance | runtime / both | 88, 264, 287 | HIR execution model, Rust leverage, shapes/ICs, NaN-boxing, allocator/interning. Only after 100% conformance. |
+
+### Active subset rule
+
+The *active subset* is the set of matrix areas currently hard-coded into the harness (`crates/quench-runtime/tests/test262.rs` and `crates/quench-runtime/tests/conformance.rs`). It must grow monotonically until it equals the full matrix in `docs/conformance-coverage-matrix.md`. A compatibility task must either (a) move a new matrix area into the active subset and pass it, or (b) clear all failures and spec skips in an area that is already active. Unit-test-only work does not count as closing a compatibility task.
 
 ## Order of attack (low effort / high impact first)
 

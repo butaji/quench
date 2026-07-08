@@ -25,3 +25,11 @@
 ## Dependencies
 
 - Tasks 281, 292, 250, 141
+
+## Targets
+
+- **Suite:** `both`
+- **Batch:** 6
+- **Target subset:** `tests/test262/test/language/statements`. See `docs/conformance-coverage-matrix.md` for the exact file count.
+- **Blocked by:** see `tasks/index.json`
+- **Exit criteria:** All test262 `language/statements/` files are active and pass at 100% with zero spec skips.

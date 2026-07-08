@@ -65,7 +65,7 @@ cargo test -p quench-runtime            # All tests pass
 
 ## Targets
 
-- **Suite:** `test262`
+- **Suite:** `harness`
 - **Batch:** 0
 - **Target subset:** `target/test262_report.md` accuracy for negative tests.
 - **Blocked by:** see `tasks/index.json`
