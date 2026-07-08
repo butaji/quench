@@ -17,9 +17,9 @@ A task may be marked `COMPLETED` only when:
 - A background process **may not** change a task's `## Status:` line to `COMPLETED`.
 - Only a human review or the watchdog process may update status after verifying the evidence in Rule 1.
 
-## Rule 3: Required evidence in every task file
+## Rule 3: Required evidence in every compatibility task file
 
-Every task file must contain:
+Every task whose `suite` is `test262`, `typescript`, or `both` must contain:
 
 - A `## Verification` section with the exact command(s) to run.
 - An `## Exit criteria` sentence that names the exact subset and the 100% / zero-skip condition.
@@ -39,6 +39,6 @@ While a background process has uncommitted modifications in `crates/quench-runti
 
 ## Enforcement
 
-- `scripts/target_tasks.py` will emit a warning for any `COMPLETED` task that lacks a `## Verification` section or an `exit_criteria` field.
+- `scripts/target_tasks.py` exits with an error for any `COMPLETED` compatibility task (`suite` in `test262`, `typescript`, or `both`) that lacks a `## Verification` section or an `exit_criteria` field.
 - The watchdog will revert any unauthorized `## Status: COMPLETED` changes made without evidence.
 - The pre-existing pre-commit hook continues to enforce file/function limits; conformance evidence is in addition to those limits.
