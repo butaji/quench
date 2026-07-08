@@ -78,15 +78,116 @@ MANUAL_OVERRIDES = {
     "338": {"suite": "runtime", "category": "interpreter", "priority": "P0"},
     "342": {"suite": "tooling", "category": "testing"},
     "351": {"suite": "tooling", "category": "testing", "batch": 0},
+    "352": {"suite": "tooling", "category": "testing", "batch": 0},
     "344": {"priority": "P0", "suite": "both", "category": "harness", "batch": 0},
+    # Coverage milestone tasks must cite concrete matrix paths, not broad categories.
+    "309": {"target_subset": "tests/test262/test/language/expressions", "exit_criteria": "All test262 language/expressions/ files are active and pass at 100% with zero spec skips."},
+    "310": {"target_subset": "tests/test262/test/language/statements", "exit_criteria": "All test262 language/statements/ files are active and pass at 100% with zero spec skips."},
+    "311": {"target_subset": "tests/test262/test/language/function-code; tests/test262/test/language/arguments-object; tests/test262/test/language/rest-parameters; tests/test262/test/language/statements/function; tests/test262/test/language/expressions/function", "exit_criteria": "All test262 function-related areas are active and pass at 100% with zero spec skips."},
+    "312": {"target_subset": "tests/test262/test/built-ins/Object; tests/test262/test/built-ins/Reflect", "exit_criteria": "All test262 built-ins/Object/ and built-ins/Reflect/ files are active and pass at 100% with zero spec skips."},
+    "313": {"target_subset": "tests/test262/test/built-ins/Array; tests/test262/test/built-ins/String; tests/test262/test/built-ins/Number; tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Date; tests/test262/test/built-ins/Error", "exit_criteria": "All core built-in suites (Array, String, Number, Boolean, Date, Error) are active and pass at 100% with zero spec skips."},
+    "314": {"target_subset": "tests/test262/test/language/statements/class; tests/test262/test/language/expressions/class; tests/test262/test/language/computed-property-names/class", "exit_criteria": "All test262 class syntax areas are active and pass at 100% with zero spec skips."},
+    "315": {"target_subset": "tests/test262/test/language/module-code; tests/test262/test/language/import; tests/test262/test/language/export", "exit_criteria": "All test262 module-code, import, and export areas are active and pass at 100% with zero spec skips."},
+    "316": {"target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors", "exit_criteria": "All test262 built-ins/Error/ and built-ins/NativeErrors/ files are active and pass at 100% with zero spec skips."},
+    "317": {"target_subset": "tests/test262/test/built-ins/Promise; tests/test262/test/language/expressions/async-function; tests/test262/test/language/statements/async-function; tests/test262/test/built-ins/AsyncFunction; tests/test262/test/built-ins/GeneratorFunction; tests/test262/test/built-ins/GeneratorPrototype", "exit_criteria": "All Promise, async-function, and generator areas are active and pass at 100% with zero spec skips."},
+    "318": {"target_subset": "tests/typescript/tests/cases/conformance", "exit_criteria": "The full TypeScript conformance suite passes at 100% with zero spec skips."},
     "253": {
         "suite": "harness",
         "category": "harness",
         "target_subset": "tests/test262/harness/ helpers loaded into the runner",
         "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed.",
     },
+    "97": {
+        "suite": "harness",
+        "category": "measurement",
+        "target_subset": "target/test262_report.md and target/conformance_report.md accuracy",
+        "exit_criteria": "test262 negative tests match by expected error type and phase with inheritance support, and the harness report is regenerated.",
+    },
+    "304": {
+        "target_subset": "tests/test262/test/language/function-code",
+        "exit_criteria": "Function-scope closure environment correctly inherits from the function closure; test262 language/function-code/ subset passes at 100% with zero spec skips.",
+    },
+    "339": {
+        "target_subset": "tests/test262/test/language/statements/variable",
+        "exit_criteria": "test262 language/statements/variable/ subset passes at 100% with zero spec skips.",
+    },
+    "340": {
+        "target_subset": "tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
+        "exit_criteria": "test262 language/statements/let/ and language/statements/const/ subsets pass at 100% with zero spec skips.",
+    },
+    "350": {
+        "target_subset": "tests/test262/test/language/statements/for-of; tests/test262/test/language/block-scope",
+        "exit_criteria": "test262 language/statements/for-of/ and language/block-scope/ subsets pass at 100% with zero spec skips.",
+    },
+    "305": {
+        "target_subset": "tests/test262/test/language/rest-parameters",
+        "exit_criteria": "test262 language/rest-parameters/ subset passes at 100% with zero spec skips.",
+    },
+    "307": {
+        "target_subset": "tests/test262/test/built-ins/Array/prototype/flat; tests/test262/test/built-ins/Array/prototype/flatMap",
+        "exit_criteria": "test262 built-ins/Array/prototype/flat/ and flatMap/ subsets pass at 100% with zero spec skips.",
+    },
+    # Runtime / tooling tasks that were mis-inferred as compatibility tasks.
+    "85": {"suite": "runtime", "category": "interpreter", "priority": "P0"},
+    "286": {"suite": "runtime", "category": "interpreter"},
+    "335": {"suite": "runtime", "category": "interpreter", "priority": "P0"},
+    "282": {"suite": "runtime", "category": "interpreter"},
+    "325": {"suite": "tooling", "category": "refactor"},
+    "329": {"suite": "tooling", "category": "refactor"},
+    # Harness / measurement tasks.
+    "91": {"suite": "harness", "category": "measurement", "batch": 0},
+    "280": {"suite": "harness", "category": "testing"},
+    "344": {"suite": "harness", "category": "measurement", "batch": 0, "priority": "P0"},
+    "82": {"suite": "harness", "category": "measurement", "batch": 7},
+    # Granular compatibility tasks with concrete matrix paths.
+    "250": {"target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors", "exit_criteria": "test262 built-ins/Error/ and built-ins/NativeErrors/ subsets pass at 100% with zero spec skips."},
+    "289": {"target_subset": "tests/test262/test/built-ins/Array; tests/test262/test/built-ins/Error; tests/test262/test/built-ins/Date", "exit_criteria": "test262 built-ins/Array/, built-ins/Error/, and built-ins/Date/ constructor subsets pass at 100% with zero spec skips."},
+    "289a": {"target_subset": "tests/test262/test/built-ins/Array", "exit_criteria": "test262 built-ins/Array/ subset passes at 100% with zero spec skips."},
+    "289b": {"target_subset": "tests/test262/test/built-ins/Error", "exit_criteria": "test262 built-ins/Error/ subset passes at 100% with zero spec skips."},
+    "289c": {"target_subset": "tests/test262/test/built-ins/Date", "exit_criteria": "test262 built-ins/Date/ subset passes at 100% with zero spec skips."},
+    "290": {"target_subset": "tests/test262/test/language/literals/template; tests/test262/test/language/computed-property-names; tests/test262/test/language/expressions/array; tests/test262/test/language/expressions/coalesce; tests/test262/test/language/expressions/delete; tests/test262/test/language/expressions/unary-plus; tests/test262/test/language/statements/for-of", "exit_criteria": "All expression quick-win areas are active and pass at 100% with zero spec skips."},
+    "290a": {"target_subset": "tests/test262/test/language/literals/template", "exit_criteria": "test262 language/literals/template/ subset passes at 100% with zero spec skips."},
+    "290b": {"target_subset": "tests/test262/test/language/computed-property-names", "exit_criteria": "test262 language/computed-property-names/ subset passes at 100% with zero spec skips."},
+    "290c": {"target_subset": "tests/test262/test/language/expressions/array", "exit_criteria": "test262 language/expressions/array/ subset passes at 100% with zero spec skips."},
+    "290d": {"target_subset": "tests/test262/test/language/expressions/coalesce", "exit_criteria": "test262 language/expressions/coalesce/ subset passes at 100% with zero spec skips."},
+    "290e": {"target_subset": "tests/test262/test/language/expressions/delete", "exit_criteria": "test262 language/expressions/delete/ subset passes at 100% with zero spec skips."},
+    "290f": {"target_subset": "tests/test262/test/language/expressions/unary-plus", "exit_criteria": "test262 language/expressions/unary-plus/ subset passes at 100% with zero spec skips."},
+    "290g": {"target_subset": "tests/test262/test/language/statements/for-of", "exit_criteria": "test262 language/statements/for-of/ subset passes at 100% with zero spec skips."},
+    "291": {"target_subset": "tests/test262/test/language/expressions/typeof", "exit_criteria": "test262 language/expressions/typeof/ subset passes at 100% with zero spec skips."},
+    "293": {"target_subset": "tests/test262/test/language/arguments-object", "exit_criteria": "test262 language/arguments-object/ subset passes at 100% with zero spec skips."},
+    "320": {"target_subset": "tests/test262/test/built-ins/Object", "exit_criteria": "test262 built-ins/Object/ subset passes at 100% with zero spec skips."},
+    "321": {"target_subset": "tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Number", "exit_criteria": "test262 built-ins/Boolean/ and built-ins/Number/ subsets pass at 100% with zero spec skips."},
+    "322": {"target_subset": "tests/test262/test/built-ins/Object/prototype; tests/test262/test/built-ins/Function/prototype", "exit_criteria": "test262 built-ins/Object/prototype/ and built-ins/Function/prototype/ subsets pass at 100% with zero spec skips."},
+    "322a": {"target_subset": "tests/test262/test/built-ins/Object/prototype", "exit_criteria": "test262 built-ins/Object/prototype/ subset passes at 100% with zero spec skips."},
+    "322b": {"target_subset": "tests/test262/test/built-ins/Function/prototype", "exit_criteria": "test262 built-ins/Function/prototype/ subset passes at 100% with zero spec skips."},
+    "323": {"target_subset": "tests/test262/test/built-ins/Object", "exit_criteria": "test262 built-ins/Object/ subset passes at 100% with zero spec skips."},
+    "324": {"target_subset": "tests/test262/test/built-ins/parseInt; tests/test262/test/built-ins/parseFloat", "exit_criteria": "test262 built-ins/parseInt/ and built-ins/parseFloat/ subsets pass at 100% with zero spec skips."},
+    "336": {"target_subset": "tests/test262/test/built-ins/Array", "exit_criteria": "test262 built-ins/Array/ subset passes at 100% with zero spec skips when using ecosystem crates."},
+    "105": {"target_subset": "tests/test262/test/built-ins/Error/prototype", "exit_criteria": "test262 built-ins/Error/prototype/ subset passes at 100% with zero spec skips."},
+    "112": {"target_subset": "tests/test262/test/built-ins/Error; tests/test262/test/built-ins/NativeErrors", "exit_criteria": "test262 built-ins/Error/ and built-ins/NativeErrors/ subsets pass at 100% with zero spec skips."},
+    "117": {"target_subset": "tests/test262/test/language/function-code", "exit_criteria": "test262 language/function-code/ subset passes at 100% with zero spec skips."},
+    "119": {"target_subset": "tests/test262/test/built-ins/Function", "exit_criteria": "test262 built-ins/Function/ subset passes at 100% with zero spec skips."},
+    "124": {"target_subset": "tests/test262/test/built-ins/Function", "exit_criteria": "test262 built-ins/Function/ subset passes at 100% with zero spec skips."},
+    "132": {"target_subset": "tests/test262/test/built-ins/Error/name", "exit_criteria": "test262 built-ins/Error/name/ subset passes at 100% with zero spec skips."},
+    "147": {"target_subset": "tests/test262/test/built-ins/Array/prototype/flat", "exit_criteria": "test262 built-ins/Array/prototype/flat/ subset passes at 100% with zero spec skips."},
+    "191": {"target_subset": "tests/test262/test/built-ins/String/prototype/toLocaleLowerCase; tests/test262/test/built-ins/String/prototype/toLocaleUpperCase", "exit_criteria": "test262 String locale case subsets pass at 100% with zero spec skips."},
+    "239": {"target_subset": "tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/String", "exit_criteria": "test262 built-ins/Boolean/ and built-ins/String/ subsets pass at 100% with zero spec skips."},
+    "283": {"target_subset": "tests/test262/test/built-ins/String/prototype", "exit_criteria": "test262 built-ins/String/prototype/ subset passes at 100% with zero spec skips."},
+    "284": {"target_subset": "tests/test262/test/built-ins/Array/prototype", "exit_criteria": "test262 built-ins/Array/prototype/ subset passes at 100% with zero spec skips."},
+    "326": {"target_subset": "tests/test262/test/built-ins/String/prototype/length", "exit_criteria": "test262 built-ins/String/prototype/length/ subset passes at 100% with zero spec skips."},
+    "327": {"target_subset": "tests/test262/test/built-ins/JSON", "exit_criteria": "test262 built-ins/JSON/ subset passes at 100% with zero spec skips."},
+    "328": {"target_subset": "tests/test262/test/language/statements/for-of", "exit_criteria": "test262 language/statements/for-of/ subset passes at 100% with zero spec skips."},
+    "341": {"target_subset": "tests/test262/test/language/expressions/new", "exit_criteria": "test262 language/expressions/new/ subset passes at 100% with zero spec skips."},
+    "182": {"target_subset": "tests/test262/test/language/statements/class; tests/test262/test/language/expressions/class", "exit_criteria": "test262 class declaration and expression subsets pass at 100% with zero spec skips."},
+    "183": {"target_subset": "tests/test262/test/language/statements/class/elements", "exit_criteria": "test262 language/statements/class/elements/ subset passes at 100% with zero spec skips."},
+    "187": {"target_subset": "tests/test262/test/language/statements/class/subclass; tests/test262/test/language/expressions/class/subclass", "exit_criteria": "test262 class subclass subsets pass at 100% with zero spec skips."},
+    "241": {"target_subset": "tests/test262/test/language/module-code; tests/test262/test/language/import; tests/test262/test/language/export", "exit_criteria": "test262 module-code, import, and export subsets pass at 100% with zero spec skips."},
+    "251": {"target_subset": "tests/test262/test/built-ins/Promise", "exit_criteria": "test262 built-ins/Promise/ subset passes at 100% with zero spec skips."},
+    "141": {"target_subset": "tests/test262/test/language/expressions/arrow-function", "exit_criteria": "test262 language/expressions/arrow-function/ subset passes at 100% with zero spec skips."},
+    "294": {"target_subset": "tests/test262/test/built-ins/Object/defineProperty; tests/test262/test/built-ins/Object/getOwnPropertyDescriptor", "exit_criteria": "test262 property-descriptor subsets pass at 100% with zero spec skips."},
+    "295": {"target_subset": "tests/test262/test/built-ins/global", "exit_criteria": "test262 built-ins/global/ subset passes at 100% with zero spec skips."},
+    "296": {"target_subset": "tests/test262/test; tests/typescript/tests/cases/conformance", "exit_criteria": "Both full conformance suites pass at 100% with zero spec skips."},
     "87": {"suite": "tooling", "category": "refactor"},
-    "85": {"category": "interpreter", "priority": "P0"},
     "88": {"priority": "P0"},
     "264": {"priority": "P0"},
     "285": {"priority": "P0"},
@@ -404,16 +505,30 @@ def main() -> int:
     # Guard-rail: completed compat tasks must also have a ## Verification section in the
     # markdown file, so background processes cannot mark tasks complete on code alone.
     violations = []
+    generic_targets = []
     for task in tasks:
         if task["suite"] in {"test262", "typescript", "both"}:
-            if not task.get("target_subset") or task["target_subset"].startswith("n/"):
+            target_subset = task.get("target_subset", "")
+            if not target_subset or target_subset.startswith("n/"):
                 violations.append((task["id"], "missing target_subset"))
+            elif " subset" in target_subset or not target_subset.startswith("tests/"):
+                # Vague targets like "expressions subset" make it easy to avoid work.
+                msg = f"generic target_subset: {target_subset[:50]}"
+                if task.get("status") == "completed":
+                    violations.append((task["id"], msg))
+                else:
+                    generic_targets.append((task["id"], msg))
             if not task.get("exit_criteria"):
                 violations.append((task["id"], "missing exit_criteria"))
             if task.get("status") == "completed":
                 file_text = Path(task["file"]).read_text()
                 if not re.search(r"^##\s*Verification", file_text, re.MULTILINE | re.IGNORECASE):
                     violations.append((task["id"], "completed compat task missing ## Verification section"))
+
+    if generic_targets:
+        print("\nGeneric target_subset warnings (pending tasks must be tightened before completion):")
+        for tid, reason in generic_targets:
+            print(f"  {tid}: {reason}")
 
     if violations:
         print("\nTargeting violations:")
