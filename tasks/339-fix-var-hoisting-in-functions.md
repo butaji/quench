@@ -20,7 +20,7 @@ f(); // ReferenceError: x is not defined
 
 ## Exact implementation
 
-Edit `crates/quench-runtime/src/interpreter/call.rs` and `crates/quench-runtime/src/env.rs`:
+Edit `crates/quench-runtime/src/interpreter.rs` and `crates/quench-runtime/src/env.rs`:
 
 1. Add a helper `collect_var_names(stmts: &[Statement]) -> Vec<String>` that walks the immediate statement list and returns the names of every `Statement::VarDeclaration { name, .. }`.
 2. When a user function is called and a new function-scope environment is created, call `collect_var_names` on the function body.

@@ -19,16 +19,18 @@ new Boolean(false) // returns false; should return a Boolean object
 
 ## Exact implementation
 
-Edit `crates/quench-runtime/src/interpreter/call.rs` and `crates/quench-runtime/src/value.rs`:
+Edit `crates/quench-runtime/src/interpreter.rs` and `crates/quench-runtime/src/lib.rs`:
 
 1. In the `[[Construct]]` path, before executing the function body:
    - Create a new ordinary object.
    - Set its `[[Prototype]]` to `callee.prototype`.
    - Bind it as `this` in the new function environment.
-2. Execute the function body, capturing any explicit `return` value.
-3. After execution:
-   - If the returned value is an object, return it.
+2. In `crates/quench-runtime/src/ast.rs`, add `Statement::has_explicit_return()` so the constructor path can distinguish an explicit `return` from an implicit last expression.
+3. Execute the function body, capturing any explicit `return` value.
+4. After execution:
+   - If the body contained an explicit `return` and the returned value is an object, return it.
    - Otherwise, return the `this` binding.
+5. Verify property assignment on the constructed object works (`this.props = props || {}` must leave `this.props` as `{}` when `props` is undefined).
 4. Remove any code that returns the implicit last expression value in constructor mode.
 
 ## Verification
