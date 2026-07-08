@@ -2,6 +2,12 @@
 
 # Task 345: Bind script-level `this` to the global object
 
+## Status: COMPLETED
+
+## Verification
+
+Background process landed the fix; `typeof this` at script level now returns `"object"`.
+
 ## Problem
 
 At the top level of a script, `this` is unbound and `typeof this` returns `"undefined"`.

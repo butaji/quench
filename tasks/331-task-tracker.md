@@ -2,18 +2,35 @@
 
 ## Current Status
 
-### Test Failures (Priority P0)
-1. **var_hoisting_tdz.rs** - 1-8 tests failing depending on run order:
-   - `test_var_hoisting_logs_undefined` - var hoisting not working inside function scope
-   - `test_let_tdz_access_before_init` - TDZ error message incorrect
-   - `test_const_assignment_throws_type_error` - const assignment not throwing
-   - `test_tdz_block_scope` - TDZ block scoping issues
-   - `test_typeof_this_returns_object` - `typeof this` returns 'undefined' not 'object'
-   - `test_constructor_returns_this_not_expression_value` - constructor behavior
+### Test Status - 2026-07-07
 
-2. **scenarios.rs** - 2 tests failing intermittently:
-   - `scenario_for_in_object` - race condition?
-   - `scenario_for_in_string` - race condition?
+**Fixed Issues:**
+1. ✅ **var hoisting in function scope** - `test_var_hoisting_logs_undefined` passes
+2. ✅ **TDZ enforcement** - `test_let_tdz_access_before_init`, `test_tdz_block_scope`, `test_tdz_shadowing_inner_let` pass
+3. ✅ **const assignment TypeError** - `test_const_assignment_throws_type_error` passes
+4. ✅ **`typeof this` returning 'object'** - `test_typeof_this_returns_object` passes
+5. ✅ **Thread safety/concurrency** - `CURRENT_DEPTH` changed from global atomic to thread-local
+
+**Remaining Issues:**
+1. ❌ **`test_constructor_returns_this_not_expression_value`** - `this.props = props || {}` doesn't set property when props is undefined
+   - Bug: `t.props` is `undefined` instead of `{}`
+   - Likely related to how the assignment expression returns `{}` but the object property isn't set
+
+### Test Suite Results
+```
+cargo test -p quench-runtime
+- lib tests: 55 passed; 0 failed
+- conformance: 2 passed; 2 ignored
+- depth_limit: 9 passed; 0 failed
+- equality_operators: 14 passed; 0 failed
+- native_extensions: 5 passed; 0 failed
+- project: 8 passed; 0 failed
+- runtime_issues: 44 passed; 0 failed (was 42 passed; 2 failed)
+- scenarios: 32 passed; 0 failed
+- test262: 0 passed; 4 ignored
+- to_primitive: 10 passed; 0 failed
+- var_hoisting_tdz: 16 passed; 1 failed (was 9 passed; 8 failed)
+```
 
 ### Large Files (Priority P1 - 400 line limit)
 - value.rs: 843 lines (exceeds 400)
@@ -27,15 +44,29 @@
 - TypeScript: 40.7% pass (153/376)
 - test262: 10.9% pass (47/431)
 
+## Changes Made
+
+### interpreter.rs
+- Added `collect_let_const_declarations()` and `collect_let_const_recursive()` for TDZ pre-scanning
+- Added `predeclare_let_const()` to establish TDZ before statement execution
+- Modified `eval_program()` to pre-scan top-level let/const
+- Modified `Statement::Block` to pre-scan let/const before executing block statements
+- Modified `call_value_with_this()` and `call_value()` to pre-scan let/const for function bodies
+- Changed `CURRENT_DEPTH` from global atomic to thread-local to fix concurrency
+- Set global `this` to `globalThis` instead of `undefined`
+
+### env.rs
+- Added `Environment::get_kind()` to look up variable kinds across scope chain
+- Modified `Environment::initialize_declared()` to find scope where variable was declared
+
 ## Task Assignments
 
 | Task | Agent | Status | Notes |
 |------|-------|--------|-------|
-| Fix var hoisting in function scope | subagent-1 | pending | Root cause analysis + fix |
-| Fix TDZ enforcement and error messages | subagent-2 | pending | TDZ checking and messaging |
-| Fix const assignment TypeError | subagent-2 | pending | Const enforcement |
-| Fix `typeof this` returning 'undefined' | subagent-3 | pending | Global this binding |
-| Fix constructor return behavior | subagent-3 | pending | Return this vs expression |
-| Investigate scenario race condition | subagent-4 | pending | Serial tests vs parallel |
-| File split analysis | subagent-5 | pending | Plan for 400-line enforcement |
-| Run conformance baseline | main | pending | Current state documentation |
+| Fix var hoisting in function scope | code.task-292-var-hoisting-tdz | ✅ DONE | Implemented predeclare_var() |
+| Fix TDZ enforcement | code.task-292-var-hoisting-tdz | ✅ DONE | Added predeclare_let_const() |
+| Fix const assignment TypeError | manual | ✅ DONE | Added get_kind() check in assign_to() |
+| Fix `typeof this` | manual | ✅ DONE | Set this to globalThis |
+| Fix concurrency | manual | ✅ DONE | Changed CURRENT_DEPTH to thread_local |
+| Fix constructor return behavior | pending | ❌ | `this.props` assignment issue |
+| File split analysis | pending | pending | Plan for 400-line enforcement |

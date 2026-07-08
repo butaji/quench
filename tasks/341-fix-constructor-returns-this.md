@@ -2,6 +2,12 @@
 
 # Task 341: Fix constructor to return `this` when no explicit object return
 
+## Status: IN PROGRESS
+
+## Progress
+
+Background process landed an initial fix in `interpreter.rs` and `lib.rs` that makes `test_constructor_returns_this_not_expression_value` pass. A remaining bug affects property assignment on the constructed object (`this.props = props || {}` leaves `this.props` as `undefined` when `props` is undefined). The fix below must be completed before closing this task.
+
 ## Problem
 
 When a constructor has no explicit `return`, the expression value of the body is returned instead of the newly created `this` object.

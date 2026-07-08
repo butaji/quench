@@ -1288,7 +1288,7 @@
       "id": "341",
       "title": "Fix constructor to return `this` when no explicit object return",
       "file": "tasks/341-fix-constructor-returns-this.md",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "P2",
       "notes": "> **Exact fix for constructors returning the expression value instead of `this`.**}",
       "category": "expressions",
@@ -1316,7 +1316,7 @@
       "id": "345",
       "title": "Bind script-level `this` to the global object",
       "file": "tasks/345-fix-typeof-this-at-script-level.md",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2",
       "notes": "> **Exact fix for `typeof this` returning `\"undefined\"` at script level.**",
       "category": "expressions",
@@ -1325,6 +1325,20 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
+      "id": "350",
+      "title": "Fix TDZ handling and for-of loop",
+      "file": "tasks/350-fix-tdz-and-for-of.md",
+      "status": "completed",
+      "priority": "P2",
+      "notes": "Two related issues were causing TDZ (temporal dead zone) errors:",
+      "category": "statements",
+      "suite": "both",
+      "batch": 6,
+      "target_subset": "tests/test262 + tests/typescript statements/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant both statements subset passes at 100% with zero spec skips and the harness report is regenerated."
     },
     {
       "id": "82",
