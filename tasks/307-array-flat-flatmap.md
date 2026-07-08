@@ -34,3 +34,21 @@ All Array.flat/flatMap tests pass:
 - The flat implementation uses recursive `flatten_array()` helper
 - flatMap uses `call_callback()` to properly invoke callbacks with (element, index, array) args
 - `ObjectKind::Array` check is used to determine if flatMap result should be flattened
+
+## Verification
+
+Run the conformance harnesses and confirm the relevant built-ins subset passes at
+100% with zero spec skips:
+
+```bash
+cargo test -p quench-runtime --test test262 -- --ignored --nocapture
+cargo test -p quench-runtime --test conformance -- --test-threads=1
+# Inspect target/test262_report.json and target/conformance_report.json:
+# built-ins/Array subset shows 100% pass and 0 spec skips.
+```
+
+Run unit regression tests:
+
+```bash
+cargo test -p quench-runtime
+```

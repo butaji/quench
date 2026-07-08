@@ -56,3 +56,12 @@ Every compatibility task must be targeted at a measurable subset of the spec sui
 | `exit_criteria` | sentence | Verifiable 100% pass condition, e.g. "test262 language/expressions/ subset passes at 100% with zero spec skips." |
 
 No compatibility task may be marked complete without a regenerated harness report proving its `target_subset` is at 100% with zero spec skips. The batch taxonomy is in `docs/js-ts-compatibility-roadmap.md`.
+
+## Completion guard rails
+
+See `docs/task-completion-policy.md` for the full policy. In short:
+
+1. A task is `COMPLETED` only after its `target_subset` shows 100% pass / 0 skips in a regenerated harness report.
+2. Background processes may implement code and tests but may **not** change a task's `## Status:` to `COMPLETED`.
+3. Every task file must have a `## Verification` section and an `exit_criteria` field.
+4. No affected task may close while the background process has uncommitted code changes.

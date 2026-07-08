@@ -65,6 +65,16 @@ cargo check -p quench-runtime
 # No errors or warnings
 ```
 
+## Verification
+
+Run the test262 harness after any harness-loader change and confirm the report
+regenerated with zero skips caused by missing helper stubs:
+
+```bash
+cargo test -p quench-runtime --test test262 -- --ignored --nocapture
+# Inspect target/test262_report.json: helper-related skips == 0
+```
+
 ## Impact
 
 - Previously skipped test262 tests (298) due to stubbed helpers can now run

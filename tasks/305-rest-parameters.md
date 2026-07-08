@@ -115,3 +115,21 @@ All 8 rest parameter tests now pass:
 - ✅ Rest with prefix: `function test(a, b, ...rest) { return rest; }`
 - ✅ Arrow rest: `const test = (...args) => args`
 - ✅ Element access: `args[0]`, `args[1]`
+
+## Verification
+
+Run the conformance harnesses and confirm the relevant functions subset passes at
+100% with zero spec skips:
+
+```bash
+cargo test -p quench-runtime --test test262 -- --ignored --nocapture
+cargo test -p quench-runtime --test conformance -- --test-threads=1
+# Inspect target/test262_report.json and target/conformance_report.json:
+# functions/ subsets show 100% pass and 0 spec skips.
+```
+
+Run unit regression tests:
+
+```bash
+cargo test -p quench-runtime
+```

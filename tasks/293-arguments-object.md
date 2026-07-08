@@ -1,6 +1,6 @@
 # Task 293: Implement arguments object in functions
 
-## Status: COMPLETED
+## Status: PENDING
 
 ## Gap
 
@@ -36,6 +36,24 @@ All arguments object tests pass:
 - test_arguments_object_empty_function
 - test_arguments_object_exists_in_nested_function
 - test_arguments_object_arrow_function_throws_reference_error
+
+## Verification
+
+Bring the relevant functions subset to 100% pass / zero spec skips and regenerate
+the conformance reports:
+
+```bash
+cargo test -p quench-runtime --test test262 -- --ignored --nocapture
+cargo test -p quench-runtime --test conformance -- --test-threads=1
+# Inspect target/test262_report.json and target/conformance_report.json:
+# functions/ subsets show 100% pass and 0 spec skips.
+```
+
+Also run unit regression tests:
+
+```bash
+cargo test -p quench-runtime
+```
 
 ## Notes
 

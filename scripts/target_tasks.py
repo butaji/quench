@@ -77,7 +77,14 @@ MANUAL_OVERRIDES = {
     "337": {"suite": "tooling", "category": "testing", "batch": 6},
     "338": {"suite": "runtime", "category": "interpreter", "priority": "P0"},
     "342": {"suite": "tooling", "category": "testing"},
+    "351": {"suite": "tooling", "category": "testing", "batch": 0},
     "344": {"priority": "P0", "suite": "both", "category": "harness", "batch": 0},
+    "253": {
+        "suite": "harness",
+        "category": "harness",
+        "target_subset": "tests/test262/harness/ helpers loaded into the runner",
+        "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed.",
+    },
     "87": {"suite": "tooling", "category": "refactor"},
     "85": {"category": "interpreter", "priority": "P0"},
     "88": {"priority": "P0"},
@@ -394,6 +401,8 @@ def main() -> int:
         print(f"  {suite}: {by_suite[suite]} tasks")
 
     # Validation: every compat task must have a concrete target_subset and exit_criteria.
+    # Guard-rail: completed compat tasks must also have a ## Verification section in the
+    # markdown file, so background processes cannot mark tasks complete on code alone.
     violations = []
     for task in tasks:
         if task["suite"] in {"test262", "typescript", "both"}:
@@ -401,6 +410,10 @@ def main() -> int:
                 violations.append((task["id"], "missing target_subset"))
             if not task.get("exit_criteria"):
                 violations.append((task["id"], "missing exit_criteria"))
+            if task.get("status") == "completed":
+                file_text = Path(task["file"]).read_text()
+                if not re.search(r"^##\s*Verification", file_text, re.MULTILINE | re.IGNORECASE):
+                    violations.append((task["id"], "completed compat task missing ## Verification section"))
 
     if violations:
         print("\nTargeting violations:")

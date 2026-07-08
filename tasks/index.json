@@ -50,11 +50,11 @@
       "priority": "P0",
       "notes": "Measurement blocker. ~298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort.",
       "category": "harness",
-      "suite": "test262",
+      "suite": "harness",
       "batch": 0,
-      "target_subset": "tests/test262 harness/ subset",
+      "target_subset": "tests/test262/harness/ helpers loaded into the runner",
       "blocked_by": [],
-      "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+      "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed."
     },
     {
       "id": "334",
@@ -83,6 +83,20 @@
       "target_subset": "tests/test262 + tests/typescript harness/ subset",
       "blocked_by": [],
       "exit_criteria": "Relevant both harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+    },
+    {
+      "id": "351",
+      "title": "Enforce task completion guard rails",
+      "file": "tasks/351-task-completion-guard-rails.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Hard policy: no task can be marked complete without 100% conformance evidence.**",
+      "category": "testing",
+      "suite": "tooling",
+      "batch": 0,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "85",
@@ -864,7 +878,7 @@
       "id": "293",
       "title": "Implement arguments object in functions",
       "file": "tasks/293-arguments-object.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P2",
       "notes": "- Partial move semantics in Rust required careful handling when cloning arguments",
       "category": "functions",
