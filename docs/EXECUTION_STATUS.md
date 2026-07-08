@@ -121,6 +121,8 @@ new Boolean(false) // returns false instead of Boolean object
 2. After execution, if the body returned an object, return that object; otherwise return the `this` binding.
 3. Update `crates/quench-runtime/src/interpreter/call.rs` and the constructor logic in `crates/quench-runtime/src/value.rs`.
 
+**Status:** Initial fix landed by the background process; a remaining `this.props = props || {}` assignment bug keeps the task open.
+
 **Tracking:** Task 341.
 
 ### 7. `typeof this` at script level returns `"undefined"`
@@ -136,6 +138,8 @@ typeof this // "undefined"
 1. In `eval_program` for `Program::Script`, bind `this` to the global object before executing statements.
 2. In `eval_program` for `Program::Module`, bind `this` to `undefined`.
 
+**Status:** Fix landed by the background process; `typeof this` at script level now returns `"object"`.
+
 **Tracking:** Task 345.
 
 ## Exit criteria for this status page
@@ -144,4 +148,5 @@ typeof this // "undefined"
 - [ ] Task 85 closed: recursive stress test (`f(100000)`) passes without native stack overflow.
 - [x] Task 339 closed: `var` hoisting inside functions works.
 - [x] Task 340 closed: `let`/`const` TDZ and const assignment `TypeError` enforced.
-- [ ] Tasks 341 and 345 closed: constructor `this` and script-level `typeof this` still pending.
+- [ ] Task 341 closed: constructor `this` works, including property assignment on the constructed object.
+- [x] Task 345 closed: script-level `typeof this` returns `"object"`.
