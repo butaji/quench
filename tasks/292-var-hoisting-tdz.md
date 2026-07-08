@@ -2,11 +2,13 @@
 
 # Task 292: Implement var hoisting and let/const TDZ
 
-## Status: COMPLETED
+## Status: IN PROGRESS
 
 ## Why reopened
 
 The previous implementation was part of the bytecode drift and was reverted. The current committed code does not hoist `var` inside functions and does not enforce `let`/`const` TDZ.
+
+**Watchdog note (2026-07-08):** This task was marked `COMPLETED` without meeting its exit criteria. `var_hoisting_tdz.rs` still fails 2/17 tests (`test_constructor_returns_this_not_expression_value`, `test_tdz_shadowing_inner_let`). It remains blocked by Tasks 339 and 340 and cannot close until all 17 tests pass and the test262 subsets improve.
 
 ## Exact path forward
 

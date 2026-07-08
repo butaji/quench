@@ -79,6 +79,7 @@ MANUAL_OVERRIDES = {
     "342": {"suite": "tooling", "category": "testing"},
     "351": {"suite": "tooling", "category": "testing", "batch": 0},
     "352": {"suite": "tooling", "category": "testing", "batch": 0},
+    "353": {"suite": "tooling", "category": "testing", "batch": 0},
     "344": {"priority": "P0", "suite": "both", "category": "harness", "batch": 0},
     # Coverage milestone tasks must cite concrete matrix paths, not broad categories.
     "309": {"target_subset": "tests/test262/test/language/expressions", "exit_criteria": "All test262 language/expressions/ files are active and pass at 100% with zero spec skips."},

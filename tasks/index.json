@@ -113,6 +113,20 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
+      "id": "353",
+      "title": "Test coverage status",
+      "file": "tasks/353-test-coverage-status.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "> **Live dashboard of test health. Updated by the watchdog as the code changes.**",
+      "category": "testing",
+      "suite": "tooling",
+      "batch": 0,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
@@ -864,7 +878,7 @@
       "id": "292",
       "title": "Implement var hoisting and let/const TDZ",
       "file": "tasks/292-var-hoisting-tdz.md",
-      "status": "completed",
+      "status": "in_progress",
       "priority": "P2",
       "notes": "- **var hoisting**: `var` declarations are now hoisted to function scope (or script scope at top level). The variable is declared as `DeclaredOnly` (undefined value) at scope entry, then initialized when the declaration statement is evaluated.",
       "category": "statements",
@@ -1367,6 +1381,20 @@
       "target_subset": "tests/test262/test/language/statements/for-of; tests/test262/test/language/block-scope",
       "blocked_by": [],
       "exit_criteria": "test262 language/statements/for-of/ and language/block-scope/ subsets pass at 100% with zero spec skips."
+    },
+    {
+      "id": "354",
+      "title": "Fix stack overflow in examples",
+      "file": "tasks/354-fix-stack-overflow-in-examples.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "> **Stack overflow and example-health tracker. The proper fix is Task 85 (trampoline interpreter).**",
+      "category": "interpreter",
+      "suite": "runtime",
+      "batch": 6,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "82",
