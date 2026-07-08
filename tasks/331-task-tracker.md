@@ -68,5 +68,6 @@ cargo test -p quench-runtime
 | Fix const assignment TypeError | manual | ✅ DONE | Added get_kind() check in assign_to() |
 | Fix `typeof this` | manual | ✅ DONE | Set this to globalThis |
 | Fix concurrency | manual | ✅ DONE | Changed CURRENT_DEPTH to thread_local |
-| Fix constructor return behavior | pending | ❌ | `this.props` assignment issue |
-| File split analysis | pending | pending | Plan for 400-line enforcement |
+| Fix constructor return behavior | manual | 🔄 IN PROGRESS | Initial fix landed; `this.props` assignment bug remains |
+| Fix TDZ/for-of loop | code.task-350 | ✅ DONE | `collect_toplevel_let_const` + `initialize_declared` fix |
+| File split analysis | pending | ❌ | Plan for 400-line enforcement |
