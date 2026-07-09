@@ -189,6 +189,34 @@ mod tests {
         assert_eq!(result, Value::String("12".to_string()));
     }
 
+    #[test]
+    fn scenario_for_of_const() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let items = []; for (const x of [1, 2, 3]) { items.push(x); } items.join(',')").unwrap();
+        assert_eq!(result, Value::String("1,2,3".to_string()));
+    }
+
+    #[test]
+    fn scenario_for_of_break() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let items = []; for (let x of [1, 2, 3, 4, 5]) { if (x === 3) break; items.push(x); } items.join(',')").unwrap();
+        assert_eq!(result, Value::String("1,2".to_string()));
+    }
+
+    #[test]
+    fn scenario_for_of_continue() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let items = []; for (let x of [1, 2, 3, 4, 5]) { if (x === 3) continue; items.push(x); } items.join(',')").unwrap();
+        assert_eq!(result, Value::String("1,2,4,5".to_string()));
+    }
+
+    #[test]
+    fn scenario_for_of_empty() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let count = 0; for (let x of []) { count++; } count").unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
     // =========================================================================
     // for-in scenarios
     // =========================================================================
@@ -630,6 +658,39 @@ mod tests {
             obj.a
         "#).unwrap();
         assert_eq!(result, Value::Undefined);
+    }
+
+    // =========================================================================
+    // Spread in function call scenarios
+    // =========================================================================
+
+    #[test]
+    fn scenario_spread_in_call() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("function f(a,b,c) { return a+b+c; } f(...[1,2,3])").unwrap();
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn scenario_spread_in_call_with_mixed_args() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("function f(a,b,c,d) { return a+b+c+d; } f(1, ...[2,3], 4)").unwrap();
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn scenario_spread_in_call_with_object() {
+        let mut ctx = Context::new().unwrap();
+        // Spread in new expression (constructor call)
+        let result = ctx.eval("function Point(x, y) { this.x = x; this.y = y; } new Point(...[1, 2]).x").unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn scenario_spread_in_call_string() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("function f(a,b) { return a+b; } f(...'hi')").unwrap();
+        assert_eq!(result, Value::String("hi".to_string()));
     }
 }
 
