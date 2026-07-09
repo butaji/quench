@@ -42,7 +42,8 @@ pub mod swc_parse;
 pub mod test262;
 pub mod value;
 
-use std::cell::Cell;
+
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -160,7 +161,7 @@ impl Context {
                 &self.shape_interner,
             );
             builder.collect_type_map(&script);
-            collect_script_bindings(&mut builder, &script);
+            shadow::lower::collect_script_bindings(&mut builder, &script);
             builder.bindings.clone()
         };
 
@@ -175,7 +176,7 @@ impl Context {
 
         let mut nodes: Vec<&shadow::ShadowNode> = Vec::new();
         for stmt in &script.body {
-            nodes.push(lower_shadow_stmt(
+            nodes.push(shadow::lower::lower_shadow_stmt(
                 &bump,
                 &mut self.string_interner,
                 &self.shape_interner,
@@ -194,7 +195,7 @@ impl Context {
         };
 
         let result = shadow::ShadowVm::new(&bump, self, mode).run(root)?;
-        Ok(jsvalue_to_value(result, &self.string_interner))
+        Ok(shadow::lower::jsvalue_to_value(result, &self.string_interner))
     }
 
     /// Set a global value in the root environment.
@@ -285,218 +286,6 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self::new().expect("Failed to create JS context")
-    }
-}
-
-/// Collect `var`/`let`/`const` bindings declared at the top level of a script
-/// and assign each one a local slot in the shadow builder.
-fn collect_script_bindings<'a>(
-    builder: &mut shadow::ShadowBuilder<'a>,
-    script: &swc_ecma_ast::Script,
-) {
-    for stmt in &script.body {
-        if let swc_ecma_ast::Stmt::Decl(swc_ecma_ast::Decl::Var(var_decl)) = stmt {
-            for decl in &var_decl.decls {
-                if let swc_ecma_ast::Pat::Ident(ident) = &decl.name {
-                    let name = ident.id.sym.to_string();
-                    let slot = builder.local_for(&name);
-                    let _sym = builder.intern(&name);
-                    builder.bindings.insert(name, shadow::Binding::Local(slot));
-                }
-            }
-        }
-    }
-}
-
-/// Lower a single swc statement into a shadow tree node.
-fn lower_shadow_stmt<'bump>(
-    bump: &'bump bumpalo::Bump,
-    interner: &mut StringInterner,
-    shapes: &ShapeInterner,
-    bindings: &HashMap<String, shadow::Binding>,
-    next_local: &mut u16,
-    stmt: &swc_ecma_ast::Stmt,
-) -> Result<&'bump shadow::ShadowNode<'bump>, JsError> {
-    match stmt {
-        swc_ecma_ast::Stmt::Expr(expr_stmt) => {
-            lower_shadow_expr(bump, interner, shapes, bindings, next_local, &expr_stmt.expr)
-        }
-        swc_ecma_ast::Stmt::Decl(swc_ecma_ast::Decl::Var(var_decl)) => {
-            let mut last = None;
-            for decl in &var_decl.decls {
-                if let swc_ecma_ast::Pat::Ident(ident) = &decl.name {
-                    let name = ident.id.sym.to_string();
-                    let slot = var_slot(&name, bindings, next_local);
-                    if let Some(init) = &decl.init {
-                        let value = lower_shadow_expr(bump, interner, shapes, bindings, next_local, init)?;
-                        let node = bump.alloc(shadow::ShadowNode::StoreLocal {
-                            index: slot,
-                            value,
-                        });
-                        last = Some(node);
-                    }
-                }
-            }
-            Ok(last.unwrap_or_else(|| bump.alloc(shadow::ShadowNode::This)))
-        }
-        _ => Err(JsError(format!("unsupported shadow statement: {:?}", stmt))),
-    }
-}
-
-/// Look up the local slot for a declared variable, allocating a fresh slot if
-/// the binding has not been collected.
-fn var_slot(
-    name: &str,
-    bindings: &HashMap<String, shadow::Binding>,
-    next_local: &mut u16,
-) -> u16 {
-    if let Some(shadow::Binding::Local(slot)) = bindings.get(name) {
-        *slot
-    } else {
-        let slot = *next_local;
-        *next_local += 1;
-        slot
-    }
-}
-
-/// Lower a single swc expression into a shadow tree node.
-fn lower_shadow_expr<'bump>(
-    bump: &'bump bumpalo::Bump,
-    interner: &mut StringInterner,
-    shapes: &ShapeInterner,
-    bindings: &HashMap<String, shadow::Binding>,
-    next_local: &mut u16,
-    expr: &swc_ecma_ast::Expr,
-) -> Result<&'bump shadow::ShadowNode<'bump>, JsError> {
-    match expr {
-        swc_ecma_ast::Expr::Bin(bin) => {
-            let left = lower_shadow_expr(bump, interner, shapes, bindings, next_local, &bin.left)?;
-            let right = lower_shadow_expr(bump, interner, shapes, bindings, next_local, &bin.right)?;
-            let node = match bin.op {
-                swc_ecma_ast::BinaryOp::Add => shadow::ShadowNode::Add {
-                    left,
-                    right,
-                    state: Cell::new(shadow::AddState::Uninitialized),
-                    hint: shadow::TypeHint::Any,
-                },
-                swc_ecma_ast::BinaryOp::Sub => shadow::ShadowNode::Sub { left, right },
-                swc_ecma_ast::BinaryOp::Mul => shadow::ShadowNode::Mul { left, right },
-                swc_ecma_ast::BinaryOp::Div => shadow::ShadowNode::Div { left, right },
-                _ => return Err(JsError(format!("unsupported binary operator: {:?}", bin.op))),
-            };
-            Ok(bump.alloc(node))
-        }
-        swc_ecma_ast::Expr::Ident(ident) => {
-            let name = ident.sym.to_string();
-            if let Some(binding) = bindings.get(&name) {
-                Ok(bump.alloc(shadow::ShadowNode::BindingRead(*binding)))
-            } else {
-                let sym = interner.intern(&name);
-                Ok(bump.alloc(shadow::ShadowNode::GlobalRead(sym)))
-            }
-        }
-        swc_ecma_ast::Expr::Lit(lit) => match lit {
-            swc_ecma_ast::Lit::Num(num) => {
-                let v = num.value;
-                if v.fract() == 0.0 && v >= i32::MIN as f64 && v <= i32::MAX as f64 {
-                    Ok(bump.alloc(shadow::ShadowNode::LiteralInt(v as i32)))
-                } else {
-                    Ok(bump.alloc(shadow::ShadowNode::LiteralDouble(v)))
-                }
-            }
-            swc_ecma_ast::Lit::Str(s) => {
-                let sym = interner.intern(s.value.as_str().unwrap_or(""));
-                Ok(bump.alloc(shadow::ShadowNode::LiteralString(sym)))
-            }
-            swc_ecma_ast::Lit::Bool(b) => {
-                Ok(bump.alloc(shadow::ShadowNode::LiteralInt(if b.value { 1 } else { 0 })))
-            }
-            swc_ecma_ast::Lit::Null(_) => Ok(bump.alloc(shadow::ShadowNode::This)),
-            _ => Err(JsError(format!("unsupported literal: {:?}", lit))),
-        },
-        swc_ecma_ast::Expr::Object(obj_lit) => {
-            let mut prop_names = Vec::new();
-            let mut prop_values: Vec<(crate::interner::Symbol, &swc_ecma_ast::Expr)> = Vec::new();
-            for prop in &obj_lit.props {
-                match prop {
-                    swc_ecma_ast::PropOrSpread::Prop(prop) => match prop.as_ref() {
-                        swc_ecma_ast::Prop::KeyValue(kv) => {
-                            let name = match &kv.key {
-                                swc_ecma_ast::PropName::Ident(ident) => ident.sym.to_string(),
-                                swc_ecma_ast::PropName::Str(s) => s.value.as_str().unwrap_or("").to_string(),
-                                _ => return Err(JsError("unsupported object key".into())),
-                            };
-                            let sym = interner.intern(&name);
-                            prop_names.push(sym);
-                            prop_values.push((sym, &kv.value));
-                        }
-                        _ => return Err(JsError("unsupported object property".into())),
-                    },
-                    _ => return Err(JsError("unsupported spread property".into())),
-                }
-            }
-            let shape = shapes.shape_for(&prop_names);
-            let mut node: &shadow::ShadowNode = bump.alloc(shadow::ShadowNode::NewObject {
-                shape: shape.clone(),
-            });
-            for (sym, value_expr) in prop_values {
-                let value = lower_shadow_expr(bump, interner, shapes, bindings, next_local, value_expr)?;
-                let offset = shape
-                    .find_offset(sym)
-                    .ok_or_else(|| JsError("shape missing property".into()))?;
-                let is_inline = offset < shadow::INLINE_SLOTS;
-                let store_offset = if is_inline { offset } else { offset - shadow::INLINE_SLOTS };
-                node = bump.alloc(shadow::ShadowNode::StaticPropWrite {
-                    obj: node,
-                    prop: sym,
-                    shape_id: shape.id,
-                    offset: store_offset as u16,
-                    is_inline,
-                    value,
-                });
-            }
-            Ok(node)
-        }
-        swc_ecma_ast::Expr::Member(member) => {
-            let obj = lower_shadow_expr(bump, interner, shapes, bindings, next_local, &member.obj)?;
-            let prop_name = match &member.prop {
-                swc_ecma_ast::MemberProp::Ident(ident) => ident.sym.to_string(),
-                _ => return Err(JsError("unsupported member property".into())),
-            };
-            let sym = interner.intern(&prop_name);
-            Ok(bump.alloc(shadow::ShadowNode::PropRead {
-                obj,
-                prop: sym,
-                cache: Cell::new(shadow::PropCache::default()),
-            }))
-        }
-        _ => Err(JsError(format!("unsupported shadow expression: {:?}", expr))),
-    }
-}
-
-fn jsvalue_to_value(
-    js: crate::nanbox::JSValue,
-    interner: &crate::interner::StringInterner,
-) -> Value {
-    if js.is_undefined() { Value::Undefined }
-    else if js.is_null() { Value::Null }
-    else if js.is_true() { Value::Boolean(true) }
-    else if js.is_false() { Value::Boolean(false) }
-    else if js.is_int32() { Value::Number(js.as_int32_unchecked() as f64) }
-    else if js.is_double() { Value::Number(js.as_double_unchecked()) }
-    else if js.is_object() {
-        Value::ObjectId(js.as_object().expect("nanbox claimed object"))
-    }
-    else if js.is_string() {
-        let sym = js.as_string().unwrap();
-        let s = interner.resolve(sym).unwrap_or("").to_string();
-        Value::String(s)
-    } else if js.is_symbol() {
-        let sym = js.as_symbol().unwrap();
-        let s = interner.resolve(sym).unwrap_or("").to_string();
-        Value::Symbol(s)
-    } else {
-        Value::Undefined
     }
 }
 
