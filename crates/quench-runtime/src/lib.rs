@@ -249,14 +249,14 @@ impl Context {
                                 eval::eval_expression(expr, &call_env)
                             }
                             ast::ArrowBody::Block(stmts) => {
-                                eval::eval_statements(&*stmts, &call_env, true)
+                                eval::eval_statements(stmts, &call_env, true)
                             }
                         }
                     } else {
                         Ok(Value::Undefined)
                     }
                 } else {
-                    eval::eval_statements(&*f.body, &call_env, false)
+                    eval::eval_statements(&f.body, &call_env, false)
                 }
             }
             Value::NativeFunction(nf) => {
@@ -419,5 +419,94 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval_shadow("var o = {a: 3}; o.a", crate::shadow::ModuleMode::Static).unwrap();
         assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn test_runtime_ink_object() {
+        let mut ctx = Context::new().unwrap();
+        let runtime_path = std::path::Path::new(
+            "/Users/admin/Code/GitHub/quench/src/runtime.js"
+        );
+        ctx.load_runtime_from(runtime_path).unwrap();
+        
+        // Test ink object exists
+        let result = ctx.eval("typeof ink");
+        assert!(result.is_ok(), "typeof ink failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("object".to_string()));
+        
+        // Test ink.createElement exists
+        let result = ctx.eval("typeof ink.createElement");
+        assert!(result.is_ok(), "typeof ink.createElement failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("function".to_string()));
+        
+        // Test ink.render exists
+        let result = ctx.eval("typeof ink.render");
+        assert!(result.is_ok(), "typeof ink.render failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("function".to_string()));
+        
+        // Test ink.Box
+        let result = ctx.eval("ink.Box");
+        assert!(result.is_ok(), "ink.Box failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("ink-box".to_string()));
+        
+        // Test ink.Text
+        let result = ctx.eval("ink.Text");
+        assert!(result.is_ok(), "ink.Text failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("ink-text".to_string()));
+    }
+
+    #[test]
+    fn test_function_call_and_apply() {
+        let mut ctx = Context::new().unwrap();
+        let runtime_path = std::path::Path::new(
+            "/Users/admin/Code/GitHub/quench/src/runtime.js"
+        );
+        ctx.load_runtime_from(runtime_path).unwrap();
+        
+        // Test Function.prototype.call with this binding
+        let result = ctx.eval(r#"
+            const obj = { x: 42 };
+            const test = function() { return this.x; };
+            test.call(obj);
+        "#);
+        assert_eq!(result.unwrap(), Value::Number(42.0));
+        
+        // Test Function.prototype.call without this binding
+        let result = ctx.eval(r#"
+            const test = function() { return 42; };
+            test.call();
+        "#);
+        assert_eq!(result.unwrap(), Value::Number(42.0));
+        
+        // Test Function.prototype.apply
+        let result = ctx.eval(r#"
+            const obj = { x: 100 };
+            const test = function() { return this.x; };
+            test.apply(obj);
+        "#);
+        assert_eq!(result.unwrap(), Value::Number(100.0));
+    }
+    
+    #[test]
+    fn test_component_instance_render() {
+        let mut ctx = Context::new().unwrap();
+        let runtime_path = std::path::Path::new(
+            "/Users/admin/Code/GitHub/quench/src/runtime.js"
+        );
+        
+        // Load runtime using stack machine
+        ctx.load_runtime_from(runtime_path).unwrap();
+        
+        // Check what ComponentInstance.prototype looks like
+        let result = ctx.eval("typeof ComponentInstance.prototype");
+        println!("prototype type: {:?}", result);
+        
+        // Now set testProp using stack machine
+        let result = ctx.eval_stack_machine("ComponentInstance.prototype.testProp = 42");
+        println!("stack machine set result: {:?}", result);
+        
+        // Check if testProp is set
+        let result = ctx.eval("ComponentInstance.prototype.testProp");
+        println!("testProp value: {:?}", result);
     }
 }

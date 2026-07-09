@@ -35,7 +35,7 @@ fn run_esbuild(source: &str, loader: &str) -> Result<String> {
             "--outfile=/dev/stdout",
             &format!("--loader:.tsx={}", loader),
             &format!("--loader:.ts={}", loader),
-            "--format=esm",
+            "--format=cjs",
         ])
         .output()
         .context("Failed to run esbuild")?;
@@ -54,8 +54,11 @@ fn transform_js(js: &str) -> Result<String> {
     // Extract ink imports to know what to prefix
     let ink_imports = extract_ink_imports(js);
 
-    // Step 1: Remove react/ink imports
-    let js = strip_imports(js);
+    // Step 0: Extract ink require variable name and replace its references
+    let js = replace_ink_require_refs(js);
+
+    // Step 1: Remove ESM react/ink imports
+    let js = strip_imports(&js);
 
     // Step 2: Transform React.createElement calls
     let js = js
@@ -169,6 +172,62 @@ fn strip_imports(js: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Replace CommonJS require() variable references with global ink/react.
+/// esbuild --format=cjs outputs: var import_ink = require("ink");
+/// This function strips the require line and replaces all import_ink.X with ink.X
+fn replace_ink_require_refs(js: &str) -> String {
+    let mut result = String::new();
+    let mut ink_var_name: Option<String> = None;
+    let mut react_var_name: Option<String> = None;
+    
+    for line in js.lines() {
+        let trimmed = line.trim();
+        
+        // Detect ink require: var import_ink = require("ink");
+        if trimmed.starts_with("var ") && trimmed.contains("require(") {
+            if trimmed.contains("\"ink\"") || trimmed.contains("'ink'") {
+                // Extract variable name: "var import_ink = require..." -> "import_ink"
+                if let Some(var_name) = extract_cjs_var_name(trimmed) {
+                    ink_var_name = Some(var_name);
+                    continue; // Skip the require line
+                }
+            }
+            if trimmed.contains("\"react\"") || trimmed.contains("'react'") {
+                if let Some(var_name) = extract_cjs_var_name(trimmed) {
+                    react_var_name = Some(var_name);
+                    continue; // Skip the require line
+                }
+            }
+        }
+        
+        result.push_str(line);
+        result.push('\n');
+    }
+    
+    // Replace references to ink variable with ink global
+    if let Some(ref var_name) = ink_var_name {
+        result = result.replace(&format!("{}.", var_name), "ink.");
+        result = result.replace(&format!("{}", var_name), "ink");
+    }
+    
+    // For React, just remove references (we convert React.createElement to ink.createElement)
+    if let Some(ref var_name) = react_var_name {
+        // Replace React.createElement calls - the var name becomes irrelevant
+        result = result.replace(&format!("{}.createElement(", var_name), "React.createElement(");
+    }
+    
+    result
+}
+
+/// Extract the variable name from a CJS require line.
+/// "var import_ink = require(\"ink\")" -> Some("import_ink")
+fn extract_cjs_var_name(line: &str) -> Option<String> {
+    // Pattern: "var " followed by identifier followed by " = require"
+    let after_var = line.strip_prefix("var ")?;
+    let before_require = after_var.split("=").next()?;
+    Some(before_require.trim().to_string())
 }
 
 // SHIMS constant

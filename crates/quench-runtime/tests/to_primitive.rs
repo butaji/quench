@@ -13,7 +13,7 @@ fn test_to_js_string_primitives() {
     assert_eq!(to_js_string(&Value::Boolean(true)), "true");
     assert_eq!(to_js_string(&Value::Boolean(false)), "false");
     assert_eq!(to_js_string(&Value::Number(42.0)), "42");
-    assert_eq!(to_js_string(&Value::Number(3.14)), "3.14");
+    assert_eq!(to_js_string(&Value::Number(std::f64::consts::PI)), "3.141592653589793");
     assert_eq!(to_js_string(&Value::String("hello".to_string())), "hello");
     assert_eq!(to_js_string(&Value::Number(f64::NAN)), "NaN");
     assert_eq!(to_js_string(&Value::Number(f64::INFINITY)), "Infinity");
@@ -27,7 +27,7 @@ fn test_to_number_primitives() {
     assert_eq!(to_number(&Value::Boolean(true)), 1.0);
     assert_eq!(to_number(&Value::Boolean(false)), 0.0);
     assert_eq!(to_number(&Value::Number(42.0)), 42.0);
-    assert_eq!(to_number(&Value::Number(3.14)), 3.14);
+    assert_eq!(to_number(&Value::Number(std::f64::consts::PI)), std::f64::consts::PI);
     assert_eq!(to_number(&Value::String("42".to_string())), 42.0);
     assert_eq!(to_number(&Value::String("".to_string())), 0.0);
     assert_eq!(to_number(&Value::String("   ".to_string())), 0.0);
@@ -36,15 +36,15 @@ fn test_to_number_primitives() {
 
 #[test]
 fn test_to_bool_primitives() {
-    assert_eq!(to_bool(&Value::Undefined), false);
-    assert_eq!(to_bool(&Value::Null), false);
-    assert_eq!(to_bool(&Value::Boolean(true)), true);
-    assert_eq!(to_bool(&Value::Boolean(false)), false);
-    assert_eq!(to_bool(&Value::Number(42.0)), true);
-    assert_eq!(to_bool(&Value::Number(0.0)), false);
-    assert_eq!(to_bool(&Value::Number(f64::NAN)), false);
-    assert_eq!(to_bool(&Value::String("hello".to_string())), true);
-    assert_eq!(to_bool(&Value::String("".to_string())), false);
+    assert!(!to_bool(&Value::Undefined));
+    assert!(!to_bool(&Value::Null));
+    assert!(to_bool(&Value::Boolean(true)));
+    assert!(!to_bool(&Value::Boolean(false)));
+    assert!(to_bool(&Value::Number(42.0)));
+    assert!(!to_bool(&Value::Number(0.0)));
+    assert!(!to_bool(&Value::Number(f64::NAN)));
+    assert!(to_bool(&Value::String("hello".to_string())));
+    assert!(!to_bool(&Value::String("".to_string())));
 }
 
 #[test]
@@ -89,27 +89,27 @@ fn test_conversion_functions_consistent() {
     // undefined
     assert_eq!(to_js_string(&Value::Undefined), "undefined");
     assert!(to_number(&Value::Undefined).is_nan());
-    assert_eq!(to_bool(&Value::Undefined), false);
+    assert!(!to_bool(&Value::Undefined));
     
     // null
     assert_eq!(to_js_string(&Value::Null), "null");
     assert_eq!(to_number(&Value::Null), 0.0);
-    assert_eq!(to_bool(&Value::Null), false);
+    assert!(!to_bool(&Value::Null));
     
     // boolean
     assert_eq!(to_js_string(&Value::Boolean(true)), "true");
     assert_eq!(to_number(&Value::Boolean(true)), 1.0);
-    assert_eq!(to_bool(&Value::Boolean(true)), true);
+    assert!(to_bool(&Value::Boolean(true)));
     
     // number
     assert_eq!(to_js_string(&Value::Number(0.0)), "0");
     assert_eq!(to_number(&Value::Number(0.0)), 0.0);
-    assert_eq!(to_bool(&Value::Number(0.0)), false);
+    assert!(!to_bool(&Value::Number(0.0)));
     
     // string
     assert_eq!(to_js_string(&Value::String("".to_string())), "");
     assert_eq!(to_number(&Value::String("".to_string())), 0.0);
-    assert_eq!(to_bool(&Value::String("".to_string())), false);
+    assert!(!to_bool(&Value::String("".to_string())));
 }
 
 #[test]

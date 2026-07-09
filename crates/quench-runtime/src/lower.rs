@@ -1185,10 +1185,12 @@ fn assign_op_to_bin(op: &swc::AssignOp) -> Result<CompoundOp, LowerError> {
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+    use crate::hir::HirFunction;
 
     #[test]
     fn test_lower_simple() {
-        // Just verify it compiles
-        assert!(true);
+        // Just verify it compiles - test that lower_hir module is accessible
+        fn _check_hir_function(_: Option<HirFunction>) {}
+        _check_hir_function(None);
     }
 }
