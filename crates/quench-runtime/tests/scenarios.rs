@@ -274,7 +274,7 @@ mod tests {
         match result {
             Value::Object(o) => {
                 let o = o.borrow();
-                assert_eq!(o.elements.get(0), Some(&Value::Boolean(true)), "should be instanceof MyClass");
+                assert_eq!(o.elements.first(), Some(&Value::Boolean(true)), "should be instanceof MyClass");
                 assert_eq!(o.elements.get(1), Some(&Value::Boolean(false)), "should not be instanceof NotMyClass");
             }
             _ => panic!("Expected array, got {:?}", result),
@@ -297,7 +297,7 @@ mod tests {
         match result {
             Value::Object(o) => {
                 let o = o.borrow();
-                assert_eq!(o.elements.get(0), Some(&Value::Boolean(true)), "child instanceof Child");
+                assert_eq!(o.elements.first(), Some(&Value::Boolean(true)), "child instanceof Child");
                 assert_eq!(o.elements.get(1), Some(&Value::Boolean(true)), "child instanceof Parent");
                 assert_eq!(o.elements.get(2), Some(&Value::Boolean(true)), "child instanceof Object");
             }
@@ -389,7 +389,7 @@ mod tests {
         match result {
             Value::Object(o) => {
                 let o = o.borrow();
-                assert_eq!(o.elements.get(0), Some(&Value::Number(100.0)), "r1 should be 100");
+                assert_eq!(o.elements.first(), Some(&Value::Number(100.0)), "r1 should be 100");
                 assert_eq!(o.elements.get(1), Some(&Value::Number(100.0)), "r2 should be 100");
                 assert_eq!(o.elements.get(2), Some(&Value::Number(100.0)), "captured should be 100");
             }
