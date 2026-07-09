@@ -59,7 +59,12 @@ pub(crate) fn set_native_this(this_val: Value) {
 }
 
 pub(crate) fn get_native_this() -> Option<Value> {
-    CURRENT_THIS.with(|cell| cell.take())
+    CURRENT_THIS.with(|cell| {
+        let val = cell.take();
+        // Restore the value for subsequent calls
+        cell.set(val.clone());
+        val
+    })
 }
 
 pub(crate) fn check_depth() -> Result<(), JsError> {

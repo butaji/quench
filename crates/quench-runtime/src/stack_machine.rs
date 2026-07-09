@@ -458,6 +458,15 @@ impl Machine {
             Expression::OptChain { .. } | Expression::OptChainCall { .. } => {
                 return Err(JsError("Internal error: optional chaining not lowered".to_string()));
             }
+            Expression::JsxElement { .. } => {
+                // JSX elements are handled by the recursive interpreter
+                // Stack machine does not support JSX
+                return Err(JsError("JSX elements must be evaluated with the recursive interpreter".to_string()));
+            }
+            Expression::JsxFragment { .. } => {
+                // JSX fragments are not supported in the stack machine
+                return Err(JsError("JSX fragments must be evaluated with the recursive interpreter".to_string()));
+            }
         }
         Ok(())
     }
@@ -955,6 +964,13 @@ impl Machine {
             Statement::Block(stmts) => {
                 self.current_frame().work.push(Work::ApplyBlock { stmts: Rc::new(stmts.clone()), index: 0, is_expr_body });
             }
+            Statement::SequenceDecls(stmts) => {
+                // Sequence of var declarations - evaluate each without creating a new scope
+                // This ensures var declarations are in the enclosing scope
+                for stmt in stmts.iter().rev() {
+                    self.current_frame().work.push(Work::EvalStmt(Rc::new(stmt.clone()), false));
+                }
+            }
             Statement::Return(expr) => {
                 if let Some(e) = expr {
                     self.current_frame().work.push(Work::ApplyReturn);
@@ -1370,7 +1386,9 @@ impl Machine {
                 }
                 Ok(())
             }
-            _ => Err(JsError("Value is not a function".to_string())),
+            _ => {
+                Err(JsError("Value is not a function".to_string()))
+            }
         }
     }
 

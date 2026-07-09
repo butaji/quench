@@ -17,7 +17,7 @@ fn install_pad_start_method(proto: &Rc<RefCell<Object>>) {
                     return Ok(Value::String(s.clone()));
                 }
                 let pad_len = target - s.len();
-                let pad_count = (pad_len + pad.len() - 1) / pad.len();
+                let pad_count = pad_len.div_ceil(pad.len());
                 let padding: String = pad.repeat(pad_count);
                 Ok(Value::String(format!("{}{}", &padding[..pad_len], s)))
             }
@@ -38,7 +38,7 @@ fn install_pad_end_method(proto: &Rc<RefCell<Object>>) {
                     return Ok(Value::String(s.clone()));
                 }
                 let pad_len = target - s.len();
-                let pad_count = (pad_len + pad.len() - 1) / pad.len();
+                let pad_count = pad_len.div_ceil(pad.len());
                 let padding: String = pad.repeat(pad_count);
                 Ok(Value::String(format!("{}{}", s, &padding[..pad_len])))
             }

@@ -32,7 +32,11 @@ pub fn set_elements(o: &Rc<RefCell<Object>>, new_elements: Vec<Value>) -> Result
 
 /// Create result array object from elements
 pub fn make_array(elements: Vec<Value>) -> Value {
-    let arr = Object::new_array_from(elements);
+    let mut arr = Object::new_array_from(elements);
+    // Set the prototype to the Array prototype so methods like filter work
+    if let Some(proto) = crate::builtins::array::get_array_prototype() {
+        arr.prototype = Some(proto);
+    }
     Value::Object(Rc::new(RefCell::new(arr)))
 }
 

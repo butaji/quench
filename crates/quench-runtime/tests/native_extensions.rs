@@ -68,3 +68,70 @@ fn native_ts_interface_stripped() {
     let result = Context::new().unwrap().eval("const x = 1; x;");
     assert!(result.is_ok(), "Failed to parse: {:?}", result);
 }
+
+#[test]
+fn native_jsx_eval_basic() {
+    // Test that JSX can be parsed and evaluated with the ink namespace
+    use quench_runtime::Value;
+    
+    let mut ctx = Context::new().unwrap();
+    
+    // First define ink.createElement
+    ctx.eval(r#"
+        const ink = {
+            createElement: function(type, props) {
+                return { type: type, props: props || {} };
+            }
+        };
+    "#).unwrap();
+    
+    // Now evaluate JSX
+    let result = ctx.eval("const el = <div>hello</div>; el;");
+    assert!(result.is_ok(), "Failed to evaluate JSX: {:?}", result);
+    
+    let el = result.unwrap();
+    match el {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            assert_eq!(obj.get("type"), Some(Value::String("div".to_string())));
+        }
+        _ => panic!("Expected object, got {:?}", el),
+    }
+}
+
+#[test]
+fn native_jsx_eval_with_props() {
+    // Test that JSX with props can be evaluated
+    use quench_runtime::Value;
+    
+    let mut ctx = Context::new().unwrap();
+    
+    // Define ink namespace
+    ctx.eval(r#"
+        const ink = {
+            createElement: function(type, props) {
+                return { type: type, props: props || {} };
+            }
+        };
+    "#).unwrap();
+    
+    // Evaluate JSX with props
+    let result = ctx.eval(r#"const el = <div className="container">Hello</div>; el;"#);
+    assert!(result.is_ok(), "Failed to evaluate JSX with props: {:?}", result);
+    
+    let el = result.unwrap();
+    match el {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            assert_eq!(obj.get("type"), Some(Value::String("div".to_string())));
+            // Props are stored in the props object
+            let props = obj.get("props");
+            assert!(props.is_some(), "Expected props, got {:?}", obj);
+            if let Some(Value::Object(props_obj)) = props {
+                let props_obj = props_obj.borrow();
+                assert_eq!(props_obj.get("className"), Some(Value::String("container".to_string())));
+            }
+        }
+        _ => panic!("Expected object, got {:?}", el),
+    }
+}

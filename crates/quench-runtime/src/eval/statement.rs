@@ -58,6 +58,14 @@ pub fn eval_statement(
         Statement::Block(stmts) => {
             eval_block(stmts, env)
         }
+        Statement::SequenceDecls(stmts) => {
+            // Evaluate var declarations in sequence without creating a new scope
+            let mut result = Value::Undefined;
+            for stmt in stmts {
+                result = eval_statement(stmt, env, false)?;
+            }
+            Ok(result)
+        }
         Statement::Return(expr) => {
             if let Some(e) = expr {
                 eval_expression(e, env)

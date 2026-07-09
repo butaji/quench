@@ -1,0 +1,16 @@
+# Clippy configuration for quench-runtime
+# Strict lint rules for all *.rs files
+
+msrv = "1.81"
+
+# Complexity limits
+too-many-arguments-threshold = 8
+type-complexity-threshold = 200
+single-char-binding-names-threshold = 5
+too-large-for-stack = 200
+
+# Cognitive complexity - max 10 per function
+cognitive-complexity-threshold = 10
+
+# Stack size
+stack-size-threshold = 200

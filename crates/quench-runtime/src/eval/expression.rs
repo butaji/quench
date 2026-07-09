@@ -101,7 +101,111 @@ pub fn eval_expression(
         Expression::OptChain { .. } | Expression::OptChainCall { .. } => {
             Err(JsError("Internal error: optional chaining not lowered".to_string()))
         }
+        Expression::JsxElement { tag, props, children } => {
+            eval_jsx_element(tag, props, children, env)
+        }
+        Expression::JsxFragment { children } => {
+            eval_jsx_fragment(children, env)
+        }
     }
+}
+
+fn eval_jsx_element(
+    tag: &crate::ast::JsxTagName,
+    props: &[crate::ast::JsxProp],
+    children: &[crate::ast::JsxChild],
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    use crate::ast::{JsxAttrValue, JsxChild, JsxProp, JsxTagName};
+    
+    // Build the createElement call
+    let create_element_fn = Expression::Member {
+        object: Box::new(Expression::Identifier("ink".to_string())),
+        property: crate::ast::PropertyKey::Ident("createElement".to_string()),
+        computed: false,
+    };
+    
+    // Build props object
+    let mut prop_entries: Vec<(crate::ast::PropertyKey, crate::ast::PropertyValue)> = Vec::new();
+    for prop in props {
+        match prop {
+            JsxProp::Attr { name, value } => {
+                let prop_value = match value {
+                    JsxAttrValue::String(s) => crate::ast::PropertyValue::Value(Expression::String(s.clone())),
+                    JsxAttrValue::Expression(expr) => crate::ast::PropertyValue::Value(expr.clone()),
+                };
+                prop_entries.push((crate::ast::PropertyKey::Ident(name.clone()), prop_value));
+            }
+            JsxProp::Spread(_expr) => {
+                // Spread is handled specially - we skip it for now
+                // Full spread support would require Object.assign semantics
+            }
+        }
+    }
+    
+    // Build props object expression
+    let props_expr = Expression::Object(prop_entries);
+    
+    // Arguments: [tag, props, ...children]
+    let mut args = vec![Expression::String(match tag {
+        JsxTagName::Ident(name) => name.clone(),
+        JsxTagName::Member { object, property } => format!("{}.{}", object, property),
+        JsxTagName::Namespaced { namespace, name } => format!("{}:{}", namespace, name),
+    })];
+    args.push(props_expr);
+    for child in children {
+        match child {
+            JsxChild::Text(s) => args.push(Expression::String(s.clone())),
+            JsxChild::Expression(expr) => args.push(expr.clone()),
+            JsxChild::Spread(_) => {}
+            JsxChild::Element(jsx_expr) => args.push((**jsx_expr).clone()),
+        }
+    }
+    
+    // Call createElement
+    let call_expr = Expression::Call {
+        callee: Box::new(create_element_fn),
+        arguments: args,
+    };
+    
+    eval_expression(&call_expr, env)
+}
+
+fn eval_jsx_fragment(
+    children: &[crate::ast::JsxChild],
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Fragment is lowered to: createElement(Fragment, null, ...children)
+    let create_element_fn = Expression::Member {
+        object: Box::new(Expression::Identifier("ink".to_string())),
+        property: crate::ast::PropertyKey::Ident("createElement".to_string()),
+        computed: false,
+    };
+    
+    let mut args = vec![
+        Expression::Member {
+            object: Box::new(Expression::Identifier("ink".to_string())),
+            property: crate::ast::PropertyKey::Ident("Fragment".to_string()),
+            computed: false,
+        },
+        Expression::Null,
+    ];
+    
+    for child in children {
+        match child {
+            crate::ast::JsxChild::Text(s) => args.push(Expression::String(s.clone())),
+            crate::ast::JsxChild::Expression(expr) => args.push(expr.clone()),
+            crate::ast::JsxChild::Spread(_) => {}
+            crate::ast::JsxChild::Element(jsx_expr) => args.push((**jsx_expr).clone()),
+        }
+    }
+    
+    let call_expr = Expression::Call {
+        callee: Box::new(create_element_fn),
+        arguments: args,
+    };
+    
+    eval_expression(&call_expr, env)
 }
 
 fn eval_identifier(name: &str, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {

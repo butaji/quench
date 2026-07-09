@@ -146,6 +146,19 @@ impl Context {
         swc_parse::parse_swc(source)
     }
 
+    /// Parse TypeScript/TSX source into an AST using swc (strips type annotations)
+    pub fn parse_typescript(&self, source: &str) -> Result<Program, JsError> {
+        swc_parse::parse_typescript(source)
+    }
+
+    /// Evaluate a TypeScript/TSX source string using the recursive interpreter.
+    /// Strips type annotations via swc and executes the resulting JavaScript.
+    pub fn eval_typescript(&mut self, source: &str) -> Result<Value, JsError> {
+        interpreter::reset_depth();
+        let program = self.parse_typescript(source)?;
+        interpreter::eval_program(&program, &mut self.env)
+    }
+
     /// Evaluate source using the shadow-tree interpreter.
     pub fn eval_shadow(&mut self, source: &str, mode: shadow::ModuleMode) -> Result<Value, JsError> {
         let script = swc_parse::parse_swc_script(source)?;
