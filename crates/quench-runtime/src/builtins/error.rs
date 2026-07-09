@@ -17,11 +17,12 @@ pub fn register_error(ctx: &mut Context) {
 }
 
 fn create_error_proto(name: &str) -> Object {
-    let proto = Object::new(ObjectKind::Ordinary);
+    let mut proto = Object::new(ObjectKind::Ordinary);
+    let name_string = name.to_string();
     proto.set(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
-            Ok(Value::String(name.to_string()))
+            Ok(Value::String(name_string.clone()))
         }))),
     );
     proto

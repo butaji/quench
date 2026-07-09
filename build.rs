@@ -98,6 +98,21 @@ fn is_skipped_dir(path: &Path, root: &Path) -> bool {
     if path != root && path.join(".git").exists() {
         return true;
     }
+    // Skip directories that are out of scope per execution contract
+    // Do not touch: src/bridge/, src/ink/, src/render/, examples/, tests/test262/, tests/typescript/
+    // Note: tests/ is the root tests directory; crates/quench-runtime/tests/ is in scope
+    let path_str = path.to_string_lossy();
+    if path_str.contains("/src/bridge/") || path_str.contains("/src/ink/") || path_str.contains("/src/render/") {
+        return true;
+    }
+    // Skip root-level src/, examples/, tests/, xtask/ directories
+    // But allow crates/quench-runtime/src/
+    if path_str.starts_with("src/") && !path_str.contains("crates/quench-runtime") {
+        return true;
+    }
+    if path_str.starts_with("examples/") || path_str.starts_with("xtask/") {
+        return true;
+    }
     path.components().any(|c| {
         let name = c.as_os_str().as_encoded_bytes();
         matches!(name, b".git" | b"target" | b"node_modules" | b"dist")
