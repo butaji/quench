@@ -2,6 +2,8 @@
 
 ## Status: TODO
 
+> Reopened - not verified implemented: Pat::Rest lowered as a plain binding only; ...args not collected into an array of remaining args.
+
 > Reopened — not verified implemented (validated 2026-07-09): `Pat::Rest` is now lowered but only as a plain binding element (`lower_binding_elem(&rest.arg)`), so `...args` is bound as a single normal param, **not** collected into an array of remaining args. No rest-array binding in function calls.
 
 ## Summary

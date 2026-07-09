@@ -2,6 +2,8 @@
 
 ## Status: TODO
 
+> Reopened - not verified implemented: check_negative_test not wired into the runner (batches.rs:88 still err_msg.contains).
+
 > Reopened — not verified implemented (validated 2026-07-09): `check_negative_test` exists but is **not wired into the runner**; `test262/batches.rs:88` still uses weak `err_msg.contains(&neg.typ) || err_msg.contains(&neg.phase)`, and `runner.rs` never calls `check_negative_test`. Inheritance matching is not used in execution.
 
 ## Problem

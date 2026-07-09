@@ -2,6 +2,8 @@
 
 ## Status: TODO
 
+> Reopened - not verified implemented: build.rs enforces file-length only; #[allow] exemptions present in conformance/typescript/*.rs.
+
 > Reopened — not verified implemented (validated 2026-07-09): `build.rs` enforces **file-length only** (fn-length/complexity deferred), and `#[allow(unknown_lints, clippy::function_length, clippy::complexity)]` exemptions exist in `conformance/typescript/*.rs` (violating the no-`#[allow]` rule). Strict linting is not actually enforced.
 
 ## Summary
