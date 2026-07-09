@@ -1,0 +1,5 @@
+# Strict clippy configuration for quench-runtime
+# Max lines per function: 40
+# Max lines per file: 500
+# Max complexity: 10
+msrv = "1.80"
