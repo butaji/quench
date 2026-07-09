@@ -55,14 +55,14 @@ fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 
 fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     let number_proto_clone = Rc::clone(proto);
-    let _number_constructor = NativeConstructor::new(
+    let number_constructor = NativeConstructor::new(
         move |args| {
             let n = args.first().map(to_number).unwrap_or(0.0);
             let number_obj =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&number_proto_clone));
-            let number_obj = Rc::new(RefCell::new(number_obj));
-            number_obj.borrow_mut().set("_value", Value::Number(n));
-            Ok(Value::Number(n))
+            let number_obj_rc = Rc::new(RefCell::new(number_obj));
+            number_obj_rc.borrow_mut().set("_value", Value::Number(n));
+            Ok(Value::Object(number_obj_rc))
         },
         proto.clone(),
     );
@@ -70,6 +70,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     let number_obj = Object::new(ObjectKind::Ordinary);
     let number_obj = Rc::new(RefCell::new(number_obj));
     number_obj.borrow_mut().set("prototype", Value::Object(Rc::clone(proto)));
+    number_obj.borrow_mut().set("constructor", Value::NativeConstructor(Rc::new(number_constructor)));
     number_obj.borrow_mut().set("MAX_VALUE", Value::Number(f64::MAX));
     number_obj.borrow_mut().set("MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
     number_obj.borrow_mut().set("NaN", Value::Number(f64::NAN));
@@ -77,4 +78,13 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     number_obj.borrow_mut().set("POSITIVE_INFINITY", Value::Number(f64::INFINITY));
 
     ctx.set_global("Number".to_string(), Value::Object(number_obj));
+}
+
+fn setup_number_conversion(ctx: &mut Context) {
+    // Number() as a function returns a primitive, not an object
+    let number_fn = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+        let n = args.first().map(to_number).unwrap_or(0.0);
+        Ok(Value::Number(n))
+    })));
+    ctx.set_global("Number".to_string(), number_fn);
 }
