@@ -47,7 +47,7 @@ fn assign_to_identifier(
 }
 
 fn assign_to_member(
-    object: &Box<Expression>,
+    object: &Expression,
     property: &PropertyKey,
     computed: bool,
     value: &Value,
@@ -63,7 +63,7 @@ fn assign_to_member(
         if has_setter {
             let setter_clone = {
                 let obj_ref = o.borrow();
-                obj_ref.get_setter(&prop_name).map(|s| s.clone())
+                obj_ref.get_setter(&prop_name).cloned()
             };
             if let Some(setter_storage) = setter_clone {
                 call_setter(&o, &setter_storage, value.clone(), env)?;
@@ -183,7 +183,7 @@ fn get_string_method(s: &str, prop_name: &str) -> Result<Value, JsError> {
 }
 
 fn get_number_method(
-    obj_val: &Value,
+    _obj_val: &Value,
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {

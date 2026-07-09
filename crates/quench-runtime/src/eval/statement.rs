@@ -89,13 +89,13 @@ pub fn eval_statement(
 
 fn eval_var_decl(
     kind: &VarKind,
-    name: &String,
+    name: &str,
     init: &Option<Expression>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let already_declared = *kind == VarKind::Var && env.borrow().has(name);
     if !already_declared {
-        env.borrow_mut().declare_var(name.clone(), kind.clone());
+        env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let value = if let Some(expr) = init {
         eval_expression(expr, env)?
@@ -107,19 +107,19 @@ fn eval_var_decl(
 }
 
 fn eval_func_decl(
-    name: &String,
+    name: &str,
     params: &[String],
     body: &[Statement],
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let func = crate::value::ValueFunction::new(
-        Some(name.clone()),
+        Some(name.to_owned()),
         params.to_vec(),
         body.to_vec(),
         Rc::clone(env),
     );
     env.borrow_mut()
-        .define(name.clone(), Value::Function(func));
+        .define(name.to_owned(), Value::Function(func));
     Ok(Value::Undefined)
 }
 
@@ -159,7 +159,7 @@ fn eval_for(
                 let _ = eval_expression(expr, env)?;
             }
             ForInit::VarDeclaration { kind, name, init } => {
-                env.borrow_mut().declare_var(name.clone(), kind.clone());
+                env.borrow_mut().declare_var(name.to_string(), *kind);
                 let value = init
                     .as_ref()
                     .map(|e| eval_expression(e, env))
@@ -177,7 +177,7 @@ fn eval_for(
     };
     while check_condition() {
         take_control_flow();
-        let _ = eval_statement(body.as_ref(), env, false)?;
+        let _ = eval_statement(body, env, false)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
             Some(ControlFlow::Continue) => {}
@@ -207,14 +207,14 @@ fn eval_try_catch(
     handler: &Box<Statement>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    match eval_statement(body.as_ref(), env, false) {
+    match eval_statement(body, env, false) {
         Ok(v) => Ok(v),
         Err(e) => {
             if let Some(name) = param {
                 env.borrow_mut()
-                    .define(name.clone(), Value::String(e.to_string()));
+                    .define(name.to_string(), Value::String(e.to_string()));
             }
-            eval_statement(handler.as_ref(), env, false)
+            eval_statement(handler, env, false)
         }
     }
 }

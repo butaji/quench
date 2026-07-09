@@ -53,7 +53,10 @@ fn call_js_function(
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
         call_env.define(param.clone(), arg);
     }
+    // Create arguments object for non-arrow functions
     if !f.is_arrow {
+        let args_obj = create_arguments_object(&f, args);
+        call_env.define("arguments".to_string(), args_obj);
         predeclare_var(&f.body, &mut call_env);
         predeclare_let_const(&f.body, &mut call_env);
     }
@@ -63,6 +66,20 @@ fn call_js_function(
     } else {
         eval_statements(&f.body, &call_env, false)
     }
+}
+
+/// Create the JavaScript arguments object for a function call
+fn create_arguments_object(f: &ValueFunction, args: Vec<Value>) -> Value {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    // Set indexed arguments (arguments[0], arguments[1], etc.)
+    for (i, arg) in args.iter().enumerate() {
+        obj.set(&i.to_string(), arg.clone());
+    }
+    // Set length property
+    obj.set("length", Value::Number(args.len() as f64));
+    // Set callee property (the function itself)
+    obj.set("callee", Value::Function(f.clone()));
+    Value::Object(Rc::new(RefCell::new(obj)))
 }
 
 fn call_arrow_body(f: &ValueFunction, call_env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
@@ -92,7 +109,7 @@ fn call_native_constructor(nc: Rc<NativeConstructor>, args: Vec<Value>) -> Resul
 fn call_object_as_constructor(
     o: Rc<RefCell<Object>>,
     args: Vec<Value>,
-    this_val: Value,
+    _this_val: Value,
 ) -> Result<Value, JsError> {
     let constructor_opt = {
         let obj = o.borrow();

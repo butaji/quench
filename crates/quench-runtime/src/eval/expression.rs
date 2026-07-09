@@ -69,7 +69,7 @@ pub fn eval_expression(
         }
         Expression::Call { callee, arguments } => eval_call(callee, arguments, env),
         Expression::Member { object, property, computed } => {
-            eval_member(&object, property, *computed, env)
+            eval_member(object, property, *computed, env)
         }
         Expression::Conditional { condition, consequent, alternate } => {
             if to_bool(&eval_expression(condition, env)?) {
@@ -171,11 +171,11 @@ fn eval_array_literal(
 
 fn eval_unary_expr(
     op: UnaryOp,
-    argument: &Box<Expression>,
+    argument: &Expression,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     if op == UnaryOp::Typeof {
-        if let Expression::Identifier(name) = argument.as_ref() {
+        if let Expression::Identifier(name) = argument {
             if name != "this" && !env.borrow().has(name) {
                 return Ok(Value::String("undefined".to_string()));
             }
@@ -196,9 +196,9 @@ fn eval_call(
 }
 
 fn eval_member(
-    object: &Box<Expression>,
+    object: &Expression,
     property: &PropertyKey,
-    computed: bool,
+    _computed: bool,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let obj_val = eval_expression(object, env)?;
@@ -208,7 +208,7 @@ fn eval_member(
 
 fn eval_update(
     op: UpdateOp,
-    argument: &Box<Expression>,
+    argument: &Expression,
     prefix: bool,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {

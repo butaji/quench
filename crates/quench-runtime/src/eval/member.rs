@@ -174,7 +174,7 @@ fn eval_native_constructor_member(nc: &Rc<NativeConstructor>, prop_name: &str) -
 }
 
 fn eval_number_member(
-    obj_val: &Value,
+    _obj_val: &Value,
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {

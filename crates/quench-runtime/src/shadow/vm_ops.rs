@@ -13,7 +13,7 @@ use super::types::{
     AddState, ExecType, INLINE_SLOTS, PropCache, ShadowNode, ShadowObject,
     TypeHint,
 };
-use super::helpers::{legacy_to_jsvalue, to_number};
+use super::helpers::to_number;
 use super::vm::ShadowVm;
 
 // ============================================================================
@@ -270,7 +270,7 @@ impl<'a> ShadowVm<'a> {
     }
 
     fn try_fast_prop_read(&self, node: &ShadowNode, obj_val: JSValue, _prop: Symbol) -> Option<JSValue> {
-        if let ShadowNode::TypedPropRead { obj_hint, cache, .. } = node {
+        if let ShadowNode::TypedPropRead { obj_hint, .. } = node {
             if let ExecType::Object(expected_shape_id) = *obj_hint {
                 if let Some(obj_id) = obj_val.as_object() {
                     if let Some(obj) = self.ctx.shadow_arena.get(obj_id) {
@@ -375,7 +375,7 @@ impl<'a> ShadowVm<'a> {
         let value = self.pop_one("StaticPropWrite value")?;
         let obj_val = self.pop_one("StaticPropWrite object")?;
         let obj_id = obj_val.as_object().ok_or_else(|| JsError("property store on non-object".into()))?;
-        let (shape_id, offset, is_inline, prop) = extract_static_write_info(node)?;
+        let (shape_id, offset, _is_inline, prop) = extract_static_write_info(node)?;
         let mut obj = self.ctx.shadow_arena.get_mut(obj_id).ok_or_else(|| JsError("bad object id".into()))?;
         if obj.shape.id == shape_id {
             self.write_object_slot(&mut obj, offset, value);

@@ -61,7 +61,7 @@ impl Statement {
             Statement::Block(stmts) => stmts.iter().any(Statement::has_explicit_return),
             Statement::If { consequent, alternate, .. } => {
                 consequent.has_explicit_return()
-                    || alternate.as_ref().map_or(false, |a| a.has_explicit_return())
+                    || alternate.as_ref().is_some_and(|a| a.has_explicit_return())
             }
             Statement::While { body, .. } => body.has_explicit_return(),
             Statement::For { body, .. } => body.has_explicit_return(),
