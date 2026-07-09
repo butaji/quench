@@ -208,6 +208,7 @@ impl Environment {
 
     /// Get a variable by name (lexical lookup)
     /// Returns a cloned Value for simplicity.
+    /// Falls back to globalThis if not found in the scope chain.
     pub fn get(&self, name: &str) -> Option<Value> {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
@@ -217,6 +218,22 @@ impl Environment {
         // Look up in parent if not found
         if let Some(ref parent) = self.parent {
             return parent.borrow().get(name);
+        }
+        // At top level, fall back to globalThis properties
+        self.get_global_this_property(name)
+    }
+
+    /// Get a property from globalThis if it exists.
+    fn get_global_this_property(&self, name: &str) -> Option<Value> {
+        if self.parent.is_none() {
+            // Look for globalThis in our own scopes (not via get() to avoid recursion)
+            for scope in &self.scopes {
+                if let Some(value) = scope.get("globalThis") {
+                    if let Value::Object(global_obj) = value {
+                        return global_obj.borrow().get(name);
+                    }
+                }
+            }
         }
         None
     }
