@@ -219,13 +219,19 @@ fn lower_array_destructuring(
         name: temp_var_name.clone(),
         init: init_expr,
     });
+    lower_array_elems(kind, arr, &temp_var_name, &mut stmts);
+    stmts
+}
+
+fn lower_array_elems(
+    kind: VarKind,
+    arr: &swc::ArrayPat,
+    temp_var_name: &str,
+    stmts: &mut Vec<Statement>,
+) {
     for (i, elem) in arr.elems.iter().enumerate() {
         if let Some(elem) = elem {
-            let member = Expression::Member {
-                object: Box::new(Expression::Identifier(temp_var_name.clone())),
-                property: PropertyKey::Number(i as f64),
-                computed: false,
-            };
+            let member = array_member_access(temp_var_name, i);
             match elem {
                 swc::Pat::Ident(id) => {
                     stmts.push(Statement::VarDeclaration {
@@ -246,7 +252,14 @@ fn lower_array_destructuring(
             }
         }
     }
-    stmts
+}
+
+fn array_member_access(source_var: &str, index: usize) -> Expression {
+    Expression::Member {
+        object: Box::new(Expression::Identifier(source_var.to_string())),
+        property: PropertyKey::Number(index as f64),
+        computed: false,
+    }
 }
 
 fn lower_object_destructuring(
@@ -262,47 +275,74 @@ fn lower_object_destructuring(
         name: temp_var_name.clone(),
         init: init_expr,
     });
+    lower_object_props(kind, obj, &temp_var_name, &mut stmts);
+    stmts
+}
+
+fn lower_object_props(
+    kind: VarKind,
+    obj: &swc::ObjectPat,
+    temp_var_name: &str,
+    stmts: &mut Vec<Statement>,
+) {
     for prop in &obj.props {
         match prop {
             swc::ObjectPatProp::KeyValue(kv) => {
-                let key_str = match &kv.key {
-                    swc::PropName::Ident(i) => atom_to_string(&i.sym),
-                    swc::PropName::Str(s) => wtf8_atom_to_string(&s.value),
-                    swc::PropName::Num(n) => n.value.to_string(),
-                    _ => continue,
-                };
-                if key_str.is_empty() {
-                    continue;
-                }
-                let kv_value_ref: &swc::Pat = &kv.value;
-                let var_name = match kv_value_ref {
-                    swc::Pat::Ident(id) => atom_to_string(&id.id.sym),
-                    _ => format!("__obj_temp_{}", key_str),
-                };
-                let member = Expression::Member {
-                    object: Box::new(Expression::Identifier(temp_var_name.clone())),
-                    property: PropertyKey::String(key_str.clone()),
-                    computed: false,
-                };
-                add_obj_destructure_stmts(kind, kv_value_ref, var_name, member, key_str, &mut stmts);
+                handle_obj_kv_prop(kind, kv, temp_var_name, stmts);
             }
             swc::ObjectPatProp::Assign(assign) => {
-                let var_name = atom_to_string(&assign.key.sym);
-                let member = Expression::Member {
-                    object: Box::new(Expression::Identifier(temp_var_name.clone())),
-                    property: PropertyKey::Ident(var_name.clone()),
-                    computed: false,
-                };
-                stmts.push(Statement::VarDeclaration {
-                    kind,
-                    name: var_name,
-                    init: Some(member),
-                });
+                handle_obj_assign_prop(kind, assign, temp_var_name, stmts);
             }
             swc::ObjectPatProp::Rest(_) => {}
         }
     }
-    stmts
+}
+
+fn handle_obj_kv_prop(
+    kind: VarKind,
+    kv: &swc::KeyValuePatProp,
+    temp_var_name: &str,
+    stmts: &mut Vec<Statement>,
+) {
+    let key_str = match &kv.key {
+        swc::PropName::Ident(i) => atom_to_string(&i.sym),
+        swc::PropName::Str(s) => wtf8_atom_to_string(&s.value),
+        swc::PropName::Num(n) => n.value.to_string(),
+        _ => return,
+    };
+    if key_str.is_empty() {
+        return;
+    }
+    let kv_value_ref: &swc::Pat = &kv.value;
+    let var_name = match kv_value_ref {
+        swc::Pat::Ident(id) => atom_to_string(&id.id.sym),
+        _ => format!("__obj_temp_{}", key_str),
+    };
+    let member = Expression::Member {
+        object: Box::new(Expression::Identifier(temp_var_name.to_string())),
+        property: PropertyKey::String(key_str.clone()),
+        computed: false,
+    };
+    add_obj_destructure_stmts(kind, kv_value_ref, var_name, member, key_str, stmts);
+}
+
+fn handle_obj_assign_prop(
+    kind: VarKind,
+    assign: &swc::AssignPatProp,
+    temp_var_name: &str,
+    stmts: &mut Vec<Statement>,
+) {
+    let var_name = atom_to_string(&assign.key.sym);
+    let member = Expression::Member {
+        object: Box::new(Expression::Identifier(temp_var_name.to_string())),
+        property: PropertyKey::Ident(var_name.clone()),
+        computed: false,
+    };
+    stmts.push(Statement::VarDeclaration {
+        kind,
+        name: var_name,
+        init: Some(member),
+    });
 }
 
 fn add_obj_destructure_stmts(
@@ -313,7 +353,6 @@ fn add_obj_destructure_stmts(
     key_str: String,
     stmts: &mut Vec<Statement>,
 ) {
-    use super::pattern::expand_nested_object_pattern;
     match kv_value_ref {
         swc::Pat::Ident(_) => {
             stmts.push(Statement::VarDeclaration {
@@ -323,22 +362,10 @@ fn add_obj_destructure_stmts(
             });
         }
         swc::Pat::Object(nested_obj) => {
-            let nested_temp_name = format!("__obj_prop_{}", key_str);
-            stmts.push(Statement::VarDeclaration {
-                kind: VarKind::Const,
-                name: nested_temp_name.clone(),
-                init: Some(member),
-            });
-            stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+            handle_obj_nested(kind, member, key_str, nested_obj, stmts);
         }
         swc::Pat::Array(nested_arr) => {
-            let nested_temp_name = format!("__obj_prop_{}", key_str);
-            stmts.push(Statement::VarDeclaration {
-                kind: VarKind::Const,
-                name: nested_temp_name.clone(),
-                init: Some(member),
-            });
-            stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
+            handle_arr_nested(kind, member, key_str, nested_arr, stmts);
         }
         _ => {
             stmts.push(Statement::VarDeclaration {
@@ -348,6 +375,39 @@ fn add_obj_destructure_stmts(
             });
         }
     }
+}
+
+fn handle_obj_nested(
+    kind: VarKind,
+    member: Expression,
+    key_str: String,
+    nested_obj: &swc::ObjectPat,
+    stmts: &mut Vec<Statement>,
+) {
+    use super::pattern::expand_nested_object_pattern;
+    let nested_temp_name = format!("__obj_prop_{}", key_str);
+    stmts.push(Statement::VarDeclaration {
+        kind: VarKind::Const,
+        name: nested_temp_name.clone(),
+        init: Some(member),
+    });
+    stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+}
+
+fn handle_arr_nested(
+    kind: VarKind,
+    member: Expression,
+    key_str: String,
+    nested_arr: &swc::ArrayPat,
+    stmts: &mut Vec<Statement>,
+) {
+    let nested_temp_name = format!("__obj_prop_{}", key_str);
+    stmts.push(Statement::VarDeclaration {
+        kind: VarKind::Const,
+        name: nested_temp_name.clone(),
+        init: Some(member),
+    });
+    stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
 }
 
 fn expand_nested_array_pattern(
