@@ -101,7 +101,7 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::ObjectId(ai), Value::ObjectId(bi)) => ai == bi,
         (Value::Function(ai), Value::Function(bi)) => Rc::ptr_eq(&ai.closure, &bi.closure),
         (Value::NativeFunction(ai), Value::NativeFunction(bi)) => {
-            Rc::ptr_eq(&ai.0, &bi.0)
+            Rc::ptr_eq(&ai.func, &bi.func)
         }
         (Value::NativeConstructor(ai), Value::NativeConstructor(bi)) => {
             Rc::ptr_eq(ai.func_rc(), bi.func_rc())

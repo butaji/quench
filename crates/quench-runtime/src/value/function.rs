@@ -137,7 +137,11 @@ impl ValueFunction {
 
 /// Native function - a host-provided function wrapped in Arc for shared ownership.
 /// These are functions provided by the runtime (e.g., console.log, Math.sin).
-pub struct NativeFunction(pub NativeFn);
+pub struct NativeFunction {
+    pub func: NativeFn,
+    /// Optional prototype object (for built-in constructors like Number)
+    pub prototype: Option<Rc<RefCell<Object>>>,
+}
 
 impl NativeFunction {
     /// Create a new native function from a closure
@@ -145,12 +149,26 @@ impl NativeFunction {
     where
         F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
     {
-        NativeFunction(std::rc::Rc::new(Box::new(f)))
+        NativeFunction {
+            func: std::rc::Rc::new(Box::new(f)),
+            prototype: None,
+        }
+    }
+
+    /// Create a new native function with a prototype
+    pub fn new_with_prototype<F>(f: F, prototype: Rc<RefCell<Object>>) -> Self
+    where
+        F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
+    {
+        NativeFunction {
+            func: std::rc::Rc::new(Box::new(f)),
+            prototype: Some(prototype),
+        }
     }
 
     /// Call the native function with arguments
     pub fn call(&self, args: Vec<Value>) -> Result<Value, JsError> {
-        (self.0)(args)
+        (self.func)(args)
     }
 }
 
@@ -162,7 +180,10 @@ impl fmt::Debug for NativeFunction {
 
 impl Clone for NativeFunction {
     fn clone(&self) -> Self {
-        NativeFunction(self.0.clone())
+        NativeFunction {
+            func: self.func.clone(),
+            prototype: self.prototype.clone(),
+        }
     }
 }
 
