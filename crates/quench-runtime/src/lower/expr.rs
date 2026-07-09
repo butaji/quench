@@ -17,7 +17,7 @@ pub fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
         swc::Expr::Arrow(arrow) => lower_arrow_expr(arrow),
         swc::Expr::Yield(yield_expr) => lower_yield_expr(yield_expr),
         swc::Expr::MetaProp(_) => Ok(Expression::Undefined),
-        swc::Expr::Await(await_expr) => lower_expr(&await_expr.arg).map(|e| e),
+        swc::Expr::Await(await_expr) => lower_expr(&await_expr.arg),
         swc::Expr::Paren(paren) => lower_expr(&paren.expr),
         swc::Expr::Bin(bin) => lower_bin_expr(bin),
         swc::Expr::Unary(unary) => lower_unary_expr(unary),

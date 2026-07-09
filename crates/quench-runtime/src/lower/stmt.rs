@@ -220,33 +220,30 @@ fn lower_array_destructuring(
         init: init_expr,
     });
     for (i, elem) in arr.elems.iter().enumerate() {
-        match elem {
-            Some(elem) => {
-                let member = Expression::Member {
-                    object: Box::new(Expression::Identifier(temp_var_name.clone())),
-                    property: PropertyKey::Number(i as f64),
-                    computed: false,
-                };
-                match elem {
-                    swc::Pat::Ident(id) => {
-                        stmts.push(Statement::VarDeclaration {
-                            kind,
-                            name: atom_to_string(&id.id.sym),
-                            init: Some(member),
-                        });
-                    }
-                    _ => {
-                        let elem_temp_name = format!("__arr_elem_{}", i);
-                        stmts.push(Statement::VarDeclaration {
-                            kind: VarKind::Const,
-                            name: elem_temp_name.clone(),
-                            init: Some(member),
-                        });
-                        stmts.extend(expand_nested_pattern(kind, elem, &elem_temp_name));
-                    }
+        if let Some(elem) = elem {
+            let member = Expression::Member {
+                object: Box::new(Expression::Identifier(temp_var_name.clone())),
+                property: PropertyKey::Number(i as f64),
+                computed: false,
+            };
+            match elem {
+                swc::Pat::Ident(id) => {
+                    stmts.push(Statement::VarDeclaration {
+                        kind,
+                        name: atom_to_string(&id.id.sym),
+                        init: Some(member),
+                    });
+                }
+                _ => {
+                    let elem_temp_name = format!("__arr_elem_{}", i);
+                    stmts.push(Statement::VarDeclaration {
+                        kind: VarKind::Const,
+                        name: elem_temp_name.clone(),
+                        init: Some(member),
+                    });
+                    stmts.extend(expand_nested_pattern(kind, elem, &elem_temp_name));
                 }
             }
-            None => {}
         }
     }
     stmts
