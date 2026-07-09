@@ -1,6 +1,6 @@
-//! Runtime context implementation for the JavaScript runtime.
+//! Runtime context for the JavaScript engine.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
@@ -19,38 +19,10 @@ use crate::interpreter;
 use crate::stack_machine;
 use crate::eval;
 
-/// Microtask queue for Promise resolution
-pub struct MicrotaskQueue {
-    queue: VecDeque<Value>,
-}
+pub mod microtask;
+pub mod tests;
 
-impl MicrotaskQueue {
-    pub fn new() -> Self {
-        MicrotaskQueue { queue: VecDeque::new() }
-    }
-
-    pub fn enqueue(&mut self, task: Value) {
-        self.queue.push_back(task);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
-    pub fn dequeue(&mut self) -> Option<Value> {
-        self.queue.pop_front()
-    }
-
-    pub fn len(&self) -> usize {
-        self.queue.len()
-    }
-}
-
-impl Default for MicrotaskQueue {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use microtask::MicrotaskQueue;
 
 /// Runtime context - holds the execution environment and globals
 pub struct Context {
@@ -94,9 +66,8 @@ impl Context {
 
     /// Initialize built-in globals and functions
     fn init_builtins(&mut self) -> Result<(), JsError> {
-        // Use the builtins module
         host::register_builtin_functions(self);
-        
+
         // CommonJS module compatibility
         let exports = Object::new(ObjectKind::Ordinary);
         let exports_rc = Rc::new(RefCell::new(exports));
@@ -105,7 +76,7 @@ impl Context {
         module_obj.borrow_mut().set("exports", Value::Object(Rc::clone(&exports_rc)));
         self.set_global("exports".to_string(), Value::Object(Rc::clone(&exports_rc)));
         self.set_global("module".to_string(), Value::Object(module_obj));
-        
+
         // JavaScript globals - globalThis is the global object itself
         let global_obj = Object::new(ObjectKind::Global);
         let global_obj = Rc::new(RefCell::new(global_obj));
@@ -118,15 +89,13 @@ impl Context {
     }
 
     /// Evaluate a JavaScript source string using the recursive interpreter.
-    /// WARNING: May cause stack overflow with deep recursion.
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
-        interpreter::reset_depth(); // Reset depth for each top-level eval
+        interpreter::reset_depth();
         let program = self.parse(source)?;
         interpreter::eval_program(&program, &mut self.env)
     }
 
     /// Evaluate a JavaScript source string using the explicit-stack interpreter.
-    /// This prevents stack overflow with deep recursion but may have less features.
     pub fn eval_stack_machine(&self, source: &str) -> Result<Value, JsError> {
         let program = self.parse(source)?;
         let mut env = std::rc::Rc::clone(&self.env);
@@ -144,7 +113,6 @@ impl Context {
     }
 
     /// Evaluate a TypeScript/TSX source string using the recursive interpreter.
-    /// Strips type annotations via swc and executes the resulting JavaScript.
     pub fn eval_typescript(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
         let program = self.parse_typescript(source)?;
@@ -156,10 +124,6 @@ impl Context {
         let script = swc_parse::parse_swc_script(source)?;
         let bump = bumpalo::Bump::new();
 
-        // Build a ShadowBuilder to collect the TypeScript type map and script
-        // bindings. The builder holds a mutable borrow of `string_interner`, so
-        // it is confined to this inner scope; the bindings map is cloned out
-        // before the builder is dropped.
         let bindings: HashMap<String, shadow::Binding> = {
             let mut builder = shadow::ShadowBuilder::new(
                 &bump,
@@ -210,7 +174,6 @@ impl Context {
     }
 
     /// Process all queued microtasks
-    /// Returns the last result or Ok(()) if queue was empty
     pub fn process_microtasks(&mut self) -> Result<Value, JsError> {
         use crate::eval::call_value_with_this;
         let mut last_result = Value::Undefined;
@@ -266,16 +229,16 @@ impl Context {
             Value::Function(f) => {
                 let closure = Rc::clone(&f.closure);
                 let params = f.params.clone();
-                
+
                 let mut call_env = Environment::with_parent(Rc::clone(&closure));
-                
+
                 for (i, param) in params.iter().enumerate() {
                     let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
                     call_env.declare(param.clone(), arg);
                 }
-                
+
                 let call_env = Rc::new(RefCell::new(call_env));
-                
+
                 if f.is_arrow {
                     if let Some(arrow_body) = f.arrow_body.as_ref() {
                         match arrow_body {
@@ -293,9 +256,7 @@ impl Context {
                     eval::eval_statements(&f.body, &call_env, false)
                 }
             }
-            Value::NativeFunction(nf) => {
-                nf.call(args)
-            }
+            Value::NativeFunction(nf) => nf.call(args),
             _ => Err(JsError(format!("{} is not a function", name))),
         }
     }
@@ -322,225 +283,5 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self::new().expect("Failed to create JS context")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_context_creation() {
-        let ctx = Context::new();
-        assert!(ctx.is_ok());
-    }
-
-    #[test]
-    fn test_globals() {
-        let mut ctx = Context::new().unwrap();
-        ctx.set_global("test".to_string(), Value::Number(42.0));
-        assert_eq!(ctx.get_global("test"), Some(Value::Number(42.0)));
-    }
-
-    #[test]
-    fn test_eval_simple() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("1 + 2");
-        assert!(result.is_ok());
-        if let Ok(v) = result {
-            assert_eq!(v, Value::Number(3.0));
-        }
-    }
-
-    #[test]
-    fn test_console_exists() {
-        let ctx = Context::new().unwrap();
-        let console = ctx.get_global("console");
-        assert!(console.is_some());
-    }
-
-    #[test]
-    fn test_global_this_assignment() {
-        let mut ctx = Context::new().unwrap();
-        // Test that globalThis exists and is an object
-        let result = ctx.eval("typeof globalThis");
-        assert!(result.is_ok(), "typeof globalThis failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("object".to_string()));
-        
-        // Test that we can assign to globalThis
-        let result = ctx.eval("globalThis.testProp = 42");
-        assert!(result.is_ok(), "globalThis assignment failed: {:?}", result);
-        
-        // Test that we can read back the property
-        let result = ctx.eval("globalThis.testProp");
-        assert!(result.is_ok(), "globalThis read failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::Number(42.0));
-    }
-
-    #[test]
-    fn test_date_prototype_access() {
-        let mut ctx = Context::new().unwrap();
-        // Test Date.prototype access
-        let result = ctx.eval("Date.prototype");
-        assert!(result.is_ok(), "Date.prototype failed: {:?}", result);
-        
-        // Test Date.prototype.toLocaleTimeString
-        let result = ctx.eval("Date.prototype.toLocaleTimeString");
-        assert!(result.is_ok(), "Date.prototype.toLocaleTimeString failed: {:?}", result);
-    }
-
-    #[test]
-    fn test_deep_recursion_does_not_stack_overflow() {
-        interpreter::reset_depth();
-        let ctx = Context::new().unwrap();
-        // A simple recursive function with depth 100 must not overflow the
-        // native Rust stack. This test uses the stack machine to verify
-        // explicit-stack execution works correctly.
-        let source = r#"
-            function recurse(n) {
-                if (n <= 0) return 0;
-                return 1 + recurse(n - 1);
-            }
-            recurse(100);
-        "#;
-        let program = ctx.parse(source).unwrap();
-        let mut env = std::rc::Rc::clone(ctx.env());
-        let result = stack_machine::eval_program(&program, &mut env);
-        assert!(result.is_ok(), "deep recursion should not stack overflow: {:?}", result);
-        assert_eq!(result.unwrap(), Value::Number(100.0));
-    }
-
-    #[test]
-    fn test_function_declaration_overrides_existing_global() {
-        let mut ctx = Context::new().unwrap();
-        // First script defines a function.
-        ctx.eval("function mountTree() { return 'runtime'; }").unwrap();
-        // A later script should be able to override it with a new declaration.
-        let result = ctx.eval(r#"
-            function mountTree() { return 'user'; }
-            mountTree();
-        "#).unwrap();
-        assert_eq!(result, Value::String("user".to_string()));
-    }
-
-    #[test]
-    fn test_duplicate_function_declaration_last_wins() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval(r#"
-            function f() { return 1; }
-            function f() { return 2; }
-            f();
-        "#).unwrap();
-        assert_eq!(result, Value::Number(2.0));
-    }
-
-    #[test]
-    fn test_eval_shadow_simple_add() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval_shadow("1 + 2", crate::shadow::ModuleMode::Static).unwrap();
-        assert_eq!(result, Value::Number(3.0));
-    }
-
-    #[test]
-    fn test_eval_shadow_var() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval_shadow("var x = 5; x + x", crate::shadow::ModuleMode::Static).unwrap();
-        assert_eq!(result, Value::Number(10.0));
-    }
-
-    #[test]
-    fn test_eval_shadow_object_prop() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval_shadow("var o = {a: 3}; o.a", crate::shadow::ModuleMode::Static).unwrap();
-        assert_eq!(result, Value::Number(3.0));
-    }
-
-    #[test]
-    fn test_runtime_ink_object() {
-        let mut ctx = Context::new().unwrap();
-        let runtime_path = std::path::Path::new(
-            "/Users/admin/Code/GitHub/quench/src/runtime.js"
-        );
-        ctx.load_runtime_from(runtime_path).unwrap();
-        
-        // Test ink object exists
-        let result = ctx.eval("typeof ink");
-        assert!(result.is_ok(), "typeof ink failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("object".to_string()));
-        
-        // Test ink.createElement exists
-        let result = ctx.eval("typeof ink.createElement");
-        assert!(result.is_ok(), "typeof ink.createElement failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("function".to_string()));
-        
-        // Test ink.render exists
-        let result = ctx.eval("typeof ink.render");
-        assert!(result.is_ok(), "typeof ink.render failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("function".to_string()));
-        
-        // Test ink.Box
-        let result = ctx.eval("ink.Box");
-        assert!(result.is_ok(), "ink.Box failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("ink-box".to_string()));
-        
-        // Test ink.Text
-        let result = ctx.eval("ink.Text");
-        assert!(result.is_ok(), "ink.Text failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("ink-text".to_string()));
-    }
-
-    #[test]
-    fn test_function_call_and_apply() {
-        let mut ctx = Context::new().unwrap();
-        let runtime_path = std::path::Path::new(
-            "/Users/admin/Code/GitHub/quench/src/runtime.js"
-        );
-        ctx.load_runtime_from(runtime_path).unwrap();
-        
-        // Test Function.prototype.call with this binding
-        let result = ctx.eval(r#"
-            const obj = { x: 42 };
-            const test = function() { return this.x; };
-            test.call(obj);
-        "#);
-        assert_eq!(result.unwrap(), Value::Number(42.0));
-        
-        // Test Function.prototype.call without this binding
-        let result = ctx.eval(r#"
-            const test = function() { return 42; };
-            test.call();
-        "#);
-        assert_eq!(result.unwrap(), Value::Number(42.0));
-        
-        // Test Function.prototype.apply
-        let result = ctx.eval(r#"
-            const obj = { x: 100 };
-            const test = function() { return this.x; };
-            test.apply(obj);
-        "#);
-        assert_eq!(result.unwrap(), Value::Number(100.0));
-    }
-    
-    #[test]
-    fn test_component_instance_render() {
-        let mut ctx = Context::new().unwrap();
-        let runtime_path = std::path::Path::new(
-            "/Users/admin/Code/GitHub/quench/src/runtime.js"
-        );
-        
-        // Load runtime using stack machine
-        ctx.load_runtime_from(runtime_path).unwrap();
-        
-        // Check what ComponentInstance.prototype looks like
-        let result = ctx.eval("typeof ComponentInstance.prototype");
-        println!("prototype type: {:?}", result);
-        
-        // Now set testProp using stack machine
-        let result = ctx.eval_stack_machine("ComponentInstance.prototype.testProp = 42");
-        println!("stack machine set result: {:?}", result);
-        
-        // Check if testProp is set
-        let result = ctx.eval("ComponentInstance.prototype.testProp");
-        println!("testProp value: {:?}", result);
     }
 }
