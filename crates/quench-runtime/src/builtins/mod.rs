@@ -7,6 +7,7 @@ pub mod math;
 pub mod object;
 pub mod array;
 pub mod map;
+pub mod promise;
 pub mod string;
 pub mod date;
 pub mod error;
@@ -109,6 +110,8 @@ pub fn register_builtins(ctx: &mut Context) {
     date::register_date(ctx);
     // Symbol needs to be registered for symbol support
     symbol::register_symbol(ctx);
+    // Promise needs to be registered for async support
+    promise::register_promise(ctx);
 }
 
 use crate::Context;

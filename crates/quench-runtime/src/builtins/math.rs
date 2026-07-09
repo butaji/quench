@@ -6,10 +6,26 @@ use std::rc::Rc;
 use crate::value::{to_number, NativeFunction, Object, Value};
 use crate::Context;
 
+thread_local! {
+    static RNG_STATE: RefCell<u64> = const { RefCell::new(0x853c49e6748fea9bu64) };
+}
+
+fn xorshift64(state: u64) -> u64 {
+    let mut x = state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    x
+}
+
 fn rand_simple() -> f64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
-    (nanos as f64) / (u32::MAX as f64)
+    RNG_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let new_state = xorshift64(*state);
+        *state = new_state;
+        let n = new_state;
+        (n as f64) / (u64::MAX as f64)
+    })
 }
 
 pub fn register_math(ctx: &mut Context) {
@@ -82,4 +98,35 @@ fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
 fn register_math_constants(math: &Rc<RefCell<Object>>) {
     math.borrow_mut().set("PI", Value::Number(std::f64::consts::PI));
     math.borrow_mut().set("E", Value::Number(std::f64::consts::E));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_random_returns_value_in_range() {
+        let value = rand_simple();
+        assert!(value >= 0.0, "random should be >= 0, got {}", value);
+        assert!(value < 1.0, "random should be < 1, got {}", value);
+    }
+
+    #[test]
+    fn test_random_produces_different_values() {
+        let v1 = rand_simple();
+        let v2 = rand_simple();
+        assert_ne!(v1, v2, "consecutive random calls should produce different values");
+    }
+
+    #[test]
+    fn test_random_distribution() {
+        let mut sum = 0.0;
+        let iterations = 10000;
+        for _ in 0..iterations {
+            sum += rand_simple();
+        }
+        let average = sum / iterations as f64;
+        assert!(average > 0.4 && average < 0.6,
+            "average should be ~0.5, got {}", average);
+    }
 }

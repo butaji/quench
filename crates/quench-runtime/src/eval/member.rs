@@ -202,7 +202,12 @@ pub fn eval_native_function_member(nf: &Rc<NativeFunction>, prop_name: &str) -> 
     }
 }
 
-fn eval_native_constructor_member(nc: &Rc<NativeConstructor>, prop_name: &str) -> Result<Value, JsError> {
+pub(crate) fn eval_native_constructor_member(nc: &Rc<NativeConstructor>, prop_name: &str) -> Result<Value, JsError> {
+    // Check static methods first
+    if let Some(val) = nc.get_static_method(prop_name) {
+        return Ok(val);
+    }
+
     match prop_name {
         "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
         "length" => Ok(Value::Number(0.0)),
