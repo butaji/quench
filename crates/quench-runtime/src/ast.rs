@@ -55,6 +55,19 @@ pub enum Statement {
     SequenceDecls(Vec<Statement>),
     /// Export statement (ES module export)
     Export(Box<Statement>),
+    /// Import statement (ES module import)
+    /// `import x from 'mod'` -> Import { default: Some("x"), named: [], namespace: None, source: "mod" }
+    /// `import { a, b } from 'mod'` -> Import { default: None, named: [("a","a"),("b","b")], namespace: None, source: "mod" }
+    /// `import * as ns from 'mod'` -> Import { default: None, named: [], namespace: Some("ns"), source: "mod" }
+    Import {
+        default: Option<String>,
+        named: Vec<(String, String)>, // (local_name, exported_name)
+        namespace: Option<String>,
+        source: String,
+    },
+    /// For-in loop (ES6)
+    /// for (x in object) { body }
+    ForIn { variable: Box<Expression>, object: Box<Expression>, body: Box<Statement> },
 }
 
 impl Statement {

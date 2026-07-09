@@ -1,4 +1,4 @@
-//! Export lowering functions
+//! Export and import lowering functions
 
 use swc_ecma_ast as swc;
 use crate::ast::{Expression, PropertyKey, Statement};
@@ -22,14 +22,20 @@ pub fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
         swc::ModuleDecl::ExportDecl(export_decl) => {
             lower_decl(&export_decl.decl)
         }
-        // export { foo, bar }
+        // export { foo, bar } or export { foo } from 'module'
         swc::ModuleDecl::ExportNamed(named) => {
             lower_export_named(named)
         }
-        // export * from 'module' (not supported, skip)
-        swc::ModuleDecl::ExportAll(_) => None,
-        // import foo from 'module' (strip for CommonJS fallback)
-        swc::ModuleDecl::Import(_) => None,
+        // export * from 'module' - re-export all
+        swc::ModuleDecl::ExportAll(export_all) => {
+            // Lower to: import * as _re_export from 'module'; Object.assign(exports, _re_export);
+            let source = wtf8_atom_to_string(&export_all.src.value);
+            Some(lower_export_star_from(&source))
+        }
+        // import statements
+        swc::ModuleDecl::Import(import) => {
+            lower_import(import)
+        }
         // TypeScript export =
         swc::ModuleDecl::TsExportAssignment(_) => None,
         // TypeScript import =
@@ -37,6 +43,75 @@ pub fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
         // TypeScript namespace export
         swc::ModuleDecl::TsNamespaceExport(_) => None,
     }
+}
+
+/// Lower an import statement to our Import statement
+fn lower_import(import: &swc::ImportDecl) -> Option<Statement> {
+    let source = wtf8_atom_to_string(&import.src.value);
+    let default = import.specifiers.iter().find_map(|spec| {
+        if let swc::ImportSpecifier::Default(default_spec) = spec {
+            Some(atom_to_string(&default_spec.local.sym))
+        } else {
+            None
+        }
+    });
+    let namespace = import.specifiers.iter().find_map(|spec| {
+        if let swc::ImportSpecifier::Namespace(ns_spec) = spec {
+            Some(atom_to_string(&ns_spec.local.sym))
+        } else {
+            None
+        }
+    });
+    let named: Vec<(String, String)> = import.specifiers.iter().filter_map(|spec| {
+        if let swc::ImportSpecifier::Named(named_spec) = spec {
+            let local = atom_to_string(&named_spec.local.sym);
+            let imported = named_spec.imported.as_ref()
+                .map(|i| match i {
+                    swc::ModuleExportName::Ident(ident) => atom_to_string(&ident.sym),
+                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                })
+                .unwrap_or_else(|| local.clone());
+            Some((local, imported))
+        } else {
+            None
+        }
+    }).collect();
+    Some(Statement::Import { default, named, namespace, source })
+}
+
+/// Lower `export * from 'module'` to re-export all bindings
+/// Creates: import * as ns from 'src'; for (let k in ns) exports[k] = ns[k];
+fn lower_export_star_from(source: &str) -> Statement {
+    let unique_name = format!("_star_{}", source.replace(['/', '-', '.'], "_"));
+    let import_stmt = Statement::Import {
+        default: None,
+        named: vec![],
+        namespace: Some(unique_name.clone()),
+        source: source.to_string(),
+    };
+    // Lower the for-in loop manually using statements
+    // for (let k in ns) exports[k] = ns[k];
+    // This becomes a ForIn statement with a body that does the assignment
+    let iterable = Expression::Identifier(unique_name.clone());
+    let variable = Expression::Identifier("_k".to_string());
+    let body = Statement::Expression(Box::new(Expression::Assignment {
+        left: Box::new(Expression::Member {
+            object: Box::new(Expression::Identifier("exports".to_string())),
+            property: PropertyKey::Computed(Box::new(Expression::Identifier("_k".to_string()))),
+            computed: true,
+        }),
+        right: Box::new(Expression::Member {
+            object: Box::new(Expression::Identifier(unique_name)),
+            property: PropertyKey::Computed(Box::new(Expression::Identifier("_k".to_string()))),
+            computed: true,
+        }),
+    }));
+    let for_in = Statement::ForIn {
+        variable: Box::new(variable),
+        object: Box::new(iterable),
+        body: Box::new(body),
+    };
+    Statement::Block(vec![import_stmt, for_in])
 }
 
 fn lower_export_default_decl(export_decl: &swc::ExportDefaultDecl) -> Option<Statement> {
@@ -68,7 +143,13 @@ fn lower_export_default_decl(export_decl: &swc::ExportDefaultDecl) -> Option<Sta
 }
 
 /// Lower export { foo, bar } to exports.foo = foo; exports.bar = bar;
+/// Lower export { foo } from 'module' to imports.foo; exports.foo = foo;
 pub fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
+    // Handle export-from syntax: export { x } from 'module'
+    if let Some(src) = &named.src {
+        return lower_export_from(named, src);
+    }
+    
     let mut stmts = Vec::new();
     for spec in &named.specifiers {
         match spec {
@@ -91,6 +172,84 @@ pub fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
     } else {
         Some(Statement::Export(Box::new(Statement::Block(stmts))))
     }
+}
+
+/// Lower `export { x } from 'module'` to import and re-export
+fn lower_export_from(named: &swc::NamedExport, src: &swc::Str) -> Option<Statement> {
+    let source = wtf8_atom_to_string(&src.value);
+    let unique_name = format!("_re_export_src_{}", source.replace(['/', '-', '.'], "_"));
+    
+    let mut stmts = Vec::new();
+    let mut imports = Vec::new();
+    
+    for spec in &named.specifiers {
+        match spec {
+            swc::ExportSpecifier::Named(named_spec) => {
+                let exported = named_spec.exported.as_ref()
+                    .map(|e| match e {
+                        swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                        swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                    })
+                    .unwrap_or_else(|| {
+                        match &named_spec.orig {
+                            swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                            swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                        }
+                    });
+                let local = match &named_spec.orig {
+                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                };
+                imports.push((local.clone(), local.clone()));
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident(exported),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier(local)),
+                })));
+            }
+            swc::ExportSpecifier::Default(_) => {
+                imports.push(("default".to_string(), "default".to_string()));
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident("default".to_string()),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier("default".to_string())),
+                })));
+            }
+            swc::ExportSpecifier::Namespace(ns) => {
+                let name = match &ns.name {
+                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                };
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident(name.clone()),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier(name)),
+                })));
+            }
+        }
+    }
+    
+    // Add import statement for the source module
+    let import_stmt = Statement::Import {
+        default: None,
+        named: imports,
+        namespace: None,
+        source,
+    };
+    
+    let mut all_stmts = vec![import_stmt];
+    all_stmts.extend(stmts);
+    
+    Some(Statement::Block(all_stmts))
 }
 
 fn lower_named_export_specifier(named_spec: &swc::ExportNamedSpecifier) -> Statement {
