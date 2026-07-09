@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn scenario_for_in_string() {
         let mut ctx = Context::new().unwrap();
-        // for-in on string should iterate over characters
+        // for-in on string should iterate over indices
         let result = ctx.eval("let chars = []; for (let c in 'ab') { chars.push(c); } chars.join(',')").unwrap();
         // String iteration gives indices
         let s = match result {
@@ -205,6 +205,27 @@ mod tests {
         };
         // Check that we get 2 items
         assert_eq!(s.matches(',').count(), 1, "Expected 2 chars separated by comma, got {}", s);
+    }
+
+    #[test]
+    fn scenario_for_in_empty_object() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let count = 0; for (let k in {}) { count++; } count").unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn scenario_for_in_with_break() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let keys = []; for (let k in {a:1, b:2, c:3}) { if (k === 'b') break; keys.push(k); } keys.join(',')").unwrap();
+        assert_eq!(result, Value::String("a".to_string()));
+    }
+
+    #[test]
+    fn scenario_for_in_with_continue() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let keys = []; for (let k in {a:1, b:2, c:3}) { if (k === 'b') continue; keys.push(k); } keys.join(',')").unwrap();
+        assert_eq!(result, Value::String("a,c".to_string()));
     }
 
     // =========================================================================
@@ -236,6 +257,66 @@ mod tests {
     fn scenario_instanceof_not() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("({}) instanceof Array").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn scenario_instanceof_with_custom_constructor() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function MyClass() {}
+            function NotMyClass() {}
+            let obj = new MyClass();
+            let r1 = obj instanceof MyClass;
+            let r2 = obj instanceof NotMyClass;
+            [r1, r2];
+        "#).unwrap();
+        match result {
+            Value::Object(o) => {
+                let o = o.borrow();
+                assert_eq!(o.elements.get(0), Some(&Value::Boolean(true)), "should be instanceof MyClass");
+                assert_eq!(o.elements.get(1), Some(&Value::Boolean(false)), "should not be instanceof NotMyClass");
+            }
+            _ => panic!("Expected array, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn scenario_instanceof_with_inheritance() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            function Parent() {}
+            function Child() {}
+            Child.prototype = Object.create(Parent.prototype);
+            let child = new Child();
+            let r1 = child instanceof Child;
+            let r2 = child instanceof Parent;
+            let r3 = child instanceof Object;
+            [r1, r2, r3];
+        "#).unwrap();
+        match result {
+            Value::Object(o) => {
+                let o = o.borrow();
+                assert_eq!(o.elements.get(0), Some(&Value::Boolean(true)), "child instanceof Child");
+                assert_eq!(o.elements.get(1), Some(&Value::Boolean(true)), "child instanceof Parent");
+                assert_eq!(o.elements.get(2), Some(&Value::Boolean(true)), "child instanceof Object");
+            }
+            _ => panic!("Expected array, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn scenario_instanceof_primitive_returns_false() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("42 instanceof Object").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+        let result = ctx.eval("'string' instanceof Object").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+        let result = ctx.eval("true instanceof Object").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+        let result = ctx.eval("null instanceof Object").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+        let result = ctx.eval("undefined instanceof Object").unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -283,6 +364,40 @@ mod tests {
     }
 
     #[test]
+    fn scenario_getter_returns_undefined() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let obj = { get x() {} }; obj.x").unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn scenario_getter_in_closure() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            let captured = 100;
+            let obj = { 
+                get value() { return captured; },
+                set value(v) { captured = v * 2; }
+            };
+            let r1 = obj.value;
+            obj.value = 50;
+            let r2 = obj.value;
+            [r1, r2, captured];
+        "#).unwrap();
+        // After setting value to 50, captured becomes 100 (50 * 2)
+        // So r1 should be 100, r2 should be 100, captured should be 100
+        match result {
+            Value::Object(o) => {
+                let o = o.borrow();
+                assert_eq!(o.elements.get(0), Some(&Value::Number(100.0)), "r1 should be 100");
+                assert_eq!(o.elements.get(1), Some(&Value::Number(100.0)), "r2 should be 100");
+                assert_eq!(o.elements.get(2), Some(&Value::Number(100.0)), "captured should be 100");
+            }
+            _ => panic!("Expected array, got {:?}", result),
+        }
+    }
+
+    #[test]
     fn scenario_setter_basic() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("let stored = null; let obj = { set x(v) { stored = v; } }; obj.x = 100; stored").unwrap();
@@ -312,6 +427,35 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("Symbol('a') !== Symbol('a')").unwrap();
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn scenario_symbol_no_args() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("typeof Symbol()").unwrap();
+        assert_eq!(result, Value::String("symbol".to_string()));
+    }
+
+    #[test]
+    fn scenario_symbol_as_property_key() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            const sym = Symbol('test');
+            const obj = {};
+            obj[sym] = 'value';
+            obj[sym];
+        "#).unwrap();
+        assert_eq!(result, Value::String("value".to_string()));
+    }
+
+    #[test]
+    fn scenario_symbol_strict_equality() {
+        let mut ctx = Context::new().unwrap();
+        // Symbol should not be loosely equal to anything
+        let result = ctx.eval("Symbol() == Symbol()").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+        let result = ctx.eval("Symbol() === Symbol()").unwrap();
+        assert_eq!(result, Value::Boolean(false));
     }
 
     // =========================================================================

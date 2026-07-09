@@ -239,7 +239,7 @@ fn eval_object_literal(
                 obj.set(&key_str, val);
             }
             PropertyValue::Getter { params: _, body } => {
-                obj.set_getter(&key_str, Rc::new(body.clone()));
+                obj.set_getter(&key_str, Rc::new(body.clone()), Rc::clone(env));
             }
             PropertyValue::Setter { param, body } => {
                 obj.set_setter(&key_str, param.clone(), Rc::new(body.clone()), Rc::clone(env));

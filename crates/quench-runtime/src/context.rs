@@ -1,6 +1,6 @@
 //! Runtime context implementation for the JavaScript runtime.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
@@ -19,6 +19,39 @@ use crate::interpreter;
 use crate::stack_machine;
 use crate::eval;
 
+/// Microtask queue for Promise resolution
+pub struct MicrotaskQueue {
+    queue: VecDeque<Value>,
+}
+
+impl MicrotaskQueue {
+    pub fn new() -> Self {
+        MicrotaskQueue { queue: VecDeque::new() }
+    }
+
+    pub fn enqueue(&mut self, task: Value) {
+        self.queue.push_back(task);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    pub fn dequeue(&mut self) -> Option<Value> {
+        self.queue.pop_front()
+    }
+
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+}
+
+impl Default for MicrotaskQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Runtime context - holds the execution environment and globals
 pub struct Context {
     pub arena: Arena<Object>,
@@ -26,12 +59,13 @@ pub struct Context {
     env: Rc<RefCell<Environment>>,
     pub string_interner: StringInterner,
     pub shape_interner: ShapeInterner,
+    pub microtasks: MicrotaskQueue,
 }
 
 impl Context {
     /// Create a new runtime context
     pub fn new() -> Result<Self, JsError> {
-        interpreter::reset_depth(); // Reset depth for new context
+        interpreter::reset_depth();
         let env = Environment::new();
         let mut ctx = Context {
             arena: Arena::new(),
@@ -39,6 +73,7 @@ impl Context {
             env: Rc::new(RefCell::new(env)),
             string_interner: StringInterner::new(),
             shape_interner: ShapeInterner::new(),
+            microtasks: MicrotaskQueue::new(),
         };
         ctx.init_builtins()?;
         Ok(ctx)
@@ -46,12 +81,13 @@ impl Context {
 
     /// Reset the context to a clean state (useful for testing)
     pub fn reset(&mut self) -> Result<(), JsError> {
-        interpreter::reset_depth(); // Reset depth counter
+        interpreter::reset_depth();
         self.env = Rc::new(RefCell::new(Environment::new()));
         self.arena = Arena::new();
         self.shadow_arena = shadow::ShadowArena::new();
         self.string_interner = StringInterner::new();
         self.shape_interner = ShapeInterner::new();
+        self.microtasks = MicrotaskQueue::new();
         self.init_builtins()?;
         Ok(())
     }
@@ -166,6 +202,35 @@ impl Context {
 
         let result = shadow::ShadowVm::new(&bump, self, mode).run(root)?;
         Ok(shadow::lower::jsvalue_to_value(result, &self.string_interner))
+    }
+
+    /// Enqueue a microtask (function to be called asynchronously)
+    pub fn enqueue_microtask(&mut self, task: Value) {
+        self.microtasks.enqueue(task);
+    }
+
+    /// Process all queued microtasks
+    /// Returns the last result or Ok(()) if queue was empty
+    pub fn process_microtasks(&mut self) -> Result<Value, JsError> {
+        use crate::eval::call_value_with_this;
+        let mut last_result = Value::Undefined;
+        while let Some(task) = self.microtasks.dequeue() {
+            match task {
+                Value::Function(ref f) => {
+                    last_result = call_value_with_this(Value::Function(f.clone()), vec![], Value::Undefined)?;
+                }
+                Value::NativeFunction(ref f) => {
+                    last_result = call_value_with_this(Value::NativeFunction(f.clone()), vec![], Value::Undefined)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(last_result)
+    }
+
+    /// Check if there are pending microtasks
+    pub fn has_pending_microtasks(&self) -> bool {
+        !self.microtasks.is_empty()
     }
 
     /// Set a global value in the root environment.

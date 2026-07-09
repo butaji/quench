@@ -116,6 +116,19 @@ impl ValueFunction {
     pub fn has_prototype(&self) -> bool {
         self.proto_cell.borrow().is_some()
     }
+
+    /// Set a property on this function (e.g., prototype)
+    pub fn set_property(&self, key: &str, value: Value) {
+        if key == "prototype" {
+            // Handle prototype assignment
+            if let Value::Object(o) = value {
+                // Ensure constructor points back to this function
+                o.borrow_mut().set("constructor", Value::Function(self.clone()));
+                // Store the prototype object
+                *self.proto_cell.borrow_mut() = Some(o);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -164,6 +177,8 @@ pub struct NativeConstructor {
     func: NativeFn,
     /// The prototype object for instanceof checks
     pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
+    /// Static methods on the constructor
+    static_methods: std::collections::HashMap<String, Value>,
 }
 
 impl NativeConstructor {
@@ -175,7 +190,18 @@ impl NativeConstructor {
         NativeConstructor {
             func: std::rc::Rc::new(Box::new(f)),
             prototype,
+            static_methods: std::collections::HashMap::new(),
         }
+    }
+
+    /// Set a static method on the constructor
+    pub fn set_static_method(&mut self, name: &str, value: Value) {
+        self.static_methods.insert(name.to_string(), value);
+    }
+
+    /// Get a static method from the constructor
+    pub fn get_static_method(&self, name: &str) -> Option<Value> {
+        self.static_methods.get(name).cloned()
     }
 
     /// Call the constructor with arguments
@@ -200,6 +226,7 @@ impl Clone for NativeConstructor {
         NativeConstructor {
             func: std::rc::Rc::clone(&self.func),
             prototype: std::rc::Rc::clone(&self.prototype),
+            static_methods: self.static_methods.clone(),
         }
     }
 }

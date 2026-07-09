@@ -55,25 +55,31 @@ fn assign_to_member(
 ) -> Result<(), JsError> {
     let obj_val = eval_expression(object, env)?;
     let prop_name = extract_property_name(property, computed, env)?;
-    if let Value::Object(o) = obj_val {
-        let has_setter = {
-            let obj_ref = o.borrow();
-            obj_ref.get_setter(&prop_name).is_some()
-        };
-        if has_setter {
-            let setter_clone = {
+    match obj_val {
+        Value::Object(o) => {
+            let has_setter = {
                 let obj_ref = o.borrow();
-                obj_ref.get_setter(&prop_name).cloned()
+                obj_ref.get_setter(&prop_name).is_some()
             };
-            if let Some(setter_storage) = setter_clone {
-                call_setter(&o, &setter_storage, value.clone(), env)?;
-                return Ok(());
+            if has_setter {
+                let setter_clone = {
+                    let obj_ref = o.borrow();
+                    obj_ref.get_setter(&prop_name).cloned()
+                };
+                if let Some(setter_storage) = setter_clone {
+                    call_setter(&o, &setter_storage, value.clone(), env)?;
+                    return Ok(());
+                }
             }
+            o.borrow_mut().set(&prop_name, value.clone());
+            Ok(())
         }
-        o.borrow_mut().set(&prop_name, value.clone());
-        Ok(())
-    } else {
-        Err(JsError(format!(
+        Value::Function(ref f) => {
+            // Functions can have properties like prototype
+            f.set_property(&prop_name, value.clone());
+            Ok(())
+        }
+        _ => Err(JsError(format!(
             "Cannot assign to property of non-object, got {:?}",
             obj_val
         )))
@@ -130,6 +136,7 @@ fn get_member_function(
         Value::Number(_) => get_number_method(obj_val, prop_name, env),
         Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => crate::eval::member::eval_native_function_member(nf, prop_name),
+        Value::NativeConstructor(nc) => crate::eval::member::eval_native_constructor_member(nc, prop_name),
         _ => Ok(Value::Undefined),
     }
 }
@@ -205,11 +212,11 @@ fn get_number_method(
 pub fn call_getter(
     obj: &Rc<RefCell<Object>>,
     getter_storage: &GetterStorage,
-    env: &Rc<RefCell<Environment>>,
+    _env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let closure = Rc::clone(env);
+    let closure = Rc::clone(&getter_storage.closure);
     let body = getter_storage.body.clone();
-    let mut call_env = Environment::with_parent(Rc::clone(&closure));
+    let mut call_env = Environment::with_parent(closure);
     call_env
         .current_scope_mut()
         .set_this(Value::Object(Rc::clone(obj)));
