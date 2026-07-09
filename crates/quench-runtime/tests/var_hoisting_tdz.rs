@@ -63,7 +63,7 @@ fn test_let_tdz_with_reference_error() {
     assert!(result.is_err(), "Using let before initialization should throw");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Cannot access 'x' before initialization"),
-            "Error should mention TDZ, got: {}", err.to_string());
+            "Error should mention TDZ, got: {}", err);
 }
 
 /// Acceptance criterion 2: let should be accessible after initialization
@@ -100,7 +100,7 @@ fn test_let_tdz_access_before_init() {
     assert!(result.is_err(), "Accessing let before initialization should throw");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Cannot access 'y' before initialization"),
-            "Error should mention TDZ, got: {}", err.to_string());
+            "Error should mention TDZ, got: {}", err);
 }
 
 /// Acceptance criterion 2: const TDZ
@@ -118,7 +118,7 @@ fn test_const_tdz_access_before_init() {
     assert!(result.is_err(), "Accessing const before initialization should throw");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Cannot access 'x' before initialization"),
-            "Error should mention TDZ, got: {}", err.to_string());
+            "Error should mention TDZ, got: {}", err);
 }
 
 /// Acceptance criterion 3: const assignment throws TypeError
@@ -140,7 +140,7 @@ fn test_const_assignment_throws_type_error() {
     assert!(result.is_err(), "Assignment to const should throw");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Assignment to constant variable"),
-            "Error should mention assignment to constant, got: {}", err.to_string());
+            "Error should mention assignment to constant, got: {}", err);
 }
 
 /// Acceptance criterion 3: const can be read after initialization
@@ -241,7 +241,7 @@ fn test_tdz_shadowing_inner_let() {
     assert!(result.is_err(), "TDZ should throw when inner let shadows outer and is accessed before init");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Cannot access 'x' before initialization"),
-            "Error should mention TDZ for x, got: {}", err.to_string());
+            "Error should mention TDZ for x, got: {}", err);
 }
 
 /// Test that after the inner let is initialized, it can be accessed

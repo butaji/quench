@@ -162,8 +162,9 @@ pub enum ModuleMode {
 }
 
 /// Execution-time type used by the TS-aware shadow interpreter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ExecType {
+    #[default]
     Unknown,
     Int32,
     Float64,
@@ -176,11 +177,7 @@ pub enum ExecType {
     Void,
 }
 
-impl Default for ExecType {
-    fn default() -> Self {
-        ExecType::Unknown
-    }
-}
+
 
 /// Map from identifier symbol to its statically inferred execution type.
 #[derive(Debug, Default)]
