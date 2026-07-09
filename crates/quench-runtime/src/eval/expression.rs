@@ -485,11 +485,4 @@ fn eval_class_expr(class: &Class, _env: &Rc<RefCell<Environment>>) -> Result<Val
     Err(JsError("Class support is not yet fully implemented".to_string()))
 }
 
-fn property_key_to_string(key: &PropertyKey, env: &Rc<RefCell<Environment>>) -> Result<String, JsError> {
-    match key {
-        PropertyKey::Ident(s) => Ok(s.clone()),
-        PropertyKey::String(s) => Ok(s.clone()),
-        PropertyKey::Number(n) => Ok(n.to_string()),
-        PropertyKey::Computed(e) => Ok(to_js_string(&eval_expression(e, env)?)),
-    }
-}
+

@@ -39,7 +39,7 @@ pub fn eval_stmt(machine: &mut Machine, stmt: Rc<Statement>, is_expr_body: bool)
             machine.current_frame().env.borrow_mut().define(name.clone(), Value::Function(func));
             machine.current_frame().values.push(Value::Undefined);
         }
-        Statement::ClassDeclaration { name, class } => {
+        Statement::ClassDeclaration { name: _, class: _ } => {
             // Class declarations need recursive interpreter for full class semantics
             return Err(JsError("Class declarations must be evaluated with the recursive interpreter".to_string()));
         }

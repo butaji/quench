@@ -49,7 +49,7 @@ fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value,
                 }
             }
             // Move to prototype
-            current = obj.prototype.as_ref().map(|p| Rc::clone(p));
+            current = obj.prototype.as_ref().map(Rc::clone);
         }
     }
     // Handle Date.prototype specially
