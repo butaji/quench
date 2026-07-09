@@ -216,4 +216,52 @@ interface Child extends Base {
         let result = ctx.eval("const obj = { a: null }; obj?.a?.b ?? 'fallback'").unwrap();
         assert_eq!(result, Value::String("fallback".to_string()));
     }
+
+    // =========================================================================
+    // Arrow function restricted properties (caller/arguments)
+    // =========================================================================
+
+    #[test]
+    fn test_arrow_function_has_no_own_caller_property() {
+        let mut ctx = Context::new().unwrap();
+        // Arrow functions do not have own 'caller' property
+        let result = ctx.eval("(() => {}).hasOwnProperty('caller')").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_arrow_function_has_no_own_arguments_property() {
+        let mut ctx = Context::new().unwrap();
+        // Arrow functions do not have own 'arguments' property
+        let result = ctx.eval("(() => {}).hasOwnProperty('arguments')").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_arrow_function_accessing_caller_throws() {
+        let mut ctx = Context::new().unwrap();
+        // Accessing 'caller' on an arrow function should throw TypeError
+        let result = ctx.eval("(() => {}).caller");
+        assert!(result.is_err(), "Expected error when accessing arrowFn.caller");
+        let err = result.unwrap_err();
+        assert!(
+            err.0.contains("TypeError"),
+            "Expected TypeError, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_arrow_function_accessing_arguments_throws() {
+        let mut ctx = Context::new().unwrap();
+        // Accessing 'arguments' on an arrow function should throw TypeError
+        let result = ctx.eval("(() => {}).arguments");
+        assert!(result.is_err(), "Expected error when accessing arrowFn.arguments");
+        let err = result.unwrap_err();
+        assert!(
+            err.0.contains("TypeError"),
+            "Expected TypeError, got: {}",
+            err
+        );
+    }
 }
