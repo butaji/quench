@@ -276,12 +276,8 @@ impl<'a> ShadowVm<'a> {
         let ExecType::Object(expected_shape_id) = *obj_hint else {
             return None;
         };
-        let Some(obj_id) = obj_val.as_object() else {
-            return None;
-        };
-        let Some(obj) = self.ctx.shadow_arena.get(obj_id) else {
-            return None;
-        };
+        let obj_id = obj_val.as_object()?;
+        let obj = self.ctx.shadow_arena.get(obj_id)?;
         if obj.shape.id == expected_shape_id {
             return self.read_object_prop(&obj, _prop, cache).ok();
         }
