@@ -139,120 +139,37 @@ pub fn eval_assignment(machine: &mut Machine, left: &Expression, right: Rc<Expre
 /// Evaluate a full expression and push result to stack.
 pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsError> {
     match &*expr {
+        // Literals
         Expression::Number(n) => machine.current_frame().values.push(Value::Number(*n)),
         Expression::String(s) => machine.current_frame().values.push(Value::String(s.clone())),
         Expression::Boolean(b) => machine.current_frame().values.push(Value::Boolean(*b)),
         Expression::Null => machine.current_frame().values.push(Value::Null),
         Expression::Undefined => machine.current_frame().values.push(Value::Undefined),
+        // Identifier, object, array
         Expression::Identifier(name) => eval_identifier(machine, name)?,
         Expression::Object(props) => eval_object(machine, props)?,
         Expression::Array(elements) => eval_array(machine, elements)?,
-        Expression::FunctionExpression { name, params, body } => {
-            let func = ValueFunction::new(
-                name.clone(),
-                params.clone(),
-                body.clone(),
-                Rc::clone(&machine.current_frame().env),
-            );
-            machine.current_frame().values.push(Value::Function(func));
-        }
-        Expression::ArrowFunction { params, body } => {
-            let func = ValueFunction::new_arrow(
-                params.clone(),
-                body.clone(),
-                Rc::clone(&machine.current_frame().env),
-            );
-            machine.current_frame().values.push(Value::Function(func));
-        }
-        Expression::Binary { op, left, right } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyBinary(*op));
-            frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
-            frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
-        }
-        Expression::Unary { op, argument } => {
-            // typeof on an undeclared identifier must not throw.
-            if *op == UnaryOp::Typeof {
-                if let Expression::Identifier(name) = argument.as_ref() {
-                    if name != "this" && !machine.current_frame().env.borrow().has(name) {
-                        machine.current_frame().values.push(Value::String("undefined".to_string()));
-                        return Ok(());
-                    }
-                }
-            }
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyUnary(*op));
-            frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
-        }
+        // Function expressions
+        Expression::FunctionExpression { name, params, body } => eval_function_expr(machine, name, params, body)?,
+        Expression::ArrowFunction { params, body } => eval_arrow_function(machine, params, body)?,
+        // Binary/unary operations
+        Expression::Binary { op, left, right } => eval_binary_expr(machine, *op, left, right)?,
+        Expression::Unary { op, argument } => eval_unary_expr(machine, *op, argument)?,
+        // Assignment
         Expression::Assignment { left, right } => eval_assignment(machine, left, Rc::new((**right).clone()))?,
-        Expression::CompoundAssignment { op, left, right } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyCompoundAssign { op: op.to_binary(), target: AssignmentTarget::Identifier(String::new()) });
-            frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
-            frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
-        }
-        Expression::Call { callee, arguments } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyCall { argc: arguments.len() });
-            for arg in arguments.iter().rev() {
-                frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
-            }
-            frame.work.push(Work::EvalCallee(Rc::new((**callee).clone())));
-        }
-        Expression::Member { object, property, computed } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyMember { property: property.clone(), computed: *computed, callee_mode: false });
-            if *computed {
-                if let PropertyKey::Computed(key_expr) = property {
-                    frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
-                } else {
-                    return Err(JsError("Invalid computed property".to_string()));
-                }
-            }
-            frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
-        }
-        Expression::Conditional { condition, consequent, alternate } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyConditional { consequent: Rc::new((**consequent).clone()), alternate: Rc::new((**alternate).clone()) });
-            frame.work.push(Work::EvalExpr(Rc::new((**condition).clone())));
-        }
-        Expression::Update { op, argument, prefix } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyUpdate { op: *op, prefix: *prefix, target: AssignmentTarget::Identifier(String::new()) });
-            frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
-        }
-        Expression::New { constructor, arguments } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::ApplyNew { argc: arguments.len() });
-            for arg in arguments.iter().rev() {
-                frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
-            }
-            frame.work.push(Work::EvalExpr(Rc::new((**constructor).clone())));
-        }
-        Expression::Sequence(exprs) => {
-            if exprs.is_empty() {
-                machine.current_frame().values.push(Value::Undefined);
-            } else {
-                machine.current_frame().work.push(Work::ApplySequence { exprs: Rc::new(exprs.clone()), index: 0 });
-            }
-        }
-        Expression::BlockExpr(stmts) => {
-            if stmts.is_empty() {
-                machine.current_frame().values.push(Value::Undefined);
-            } else {
-                machine.current_frame().work.push(Work::ApplyBlockExpr { stmts: Rc::new(stmts.clone()), index: 0 });
-            }
-        }
-        Expression::ForOf { variable, iterable, body } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::BeginForOf { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
-            frame.work.push(Work::EvalExpr(Rc::new((**iterable).clone())));
-        }
-        Expression::ForIn { variable, object, body } => {
-            let frame = machine.current_frame();
-            frame.work.push(Work::BeginForIn { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
-            frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
-        }
+        Expression::CompoundAssignment { op, left, right } => eval_compound_assign(machine, op, left, right)?,
+        // Call/member access
+        Expression::Call { callee, arguments } => eval_call_expr(machine, callee, arguments)?,
+        Expression::Member { object, property, computed } => eval_member_expr(machine, object, property, *computed)?,
+        // Other expressions
+        Expression::Conditional { condition, consequent, alternate } => eval_conditional_expr(machine, condition, consequent, alternate)?,
+        Expression::Update { op, argument, prefix } => eval_update_expr(machine, *op, *prefix, argument)?,
+        Expression::New { constructor, arguments } => eval_new_expr(machine, constructor, arguments)?,
+        Expression::Sequence(exprs) => eval_sequence_expr(machine, exprs)?,
+        Expression::BlockExpr(stmts) => eval_block_expr(machine, stmts)?,
+        Expression::ForOf { variable, iterable, body } => eval_for_of_expr(machine, variable, iterable, body)?,
+        Expression::ForIn { variable, object, body } => eval_for_in_expr(machine, variable, object, body)?,
+        // Errors
         Expression::ArrayPattern(_) | Expression::ObjectPattern(_) => {
             return Err(JsError("Array/Object pattern must be used in assignment context".to_string()));
         }
@@ -266,5 +183,152 @@ pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsEr
             return Err(JsError("JSX fragments must be evaluated with the recursive interpreter".to_string()));
         }
     }
+    Ok(())
+}
+
+/// Evaluate a function expression.
+fn eval_function_expr(machine: &mut Machine, name: &Option<String>, params: &[String], body: &[Statement]) -> Result<(), JsError> {
+    let func = ValueFunction::new(
+        name.clone(),
+        params.to_vec(),
+        body.to_vec(),
+        Rc::clone(&machine.current_frame().env),
+    );
+    machine.current_frame().values.push(Value::Function(func));
+    Ok(())
+}
+
+/// Evaluate an arrow function expression.
+fn eval_arrow_function(machine: &mut Machine, params: &[String], body: &Box<ArrowBody>) -> Result<(), JsError> {
+    let func = ValueFunction::new_arrow(
+        params.to_vec(),
+        body.clone(),
+        Rc::clone(&machine.current_frame().env),
+    );
+    machine.current_frame().values.push(Value::Function(func));
+    Ok(())
+}
+
+/// Evaluate a binary expression.
+fn eval_binary_expr(machine: &mut Machine, op: BinaryOp, left: &Box<Expression>, right: &Box<Expression>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyBinary(op));
+    frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
+    frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
+    Ok(())
+}
+
+/// Evaluate a unary expression (handles special typeof behavior).
+fn eval_unary_expr(machine: &mut Machine, op: UnaryOp, argument: &Box<Expression>) -> Result<(), JsError> {
+    // typeof on an undeclared identifier must not throw.
+    if op == UnaryOp::Typeof {
+        if let Expression::Identifier(name) = argument.as_ref() {
+            if name != "this" && !machine.current_frame().env.borrow().has(name) {
+                machine.current_frame().values.push(Value::String("undefined".to_string()));
+                return Ok(());
+            }
+        }
+    }
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyUnary(op));
+    frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
+    Ok(())
+}
+
+/// Evaluate a compound assignment expression (e.g., +=, -=).
+fn eval_compound_assign(machine: &mut Machine, op: &CompoundOp, left: &Box<Expression>, right: &Box<Expression>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyCompoundAssign { op: op.to_binary(), target: AssignmentTarget::Identifier(String::new()) });
+    frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
+    frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
+    Ok(())
+}
+
+/// Evaluate a call expression.
+fn eval_call_expr(machine: &mut Machine, callee: &Box<Expression>, arguments: &[Expression]) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyCall { argc: arguments.len() });
+    for arg in arguments.iter().rev() {
+        frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
+    }
+    frame.work.push(Work::EvalCallee(Rc::new((**callee).clone())));
+    Ok(())
+}
+
+/// Evaluate a member access expression.
+fn eval_member_expr(machine: &mut Machine, object: &Box<Expression>, property: &PropertyKey, computed: bool) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyMember { property: property.clone(), computed, callee_mode: false });
+    if computed {
+        if let PropertyKey::Computed(key_expr) = property {
+            frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
+        } else {
+            return Err(JsError("Invalid computed property".to_string()));
+        }
+    }
+    frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
+    Ok(())
+}
+
+/// Evaluate a conditional expression.
+fn eval_conditional_expr(machine: &mut Machine, condition: &Box<Expression>, consequent: &Box<Expression>, alternate: &Box<Expression>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyConditional { consequent: Rc::new((**consequent).clone()), alternate: Rc::new((**alternate).clone()) });
+    frame.work.push(Work::EvalExpr(Rc::new((**condition).clone())));
+    Ok(())
+}
+
+/// Evaluate an update expression (++ or --).
+fn eval_update_expr(machine: &mut Machine, op: UpdateOp, prefix: bool, argument: &Box<Expression>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyUpdate { op, prefix, target: AssignmentTarget::Identifier(String::new()) });
+    frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
+    Ok(())
+}
+
+/// Evaluate a new expression.
+fn eval_new_expr(machine: &mut Machine, constructor: &Box<Expression>, arguments: &[Expression]) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::ApplyNew { argc: arguments.len() });
+    for arg in arguments.iter().rev() {
+        frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
+    }
+    frame.work.push(Work::EvalExpr(Rc::new((**constructor).clone())));
+    Ok(())
+}
+
+/// Evaluate a sequence expression.
+fn eval_sequence_expr(machine: &mut Machine, exprs: &[Expression]) -> Result<(), JsError> {
+    if exprs.is_empty() {
+        machine.current_frame().values.push(Value::Undefined);
+    } else {
+        machine.current_frame().work.push(Work::ApplySequence { exprs: Rc::new(exprs.to_vec()), index: 0 });
+    }
+    Ok(())
+}
+
+/// Evaluate a block expression.
+fn eval_block_expr(machine: &mut Machine, stmts: &[Statement]) -> Result<(), JsError> {
+    if stmts.is_empty() {
+        machine.current_frame().values.push(Value::Undefined);
+    } else {
+        machine.current_frame().work.push(Work::ApplyBlockExpr { stmts: Rc::new(stmts.to_vec()), index: 0 });
+    }
+    Ok(())
+}
+
+/// Evaluate a for-of expression.
+fn eval_for_of_expr(machine: &mut Machine, variable: &Box<Expression>, iterable: &Box<Expression>, body: &Box<Statement>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::BeginForOf { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
+    frame.work.push(Work::EvalExpr(Rc::new((**iterable).clone())));
+    Ok(())
+}
+
+/// Evaluate a for-in expression.
+fn eval_for_in_expr(machine: &mut Machine, variable: &Box<Expression>, object: &Box<Expression>, body: &Box<Statement>) -> Result<(), JsError> {
+    let frame = machine.current_frame();
+    frame.work.push(Work::BeginForIn { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
+    frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
     Ok(())
 }
