@@ -7,7 +7,7 @@ use crate::ast::{
 use super::helpers::{
     lower_bin_op, lower_unary_op, assign_op_to_bin, lower_prop_name,
 };
-use super::helpers::{atom_to_string, LowerError};
+use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
 use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
 use super::literals::{lower_getter_prop, lower_literal, lower_method_prop, lower_setter_prop, lower_template_literal};
 use super::opt_chain::lower_opt_chain;
@@ -248,7 +248,7 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerErr
             Ok((PropertyKey::Ident(name.clone()), PropertyValue::Value(Expression::Identifier(name))))
         }
         swc::Prop::KeyValue(kv) => {
-            let key = lower_prop_name(&kv.key)?;
+            let key = lower_prop_name_with_computed(&kv.key)?;
             let value = lower_expr(&kv.value)?;
             Ok((key, PropertyValue::Value(value)))
         }
@@ -256,6 +256,19 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerErr
         swc::Prop::Setter(setter) => lower_setter_prop(setter),
         swc::Prop::Method(method) => lower_method_prop(method),
         swc::Prop::Assign(_) => Err(LowerError::new("Assignment property not supported")),
+    }
+}
+
+/// Lower property name with support for computed keys
+fn lower_prop_name_with_computed(key: &swc::PropName) -> Result<PropertyKey, LowerError> {
+    match key {
+        swc::PropName::Str(s) => Ok(PropertyKey::String(wtf8_atom_to_string(&s.value))),
+        swc::PropName::Ident(i) => Ok(PropertyKey::Ident(atom_to_string(&i.sym))),
+        swc::PropName::Num(n) => Ok(PropertyKey::Number(n.value)),
+        swc::PropName::Computed(comp) => {
+            Ok(PropertyKey::Computed(Box::new(lower_expr(&comp.expr)?)))
+        }
+        swc::PropName::BigInt(b) => Ok(PropertyKey::String(b.value.to_string())),
     }
 }
 
