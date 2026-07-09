@@ -28,11 +28,29 @@ pub fn register_array(ctx: &mut Context) {
     let array = Object::new(ObjectKind::Ordinary);
     let array = Rc::new(RefCell::new(array));
 
+    register_array_static_methods(&array);
+    let array_proto = Object::new(ObjectKind::Array);
+    let array_proto_rc = Rc::new(RefCell::new(array_proto));
+
+    setup_prototype_methods(&array_proto_rc);
+    setup_array_length_getter(&array_proto_rc);
+
+    array.borrow_mut().set("prototype", Value::Object(Rc::clone(&array_proto_rc)));
+
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        array_proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
+    setup_array_prototype_global(&array_proto_rc);
+
+    ctx.set_global("Array".to_string(), Value::Object(array));
+}
+
+fn register_array_static_methods(array: &Rc<RefCell<Object>>) {
     array.borrow_mut().set("isArray", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         Ok(Value::Boolean(matches!(arg, Value::Object(ref o) if o.borrow().kind == ObjectKind::Array)))
     }))));
-
     array.borrow_mut().set("from", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let items = args.first().cloned().unwrap_or(Value::Undefined);
         let arr = match items {
@@ -44,46 +62,29 @@ pub fn register_array(ctx: &mut Context) {
         };
         Ok(Value::Object(Rc::new(RefCell::new(arr))))
     }))));
-
     array.borrow_mut().set("of", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let arr = Object::new_array_from(args.to_vec());
         Ok(Value::Object(Rc::new(RefCell::new(arr))))
     }))));
+}
 
-    // Create Array.prototype and attach to Array
-    let array_proto = Object::new(ObjectKind::Array);
-    let array_proto_rc = Rc::new(RefCell::new(array_proto));
-
-    // Setup all prototype methods
-    setup_prototype_methods(&array_proto_rc);
-
-    // length property getter
-    array_proto_rc.borrow_mut().set("length", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+fn setup_array_length_getter(array_proto: &Rc<RefCell<Object>>) {
+    array_proto.borrow_mut().set("length", Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
         match crate::builtins::get_native_this() {
             Some(Value::Object(o)) => Ok(Value::Number(o.borrow().elements.len() as f64)),
             _ => Ok(Value::Undefined),
         }
     }))));
+}
 
-    array.borrow_mut().set("prototype", Value::Object(Rc::clone(&array_proto_rc)));
-
-    // Set up the prototype chain: array_proto_rc -> Object.prototype
-    if let Some(object_proto) = crate::builtins::get_object_prototype() {
-        array_proto_rc.borrow_mut().prototype = Some(object_proto);
-    }
-
-    // Store Array.prototype globally for interpreter to use when creating array literals
+fn setup_array_prototype_global(array_proto: &Rc<RefCell<Object>>) {
     let global_proto = Rc::new(RefCell::new(Object::new(ObjectKind::Array)));
-    // Set global_proto's prototype to array_proto_rc
-    global_proto.borrow_mut().prototype = Some(Rc::clone(&array_proto_rc));
-    // Copy all properties from array_proto_rc to global_proto
-    let proto_props = array_proto_rc.borrow().properties.clone();
+    global_proto.borrow_mut().prototype = Some(Rc::clone(array_proto));
+    let proto_props = array_proto.borrow().properties.clone();
     for (k, v) in proto_props {
         global_proto.borrow_mut().set(&k, v);
     }
     ARRAY_PROTOTYPE.with(|ap| {
         *ap.borrow_mut() = Some(global_proto);
     });
-
-    ctx.set_global("Array".to_string(), Value::Object(array));
 }

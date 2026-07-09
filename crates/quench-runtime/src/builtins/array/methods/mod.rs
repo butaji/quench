@@ -2,6 +2,8 @@
 //!
 //! All Array.prototype method implementations organized by category.
 
+use crate::value::Value;
+
 pub mod accessors;
 pub mod mutation;
 pub mod rearrange;
@@ -33,7 +35,14 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
         );
     };
 
-    // Transformation methods
+    setup_transformation_methods(&m);
+    setup_mutation_methods(&m);
+    setup_rearrange_methods(&m);
+    setup_accessor_methods(&m);
+    setup_search_methods(&m);
+}
+
+fn setup_transformation_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("map", proto_map);
     m("filter", proto_filter);
     m("forEach", proto_for_each);
@@ -42,25 +51,29 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     m("every", proto_every);
     m("flat", proto_flat);
     m("flatMap", proto_flat_map);
+}
 
-    // Mutation methods
+fn setup_mutation_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("push", proto_push);
     m("pop", proto_pop);
     m("shift", proto_shift);
     m("unshift", proto_unshift);
     m("splice", proto_splice);
+}
 
-    // Rearrange methods
+fn setup_rearrange_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("reverse", proto_reverse);
     m("sort", proto_sort);
+}
 
-    // Accessor methods
+fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("slice", proto_slice);
     m("concat", proto_concat);
     m("join", proto_join);
     m("toString", proto_to_string);
+}
 
-    // Search methods
+fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("indexOf", proto_index_of);
     m("includes", proto_includes);
     m("find", proto_find);
