@@ -74,7 +74,7 @@ fn get_class_prototype_cached(
 ) -> Result<Rc<RefCell<Object>>, JsError> {
     // Use the shared prototype from ClassValue
     // This ensures that instanceof checks work correctly
-    crate::eval::expression::get_or_create_class_prototype(class, env)
+    crate::eval::class::get_or_create_class_prototype(class, env)
 }
 
 /// Helper to convert PropertyKey to string
