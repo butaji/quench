@@ -1,81 +1,78 @@
 # Deferred: Strict Build-Time Linting Rules
 
-## Status: DEFERRED
+## Status
 
-The following strict linting rules from the execution contract cannot be immediately implemented without significant architectural changes:
+The file-length limit (500 lines) is **ENFORCED** by `build.rs`.
+Function-length and complexity limits are **DEFERRED** as documented below.
 
-### 1. 500 Lines/File Limit
+## Rules Status
 
-**Files exceeding the limit:**
-| File | Current Lines | Status |
-|------|--------------|--------|
-| `stack_machine.rs` | 1679 | DEFERRED - Core interpreter, splitting causes Rust privacy issues |
-| `test262/runner.rs` | 679 | ACCEPTABLE - Test harness, not runtime |
-| `lower/expr.rs` | 614 | DEFERRED - Complex lowering logic, splitting breaks compilation |
-| `lib.rs` | 525 | DEFERRED - Public API module |
-| `lower/stmt.rs` | 510 | DEFERRED - Complex lowering logic |
+| Rule | Status | Notes |
+|------|--------|-------|
+| File length: 500 lines | **ENFORCED** | Build fails on violations |
+| Function length: 40 lines | **DEFERRED** | ~46 violations, requires architectural changes |
+| Complexity: 10 | **DEFERRED** | ~20 violations in complex match arms |
+| No `#[allow(...)]` exemptions | **PARTIAL** | No new exemptions allowed |
 
-**Why deferred:**
-- Rust's module privacy model makes cross-file method calls awkward
-- The `impl` blocks must be in the same file as the struct definition for private methods
-- Splitting requires either making methods `pub(crate)` or restructuring the entire architecture
-- The runtime is functional and well-tested; breaking it for line count is not pragmatic
+## 1. 500 Lines/File Limit - ENFORCED
 
-### 2. 40 Lines/Function Limit
+The linter in `build.rs` checks file lengths and panics on violations.
+As of 2026-07-09, no files in `crates/quench-runtime/src/` exceed 500 lines.
 
-**Status:** ACCEPTABLE with documentation
+## 2. 40 Lines/Function Limit - DEFERRED
 
-Individual functions in the codebase are well-designed but may exceed 40 lines. The interpreter patterns used (explicit stack machine, AST traversal) naturally produce functions that are longer than the limit but are necessary for correctness.
+### Violations (~46 functions)
 
-**Acceptance criteria:**
-- Functions that handle complex state machines (like `eval_stmt`, `eval_expr`) are allowed to exceed 40 lines
-- Helper functions should remain under 40 lines
-- Code review should flag functions that can be reasonably split
+These violations require significant refactoring to fix. They are acceptable
+for now as documented here.
 
-### 3. Complexity 10 Limit
+| File | Count | Notes |
+|------|-------|-------|
+| `stack_machine/*.rs` | ~15 | Core interpreter, splitting requires pub(crate) |
+| `eval/*.rs` | ~12 | Complex AST traversal patterns |
+| `builtins/**/*.rs` | ~8 | Promise and other builtins |
+| `lower/**/*.rs` | ~6 | AST lowering logic |
+| `test262/**/*.rs` | ~5 | Test harness (acceptable) |
 
-**Status:** ACCEPTABLE with documentation
+### Acceptance Criteria
 
-Cyclomatic complexity limits are not currently enforced. The Rust compiler and borrow checker provide inherent complexity management.
+- Functions that handle complex state machines are allowed
+- Helper functions should remain under 40 lines when possible
+- New code should not add violations
 
-**Acceptance criteria:**
-- No `unsafe` blocks without documentation
-- No nested closures deeper than 3 levels
-- Pattern matching is preferred over complex conditionals
+## 3. Complexity 10 Limit - DEFERRED
 
-### 4. No `#[allow(...)]` Exemptions
+### Violations (~20 functions)
+
+Complex match arms in interpreter and lowering code exceed complexity 10.
+These are acceptable for JS semantics correctness.
+
+| File | Count | Notes |
+|------|-------|-------|
+| `eval/expression.rs` | 2 | eval_expression match arms |
+| `eval/statement.rs` | 1 | statement evaluation |
+| `eval/class.rs` | 1 | class evaluation |
+| `stack_machine/*.rs` | ~4 | interpreter loops |
+| `hir.rs` | 1 | HIR lowering |
+| `test262/**/*.rs` | ~10 | Test harness (acceptable) |
+
+## 4. No `#[allow(...)]` Exemptions
 
 **Status:** PARTIALLY ACCEPTABLE
 
-The codebase currently uses minimal `#[allow]` attributes. Clippy warnings are addressed where practical.
-
-**Current clippy warnings (8):**
-- `question_mark` - suggestions to use `?` operator (low priority)
-- `type_complexity` - complex type aliases (acceptable for JS interop)
-- `boxed_local` - unnecessary boxing (low priority)
-- `module_inception` - module naming (cosmetic)
-
-**Acceptance criteria:**
-- No `#[allow(...)]` added for new code without documented justification
-- Existing warnings may be addressed incrementally
+- No `#[allow]` attributes for lint rules
+- Clippy warnings addressed incrementally
+- Existing warnings documented in `cargo clippy` output
 
 ## Deferred Action Plan
 
-When the runtime reaches 100% spec compliance (test262, TypeScript), the following refactoring may be considered:
+When refactoring for other reasons, consider:
+1. Split large functions into helper functions
+2. Extract complex match arms into separate functions
+3. Use guard clauses to reduce nesting
 
-1. **Phase 1:** Address clippy warnings (low effort, 1-2 days)
-2. **Phase 2:** Split `lib.rs` into submodules (medium effort, 1 week)
-3. **Phase 3:** Restructure `lower/` modules (medium effort, 1 week)
-4. **Phase 4:** Restructure `stack_machine.rs` with proper `pub(crate)` visibility (high effort, 2 weeks)
+## Verification
 
-## Risk Assessment
-
-**If not addressed:**
-- Code maintainability decreases over time
-- New contributors may find the codebase intimidating
-- Linter CI may fail in the future if stricter rules are enforced
-
-**Mitigation:**
-- All existing tests pass
-- Code is well-documented
-- Architecture is sound even if files are large
+```bash
+cargo build  # Only file-length violations cause failure
+```
