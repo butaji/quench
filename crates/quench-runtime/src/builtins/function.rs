@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{NativeConstructor, Object, ObjectKind, Value};
+use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 // Thread-local storage for Function.prototype (used by interpreter for function expressions)
@@ -35,6 +35,26 @@ pub fn register_function(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         function_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
+    
+    // Function.prototype.toString - returns a string representation of the function
+    function_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(Value::String("[Function]".to_string()))
+    }))));
+    
+    // Function.prototype.call - placeholder, interpreter handles this specially
+    function_proto_rc.borrow_mut().set("call", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Err(crate::value::JsError("Function.prototype.call must be called on a function".to_string()))
+    }))));
+    
+    // Function.prototype.apply - calls the function with a given this value and array of arguments
+    function_proto_rc.borrow_mut().set("apply", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Err(crate::value::JsError("Function.prototype.apply must be called on a function".to_string()))
+    }))));
+    
+    // Function.prototype.bind - creates a new function that has its this value bound
+    function_proto_rc.borrow_mut().set("bind", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Err(crate::value::JsError("Function.prototype.bind must be called on a function".to_string()))
+    }))));
 
     // Function constructor with prototype
     let function_constructor = NativeConstructor::new(
