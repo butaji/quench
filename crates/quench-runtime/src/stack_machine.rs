@@ -77,6 +77,8 @@ enum Work {
     ApplyUnary(UnaryOp),
     /// Pop a value and assign it to an identifier or member.
     ApplyAssign { target: AssignmentTarget },
+    /// Pop value, object, and key; assign to member property.
+    ApplyMemberAssign,
     /// Pop right, left, apply binary op and assign.
     ApplyCompoundAssign { op: BinaryOp, target: AssignmentTarget },
     /// Evaluate a callee expression, leaving (function, this) on the stack.
@@ -279,6 +281,9 @@ impl Machine {
             Work::ApplyBinary(op) => self.apply_binary(op)?,
             Work::ApplyUnary(op) => self.apply_unary(op)?,
             Work::ApplyAssign { target } => self.apply_assign(target)?,
+            Work::ApplyMemberAssign => {
+                self.apply_member_assign()?;
+            }
             Work::ApplyCompoundAssign { op, target } => self.apply_compound_assign(op, target)?,
             Work::EvalCallee(callee) => self.eval_callee(callee)?,
             Work::ApplyCall { argc } => self.apply_call(argc)?,
@@ -581,7 +586,8 @@ impl Machine {
             }
             Expression::Member { object, property, computed } => {
                 let frame = self.current_frame();
-                frame.work.push(Work::ApplyAssign { target: AssignmentTarget::Identifier(String::new()) });
+                // Member assignment: push marker, then key, object, value
+                frame.work.push(Work::ApplyMemberAssign);
                 if *computed {
                     if let PropertyKey::Computed(key_expr) = property {
                         frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
@@ -652,6 +658,35 @@ impl Machine {
                 frame.values.push(Value::Undefined);
                 Ok(())
             }
+        }
+    }
+
+    /// Pop value, object, and key from stack; assign value to object[key].
+    fn apply_member_assign(&mut self) -> Result<(), JsError> {
+        let key = self.pop_value();
+        let obj_val = self.pop_value();
+        let value = self.pop_value();
+        let key_str = to_js_string(&key);
+        match obj_val {
+            Value::Object(obj_rc) => {
+                // Check for setter
+                let has_setter = {
+                    let obj = obj_rc.borrow();
+                    obj.get_setter(&key_str).is_some()
+                };
+                if has_setter {
+                    // For now, setters on regular objects are not supported in this path
+                    return Err(JsError("Setter not supported in member assignment".to_string()));
+                }
+                obj_rc.borrow_mut().set(&key_str, value);
+                self.current_frame().values.push(Value::Undefined);
+                Ok(())
+            }
+            Value::String(_) => {
+                // Strings are immutable in JavaScript
+                Err(JsError("Cannot assign to property of a string".to_string()))
+            }
+            _ => Err(JsError("Cannot set property on non-object".to_string())),
         }
     }
 
@@ -1442,7 +1477,11 @@ fn read_property(obj_val: &Value, prop_name: &str, env: &Rc<RefCell<Environment>
             } else if prop_name == "prototype" {
                 Ok(Value::Object(f.get_prototype()))
             } else {
-                Ok(Value::Undefined)
+                // Check prototype chain for other properties like toString, call, apply
+                let proto = f.get_prototype();
+                let result = proto.borrow().get(prop_name)
+                    .unwrap_or(Value::Undefined);
+                Ok(result)
             }
         }
         Value::NativeFunction(nf) => {

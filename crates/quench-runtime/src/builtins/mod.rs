@@ -7,6 +7,7 @@ pub mod math;
 pub mod object;
 pub mod array;
 pub mod map;
+pub mod string;
 pub mod date;
 pub mod error;
 pub mod function;
@@ -97,6 +98,8 @@ pub fn register_builtins(ctx: &mut Context) {
     object::register_object(ctx);
     array::register_array(ctx);
     map::register_map_and_set(ctx);
+    // String must be registered for string support
+    string::register_string(ctx);
     // Number must be registered before Date (for timestamp conversion)
     number::register_number(ctx);
     date::register_global_functions(ctx);
