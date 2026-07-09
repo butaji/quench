@@ -30,107 +30,140 @@ pub fn call_value(
     this_val: Value,
 ) -> Result<(), JsError> {
     match func {
-        Value::Function(f) => {
-            let closure = Rc::clone(&f.closure);
-            let params = f.params.clone();
+        Value::Function(f) => call_js_function(machine, f, args, this_val),
+        Value::NativeFunction(nf) => call_native_function(machine, nf, this_val, args),
+        Value::NativeConstructor(nc) => call_native_constructor(machine, nc, args),
+        Value::Object(o) => call_object_as_constructor(machine, o, args),
+        _ => Err(JsError("Value is not a function".to_string())),
+    }
+}
 
-            let mut call_env = Environment::with_parent(Rc::clone(&closure));
-            call_env.current_scope_mut().set_this(this_val);
+/// Call a JavaScript function.
+fn call_js_function(
+    machine: &mut Machine,
+    f: ValueFunction,
+    args: Vec<Value>,
+    this_val: Value,
+) -> Result<(), JsError> {
+    let closure = Rc::clone(&f.closure);
+    let params = f.params.clone();
 
-            for (i, param) in params.iter().enumerate() {
-                let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-                call_env.define(param.clone(), arg);
+    let mut call_env = Environment::with_parent(Rc::clone(&closure));
+    call_env.current_scope_mut().set_this(this_val);
+
+    for (i, param) in params.iter().enumerate() {
+        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
+        call_env.define(param.clone(), arg);
+    }
+
+    // Create arguments object for non-arrow functions
+    if !f.is_arrow {
+        let args_obj = create_arguments_object(&f, args);
+        call_env.define("arguments".to_string(), args_obj);
+        hir::predeclare_var(&f.body, &mut call_env);
+        hir::predeclare_let_const(&f.body, &mut call_env);
+    }
+
+    let call_env = Rc::new(RefCell::new(call_env));
+
+    if f.is_arrow {
+        call_arrow_body(machine, &f, call_env);
+    } else {
+        machine.frames.push(Frame {
+            env: call_env,
+            values: Vec::new(),
+            work: Vec::new(),
+            catches: Vec::new(),
+        });
+        machine.push_stmt_list(&f.body, false);
+    }
+    Ok(())
+}
+
+/// Handle arrow function body execution.
+fn call_arrow_body(machine: &mut Machine, f: &ValueFunction, call_env: Rc<RefCell<Environment>>) {
+    if let Some(ref arrow_body) = *f.arrow_body.as_ref() {
+        match arrow_body {
+            ArrowBody::Expression(expr) => {
+                machine.frames.push(Frame {
+                    env: call_env,
+                    values: Vec::new(),
+                    work: vec![Work::EvalExpr(Rc::new(expr.clone()))],
+                    catches: Vec::new(),
+                });
             }
-
-            // Create arguments object for non-arrow functions
-            if !f.is_arrow {
-                let args_obj = create_arguments_object(&f, args);
-                call_env.define("arguments".to_string(), args_obj);
-                hir::predeclare_var(&f.body, &mut call_env);
-                hir::predeclare_let_const(&f.body, &mut call_env);
-            }
-
-            let call_env = Rc::new(RefCell::new(call_env));
-
-            if f.is_arrow {
-                if let Some(ref arrow_body) = *f.arrow_body.as_ref() {
-                    match arrow_body {
-                        ArrowBody::Expression(expr) => {
-                            machine.frames.push(Frame {
-                                env: call_env,
-                                values: Vec::new(),
-                                work: vec![Work::EvalExpr(Rc::new(expr.clone()))],
-                                catches: Vec::new(),
-                            });
-                        }
-                        ArrowBody::Block(stmts) => {
-                            machine.frames.push(Frame {
-                                env: call_env,
-                                values: Vec::new(),
-                                work: Vec::new(),
-                                catches: Vec::new(),
-                            });
-                            machine.push_stmt_list(stmts, true);
-                        }
-                    }
-                } else {
-                    machine.current_frame().values.push(Value::Undefined);
-                }
-            } else {
+            ArrowBody::Block(stmts) => {
                 machine.frames.push(Frame {
                     env: call_env,
                     values: Vec::new(),
                     work: Vec::new(),
                     catches: Vec::new(),
                 });
-                machine.push_stmt_list(&f.body, false);
+                machine.push_stmt_list(stmts, true);
             }
-            Ok(())
         }
-        Value::NativeFunction(nf) => {
-            hir::set_native_this(this_val);
-            let result = nf.call(args)?;
-            machine.current_frame().values.push(result);
-            Ok(())
-        }
-        Value::NativeConstructor(nc) => {
-            let result = nc.call(args)?;
-            machine.current_frame().values.push(result);
-            Ok(())
-        }
-        Value::Object(o) => {
-            let constructor_opt = {
-                let obj = o.borrow();
-                if let Some(constructor) = obj.get("constructor") {
-                    if matches!(constructor, Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) {
-                        Some(constructor.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-
-            if let Some(constructor) = constructor_opt {
-                let new_obj = Object::new(ObjectKind::Ordinary);
-                let new_obj_rc = Rc::new(RefCell::new(new_obj));
-                {
-                    let proto = o.borrow().get("prototype");
-                    if proto.is_some() {
-                        new_obj_rc.borrow_mut().set("constructor", Value::Object(Rc::clone(&o)));
-                    }
-                }
-                call_value(machine, constructor, args, Value::Object(Rc::clone(&new_obj_rc)))?;
-            } else {
-                return Err(JsError("Object is not a constructor".to_string()));
-            }
-            Ok(())
-        }
-        _ => {
-            Err(JsError("Value is not a function".to_string()))
-        }
+    } else {
+        machine.current_frame().values.push(Value::Undefined);
     }
+}
+
+/// Call a native function.
+fn call_native_function(
+    machine: &mut Machine,
+    nf: std::rc::Rc<crate::value::NativeFunction>,
+    this_val: Value,
+    args: Vec<Value>,
+) -> Result<(), JsError> {
+    hir::set_native_this(this_val);
+    let result = nf.call(args)?;
+    machine.current_frame().values.push(result);
+    Ok(())
+}
+
+/// Call a native constructor.
+fn call_native_constructor(
+    machine: &mut Machine,
+    nc: std::rc::Rc<crate::value::NativeConstructor>,
+    args: Vec<Value>,
+) -> Result<(), JsError> {
+    let result = nc.call(args)?;
+    machine.current_frame().values.push(result);
+    Ok(())
+}
+
+/// Call an object as a constructor.
+fn call_object_as_constructor(
+    machine: &mut Machine,
+    o: std::rc::Rc<std::cell::RefCell<Object>>,
+    args: Vec<Value>,
+) -> Result<(), JsError> {
+    let constructor_opt = {
+        let obj = o.borrow();
+        if let Some(constructor) = obj.get("constructor") {
+            if matches!(constructor, Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) {
+                Some(constructor.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some(constructor) = constructor_opt {
+        let new_obj = Object::new(ObjectKind::Ordinary);
+        let new_obj_rc = Rc::new(RefCell::new(new_obj));
+        {
+            let proto = o.borrow().get("prototype");
+            if proto.is_some() {
+                new_obj_rc.borrow_mut().set("constructor", Value::Object(Rc::clone(&o)));
+            }
+        }
+        call_value(machine, constructor, args, Value::Object(Rc::clone(&new_obj_rc)))?;
+    } else {
+        return Err(JsError("Object is not a constructor".to_string()));
+    }
+    Ok(())
 }
 
 /// Call a setter function.
