@@ -19,6 +19,7 @@ pub mod symbol;
 pub use array::get_array_prototype;
 pub use object::get_object_prototype;
 pub use function::get_function_prototype;
+pub use promise::execute_pending_microtasks;
 
 // Re-export get_native_this for use by submodules
 pub(crate) use crate::interpreter::get_native_this;

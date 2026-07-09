@@ -3,6 +3,7 @@
 //! Implements Promise/A+ specification for asynchronous operations.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::eval::call_value_with_this;
@@ -11,8 +12,17 @@ use crate::value::object::PromiseObjectData;
 use crate::Context;
 use crate::JsError;
 
+// Thread-local storage for Promise prototype
+thread_local! {
+    static PROMISE_PROTO: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
 pub fn register_promise(ctx: &mut Context) {
     let proto = create_promise_proto();
+
+    // Store the prototype in thread-local
+    PROMISE_PROTO.with(|p| *p.borrow_mut() = Some(Rc::clone(&proto)));
+
     let proto_clone = Rc::clone(&proto);
     let constructor = create_promise_constructor(proto_clone, Rc::clone(&proto));
 
@@ -27,8 +37,14 @@ pub fn register_promise(ctx: &mut Context) {
     );
 }
 
+fn get_promise_proto() -> Rc<RefCell<Object>> {
+    PROMISE_PROTO.with(|p| {
+        p.borrow().clone().expect("Promise prototype not initialized")
+    })
+}
+
 fn create_promise_proto() -> Rc<RefCell<Object>> {
-    let proto = Object::new(ObjectKind::Ordinary);
+    let proto = Object::new(ObjectKind::Promise);
     let proto_rc = Rc::new(RefCell::new(proto));
 
     proto_rc.borrow_mut().set(
@@ -76,6 +92,10 @@ fn create_promise_constructor(
                             data.fulfill(value);
                         }
                     }
+                    drop(obj);
+                    // Process pending callbacks
+                    let promise_clone = Rc::clone(&promise_rc_clone);
+                    process_callbacks_sync(&promise_clone);
                 });
 
                 let reject_fn: Box<dyn Fn(Value)> = Box::new(move |reason: Value| {
@@ -85,6 +105,9 @@ fn create_promise_constructor(
                             data.reject(reason);
                         }
                     }
+                    drop(obj);
+                    let promise_clone = Rc::clone(&promise_rc_clone2);
+                    process_callbacks_sync(&promise_clone);
                 });
 
                 let resolve_rc = Rc::new(RefCell::new(resolve_fn));
@@ -117,7 +140,7 @@ fn create_promise_constructor(
         proto,
     );
 
-    // Set static methods with closure to capture prototype
+    // Set static methods
     let proto_for_static_clone = Rc::clone(&proto_for_static);
     constructor.set_static_method(
         "resolve",
@@ -142,8 +165,8 @@ fn create_promise_constructor(
     constructor.set_static_method(
         "all",
         Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |_args: Vec<Value>| {
-                promise_all_impl_static(Rc::clone(&proto_for_static_clone3))
+            move |args: Vec<Value>| {
+                promise_all_impl(args, Rc::clone(&proto_for_static_clone3))
             },
         ))),
     );
@@ -152,28 +175,8 @@ fn create_promise_constructor(
     constructor.set_static_method(
         "race",
         Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |_args: Vec<Value>| {
-                promise_race_impl_static(Rc::clone(&proto_for_static_clone4))
-            },
-        ))),
-    );
-
-    let proto_for_static_clone5 = Rc::clone(&proto_for_static);
-    constructor.set_static_method(
-        "allSettled",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |_args: Vec<Value>| {
-                promise_all_settled_impl_static(Rc::clone(&proto_for_static_clone5))
-            },
-        ))),
-    );
-
-    let proto_for_static_clone6 = Rc::clone(&proto_for_static);
-    constructor.set_static_method(
-        "any",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |_args: Vec<Value>| {
-                promise_any_impl_static(Rc::clone(&proto_for_static_clone6))
+            move |args: Vec<Value>| {
+                promise_race_impl(args, Rc::clone(&proto_for_static_clone4))
             },
         ))),
     );
@@ -181,55 +184,116 @@ fn create_promise_constructor(
     constructor
 }
 
+/// Process callbacks stored on a promise (synchronous version)
+fn process_callbacks_sync(promise_rc: &Rc<RefCell<Object>>) {
+    // Get state and callbacks while holding the lock
+    let (state, result, callbacks) = {
+        let mut obj = promise_rc.borrow_mut();
+        if let Some(ref mut data) = obj.promise_data {
+            let callbacks: Vec<_> = data.on_fulfilled_callbacks.drain(..).collect();
+            (data.state.clone(), data.result.clone(), callbacks)
+        } else {
+            return;
+        }
+    };
+
+    // Process each callback outside the lock
+    for callback_value in callbacks {
+        if let Value::Object(ref cb_obj) = callback_value {
+            let on_fulfilled = cb_obj.borrow().properties.get("_onFulfilled")
+                .cloned()
+                .unwrap_or(Value::Undefined);
+            let target_opt = cb_obj.borrow().properties.get("_targetPromise")
+                .cloned();
+
+            if let Some(Value::Object(ref target_rc)) = target_opt {
+                if state == crate::value::object::PromiseState::Fulfilled {
+                    execute_callback(&on_fulfilled, result.clone(), target_rc);
+                }
+            }
+        }
+    }
+}
+
+/// Execute a callback and fulfill/reject the target promise
+fn execute_callback(callback: &Value, arg: Value, target_promise: &Rc<RefCell<Object>>) {
+    let result = if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        call_value_with_this(callback.clone(), vec![arg], Value::Undefined)
+    } else {
+        Ok(arg)
+    };
+
+    let mut target = target_promise.borrow_mut();
+    if let Some(ref mut data) = target.promise_data {
+        match result {
+            Ok(val) => data.fulfill(val),
+            Err(e) => data.reject(Value::String(e.to_string())),
+        }
+    }
+    drop(target);
+
+    // Process any callbacks on the target promise
+    process_callbacks_sync(target_promise);
+}
+
 fn promise_then_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
 
-    let new_promise = Object::new(ObjectKind::Promise);
+    let current_promise_this = crate::interpreter::get_native_this();
+
+    // Create new promise with Promise prototype
+    let promise_proto = get_promise_proto();
+    let new_promise = Object::with_prototype(ObjectKind::Promise, Rc::clone(&promise_proto));
     let new_promise_rc = Rc::new(RefCell::new(new_promise));
     {
         let mut obj = new_promise_rc.borrow_mut();
         obj.promise_data = Some(PromiseObjectData::new());
     }
 
-    let current_promise_this = crate::interpreter::get_native_this();
-
     if let Some(Value::Object(ref obj_rc)) = current_promise_this {
-        let obj = obj_rc.borrow();
-        if let Some(ref data) = obj.promise_data {
-            let mut new_data = new_promise_rc.borrow_mut();
-            if let Some(ref mut nd) = new_data.promise_data {
-                nd.state = data.state.clone();
-                nd.result = data.result.clone();
-            }
+        let (state, result) = {
+            let obj = obj_rc.borrow();
+            (
+                obj.promise_data.as_ref().map(|d| d.state.clone()),
+                obj.promise_data.as_ref().map(|d| d.result.clone()),
+            )
+        };
 
-            if data.state != crate::value::object::PromiseState::Pending {
-                let executor = match data.state {
-                    crate::value::object::PromiseState::Fulfilled => on_fulfilled.clone(),
-                    crate::value::object::PromiseState::Rejected => on_rejected.clone(),
-                    crate::value::object::PromiseState::Pending => Value::Undefined,
-                };
-
-                if matches!(executor, Value::Function(_) | Value::NativeFunction(_)) {
-                    let result = call_value_with_this(executor, vec![data.result.clone()], Value::Undefined);
-                    match result {
-                        Ok(val) => {
-                            if let Some(ref mut nd) = new_data.promise_data {
-                                nd.fulfill(val);
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(ref mut nd) = new_data.promise_data {
-                                nd.reject(Value::String(e.to_string()));
-                            }
-                        }
-                    }
-                }
+        match state {
+            Some(crate::value::object::PromiseState::Fulfilled) => {
+                // Already fulfilled - execute callback immediately
+                let callback = create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
+                queue_callback_on_promise(obj_rc, callback);
+                // Process the callback now
+                process_callbacks_sync(obj_rc);
             }
+            Some(crate::value::object::PromiseState::Pending) => {
+                // Still pending - store callback
+                let callback = create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
+                queue_callback_on_promise(obj_rc, callback);
+            }
+            _ => {}
         }
     }
 
     Ok(Value::Object(new_promise_rc))
+}
+
+fn create_callback_promise(on_fulfilled: Value, on_rejected: Value, target_promise: Rc<RefCell<Object>>) -> Value {
+    let obj = Object::new(ObjectKind::Promise);
+    let obj_rc = Rc::new(RefCell::new(obj));
+    obj_rc.borrow_mut().set("_onFulfilled", on_fulfilled);
+    obj_rc.borrow_mut().set("_onRejected", on_rejected);
+    obj_rc.borrow_mut().set("_targetPromise", Value::Object(target_promise));
+    Value::Object(obj_rc)
+}
+
+fn queue_callback_on_promise(promise_rc: &Rc<RefCell<Object>>, callback: Value) {
+    let mut obj = promise_rc.borrow_mut();
+    if let Some(ref mut data) = obj.promise_data {
+        data.add_fulfilled_callback(callback);
+    }
 }
 
 fn promise_catch_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -238,17 +302,19 @@ fn promise_catch_impl(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
+    let _on_finally = args.first().cloned().unwrap_or(Value::Undefined);
 
-    let new_promise = Object::new(ObjectKind::Promise);
+    // Create new promise
+    let promise_proto = get_promise_proto();
+    let new_promise = Object::with_prototype(ObjectKind::Promise, Rc::clone(&promise_proto));
     let new_promise_rc = Rc::new(RefCell::new(new_promise));
     {
         let mut obj = new_promise_rc.borrow_mut();
         obj.promise_data = Some(PromiseObjectData::new());
     }
 
+    // For now, just pass through
     let current_promise_this = crate::interpreter::get_native_this();
-
     if let Some(Value::Object(ref obj_rc)) = current_promise_this {
         let obj = obj_rc.borrow();
         if let Some(ref data) = obj.promise_data {
@@ -256,10 +322,6 @@ fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
             if let Some(ref mut nd) = new_data.promise_data {
                 nd.state = data.state.clone();
                 nd.result = data.result.clone();
-            }
-
-            if matches!(on_finally, Value::Function(_) | Value::NativeFunction(_)) {
-                let _ = call_value_with_this(on_finally, vec![], Value::Undefined);
             }
         }
     }
@@ -270,6 +332,7 @@ fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
 fn promise_resolve_impl_static(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
 
+    // If already a promise, return it
     if let Value::Object(ref obj) = value {
         let obj_ref = obj.borrow();
         if obj_ref.kind == ObjectKind::Promise {
@@ -306,52 +369,336 @@ fn promise_reject_impl_static(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> R
     Ok(Value::Object(promise_rc))
 }
 
-fn promise_all_impl_static(proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+fn promise_all_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+
+    let values: Vec<Value> = if let Value::Object(ref obj) = input {
+        obj.borrow().elements.clone()
+    } else {
+        vec![]
+    };
+
+    let total = values.len();
     let promise_obj = Object::new(ObjectKind::Promise);
     let promise_rc = Rc::new(RefCell::new(promise_obj));
+    let mut promise_data = PromiseObjectData::new();
+    promise_data.state = crate::value::object::PromiseState::Pending;
+
+    if total == 0 {
+        promise_data.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![])))));
+        {
+            let mut obj = promise_rc.borrow_mut();
+            obj.prototype = Some(proto);
+            obj.promise_data = Some(promise_data);
+        }
+        return Ok(Value::Object(promise_rc));
+    }
+
+    let results = Rc::new(RefCell::new(vec![Value::Undefined; total]));
+    let fulfilled_count = Rc::new(RefCell::new(0usize));
+    let rejected_flag = Rc::new(RefCell::new(false));
+
+    for (i, value) in values.into_iter().enumerate() {
+        // Create separate clones for resolve and reject closures
+        let promise_rc_f = Rc::clone(&promise_rc);
+        let results_f = Rc::clone(&results);
+        let count_f = Rc::clone(&fulfilled_count);
+        let rejected_f = Rc::clone(&rejected_flag);
+        let total_f = total;
+        let idx_f = i;
+
+        let promise_rc_r = Rc::clone(&promise_rc);
+        let rejected_r = Rc::clone(&rejected_flag);
+
+        let resolve_fn = Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args: Vec<Value>| {
+                let val = args.first().cloned().unwrap_or(Value::Undefined);
+                {
+                    let mut r = results_f.borrow_mut();
+                    r[idx_f] = val;
+                }
+                {
+                    let mut c = count_f.borrow_mut();
+                    *c += 1;
+                    if *c == total_f && !*rejected_f.borrow() {
+                        let mut p = promise_rc_f.borrow_mut();
+                        if let Some(ref mut d) = p.promise_data {
+                            d.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(results_f.borrow().clone())))));
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            },
+        )));
+
+        let reject_fn = Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args: Vec<Value>| {
+                let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                {
+                    let mut r = rejected_r.borrow_mut();
+                    *r = true;
+                }
+                let mut p = promise_rc_r.borrow_mut();
+                if let Some(ref mut d) = p.promise_data {
+                    d.reject(reason);
+                }
+                Ok(Value::Undefined)
+            },
+        )));
+
+        // Chain to the value
+        if let Value::Object(ref p) = value {
+            let obj = p.borrow();
+            if let Some(ref data) = obj.promise_data {
+                match data.state {
+                    crate::value::object::PromiseState::Fulfilled => {
+                        let result = data.result.clone();
+                        {
+                            let mut r = results.borrow_mut();
+                            r[i] = result;
+                        }
+                        {
+                            let mut c = fulfilled_count.borrow_mut();
+                            *c += 1;
+                            if *c == total && !*rejected_flag.borrow() {
+                                let mut p = promise_rc.borrow_mut();
+                                if let Some(ref mut d) = p.promise_data {
+                                    d.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(results.borrow().clone())))));
+                                }
+                            }
+                        }
+                    }
+                    crate::value::object::PromiseState::Rejected => {
+                        let mut r = rejected_flag.borrow_mut();
+                        *r = true;
+                        let mut p = promise_rc.borrow_mut();
+                        if let Some(ref mut d) = p.promise_data {
+                            d.reject(data.result.clone());
+                        }
+                    }
+                    _ => {
+                        // Attach then handlers
+                        if let Some(ref then_method) = obj.get("then") {
+                            let pf = Rc::new(RefCell::new(resolve_fn.clone()));
+                            let pr = Rc::new(RefCell::new(reject_fn.clone()));
+
+                            let on_fulfilled = Value::NativeFunction(Rc::new(NativeFunction::new(
+                                move |args: Vec<Value>| {
+                                    let val = args.first().cloned().unwrap_or(Value::Undefined);
+                                    let cb = pf.borrow().clone();
+                                    if matches!(cb, Value::Function(_) | Value::NativeFunction(_)) {
+                                        let _ = call_value_with_this(cb, vec![val], Value::Undefined);
+                                    }
+                                    Ok(Value::Undefined)
+                                },
+                            )));
+                            let on_rejected = Value::NativeFunction(Rc::new(NativeFunction::new(
+                                move |args: Vec<Value>| {
+                                    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                                    let cb = pr.borrow().clone();
+                                    if matches!(cb, Value::Function(_) | Value::NativeFunction(_)) {
+                                        let _ = call_value_with_this(cb, vec![reason], Value::Undefined);
+                                    }
+                                    Ok(Value::Undefined)
+                                },
+                            )));
+                            let _ = call_value_with_this(then_method.clone(), vec![on_fulfilled, on_rejected], Value::Undefined);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Non-object values resolve immediately
+            {
+                let mut r = results.borrow_mut();
+                r[i] = value;
+            }
+            {
+                let mut c = fulfilled_count.borrow_mut();
+                *c += 1;
+                if *c == total && !*rejected_flag.borrow() {
+                    let mut p = promise_rc.borrow_mut();
+                    if let Some(ref mut d) = p.promise_data {
+                        d.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(results.borrow().clone())))));
+                    }
+                }
+            }
+        }
+    }
+
     {
         let mut obj = promise_rc.borrow_mut();
         obj.prototype = Some(proto);
-        obj.promise_data = Some(PromiseObjectData::new());
+        obj.promise_data = Some(promise_data);
     }
+
     Ok(Value::Object(promise_rc))
 }
 
-fn promise_race_impl_static(proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+fn promise_race_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+
+    let values: Vec<Value> = if let Value::Object(ref obj) = input {
+        obj.borrow().elements.clone()
+    } else {
+        vec![]
+    };
+
     let promise_obj = Object::new(ObjectKind::Promise);
     let promise_rc = Rc::new(RefCell::new(promise_obj));
+    let promise_data = PromiseObjectData::new();
+    let settled = Rc::new(RefCell::new(false));
+
+    for value in values {
+        // Create separate clones for resolve and reject closures
+        let promise_rc_f = Rc::clone(&promise_rc);
+        let settled_f = Rc::clone(&settled);
+        let promise_rc_r = Rc::clone(&promise_rc);
+        let settled_r = Rc::clone(&settled);
+
+        let resolve_fn = Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args: Vec<Value>| {
+                let mut s = settled_f.borrow_mut();
+                if !*s {
+                    *s = true;
+                    let val = args.first().cloned().unwrap_or(Value::Undefined);
+                    let mut p = promise_rc_f.borrow_mut();
+                    if let Some(ref mut d) = p.promise_data {
+                        d.fulfill(val);
+                    }
+                }
+                Ok(Value::Undefined)
+            },
+        )));
+
+        let reject_fn = Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args: Vec<Value>| {
+                let mut s = settled_r.borrow_mut();
+                if !*s {
+                    *s = true;
+                    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                    let mut p = promise_rc_r.borrow_mut();
+                    if let Some(ref mut d) = p.promise_data {
+                        d.reject(reason);
+                    }
+                }
+                Ok(Value::Undefined)
+            },
+        )));
+
+        if let Value::Object(ref p) = value {
+            let obj = p.borrow();
+            if let Some(ref data) = obj.promise_data {
+                match data.state {
+                    crate::value::object::PromiseState::Fulfilled => {
+                        let mut s = settled.borrow_mut();
+                        if !*s {
+                            *s = true;
+                            let mut pr = promise_rc.borrow_mut();
+                            if let Some(ref mut d) = pr.promise_data {
+                                d.fulfill(data.result.clone());
+                            }
+                        }
+                    }
+                    crate::value::object::PromiseState::Rejected => {
+                        let mut s = settled.borrow_mut();
+                        if !*s {
+                            *s = true;
+                            let mut pr = promise_rc.borrow_mut();
+                            if let Some(ref mut d) = pr.promise_data {
+                                d.reject(data.result.clone());
+                            }
+                        }
+                    }
+                    _ => {
+                        if let Some(ref then_method) = obj.get("then") {
+                            let pf = Rc::new(RefCell::new(resolve_fn.clone()));
+                            let pr = Rc::new(RefCell::new(reject_fn.clone()));
+
+                            let on_fulfilled = Value::NativeFunction(Rc::new(NativeFunction::new(
+                                move |args: Vec<Value>| {
+                                    let val = args.first().cloned().unwrap_or(Value::Undefined);
+                                    let cb = pf.borrow().clone();
+                                    if matches!(cb, Value::Function(_) | Value::NativeFunction(_)) {
+                                        let _ = call_value_with_this(cb, vec![val], Value::Undefined);
+                                    }
+                                    Ok(Value::Undefined)
+                                },
+                            )));
+                            let on_rejected = Value::NativeFunction(Rc::new(NativeFunction::new(
+                                move |args: Vec<Value>| {
+                                    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                                    let cb = pr.borrow().clone();
+                                    if matches!(cb, Value::Function(_) | Value::NativeFunction(_)) {
+                                        let _ = call_value_with_this(cb, vec![reason], Value::Undefined);
+                                    }
+                                    Ok(Value::Undefined)
+                                },
+                            )));
+                            let _ = call_value_with_this(then_method.clone(), vec![on_fulfilled, on_rejected], Value::Undefined);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut s = settled.borrow_mut();
+            if !*s {
+                *s = true;
+                let mut pr = promise_rc.borrow_mut();
+                if let Some(ref mut d) = pr.promise_data {
+                    d.fulfill(value);
+                }
+            }
+        }
+
+        // Check if already settled
+        if *settled.borrow() {
+            break;
+        }
+    }
+
     {
         let mut obj = promise_rc.borrow_mut();
         obj.prototype = Some(proto);
-        obj.promise_data = Some(PromiseObjectData::new());
+        obj.promise_data = Some(promise_data);
     }
+
     Ok(Value::Object(promise_rc))
 }
 
-fn promise_all_settled_impl_static(proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
-    let promise_obj = Object::new(ObjectKind::Promise);
-    let promise_rc = Rc::new(RefCell::new(promise_obj));
-    {
-        let mut obj = promise_rc.borrow_mut();
-        obj.prototype = Some(proto);
-        obj.promise_data = Some(PromiseObjectData::new());
-    }
-    Ok(Value::Object(promise_rc))
+// Thread-local microtask queue
+thread_local! {
+    static MICROTASK_QUEUE: RefCell<VecDeque<Value>> = const { RefCell::new(VecDeque::new()) };
 }
 
-fn promise_any_impl_static(proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
-    let promise_obj = Object::new(ObjectKind::Promise);
-    let promise_rc = Rc::new(RefCell::new(promise_obj));
-    {
-        let mut obj = promise_rc.borrow_mut();
-        obj.prototype = Some(proto);
-        obj.promise_data = Some(PromiseObjectData::new());
+pub fn get_pending_microtasks() -> Vec<Value> {
+    MICROTASK_QUEUE.with(|queue| {
+        queue.borrow_mut().drain(..).collect()
+    })
+}
+
+pub fn execute_pending_microtasks() -> Result<(), JsError> {
+    loop {
+        let tasks = get_pending_microtasks();
+        if tasks.is_empty() {
+            break;
+        }
+        for task in tasks {
+            if matches!(task, Value::Function(_) | Value::NativeFunction(_)) {
+                call_value_with_this(task, vec![], Value::Undefined)?;
+            }
+        }
     }
-    Ok(Value::Object(promise_rc))
+    Ok(())
 }
 
 fn queue_microtask(args: Vec<Value>) -> Result<Value, JsError> {
-    let _callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+
+    if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        MICROTASK_QUEUE.with(|q| q.borrow_mut().push_back(callback));
+    }
+
     Ok(Value::Undefined)
 }
 
