@@ -15,7 +15,7 @@ pub fn lower_literal(lit: &swc::Lit) -> Result<Expression, LowerError> {
         swc::Lit::Str(s) => Ok(Expression::String(wtf8_atom_to_string(&s.value))),
         swc::Lit::Bool(b) => Ok(Expression::Boolean(b.value)),
         swc::Lit::Null(_) => Ok(Expression::Null),
-        swc::Lit::Regex(regex) => Ok(Expression::String(format!("/{}/{}", regex.exp, regex.flags))),
+        swc::Lit::Regex(regex) => Ok(Expression::RegExp { pattern: regex.exp.to_string(), flags: regex.flags.to_string() }),
         swc::Lit::BigInt(_) => Err(LowerError::new("BigInt not supported")),
         swc::Lit::JSXText(t) => Ok(Expression::String(t.value.to_string())),
     }

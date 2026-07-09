@@ -14,6 +14,7 @@ pub mod error;
 pub mod function;
 pub mod number;
 pub mod symbol;
+pub mod regex;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -114,6 +115,10 @@ pub fn register_builtins(ctx: &mut Context) {
     symbol::register_symbol(ctx);
     // Promise needs to be registered for async support
     promise::register_promise(ctx);
+    // RegExp needs to be registered for regex support
+    regex::register_regexp(ctx);
+    // String regex methods need to be registered after RegExp
+    regex::register_string_regex_methods(ctx);
 }
 
 use crate::Context;

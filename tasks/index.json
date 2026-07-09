@@ -18,7 +18,7 @@
       "id": "97",
       "title": "Improve Negative-Test Matching by Type and Phase",
       "file": "tasks/97-precise-negative-test-matching.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P0",
       "notes": "Measurement. Low effort, high impact. Match test262 negative tests by expected error type/phase instead of coarse string comparison.",
       "category": "measurement",
@@ -46,7 +46,7 @@
       "id": "253",
       "title": "Load Real test262 Harness Includes",
       "file": "tasks/253-load-real-test262-harness-includes.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P0",
       "notes": "Measurement blocker. ~298 test262 tests are skipped because helpers are stubbed. Load $262, assert.compareArray, assert.throws, etc. High impact, medium effort.",
       "category": "harness",
@@ -55,20 +55,6 @@
       "target_subset": "tests/test262/harness/ helpers loaded into the runner",
       "blocked_by": [],
       "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed."
-    },
-    {
-      "id": "330",
-      "title": "Restore green build for quench-runtime",
-      "file": "tasks/330-restore-green-build.md",
-      "status": "completed",
-      "priority": "P0",
-      "notes": "- Three warnings remain in `quench-runtime` (unused `Getter`, `Setter`, and `set_this_binding`). These are not build blockers and are tracked by normal cleanup work.",
-      "category": "testing",
-      "suite": "tooling",
-      "batch": 0,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "334",
@@ -183,82 +169,12 @@
       "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
-      "id": "286",
-      "title": "Remove redundant Context::globals HashMap",
-      "file": "tasks/286-remove-context-globals-duplicate.md",
-      "status": "completed",
-      "priority": "P0",
-      "notes": "`Context` maintains both `self.globals` and `self.env`, inserting globals into both maps. This duplicates storage and adds extra clones.",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "308",
-      "title": "Fix thread-safety bug in depth tracking",
-      "file": "tasks/308-thread-safe-depth-tracking.md",
-      "status": "completed",
-      "priority": "P0",
-      "notes": "The depth tracking in `crates/quench-runtime/src/interpreter/depth.rs` used a global `static CURRENT_DEPTH: AtomicUsize` that was shared across all test threads. When tests ran in parallel, they would interfere with each other's depth counters, causing flaky test failures.",
-      "category": "statements",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "333",
-      "title": "Fix Stack Overflow in Examples",
-      "file": "tasks/333-fix-stack-overflow.md",
-      "status": "closed",
-      "priority": "P0",
-      "notes": "The stack overflow occurs because the JavaScript interpreter is recursive:",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
       "id": "335",
       "title": "Collapse value model into Value::Object with [[Call]] / [[Construct]] slots",
       "file": "tasks/335-collapse-value-model.md",
       "status": "pending",
       "priority": "P0",
       "notes": "> **Minimum custom code.** Use the standard ECMAScript object model instead of custom variants.",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "338",
-      "title": "Make recursion depth counter thread-local",
-      "file": "tasks/338-thread-local-recursion-depth.md",
-      "status": "completed",
-      "priority": "P0",
-      "notes": "> **Immediate fix for false stack-overflow errors in parallel tests.**",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 1,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "343",
-      "title": "Fix Stack Overflow in Examples",
-      "file": "tasks/343-fix-stack-overflow.md",
-      "status": "pending",
-      "priority": "P0",
-      "notes": "> The canonical fix for recursive-interpreter stack overflow is Task 85 (trampoline interpreter). This task is closed in favor of that approach.",
       "category": "interpreter",
       "suite": "runtime",
       "batch": 1,
@@ -321,20 +237,6 @@
       "target_subset": "tests/test262/test/built-ins/Boolean; tests/test262/test/built-ins/Number",
       "blocked_by": [],
       "exit_criteria": "test262 built-ins/Boolean/ and built-ins/Number/ subsets pass at 100% with zero spec skips."
-    },
-    {
-      "id": "323",
-      "title": "Make object property enumeration insertion-ordered",
-      "file": "tasks/323-insertion-order-enumeration.md",
-      "status": "completed",
-      "priority": "P0",
-      "notes": "New win. HashMap iteration is unordered; Object.keys must follow insertion order. Low-medium effort, high impact.",
-      "category": "objects",
-      "suite": "both",
-      "batch": 2,
-      "target_subset": "tests/test262/test/built-ins/Object",
-      "blocked_by": [],
-      "exit_criteria": "test262 built-ins/Object/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "324",
@@ -533,20 +435,6 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
-      "id": "105",
-      "title": "Implement Error.prototype default methods",
-      "file": "tasks/105-error-prototype-default-methods.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "Stub created from a dependency reference in a milestone task. Refine acceptance criteria when scheduling.",
-      "category": "built-ins",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/built-ins/Error/prototype",
-      "blocked_by": [],
-      "exit_criteria": "test262 built-ins/Error/prototype/ subset passes at 100% with zero spec skips."
-    },
-    {
       "id": "112",
       "title": "Implement Error constructor inheritance",
       "file": "tasks/112-error-constructor-inheritance.md",
@@ -575,20 +463,6 @@
       "exit_criteria": "test262 language/function-code/ subset passes at 100% with zero spec skips."
     },
     {
-      "id": "119",
-      "title": "Implement function name property",
-      "file": "tasks/119-function-name-property.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "Stub created from a dependency reference in a milestone task. Refine acceptance criteria when scheduling.",
-      "category": "functions",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/built-ins/Function",
-      "blocked_by": [],
-      "exit_criteria": "test262 built-ins/Function/ subset passes at 100% with zero spec skips."
-    },
-    {
       "id": "124",
       "title": "Implement function length property",
       "file": "tasks/124-function-length-property.md",
@@ -615,20 +489,6 @@
       "target_subset": "tests/test262/test/built-ins/Error/name",
       "blocked_by": [],
       "exit_criteria": "test262 built-ins/Error/name/ subset passes at 100% with zero spec skips."
-    },
-    {
-      "id": "147",
-      "title": "Fix Array.prototype.flat() prototype chain",
-      "file": "tasks/147-array-flat-prototype-chain.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "Stub created from a dependency reference in a milestone task. Refine acceptance criteria when scheduling.",
-      "category": "built-ins",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/built-ins/Array/prototype/flat",
-      "blocked_by": [],
-      "exit_criteria": "test262 built-ins/Array/prototype/flat/ subset passes at 100% with zero spec skips."
     },
     {
       "id": "191",
@@ -871,22 +731,6 @@
       "exit_criteria": "test262 language/expressions/delete/ subset passes at 100% with zero spec skips."
     },
     {
-      "id": "290f",
-      "title": "Implement unary plus",
-      "file": "tasks/290f-unary-plus.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "> Sub-task of 290: complete expression syntax gaps.",
-      "category": "expressions",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/language/expressions/unary-plus",
-      "blocked_by": [
-        "290"
-      ],
-      "exit_criteria": "test262 language/expressions/unary-plus/ subset passes at 100% with zero spec skips."
-    },
-    {
       "id": "290g",
       "title": "Implement `for-of` loops",
       "file": "tasks/290g-for-of.md",
@@ -917,20 +761,6 @@
       "exit_criteria": "test262 language/expressions/typeof/ subset passes at 100% with zero spec skips."
     },
     {
-      "id": "292",
-      "title": "Implement var hoisting and let/const TDZ",
-      "file": "tasks/292-var-hoisting-tdz.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "Focused tasks 339 and 340 landed. `var_hoisting_tdz.rs` passes 17/17 tests. test262 variable/let/const subsets are unblocked for incremental conformance.",
-      "category": "errors",
-      "suite": "test262",
-      "batch": 6,
-      "target_subset": "tests/test262/test/language/statements/variable; tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
-      "blocked_by": [],
-      "exit_criteria": "test262 language/statements/variable/, language/statements/let/, and language/statements/const/ subsets pass at 100% with zero spec skips."
-    },
-    {
       "id": "293",
       "title": "Implement arguments object in functions",
       "file": "tasks/293-arguments-object.md",
@@ -943,20 +773,6 @@
       "target_subset": "tests/test262/test/language/arguments-object",
       "blocked_by": [],
       "exit_criteria": "test262 language/arguments-object/ subset passes at 100% with zero spec skips."
-    },
-    {
-      "id": "299",
-      "title": "Implement optional chaining (?.) operator",
-      "file": "tasks/299-optional-chaining.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "Implemented optional chaining operator (`?.`) for the quench runtime. This syntax allows safe property access and function calls on potentially null/undefined values.",
-      "category": "expressions",
-      "suite": "runtime",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
       "id": "302",
@@ -973,24 +789,10 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
-      "id": "304",
-      "title": "Fix function closure environment in call_js_function",
-      "file": "tasks/304-fix-closure-environment.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "Function declarations hoisted to global scope were not accessible inside function bodies. Tests failed with:",
-      "category": "statements",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/language/function-code",
-      "blocked_by": [],
-      "exit_criteria": "Function-scope closure environment correctly inherits from the function closure; test262 language/function-code/ subset passes at 100% with zero spec skips."
-    },
-    {
       "id": "305",
       "title": "Implement Rest Parameter Binding",
       "file": "tasks/305-rest-parameters.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P2",
       "notes": "Rest parameters (`...args`) now work correctly in both regular and arrow functions.",
       "category": "functions",
@@ -1004,7 +806,7 @@
       "id": "306",
       "title": "Fix Lint Violations for Strict Build-Time Linting",
       "file": "tasks/306-lint-violations.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P2",
       "notes": "Fixed lint violations to comply with strict build-time linting rules:",
       "category": "statements",
@@ -1013,20 +815,6 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "Task acceptance criteria in the task file are met."
-    },
-    {
-      "id": "307",
-      "title": "Implement Array.flat and Array.flatMap",
-      "file": "tasks/307-array-flat-flatmap.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "- The flat implementation uses recursive `flatten_array()` helper",
-      "category": "built-ins",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/built-ins/Array/prototype/flat; tests/test262/test/built-ins/Array/prototype/flatMap",
-      "blocked_by": [],
-      "exit_criteria": "test262 built-ins/Array/prototype/flat/ and flatMap/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "309",
@@ -1327,34 +1115,6 @@
       "exit_criteria": "test262 built-ins/Array/ subset passes at 100% with zero spec skips when using ecosystem crates."
     },
     {
-      "id": "339",
-      "title": "Fix var hoisting inside function scope",
-      "file": "tasks/339-fix-var-hoisting-in-functions.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "> **Exact fix for var declarations not being hoisted inside function bodies.**",
-      "category": "functions",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/language/statements/variable",
-      "blocked_by": [],
-      "exit_criteria": "test262 language/statements/variable/ subset passes at 100% with zero spec skips."
-    },
-    {
-      "id": "340",
-      "title": "Fix let/const TDZ and const assignment TypeError",
-      "file": "tasks/340-fix-let-const-tdz-and-const-assignment.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "> **Exact fix for TDZ and const assignment checks.**",
-      "category": "errors",
-      "suite": "both",
-      "batch": 6,
-      "target_subset": "tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
-      "blocked_by": [],
-      "exit_criteria": "test262 language/statements/let/ and language/statements/const/ subsets pass at 100% with zero spec skips."
-    },
-    {
       "id": "341",
       "title": "Fix constructor to return `this` when no explicit object return",
       "file": "tasks/341-fix-constructor-returns-this.md",
@@ -1369,38 +1129,10 @@
       "exit_criteria": "test262 language/expressions/new/ subset passes at 100% with zero spec skips."
     },
     {
-      "id": "342",
-      "title": "Test Coverage Status",
-      "file": "tasks/342-test-coverage-status.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "> This file is a historical dashboard. The coverage tracking goal is now owned by Task 298.",
-      "category": "testing",
-      "suite": "tooling",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
-    },
-    {
-      "id": "345",
-      "title": "Bind script-level `this` to the global object",
-      "file": "tasks/345-fix-typeof-this-at-script-level.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "> **Exact fix for `typeof this` returning `\"undefined\"` at script level.**",
-      "category": "expressions",
-      "suite": "tooling",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
-    },
-    {
       "id": "350",
       "title": "Fix TDZ handling and for-of loop",
       "file": "tasks/350-fix-tdz-and-for-of.md",
-      "status": "completed",
+      "status": "pending",
       "priority": "P2",
       "notes": "Two related issues were causing TDZ (temporal dead zone) errors:",
       "category": "statements",

@@ -1,6 +1,8 @@
 # Task 253: Load Real test262 Harness Includes
 
-## Status: COMPLETED
+## Status: TODO
+
+> Reopened — not verified implemented (validated 2026-07-09): `test262/harness/harness_loader.rs` does **not exist** (no `HarnessCache`); `harness.rs` injects no JS helpers, `assert.compareArray`/`arrayContains` are still stubbed to `Undefined`, and the include allowlist (`batches.rs:47`) is still only `["assert.js","sta.js","eq.js"]`.
 
 ## Summary
 

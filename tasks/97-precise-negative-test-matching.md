@@ -1,6 +1,8 @@
 # Task 97: Improve Negative-Test Matching by Type and Phase
 
-## Status: COMPLETED
+## Status: TODO
+
+> Reopened — not verified implemented (validated 2026-07-09): `check_negative_test` exists but is **not wired into the runner**; `test262/batches.rs:88` still uses weak `err_msg.contains(&neg.typ) || err_msg.contains(&neg.phase)`, and `runner.rs` never calls `check_negative_test`. Inheritance matching is not used in execution.
 
 ## Problem
 

@@ -38,6 +38,7 @@ pub fn eval_expression(
         Expression::Boolean(b) => Ok(Value::Boolean(*b)),
         Expression::Null => Ok(Value::Null),
         Expression::Undefined => Ok(Value::Undefined),
+        Expression::RegExp { pattern, flags } => eval_regexp_literal(pattern, flags),
         Expression::Identifier(name) => eval_identifier(name, env),
         Expression::Object(props) => eval_object_literal(props, env),
         Expression::Array(elements) => eval_array_literal(elements, env),
@@ -474,4 +475,36 @@ fn eval_block_expr(stmts: &[Statement], env: &Rc<RefCell<Environment>>) -> Resul
         last = eval_statement(stmt, env, false)?;
     }
     Ok(last)
+}
+
+fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError> {
+    use regress::Regex;
+    use crate::value::ObjectKind;
+
+    // Validate the pattern
+    let _regex = Regex::new(pattern).map_err(|e| {
+        JsError::new(format!("Invalid regular expression: {}", e))
+    })?;
+
+    // Create a RegExp object
+    let mut obj = Object::new(ObjectKind::RegExp);
+    obj.internal_regex_source = Some(pattern.to_string());
+    obj.internal_regex_flags = Some(flags.to_string());
+    obj.set("source", Value::String(pattern.to_string()));
+    obj.set("global", Value::Boolean(flags.contains('g')));
+    obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
+    obj.set("multiline", Value::Boolean(flags.contains('m')));
+    obj.set("lastIndex", Value::Number(0.0));
+    obj.set("flags", Value::String(flags.to_string()));
+
+    // Store the compiled regex
+    obj.internal_regex = Regex::new(pattern).ok();
+
+    let obj_rc = Rc::new(RefCell::new(obj));
+
+    // Set up prototype chain
+    let proto = crate::builtins::regex::get_regexp_prototype();
+    obj_rc.borrow_mut().prototype = Some(proto);
+
+    Ok(Value::Object(obj_rc))
 }

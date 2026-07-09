@@ -1,6 +1,8 @@
 # Task 350: Fix TDZ handling and for-of loop
 
-## Status: COMPLETED
+## Status: TODO
+
+> Reopened — not verified implemented (validated 2026-07-09): for-of machinery exists, but there is **no per-iteration fresh `VarKind::Let` binding** — `lower_for_lhs` lowers the loop variable without preserving per-iteration rebinding, so `for (const x of [...])` reuses one slot across iterations.
 
 ## Priority: P0 correctness
 

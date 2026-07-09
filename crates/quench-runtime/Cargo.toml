@@ -29,6 +29,9 @@ urlencoding = "2"
 # Tracing/logging
 tracing = "0.1"
 
+# Regular expressions (ECMAScript regex syntax)
+regress = "0.11"
+
 # Error handling
 anyhow = "1"
 

@@ -222,11 +222,51 @@ fn string_method(s: &str, method: &str) -> Result<Value, JsError> {
                 Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
             }
             "match" => {
-                let pattern = args.first().map(to_js_string).unwrap_or_default();
+                let pattern = args.first();
+                if let Some(Value::Object(obj)) = pattern {
+                    let obj_ref = obj.borrow();
+                    if let Some(ref regex) = obj_ref.internal_regex {
+                        if obj_ref.get("global").map(|v| v == Value::Boolean(true)).unwrap_or(false) {
+                            // Global match
+                            let mut matches = Vec::new();
+                            for m in regex.find_iter(&s) {
+                                matches.push(Value::String(m.as_str(&s).to_string()));
+                            }
+                            let array = Object::new_array_from(matches);
+                            return Ok(Value::Object(Rc::new(RefCell::new(array))));
+                        } else {
+                            // Non-global match
+                            if let Some(m) = regex.find(&s) {
+                                let mut arr = Object::new(ObjectKind::Array);
+                                arr.elements.push(Value::String(m.as_str(&s).to_string()));
+                                arr.properties.insert("length".to_string(), Value::Number(1.0));
+                                arr.properties.insert("index".to_string(), Value::Number(m.start() as f64));
+                                arr.properties.insert("input".to_string(), Value::String(s.clone()));
+                                return Ok(Value::Object(Rc::new(RefCell::new(arr))));
+                            } else {
+                                return Ok(Value::Null);
+                            }
+                        }
+                    }
+                }
+                // Fallback to simple string match
+                let pattern = pattern.map(to_js_string).unwrap_or_default();
                 Ok(Value::Boolean(s.contains(&pattern)))
             }
             "search" => {
-                let pattern = args.first().map(to_js_string).unwrap_or_default();
+                let pattern = args.first();
+                if let Some(Value::Object(obj)) = pattern {
+                    let obj_ref = obj.borrow();
+                    if let Some(ref regex) = obj_ref.internal_regex {
+                        if let Some(m) = regex.find(&s) {
+                            return Ok(Value::Number(m.start() as f64));
+                        } else {
+                            return Ok(Value::Number(-1.0));
+                        }
+                    }
+                }
+                // Fallback to simple string search
+                let pattern = pattern.map(to_js_string).unwrap_or_default();
                 Ok(Value::Number(s.find(&pattern).map(|i| i as f64).unwrap_or(-1.0)))
             }
             _ => Ok(Value::Undefined),

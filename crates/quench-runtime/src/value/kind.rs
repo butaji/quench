@@ -15,6 +15,7 @@ pub enum ObjectKind {
     Global,          // Global object (fallback lookup)
     Promise,         // Promise object
     Class,           // Class object (constructor with prototype)
+    RegExp,          // RegExp object
 }
 
 impl fmt::Display for ObjectKind {
@@ -30,6 +31,7 @@ impl fmt::Display for ObjectKind {
             ObjectKind::Global => write!(f, "global"),
             ObjectKind::Promise => write!(f, "promise"),
             ObjectKind::Class => write!(f, "class"),
+            ObjectKind::RegExp => write!(f, "regexp"),
         }
     }
 }
