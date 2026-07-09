@@ -9,9 +9,15 @@ license = "MIT"
 [dependencies]
 # Parsing - SWC only (no custom lexers or parsers)
 swc_common = "23"
-swc_ecma_parser = "41"
+swc_ecma_parser = { version = "41", features = ["typescript"] }
 swc_ecma_ast = "25"
 swc_atoms = "9"
+
+# Ordered map for object property insertion-order enumeration
+indexmap = "2"
+
+# Bump allocator for the SSTI shadow tree
+bumpalo = "3.20.3"
 
 # JSON serialization
 serde = { version = "1", features = ["derive"] }

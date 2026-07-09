@@ -723,7 +723,7 @@ fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
             
             let body = match arrow.body.as_ref() {
                 swc::BlockStmtOrExpr::BlockStmt(block) => {
-                    ArrowBody::Block(block.stmts.iter().filter_map(lower_stmt).collect())
+                    ArrowBody::Block(std::rc::Rc::new(block.stmts.iter().filter_map(lower_stmt).collect()))
                 }
                 swc::BlockStmtOrExpr::Expr(expr) => {
                     ArrowBody::Expression(lower_expr(expr)?)

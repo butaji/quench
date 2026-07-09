@@ -25,6 +25,7 @@ The current runtime is a recursive AST walker backed by `HashMap<String, Value>`
 | 3 | Recursive interpreter + global atomic depth counter | `interpreter.rs` | Migrate to trampoline/`CallFrame` via Task 85. Make the recursion depth thread-local via Task 338. | high | very high |
 | 4 | Variable lookup walks `HashMap<String, Value>` scopes | `env.rs`, `interpreter.rs` | Intern identifiers; use `Vec`-based locals / upvalues (HIR §9) | medium | very high |
 | 5 | Object properties stored in `HashMap<String, Value>` | `value.rs` | Intern property keys with `lasso`. Implement shapes + slot arrays only after Task 85 and value-model unification are closed. | medium | very high |
+| 5.5 | No type-aware dispatch; all operations use generic paths | `lower.rs`, `interpreter.rs` | SWC type extraction → TypeMap → typed shadow nodes (Task 356). Speculative fast-path with cheap deoptimization. | high | very high |
 
 ### P1 — Significant performance / design issues
 

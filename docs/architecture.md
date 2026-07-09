@@ -9,8 +9,10 @@ quench (main binary)
   ├── Bridge / event loop / terminal UI
   └── quench-runtime  (interpreter engine)
         ├── swc_parse  — parse JS/TS/TSX with swc
-        ├── lower      — swc AST → runtime AST (future HIR post-conformance)
-        ├── interpreter— execute AST via trampoline
+        ├── lower      — swc AST → runtime AST
+        ├── lower_hir  — swc AST → HIR for explicit-stack execution
+        ├── interpreter— execute AST (recursive legacy path)
+        ├── shadow     — Self-Optimizing Shadow Tree Interpreter (explicit value/call stack)
         ├── builtins   — JS standard library
         ├── value      — JS values and objects
         └── context    — globals, environment, modules
@@ -20,9 +22,11 @@ quench (main binary)
 
 1. `swc` parses `.js/.jsx/.ts/.tsx` source.
 2. swc transforms strip TypeScript annotations and lower JSX to `ink.createElement`/`ink.Fragment`.
-3. The lowerer produces the runtime AST.
-4. The interpreter executes the AST directly through the trampoline loop.
-5. A typed HIR and HIR interpreter are introduced only after the conformance suites pass; until then the AST interpreter is the execution model.
+3. The lowerer produces either the runtime AST (legacy recursive interpreter) or a HIR (explicit-stack path).
+4. Two execution paths are available:
+   - **Legacy interpreter** — recursive AST walker with a depth counter.
+   - **SSTI / HIR** — explicit value stack, explicit call frames, NaN-boxed values, and shape-based objects. This is the VM foundation for incremental conformance work.
+5. Future performance work (full trampoline, JIT/AOT) stays deferred until after 100% conformance.
 
 ## Key design choices
 
@@ -53,11 +57,11 @@ Allowed glue points:
 
 ## Performance direction
 
-The interpreter is currently recursive and uses `Rc<RefCell<...>>` for values. The planned evolution is:
+The legacy interpreter is recursive and uses `Rc<RefCell<...>>` for values. The SSTI/HIR path already uses NaN-boxed values, string interning, and object shapes. The planned evolution is:
 
-1. **Trampoline interpreter** — explicit `Vec<CallFrame>` so JS recursion does not consume the native Rust stack. Use `&mut Context` and slot-indexed storage to keep the hot loop borrow-checker friendly.
-2. **NaN-boxed `Value`**, string interning, and object shapes once correctness is solid.
-3. **Future performance work** only after 100% conformance — object shapes, inline caches, and other optimizations that stay within the interpreter/HIR model.
+1. **Conformance first** — drive test262 / TypeScript subsets to 100% pass using the existing explicit-stack paths.
+2. **Complete trampoline migration** (Task 85) — once the legacy recursive path is no longer required for any subset, migrate all execution to explicit `Vec<CallFrame>`.
+3. **Future performance work** only after 100% conformance — bytecode, JIT/AOT, and other optimizations stay deferred.
 
 ## Rust-specific leverage
 
@@ -72,15 +76,14 @@ Rust should be treated as an accelerator, not just a safe implementation languag
 
 ## Direction validation
 
-Recent research confirms the current shape is the right one for an Ink-focused runtime:
+The runtime now has two explicit-stack execution paths (SSTI and HIR) alongside the legacy recursive interpreter. Recent research and current test results confirm:
 
-- **Recursive AST interpreter is the simplest path to correctness**, but every production engine uses an explicit call stack / trampoline to avoid native stack overflow. The planned trampoline interpreter (Task 85) is the canonical fix.
-- **Correctness before speed.** Stay with the AST / HIR interpreter until the conformance suites pass; only then invest in object shapes, NaN-boxing, or other performance work.
-- **test262 runners load harness files from the submodule** (`assert.js`, `sta.js`, etc.) and run them in the engine before each test. We should do the same instead of stubbing helpers.
-- **Value representation can stay simple for now.** Boa and QuickJS use dedicated `JsValue` enums and reference counting early on; NaN-boxing and shapes are optimizations, not correctness prerequisites.
-- **String interning, object shapes, and ICs are the standard performance stack** once correctness is achieved.
+- **Explicit-stack execution prevents native stack overflow.** The SSTI path already runs deep recursive tests (e.g. `test_shadow_deep_chain_no_stack_overflow`) and complex examples without crashing. Task 85 (full trampoline migration) is an architectural improvement, not a blocker for conformance work.
+- **Correctness before speed.** NaN-boxing, object shapes, and inline caches are already implemented in the SSTI path, but they are treated as enablers for conformance, not premature optimization.
+- **test262 runners load harness files from the submodule** (`assert.js`, `sta.js`, etc.). The custom runner currently stubs some helpers; loading real harness files remains future work (Task 253 / 334).
+- **Incremental conformance is the viable path.** Running whole suites at once produces an unactionable wall of failures. The stop-on-fail harness (`run_suite_stop_on_fail`) processes files in deterministic order and converts each failure into a focused regression test.
 
-Implication: keep prioritizing low-effort conformance wins and the trampoline interpreter over premature optimization.
+Implication: the VM foundation is ready; prioritize driving concrete test262 / TypeScript subsets to 100% pass using the incremental workflow.
 
 ## Pending work
 

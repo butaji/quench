@@ -228,7 +228,7 @@ impl Machine {
             };
 
             if let Err(e) = self.step(work) {
-                let mut value = e;
+                let value = e;
                 self.frames.pop();
                 while let Some(caller) = self.frames.last_mut() {
                     if let Some(catch_frame) = caller.catches.pop() {
@@ -1338,7 +1338,7 @@ impl Machine {
         Ok(())
     }
 
-    fn var_decl(&mut self, kind: VarKind, name: String) -> Result<(), JsError> {
+    fn var_decl(&mut self, _kind: VarKind, name: String) -> Result<(), JsError> {
         let value = self.pop_value();
         self.current_frame().env.borrow_mut().initialize_declared(&name, value);
         self.current_frame().values.push(Value::Undefined);

@@ -9,4 +9,7 @@ pub mod harness;
 pub mod runner;
 
 pub use metadata::Test262Metadata;
-pub use runner::{TestOutcome, TestResult, Test262Report, should_skip, run_test_file, run_suite, write_report};
+pub use runner::{
+    TestOutcome, TestResult, Test262Report, assert_test262_file_passes, collect_test_files,
+    run_suite, run_suite_stop_on_fail, run_test_file, should_skip, write_report,
+};

@@ -108,6 +108,10 @@ MANUAL_OVERRIDES = {
         "target_subset": "tests/test262/test/language/function-code",
         "exit_criteria": "Function-scope closure environment correctly inherits from the function closure; test262 language/function-code/ subset passes at 100% with zero spec skips.",
     },
+    "292": {
+        "target_subset": "tests/test262/test/language/statements/variable; tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
+        "exit_criteria": "test262 language/statements/variable/, language/statements/let/, and language/statements/const/ subsets pass at 100% with zero spec skips.",
+    },
     "339": {
         "target_subset": "tests/test262/test/language/statements/variable",
         "exit_criteria": "test262 language/statements/variable/ subset passes at 100% with zero spec skips.",

@@ -19,7 +19,6 @@ pub enum VarState {
 }
 
 /// An environment frame that holds variable bindings
-#[derive(Debug, Clone)]
 pub struct Scope {
     bindings: HashMap<String, Value>,
     /// Track variables that are declared but not initialized (var hoisting / TDZ)
@@ -27,6 +26,28 @@ pub struct Scope {
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
     this_value: Option<Value>,
+}
+
+impl std::fmt::Debug for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Print bindings keys only to avoid potential recursion with Values
+        f.debug_struct("Scope")
+            .field("bindings", &self.bindings.keys().collect::<Vec<_>>())
+            .field("declarations", &self.declarations.keys().collect::<Vec<_>>())
+            .field("has_this", &self.this_value.is_some())
+            .finish()
+    }
+}
+
+impl Clone for Scope {
+    fn clone(&self) -> Self {
+        Scope {
+            bindings: self.bindings.clone(),
+            declarations: self.declarations.clone(),
+            var_kinds: self.var_kinds.clone(),
+            this_value: self.this_value.clone(),
+        }
+    }
 }
 
 impl Scope {
@@ -136,11 +157,20 @@ impl Default for Scope {
 }
 
 /// An environment holds a scope chain for variable resolution
-#[derive(Debug)]
 pub struct Environment {
     pub scopes: Vec<Scope>,
     /// Parent environment (for closures)
     parent: Option<Rc<RefCell<Environment>>>,
+}
+
+impl std::fmt::Debug for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Avoid printing parent to prevent infinite recursion
+        f.debug_struct("Environment")
+            .field("scopes", &self.scopes)
+            .field("parent", &if self.parent.is_some() { "..." } else { "None" })
+            .finish()
+    }
 }
 
 impl Environment {
@@ -225,17 +255,44 @@ impl Environment {
     }
 
     /// Initialize a declared variable (removes from declarations, adds to bindings)
+    /// Finds the innermost scope where the variable was declared.
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
+        // Search from innermost scope outward so block-scoped declarations
+        // shadow outer declarations, matching JavaScript lexical scoping.
+        let mut decl_scope_index = None;
+        for (i, scope) in self.scopes.iter().enumerate().rev() {
+            if scope.declarations.contains_key(name) {
+                decl_scope_index = Some(i);
+                break;
+            }
+        }
+        
+        // Also check parent environments
+        if decl_scope_index.is_none() {
+            if let Some(ref parent) = self.parent {
+                return parent.borrow_mut().initialize_declared(name, value);
+            }
+        }
+        
+        // Initialize in the scope where it was declared
+        if let Some(index) = decl_scope_index {
+            let scope = &mut self.scopes[index];
             scope.initialize_declared(name, value);
         }
     }
 
-    /// Check if a variable is in TDZ in the current scope
+    /// Check if a variable is in TDZ in the current scope.
+    /// If the innermost scope has any record of the name (binding or
+    /// declaration), only that scope's TDZ state matters; an inner binding
+    /// shadows any outer TDZ.
+    /// Check if a variable is in TDZ in the current scope.
+    /// If the innermost scope has any record of the name (binding or
+    /// declaration), only that scope's TDZ state matters; an inner binding
+    /// shadows any outer TDZ.
     pub fn is_tdz(&self, name: &str) -> bool {
         if let Some(scope) = self.scopes.last() {
-            if scope.is_tdz(name) {
-                return true;
+            if scope.has(name) {
+                return scope.is_tdz(name);
             }
         }
         // Check parent
@@ -243,6 +300,20 @@ impl Environment {
             return parent.borrow().is_tdz(name);
         }
         false
+    }
+
+    /// Get the kind of a variable (Var, Let, Const) by looking up the scope chain
+    pub fn get_kind(&self, name: &str) -> Option<VarKind> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(kind) = scope.get_kind(name) {
+                return Some(kind);
+            }
+        }
+        // Check parent
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get_kind(name);
+        }
+        None
     }
 
     /// Check if a variable exists in any scope
