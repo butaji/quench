@@ -17,6 +17,7 @@ A test may be skipped only when the gap is tracked by an open task below. Do not
 | ES module import/export | Yes | 241 | `tests/typescript` moduleResolution + `tests/test262/test/language/module-code/` subsets pass at 100%. |
 | Promise / async / await / microtasks | Yes | 251 | `tests/test262/test/language/expressions/async-arrow-function/`, `async-function/`, `async-generator/`, and promise built-in subsets pass at 100%. |
 | Generator functions and iterators | Yes | 251 | `tests/test262/test/language/statements/generators/`, `expressions/generators/`, and iterator protocol subsets pass at 100%. |
+| Large file splitting (500-line limit) | Yes | 357 | All `*.rs` files in `crates/quench-runtime/src/` under 500 lines. |
 | Proxy | No | — | Create a task before enabling any Proxy tests. |
 | TypedArray / ArrayBuffer / DataView | No | — | Create a task before enabling any TypedArray tests. |
 | WebAssembly host support | No | — | Out of scope until an example requires it. |
