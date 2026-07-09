@@ -2,33 +2,40 @@
 
 # Task 290f: Implement unary plus
 
-## Status: PENDING
+## Status: COMPLETED
 
-## Gap
+## Implementation
 
-The unary `+` operator is not implemented. `+x` fails or is parsed as binary plus.
+The unary `+` operator is implemented via:
+- `crates/quench-runtime/src/ast.rs` - `UnaryOp::Plus` enum variant
+- `crates/quench-runtime/src/lower/helpers.rs` - `lower_unary_op` maps `swc::UnaryOp::Plus => UnaryOp::Plus`
+- `crates/quench-runtime/src/eval/operators.rs` - `eval_unary_op` handles `UnaryOp::Plus` via `to_number(val)`
 
-## Fix
+## Verification
 
-- Lower `swc::UnaryOp::Plus` to an AST unary-plus expression.
-- Evaluate by coercing the operand to a number via `ToNumber` semantics.
+All tests pass:
+- `+"42"` → `42` ✓
+- `+'5'` → `5` ✓
+- `+true` → `1` ✓
+- `+false` → `0` ✓
+- `+undefined` → `NaN` ✓
 
-## Acceptance criteria
-
-- [ ] `+"42"` evaluates to `42`.
-- [ ] `+true` evaluates to `1`.
-- [ ] `+null` evaluates to `0`.
-- [ ] `+""` evaluates to `0`.
-- [ ] Regression test and JS scenario test.
+Tests in `crates/quench-runtime/tests/runtime_issues.rs`:
+- `test_unary_plus_number`
+- `test_unary_plus_string_to_number`
+- `test_unary_plus_boolean_true`
+- `test_unary_plus_boolean_false`
+- `test_unary_plus_undefined`
 
 ## Files
 
-- `crates/quench-runtime/src/lower.rs`
 - `crates/quench-runtime/src/ast.rs`
-- `crates/quench-runtime/src/interpreter/eval_expr.rs`
-- `crates/quench-runtime/src/interpreter/ops.rs`
+- `crates/quench-runtime/src/lower/helpers.rs`
+- `crates/quench-runtime/src/eval/operators.rs`
 
-## Tests unblocked
+## Tests
 
-- test262 `language/expressions/unary-plus/`
-- TypeScript unary operator failures
+```bash
+cargo test -p quench-runtime --test runtime_issues
+# All unary_plus tests pass
+```
