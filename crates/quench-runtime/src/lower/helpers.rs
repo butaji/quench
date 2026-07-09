@@ -69,7 +69,7 @@ pub fn lower_bin_op(op: &swc::BinaryOp) -> Result<BinaryOp, LowerError> {
 pub fn lower_unary_op(op: &swc::UnaryOp) -> Result<UnaryOp, LowerError> {
     match op {
         swc::UnaryOp::Minus => Ok(UnaryOp::Neg),
-        swc::UnaryOp::Plus => Err(LowerError::new("Unary + not supported")),
+        swc::UnaryOp::Plus => Ok(UnaryOp::Plus),
         swc::UnaryOp::Tilde => Ok(UnaryOp::BitNot),
         swc::UnaryOp::Bang => Ok(UnaryOp::Not),
         swc::UnaryOp::TypeOf => Ok(UnaryOp::Typeof),

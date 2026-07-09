@@ -365,7 +365,12 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         Expression::Undefined => "undefined".to_string(),
         Expression::Identifier(name) => name.clone(),
         Expression::Array(elems) => {
-            let inner = elems.iter().map(expr_to_js).collect::<Vec<_>>().join(", ");
+            let inner = elems.iter().map(|e| {
+                match e {
+                    Expression::Spread(inner) => format!("...{}", expr_to_js(inner)),
+                    _ => expr_to_js(e),
+                }
+            }).collect::<Vec<_>>().join(", ");
             format!("[{}]", inner)
         }
         Expression::Object(props) => {
@@ -423,6 +428,7 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
             let op_str = match op {
                 UnaryOp::Not => "!",
                 UnaryOp::Neg => "-",
+                UnaryOp::Plus => "+",
                 UnaryOp::BitNot => "~",
                 UnaryOp::Typeof => "typeof",
                 UnaryOp::Void => "void",
@@ -589,6 +595,9 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         Expression::Class(_) => {
             // Class expressions are not supported in the compiler output
             "null".to_string()
+        }
+        Expression::Spread(inner) => {
+            format!("...{}", expr_to_js(inner))
         }
     }
 }
