@@ -10,34 +10,16 @@ use crate::eval::statement::eval_statements;
 use crate::interpreter::{predeclare_let_const, take_control_flow, ControlFlow};
 use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
-
-// Use thread-local storage for the class value cache
-thread_local! {
-    static CLASS_VALUE_CACHE: std::cell::RefCell<HashMap<usize, ClassValue>> =
-        std::cell::RefCell::new(HashMap::new());
-}
 
 /// Evaluate a class expression
 pub fn eval_class_expr(class: &Class, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    let class_ptr = class as *const Class as usize;
-
-    let class_value = CLASS_VALUE_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some(cached) = cache.get(&class_ptr) {
-            cached.clone()
-        } else {
-            let new_value = ClassValue::from_ast(class);
-            cache.insert(class_ptr, new_value.clone());
-            new_value
-        }
-    });
+    let new_value = ClassValue::from_ast(class);
 
     // Eagerly create the prototype for this class
-    let _ = get_or_create_class_prototype(&class_value, env)?;
+    let _ = get_or_create_class_prototype(&new_value, env)?;
 
-    Ok(Value::Class(class_value))
+    Ok(Value::Class(new_value))
 }
 
 /// Instantiate a class from its AST representation
@@ -61,6 +43,15 @@ pub fn instantiate_class_from_ast_with_env(
     let mut call_env = Environment::with_parent(Rc::clone(env));
     call_env.current_scope_mut().set_this(this_val.clone());
 
+    // Set the super class reference in the environment for super() calls
+    if class.super_class.is_some() {
+        let super_class_val = crate::eval::expression::eval_expression(
+            class.super_class.as_ref().unwrap(),
+            env,
+        )?;
+        call_env.set_super_class(super_class_val);
+    }
+
     for (i, param) in params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
         call_env.define(param.clone(), arg);
@@ -71,43 +62,70 @@ pub fn instantiate_class_from_ast_with_env(
 
     let call_env = Rc::new(RefCell::new(call_env));
 
-    let result = if body.is_empty() {
-        if class.super_class.is_some() {
-            let super_class_val = crate::eval::expression::eval_expression(
-                class.super_class.as_ref().unwrap(),
-                env,
-            )?;
-            match super_class_val {
-                Value::Class(super_class) => {
-                    instantiate_class_from_ast_with_env(super_class, args, env)?
-                }
-                Value::Object(o) => {
-                    if let Some(Value::Function(constructor)) =
-                        o.borrow().get("constructor")
-                    {
-                        crate::eval::function::call_value_with_this(
-                            Value::Function(constructor.clone()),
-                            args,
-                            this_val.clone(),
-                        )?
-                    } else {
-                        this_val.clone()
-                    }
-                }
-                _ => this_val.clone(),
+    // Check if body is empty
+    if body.is_empty() {
+        // No constructor body - call super() if there's a superclass
+        if let Some(super_class_val) = class.super_class.as_ref() {
+            let super_val = crate::eval::expression::eval_expression(super_class_val, env)?;
+            call_super_or_default(&super_val, args, &this_val, env)?;
+        }
+        Ok(this_val)
+    } else {
+        // Check if the first statement is an explicit super() call
+        let first_is_super_call = check_first_is_super_call(&body);
+
+        if first_is_super_call {
+            // First statement is explicit super() call - just evaluate normally
+            predeclare_let_const(&body, &mut call_env.borrow_mut());
+            let result = eval_statements(&body, &call_env, false)?;
+            match result {
+                Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
+                _ => Ok(this_val),
             }
         } else {
-            this_val.clone()
+            // No explicit super() call - call super() automatically first
+            if let Some(super_class_val) = class.super_class.as_ref() {
+                let super_val = crate::eval::expression::eval_expression(super_class_val, env)?;
+                call_super_or_default(&super_val, args.clone(), &this_val, env)?;
+            }
+            // Then evaluate the constructor body
+            predeclare_let_const(&body, &mut call_env.borrow_mut());
+            let result = eval_statements(&body, &call_env, false)?;
+            match result {
+                Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
+                _ => Ok(this_val),
+            }
         }
-    } else {
-        predeclare_let_const(&body, &mut call_env.borrow_mut());
-        eval_statements(&body, &call_env, false)?
-    };
-
-    match result {
-        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
-        _ => Ok(this_val),
     }
+}
+
+/// Call the super constructor or use default behavior
+fn call_super_or_default(super_val: &Value, args: Vec<Value>, this_val: &Value, env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+    match super_val {
+        Value::Class(super_class) => {
+            // Use call_super_constructor to ensure 'this' is properly bound
+            call_super_constructor(super_class.clone(), args, this_val.clone(), env)?;
+        }
+        Value::Object(o) => {
+            if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
+                crate::eval::function::call_value_with_this(
+                    Value::Function(constructor.clone()),
+                    args,
+                    this_val.clone(),
+                )?;
+            }
+        }
+        Value::NativeConstructor(nc) => {
+            // For native constructors, call with 'this' binding
+            crate::eval::function::call_value_with_this(
+                Value::NativeConstructor(nc.clone()),
+                args,
+                this_val.clone(),
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Instantiate a class from its AST representation (legacy signature)
@@ -120,6 +138,57 @@ pub fn instantiate_class_from_ast(
         args,
         &Rc::new(RefCell::new(Environment::new())),
     )
+}
+
+/// Call a super constructor with the given arguments and 'this' binding
+pub fn call_super_constructor(
+    class: ClassValue,
+    args: Vec<Value>,
+    this_val: Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let proto_rc = get_or_create_class_prototype(&class, env)?;
+
+    let params = class.constructor_params.clone();
+    let body = class.constructor_body.clone();
+
+    let mut call_env = Environment::with_parent(Rc::clone(env));
+    call_env.current_scope_mut().set_this(this_val.clone());
+
+    for (i, param) in params.iter().enumerate() {
+        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
+        call_env.define(param.clone(), arg);
+    }
+
+    let args_obj = create_arguments_object_simple(args);
+    call_env.define("arguments".to_string(), args_obj);
+
+    let call_env = Rc::new(RefCell::new(call_env));
+
+    if body.is_empty() {
+        // Empty constructor - just return this
+        Ok(this_val)
+    } else {
+        // Evaluate constructor body
+        predeclare_let_const(&body, &mut call_env.borrow_mut());
+        let result = eval_statements(&body, &call_env, false)?;
+        match result {
+            Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
+            _ => Ok(this_val),
+        }
+    }
+}
+
+/// Check if the first statement in a constructor body is an explicit super() call
+fn check_first_is_super_call(body: &[Statement]) -> bool {
+    if let Some(Statement::Expression(expr)) = body.first() {
+        if let Expression::Call { callee, .. } = expr.as_ref() {
+            if let Expression::Identifier(id) = callee.as_ref() {
+                return id == "super";
+            }
+        }
+    }
+    false
 }
 
 /// Create a simple arguments object
