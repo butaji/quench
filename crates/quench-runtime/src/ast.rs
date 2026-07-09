@@ -26,7 +26,7 @@ pub enum Statement {
     /// Variable declaration
     VarDeclaration { kind: VarKind, name: String, init: Option<Expression> },
     /// Function declaration
-    FunctionDeclaration { name: String, params: Vec<String>, body: Vec<Statement> },
+    FunctionDeclaration { name: String, params: Vec<Param>, body: Vec<Statement> },
     /// Class declaration
     ClassDeclaration { name: String, class: Class },
     /// If statement
@@ -125,8 +125,8 @@ pub enum Expression {
     Array(Vec<Expression>),
     /// Spread element: ...expr (used in array literals)
     Spread(Box<Expression>),
-    FunctionExpression { name: Option<String>, params: Vec<String>, body: Vec<Statement> },
-    ArrowFunction { params: Vec<String>, body: Box<ArrowBody> },
+    FunctionExpression { name: Option<String>, params: Vec<Param>, body: Vec<Statement> },
+    ArrowFunction { params: Vec<Param>, body: Box<ArrowBody> },
     Binary { op: BinaryOp, left: Box<Expression>, right: Box<Expression> },
     Unary { op: UnaryOp, argument: Box<Expression> },
     Assignment { left: Box<Expression>, right: Box<Expression> },
@@ -207,6 +207,25 @@ pub enum BindingElement {
     Identifier(String),
     ArrayPattern(Vec<BindingElement>),
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
+}
+
+/// Function parameter - either a simple name or a name with a default value
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub default: Option<Box<Expression>>,
+}
+
+impl Param {
+    /// Create a simple parameter without default
+    pub fn new(name: &str) -> Self {
+        Param { name: name.to_string(), default: None }
+    }
+
+    /// Create a parameter with a default value
+    pub fn with_default(name: &str, default: Expression) -> Self {
+        Param { name: name.to_string(), default: Some(Box::new(default)) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -252,13 +252,24 @@ impl Context {
                 let params = f.params.clone();
 
                 let mut call_env = Environment::with_parent(Rc::clone(&closure));
+                let call_env_rc = Rc::new(RefCell::new(call_env));
 
                 for (i, param) in params.iter().enumerate() {
-                    let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-                    call_env.declare(param.clone(), arg);
+                    let arg = args.get(i).cloned();
+                    let value = match arg {
+                        Some(Value::Undefined) if param.default.is_some() => {
+                            eval::eval_expression(&param.default.as_ref().unwrap(), &call_env_rc)?
+                        }
+                        Some(v) => v,
+                        None if param.default.is_some() => {
+                            eval::eval_expression(&param.default.as_ref().unwrap(), &call_env_rc)?
+                        }
+                        None => Value::Undefined,
+                    };
+                    call_env_rc.borrow_mut().declare(param.name.clone(), value);
                 }
 
-                let call_env = Rc::new(RefCell::new(call_env));
+                let call_env = call_env_rc;
 
                 if f.is_arrow {
                     if let Some(arrow_body) = f.arrow_body.as_ref() {

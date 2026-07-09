@@ -77,7 +77,7 @@ pub fn eval_object(machine: &mut Machine, props: &[(PropertyKey, PropertyValue)]
                 });
                 let setter_func = ValueFunction::new(
                     None,
-                    vec![param.clone()],
+                    vec![Param::new(param)],
                     body.clone(),
                     Rc::clone(&machine.current_frame().env),
                 );
@@ -197,7 +197,7 @@ pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsEr
 }
 
 /// Evaluate a function expression.
-fn eval_function_expr(machine: &mut Machine, name: &Option<String>, params: &[String], body: &[Statement]) -> Result<(), JsError> {
+fn eval_function_expr(machine: &mut Machine, name: &Option<String>, params: &[Param], body: &[Statement]) -> Result<(), JsError> {
     let func = ValueFunction::new(
         name.clone(),
         params.to_vec(),
@@ -209,7 +209,7 @@ fn eval_function_expr(machine: &mut Machine, name: &Option<String>, params: &[St
 }
 
 /// Evaluate an arrow function expression.
-fn eval_arrow_function(machine: &mut Machine, params: &[String], body: &Box<ArrowBody>) -> Result<(), JsError> {
+fn eval_arrow_function(machine: &mut Machine, params: &[Param], body: &Box<ArrowBody>) -> Result<(), JsError> {
     let func = ValueFunction::new_arrow(
         params.to_vec(),
         body.clone(),

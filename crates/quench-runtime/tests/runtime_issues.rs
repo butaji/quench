@@ -1208,3 +1208,77 @@ fn test_error_to_string_empty_message() {
         "new Error('').toString() should return 'Error'"
     );
 }
+
+
+// =============================================================================
+// Function default parameters tests (Task 117)
+// =============================================================================
+
+#[test]
+fn test_function_default_params_basic() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Basic default parameter
+    let result = ctx.eval("function f(x = 5) { return x; } f()").unwrap();
+    assert_eq!(result, Value::Number(5.0), "f() should use default value 5");
+    
+    // With argument - should NOT use default
+    let result = ctx.eval("function f(x = 5) { return x; } f(2)").unwrap();
+    assert_eq!(result, Value::Number(2.0), "f(2) should use argument 2, not default 5");
+}
+
+#[test]
+fn test_function_default_params_undefined() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Explicit undefined SHOULD trigger default per ES2015+ spec
+    let result = ctx.eval("function f(x = 5) { return x; } f(undefined)").unwrap();
+    assert_eq!(result, Value::Number(5.0), "f(undefined) should use default, per ES2015+ spec");
+}
+
+#[test]
+fn test_function_default_params_expression() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Default can be an expression
+    let result = ctx.eval("function f(x = 1 + 2) { return x; } f()").unwrap();
+    assert_eq!(result, Value::Number(3.0), "f() should evaluate default expression 1 + 2 = 3");
+}
+
+#[test]
+fn test_function_default_params_multiple() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Multiple default parameters
+    let result = ctx.eval("function f(a = 1, b = 2, c = 3) { return a + b + c; } f()").unwrap();
+    assert_eq!(result, Value::Number(6.0), "f() should use all defaults: 1+2+3=6");
+    
+    // Partial override
+    let result = ctx.eval("function f(a = 1, b = 2, c = 3) { return a + b + c; } f(10)").unwrap();
+    assert_eq!(result, Value::Number(15.0), "f(10) should use a=10, b=2, c=3: 10+2+3=15");
+    
+    // Override first two
+    let result = ctx.eval("function f(a = 1, b = 2, c = 3) { return a + b + c; } f(10, 20)").unwrap();
+    assert_eq!(result, Value::Number(33.0), "f(10, 20) should use a=10, b=20, c=3: 10+20+3=33");
+}
+
+#[test]
+fn test_function_default_params_reference() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Default can reference previous parameters
+    let result = ctx.eval("function f(a, b = a + 1) { return b; } f(10)").unwrap();
+    assert_eq!(result, Value::Number(11.0), "f(10) should set b to a+1=11");
+}
+
+#[test]
+fn test_function_default_params_arrow() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Arrow functions with defaults
+    let result = ctx.eval("const f = (x = 5) => x; f()").unwrap();
+    assert_eq!(result, Value::Number(5.0), "Arrow function with default should work");
+    
+    let result = ctx.eval("const f = (x = 5) => x; f(2)").unwrap();
+    assert_eq!(result, Value::Number(2.0), "Arrow function should use argument when provided");
+}

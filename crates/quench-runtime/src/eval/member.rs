@@ -1,5 +1,6 @@
 //! Member access evaluation (property lookup on objects, strings, functions, etc.)
 
+use crate::ast::Param;
 use crate::env::Environment;
 use crate::eval::object::call_getter;
 use crate::value::{to_js_string, to_number, JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
@@ -43,9 +44,10 @@ pub fn eval_class_member(
             // Check static methods
             for (name, params, body) in &class.static_methods {
                 if prop_key_matches(name, prop_name) {
+                    let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
                     let func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
-                        params.clone(),
+                        params_vec,
                         body.clone(),
                         Rc::clone(env),
                     );
