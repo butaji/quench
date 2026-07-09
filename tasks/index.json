@@ -578,7 +578,7 @@
       "id": "119",
       "title": "Implement function name property",
       "file": "tasks/119-function-name-property.md",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2",
       "notes": "Stub created from a dependency reference in a milestone task. Refine acceptance criteria when scheduling.",
       "category": "functions",
