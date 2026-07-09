@@ -15,36 +15,39 @@ The quench-runtime is a custom TypeScript/JavaScript/TSX runtime built in Rust. 
 ### Test Results
 
 ```
-cargo test -p quench-runtime --lib              → 87 passed ✅
-cargo test -p quench-runtime --test scenarios   → 32 passed ✅
+cargo test -p quench-runtime --lib              → 93 passed ✅
+cargo test -p quench-runtime --test scenarios   → 44 passed ✅
 cargo test -p quench-runtime --test depth_limit → 9 passed ✅
-cargo test -p quench-runtime --test runtime_issues → 44 passed ✅
+cargo test -p quench-runtime --test runtime_issues → 56 passed ✅
 cargo test -p quench-runtime --test conformance → 2 passed, 2 ignored ✅
 cargo test -p quench-runtime --test equality_operators → 14 passed ✅
-cargo test -p quench-runtime --test modules     → 5 passed ✅
-cargo test -p quench-runtime --test native_extensions → 8 passed ✅
+cargo test -p quench-runtime --test modules     → 14 passed ✅
+cargo test -p quench-runtime --test native_extensions → 10 passed ✅
 cargo test -p quench-runtime --test project     → 6 passed, 1 ignored ✅
 cargo test -p quench-runtime --test to_primitive → 10 passed ✅
 cargo test -p quench-runtime --test var_hoisting_tdz → 17 passed ✅
+cargo test -p quench-runtime --test promise     → 26 passed ✅
 cargo test -p quench-runtime --test test262     → 0 passed, 4 ignored ✅
 ```
 
-**Total**: ~244 tests pass, 7 ignored, 0 failed.
+**Total**: ~301 tests pass, ~23 ignored, 0 failed.
 
 ### Known Limitations
 
-1. **Examples still log a render initialization error**: `use-bridge.tsx` and `animations.tsx` log `ReferenceError: Cannot access 'inst' before initialization` during `render: mountTree`, but they now recover and return `Root node: Some(1)`. This is no longer a stack-overflow or hoisting/TDZ issue.
+1. **Recursive interpreter**: The legacy interpreter is still recursive. Task 85 (trampoline interpreter) and the Self-Optimizing Shadow Tree Interpreter (`shadow.rs`) provide explicit-stack paths; the SSTI is landed and tested, while full trampoline migration remains future work.
 
-2. **Recursive interpreter**: The legacy interpreter is still recursive. Task 85 (trampoline interpreter) and the Self-Optimizing Shadow Tree Interpreter (`shadow.rs`) provide explicit-stack paths; the SSTI is landed and tested, while full trampoline migration remains future work.
+2. **Microtasks require manual processing**: Promise callbacks, `queueMicrotask`, and async operations require calling `Context::execute_pending_microtasks()` to drain the microtask queue. This is by design for event-driven Ink applications.
+
+3. **ES modules via CommonJS**: Import/export statements are stripped and processed as CommonJS (`module.exports`, `exports`). Full ES module semantics (live bindings, module namespace objects) are not yet implemented.
 
 ## Example Status
 
 | Example | Status | Notes |
 |---------|--------|-------|
 | `examples/simple.js` | ✅ Pass | FFI tests all pass |
-| `examples/counter.js` | ✅ Runs | Logs `ReferenceError: Cannot access 'inst' before initialization` but returns `Root node: Some(1)` |
-| `examples/use-bridge.tsx` | ✅ Runs | Logs `ReferenceError: Cannot access 'inst' before initialization` but returns `Root node: Some(1)` |
-| `examples/animations.tsx` | ✅ Runs | Logs `ReferenceError: Cannot access 'inst' before initialization` but returns `Root node: Some(1)` |
+| `examples/counter.js` | ✅ Runs | Returns `Root node: Some(1)` |
+| `examples/use-bridge.tsx` | ✅ Runs | Returns `Root node: Some(1)` |
+| `examples/animations.tsx` | ✅ Runs | Returns `Root node: Some(1)` |
 
 ## Architecture
 
