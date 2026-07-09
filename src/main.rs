@@ -175,7 +175,7 @@ fn register_bridge_functions(ctx: &mut js_runtime::Context) {
             Value::Boolean(b) => b.to_string(),
             Value::Number(n) => n.to_string(),
             Value::String(s) => s.clone(),
-            Value::Object(_) => "[object Object]".to_string(),
+            Value::Object(_) | Value::ObjectId(_) => "[object Object]".to_string(),
             Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => "[Function]".to_string(),
             Value::Symbol(s) => format!("Symbol({})", s),
         }
@@ -538,19 +538,21 @@ fn inject_bridge_config(ctx: &mut quench_runtime::Context) -> Result<()> {
 
 /// Load and execute user JavaScript code
 fn load_user_code(
-    ctx: &mut quench_runtime::Context,
+    ctx: &quench_runtime::Context,
     cli_args: &cli::CliArgs,
 ) -> Result<Option<u32>> {
     if let Some(ref script) = cli_args.script {
         tracing::debug!("Loading script: {}", script);
         let code = std::fs::read_to_string(script)?;
-        if let Err(e) = ctx.eval(&code) {
+        // Use the stack machine to prevent stack overflow with deep recursion
+        if let Err(e) = ctx.eval_stack_machine(&code) {
             tracing::warn!("Script error (may be caught by JS): {:?}", e);
         }
     }
 
     if let Some(ref code) = cli_args.js_code {
-        if let Err(e) = ctx.eval(code) {
+        // Use the stack machine to prevent stack overflow with deep recursion
+        if let Err(e) = ctx.eval_stack_machine(code) {
             tracing::error!("JS code error: {:?}", e);
         }
     }
