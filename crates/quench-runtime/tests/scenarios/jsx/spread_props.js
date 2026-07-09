@@ -1,9 +1,7 @@
 // JSX spread props test
-// This file tests JSX with spread operator for props
+// This file tests JSX element with spread props
 
-// Expected when JSX is implemented:
-// let props = { className: 'container', id: 'main' };
-// let element = <div {...props}>Content</div>;
-
-// For now, we test the placeholder:
-42;
+// Test element with expression in props
+const props = { className: "test" };
+const element = <div {...props}>Spread Props</div>;
+element;

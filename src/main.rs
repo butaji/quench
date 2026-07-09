@@ -538,7 +538,7 @@ fn inject_bridge_config(ctx: &mut quench_runtime::Context) -> Result<()> {
 
 /// Load and execute user JavaScript code
 fn load_user_code(
-    ctx: &quench_runtime::Context,
+    ctx: &mut quench_runtime::Context,
     cli_args: &cli::CliArgs,
 ) -> Result<Option<u32>> {
     if let Some(ref script) = cli_args.script {
@@ -551,7 +551,8 @@ fn load_user_code(
     }
 
     if let Some(ref code) = cli_args.js_code {
-        // Use the stack machine to prevent stack overflow with deep recursion
+        // Use the stack machine for execution - it prevents stack overflow
+        // JSX has already been transformed to ink.createElement calls by the compiler
         if let Err(e) = ctx.eval_stack_machine(code) {
             tracing::error!("JS code error: {:?}", e);
         }
