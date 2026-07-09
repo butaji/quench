@@ -28,6 +28,7 @@ pub mod builtins;
 pub mod callframe;
 pub mod conformance;
 pub mod env;
+pub mod eval;
 pub mod hir;
 pub mod host;
 pub mod interner;
@@ -244,17 +245,17 @@ impl Context {
                     if let Some(arrow_body) = f.arrow_body.as_ref() {
                         match arrow_body {
                             ast::ArrowBody::Expression(expr) => {
-                                interpreter::eval_expression(expr, &call_env)
+                                eval::eval_expression(expr, &call_env)
                             }
                             ast::ArrowBody::Block(stmts) => {
-                                interpreter::eval_statements(&*stmts, &call_env, true)
+                                eval::eval_statements(&*stmts, &call_env, true)
                             }
                         }
                     } else {
                         Ok(Value::Undefined)
                     }
                 } else {
-                    interpreter::eval_statements(&*f.body, &call_env, false)
+                    eval::eval_statements(&*f.body, &call_env, false)
                 }
             }
             Value::NativeFunction(nf) => {

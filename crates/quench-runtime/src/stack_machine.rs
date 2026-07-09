@@ -15,6 +15,8 @@ use crate::ast::*;
 use crate::value::{Value, JsError, Object, ObjectKind, ValueFunction, NativeFunction, to_js_string, to_bool, to_number, GetterStorage, SetterStorage};
 use crate::env::Environment;
 use crate::interpreter as hir;
+use crate::eval::operators::{eval_binary_op, eval_unary_op};
+use crate::eval::iteration::{get_iterator, get_enumerable_keys};
 
 /// Evaluate a complete program with hoisting.
 pub fn eval_program(program: &Program, env: &mut Rc<RefCell<Environment>>) -> Result<Value, JsError> {
@@ -600,14 +602,14 @@ impl Machine {
     fn apply_binary(&mut self, op: BinaryOp) -> Result<(), JsError> {
         let right = self.pop_value();
         let left = self.pop_value();
-        let result = hir::eval_binary_op(op, &left, &right)?;
+        let result = eval_binary_op(op, &left, &right)?;
         self.current_frame().values.push(result);
         Ok(())
     }
 
     fn apply_unary(&mut self, op: UnaryOp) -> Result<(), JsError> {
         let val = self.pop_value();
-        let result = hir::eval_unary_op(op, &val)?;
+        let result = eval_unary_op(op, &val)?;
         self.current_frame().values.push(result);
         Ok(())
     }
@@ -655,7 +657,7 @@ impl Machine {
     fn apply_compound_assign(&mut self, op: BinaryOp, _target: AssignmentTarget) -> Result<(), JsError> {
         let right = self.pop_value();
         let left_val = self.pop_value();
-        let result = hir::eval_binary_op(op, &left_val, &right)?;
+        let result = eval_binary_op(op, &left_val, &right)?;
         self.current_frame().values.push(result);
         // The actual assignment target is on the stack next: a target marker was
         // pushed by `apply_compound_assign` setup.  We resolve it directly.
@@ -1124,7 +1126,7 @@ impl Machine {
 
     fn begin_for_of(&mut self, variable: Rc<Expression>, body: Rc<Statement>) -> Result<(), JsError> {
         let iterable = self.pop_value();
-        let items = hir::get_iterator(&iterable)?;
+        let items = get_iterator(&iterable)?;
         if items.is_empty() {
             self.current_frame().values.push(Value::Undefined);
         } else {
@@ -1151,7 +1153,7 @@ impl Machine {
 
     fn begin_for_in(&mut self, variable: Rc<Expression>, body: Rc<Statement>) -> Result<(), JsError> {
         let obj_value = self.pop_value();
-        let keys = hir::get_enumerable_keys(&obj_value)?;
+        let keys = get_enumerable_keys(&obj_value)?;
         if keys.is_empty() {
             self.current_frame().values.push(Value::Undefined);
         } else {
