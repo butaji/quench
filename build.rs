@@ -121,7 +121,7 @@ fn is_out_of_scope(path: &Path) -> bool {
 
 fn is_under_src(path_str: &str) -> bool {
     (path_str.contains("/src/") || path_str.ends_with("/src"))
-        && !path_str.contains("crates/quench-runtime/src/")
+        && !path_str.contains("crates/quench-runtime/src")
 }
 
 fn is_under_examples(path_str: &str) -> bool {
