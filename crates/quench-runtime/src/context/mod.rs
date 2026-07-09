@@ -95,6 +95,13 @@ impl Context {
         interpreter::eval_program(&program, &mut self.env)
     }
 
+    /// Evaluate an ES module source string using the recursive interpreter.
+    pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
+        interpreter::reset_depth();
+        let program = swc_parse::parse_es_module(source)?;
+        interpreter::eval_program(&program, &mut self.env)
+    }
+
     /// Evaluate a JavaScript source string using the explicit-stack interpreter.
     pub fn eval_stack_machine(&self, source: &str) -> Result<Value, JsError> {
         let program = self.parse(source)?;

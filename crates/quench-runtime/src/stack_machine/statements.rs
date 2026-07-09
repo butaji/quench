@@ -127,6 +127,10 @@ pub fn eval_stmt(machine: &mut Machine, stmt: Rc<Statement>, is_expr_body: bool)
             machine.current_frame().work.push(Work::EvalExpr(Rc::new((**expr).clone())));
             machine.current_frame().work.push(Work::Throw);
         }
+        Statement::Export(stmt) => {
+            // Export statements just evaluate their wrapped statement
+            machine.current_frame().work.push(Work::EvalStmt(Rc::new((**stmt).clone()), is_expr_body));
+        }
     }
     Ok(())
 }
