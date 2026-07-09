@@ -3,8 +3,13 @@
 use crate::test262::metadata::Test262Metadata;
 
 /// Features to skip (not yet supported by quench-runtime)
-/// NOTE: Removed "template-literals", "optional-chaining", "nullish-coalescing"
-/// as these are now implemented (task 91 audit).
+///
+/// ## Completed audits (task 91)
+/// - "template-literals" - implemented via lower/literals.rs
+/// - "optional-chaining" - implemented via lower/opt_chain.rs
+/// - "nullish-coalescing" - implemented via eval/operators.rs
+/// - "optional-catch-binding" - implemented: ast.rs param=Option<String>,
+///   eval/statement.rs handles None param
 const SKIP_FEATURES: &[&str] = &[
     "Promise",
     "async-functions",
@@ -43,7 +48,6 @@ const SKIP_FEATURES: &[&str] = &[
     "spread",
     "spread-syntax",
     "for-await-of",
-    "optional-catch-binding",
     "logical-assignment",
     "import.meta",
     "export-star",
@@ -107,6 +111,16 @@ mod tests {
     #[test]
     fn test_should_not_skip_basic() {
         let meta = Test262Metadata::default();
+        assert!(should_skip(&meta).is_none());
+    }
+
+    #[test]
+    fn test_optional_catch_binding_not_skipped() {
+        // optional-catch-binding is implemented - should NOT be skipped
+        let meta = Test262Metadata {
+            features: vec!["optional-catch-binding".to_string()],
+            ..Default::default()
+        };
         assert!(should_skip(&meta).is_none());
     }
 }
