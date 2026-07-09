@@ -211,7 +211,7 @@ fn print_category_breakdown(report: &Report, n: usize) {
     }
     eprintln!("\nTop categories by failure count:");
     let mut categories: Vec<_> = by_cat.into_iter().collect();
-    categories.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    categories.sort_by_key(|b| std::cmp::Reverse(b.1 .1));
     for (cat, (total, failed, pass_rate)) in categories.into_iter().take(n) {
         eprintln!(
             "  {:20} total={:4} failed={:4} pass={:.1}%",
@@ -233,7 +233,7 @@ fn error_buckets(report: &Report) -> Vec<(String, usize, PathBuf)> {
         .into_iter()
         .map(|(sig, (count, example))| (sig, count, example))
         .collect();
-    buckets.sort_by(|a, b| b.1.cmp(&a.1));
+    buckets.sort_by_key(|b| std::cmp::Reverse(b.1));
     buckets
 }
 
@@ -308,7 +308,7 @@ fn write_markdown_category_breakdown(
     writeln!(file, "| Category | Total | Failed | Pass rate |")?;
     writeln!(file, "|----------|------:|-------:|----------:|")?;
     let mut categories: Vec<_> = by_cat.into_iter().collect();
-    categories.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    categories.sort_by_key(|b| std::cmp::Reverse(b.1 .1));
     for (cat, (total, failed, pass_rate)) in categories {
         writeln!(
             file,

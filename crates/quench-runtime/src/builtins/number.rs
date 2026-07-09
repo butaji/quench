@@ -38,7 +38,7 @@ fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
     let n = to_number(&this_val);
     let digits = args.first().map(|v| to_number(v) as i32).unwrap_or(0);
-    let digits = digits.max(0).min(100) as usize;
+    let digits = digits.clamp(0, 100) as usize;
 
     if n.is_nan() {
         return Ok(Value::String("NaN".to_string()));

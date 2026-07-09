@@ -86,10 +86,7 @@ impl Scope {
 
     /// Check if a variable is declared but not yet initialized
     pub fn is_declared_only(&self, name: &str) -> bool {
-        match self.declarations.get(name) {
-            Some(VarState::DeclaredOnly) | Some(VarState::TDZ) => true,
-            _ => false,
-        }
+        matches!(self.declarations.get(name), Some(VarState::DeclaredOnly) | Some(VarState::TDZ))
     }
 
     /// Get the kind of a variable
