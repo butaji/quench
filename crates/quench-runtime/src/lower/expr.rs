@@ -2,7 +2,13 @@
 
 use swc_ecma_ast as swc;
 use crate::ast::{
-    ArrowBody, BinaryOp, CompoundOp, Expression, PropertyKey, PropertyValue, UnaryOp, UpdateOp,
+    ArrowBody, BinaryOp, Expression, PropertyKey, PropertyValue, UpdateOp,
+};
+use super::helpers::{
+    lower_bin_op as helper_lower_bin_op,
+    lower_unary_op as helper_lower_unary_op,
+    assign_op_to_bin as helper_assign_op_to_bin,
+    lower_prop_name,
 };
 use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
 
@@ -109,13 +115,13 @@ fn lower_yield_expr(yield_expr: &swc::YieldExpr) -> Result<Expression, LowerErro
 fn lower_bin_expr(bin: &swc::BinExpr) -> Result<Expression, LowerError> {
     let left = lower_expr(&bin.left)?;
     let right = lower_expr(&bin.right)?;
-    let op = lower_bin_op(&bin.op)?;
+    let op = helper_lower_bin_op(&bin.op)?;
     Ok(Expression::Binary { op, left: Box::new(left), right: Box::new(right) })
 }
 
 fn lower_unary_expr(unary: &swc::UnaryExpr) -> Result<Expression, LowerError> {
     let arg = lower_expr(&unary.arg)?;
-    let op = lower_unary_op(&unary.op)?;
+    let op = helper_lower_unary_op(&unary.op)?;
     Ok(Expression::Unary { op, argument: Box::new(arg) })
 }
 
@@ -135,7 +141,7 @@ fn lower_assign_expr(assign: &swc::AssignExpr) -> Result<Expression, LowerError>
     if assign.op == swc::AssignOp::Assign {
         Ok(Expression::Assignment { left: Box::new(left), right: Box::new(right) })
     } else {
-        let bin_op = assign_op_to_bin(&assign.op)?;
+        let bin_op = helper_assign_op_to_bin(&assign.op)?;
         Ok(Expression::CompoundAssignment {
             op: bin_op,
             left: Box::new(left),
@@ -447,73 +453,4 @@ fn lower_method_prop(method: &swc::MethodProp) -> Result<(PropertyKey, PropertyV
         .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
         .unwrap_or_default();
     Ok((key, PropertyValue::Value(Expression::FunctionExpression { name: None, params, body })))
-}
-
-fn lower_prop_name(key: &swc::PropName) -> Result<PropertyKey, LowerError> {
-    match key {
-        swc::PropName::Str(s) => Ok(PropertyKey::String(wtf8_atom_to_string(&s.value))),
-        swc::PropName::Ident(i) => Ok(PropertyKey::Ident(atom_to_string(&i.sym))),
-        swc::PropName::Num(n) => Ok(PropertyKey::Number(n.value)),
-        swc::PropName::Computed(_) => Err(LowerError::new("Computed property name not supported")),
-        swc::PropName::BigInt(b) => Ok(PropertyKey::String(b.value.to_string())),
-    }
-}
-
-fn lower_bin_op(op: &swc::BinaryOp) -> Result<BinaryOp, LowerError> {
-    match op {
-        swc::BinaryOp::Mul => Ok(BinaryOp::Mul),
-        swc::BinaryOp::Div => Ok(BinaryOp::Div),
-        swc::BinaryOp::Mod => Ok(BinaryOp::Mod),
-        swc::BinaryOp::Add => Ok(BinaryOp::Add),
-        swc::BinaryOp::Sub => Ok(BinaryOp::Sub),
-        swc::BinaryOp::LShift => Ok(BinaryOp::Shl),
-        swc::BinaryOp::RShift => Ok(BinaryOp::Shr),
-        swc::BinaryOp::ZeroFillRShift => Ok(BinaryOp::Ushr),
-        swc::BinaryOp::Lt => Ok(BinaryOp::Lt),
-        swc::BinaryOp::LtEq => Ok(BinaryOp::Le),
-        swc::BinaryOp::Gt => Ok(BinaryOp::Gt),
-        swc::BinaryOp::GtEq => Ok(BinaryOp::Ge),
-        swc::BinaryOp::EqEq => Ok(BinaryOp::Eq),
-        swc::BinaryOp::EqEqEq => Ok(BinaryOp::StrictEq),
-        swc::BinaryOp::NotEq => Ok(BinaryOp::Neq),
-        swc::BinaryOp::NotEqEq => Ok(BinaryOp::StrictNeq),
-        swc::BinaryOp::BitAnd => Ok(BinaryOp::BitAnd),
-        swc::BinaryOp::BitXor => Ok(BinaryOp::BitXor),
-        swc::BinaryOp::BitOr => Ok(BinaryOp::BitOr),
-        swc::BinaryOp::LogicalAnd => Ok(BinaryOp::And),
-        swc::BinaryOp::LogicalOr => Ok(BinaryOp::Or),
-        swc::BinaryOp::NullishCoalescing => Ok(BinaryOp::NullishCoalescing),
-        swc::BinaryOp::In => Ok(BinaryOp::In),
-        swc::BinaryOp::InstanceOf => Ok(BinaryOp::Instanceof),
-        _ => Err(LowerError::new(format!("Unsupported binary operator: {:?}", op))),
-    }
-}
-
-fn lower_unary_op(op: &swc::UnaryOp) -> Result<UnaryOp, LowerError> {
-    match op {
-        swc::UnaryOp::Minus => Ok(UnaryOp::Neg),
-        swc::UnaryOp::Plus => Err(LowerError::new("Unary + not supported")),
-        swc::UnaryOp::Tilde => Ok(UnaryOp::BitNot),
-        swc::UnaryOp::Bang => Ok(UnaryOp::Not),
-        swc::UnaryOp::TypeOf => Ok(UnaryOp::Typeof),
-        swc::UnaryOp::Void => Ok(UnaryOp::Void),
-        swc::UnaryOp::Delete => Err(LowerError::new("Delete not supported")),
-    }
-}
-
-fn assign_op_to_bin(op: &swc::AssignOp) -> Result<CompoundOp, LowerError> {
-    match op {
-        swc::AssignOp::AddAssign => Ok(CompoundOp::Add),
-        swc::AssignOp::SubAssign => Ok(CompoundOp::Sub),
-        swc::AssignOp::MulAssign => Ok(CompoundOp::Mul),
-        swc::AssignOp::DivAssign => Ok(CompoundOp::Div),
-        swc::AssignOp::ModAssign => Ok(CompoundOp::Mod),
-        swc::AssignOp::LShiftAssign => Ok(CompoundOp::Shl),
-        swc::AssignOp::RShiftAssign => Ok(CompoundOp::Shr),
-        swc::AssignOp::ZeroFillRShiftAssign => Ok(CompoundOp::Ushr),
-        swc::AssignOp::BitAndAssign => Ok(CompoundOp::BitAnd),
-        swc::AssignOp::BitXorAssign => Ok(CompoundOp::BitXor),
-        swc::AssignOp::BitOrAssign => Ok(CompoundOp::BitOr),
-        _ => Err(LowerError::new(format!("Unsupported assign operator: {:?}", op))),
-    }
 }
