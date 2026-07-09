@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::{to_bool, to_number, JsError, Object, ObjectKind, Value};
-use crate::interpreter::call_value_with_this;
+use crate::eval::call_value_with_this;
 
 // ============================================================================
 // Helper functions for Array methods
