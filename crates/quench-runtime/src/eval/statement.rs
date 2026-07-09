@@ -39,6 +39,9 @@ pub fn eval_statement(
         Statement::FunctionDeclaration { name, params, body } => {
             eval_func_decl(name, params, body, env)
         }
+        Statement::ClassDeclaration { name, class } => {
+            eval_class_decl(name, class, env)
+        }
         Statement::If { condition, consequent, alternate } => {
             let cond_val = eval_expression(condition, env)?;
             if to_bool(&cond_val) {
@@ -128,6 +131,17 @@ fn eval_func_decl(
     );
     env.borrow_mut()
         .define(name.to_owned(), Value::Function(func));
+    Ok(Value::Undefined)
+}
+
+fn eval_class_decl(
+    name: &str,
+    class: &Class,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Evaluate the class expression
+    let class_val = eval_expression(&Expression::Class(class.clone()), env)?;
+    env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }
 

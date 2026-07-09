@@ -251,3 +251,27 @@ The harness currently runs only the paths hard-coded in:
 
 The active subset must grow until it equals the full matrix above.
 
+## Harness Blockers
+
+Many areas are blocked by missing harness implementations. See tasks 357-359 for implementation guidance.
+
+| Area | Blocker | Task |
+|------|---------|------|
+| `built-ins/Array/*` | `propertyHelper.js` | Task 358 |
+| `built-ins/Error/*` | `nativeErrors.js` | Task 358 |
+| `built-ins/Object/*` | `propertyHelper.js` | Task 358 |
+| `built-ins/Promise/*` | `asyncHelpers.js`, `promiseHelper.js` | Task 251 |
+| Various | `assert.compareArray` stub | Task 357 |
+| Various | `assert.arrayContains` stub | Task 357 |
+
+## Incremental Expansion Guide
+
+1. **Task 357**: Implement `assert.compareArray` and `assert.arrayContains`
+2. **Task 358**: Expand `SUPPORTED_INCLUDES` to include `propertyHelper.js`
+3. **Task 359**: Map and track conformance % increase per harness implementation
+
+Run this to see which includes are blocking tests:
+```bash
+cargo test --test test262 -- --ignored 2>&1 | grep "unsupported include" | sort | uniq -c | sort -rn
+```
+

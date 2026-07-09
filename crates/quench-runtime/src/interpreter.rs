@@ -5,7 +5,7 @@
 
 use crate::ast::*;
 use crate::env::Environment;
-use crate::value::{JsError, Value};
+use crate::value::{JsError, Object, Value};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -54,6 +54,40 @@ thread_local! {
     static CURRENT_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Stack to track the current superclass during construction
+thread_local! {
+    static SUPER_CLASS: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+/// Set the current superclass
+pub(crate) fn set_super_class(super_val: Option<Value>) {
+    SUPER_CLASS.with(|cell| *cell.borrow_mut() = super_val);
+}
+
+/// Get the current superclass
+pub(crate) fn get_super_class() -> Option<Value> {
+    SUPER_CLASS.with(|cell| cell.borrow().clone())
+}
+
+/// Get the super prototype for the current class
+pub fn get_super_prototype() -> Option<Rc<RefCell<Object>>> {
+    get_super_class().and_then(|v| {
+        if let Value::Function(ref f) = v {
+            Some(f.get_prototype())
+        } else if let Value::Object(ref o) = v {
+            o.borrow().get("prototype").and_then(|p| {
+                if let Value::Object(ref proto) = p {
+                    Some(proto.clone())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        }
+    })
+}
+
 pub(crate) fn set_native_this(this_val: Value) {
     CURRENT_THIS.with(|cell| cell.set(Some(this_val)));
 }
@@ -94,6 +128,7 @@ pub fn eval_program(program: &Program, env: &mut Rc<RefCell<Environment>>) -> Re
     match program {
         Program::Script(statements) => {
             hoist_functions(statements, env);
+            hoist_classes(statements, env);
             predeclare_let_const(statements, &mut env.borrow_mut());
             let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
             set_this_binding(env, global_this);
@@ -140,6 +175,28 @@ pub(crate) fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environ
             }
             Statement::While { body, .. } => hoist_functions(std::slice::from_ref(body.as_ref()), env),
             Statement::For { body, .. } => hoist_functions(std::slice::from_ref(body.as_ref()), env),
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn hoist_classes(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
+    for stmt in statements {
+        match stmt {
+            Statement::ClassDeclaration { name, class } => {
+                // Create class value placeholder for hoisting
+                // The actual class is evaluated when the statement is executed
+                env.borrow_mut().declare_var(name.clone(), VarKind::Let);
+            }
+            Statement::Block(stmts) => hoist_classes(stmts, env),
+            Statement::If { consequent, alternate, .. } => {
+                hoist_classes(std::slice::from_ref(consequent.as_ref()), env);
+                if let Some(alt) = alternate {
+                    hoist_classes(std::slice::from_ref(alt.as_ref()), env);
+                }
+            }
+            Statement::While { body, .. } => hoist_classes(std::slice::from_ref(body.as_ref()), env),
+            Statement::For { body, .. } => hoist_classes(std::slice::from_ref(body.as_ref()), env),
             _ => {}
         }
     }
