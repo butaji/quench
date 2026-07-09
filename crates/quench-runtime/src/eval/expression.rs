@@ -110,6 +110,9 @@ pub fn eval_expression(
         Expression::Class(class) => {
             eval_class_expr(class, env)
         }
+        Expression::Spread(_) => {
+            Err(JsError("Spread must be used inside an array literal context".to_string()))
+        }
     }
 }
 
@@ -268,10 +271,23 @@ fn eval_array_literal(
     elements: &[Expression],
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let mut arr = Object::new_array(elements.len());
-    for (i, elem_expr) in elements.iter().enumerate() {
-        let value = eval_expression(elem_expr, env)?;
-        arr.set(&i.to_string(), value);
+    let mut arr = Object::new_array(0);
+    for elem_expr in elements.iter() {
+        match elem_expr {
+            Expression::Spread(spread_expr) => {
+                let spread_val = eval_expression(spread_expr, env)?;
+                let items = crate::eval::iteration::get_iterator(&spread_val)?;
+                for item in items {
+                    let idx = arr.elements.len();
+                    arr.set(&idx.to_string(), item);
+                }
+            }
+            _ => {
+                let value = eval_expression(elem_expr, env)?;
+                let idx = arr.elements.len();
+                arr.set(&idx.to_string(), value);
+            }
+        }
     }
     if let Some(prototype) = crate::builtins::get_array_prototype() {
         arr.prototype = Some(prototype);

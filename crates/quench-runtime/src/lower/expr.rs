@@ -56,9 +56,21 @@ pub fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
 }
 
 fn lower_array_expr(arr: &swc::ArrayLit) -> Result<Expression, LowerError> {
-    let elements: Vec<Expression> = arr.elems.iter()
-        .filter_map(|e| e.as_ref().and_then(|e| lower_expr(&e.expr).ok()))
-        .collect();
+    let mut elements: Vec<Expression> = Vec::new();
+    for elem in &arr.elems {
+        let e = match elem {
+            Some(swc::ExprOrSpread { spread: Some(_), expr }) => {
+                // Spread element: [...expr]
+                Expression::Spread(Box::new(lower_expr(expr)?))
+            }
+            Some(swc::ExprOrSpread { spread: None, expr }) => {
+                // Regular element
+                lower_expr(expr)?
+            }
+            None => Expression::Undefined, // holes like [1,,3]
+        };
+        elements.push(e);
+    }
     Ok(Expression::Array(elements))
 }
 

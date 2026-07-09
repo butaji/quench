@@ -582,3 +582,124 @@ fn test_continue_in_while_loop() {
     // sum should be 1+3+4+5 = 13
     assert_eq!(result, Value::Number(13.0));
 }
+
+// ============================================================================
+// Unary plus operator tests
+// ============================================================================
+
+#[test]
+fn test_unary_plus_number() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("+42").unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_unary_plus_string_to_number() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("+'5'").unwrap();
+    assert_eq!(result, Value::Number(5.0));
+}
+
+#[test]
+fn test_unary_plus_boolean_true() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("+true").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+}
+
+#[test]
+fn test_unary_plus_boolean_false() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("+false").unwrap();
+    assert_eq!(result, Value::Number(0.0));
+}
+
+#[test]
+fn test_unary_plus_undefined() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("+undefined").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number, got {:?}", result),
+    }
+}
+
+// ============================================================================
+// Spread in array tests
+// ============================================================================
+
+#[test]
+fn test_spread_in_array_basic() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("[1, ...[2, 3], 4]").unwrap();
+    match result {
+        Value::Object(o) => {
+            let arr = o.borrow();
+            assert_eq!(arr.elements.len(), 4);
+            assert_eq!(arr.elements[0], Value::Number(1.0));
+            assert_eq!(arr.elements[1], Value::Number(2.0));
+            assert_eq!(arr.elements[2], Value::Number(3.0));
+            assert_eq!(arr.elements[3], Value::Number(4.0));
+        }
+        _ => panic!("Expected array object, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_spread_in_array_empty() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("[...[]]").unwrap();
+    match result {
+        Value::Object(o) => {
+            let arr = o.borrow();
+            assert_eq!(arr.elements.len(), 0);
+        }
+        _ => panic!("Expected empty array"),
+    }
+}
+
+#[test]
+fn test_spread_in_array_string() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("[...'ab']").unwrap();
+    match result {
+        Value::Object(o) => {
+            let arr = o.borrow();
+            assert_eq!(arr.elements.len(), 2);
+        }
+        _ => panic!("Expected array object"),
+    }
+}
+
+// ============================================================================
+// Typeof tests
+// ============================================================================
+
+#[test]
+fn test_typeof_null() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("typeof null").unwrap();
+    assert_eq!(result, Value::String("object".to_string()));
+}
+
+#[test]
+fn test_typeof_undefined() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("typeof undefined").unwrap();
+    assert_eq!(result, Value::String("undefined".to_string()));
+}
+
+#[test]
+fn test_typeof_function() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("typeof function(){}").unwrap();
+    assert_eq!(result, Value::String("function".to_string()));
+}
+
+#[test]
+fn test_typeof_undeclared() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("typeof totally_undeclared_variable_xyz").unwrap();
+    assert_eq!(result, Value::String("undefined".to_string()));
+}

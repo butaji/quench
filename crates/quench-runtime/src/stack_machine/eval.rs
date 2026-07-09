@@ -189,6 +189,9 @@ pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsEr
             // Fall back to the recursive interpreter for class support
             return Err(JsError("Class expressions must be evaluated with the recursive interpreter".to_string()));
         }
+        Expression::Spread(_) => {
+            return Err(JsError("Spread must be used inside an array literal context".to_string()));
+        }
     }
     Ok(())
 }
