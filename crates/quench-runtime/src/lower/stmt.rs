@@ -14,9 +14,20 @@ use super::pattern::{expand_nested_pattern, expand_nested_array_pattern};
 
 /// Lower a swc Module to our runtime Program
 pub fn lower_module(module: &swc::Module) -> Result<crate::ast::Program, LowerError> {
-    let statements: Vec<Statement> = module.body.iter()
-        .filter_map(lower_module_item)
-        .collect();
+    let mut statements: Vec<Statement> = Vec::new();
+    let mut export_stmts: Vec<Statement> = Vec::new();
+    
+    for item in &module.body {
+        match lower_module_item(item) {
+            Some(Statement::Export(stmt)) => export_stmts.push(*stmt),
+            Some(stmt) => statements.push(stmt),
+            None => {}
+        }
+    }
+    
+    // If we have export statements, add them at the end
+    statements.extend(export_stmts);
+    
     Ok(crate::ast::Program::Script(statements))
 }
 
@@ -38,11 +49,126 @@ fn lower_module_item(item: &swc::ModuleItem) -> Option<Statement> {
 
 fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
     match decl {
-        swc::ModuleDecl::ExportDefaultDecl(_) => None,
+        // export default function foo() { ... }
+        swc::ModuleDecl::ExportDefaultDecl(export_decl) => {
+            match &export_decl.decl {
+                swc::DefaultDecl::Fn(func_expr) => {
+                    // For export default function, create a function declaration
+                    let name = func_expr.ident.as_ref()
+                        .map(|i| i.sym.to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                    let params = func_expr.function.params.iter().map(|p| {
+                        match &p.pat {
+                            swc::Pat::Ident(ident) => ident.id.sym.to_string(),
+                            _ => "".to_string(),
+                        }
+                    }).collect();
+                    let body = func_expr.function.body.as_ref()
+                        .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
+                        .unwrap_or_default();
+                    Some(Statement::FunctionDeclaration { name, params, body })
+                }
+                swc::DefaultDecl::Class(class_expr) => {
+                    // For export default class
+                    let name = class_expr.ident.as_ref()
+                        .map(|i| i.sym.to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                    let class = lower_class(&class_expr.class)?;
+                    Some(Statement::ClassDeclaration { name, class })
+                }
+                swc::DefaultDecl::TsInterfaceDecl(_) => None,
+            }
+        }
+        // export default expr
         swc::ModuleDecl::ExportDefaultExpr(expr) => {
             Some(Statement::Expression(Box::new(lower_expr(&expr.expr).ok()?)))
         }
-        _ => None,
+        // export const/let/function/class declarations
+        swc::ModuleDecl::ExportDecl(export_decl) => {
+            lower_decl(&export_decl.decl)
+        }
+        // export { foo, bar }
+        swc::ModuleDecl::ExportNamed(named) => {
+            lower_export_named(named)
+        }
+        // export * from 'module' (not supported, skip)
+        swc::ModuleDecl::ExportAll(_) => None,
+        // import foo from 'module' (strip for CommonJS fallback)
+        swc::ModuleDecl::Import(_) => None,
+        // TypeScript export =
+        swc::ModuleDecl::TsExportAssignment(_) => None,
+        // TypeScript import =
+        swc::ModuleDecl::TsImportEquals(_) => None,
+        // TypeScript namespace export
+        swc::ModuleDecl::TsNamespaceExport(_) => None,
+    }
+}
+
+/// Lower export { foo, bar } to exports.foo = foo; exports.bar = bar;
+fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
+    let mut stmts = Vec::new();
+    for spec in &named.specifiers {
+        match spec {
+            swc::ExportSpecifier::Named(named_spec) => {
+                let exported = named_spec.exported.as_ref()
+                    .map(|e| match e {
+                        swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                        swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                    })
+                    .unwrap_or_else(|| {
+                        match &named_spec.orig {
+                            swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                            swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                        }
+                    });
+                let local = match &named_spec.orig {
+                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                };
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident(exported),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier(local)),
+                })));
+            }
+            swc::ExportSpecifier::Default(_) => {
+                // export { default }
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident("default".to_string()),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier("default".to_string())),
+                })));
+            }
+            swc::ExportSpecifier::Namespace(ns) => {
+                // export * as ns from 'module'
+                let name = match &ns.name {
+                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                };
+                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident(name.clone()),
+                        computed: false,
+                    }),
+                    right: Box::new(Expression::Identifier(name)),
+                })));
+            }
+        }
+    }
+    
+    if stmts.is_empty() {
+        None
+    } else if stmts.len() == 1 {
+        Some(Statement::Export(Box::new(stmts.into_iter().next().unwrap())))
+    } else {
+        Some(Statement::Export(Box::new(Statement::Block(stmts))))
     }
 }
 
