@@ -1,4 +1,3 @@
-// linter-skip
 //! Promise built-in implementation
 //!
 //! This module provides a basic Promise implementation for quench-runtime.

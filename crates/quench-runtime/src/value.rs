@@ -1,4 +1,3 @@
-// linter-skip
 //! JavaScript runtime values - HIR (High-level IR)
 //!
 //! This module defines the value types used by the interpreter.

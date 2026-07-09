@@ -1,5 +1,3 @@
-// linter-skip
-#![allow(clippy::too_many_lines, clippy::complexity)]
 //! Array built-in
 
 use std::cell::RefCell;
