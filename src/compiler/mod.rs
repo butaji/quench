@@ -355,6 +355,12 @@ fn stmt_to_js(stmt: &quench_runtime::ast::Statement) -> String {
         Statement::SequenceDecls(stmts) => stmts.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n"),
         // ES module export - compile the inner statement
         Statement::Export(inner) => stmt_to_js(inner),
+        // ES module import - placeholder (not supported in inline compilation)
+        Statement::Import { .. } => "// import statement not supported".to_string(),
+        // For-in loop
+        Statement::ForIn { variable, object, body } => {
+            format!("for ({} in {}) {}", expr_to_js(variable), expr_to_js(object), stmt_to_js(body))
+        }
     }
 }
 
