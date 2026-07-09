@@ -11,6 +11,21 @@ use crate::test262::runner::{
     TestOutcome, TestResult, Test262Report, should_skip,
 };
 
+/// Supported test262 harness includes.
+/// Tests requiring an include not in this list are skipped.
+const SUPPORTED_INCLUDES: &[&str] = &[
+    // Core helpers
+    "assert.js",
+    "sta.js",
+    "eq.js",
+    // Property verification helpers (Task 358)
+    "propertyHelper.js",
+    // Native error constructors (Task 358)
+    "nativeErrors.js",
+    // Deep equality (Task 358)
+    "deepEqual.js",
+];
+
 /// Run a single test262 test file with a fresh Context.
 /// This prevents state leakage between tests and allows proper cleanup.
 pub fn run_test_file(path: &Path) -> TestOutcome {
@@ -44,7 +59,7 @@ pub fn run_test_file(path: &Path) -> TestOutcome {
     // Check if required includes are supported
     if let Some(ref m) = meta {
         for include in &m.includes {
-            if !["assert.js", "sta.js", "eq.js"].contains(&include.as_str()) {
+            if !SUPPORTED_INCLUDES.contains(&include.as_str()) {
                 return TestOutcome::Skip {
                     reason: format!("unsupported include: {}", include)
                 };

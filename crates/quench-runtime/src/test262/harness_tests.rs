@@ -124,4 +124,63 @@ mod tests {
         let result = ctx.eval("assert.arrayContains([1, NaN, 3], [NaN]);");
         assert!(result.is_ok(), "arrayContains should pass with NaN: {:?}", result);
     }
+
+    // =============================================================================
+    // propertyHelper.js tests (Task 358)
+    // =============================================================================
+
+    #[test]
+    fn harness_verify_property_passes() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("var obj = {x: 42}; verifyProperty(obj, 'x', {value: 42});");
+        assert!(result.is_ok(), "verifyProperty should pass: {:?}", result);
+    }
+
+    #[test]
+    fn harness_verify_property_fails_wrong_value() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("var obj = {x: 42}; verifyProperty(obj, 'x', {value: 100});");
+        assert!(result.is_err(), "verifyProperty should fail on wrong value");
+    }
+
+    #[test]
+    fn harness_verify_accessor_property() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'x', {get: function() { return 42; }}); \
+             verifyAccessorProperty(obj, 'x', {get: function() { return 42; }});"
+        );
+        assert!(result.is_ok(), "verifyAccessorProperty should pass: {:?}", result);
+    }
+
+    // =============================================================================
+    // deepEqual.js tests (Task 358)
+    // =============================================================================
+
+    #[test]
+    fn harness_deep_equal_passes() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("assert.deepEqual({a: 1, b: 2}, {a: 1, b: 2});");
+        assert!(result.is_ok(), "deepEqual should pass: {:?}", result);
+    }
+
+    #[test]
+    fn harness_deep_equal_fails() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("assert.deepEqual({a: 1}, {a: 2});");
+        assert!(result.is_err(), "deepEqual should fail on different values");
+    }
+
+    #[test]
+    fn harness_deep_equal_arrays() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("assert.deepEqual([1, 2, 3], [1, 2, 3]);");
+        assert!(result.is_ok(), "deepEqual should pass for arrays: {:?}", result);
+    }
 }
