@@ -1164,3 +1164,47 @@ fn test_var_and_globalthis_bidirectional() {
     let bare = ctx.eval("b").unwrap();
     assert_eq!(bare, Value::Number(20.0));
 }
+
+#[test]
+fn test_error_to_string_with_message() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Error('test').toString()").unwrap();
+    assert_eq!(
+        result,
+        Value::String("Error: test".to_string()),
+        "new Error('test').toString() should return 'Error: test'"
+    );
+}
+
+#[test]
+fn test_error_to_string_without_message() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Error().toString()").unwrap();
+    assert_eq!(
+        result,
+        Value::String("Error".to_string()),
+        "new Error().toString() should return 'Error'"
+    );
+}
+
+#[test]
+fn test_type_error_to_string() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new TypeError('invalid').toString()").unwrap();
+    assert_eq!(
+        result,
+        Value::String("TypeError: invalid".to_string()),
+        "new TypeError('invalid').toString() should return 'TypeError: invalid'"
+    );
+}
+
+#[test]
+fn test_error_to_string_empty_message() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Error('').toString()").unwrap();
+    assert_eq!(
+        result,
+        Value::String("Error".to_string()),
+        "new Error('').toString() should return 'Error'"
+    );
+}
