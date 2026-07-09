@@ -86,6 +86,14 @@ fn read_object_property(
 
 /// Read a property from a function value.
 fn read_function_property(f: &ValueFunction, prop_name: &str) -> Result<Value, JsError> {
+    // Arrow functions are always strict mode and cannot have 'arguments' or 'caller'
+    if f.is_arrow {
+        if prop_name == "arguments" || prop_name == "caller" {
+            return Err(JsError("TypeError: 'arguments' and 'caller' are "
+                .to_string()
+                + "restricted properties and cannot be accessed on arrow functions"));
+        }
+    }
     if prop_name == "name" {
         Ok(Value::String(f.name.clone().unwrap_or_default()))
     } else if prop_name == "prototype" {
