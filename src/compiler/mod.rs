@@ -283,7 +283,7 @@ fn ast_to_js(program: &quench_runtime::ast::Program) -> String {
 
 fn stmt_to_js(stmt: &quench_runtime::ast::Statement) -> String {
     match stmt {
-        Statement::Expression(expr) => expr_to_js(expr),
+        Statement::Expression(expr) => format!("{};", expr_to_js(expr)),
         Statement::VarDeclaration { kind, name, init } => {
             let kw = match kind {
                 VarKind::Var => "var",
@@ -503,7 +503,16 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         Expression::ArrowFunction { params, body } => {
             let params_str = params.join(", ");
             match &**body {
-                ArrowBody::Expression(e) => format!("({}) => {}", params_str, expr_to_js(e)),
+                ArrowBody::Expression(e) => {
+                    let expr_js = expr_to_js(e);
+                    // Object literals need parentheses: () => ({...})
+                    let wrapped = if expr_js.starts_with('{') {
+                        format!("({})", expr_js)
+                    } else {
+                        expr_js
+                    };
+                    format!("({}) => {}", params_str, wrapped)
+                }
                 ArrowBody::Block(stmts) => {
                     let body_str = stmts.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n");
                     format!("({}) => {{ {} }}", params_str, body_str)
