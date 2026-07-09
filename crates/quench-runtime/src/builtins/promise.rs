@@ -252,7 +252,7 @@ fn promise_then_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Some(Value::Object(ref obj_rc)) = current_promise_this {
-        let (state, result) = {
+        let (state, _result) = {
             let obj = obj_rc.borrow();
             (
                 obj.promise_data.as_ref().map(|d| d.state.clone()),
