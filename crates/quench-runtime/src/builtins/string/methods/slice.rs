@@ -12,7 +12,7 @@ pub fn install_slice_methods(proto: &Rc<RefCell<Object>>) {
     proto_clone.borrow_mut().set("substring", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
         match crate::builtins::get_native_this() {
             Some(Value::String(s)) => {
-                let start = args.get(0).map(|v| to_number(v) as usize).unwrap_or(0);
+                let start = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
                 let end = args.get(1).map(|v| to_number(v) as usize).unwrap_or(s.len());
                 let start = start.min(s.len());
                 let end = end.min(s.len());
@@ -26,7 +26,7 @@ pub fn install_slice_methods(proto: &Rc<RefCell<Object>>) {
     proto_clone.borrow_mut().set("slice", Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
         match crate::builtins::get_native_this() {
             Some(Value::String(s)) => {
-                let start = args.get(0).map(|v| to_number(v) as i64).unwrap_or(0) as isize;
+                let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0) as isize;
                 let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(s.len() as i64) as isize;
                 let len = s.len() as isize;
                 

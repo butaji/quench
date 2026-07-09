@@ -410,11 +410,28 @@ fn handle_arr_nested(
     stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
 }
 
+/// Wrap declarations in appropriate statement(s).
+/// For var declarations, return them as individual statements to avoid
+/// creating a new block scope (var is function-scoped, not block-scoped).
+/// For let/const, wrap in a Block since they're block-scoped.
 fn wrap_decls(decls: Vec<Statement>) -> Option<Statement> {
     if decls.is_empty() {
-        Some(Statement::Empty)
-    } else if decls.len() == 1 {
-        Some(decls.into_iter().next().unwrap())
+        return Some(Statement::Empty);
+    }
+    if decls.len() == 1 {
+        return Some(decls.into_iter().next().unwrap());
+    }
+    
+    // Check if all declarations are var - if so, don't wrap in Block
+    // to avoid creating a new scope (var is function-scoped)
+    let all_var = decls.iter().all(|s| {
+        matches!(s, Statement::VarDeclaration { kind: VarKind::Var, .. })
+    });
+    
+    if all_var {
+        // Return as Sequence of individual statements
+        // This is handled specially in the stack machine
+        Some(Statement::SequenceDecls(decls))
     } else {
         Some(Statement::Block(decls))
     }
