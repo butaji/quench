@@ -180,7 +180,7 @@ fn eval_typeof(val: &Value) -> Result<Value, JsError> {
 fn get_class_prototype_for_instanceof(class: &crate::value::ClassValue) -> Result<std::rc::Rc<std::cell::RefCell<crate::value::Object>>, JsError> {
     // Use the shared prototype from ClassValue
     // This ensures that instanceof checks work correctly
-    crate::eval::expression::get_or_create_class_prototype(class, &std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())))
+    crate::eval::class::get_or_create_class_prototype(class, &std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())))
 }
 
 /// Get prototype from a class value (used for extends)

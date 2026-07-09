@@ -2,9 +2,11 @@
 //!
 //! Contains the expression and statement evaluators for the interpreter.
 
+pub mod class;
 pub mod expression;
 pub mod function;
 pub mod iteration;
+pub mod jsx;
 pub mod member;
 pub mod object;
 pub mod operators;
