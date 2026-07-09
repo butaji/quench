@@ -114,6 +114,23 @@ pub fn eval_statement(
     }
 }
 
+/// Helper to set a property on globalThis if we're at the top level.
+fn set_on_global_this(
+    env: &Rc<RefCell<Environment>>,
+    name: &str,
+    value: Value,
+) {
+    // Only set on globalThis if this is the top-level environment
+    let is_top_level = env.borrow().get_parent().is_none();
+    if is_top_level {
+        // Get globalThis outside the mutable borrow to avoid conflict
+        let global_this = env.borrow().get("globalThis");
+        if let Some(Value::Object(global_obj)) = global_this {
+            global_obj.borrow_mut().set(name, value);
+        }
+    }
+}
+
 fn eval_var_decl(
     kind: &VarKind,
     name: &str,
@@ -129,7 +146,11 @@ fn eval_var_decl(
     } else {
         Value::Undefined
     };
-    env.borrow_mut().initialize_declared(name, value);
+    env.borrow_mut().initialize_declared(name, value.clone());
+    // For top-level var declarations, also set on globalThis
+    if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+        set_on_global_this(env, name, value);
+    }
     Ok(Value::Undefined)
 }
 
