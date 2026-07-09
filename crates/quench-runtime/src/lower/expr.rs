@@ -3,15 +3,13 @@
 use swc_ecma_ast as swc;
 use crate::ast::{
     ArrowBody, BinaryOp, Expression, PropertyKey, PropertyValue, UpdateOp,
-    JsxTagName, JsxProp, JsxAttrValue, JsxChild,
 };
 use super::helpers::{
-    lower_bin_op as helper_lower_bin_op,
-    lower_unary_op as helper_lower_unary_op,
-    assign_op_to_bin as helper_assign_op_to_bin,
-    lower_prop_name,
+    lower_bin_op, lower_unary_op, assign_op_to_bin, lower_prop_name,
 };
-use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+use super::helpers::{atom_to_string, LowerError};
+use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
+use super::literals::{lower_getter_prop, lower_literal, lower_method_prop, lower_setter_prop, lower_template_literal};
 
 /// Lower a swc Expr to our Expression
 pub fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
@@ -116,13 +114,13 @@ fn lower_yield_expr(yield_expr: &swc::YieldExpr) -> Result<Expression, LowerErro
 fn lower_bin_expr(bin: &swc::BinExpr) -> Result<Expression, LowerError> {
     let left = lower_expr(&bin.left)?;
     let right = lower_expr(&bin.right)?;
-    let op = helper_lower_bin_op(&bin.op)?;
+    let op = lower_bin_op(&bin.op)?;
     Ok(Expression::Binary { op, left: Box::new(left), right: Box::new(right) })
 }
 
 fn lower_unary_expr(unary: &swc::UnaryExpr) -> Result<Expression, LowerError> {
     let arg = lower_expr(&unary.arg)?;
-    let op = helper_lower_unary_op(&unary.op)?;
+    let op = lower_unary_op(&unary.op)?;
     Ok(Expression::Unary { op, argument: Box::new(arg) })
 }
 
@@ -142,7 +140,7 @@ fn lower_assign_expr(assign: &swc::AssignExpr) -> Result<Expression, LowerError>
     if assign.op == swc::AssignOp::Assign {
         Ok(Expression::Assignment { left: Box::new(left), right: Box::new(right) })
     } else {
-        let bin_op = helper_assign_op_to_bin(&assign.op)?;
+        let bin_op = assign_op_to_bin(&assign.op)?;
         Ok(Expression::CompoundAssignment {
             op: bin_op,
             left: Box::new(left),
@@ -353,57 +351,6 @@ fn lower_prop_or_spread(prop: &swc::PropOrSpread) -> Result<(PropertyKey, Proper
     }
 }
 
-fn lower_literal(lit: &swc::Lit) -> Result<Expression, LowerError> {
-    match lit {
-        swc::Lit::Num(n) => Ok(Expression::Number(n.value)),
-        swc::Lit::Str(s) => Ok(Expression::String(wtf8_atom_to_string(&s.value))),
-        swc::Lit::Bool(b) => Ok(Expression::Boolean(b.value)),
-        swc::Lit::Null(_) => Ok(Expression::Null),
-        swc::Lit::Regex(regex) => Ok(Expression::String(format!("/{}/{}", regex.exp, regex.flags))),
-        swc::Lit::BigInt(_) => Err(LowerError::new("BigInt not supported")),
-        swc::Lit::JSXText(t) => Ok(Expression::String(t.value.to_string())),
-    }
-}
-
-fn lower_template_literal(tpl: &swc::Tpl) -> Result<Expression, LowerError> {
-    if tpl.exprs.is_empty() {
-        let mut result = String::new();
-        for elem in &tpl.quasis {
-            if let Some(cooked) = &elem.cooked {
-                result.push_str(&wtf8_atom_to_string(cooked));
-            }
-        }
-        return Ok(Expression::String(result));
-    }
-    let mut exprs: Vec<Expression> = Vec::new();
-    let quasi_count = tpl.quasis.len();
-    let expr_count = tpl.exprs.len();
-    for i in 0..quasi_count {
-        if let Some(cooked) = &tpl.quasis.get(i).and_then(|q| q.cooked.as_ref()) {
-            let s = wtf8_atom_to_string(cooked);
-            if !s.is_empty() {
-                exprs.push(Expression::String(s));
-            }
-        }
-        if i < expr_count {
-            exprs.push(lower_expr(&tpl.exprs[i])?);
-        }
-    }
-    if exprs.len() == 1 {
-        return Ok(exprs.remove(0));
-    }
-    let mut result = exprs.remove(0);
-    while !exprs.is_empty() {
-        let right = exprs.remove(0);
-        result = Expression::Binary {
-            op: BinaryOp::Add,
-            left: Box::new(result),
-            right: Box::new(right),
-        };
-    }
-    Ok(result)
-}
-
 fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerError> {
     match prop {
         swc::Prop::Shorthand(ident) => {
@@ -420,195 +367,4 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerErr
         swc::Prop::Method(method) => lower_method_prop(method),
         swc::Prop::Assign(_) => Err(LowerError::new("Assignment property not supported")),
     }
-}
-
-fn lower_getter_prop(getter: &swc::GetterProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
-    let key = lower_prop_name(&getter.key)?;
-    let body = getter.body.as_ref()
-        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
-        .unwrap_or_default();
-    Ok((key, PropertyValue::Getter { params: vec![], body }))
-}
-
-fn lower_setter_prop(setter: &swc::SetterProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
-    let key = lower_prop_name(&setter.key)?;
-    let param = match &*setter.param {
-        swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-        _ => "value".to_string(),
-    };
-    let body = setter.body.as_ref()
-        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
-        .unwrap_or_default();
-    Ok((key, PropertyValue::Setter { param, body }))
-}
-
-fn lower_method_prop(method: &swc::MethodProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
-    let key = lower_prop_name(&method.key)?;
-    let params = method.function.params.iter().map(|p| {
-        match &p.pat {
-            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-            _ => "arg".to_string(),
-        }
-    }).collect();
-    let body = method.function.body.as_ref()
-        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
-        .unwrap_or_default();
-    Ok((key, PropertyValue::Value(Expression::FunctionExpression { name: None, params, body })))
-}
-
-// ===================================================================
-// JSX lowering functions
-// ===================================================================
-
-fn lower_jsx_member(member: &swc::JSXMemberExpr) -> Result<Expression, LowerError> {
-    let obj = match &member.obj {
-        swc::JSXObject::Ident(ident) => atom_to_string(&ident.sym),
-        swc::JSXObject::JSXMemberExpr(nested) => {
-            // Recursively handle nested member expressions like Foo.Bar.Baz
-            let nested_result = lower_jsx_member(nested)?;
-            match nested_result {
-                Expression::JsxElement { tag: JsxTagName::Member { object, property }, .. } => {
-                    format!("{}.{}", object, property)
-                }
-                _ => return Err(LowerError::new("Invalid nested JSX member expression")),
-            }
-        }
-    };
-    let property = atom_to_string(&member.prop.sym);
-    Ok(Expression::JsxElement {
-        tag: JsxTagName::Member { object: obj, property },
-        props: vec![],
-        children: vec![],
-    })
-}
-
-fn lower_jsx_namespaced(ns: &swc::JSXNamespacedName) -> Result<Expression, LowerError> {
-    let namespace = atom_to_string(&ns.ns.sym);
-    let name = atom_to_string(&ns.name.sym);
-    Ok(Expression::JsxElement {
-        tag: JsxTagName::Namespaced { namespace, name },
-        props: vec![],
-        children: vec![],
-    })
-}
-
-fn lower_jsx_element(elem: &swc::JSXElement) -> Result<Expression, LowerError> {
-    let tag = lower_jsx_element_name(&elem.opening.name)?;
-    let props = lower_jsx_attributes(&elem.opening.attrs)?;
-    let children = lower_jsx_children(&elem.children)?;
-    
-    Ok(Expression::JsxElement { tag, props, children })
-}
-
-fn lower_jsx_fragment(frag: &swc::JSXFragment) -> Result<Expression, LowerError> {
-    let children = lower_jsx_children(&frag.children)?;
-    Ok(Expression::JsxFragment { children })
-}
-
-fn lower_jsx_element_name(name: &swc::JSXElementName) -> Result<JsxTagName, LowerError> {
-    match name {
-        swc::JSXElementName::Ident(ident) => {
-            Ok(JsxTagName::Ident(atom_to_string(&ident.sym)))
-        }
-        swc::JSXElementName::JSXMemberExpr(member) => {
-            let obj = match &member.obj {
-                swc::JSXObject::Ident(ident) => atom_to_string(&ident.sym),
-                swc::JSXObject::JSXMemberExpr(nested) => {
-                    let nested_result = lower_jsx_member(nested)?;
-                    match nested_result {
-                        Expression::JsxElement { tag: JsxTagName::Member { object, property }, .. } => {
-                            format!("{}.{}", object, property)
-                        }
-                        _ => return Err(LowerError::new("Invalid nested JSX member expression")),
-                    }
-                }
-            };
-            let property = atom_to_string(&member.prop.sym);
-            Ok(JsxTagName::Member { object: obj, property })
-        }
-        swc::JSXElementName::JSXNamespacedName(ns) => {
-            let namespace = atom_to_string(&ns.ns.sym);
-            let name = atom_to_string(&ns.name.sym);
-            Ok(JsxTagName::Namespaced { namespace, name })
-        }
-    }
-}
-
-fn lower_jsx_attributes(attrs: &[swc::JSXAttrOrSpread]) -> Result<Vec<JsxProp>, LowerError> {
-    let mut props = Vec::new();
-    for attr_or_spread in attrs {
-        match attr_or_spread {
-            swc::JSXAttrOrSpread::JSXAttr(attr) => {
-                let name = lower_jsx_attr_name(&attr.name)?;
-                let value = match &attr.value {
-                    Some(swc::JSXAttrValue::JSXExprContainer(expr)) => {
-                        match &expr.expr {
-                            swc::JSXExpr::Expr(expr) => {
-                                JsxAttrValue::Expression(lower_expr(expr)?)
-                            }
-                            swc::JSXExpr::JSXEmptyExpr(_) => {
-                                JsxAttrValue::Expression(Expression::Null)
-                            }
-                        }
-                    }
-                    Some(swc::JSXAttrValue::Str(s)) => {
-                        JsxAttrValue::String(wtf8_atom_to_string(&s.value))
-                    }
-                    Some(_) | None => {
-                        // Handle other cases (JSXElement, JSXFragment) as null
-                        JsxAttrValue::Expression(Expression::Null)
-                    }
-                };
-                props.push(JsxProp::Attr { name, value });
-            }
-            swc::JSXAttrOrSpread::SpreadElement(spread) => {
-                let expr = lower_expr(&spread.expr)?;
-                props.push(JsxProp::Spread(expr));
-            }
-        }
-    }
-    Ok(props)
-}
-
-fn lower_jsx_attr_name(name: &swc::JSXAttrName) -> Result<String, LowerError> {
-    match name {
-        swc::JSXAttrName::Ident(ident) => Ok(atom_to_string(&ident.sym)),
-        swc::JSXAttrName::JSXNamespacedName(ns) => {
-            Ok(format!("{}:{}", atom_to_string(&ns.ns.sym), atom_to_string(&ns.name.sym)))
-        }
-    }
-}
-
-fn lower_jsx_children(children: &[swc::JSXElementChild]) -> Result<Vec<JsxChild>, LowerError> {
-    let mut result = Vec::new();
-    for child in children {
-        match child {
-            swc::JSXElementChild::JSXText(text) => {
-                result.push(JsxChild::Text(text.value.to_string()));
-            }
-            swc::JSXElementChild::JSXExprContainer(expr) => {
-                match &expr.expr {
-                    swc::JSXExpr::Expr(inner) => {
-                        result.push(JsxChild::Expression(lower_expr(inner)?));
-                    }
-                    swc::JSXExpr::JSXEmptyExpr(_) => {
-                        // Empty expression, skip
-                    }
-                }
-            }
-            swc::JSXElementChild::JSXSpreadChild(spread) => {
-                let expr = lower_expr(&spread.expr)?;
-                result.push(JsxChild::Spread(expr));
-            }
-            swc::JSXElementChild::JSXElement(elem) => {
-                let elem_expr = lower_jsx_element(elem)?;
-                result.push(JsxChild::Element(Box::new(elem_expr)));
-            }
-            swc::JSXElementChild::JSXFragment(frag) => {
-                let frag_expr = lower_jsx_fragment(frag)?;
-                result.push(JsxChild::Element(Box::new(frag_expr)));
-            }
-        }
-    }
-    Ok(result)
 }
