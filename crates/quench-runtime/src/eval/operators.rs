@@ -144,6 +144,7 @@ pub fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
     match op {
         UnaryOp::Not => Ok(Value::Boolean(!to_bool(val))),
         UnaryOp::Neg => Ok(Value::Number(-to_number(val))),
+        UnaryOp::Plus => Ok(Value::Number(to_number(val))),
         UnaryOp::BitNot => Ok(Value::Number(!(to_number(val) as i64) as f64)),
         UnaryOp::Typeof => eval_typeof(val),
         UnaryOp::Void => Ok(Value::Undefined),

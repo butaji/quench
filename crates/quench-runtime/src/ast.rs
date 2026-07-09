@@ -108,6 +108,8 @@ pub enum Expression {
     /// Object with getter/setter support
     Object(Vec<(PropertyKey, PropertyValue)>),
     Array(Vec<Expression>),
+    /// Spread element: ...expr (used in array literals)
+    Spread(Box<Expression>),
     FunctionExpression { name: Option<String>, params: Vec<String>, body: Vec<Statement> },
     ArrowFunction { params: Vec<String>, body: Box<ArrowBody> },
     Binary { op: BinaryOp, left: Box<Expression>, right: Box<Expression> },
@@ -266,7 +268,7 @@ impl BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp { Not, Neg, BitNot, Typeof, Void }
+pub enum UnaryOp { Not, Neg, Plus, BitNot, Typeof, Void }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompoundOp {
