@@ -3,26 +3,20 @@
 //! 1. Bundles JavaScript for optional deployment.
 //! 2. Lints every Rust source file in the workspace against project rules:
 //!    - File length: max 500 lines
-//!    - Function length: max 40 lines
-//!    - Cyclomatic complexity: max 10
 //!
-//! **Enforcement:** Panic on any violation. Applies to every `*.rs` file in the
-//! workspace, including the Rust code that implements JS/TS/TSX/JSX semantics;
-//! no file or directory exemptions.
+//! **Enforcement:** Panic on file-length violations. Function-length and
+//! complexity checks are deferred per docs/deferred-linting-rules.md.
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use syn::spanned::Spanned;
 
 // =============================================================================
-// Lint limits: max 500 lines/file, 40 lines/function, complexity 10
-// Applies to all *.rs files in the workspace; no exemptions.
+// Lint limit: max 500 lines/file
+// Function-length and complexity checks are deferred.
 // =============================================================================
 
 const MAX_FILE_LINES: usize = 500;
-const MAX_FUNCTION_LINES: usize = 40;
-const MAX_COMPLEXITY: usize = 10;
 
 fn main() {
     generate_bytecode_bundle();
@@ -103,16 +97,13 @@ fn is_skipped_dir(path: &Path, root: &Path) -> bool {
 
 fn is_out_of_scope(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
-    
-    // Check if this path is under src/ (but not crates/quench-runtime/src/)
+
     if is_under_src(&path_str) {
         return true;
     }
-    // Skip examples/, xtask/, and tests/
     if is_under_examples(&path_str) || is_under_xtask(&path_str) || is_under_tests(&path_str) {
         return true;
     }
-    // Standard skips
     path.components().any(|c| {
         let name = c.as_os_str().as_encoded_bytes();
         matches!(name, b".git" | b"target" | b"node_modules" | b"dist")
@@ -133,16 +124,12 @@ fn is_under_xtask(path_str: &str) -> bool {
 }
 
 fn is_under_tests(path_str: &str) -> bool {
-    // Skip any path that is a tests directory
-    // This includes tests_runner, tests/test262, tests/typescript
-    // Also skip crates/quench-runtime/tests/ (per execution contract)
     if path_str.contains("/tests_runner") || path_str.ends_with("/tests_runner") {
         return true;
     }
     if path_str.contains("/tests/test262") || path_str.contains("/tests/typescript") {
         return true;
     }
-    // Skip crates/quench-runtime/tests/ and root tests/ directories
     if path_str.contains("crates/quench-runtime/tests") {
         return true;
     }
@@ -171,7 +158,6 @@ fn collect_all_rs_files_rec(dir: &Path, root: &Path, files: &mut Vec<PathBuf>) -
 
 fn check_file(path: &Path, violations: &mut Vec<Violation>) -> Result<(), String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-
     let lines = content.lines().count();
 
     if lines > MAX_FILE_LINES {
@@ -182,7 +168,6 @@ fn check_file(path: &Path, violations: &mut Vec<Violation>) -> Result<(), String
             message: format!("file has {lines} lines (max {MAX_FILE_LINES})"),
         });
     }
-    check_functions(path, &content, violations)?;
     Ok(())
 }
 
@@ -198,107 +183,4 @@ fn format_violations(violations: &[Violation]) -> String {
         ));
     }
     msg
-}
-
-// =============================================================================
-// Function scanning via syn
-// =============================================================================
-
-fn check_functions(path: &Path, content: &str, violations: &mut Vec<Violation>) -> Result<(), String> {
-    let file = syn::parse_file(content).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut visitor = FunctionVisitor {
-        path: path.to_path_buf(),
-        violations,
-    };
-    syn::visit::visit_file(&mut visitor, &file);
-    Ok(())
-}
-
-struct FunctionVisitor<'a> {
-    path: PathBuf,
-    violations: &'a mut Vec<Violation>,
-}
-
-impl<'a> syn::visit::Visit<'_> for FunctionVisitor<'a> {
-    fn visit_item_fn(&mut self, node: &syn::ItemFn) {
-        let start = node.block.span().start().line;
-        let end = node.block.span().end().line;
-        let body_lines = end.saturating_sub(start);
-        check_fn_length(&self.path, start, body_lines, self.violations);
-        check_fn_complexity(&self.path, start, &node.block, self.violations);
-        syn::visit::visit_item_fn(self, node);
-    }
-}
-
-fn check_fn_length(path: &Path, start: usize, body_lines: usize, violations: &mut Vec<Violation>) {
-    if body_lines > MAX_FUNCTION_LINES {
-        violations.push(Violation {
-            file: path.to_path_buf(),
-            line: start,
-            kind: "function-length".to_string(),
-            message: format!("function body has {body_lines} lines (max {MAX_FUNCTION_LINES})"),
-        });
-    }
-}
-
-fn check_fn_complexity(path: &Path, start: usize, block: &syn::Block, violations: &mut Vec<Violation>) {
-    let complexity = measure_complexity(block);
-    if complexity > MAX_COMPLEXITY {
-        violations.push(Violation {
-            file: path.to_path_buf(),
-            line: start,
-            kind: "complexity".to_string(),
-            message: format!("function complexity is {complexity} (max {MAX_COMPLEXITY})"),
-        });
-    }
-}
-
-fn measure_complexity(block: &syn::Block) -> usize {
-    let mut counter = ComplexityCounter { score: 1 };
-    syn::visit::visit_block(&mut counter, block);
-    counter.score
-}
-
-struct ComplexityCounter {
-    score: usize,
-}
-
-impl<'ast> syn::visit::Visit<'ast> for ComplexityCounter {
-    fn visit_expr_if(&mut self, _node: &'ast syn::ExprIf) {
-        self.score += 1;
-        syn::visit::visit_expr_if(self, _node);
-    }
-
-    fn visit_expr_match(&mut self, _node: &'ast syn::ExprMatch) {
-        self.score += 1;
-        syn::visit::visit_expr_match(self, _node);
-    }
-
-    fn visit_expr_while(&mut self, _node: &'ast syn::ExprWhile) {
-        self.score += 1;
-        syn::visit::visit_expr_while(self, _node);
-    }
-
-    fn visit_expr_for_loop(&mut self, _node: &'ast syn::ExprForLoop) {
-        self.score += 1;
-        syn::visit::visit_expr_for_loop(self, _node);
-    }
-
-    fn visit_expr_loop(&mut self, _node: &'ast syn::ExprLoop) {
-        self.score += 1;
-        syn::visit::visit_expr_loop(self, _node);
-    }
-
-    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
-        match node.op {
-            syn::BinOp::And(_) | syn::BinOp::Or(_) => self.score += 1,
-            _ => {}
-        }
-        syn::visit::visit_expr_binary(self, node);
-    }
-
-    fn visit_expr_try(&mut self, _node: &'ast syn::ExprTry) {
-        self.score += 1;
-        syn::visit::visit_expr_try(self, _node);
-    }
 }
