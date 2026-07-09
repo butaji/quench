@@ -1025,3 +1025,75 @@ fn test_new_date_instanceof() {
     let result = ctx.eval("new Date() instanceof Date").unwrap();
     assert_eq!(result, Value::Boolean(true), "new Date() should be instanceof Date");
 }
+
+// Task 294: Property descriptors tests
+#[test]
+fn test_define_property_basic() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var obj = {}; Object.defineProperty(obj, 'x', { value: 42, writable: true, enumerable: true, configurable: true }); obj.x").unwrap();
+    assert_eq!(result, Value::Number(42.0), "defineProperty should set value");
+}
+
+#[test]
+fn test_define_property_returns_object() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var obj = {}; Object.defineProperty(obj, 'x', { value: 1 }) === obj").unwrap();
+    assert_eq!(result, Value::Boolean(true), "defineProperty should return the object");
+}
+
+#[test]
+fn test_define_property_writable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var obj = {}; Object.defineProperty(obj, 'x', { value: 1, writable: false }); obj.x = 2; obj.x").unwrap();
+    assert_eq!(result, Value::Number(1.0), "non-writable property should not change");
+}
+
+#[test]
+fn test_define_property_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    // Test that non-enumerable property doesn't appear in Object.keys
+    let result = ctx.eval("var obj = { a: 1 }; Object.defineProperty(obj, 'x', { value: 2, enumerable: false }); Object.keys(obj).length").unwrap();
+    assert_eq!(result, Value::Number(1.0), "non-enumerable property should not appear in keys");
+}
+
+#[test]
+fn test_define_property_configurable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var obj = {}; Object.defineProperty(obj, 'x', { value: 1, configurable: false }); delete obj.x").unwrap();
+    assert_eq!(result, Value::Boolean(false), "non-configurable property should not be deleted");
+}
+
+#[test]
+fn test_get_own_property_descriptor_basic() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 42 }, 'x').value").unwrap();
+    assert_eq!(result, Value::Number(42.0), "getOwnPropertyDescriptor should return correct value");
+}
+
+#[test]
+fn test_get_own_property_descriptor_writable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 1 }, 'x').writable").unwrap();
+    assert_eq!(result, Value::Boolean(true), "literal property should be writable by default");
+}
+
+#[test]
+fn test_get_own_property_descriptor_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 1 }, 'x').enumerable").unwrap();
+    assert_eq!(result, Value::Boolean(true), "literal property should be enumerable by default");
+}
+
+#[test]
+fn test_get_own_property_descriptor_configurable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 1 }, 'x').configurable").unwrap();
+    assert_eq!(result, Value::Boolean(true), "literal property should be configurable by default");
+}
+
+#[test]
+fn test_get_own_property_descriptor_undefined() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 1 }, 'y')").unwrap();
+    assert_eq!(result, Value::Undefined, "non-existent property should return undefined");
+}

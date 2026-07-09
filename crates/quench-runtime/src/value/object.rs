@@ -7,8 +7,8 @@ use indexmap::IndexMap;
 
 use crate::ast::Statement;
 use crate::env::Environment;
-use crate::value::Value;
 use crate::value::kind::ObjectKind;
+use crate::value::Value;
 
 /// Promise state for Promise objects
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +94,37 @@ pub struct Setter {
     pub body: Vec<Statement>,
 }
 
+/// Property descriptor flags per ECMAScript spec
+#[derive(Debug, Clone, Default)]
+pub struct PropertyFlags {
+    pub value: Option<Value>,
+    pub writable: bool,
+    pub enumerable: bool,
+    pub configurable: bool,
+}
+
+impl PropertyFlags {
+    /// Default flags for a normal property
+    pub fn default_data() -> Self {
+        PropertyFlags {
+            value: None,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+        }
+    }
+
+    /// Default flags for accessor property
+    pub fn default_accessor() -> Self {
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: true,
+            configurable: true,
+        }
+    }
+}
+
 /// JavaScript object with prototype chain support.
 /// Uses IndexMap for insertion-ordered properties and Vec for array elements.
 #[derive(Debug, Clone)]
@@ -110,6 +141,8 @@ pub struct Object {
     getters: IndexMap<String, GetterStorage>,
     /// Setter functions for properties
     setters: IndexMap<String, SetterStorage>,
+    /// Property descriptor flags (for defineProperty support)
+    descriptors: IndexMap<String, PropertyFlags>,
     /// Promise-specific data (only for Promise objects)
     pub promise_data: Option<PromiseObjectData>,
 }
@@ -124,6 +157,7 @@ impl Object {
             prototype: None,
             getters: IndexMap::new(),
             setters: IndexMap::new(),
+            descriptors: IndexMap::new(),
             promise_data: None,
         }
     }
@@ -137,6 +171,7 @@ impl Object {
             prototype: Some(prototype),
             getters: IndexMap::new(),
             setters: IndexMap::new(),
+            descriptors: IndexMap::new(),
             promise_data: None,
         }
     }
@@ -145,7 +180,8 @@ impl Object {
     pub fn new_array(len: usize) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = vec![Value::Undefined; len];
-        obj.properties.insert("length".to_string(), Value::Number(len as f64));
+        obj.properties
+            .insert("length".to_string(), Value::Number(len as f64));
         obj
     }
 
@@ -165,32 +201,73 @@ impl Object {
         None
     }
 
-    /// Set a property value on this object only (no prototype chain)
+    /// Set a property value on this object only (no prototype chain).
+    /// Respects writable flag from property descriptor.
     pub fn set(&mut self, key: &str, value: Value) {
+        // Check if property is non-writable
+        if let Some(flags) = self.descriptors.get(key) {
+            if !flags.writable {
+                return; // Silently ignore attempt to write to non-writable property
+            }
+        }
+
         if let Ok(idx) = key.parse::<usize>() {
-            // For array indices, store in elements only, not properties
             while self.elements.len() <= idx {
                 self.elements.push(Value::Undefined);
             }
-            self.elements[idx] = value.clone();
-            // Update length property
-            self.properties.insert("length".to_string(), Value::Number(self.elements.len() as f64));
+            self.elements[idx] = value;
+            self.properties.insert(
+                "length".to_string(),
+                Value::Number(self.elements.len() as f64),
+            );
         } else {
-            // Non-numeric keys go to properties only
             self.properties.insert(key.to_string(), value);
         }
     }
 
+    /// Define a property with explicit descriptor flags
+    pub fn define(&mut self, key: &str, value: Value, flags: PropertyFlags) {
+        // Remove existing getter/setter if redefining as data property
+        if flags.value.is_some() || !self.getters.contains_key(key) {
+            self.getters.shift_remove(key);
+            self.setters.shift_remove(key);
+        }
+        self.properties.insert(key.to_string(), value);
+        self.descriptors.insert(key.to_string(), flags);
+    }
+
+    /// Get property descriptor for a key
+    pub fn get_descriptor(&self, key: &str) -> Option<PropertyFlags> {
+        self.descriptors.get(key).cloned()
+    }
+
     /// Set a getter function for a property
-    pub fn set_getter(&mut self, key: &str, body: std::rc::Rc<Vec<Statement>>,
-                       closure: std::rc::Rc<std::cell::RefCell<Environment>>) {
-        self.getters.insert(key.to_string(), GetterStorage { body, closure });
+    pub fn set_getter(
+        &mut self,
+        key: &str,
+        body: std::rc::Rc<Vec<Statement>>,
+        closure: std::rc::Rc<std::cell::RefCell<Environment>>,
+    ) {
+        self.getters
+            .insert(key.to_string(), GetterStorage { body, closure });
     }
 
     /// Set a setter function for a property
-    pub fn set_setter(&mut self, key: &str, param: String, body: std::rc::Rc<Vec<Statement>>,
-                       closure: std::rc::Rc<std::cell::RefCell<Environment>>) {
-        self.setters.insert(key.to_string(), SetterStorage { param, body, closure });
+    pub fn set_setter(
+        &mut self,
+        key: &str,
+        param: String,
+        body: std::rc::Rc<Vec<Statement>>,
+        closure: std::rc::Rc<std::cell::RefCell<Environment>>,
+    ) {
+        self.setters.insert(
+            key.to_string(),
+            SetterStorage {
+                param,
+                body,
+                closure,
+            },
+        );
     }
 
     /// Check if property has a getter
@@ -227,7 +304,8 @@ impl Object {
         if self.kind == ObjectKind::Array {
             (0..self.elements.len()).map(|i| i.to_string()).collect()
         } else {
-            let mut numeric: Vec<(usize, String)> = self.properties
+            let mut numeric: Vec<(usize, String)> = self
+                .properties
                 .keys()
                 .filter_map(|k| k.parse::<usize>().ok().map(|i| (i, k.clone())))
                 .collect();
@@ -239,19 +317,21 @@ impl Object {
     fn add_non_numeric_keys(&self, keys: &mut Vec<String>) {
         for key in self.properties.keys() {
             if key != "length" && key.parse::<usize>().is_err() && !keys.contains(key) {
-                keys.push(key.clone());
+                if self.is_enumerable(key) {
+                    keys.push(key.clone());
+                }
             }
         }
     }
 
     fn add_accessor_keys(&self, keys: &mut Vec<String>) {
         for key in self.getters.keys() {
-            if !keys.contains(key) {
+            if !keys.contains(key) && self.is_enumerable(key) {
                 keys.push(key.clone());
             }
         }
         for key in self.setters.keys() {
-            if !keys.contains(key) && !self.getters.contains_key(key) {
+            if !keys.contains(key) && !self.getters.contains_key(key) && self.is_enumerable(key) {
                 keys.push(key.clone());
             }
         }
@@ -262,7 +342,11 @@ impl Object {
         if self.properties.contains_key(key) {
             return true;
         }
-        if key.parse::<usize>().map(|i| i < self.elements.len()).unwrap_or(false) {
+        if key
+            .parse::<usize>()
+            .map(|i| i < self.elements.len())
+            .unwrap_or(false)
+        {
             return true;
         }
         if let Some(ref proto) = self.prototype {
@@ -272,15 +356,34 @@ impl Object {
     }
 
     /// Delete own property. For numeric keys on arrays, removes from elements.
+    /// Respects configurable flag from property descriptor.
     pub fn delete(&mut self, key: &str) -> bool {
+        // Check if property is non-configurable
+        if let Some(flags) = self.descriptors.get(key) {
+            if !flags.configurable {
+                return false; // Cannot delete non-configurable property
+            }
+        }
+
         if let Ok(idx) = key.parse::<usize>() {
             if idx < self.elements.len() {
                 self.elements[idx] = Value::Undefined;
-                // Update length
-                self.properties.insert("length".to_string(), Value::Number(self.elements.len() as f64));
+                self.properties.insert(
+                    "length".to_string(),
+                    Value::Number(self.elements.len() as f64),
+                );
                 return true;
             }
         }
+        self.descriptors.shift_remove(key);
         self.properties.shift_remove(key).is_some()
+    }
+
+    /// Check if a property is enumerable
+    pub fn is_enumerable(&self, key: &str) -> bool {
+        self.descriptors
+            .get(key)
+            .map(|f| f.enumerable)
+            .unwrap_or(true)
     }
 }
