@@ -239,10 +239,54 @@ fn eval_unary_expr(machine: &mut Machine, op: UnaryOp, argument: &Box<Expression
             }
         }
     }
+    // Handle delete specially - needs object reference and property name
+    if op == UnaryOp::Delete {
+        return eval_delete_expr(machine, argument);
+    }
     let frame = machine.current_frame();
     frame.work.push(Work::ApplyUnary(op));
     frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
     Ok(())
+}
+
+/// Evaluate a delete expression in the stack machine.
+fn eval_delete_expr(machine: &mut Machine, argument: &Box<Expression>) -> Result<(), JsError> {
+    match argument.as_ref() {
+        Expression::Member { object, property, computed } => {
+            let frame = machine.current_frame();
+            frame.work.push(Work::ApplyDeleteMember {
+                property: property.clone(),
+                computed: *computed,
+            });
+            // For computed property, we need to evaluate it and push the result
+            // For non-computed, we just use the static property name
+            if *computed {
+                match property {
+                    PropertyKey::Computed(expr) => {
+                        frame.work.push(Work::EvalExpr(Rc::new((**expr).clone())));
+                    }
+                    _ => { /* should not happen */ }
+                }
+            }
+            // Evaluate object expression
+            frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
+            Ok(())
+        }
+        Expression::Identifier(name) => {
+            // In JavaScript, delete on unqualified identifiers only works for var declarations
+            // For simplicity, we just return true without actually removing
+            if machine.current_frame().env.borrow().has(name) {
+                // In a real implementation, we'd need to handle this properly
+                // For now, just acknowledge the variable exists
+            }
+            machine.current_frame().values.push(Value::Boolean(true));
+            Ok(())
+        }
+        _ => {
+            machine.current_frame().values.push(Value::Boolean(false));
+            Ok(())
+        }
+    }
 }
 
 /// Evaluate a compound assignment expression (e.g., +=, -=).

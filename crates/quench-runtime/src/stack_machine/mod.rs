@@ -162,6 +162,7 @@ impl Machine {
             Work::ApplyForOf { variable, body, items, index } => apply_for_of(self, variable, body, items, index)?,
             Work::ApplyForIn { variable, body, keys, index } => apply_for_in(self, variable, body, keys, index)?,
             Work::ApplyObjectProperty { key, kind, obj } => apply_object_property(self, key, kind, obj)?,
+            Work::ApplyDeleteMember { property, computed } => apply_delete_member(self, property, computed)?,
             Work::Discard => { self.pop_value(); }
             Work::VarDecl { kind, name } => var_decl(self, kind, name)?,
             Work::ForInitVar { kind, name } => for_init_var(self, kind, name)?,

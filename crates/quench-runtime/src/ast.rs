@@ -283,7 +283,7 @@ impl BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp { Not, Neg, Plus, BitNot, Typeof, Void }
+pub enum UnaryOp { Not, Neg, Plus, BitNot, Typeof, Void, Delete }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompoundOp {

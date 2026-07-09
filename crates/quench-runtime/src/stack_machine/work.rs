@@ -19,6 +19,8 @@ pub enum Work {
     ApplyBinary(crate::ast::BinaryOp),
     /// Pop one value, apply a unary operator, push the result.
     ApplyUnary(crate::ast::UnaryOp),
+    /// Delete a member property: pop object, then delete property.
+    ApplyDeleteMember { property: crate::ast::PropertyKey, computed: bool },
     /// Pop a value and assign it to an identifier or member.
     ApplyAssign { target: super::AssignmentTarget },
     /// Pop value, object, and key; assign to member property.

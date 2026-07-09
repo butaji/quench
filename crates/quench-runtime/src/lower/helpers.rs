@@ -74,7 +74,7 @@ pub fn lower_unary_op(op: &swc::UnaryOp) -> Result<UnaryOp, LowerError> {
         swc::UnaryOp::Bang => Ok(UnaryOp::Not),
         swc::UnaryOp::TypeOf => Ok(UnaryOp::Typeof),
         swc::UnaryOp::Void => Ok(UnaryOp::Void),
-        swc::UnaryOp::Delete => Err(LowerError::new("Delete not supported")),
+        swc::UnaryOp::Delete => Ok(UnaryOp::Delete),
     }
 }
 
