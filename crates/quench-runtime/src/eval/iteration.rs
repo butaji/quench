@@ -1,9 +1,16 @@
 //! Iteration support for for-of/for-in loops
 
-use crate::value::{JsError, Object, ObjectKind, Value};
-use crate::eval::function::call_value;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use crate::ast::{Expression, Statement};
+use crate::env::Environment;
+use crate::eval::expression::eval_expression;
+use crate::eval::function::call_value;
+use crate::eval::object::assign_to;
+use crate::eval::statement::eval_statement;
+use crate::interpreter::{take_control_flow, ControlFlow};
+use crate::value::{JsError, Object, ObjectKind, Value};
 
 /// Get an iterator for for-of/for-in loops
 pub fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
@@ -73,4 +80,48 @@ fn get_object_keys(o: &Rc<RefCell<Object>>) -> Result<Vec<String>, JsError> {
         }
     }
     Ok(keys)
+}
+
+/// Evaluate a for-of loop
+pub fn eval_for_of(
+    variable: &Expression,
+    iterable: &Expression,
+    body: &Statement,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let iter_value = eval_expression(iterable, env)?;
+    let items = get_iterator(&iter_value)?;
+    let mut last = Value::Undefined;
+    for item in items {
+        assign_to(variable, &item, env)?;
+        last = eval_statement(body, env, false)?;
+        match take_control_flow() {
+            Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Continue) => {}
+            None => {}
+        }
+    }
+    Ok(last)
+}
+
+/// Evaluate a for-in loop
+pub fn eval_for_in(
+    variable: &Expression,
+    object: &Expression,
+    body: &Statement,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let obj_value = eval_expression(object, env)?;
+    let keys = get_enumerable_keys(&obj_value)?;
+    let mut last = Value::Undefined;
+    for key in keys {
+        assign_to(variable, &Value::String(key), env)?;
+        last = eval_statement(body, env, false)?;
+        match take_control_flow() {
+            Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Continue) => {}
+            None => {}
+        }
+    }
+    Ok(last)
 }

@@ -10,7 +10,7 @@ use crate::eval::class::{
     eval_class_expr, get_constructor_prototype, instantiate_class_from_ast_with_env,
 };
 use crate::eval::function::call_value_with_this;
-use crate::eval::iteration::{get_enumerable_keys, get_iterator};
+use crate::eval::iteration::{eval_for_in, eval_for_of, get_enumerable_keys, get_iterator};
 use crate::eval::jsx::{eval_jsx_element, eval_jsx_fragment};
 use crate::eval::member::eval_member_access;
 use crate::eval::object::{assign_to, eval_callee_with_this};
@@ -472,48 +472,6 @@ fn eval_block_expr(stmts: &[Statement], env: &Rc<RefCell<Environment>>) -> Resul
     let mut last = Value::Undefined;
     for stmt in stmts {
         last = eval_statement(stmt, env, false)?;
-    }
-    Ok(last)
-}
-
-fn eval_for_of(
-    variable: &Expression,
-    iterable: &Expression,
-    body: &Statement,
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    let iter_value = eval_expression(iterable, env)?;
-    let items = get_iterator(&iter_value)?;
-    let mut last = Value::Undefined;
-    for item in items {
-        assign_to(variable, &item, env)?;
-        last = eval_statement(body, env, false)?;
-        match take_control_flow() {
-            Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Continue) => {}
-            None => {}
-        }
-    }
-    Ok(last)
-}
-
-fn eval_for_in(
-    variable: &Expression,
-    object: &Expression,
-    body: &Statement,
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    let obj_value = eval_expression(object, env)?;
-    let keys = get_enumerable_keys(&obj_value)?;
-    let mut last = Value::Undefined;
-    for key in keys {
-        assign_to(variable, &Value::String(key), env)?;
-        last = eval_statement(body, env, false)?;
-        match take_control_flow() {
-            Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Continue) => {}
-            None => {}
-        }
     }
     Ok(last)
 }
