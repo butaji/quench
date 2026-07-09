@@ -296,7 +296,7 @@ fn stmt_to_js(stmt: &quench_runtime::ast::Statement) -> String {
             }
         }
         Statement::FunctionDeclaration { name, params, body } => {
-            let params_str = params.join(", ");
+            let params_str = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
             let body_str = body.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n");
             format!("function {}({}) {{\n{}}}", name, params_str, body_str)
         }
@@ -372,6 +372,7 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         Expression::Null => "null".to_string(),
         Expression::Undefined => "undefined".to_string(),
         Expression::Identifier(name) => name.clone(),
+        Expression::RegExp { pattern, flags } => format!("/{}/{}", pattern, flags),
         Expression::Array(elems) => {
             let inner = elems.iter().map(|e| {
                 match e {
@@ -503,12 +504,12 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         }
         Expression::FunctionExpression { name, params, body } => {
             let name_str = name.as_ref().map(|n| format!(" {} ", n)).unwrap_or_default();
-            let params_str = params.join(", ");
+            let params_str = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
             let body_str = body.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n");
             format!("function{}({}) {{ {} }}", name_str, params_str, body_str)
         }
         Expression::ArrowFunction { params, body } => {
-            let params_str = params.join(", ");
+            let params_str = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
             match &**body {
                 ArrowBody::Expression(e) => {
                     let expr_js = expr_to_js(e);
