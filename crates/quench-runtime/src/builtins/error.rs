@@ -3,8 +3,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
+use crate::value::convert::to_js_string;
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
+use crate::interpreter::get_native_this;
 
 pub fn register_error(ctx: &mut Context) {
     let error_proto = create_error_proto("Error");
@@ -23,11 +25,35 @@ pub fn register_error(ctx: &mut Context) {
 
 fn create_error_proto(name: &str) -> Object {
     let mut proto = Object::new(ObjectKind::Ordinary);
-    let name_string = name.to_string();
+    let default_name = name.to_string();
     proto.set(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
-            Ok(Value::String(name_string.clone()))
+            let this = get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(obj_rc) = &this else {
+                return Err(JsError::from(
+                    "Error.prototype.toString called on non-object",
+                ));
+            };
+            let name_val = obj_rc.borrow().get("name").unwrap_or(Value::Undefined);
+            let name_str = to_js_string(&name_val);
+            let final_name = if name_str == "undefined" {
+                &default_name
+            } else {
+                &name_str
+            };
+            let msg_val = obj_rc.borrow().get("message").unwrap_or(Value::Undefined);
+            let msg_str = match &msg_val {
+                Value::Undefined => String::new(),
+                _ => to_js_string(&msg_val),
+            };
+            if final_name.is_empty() {
+                return Ok(Value::String(msg_str));
+            }
+            if msg_str.is_empty() {
+                return Ok(Value::String(final_name.clone()));
+            }
+            Ok(Value::String(format!("{}: {}", final_name, msg_str)))
         }))),
     );
     proto
