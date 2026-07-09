@@ -130,7 +130,7 @@ fn call_native_constructor(nc: Rc<NativeConstructor>, args: Vec<Value>) -> Resul
 fn call_object_as_constructor(
     o: Rc<RefCell<Object>>,
     args: Vec<Value>,
-    _this_val: Value,
+    this_val: Value,
 ) -> Result<Value, JsError> {
     let constructor_opt = {
         let obj = o.borrow();
@@ -148,6 +148,13 @@ fn call_object_as_constructor(
         }
     };
     if let Some(constructor) = constructor_opt {
+        // If this_val is undefined, this is a direct function call, not 'new'
+        // For built-in constructors like Number, call with undefined 'this'
+        if matches!(this_val, Value::Undefined) {
+            return call_value_with_this(constructor, args, Value::Undefined);
+        }
+        
+        // Otherwise, this is a 'new' expression - create a new object
         let new_obj = Object::new(ObjectKind::Ordinary);
         let new_obj_rc = Rc::new(RefCell::new(new_obj));
         {
@@ -158,7 +165,13 @@ fn call_object_as_constructor(
                     .set("constructor", Value::Object(Rc::clone(&o)));
             }
         }
-        call_value_with_this(constructor, args, Value::Object(Rc::clone(&new_obj_rc)))
+        let result = call_value_with_this(constructor, args, Value::Object(Rc::clone(&new_obj_rc)))?;
+        // If the constructor returns an object, use it; otherwise use new_obj
+        if matches!(result, Value::Object(_)) {
+            Ok(result)
+        } else {
+            Ok(Value::Object(new_obj_rc))
+        }
     } else {
         Err(JsError("Object is not a constructor".to_string()))
     }

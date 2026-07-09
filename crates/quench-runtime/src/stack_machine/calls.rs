@@ -234,6 +234,7 @@ pub fn apply_new(machine: &mut Machine, argc: usize) -> Result<(), JsError> {
 
     let use_constructor_result = match &constructor_val {
         Value::NativeConstructor(_) => true,
+        Value::NativeFunction(_) => true,  // Native functions can also be constructors
         Value::Function(f) => f.body.iter().any(Statement::has_explicit_return),
         _ => false,
     };

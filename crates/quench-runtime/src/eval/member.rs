@@ -285,13 +285,47 @@ pub fn eval_native_function_member(nf: &Rc<NativeFunction>, prop_name: &str) -> 
     match prop_name {
         "name" => Ok(Value::String("anonymous".to_string())),
         "prototype" => {
-            let mut proto = Object::new(ObjectKind::Ordinary);
-            proto.set("constructor", Value::NativeFunction(Rc::clone(nf)));
-            Ok(Value::Object(Rc::new(RefCell::new(proto))))
+            // If NativeFunction has a prototype, use it; otherwise create a new one
+            if let Some(ref proto) = nf.prototype {
+                Ok(Value::Object(Rc::clone(proto)))
+            } else {
+                let mut proto = Object::new(ObjectKind::Ordinary);
+                proto.set("constructor", Value::NativeFunction(Rc::clone(nf)));
+                Ok(Value::Object(Rc::new(RefCell::new(proto))))
+            }
         }
         "length" => Ok(Value::Number(0.0)),
-        "call" => Ok(Value::NativeFunction(Rc::clone(nf))),
-        "apply" => Ok(Value::NativeFunction(Rc::clone(nf))),
+        "call" => {
+            // Create a wrapper that sets 'this' to the first argument
+            let nf_clone = nf.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+                    let remaining_args: Vec<Value> = args.into_iter().skip(1).collect();
+                    crate::interpreter::set_native_this(this_val);
+                    nf_clone.call(remaining_args)
+                },
+            ))))
+        }
+        "apply" => {
+            // Create a wrapper that handles apply semantics
+            let nf_clone = nf.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+                    let spread_args = if let Some(Value::Object(o)) = args.get(1) {
+                        let o = o.borrow();
+                        (0..o.elements.len())
+                            .filter_map(|i| o.elements.get(i).cloned())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    crate::interpreter::set_native_this(this_val);
+                    nf_clone.call(spread_args)
+                },
+            ))))
+        }
         _ => Ok(Value::Undefined),
     }
 }
@@ -315,10 +349,21 @@ fn eval_number_member(
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
-        let num_obj = num_obj.borrow();
-        if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
-            let proto_obj = proto.borrow();
+    // Try looking up Number.prototype for both Object and NativeFunction
+    if let Some(num_val) = env.borrow().get("Number") {
+        let proto = match &num_val {
+            Value::Object(num_obj) => {
+                let num_obj = num_obj.borrow();
+                num_obj.get("prototype")
+            }
+            Value::NativeFunction(nf) => {
+                // For NativeFunction with prototype, return it
+                nf.prototype.as_ref().map(|p| Value::Object(Rc::clone(p)))
+            }
+            _ => None,
+        };
+        if let Some(Value::Object(proto_obj)) = proto {
+            let proto_obj = proto_obj.borrow();
             if let Some(val) = proto_obj.get(prop_name) {
                 return Ok(val);
             }

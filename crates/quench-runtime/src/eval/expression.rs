@@ -361,13 +361,15 @@ fn eval_new(
     let new_obj_rc = Rc::new(RefCell::new(new_obj));
 
     let result = call_value_with_this(
-        actual_constructor,
+        actual_constructor.clone(),
         args,
         Value::Object(Rc::clone(&new_obj_rc)),
     )?;
 
-    let use_constructor_result = match &constructor_val {
+    // Check actual_constructor for whether to use the constructor result
+    let use_constructor_result = match &actual_constructor {
         Value::NativeConstructor(_) => true,
+        Value::NativeFunction(_) => true,  // Native functions can also be constructors
         Value::Function(f) => f.body.iter().any(Statement::has_explicit_return),
         _ => false,
     };
