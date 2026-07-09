@@ -98,25 +98,58 @@ fn is_skipped_dir(path: &Path, root: &Path) -> bool {
     if path != root && path.join(".git").exists() {
         return true;
     }
-    // Skip directories that are out of scope per execution contract
-    // Do not touch: src/bridge/, src/ink/, src/render/, examples/, tests/test262/, tests/typescript/
-    // Note: tests/ is the root tests directory; crates/quench-runtime/tests/ is in scope
+    is_out_of_scope(path)
+}
+
+fn is_out_of_scope(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
-    if path_str.contains("/src/bridge/") || path_str.contains("/src/ink/") || path_str.contains("/src/render/") {
+    
+    // Check if this path is under src/ (but not crates/quench-runtime/src/)
+    if is_under_src(&path_str) {
         return true;
     }
-    // Skip root-level src/, examples/, tests/, xtask/ directories
-    // But allow crates/quench-runtime/src/
-    if path_str.starts_with("src/") && !path_str.contains("crates/quench-runtime") {
+    // Skip examples/, xtask/, and tests/
+    if is_under_examples(&path_str) || is_under_xtask(&path_str) || is_under_tests(&path_str) {
         return true;
     }
-    if path_str.starts_with("examples/") || path_str.starts_with("xtask/") {
-        return true;
-    }
+    // Standard skips
     path.components().any(|c| {
         let name = c.as_os_str().as_encoded_bytes();
         matches!(name, b".git" | b"target" | b"node_modules" | b"dist")
     })
+}
+
+fn is_under_src(path_str: &str) -> bool {
+    (path_str.contains("/src/") || path_str.ends_with("/src"))
+        && !path_str.contains("crates/quench-runtime/src/")
+}
+
+fn is_under_examples(path_str: &str) -> bool {
+    path_str.contains("/examples/") || path_str.ends_with("/examples")
+}
+
+fn is_under_xtask(path_str: &str) -> bool {
+    path_str.contains("/xtask/") || path_str.ends_with("/xtask")
+}
+
+fn is_under_tests(path_str: &str) -> bool {
+    // Skip any path that is a tests directory
+    // This includes tests_runner, tests/test262, tests/typescript
+    // Also skip crates/quench-runtime/tests/ (per execution contract)
+    if path_str.contains("/tests_runner") || path_str.ends_with("/tests_runner") {
+        return true;
+    }
+    if path_str.contains("/tests/test262") || path_str.contains("/tests/typescript") {
+        return true;
+    }
+    // Skip crates/quench-runtime/tests/ and root tests/ directories
+    if path_str.contains("crates/quench-runtime/tests") {
+        return true;
+    }
+    if path_str.starts_with("./tests/") || path_str.starts_with("tests/") {
+        return true;
+    }
+    false
 }
 
 fn collect_all_rs_files_rec(dir: &Path, root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
