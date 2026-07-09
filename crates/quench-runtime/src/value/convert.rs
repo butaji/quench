@@ -110,6 +110,51 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// SameValue comparison (ES2015+)
+///
+/// Implements ECMAScript SameValue algorithm:
+/// - Same as === except NaN equals NaN and +0 != -0
+pub fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Undefined, Value::Undefined) => true,
+        (Value::Null, Value::Null) => true,
+        (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
+        (Value::Number(ai), Value::Number(bi)) => {
+            // Handle NaN: NaN != NaN in regular comparison, but SameValue says NaN equals NaN
+            if ai.is_nan() && bi.is_nan() {
+                return true;
+            }
+            // If both are equal in regular comparison
+            if ai == bi {
+                // Handle +0 vs -0: they're equal in === but NOT in SameValue
+                if *ai == 0.0 {
+                    // Check sign: 1/+0 = +Infinity, 1/-0 = -Infinity
+                    let a_sign = (1.0f64 / ai).is_sign_positive();
+                    let b_sign = (1.0f64 / bi).is_sign_positive();
+                    return a_sign == b_sign;
+                }
+                // For non-zero numbers, regular equality works
+                return true;
+            }
+            // Numbers are different (not equal)
+            false
+        }
+        (Value::String(ai), Value::String(bi)) => ai == bi,
+        (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::ObjectId(ai), Value::ObjectId(bi)) => ai == bi,
+        (Value::Function(ai), Value::Function(bi)) => Rc::ptr_eq(&ai.closure, &bi.closure),
+        (Value::NativeFunction(ai), Value::NativeFunction(bi)) => {
+            Rc::ptr_eq(&ai.func, &bi.func)
+        }
+        (Value::NativeConstructor(ai), Value::NativeConstructor(bi)) => {
+            Rc::ptr_eq(ai.func_rc(), bi.func_rc())
+        }
+        (Value::Symbol(ai), Value::Symbol(bi)) => ai == bi,
+        (Value::Class(_), Value::Class(_)) => false,
+        _ => false,
+    }
+}
+
 /// Loose equality comparison (==)
 ///
 /// Implements the ECMAScript Abstract Equality Comparison algorithm.
