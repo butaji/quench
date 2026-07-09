@@ -9,6 +9,7 @@ use crate::env::Environment;
 
 use crate::eval::operators::eval_binary_op;
 use super::{Machine, AssignmentTarget, ObjectPropertyKind};
+use super::string_methods::read_string_property;
 
 /// Get a static property key as a string slice.
 pub fn property_key_static(key: &crate::ast::PropertyKey) -> Result<&str, crate::JsError> {
@@ -139,91 +140,6 @@ fn read_number_property(prop_name: &str, env: &Rc<RefCell<Environment>>) -> Resu
         }
     }
     Ok(Value::Undefined)
-}
-
-/// Read a property from a string value.
-pub fn read_string_property(s: &str, prop_name: &str) -> Result<Value, JsError> {
-    use crate::value::{NativeFunction, to_js_string};
-
-    match prop_name {
-        "length" => Ok(Value::Number(s.len() as f64)),
-        "charAt" | "charCodeAt" | "indexOf" | "substring" | "slice"
-        | "toUpperCase" | "toLowerCase" | "trim" | "split"
-        | "includes" | "startsWith" | "endsWith" | "replace" | "match"
-        | "search" | "concat" => {
-            let s_clone = s.to_string();
-            let prop_name_clone = prop_name.to_string();
-            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-                let s = s_clone.clone();
-                match prop_name_clone.as_str() {
-                    "length" => Ok(Value::Number(s.len() as f64)),
-                    "charAt" => {
-                        let idx = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
-                        Ok(Value::String(s.chars().nth(idx).map(|c| c.to_string()).unwrap_or_default()))
-                    }
-                    "indexOf" => {
-                        let needle = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)))
-                    }
-                    "toUpperCase" => Ok(Value::String(s.to_uppercase())),
-                    "toLowerCase" => Ok(Value::String(s.to_lowercase())),
-                    "trim" => Ok(Value::String(s.trim().to_string())),
-                    "includes" => {
-                        let needle = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Boolean(s.contains(&needle)))
-                    }
-                    "startsWith" => {
-                        let needle = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Boolean(s.starts_with(&needle)))
-                    }
-                    "endsWith" => {
-                        let needle = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Boolean(s.ends_with(&needle)))
-                    }
-                    "concat" => {
-                        let sep = args.iter().map(to_js_string).collect::<Vec<_>>().join("");
-                        Ok(Value::String(format!("{}{}", s, sep)))
-                    }
-                    "split" => {
-                        let sep = args.first().map(to_js_string).unwrap_or_default();
-                        let parts: Vec<Value> = if sep.is_empty() {
-                            s.chars().map(|c| Value::String(c.to_string())).collect()
-                        } else {
-                            s.split(&sep).map(|p| Value::String(p.to_string())).collect()
-                        };
-                        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(parts.len())))))
-                    }
-                    "substring" => {
-                        let start = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
-                        let end = args.get(1).map(|v| to_number(v) as usize).unwrap_or(s.len());
-                        let start = start.min(s.len());
-                        let end = end.min(s.len());
-                        let start = start.min(end);
-                        Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
-                    }
-                    "slice" => {
-                        let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0) as isize;
-                        let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(s.len() as i64) as isize;
-                        let len = s.len() as isize;
-                        let start = if start < 0 { (len + start).max(0) as usize } else { start as usize }.min(len as usize);
-                        let end = if end < 0 { (len + end).max(0) as usize } else { end as usize }.min(len as usize);
-                        let end = end.max(start);
-                        Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
-                    }
-                    "match" => {
-                        let pattern = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Boolean(s.contains(&pattern)))
-                    }
-                    "search" => {
-                        let pattern = args.first().map(to_js_string).unwrap_or_default();
-                        Ok(Value::Number(s.find(&pattern).map(|i| i as f64).unwrap_or(-1.0)))
-                    }
-                    _ => Ok(Value::Undefined),
-                }
-            }))))
-        }
-        _ => Ok(Value::Undefined),
-    }
 }
 
 /// Call a getter on an object.
