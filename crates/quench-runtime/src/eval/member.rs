@@ -243,6 +243,14 @@ pub fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) ->
     }
     match prop_name {
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
+        "length" => {
+            // function.length returns the number of formal parameters,
+            // excluding parameters with default values and rest parameters
+            let length = f.params.iter()
+                .filter(|p| p.default.is_none())
+                .count() as f64;
+            Ok(Value::Number(length))
+        }
         "prototype" => {
             let proto = f.get_prototype();
             Ok(Value::Object(proto))

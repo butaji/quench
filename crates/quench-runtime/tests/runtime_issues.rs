@@ -1282,3 +1282,49 @@ fn test_function_default_params_arrow() {
     let result = ctx.eval("const f = (x = 5) => x; f(2)").unwrap();
     assert_eq!(result, Value::Number(2.0), "Arrow function should use argument when provided");
 }
+
+#[test]
+fn test_function_name_property() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Named function expression
+    let result = ctx.eval("(function foo() {}).name").unwrap();
+    assert_eq!(result.to_string(), "foo", "Named function expression should have name 'foo'");
+    
+    // Anonymous function expression
+    let result = ctx.eval("(function() {}).name").unwrap();
+    assert_eq!(result.to_string(), "", "Anonymous function expression should have empty name");
+    
+    // Named function declaration
+    let result = ctx.eval("function bar() {}; bar.name").unwrap();
+    assert_eq!(result.to_string(), "bar", "Named function declaration should have name 'bar'");
+}
+
+#[test]
+fn test_function_length_property() {
+    let mut ctx = Context::new().unwrap();
+    
+    // (function(a, b, c) {}).length should be 3
+    let result = ctx.eval("(function(a, b, c) {}).length").unwrap();
+    assert_eq!(result, Value::Number(3.0), "Function with 3 params should have length 3");
+    
+    // (function() {}).length should be 0
+    let result = ctx.eval("(function() {}).length").unwrap();
+    assert_eq!(result, Value::Number(0.0), "Function with no params should have length 0");
+    
+    // (function(a) {}).length should be 1
+    let result = ctx.eval("(function(a) {}).length").unwrap();
+    assert_eq!(result, Value::Number(1.0), "Function with 1 param should have length 1");
+    
+    // Function declaration
+    let result = ctx.eval("function f(a, b) {}; f.length").unwrap();
+    assert_eq!(result, Value::Number(2.0), "Function declaration with 2 params should have length 2");
+    
+    // Arrow function
+    let result = ctx.eval("(a => a).length").unwrap();
+    assert_eq!(result, Value::Number(1.0), "Arrow function with 1 param should have length 1");
+    
+    // Function with defaults - should NOT count params with defaults
+    let result = ctx.eval("(function(a, b = 1) {}).length").unwrap();
+    assert_eq!(result, Value::Number(1.0), "Function with default param should have length 1");
+}
