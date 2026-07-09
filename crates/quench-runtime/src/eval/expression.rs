@@ -141,6 +141,23 @@ fn eval_identifier(name: &str, env: &Rc<RefCell<Environment>>) -> Result<Value, 
         .ok_or_else(|| JsError(format!("ReferenceError: {} is not defined", name)))
 }
 
+/// Get the super class value from the environment chain
+fn get_super_from_env(env: &Rc<RefCell<Environment>>) -> Option<Value> {
+    let mut current = Some(env.clone());
+    while let Some(e) = current {
+        if let Some(super_class) = e.borrow().get_super_class() {
+            return Some(super_class);
+        }
+        current = e.borrow().get_parent();
+    }
+    None
+}
+
+fn eval_super(env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    get_super_from_env(env)
+        .ok_or_else(|| JsError("ReferenceError: super is only valid in class methods".to_string()))
+}
+
 fn eval_object_literal(
     props: &[(PropertyKey, PropertyValue)],
     env: &Rc<RefCell<Environment>>,
@@ -225,9 +242,57 @@ fn eval_call(
     arguments: &[Expression],
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    // Handle super() calls specially
+    if let Expression::Identifier(name) = callee {
+        if name == "super" {
+            return eval_super_call(arguments, env);
+        }
+    }
     let (func, this_val) = eval_callee_with_this(callee, env)?;
     let args: Result<Vec<Value>, _> = arguments.iter().map(|a| eval_expression(a, env)).collect();
     call_value_with_this(func, args?, this_val)
+}
+
+/// Evaluate a super() call - invokes the parent constructor with the given arguments
+fn eval_super_call(
+    arguments: &[Expression],
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let super_val = get_super_from_env(env)
+        .ok_or_else(|| JsError("ReferenceError: super is only valid in class methods".to_string()))?;
+    
+    let args: Vec<Value> = arguments.iter().map(|a| eval_expression(a, env)).collect::<Result<_, _>>()?;
+    let this_val = get_this_binding(env);
+    
+    // Call the super constructor with the current 'this' binding
+    match super_val {
+        Value::Class(super_class) => {
+            // For AST-based classes, we need to call the constructor
+            // but ensure 'this' is bound correctly
+            crate::eval::class::call_super_constructor(super_class, args, this_val, env)
+        }
+        Value::Object(o) => {
+            if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
+                crate::eval::function::call_value_with_this(
+                    Value::Function(constructor.clone()),
+                    args,
+                    this_val,
+                )
+            } else {
+                Ok(Value::Undefined)
+            }
+        }
+        Value::NativeConstructor(nc) => {
+            // For native constructors, we need special handling
+            // Call with 'new' semantics but with provided 'this'
+            crate::eval::function::call_value_with_this(
+                Value::NativeConstructor(nc.clone()),
+                args,
+                this_val,
+            )
+        }
+        _ => Err(JsError("TypeError: super is not a constructor".to_string())),
+    }
 }
 
 fn eval_member(
@@ -370,8 +435,4 @@ fn eval_for_in(
         }
     }
     Ok(last)
-}
-
-fn eval_super(_env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    Err(JsError("ReferenceError: super is only valid in class methods".to_string()))
 }

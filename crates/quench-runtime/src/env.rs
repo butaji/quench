@@ -158,6 +158,8 @@ pub struct Environment {
     pub scopes: Vec<Scope>,
     /// Parent environment (for closures)
     parent: Option<Rc<RefCell<Environment>>>,
+    /// Super class reference for class methods/constructors
+    super_class: Option<Value>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -176,6 +178,7 @@ impl Environment {
         Environment {
             scopes: vec![Scope::new()],
             parent: None,
+            super_class: None,
         }
     }
 
@@ -184,7 +187,23 @@ impl Environment {
         Environment {
             scopes: vec![Scope::new()],
             parent: Some(parent),
+            super_class: None,
         }
+    }
+
+    /// Set the super class reference for class methods/constructors
+    pub fn set_super_class(&mut self, super_class: Value) {
+        self.super_class = Some(super_class);
+    }
+
+    /// Get the super class reference
+    pub fn get_super_class(&self) -> Option<Value> {
+        self.super_class.clone()
+    }
+
+    /// Get the parent environment
+    pub fn get_parent(&self) -> Option<Rc<RefCell<Environment>>> {
+        self.parent.clone()
     }
 
     /// Get a variable by name (lexical lookup)
@@ -368,6 +387,7 @@ impl Clone for Environment {
         Environment {
             scopes: self.scopes.clone(),
             parent: None,
+            super_class: None,
         }
     }
 }
