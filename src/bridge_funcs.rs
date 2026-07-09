@@ -15,7 +15,7 @@ fn to_js_string(v: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
-        Value::Object(_) => "[object Object]".to_string(),
+        Value::Object(_) | Value::ObjectId(_) => "[object Object]".to_string(),
         Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
             "[Function]".to_string()
         }

@@ -1,5 +1,5 @@
 // linter-skip
-#![allow(clippy::too_many_lines, clippy::function_body_length)]
+#![allow(clippy::too_many_lines)]
 //! Error built-ins
 
 use std::cell::RefCell;

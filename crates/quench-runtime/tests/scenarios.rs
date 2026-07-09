@@ -313,5 +313,22 @@ mod tests {
         let result = ctx.eval("Symbol('a') !== Symbol('a')").unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
+
+    // =========================================================================
+    // Global scenarios
+    // =========================================================================
+
+    #[test]
+    fn scenario_global_read_write() {
+        let mut ctx = Context::new().unwrap();
+        ctx.set_global("myGlobal".to_string(), Value::Number(42.0));
+        assert_eq!(ctx.get_global("myGlobal"), Some(Value::Number(42.0)));
+
+        let result = ctx.eval("myGlobal").unwrap();
+        assert_eq!(result, Value::Number(42.0));
+
+        ctx.eval("myGlobal = 99").unwrap();
+        assert_eq!(ctx.get_global("myGlobal"), Some(Value::Number(99.0)));
+    }
 }
 

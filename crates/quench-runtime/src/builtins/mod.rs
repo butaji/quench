@@ -63,6 +63,7 @@ impl serde::Serialize for JsValueProxy<'_> {
                 }
             }
             #[allow(unused_variables)] Value::Function(_) => serializer.serialize_str("[Function]"),
+            Value::ObjectId(_) => serializer.serialize_str("[object Object]"),
             Value::NativeFunction(_) => serializer.serialize_str("[Function]"),
             Value::NativeConstructor(_) => serializer.serialize_str("[Function]"),
             Value::Symbol(s) => serializer.serialize_str(&format!("Symbol({})", s)),
