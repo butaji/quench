@@ -299,7 +299,6 @@ fn test_class_this_in_arrow_in_constructor() {
 // =========================================================================
 
 #[test]
-#[ignore] // super() calls not yet working properly
 fn test_class_super_call_in_constructor() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -322,7 +321,6 @@ fn test_class_super_call_in_constructor() {
 }
 
 #[test]
-#[ignore] // super() calls not yet working properly
 fn test_class_super_call_no_args() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -352,7 +350,7 @@ fn test_class_super_call_no_args() {
 }
 
 #[test]
-#[ignore] // super() calls not yet working properly
+#[ignore] // requires iterative interpreter to avoid stack overflow
 fn test_class_chaining_constructors() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
