@@ -287,3 +287,47 @@ pub fn apply_compound_assign(machine: &mut Machine, op: BinaryOp, _target: Assig
     machine.current_frame().values.push(result);
     Ok(())
 }
+
+/// Apply a delete operation on a member property.
+pub fn apply_delete_member(
+    machine: &mut Machine,
+    property: crate::ast::PropertyKey,
+    computed: bool,
+) -> Result<(), JsError> {
+    let obj_val = machine.pop_value();
+    // Get property key - if computed, pop from stack; otherwise use property directly
+    let key = if computed {
+        let key_val = machine.pop_value();
+        crate::value::to_js_string(&key_val)
+    } else {
+        match property {
+            crate::ast::PropertyKey::Ident(s) => s,
+            crate::ast::PropertyKey::String(s) => s,
+            crate::ast::PropertyKey::Number(n) => n.to_string(),
+            crate::ast::PropertyKey::Computed(expr) => {
+                // Should not reach here - computed expressions handled above
+                return Err(JsError("Invalid delete target".to_string()));
+            }
+        }
+    };
+    match obj_val {
+        Value::Null | Value::Undefined => {
+            return Err(JsError(
+                "TypeError: Cannot delete property of null or undefined".to_string(),
+            ));
+        }
+        Value::Object(obj_rc) => {
+            let deleted = obj_rc.borrow_mut().delete(&key);
+            machine.current_frame().values.push(Value::Boolean(deleted));
+        }
+        Value::ObjectId(_id) => {
+            // Arena objects need to be handled differently
+            machine.current_frame().values.push(Value::Boolean(false));
+        }
+        _ => {
+            machine.current_frame().values.push(Value::Boolean(false));
+        }
+    }
+    Ok(())
+}
+

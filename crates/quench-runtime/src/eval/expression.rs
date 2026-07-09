@@ -233,8 +233,66 @@ fn eval_unary_expr(
             }
         }
     }
+    // Handle delete specially - needs the object reference, not just the value
+    if op == UnaryOp::Delete {
+        return eval_delete(argument, env);
+    }
     let val = eval_expression(argument, env)?;
     eval_unary_op(op, &val)
+}
+
+/// Evaluate a delete expression.
+fn eval_delete(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    match expr {
+        Expression::Member { object, property, computed } => {
+            let obj_val = eval_expression(object, env)?;
+            let prop_key = extract_property_name(property.clone(), *computed, env)?;
+            match obj_val {
+                Value::Null | Value::Undefined => Err(JsError(
+                    "TypeError: Cannot delete property of null or undefined".to_string(),
+                )),
+                Value::Object(obj_rc) => {
+                    let deleted = obj_rc.borrow_mut().delete(&prop_key);
+                    Ok(Value::Boolean(deleted))
+                }
+                Value::ObjectId(_id) => {
+                    // Arena objects - for now, return false
+                    Ok(Value::Boolean(false))
+                }
+                _ => Ok(Value::Boolean(false)),
+            }
+        }
+        Expression::Identifier(_name) => {
+            // In strict mode, delete of an unqualified identifier is a SyntaxError
+            // For simplicity, we return true without actually removing
+            Ok(Value::Boolean(true))
+        }
+        _ => Ok(Value::Boolean(false)),
+    }
+}
+
+/// Extract a property name from a PropertyKey, evaluating computed keys.
+fn extract_property_name(
+    key: PropertyKey,
+    computed: bool,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<String, JsError> {
+    match key {
+        PropertyKey::Ident(name) => {
+            if computed {
+                let val = eval_expression(&Expression::Identifier(name), env)?;
+                Ok(to_js_string(&val))
+            } else {
+                Ok(name)
+            }
+        }
+        PropertyKey::String(s) => Ok(s),
+        PropertyKey::Number(n) => Ok(n.to_string()),
+        PropertyKey::Computed(expr) => {
+            let val = eval_expression(&expr, env)?;
+            Ok(to_js_string(&val))
+        }
+    }
 }
 
 fn eval_call(

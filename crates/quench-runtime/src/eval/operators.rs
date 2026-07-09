@@ -151,6 +151,7 @@ where
 }
 
 /// Evaluate a unary operator
+/// Note: UnaryOp::Delete is handled specially in eval_unary_expr, not here.
 pub fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
     match op {
         UnaryOp::Not => Ok(Value::Boolean(!to_bool(val))),
@@ -159,6 +160,7 @@ pub fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
         UnaryOp::BitNot => Ok(Value::Number(!(to_number(val) as i64) as f64)),
         UnaryOp::Typeof => eval_typeof(val),
         UnaryOp::Void => Ok(Value::Undefined),
+        UnaryOp::Delete => Err(JsError("Delete should be handled specially".to_string())),
     }
 }
 
