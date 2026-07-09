@@ -6,7 +6,7 @@ use crate::ast::{
 };
 use super::expr::lower_expr;
 use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
-use super::pattern::expand_nested_pattern;
+use super::pattern::{expand_nested_pattern, expand_nested_array_pattern};
 
 /// Lower a swc Module to our runtime Program
 pub fn lower_module(module: &swc::Module) -> Result<crate::ast::Program, LowerError> {
@@ -408,15 +408,6 @@ fn handle_arr_nested(
         init: Some(member),
     });
     stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
-}
-
-fn expand_nested_array_pattern(
-    kind: VarKind,
-    arr: &swc::ArrayPat,
-    source_var: &str,
-) -> Vec<Statement> {
-    use super::pattern::expand_nested_array_pattern;
-    expand_nested_array_pattern(kind, arr, source_var)
 }
 
 fn wrap_decls(decls: Vec<Statement>) -> Option<Statement> {
