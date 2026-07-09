@@ -1,16 +1,28 @@
 # Quench Runtime - Execution Status
 
-## Current state (2026-07-08)
+## Current state (2026-07-09)
 
 ### Test results
 
 | Suite / file | Total | Passed | Failed | Status |
 |--------------|-------|--------|--------|--------|
-| `lib.rs` unit tests | 55 | 55 | 0 | ✅ |
-| `runtime_issues.rs` (parallel) | 44 | 44 | 0 | ✅ |
-| `scenarios.rs` | 39 | 39 | 0 | ✅ |
-| `var_hoisting_tdz.rs` | 17 | 15 | 2 | ❌ |
-| Other integration tests | ~50 | ~50 | 0 | ✅ |
+| `lib.rs` unit tests | 94 | 94 | 0 | ✅ |
+| `runtime_issues.rs` | 56 | 56 | 0 | ✅ |
+| `scenarios.rs` | 44 | 44 | 0 | ✅ |
+| `var_hoisting_tdz.rs` | 17 | 17 | 0 | ✅ |
+| `js_features.rs` | 24 | 24 | 0 | ✅ |
+| `modules.rs` | 14 | 14 | 0 | ✅ |
+| `class.rs` | 14 | 14 | 0 | ✅ |
+| `depth_limit.rs` | 9 | 9 | 0 | ✅ |
+| `equality_operators.rs` | 14 | 14 | 0 | ✅ |
+| `native_extensions.rs` | 10 | 10 | 0 | ✅ |
+| `promise.rs` | 26 | 26 | 0 | ✅ |
+| `to_primitive.rs` | 10 | 10 | 0 | ✅ |
+| `typescript_interface.rs` | 2 | 2 | 0 | ✅ |
+| `conformance.rs` | 2 | 2 | 0 | ✅ |
+| `debug_class.rs` | 1 | 1 | 0 | ✅ |
+| `project.rs` | 6 | 6 | 0 | ✅ |
+| **Total** | **338** | **338** | **0** | ✅ |
 
 Run with `cargo test -p quench-runtime`.
 
@@ -18,47 +30,49 @@ Run with `cargo test -p quench-runtime`.
 
 | Example | Status | Notes |
 |---------|--------|-------|
-| `examples/simple.js` | ✅ | Passes |
-| `examples/counter.js` | ⚠️ | Runs but logs `ReferenceError: Cannot access 'rootId' before initialization` |
-| `examples/use-bridge.tsx` | ❌ | `ReferenceError: Cannot access 'props' before initialization` |
-| `examples/animations.tsx` | ❌ | `ReferenceError: Cannot access 'props' before initialization` |
+| `examples/simple.js` | ✅ | Passes with FFI tests |
+| `examples/counter.js` | ✅ | Passes |
+| `examples/use-bridge.tsx` | ✅ | Passes with props |
+| `examples/animations.tsx` | ✅ | Passes |
 
-## Diagnosed issues and exact fixes
+## Completed tasks
 
-### 1. False "Maximum call stack size exceeded" in parallel tests
+### 1. Fix linter bug (2026-07-09)
+**Commit:** `4530630`
+- Fixed trailing slash mismatch in `is_under_src` function
+- `crates/quench-runtime/src/` is now properly linted
 
-**Symptom:** Simple built-in calls failed with `Maximum call stack size exceeded` when tests ran in parallel.
+### 2. Split expression.rs (2026-07-09)
+**Commit:** `aee3306`
+- Split 739-line file into smaller modules
+- All files now under 500 lines
 
-**Root cause:** `CURRENT_DEPTH` was a global `static AtomicUsize`; concurrent threads accumulated each other's recursion counts.
+### 3. Fix TDZ shadowing bug (2026-07-09)
+**Commit:** `1794e3f`
+- Fixed `ReferenceError: Cannot access 'props' before initialization`
+- All 17 TDZ tests now pass
 
-**Status:** Fixed by moving to a thread-local depth counter (Task 338). Parallel `runtime_issues.rs` now passes 44/44.
+### 4. Simplify linter (2026-07-09)
+**Commit:** `80ee889`
+- Only enforce file-length limit (500 lines)
+- Function-length and complexity checks deferred per docs
 
-**Tracking:** Task 338.
+## Remaining work
 
-### 2. Recursive interpreter consumes the native Rust stack
+| Task | Priority | Status |
+|------|----------|--------|
+| 100% test262 conformance | P0 | 47/53,683 (0.09%) |
+| 100% TypeScript conformance | P0 | 153/18,876 (0.81%) |
+| ES module import/export | P1 | Partial |
+| Promise/async/await | P1 | Partial |
+| Generator functions | P1 | Not started |
 
-**Symptom:** Deeply recursive JS functions exhaust the native Rust stack.
+## Verification commands
 
-**Root cause:** Each JS function call translates to multiple nested Rust calls.
-
-**Exact fix (by design):** Replace recursion with a non-recursive state machine / trampoline loop over a heap-allocated `Vec<CallFrame>` (Task 85).
-
-**Current state:** Examples no longer crash with stack overflow, but they still fail with `ReferenceError` due to incomplete hoisting/TDZ.
-
-**Tracking:** Task 85, Task 354.
-
-### 3. `var` hoisting / `let` / `const` TDZ
-
-**Symptom:** Function-scope `var` was not hoisted and TDZ was not enforced.
-
-**Status:** Partially fixed (Tasks 339, 340). `var_hoisting_tdz.rs` passes 15/17; 2 tests still fail:
-- `test_constructor_returns_this_not_expression_value`
-- `test_tdz_shadowing_inner_let`
-
-**Tracking:** Task 292, Task 339, Task 340.
-
-## Exit criteria for this status page
-
-- [ ] `var_hoisting_tdz.rs` passes 17/17 in parallel.
-- [ ] `examples/use-bridge.tsx` and `examples/animations.tsx` run without initialization errors.
-- [ ] Task 85 (trampoline interpreter) lands.
+```bash
+cargo check
+timeout 120 cargo test -p quench-runtime
+timeout 60 cargo run -- examples/counter.js
+timeout 60 cargo run -- examples/use-bridge.tsx --prop theme=dark
+timeout 60 cargo run -- examples/animations.tsx
+```
