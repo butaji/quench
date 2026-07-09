@@ -167,12 +167,7 @@ fn eval_while(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let mut last = Value::Undefined;
-    let mut iter_count = 0;
     while to_bool(&eval_expression(condition, env)?) {
-        iter_count += 1;
-        if iter_count > 10 {
-            return Err(JsError("while loop ran too many times".to_string()));
-        }
         let _ = take_control_flow();
         last = eval_statement(body, env, false)?;
         match take_control_flow() {

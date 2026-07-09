@@ -628,6 +628,37 @@ fn test_continue_in_while_loop() {
 }
 
 // ============================================================================
+// While loop iteration tests
+// ============================================================================
+
+#[test]
+fn test_while_loop_counter() {
+    let mut ctx = Context::new().unwrap();
+    // A while loop that needs more than 10 iterations should complete
+    let result = ctx.eval(r#"
+        var count = 0;
+        while (count < 20) {
+            count++;
+        }
+        count;
+    "#).unwrap();
+    assert_eq!(result, Value::Number(20.0));
+}
+
+#[test]
+fn test_while_loop_fifteen_iterations() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(r#"
+        var i = 0;
+        while (i < 15) {
+            i = i + 1;
+        }
+        i;
+    "#).unwrap();
+    assert_eq!(result, Value::Number(15.0));
+}
+
+// ============================================================================
 // Unary plus operator tests
 // ============================================================================
 
@@ -1096,4 +1127,40 @@ fn test_get_own_property_descriptor_undefined() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval("Object.getOwnPropertyDescriptor({ x: 1 }, 'y')").unwrap();
     assert_eq!(result, Value::Undefined, "non-existent property should return undefined");
+}
+
+// =============================================================================
+// Task 295: Use global object as environment record
+// =============================================================================
+
+#[test]
+fn test_var_creates_global() {
+    let mut ctx = Context::new().unwrap();
+    // var x = 1 should create globalThis.x
+    ctx.eval("var x = 1").unwrap();
+    let result = ctx.eval("globalThis.x").unwrap();
+    assert_eq!(result, Value::Number(1.0), "var x = 1 should create globalThis.x");
+}
+
+#[test]
+fn test_global_accessible_bare() {
+    let mut ctx = Context::new().unwrap();
+    // globalThis.y = 2 should make bare y resolvable
+    ctx.eval("globalThis.y = 2").unwrap();
+    let result = ctx.eval("y").unwrap();
+    assert_eq!(result, Value::Number(2.0), "globalThis.y = 2 should make bare y resolvable");
+}
+
+#[test]
+fn test_var_and_globalthis_bidirectional() {
+    let mut ctx = Context::new().unwrap();
+    // Setting via var should be readable via globalThis
+    ctx.eval("var a = 10").unwrap();
+    let via_global = ctx.eval("globalThis.a").unwrap();
+    assert_eq!(via_global, Value::Number(10.0));
+    
+    // Setting via globalThis should be readable via bare name
+    ctx.eval("globalThis.b = 20").unwrap();
+    let bare = ctx.eval("b").unwrap();
+    assert_eq!(bare, Value::Number(20.0));
 }
