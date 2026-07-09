@@ -353,6 +353,8 @@ fn stmt_to_js(stmt: &quench_runtime::ast::Statement) -> String {
             format!("try {} {}", stmt_to_js(body), handler_js)
         }
         Statement::SequenceDecls(stmts) => stmts.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n"),
+        // ES module export - compile the inner statement
+        Statement::Export(inner) => stmt_to_js(inner),
     }
 }
 
