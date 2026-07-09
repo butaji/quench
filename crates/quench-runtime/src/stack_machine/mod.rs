@@ -15,6 +15,7 @@ mod frame;
 mod loops;
 mod property;
 mod statements;
+mod string_methods;
 mod work;
 
 use std::rc::Rc;
