@@ -137,7 +137,7 @@ fn call_object_as_constructor(
         if let Some(constructor) = obj.get("constructor") {
             if matches!(
                 constructor,
-                Value::Function(_) | Value::NativeFunction(_)
+                Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)
             ) {
                 Some(constructor.clone())
             } else {

@@ -168,13 +168,17 @@ impl Object {
     /// Set a property value on this object only (no prototype chain)
     pub fn set(&mut self, key: &str, value: Value) {
         if let Ok(idx) = key.parse::<usize>() {
+            // For array indices, store in elements only, not properties
             while self.elements.len() <= idx {
                 self.elements.push(Value::Undefined);
             }
             self.elements[idx] = value.clone();
+            // Update length property
             self.properties.insert("length".to_string(), Value::Number(self.elements.len() as f64));
+        } else {
+            // Non-numeric keys go to properties only
+            self.properties.insert(key.to_string(), value);
         }
-        self.properties.insert(key.to_string(), value);
     }
 
     /// Set a getter function for a property
@@ -210,27 +214,37 @@ impl Object {
     }
 
     /// Get all property keys (own properties only, including getters/setters).
+    /// For arrays, includes actual element indices from elements Vec.
+    /// Does not include "length" as an own key (it's a property, not an index).
     pub fn own_keys(&self) -> Vec<String> {
-        let mut numeric: Vec<String> = Vec::new();
-        let mut non_numeric: Vec<String> = Vec::new();
+        let mut keys = self.array_indices();
+        self.add_non_numeric_keys(&mut keys);
+        self.add_accessor_keys(&mut keys);
+        keys
+    }
 
+    fn array_indices(&self) -> Vec<String> {
+        if self.kind == ObjectKind::Array {
+            (0..self.elements.len()).map(|i| i.to_string()).collect()
+        } else {
+            let mut numeric: Vec<(usize, String)> = self.properties
+                .keys()
+                .filter_map(|k| k.parse::<usize>().ok().map(|i| (i, k.clone())))
+                .collect();
+            numeric.sort_by_key(|(i, _)| *i);
+            numeric.into_iter().map(|(_, k)| k).collect()
+        }
+    }
+
+    fn add_non_numeric_keys(&self, keys: &mut Vec<String>) {
         for key in self.properties.keys() {
-            if key.parse::<usize>().is_ok() {
-                numeric.push(key.clone());
-            } else {
-                non_numeric.push(key.clone());
+            if key != "length" && key.parse::<usize>().is_err() && !keys.contains(key) {
+                keys.push(key.clone());
             }
         }
+    }
 
-        numeric.sort_by(|a, b| {
-            let ai = a.parse::<usize>().unwrap();
-            let bi = b.parse::<usize>().unwrap();
-            ai.cmp(&bi)
-        });
-
-        let mut keys = numeric;
-        keys.extend(non_numeric);
-
+    fn add_accessor_keys(&self, keys: &mut Vec<String>) {
         for key in self.getters.keys() {
             if !keys.contains(key) {
                 keys.push(key.clone());
@@ -241,8 +255,6 @@ impl Object {
                 keys.push(key.clone());
             }
         }
-
-        keys
     }
 
     /// Check if property exists (own or prototype chain)
@@ -259,8 +271,16 @@ impl Object {
         false
     }
 
-    /// Delete own property
+    /// Delete own property. For numeric keys on arrays, removes from elements.
     pub fn delete(&mut self, key: &str) -> bool {
+        if let Ok(idx) = key.parse::<usize>() {
+            if idx < self.elements.len() {
+                self.elements[idx] = Value::Undefined;
+                // Update length
+                self.properties.insert("length".to_string(), Value::Number(self.elements.len() as f64));
+                return true;
+            }
+        }
         self.properties.shift_remove(key).is_some()
     }
 }
