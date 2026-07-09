@@ -124,8 +124,8 @@ fn eval_func_decl(
 }
 
 fn eval_while(
-    condition: &Box<Expression>,
-    body: &Box<Statement>,
+    condition: &Expression,
+    body: &Statement,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let mut last = Value::Undefined;
@@ -136,7 +136,7 @@ fn eval_while(
             return Err(JsError("while loop ran too many times".to_string()));
         }
         let _ = take_control_flow();
-        last = eval_statement(body.as_ref(), env, false)?;
+        last = eval_statement(body, env, false)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
             Some(ControlFlow::Continue) => {}
@@ -150,7 +150,7 @@ fn eval_for(
     init: &Option<ForInit>,
     condition: &Option<Box<Expression>>,
     update: &Option<Box<Expression>>,
-    body: &Box<Statement>,
+    body: &Statement,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     if let Some(for_init) = init {
@@ -202,9 +202,9 @@ fn eval_block(
 }
 
 fn eval_try_catch(
-    body: &Box<Statement>,
+    body: &Statement,
     param: &Option<String>,
-    handler: &Box<Statement>,
+    handler: &Statement,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     match eval_statement(body, env, false) {

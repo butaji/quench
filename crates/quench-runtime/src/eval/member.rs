@@ -138,18 +138,56 @@ fn string_method(s: &str, method: &str) -> Result<Value, JsError> {
     }))))
 }
 
-fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) -> Result<Value, JsError> {
+pub fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) -> Result<Value, JsError> {
     match prop_name {
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
         "prototype" => {
             let proto = f.get_prototype();
             Ok(Value::Object(proto))
         }
+        "call" => {
+            // Create a native function for call that invokes the ValueFunction
+            let func_clone = f.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+                    let remaining_args: Vec<Value> = args.into_iter().skip(1).collect();
+                    crate::eval::function::call_js_function_with_this(
+                        func_clone.clone(),
+                        remaining_args,
+                        this_val,
+                    )
+                }
+            ))))
+        }
+        "apply" => {
+            // Create a native function for apply that invokes the ValueFunction
+            let func_clone = f.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+                    let args_array = args.get(1);
+                    let spread_args = if let Some(Value::Object(o)) = args_array {
+                        let o = o.borrow();
+                        (0..o.elements.len())
+                            .filter_map(|i| o.elements.get(i).cloned())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    crate::eval::function::call_js_function_with_this(
+                        func_clone.clone(),
+                        spread_args,
+                        this_val,
+                    )
+                }
+            ))))
+        }
         _ => Ok(Value::Undefined),
     }
 }
 
-fn eval_native_function_member(nf: &Rc<NativeFunction>, prop_name: &str) -> Result<Value, JsError> {
+pub fn eval_native_function_member(nf: &Rc<NativeFunction>, prop_name: &str) -> Result<Value, JsError> {
     match prop_name {
         "name" => Ok(Value::String("anonymous".to_string())),
         "prototype" => {

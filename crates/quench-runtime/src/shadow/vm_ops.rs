@@ -166,8 +166,8 @@ impl<'a> ShadowVm<'a> {
             return Ok(val);
         }
         if a.is_string() || b.is_string() {
-            let sa = self.to_string_symbol(a);
-            let sb = self.to_string_symbol(b);
+            let sa = self.string_symbol(a);
+            let sb = self.string_symbol(b);
             let a_str = self.ctx.string_interner.resolve(sa).unwrap_or("").to_string();
             let b_str = self.ctx.string_interner.resolve(sb).unwrap_or("").to_string();
             let sym = self.ctx.string_interner.intern(format!("{}{}", a_str, b_str));
@@ -178,7 +178,7 @@ impl<'a> ShadowVm<'a> {
         Ok(JSValue::double(da + db))
     }
 
-    fn to_string_symbol(&mut self, v: JSValue) -> Symbol {
+    fn string_symbol(&mut self, v: JSValue) -> Symbol {
         if let Some(sym) = v.as_string() { return sym; }
         let s = if v.is_int32() {
             format!("{}", v.as_int32_unchecked())
@@ -261,7 +261,7 @@ impl<'a> ShadowVm<'a> {
         let obj_id = obj_val.as_object().ok_or_else(|| JsError("property read on non-object".into()))?;
         let obj = self.ctx.shadow_arena.get(obj_id).ok_or_else(|| JsError("bad object id".into()))?;
         let val = if let ShadowNode::TypedPropRead { cache, .. } = node {
-            self.read_object_prop(&*obj, prop, cache)?
+            self.read_object_prop(&obj, prop, cache)?
         } else {
             return Err(JsError("ApplyTypedPropRead on non-TypedPropRead node".into()));
         };
@@ -270,18 +270,20 @@ impl<'a> ShadowVm<'a> {
     }
 
     fn try_fast_prop_read(&self, node: &ShadowNode, obj_val: JSValue, _prop: Symbol) -> Option<JSValue> {
-        if let ShadowNode::TypedPropRead { obj_hint, .. } = node {
-            if let ExecType::Object(expected_shape_id) = *obj_hint {
-                if let Some(obj_id) = obj_val.as_object() {
-                    if let Some(obj) = self.ctx.shadow_arena.get(obj_id) {
-                        if obj.shape.id == expected_shape_id {
-                            if let ShadowNode::TypedPropRead { cache, .. } = node {
-                                return self.read_object_prop(&obj, _prop, cache).ok();
-                            }
-                        }
-                    }
-                }
-            }
+        let ShadowNode::TypedPropRead { obj_hint, cache, .. } = node else {
+            return None;
+        };
+        let ExecType::Object(expected_shape_id) = *obj_hint else {
+            return None;
+        };
+        let Some(obj_id) = obj_val.as_object() else {
+            return None;
+        };
+        let Some(obj) = self.ctx.shadow_arena.get(obj_id) else {
+            return None;
+        };
+        if obj.shape.id == expected_shape_id {
+            return self.read_object_prop(&obj, _prop, cache).ok();
         }
         None
     }
@@ -351,9 +353,9 @@ impl<'a> ShadowVm<'a> {
         let obj = self.ctx.shadow_arena.get(obj_id).ok_or_else(|| JsError("bad object id".into()))?;
         let (shape_id, offset, is_inline, prop) = extract_static_read_info(node)?;
         let val = if obj.shape.id == shape_id {
-            self.read_from_object(&*obj, offset, is_inline)
+            self.read_from_object(&obj, offset, is_inline)
         } else {
-            self.read_with_fallback(&*obj, offset, is_inline, prop)?
+            self.read_with_fallback(&obj, offset, is_inline, prop)?
         };
         self.value_stack.push(val);
         Ok(())

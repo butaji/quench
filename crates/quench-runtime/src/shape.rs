@@ -83,6 +83,12 @@ pub struct ShapeInterner {
     root: ShapeRef,
 }
 
+impl Default for ShapeInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShapeInterner {
     /// Create a shape interner with a single root shape.
     pub fn new() -> Self {

@@ -128,6 +128,8 @@ fn get_member_function(
         Value::Object(o) => Ok(o.borrow().get(prop_name).unwrap_or(Value::Undefined)),
         Value::String(s) => get_string_method(s, prop_name),
         Value::Number(_) => get_number_method(obj_val, prop_name, env),
+        Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
+        Value::NativeFunction(nf) => crate::eval::member::eval_native_function_member(nf, prop_name),
         _ => Ok(Value::Undefined),
     }
 }

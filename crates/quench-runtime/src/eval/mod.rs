@@ -11,7 +11,7 @@ pub mod operators;
 pub mod statement;
 
 pub use expression::eval_expression;
-pub use function::{call_value, call_value_with_this};
+pub use function::{call_value, call_value_with_this, call_js_function_with_this};
 pub use iteration::{get_enumerable_keys, get_iterator};
 pub use object::{assign_to, call_getter, call_setter, eval_callee_with_this};
 pub use operators::{eval_binary_op, eval_unary_op};

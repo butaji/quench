@@ -25,7 +25,7 @@ pub fn call_value_with_this(
         }
     }
     let result = match func {
-        Value::Function(f) => call_js_function(f, args, this_val),
+        Value::Function(f) => call_js_function_impl(f, args, this_val),
         Value::NativeFunction(nf) => call_native_function(nf, args, this_val),
         Value::NativeConstructor(nc) => call_native_constructor(nc, args),
         Value::Object(o) => call_object_as_constructor(o, args, this_val),
@@ -40,7 +40,20 @@ pub fn call_value(func: Value, args: Vec<Value>) -> Result<Value, JsError> {
     call_value_with_this(func, args, Value::Undefined)
 }
 
-fn call_js_function(
+/// Call a JavaScript function with an explicit this binding
+/// This is exposed for use by Function.prototype.call/apply
+pub fn call_js_function_with_this(
+    f: ValueFunction,
+    args: Vec<Value>,
+    this_val: Value,
+) -> Result<Value, JsError> {
+    check_depth()?;
+    let result = call_js_function_impl(f, args, this_val);
+    release_depth();
+    result
+}
+
+fn call_js_function_impl(
     f: ValueFunction,
     args: Vec<Value>,
     this_val: Value,

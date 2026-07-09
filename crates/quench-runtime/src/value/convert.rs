@@ -138,10 +138,10 @@ fn null_undefined_eq(a: &Value, b: &Value) -> bool {
 fn number_string_eq(a: &Value, b: &Value) -> Option<bool> {
     match (a, b) {
         (Value::Number(n), Value::String(s)) => {
-            Some(parse_number_string(s).map_or(false, |p| *n == p))
+            Some(parse_number_string(s) == Some(*n))
         }
         (Value::String(s), Value::Number(n)) => {
-            Some(parse_number_string(s).map_or(false, |p| p == *n))
+            Some(parse_number_string(s) == Some(*n))
         }
         _ => None,
     }
@@ -205,21 +205,17 @@ fn to_primitive_for_compare(v: &Value) -> Value {
         Value::Symbol(s) => Value::Symbol(s.clone()),
         Value::ObjectId(_) => Value::String("[object Object]".to_string()),
         Value::Object(obj) => {
-            if let Some(method) = obj.borrow().get("valueOf") {
-                if let Value::NativeFunction(nf) = method {
-                    if let Ok(result) = nf.call(vec![]) {
-                        if !matches!(result, Value::Object(_)) {
-                            return result;
-                        }
+            if let Some(Value::NativeFunction(nf)) = obj.borrow().get("valueOf").filter(|m| matches!(m, Value::NativeFunction(_))) {
+                if let Ok(result) = nf.call(vec![]) {
+                    if !matches!(result, Value::Object(_)) {
+                        return result;
                     }
                 }
             }
-            if let Some(method) = obj.borrow().get("toString") {
-                if let Value::NativeFunction(nf) = method {
-                    if let Ok(result) = nf.call(vec![]) {
-                        if !matches!(result, Value::Object(_)) {
-                            return result;
-                        }
+            if let Some(Value::NativeFunction(nf)) = obj.borrow().get("toString").filter(|m| matches!(m, Value::NativeFunction(_))) {
+                if let Ok(result) = nf.call(vec![]) {
+                    if !matches!(result, Value::Object(_)) {
+                        return result;
                     }
                 }
             }

@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn round_trip_double() {
-        for v in [0.0, 1.5, -3.14, f64::NAN, f64::INFINITY, 1e300] {
+        for v in [0.0, 1.5, -std::f64::consts::PI, f64::NAN, f64::INFINITY, 1e300] {
             let js = JSValue::double(v);
             assert!(js.is_double());
             assert!(!js.is_int32());

@@ -646,30 +646,28 @@ mod tests {
 
     #[test]
     fn test_should_skip_flags() {
-        let mut meta = Test262Metadata::default();
-        meta.flags = vec!["module".to_string()];
+        let meta = Test262Metadata { flags: vec!["module".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_some());
         
-        meta.flags = vec!["async".to_string()];
+        let meta = Test262Metadata { flags: vec!["async".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_some());
         
-        meta.flags = vec!["raw".to_string()];
+        let meta = Test262Metadata { flags: vec!["raw".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_some());
         
-        meta.flags = vec!["onlyStrict".to_string()];
+        let meta = Test262Metadata { flags: vec!["onlyStrict".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_none());
     }
 
     #[test]
     fn test_should_skip_features() {
-        let mut meta = Test262Metadata::default();
-        meta.features = vec!["Promise".to_string()];
+        let meta = Test262Metadata { features: vec!["Promise".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_some());
         
-        meta.features = vec!["class".to_string()];
+        let meta = Test262Metadata { features: vec!["class".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_some());
         
-        meta.features = vec!["arrowFunctions".to_string()];
+        let meta = Test262Metadata { features: vec!["arrowFunctions".to_string()], ..Default::default() };
         assert!(should_skip(&meta).is_none());
     }
 

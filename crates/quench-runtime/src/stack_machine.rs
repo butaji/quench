@@ -201,7 +201,7 @@ impl Machine {
 
     /// Run a top-level statement list to completion and return the last value.
     fn run_statements(mut self, stmts: &Rc<Vec<Statement>>) -> Result<Value, JsError> {
-        self.push_stmt_list(&*stmts, false);
+        self.push_stmt_list(stmts, false);
         self.run()
     }
 
@@ -258,9 +258,9 @@ impl Machine {
         self.frames.last_mut().expect("no active frame")
     }
 
-    fn push_stmt_list(&mut self, stmts: &Vec<Statement>, is_expr_body: bool) {
+    fn push_stmt_list(&mut self, stmts: &[Statement], is_expr_body: bool) {
         if !stmts.is_empty() {
-            self.current_frame().work.push(Work::EvalStmts(Rc::new(stmts.clone()), is_expr_body, 0));
+            self.current_frame().work.push(Work::EvalStmts(Rc::new(stmts.to_owned()), is_expr_body, 0));
         } else {
             self.current_frame().values.push(Value::Undefined);
         }
@@ -358,8 +358,8 @@ impl Machine {
             Expression::Binary { op, left, right } => {
                 let frame = self.current_frame();
                 frame.work.push(Work::ApplyBinary(*op));
-                frame.work.push(Work::EvalExpr(Rc::new((&**right).clone())));
-                frame.work.push(Work::EvalExpr(Rc::new((&**left).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
             }
             Expression::Unary { op, argument } => {
                 // typeof on an undeclared identifier must not throw.
@@ -373,14 +373,14 @@ impl Machine {
                 }
                 let frame = self.current_frame();
                 frame.work.push(Work::ApplyUnary(*op));
-                frame.work.push(Work::EvalExpr(Rc::new((&**argument).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
             }
-            Expression::Assignment { left, right } => self.eval_assignment(left, Rc::new((&**right).clone()))?,
+            Expression::Assignment { left, right } => self.eval_assignment(left, Rc::new((**right).clone()))?,
             Expression::CompoundAssignment { op, left, right } => {
                 let frame = self.current_frame();
                 frame.work.push(Work::ApplyCompoundAssign { op: op.to_binary(), target: AssignmentTarget::Identifier(String::new()) });
-                frame.work.push(Work::EvalExpr(Rc::new((&**left).clone())));
-                frame.work.push(Work::EvalExpr(Rc::new((&**right).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**left).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**right).clone())));
                 // The actual target is resolved by the applier using the value
                 // it pops; we communicate it via a placeholder.  This is fixed
                 // in `apply_compound_assign`.
@@ -391,29 +391,29 @@ impl Machine {
                 for arg in arguments.iter().rev() {
                     frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
                 }
-                frame.work.push(Work::EvalCallee(Rc::new((&**callee).clone())));
+                frame.work.push(Work::EvalCallee(Rc::new((**callee).clone())));
             }
             Expression::Member { object, property, computed } => {
                 let frame = self.current_frame();
                 frame.work.push(Work::ApplyMember { property: property.clone(), computed: *computed, callee_mode: false });
                 if *computed {
                     if let PropertyKey::Computed(key_expr) = property {
-                        frame.work.push(Work::EvalExpr(Rc::new((&**key_expr).clone())));
+                        frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
                     } else {
                         return Err(JsError("Invalid computed property".to_string()));
                     }
                 }
-                frame.work.push(Work::EvalExpr(Rc::new((&**object).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
             }
             Expression::Conditional { condition, consequent, alternate } => {
                 let frame = self.current_frame();
-                frame.work.push(Work::ApplyConditional { consequent: Rc::new((&**consequent).clone()), alternate: Rc::new((&**alternate).clone()) });
-                frame.work.push(Work::EvalExpr(Rc::new((&**condition).clone())));
+                frame.work.push(Work::ApplyConditional { consequent: Rc::new((**consequent).clone()), alternate: Rc::new((**alternate).clone()) });
+                frame.work.push(Work::EvalExpr(Rc::new((**condition).clone())));
             }
             Expression::Update { op, argument, prefix } => {
                 let frame = self.current_frame();
                 frame.work.push(Work::ApplyUpdate { op: *op, prefix: *prefix, target: AssignmentTarget::Identifier(String::new()) });
-                frame.work.push(Work::EvalExpr(Rc::new((&**argument).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**argument).clone())));
             }
             Expression::New { constructor, arguments } => {
                 let frame = self.current_frame();
@@ -421,7 +421,7 @@ impl Machine {
                 for arg in arguments.iter().rev() {
                     frame.work.push(Work::EvalExpr(Rc::new(arg.clone())));
                 }
-                frame.work.push(Work::EvalExpr(Rc::new((&**constructor).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**constructor).clone())));
             }
             Expression::Sequence(exprs) => {
                 if exprs.is_empty() {
@@ -439,13 +439,13 @@ impl Machine {
             }
             Expression::ForOf { variable, iterable, body } => {
                 let frame = self.current_frame();
-                frame.work.push(Work::BeginForOf { variable: Rc::new((&**variable).clone()), body: Rc::new((&**body).clone()) });
-                frame.work.push(Work::EvalExpr(Rc::new((&**iterable).clone())));
+                frame.work.push(Work::BeginForOf { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
+                frame.work.push(Work::EvalExpr(Rc::new((**iterable).clone())));
             }
             Expression::ForIn { variable, object, body } => {
                 let frame = self.current_frame();
-                frame.work.push(Work::BeginForIn { variable: Rc::new((&**variable).clone()), body: Rc::new((&**body).clone()) });
-                frame.work.push(Work::EvalExpr(Rc::new((&**object).clone())));
+                frame.work.push(Work::BeginForIn { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
+                frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
             }
             Expression::ArrayPattern(_) | Expression::ObjectPattern(_) => {
                 return Err(JsError("Array/Object pattern must be used in assignment context".to_string()));
@@ -565,7 +565,7 @@ impl Machine {
             }
             ObjectPropertyKind::Setter => {
                 if let Value::Function(f) = value {
-                    obj.set_setter(&key, f.params.get(0).cloned().unwrap_or_default(), Rc::clone(&f.body), frame_env);
+                    obj.set_setter(&key, f.params.first().cloned().unwrap_or_default(), Rc::clone(&f.body), frame_env);
                 }
             }
         }
@@ -584,7 +584,7 @@ impl Machine {
                 frame.work.push(Work::ApplyAssign { target: AssignmentTarget::Identifier(String::new()) });
                 if *computed {
                     if let PropertyKey::Computed(key_expr) = property {
-                        frame.work.push(Work::EvalExpr(Rc::new((&**key_expr).clone())));
+                        frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
                     } else {
                         return Err(JsError("Invalid computed property".to_string()));
                     }
@@ -592,7 +592,7 @@ impl Machine {
                     let key = property_key_static(property)?;
                     frame.work.push(Work::PushValue(Value::String(key.to_string())));
                 }
-                frame.work.push(Work::EvalExpr(Rc::new((&**object).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
                 frame.work.push(Work::EvalExpr(right));
             }
             _ => return Err(JsError("Invalid assignment target".to_string())),
@@ -642,7 +642,7 @@ impl Machine {
                 if has_setter {
                     let setter_storage = {
                         let obj = obj_rc.borrow();
-                        obj.get_setter(&key).map(|s| s.clone())
+                        obj.get_setter(&key).cloned()
                     };
                     if let Some(storage) = setter_storage {
                         return self.call_setter(&obj_rc, &storage, value);
@@ -679,12 +679,12 @@ impl Machine {
                 frame.work.push(Work::ApplyMember { property: property.clone(), computed: *computed, callee_mode: true });
                 if *computed {
                     if let PropertyKey::Computed(key_expr) = property {
-                        frame.work.push(Work::EvalExpr(Rc::new((&**key_expr).clone())));
+                        frame.work.push(Work::EvalExpr(Rc::new((**key_expr).clone())));
                     } else {
                         return Err(JsError("Invalid computed property".to_string()));
                     }
                 }
-                frame.work.push(Work::EvalExpr(Rc::new((&**object).clone())));
+                frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
             }
             _ => {
                 let frame = self.current_frame();
@@ -829,7 +829,7 @@ impl Machine {
     }
 
     fn apply_sequence(&mut self, exprs: &Rc<Vec<Expression>>, index: usize) -> Result<(), JsError> {
-        let slice: &[Expression] = &*exprs;
+        let slice: &[Expression] = exprs;
         if index + 1 >= slice.len() {
             self.current_frame().work.push(Work::EvalExpr(Rc::new(slice[index].clone())));
         } else {
@@ -841,7 +841,7 @@ impl Machine {
     }
 
     fn apply_block_expr(&mut self, stmts: &Rc<Vec<Statement>>, index: usize) -> Result<(), JsError> {
-        let slice: &[Statement] = &*stmts;
+        let slice: &[Statement] = stmts;
         if index + 1 >= slice.len() {
             self.current_frame().work.push(Work::EvalStmt(Rc::new(slice[index].clone()), false));
         } else {
@@ -862,7 +862,7 @@ impl Machine {
                 let env = Rc::clone(&self.current_frame().env);
                 let already_declared = *kind == VarKind::Var && env.borrow().has(name);
                 if !already_declared {
-                    env.borrow_mut().declare_var(name.clone(), kind.clone());
+                    env.borrow_mut().declare_var(name.clone(), *kind);
                 }
                 if let Some(init_expr) = init {
                     let frame = self.current_frame();
@@ -885,28 +885,28 @@ impl Machine {
             }
             Statement::If { condition, consequent, alternate } => {
                 let frame = self.current_frame();
-                frame.work.push(Work::ApplyIf { consequent: Rc::new((&**consequent).clone()), alternate: alternate.as_deref().map(|s| Rc::new(s.clone())), is_expr_body });
-                frame.work.push(Work::EvalExpr(Rc::new((&**condition).clone())));
+                frame.work.push(Work::ApplyIf { consequent: Rc::new((**consequent).clone()), alternate: alternate.as_deref().map(|s| Rc::new(s.clone())), is_expr_body });
+                frame.work.push(Work::EvalExpr(Rc::new((**condition).clone())));
             }
             Statement::While { condition, body } => {
-                self.current_frame().work.push(Work::ApplyWhile { condition: Rc::new((&**condition).clone()), body: Rc::new((&**body).clone()), is_expr_body });
+                self.current_frame().work.push(Work::ApplyWhile { condition: Rc::new((**condition).clone()), body: Rc::new((**body).clone()), is_expr_body });
             }
             Statement::For { init, condition, update, body } => {
                 self.current_frame().work.push(Work::ApplyFor {
                     condition: condition.as_deref().map(|e| Rc::new(e.clone())),
                     update: update.as_deref().map(|e| Rc::new(e.clone())),
-                    body: Rc::new((&**body).clone()),
+                    body: Rc::new((**body).clone()),
                     is_expr_body,
                     phase: ForPhase::Init,
                 });
                 if let Some(for_init) = init {
                     match for_init {
                         ForInit::Expression(expr) => {
-                            self.current_frame().work.push(Work::EvalExpr(Rc::new((&**expr).clone())));
+                            self.current_frame().work.push(Work::EvalExpr(Rc::new((**expr).clone())));
                             self.current_frame().work.push(Work::Discard);
                         }
                         ForInit::VarDeclaration { kind, name, init: init_expr } => {
-                            self.current_frame().env.borrow_mut().declare_var(name.clone(), kind.clone());
+                            self.current_frame().env.borrow_mut().declare_var(name.clone(), *kind);
                             if let Some(init_expr) = init_expr {
                                 self.current_frame().work.push(Work::ForInitVar { kind: *kind, name: name.clone() });
                                 self.current_frame().work.push(Work::EvalExpr(Rc::new(init_expr.clone())));
@@ -923,14 +923,14 @@ impl Machine {
             Statement::Return(expr) => {
                 if let Some(e) = expr {
                     self.current_frame().work.push(Work::ApplyReturn);
-                    self.current_frame().work.push(Work::EvalExpr(Rc::new((&**e).clone())));
+                    self.current_frame().work.push(Work::EvalExpr(Rc::new((**e).clone())));
                 } else {
                     self.current_frame().values.push(Value::Undefined);
                     self.current_frame().work.push(Work::ApplyReturn);
                 }
             }
             Statement::Expression(expr) => {
-                self.current_frame().work.push(Work::EvalExpr(Rc::new((&**expr).clone())));
+                self.current_frame().work.push(Work::EvalExpr(Rc::new((**expr).clone())));
             }
             Statement::Empty => {
                 self.current_frame().values.push(Value::Undefined);
@@ -959,7 +959,7 @@ impl Machine {
                 });
             }
             Statement::Throw(expr) => {
-                self.current_frame().work.push(Work::EvalExpr(Rc::new((&**expr).clone())));
+                self.current_frame().work.push(Work::EvalExpr(Rc::new((**expr).clone())));
                 self.current_frame().work.push(Work::Throw);
             }
         }
@@ -967,7 +967,7 @@ impl Machine {
     }
 
     fn eval_stmts(&mut self, stmts: &Rc<Vec<Statement>>, is_expr_body: bool, index: usize) -> Result<(), JsError> {
-        let slice: &[Statement] = &*stmts;
+        let slice: &[Statement] = stmts;
         if index >= slice.len() {
             if self.current_frame().values.is_empty() {
                 self.current_frame().values.push(Value::Undefined);
@@ -1089,7 +1089,7 @@ impl Machine {
     }
 
     fn apply_block(&mut self, stmts: &Rc<Vec<Statement>>, index: usize, is_expr_body: bool) -> Result<(), JsError> {
-        let slice: &[Statement] = &*stmts;
+        let slice: &[Statement] = stmts;
         if index == 0 {
             self.current_frame().env.borrow_mut().push_scope();
             hir::predeclare_let_const(slice, &mut self.current_frame().env.borrow_mut());
@@ -1160,7 +1160,7 @@ impl Machine {
             self.current_frame().values.push(Value::Undefined);
             return Ok(());
         }
-        self.assign_value(&*variable, items[index].clone())?;
+        self.assign_value(&variable, items[index].clone())?;
         self.current_frame().work.push(Work::ApplyForOf { variable: variable.clone(), body: body.clone(), items, index: index + 1 });
         self.current_frame().work.push(Work::EvalStmt(body, false));
         Ok(())
@@ -1187,7 +1187,7 @@ impl Machine {
             self.current_frame().values.push(Value::Undefined);
             return Ok(());
         }
-        self.assign_value(&*variable, Value::String(keys[index].clone()))?;
+        self.assign_value(&variable, Value::String(keys[index].clone()))?;
         self.current_frame().work.push(Work::ApplyForIn { variable: variable.clone(), body: body.clone(), keys, index: index + 1 });
         self.current_frame().work.push(Work::EvalStmt(body, false));
         Ok(())
@@ -1254,8 +1254,8 @@ impl Machine {
                 if !f.is_arrow {
                     let args_obj = self.create_arguments_object(&f, args);
                     call_env.define("arguments".to_string(), args_obj);
-                    hir::predeclare_var(&*f.body, &mut call_env);
-                    hir::predeclare_let_const(&*f.body, &mut call_env);
+                    hir::predeclare_var(&f.body, &mut call_env);
+                    hir::predeclare_let_const(&f.body, &mut call_env);
                 }
 
                 let call_env = Rc::new(RefCell::new(call_env));
@@ -1278,7 +1278,7 @@ impl Machine {
                                     work: Vec::new(),
                                     catches: Vec::new(),
                                 });
-                                self.push_stmt_list(&*stmts, true);
+                                self.push_stmt_list(stmts, true);
                             }
                         }
                     } else {
@@ -1291,7 +1291,7 @@ impl Machine {
                         work: Vec::new(),
                         catches: Vec::new(),
                     });
-                    self.push_stmt_list(&*f.body, false);
+                    self.push_stmt_list(&f.body, false);
                 }
                 Ok(())
             }
@@ -1353,7 +1353,7 @@ impl Machine {
             work: Vec::new(),
             catches: Vec::new(),
         });
-        self.push_stmt_list(&*setter_storage.body, false);
+        self.push_stmt_list(&setter_storage.body, false);
         Ok(())
     }
 

@@ -70,7 +70,7 @@ pub fn register_array(ctx: &mut Context) {
                 Object::new_array(0)
             } else if args.len() == 1 {
                 if let Value::Number(n) = args[0] {
-                    if n == n.floor() && n >= 0.0 && n < 4294967296.0 {
+                    if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                         Object::new_array(n as usize)
                     } else {
                         return Err(JsError("Invalid array length".to_string()));

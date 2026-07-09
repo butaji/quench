@@ -17,6 +17,12 @@ pub struct HirBuilder {
     current_block: BlockId,
 }
 
+impl Default for HirBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HirBuilder {
     pub fn new() -> Self {
         let mut func = HirFunction::default();
