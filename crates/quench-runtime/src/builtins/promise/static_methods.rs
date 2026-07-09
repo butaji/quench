@@ -8,6 +8,9 @@ use crate::value::{NativeFunction, Object, ObjectKind, Value};
 use crate::value::object::PromiseObjectData;
 use crate::JsError;
 
+// Re-export process_callbacks_sync for use in static methods
+pub(crate) use super::process_callbacks_sync;
+
 /// Implements Promise.resolve
 pub fn promise_resolve_impl_static(
     args: Vec<Value>,
@@ -72,12 +75,19 @@ pub fn promise_all_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<
     let mut promise_data = PromiseObjectData::new();
     promise_data.state = crate::value::object::PromiseState::Pending;
 
+    // Set promise_data BEFORE processing values so we can modify it during processing
+    {
+        let mut obj = promise_rc.borrow_mut();
+        obj.prototype = Some(proto);
+        obj.promise_data = Some(promise_data);
+    }
+
     if total == 0 {
-        promise_data.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![])))));
         {
             let mut obj = promise_rc.borrow_mut();
-            obj.prototype = Some(proto);
-            obj.promise_data = Some(promise_data);
+            if let Some(ref mut data) = obj.promise_data {
+                data.fulfill(Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![])))));
+            }
         }
         return Ok(Value::Object(promise_rc));
     }
@@ -90,12 +100,6 @@ pub fn promise_all_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<
         process_promise_all_value(
             i, value, total, &promise_rc, &results, &fulfilled_count, &rejected_flag
         );
-    }
-
-    {
-        let mut obj = promise_rc.borrow_mut();
-        obj.prototype = Some(proto);
-        obj.promise_data = Some(promise_data);
     }
 
     Ok(Value::Object(promise_rc))
@@ -188,6 +192,7 @@ fn attach_callbacks_to_value(
             match data.state {
                 crate::value::object::PromiseState::Fulfilled => {
                     let result = data.result.clone();
+                    let already_rejected = *ctx.rejected_flag.borrow();
                     {
                         let mut r = ctx.results.borrow_mut();
                         r[idx] = result;
@@ -195,11 +200,14 @@ fn attach_callbacks_to_value(
                     {
                         let mut c = ctx.fulfilled_count.borrow_mut();
                         *c += 1;
-                        if *c == total && !*ctx.rejected_flag.borrow() {
+                        if *c == total && !already_rejected {
+                            // Clone results before borrowing promise_rc
+                            let results_clone = ctx.results.borrow().clone();
+                            drop(c);
                             let mut p = ctx.promise_rc.borrow_mut();
                             if let Some(ref mut d) = p.promise_data {
                                 d.fulfill(Value::Object(Rc::new(RefCell::new(
-                                    Object::new_array_from(ctx.results.borrow().clone())
+                                    Object::new_array_from(results_clone)
                                 ))));
                             }
                         }
@@ -208,25 +216,37 @@ fn attach_callbacks_to_value(
                 crate::value::object::PromiseState::Rejected => {
                     let mut r = ctx.rejected_flag.borrow_mut();
                     *r = true;
-                    let mut p = ctx.promise_rc.borrow_mut();
-                    if let Some(ref mut d) = p.promise_data {
-                        d.reject(data.result.clone());
+                    {
+                        let mut p = ctx.promise_rc.borrow_mut();
+                        if let Some(ref mut d) = p.promise_data {
+                            d.reject(data.result.clone());
+                        }
                     }
+                    // Process callbacks on the outer promise
+                    let promise_rc_clone = Rc::clone(ctx.promise_rc);
+                    drop(r);
+                    process_callbacks_sync(&promise_rc_clone);
                 }
                 _ => attach_then_handlers(p, resolve_fn, reject_fn),
             }
         }
     } else {
-        let mut r = ctx.results.borrow_mut();
-        r[idx] = value;
+        let already_rejected = *ctx.rejected_flag.borrow();
+        {
+            let mut r = ctx.results.borrow_mut();
+            r[idx] = value;
+        }
         {
             let mut c = ctx.fulfilled_count.borrow_mut();
             *c += 1;
-            if *c == total && !*ctx.rejected_flag.borrow() {
+            if *c == total && !already_rejected {
+                // Clone results before borrowing promise_rc
+                let results_clone = ctx.results.borrow().clone();
+                drop(c);
                 let mut p = ctx.promise_rc.borrow_mut();
                 if let Some(ref mut d) = p.promise_data {
                     d.fulfill(Value::Object(Rc::new(RefCell::new(
-                        Object::new_array_from(ctx.results.borrow().clone())
+                        Object::new_array_from(results_clone)
                     ))));
                 }
             }

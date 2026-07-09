@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::value::{to_js_string, to_bool, JsError, Value};
+use crate::value::{to_js_string, to_bool, JsError, Value, Object, ObjectKind};
 use crate::interpreter::{
     predeclare_let_const, take_control_flow, is_control_flow_set, set_control_flow, ControlFlow,
 };
@@ -98,6 +98,12 @@ pub fn eval_statement(
         Statement::Export(stmt) => {
             // Export statements wrap other statements (like assignments)
             eval_statement(stmt, env, _is_expr_body)
+        }
+        Statement::Import { default, named, namespace, source } => {
+            eval_import(default, named, namespace, source, env)
+        }
+        Statement::ForIn { variable, object, body } => {
+            eval_for_in_stmt(variable, object, body, env)
         }
     }
 }
@@ -243,4 +249,110 @@ fn eval_try_catch(
             eval_statement(handler, env, false)
         }
     }
+}
+
+/// Evaluate an ES module import statement
+/// For CommonJS compatibility, this reads from the global `__quench_modules__` cache
+fn eval_import(
+    default: &Option<String>,
+    named: &[(String, String)],
+    namespace: &Option<String>,
+    source: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Get the module's exports from our module cache
+    let module_exports = get_module_exports(source, env)?;
+    
+    // Handle default import: `import x from 'mod'`
+    if let Some(name) = default {
+        let default_val = module_exports.borrow().get("default")
+            .unwrap_or(Value::Undefined);
+        env.borrow_mut().define(name.clone(), default_val);
+    }
+    
+    // Handle named imports: `import { x, y as z } from 'mod'`
+    for (local_name, exported_name) in named {
+        let val = module_exports.borrow().get(exported_name)
+            .unwrap_or(Value::Undefined);
+        env.borrow_mut().define(local_name.clone(), val);
+    }
+    
+    // Handle namespace import: `import * as ns from 'mod'`
+    if let Some(name) = namespace {
+        env.borrow_mut().define(name.clone(), Value::Object(module_exports.clone()));
+    }
+    
+    Ok(Value::Undefined)
+}
+
+/// Get exports from a module (CommonJS-style lookup)
+fn get_module_exports(source: &str, env: &Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Object>>, JsError> {
+    // Check if we have a cached module in the global __quench_modules__
+    let cache = env.borrow().get("__quench_modules__");
+    
+    if let Some(Value::Object(cache_obj)) = &cache {
+        let key = normalize_module_path(source);
+        if let Some(exports) = cache_obj.borrow().get(&key) {
+            if let Value::Object(exports_obj) = exports {
+                return Ok(exports_obj.clone());
+            }
+        }
+    }
+    
+    // Check globalThis.__quench_modules__
+    let global = env.borrow().get("globalThis");
+    if let Some(Value::Object(global_obj)) = &global {
+        if let Some(modules) = global_obj.borrow().get("__quench_modules__") {
+            if let Value::Object(modules_obj) = modules {
+                let key = normalize_module_path(source);
+                if let Some(exports) = modules_obj.borrow().get(&key) {
+                    if let Value::Object(exports_obj) = exports {
+                        return Ok(exports_obj.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Create a new empty exports object for this module
+    let exports = Object::new(ObjectKind::Ordinary);
+    let exports_rc = Rc::new(RefCell::new(exports));
+    
+    // Cache it for future imports
+    let key = normalize_module_path(source);
+    if let Some(Value::Object(cache_obj)) = cache {
+        cache_obj.borrow_mut().set(&key, Value::Object(exports_rc.clone()));
+    }
+    
+    Ok(exports_rc)
+}
+
+/// Normalize a module path to a cache key
+fn normalize_module_path(source: &str) -> String {
+    source.to_string()
+}
+
+/// Evaluate a for-in statement: for (x in object) { body }
+fn eval_for_in_stmt(
+    variable: &Expression,
+    object: &Expression,
+    body: &Statement,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    use crate::eval::iteration::get_enumerable_keys;
+    use crate::eval::object::assign_to;
+    
+    let obj_value = eval_expression(object, env)?;
+    let keys = get_enumerable_keys(&obj_value)?;
+    let mut last = Value::Undefined;
+    for key in keys {
+        assign_to(variable, &Value::String(key), env)?;
+        last = eval_statement(body, env, false)?;
+        match take_control_flow() {
+            Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Continue) => {}
+            None => {}
+        }
+    }
+    Ok(last)
 }

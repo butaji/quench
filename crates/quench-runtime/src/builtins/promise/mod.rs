@@ -193,41 +193,86 @@ fn create_promise_constructor(
 }
 
 /// Process callbacks stored on a promise (synchronous version)
-fn process_callbacks_sync(promise_rc: &Rc<RefCell<Object>>) {
-    // Get state and callbacks while holding the lock
-    let (state, result, callbacks) = {
-        let mut obj = promise_rc.borrow_mut();
-        if let Some(ref mut data) = obj.promise_data {
-            let callbacks: Vec<_> = data.on_fulfilled_callbacks.drain(..).collect();
-            (data.state.clone(), data.result.clone(), callbacks)
-        } else {
-            return;
-        }
-    };
+pub(crate) fn process_callbacks_sync(promise_rc: &Rc<RefCell<Object>>) {
+    loop {
+        // Get state and callbacks while holding the lock
+        let (state, result, callbacks) = {
+            let mut obj = promise_rc.borrow_mut();
+            if let Some(ref mut data) = obj.promise_data {
+                // For fulfilled promises, process _onFulfilled callbacks
+                // For rejected promises, process _onRejected callbacks
+                let fulfilled_callbacks: Vec<_> = data.on_fulfilled_callbacks.drain(..).collect();
+                let rejected_callbacks: Vec<_> = data.on_rejected_callbacks.drain(..).collect();
+                let all_callbacks: Vec<_> = fulfilled_callbacks
+                    .into_iter()
+                    .chain(rejected_callbacks.into_iter())
+                    .collect();
+                (data.state.clone(), data.result.clone(), all_callbacks)
+            } else {
+                return;
+            }
+        };
 
-    // Process each callback outside the lock
-    for callback_value in callbacks {
-        if let Value::Object(ref cb_obj) = callback_value {
-            let on_fulfilled = cb_obj.borrow().properties.get("_onFulfilled")
-                .cloned()
-                .unwrap_or(Value::Undefined);
-            let target_opt = cb_obj.borrow().properties.get("_targetPromise")
-                .cloned();
+        // Process each callback
+        let mut has_callbacks = false;
+        for callback_value in callbacks {
+            has_callbacks = true;
+            if let Value::Object(ref cb_obj) = callback_value {
+                let on_fulfilled = cb_obj.borrow().properties.get("_onFulfilled")
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                let on_rejected = cb_obj.borrow().properties.get("_onRejected")
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                let target_opt = cb_obj.borrow().properties.get("_targetPromise")
+                    .cloned();
 
-            if let Some(Value::Object(ref target_rc)) = target_opt {
-                if state == crate::value::object::PromiseState::Fulfilled {
-                    execute_callback(&on_fulfilled, result.clone(), target_rc);
+                if let Some(Value::Object(ref target_rc)) = target_opt {
+                    match state {
+                        crate::value::object::PromiseState::Fulfilled => {
+                            execute_callback(&on_fulfilled, result.clone(), target_rc, false);
+                        }
+                        crate::value::object::PromiseState::Rejected => {
+                            execute_callback(&on_rejected, result.clone(), target_rc, true);
+                        }
+                        crate::value::object::PromiseState::Pending => {}
+                    }
                 }
             }
+        }
+
+        // If no callbacks were processed, we're done
+        if !has_callbacks {
+            break;
+        }
+
+        // Check if new callbacks were added (from execute_callback)
+        let has_new = {
+            let obj = promise_rc.borrow();
+            if let Some(ref data) = obj.promise_data {
+                !data.on_fulfilled_callbacks.is_empty() || !data.on_rejected_callbacks.is_empty()
+            } else {
+                false
+            }
+        };
+
+        if !has_new {
+            break;
         }
     }
 }
 
 /// Execute a callback and fulfill/reject the target promise
-fn execute_callback(callback: &Value, arg: Value, target_promise: &Rc<RefCell<Object>>) {
+/// is_on_rejected indicates whether we're executing an onRejected callback
+fn execute_callback(callback: &Value, arg: Value, target_promise: &Rc<RefCell<Object>>, is_on_rejected: bool) {
+    // Per Promise/A+ spec: if callback is not a function, it should be treated as identity/throwing
     let result = if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
         call_value_with_this(callback.clone(), vec![arg], Value::Undefined)
+    } else if is_on_rejected {
+        // Per Promise/A+ spec: if onRejected is not a function, re-throw the rejection
+        Err(JsError(format!("{}", arg)))
     } else {
+        // Non-function onFulfilled: pass through the value
         Ok(arg)
     };
 
@@ -260,12 +305,9 @@ fn promise_then_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Some(Value::Object(ref obj_rc)) = current_promise_this {
-        let (state, _result) = {
+        let state = {
             let obj = obj_rc.borrow();
-            (
-                obj.promise_data.as_ref().map(|d| d.state.clone()),
-                obj.promise_data.as_ref().map(|d| d.result.clone()),
-            )
+            obj.promise_data.as_ref().map(|d| d.state.clone())
         };
 
         match state {
@@ -274,11 +316,17 @@ fn promise_then_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 queue_callback_on_promise(obj_rc, callback);
                 process_callbacks_sync(obj_rc);
             }
+            Some(crate::value::object::PromiseState::Rejected) => {
+                // Immediately process with rejected callback
+                let callback = create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
+                queue_callback_on_promise(obj_rc, callback);
+                process_callbacks_sync(obj_rc);
+            }
             Some(crate::value::object::PromiseState::Pending) => {
                 let callback = create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
                 queue_callback_on_promise(obj_rc, callback);
             }
-            _ => {}
+            None => {}
         }
     }
 
@@ -307,8 +355,23 @@ fn promise_catch_impl(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let _on_finally = args.first().cloned().unwrap_or(Value::Undefined);
+    let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
 
+    let current_promise_this = crate::interpreter::get_native_this();
+
+    // Capture the current state and result
+    let (current_state, current_result) = if let Some(Value::Object(ref obj_rc)) = current_promise_this {
+        let obj = obj_rc.borrow();
+        if let Some(ref data) = obj.promise_data {
+            (Some(data.state.clone()), Some(data.result.clone()))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    // Create new promise with Promise prototype
     let promise_proto = get_promise_proto();
     let new_promise = Object::with_prototype(ObjectKind::Promise, Rc::clone(&promise_proto));
     let new_promise_rc = Rc::new(RefCell::new(new_promise));
@@ -317,14 +380,40 @@ fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
         obj.promise_data = Some(PromiseObjectData::new());
     }
 
-    let current_promise_this = crate::interpreter::get_native_this();
-    if let Some(Value::Object(ref obj_rc)) = current_promise_this {
-        let obj = obj_rc.borrow();
-        if let Some(ref data) = obj.promise_data {
+    // Call the finally callback if it's a function
+    // If it throws, reject the new promise with that error
+    // Otherwise, copy the original state/result to the new promise
+    if matches!(on_finally, Value::Function(_) | Value::NativeFunction(_)) {
+        let result = call_value_with_this(on_finally.clone(), vec![], Value::Undefined);
+        match result {
+            Err(e) => {
+                // finally callback threw, reject the new promise
+                {
+                    let mut new_data = new_promise_rc.borrow_mut();
+                    if let Some(ref mut nd) = new_data.promise_data {
+                        nd.reject(Value::String(e.to_string()));
+                    }
+                }
+                return Ok(Value::Object(new_promise_rc));
+            }
+            Ok(_) => {
+                // finally callback succeeded, copy original state/result
+                if let (Some(state), Some(result)) = (current_state, current_result) {
+                    let mut new_data = new_promise_rc.borrow_mut();
+                    if let Some(ref mut nd) = new_data.promise_data {
+                        nd.state = state;
+                        nd.result = result;
+                    }
+                }
+            }
+        }
+    } else {
+        // No callback or non-function, just copy state/result
+        if let (Some(state), Some(result)) = (current_state, current_result) {
             let mut new_data = new_promise_rc.borrow_mut();
             if let Some(ref mut nd) = new_data.promise_data {
-                nd.state = data.state.clone();
-                nd.result = data.result.clone();
+                nd.state = state;
+                nd.result = result;
             }
         }
     }

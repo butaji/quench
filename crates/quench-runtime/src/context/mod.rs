@@ -77,6 +77,20 @@ impl Context {
         self.set_global("exports".to_string(), Value::Object(Rc::clone(&exports_rc)));
         self.set_global("module".to_string(), Value::Object(module_obj));
 
+        // ES Module cache for import/export support
+        let module_cache = Object::new(ObjectKind::Ordinary);
+        let module_cache_rc = Rc::new(RefCell::new(module_cache));
+        self.set_global("__quench_modules__".to_string(), Value::Object(Rc::clone(&module_cache_rc)));
+        
+        // Also expose on globalThis for ES module resolution
+        let global_obj = self.get_global("globalThis")
+            .and_then(|g| {
+                if let Value::Object(o) = g { Some(o) } else { None }
+            });
+        if let Some(global_obj) = global_obj {
+            global_obj.borrow_mut().set("__quench_modules__", Value::Object(Rc::clone(&module_cache_rc)));
+        }
+
         // JavaScript globals - globalThis is the global object itself
         let global_obj = Object::new(ObjectKind::Global);
         let global_obj = Rc::new(RefCell::new(global_obj));
@@ -284,6 +298,25 @@ impl Context {
             self.eval_stack_machine(&source)?;
         }
         Ok(())
+    }
+
+    /// Register a module's exports for ES module import resolution.
+    /// This is useful for testing ES modules without a file system.
+    pub fn register_module(&mut self, path: &str, exports: Object) {
+        let cache = self.get_global("__quench_modules__");
+        if let Some(Value::Object(cache_obj)) = cache {
+            cache_obj.borrow_mut().set(path, Value::Object(Rc::new(RefCell::new(exports))));
+        }
+    }
+
+    /// Get a registered module's exports.
+    pub fn get_module(&self, path: &str) -> Option<Value> {
+        let cache = self.get_global("__quench_modules__")?;
+        if let Value::Object(cache_obj) = cache {
+            cache_obj.borrow().get(path)
+        } else {
+            None
+        }
     }
 }
 
