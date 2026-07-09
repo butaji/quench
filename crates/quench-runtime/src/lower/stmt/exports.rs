@@ -1,10 +1,12 @@
 //! Export and import lowering functions
 
 use swc_ecma_ast as swc;
+use crate::ast::Param;
 use crate::ast::{Expression, PropertyKey, Statement};
 use crate::lower::expr::lower_expr;
 use crate::lower::helpers::{atom_to_string, wtf8_atom_to_string};
 
+use super::declarations::lower_param_decl;
 use super::lower_stmt;
 
 /// Lower a swc ModuleDecl to a Statement
@@ -120,12 +122,7 @@ fn lower_export_default_decl(export_decl: &swc::ExportDefaultDecl) -> Option<Sta
             let name = func_expr.ident.as_ref()
                 .map(|i| i.sym.to_string())
                 .unwrap_or_else(|| "default".to_string());
-            let params = func_expr.function.params.iter().map(|p| {
-                match &p.pat {
-                    swc::Pat::Ident(ident) => ident.id.sym.to_string(),
-                    _ => "".to_string(),
-                }
-            }).collect();
+            let params: Vec<Param> = func_expr.function.params.iter().map(|p| lower_param_decl(&p.pat)).collect();
             let body = func_expr.function.body.as_ref()
                 .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();

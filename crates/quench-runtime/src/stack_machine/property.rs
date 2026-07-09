@@ -192,7 +192,7 @@ pub fn apply_object_property(
         }
         ObjectPropertyKind::Setter => {
             if let Value::Function(f) = value {
-                obj.set_setter(&key, f.params.first().cloned().unwrap_or_default(), Rc::clone(&f.body), frame_env);
+                obj.set_setter(&key, f.params.first().map(|p| p.name.clone()).unwrap_or_default(), Rc::clone(&f.body), frame_env);
             }
         }
     }

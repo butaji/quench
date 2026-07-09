@@ -53,7 +53,7 @@ fn call_js_function(
 
     for (i, param) in params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
+        call_env.define(param.name.clone(), arg);
     }
 
     // Create arguments object for non-arrow functions

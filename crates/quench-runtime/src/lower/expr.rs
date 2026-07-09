@@ -2,7 +2,7 @@
 
 use swc_ecma_ast as swc;
 use crate::ast::{
-    ArrowBody, BinaryOp, Class, ClassMember, Expression, PropertyKey, PropertyValue, UpdateOp,
+    ArrowBody, BinaryOp, Class, ClassMember, Expression, Param, PropertyKey, PropertyValue, UpdateOp,
 };
 use super::helpers::{
     lower_bin_op, lower_unary_op, assign_op_to_bin, lower_prop_name,
@@ -80,12 +80,7 @@ fn lower_object_expr(obj: &swc::ObjectLit) -> Result<Expression, LowerError> {
 
 fn lower_fn_expr(func: &swc::FnExpr) -> Result<Expression, LowerError> {
     let name = func.ident.as_ref().map(|i| atom_to_string(&i.sym));
-    let params = func.function.params.iter().map(|p| {
-        match &p.pat {
-            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-            _ => "arg".to_string(),
-        }
-    }).collect();
+    let params: Vec<Param> = func.function.params.iter().map(|p| lower_param(&p.pat)).collect();
     let body = func.function.body.as_ref()
         .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
         .unwrap_or_default();
@@ -93,12 +88,7 @@ fn lower_fn_expr(func: &swc::FnExpr) -> Result<Expression, LowerError> {
 }
 
 fn lower_arrow_expr(arrow: &swc::ArrowExpr) -> Result<Expression, LowerError> {
-    let params: Vec<String> = arrow.params.iter().map(|p| {
-        match p {
-            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-            _ => "arg".to_string(),
-        }
-    }).collect();
+    let params: Vec<Param> = arrow.params.iter().map(|p| lower_param(p)).collect();
     let body = match arrow.body.as_ref() {
         swc::BlockStmtOrExpr::BlockStmt(block) => {
             ArrowBody::Block(std::rc::Rc::new(
@@ -108,6 +98,22 @@ fn lower_arrow_expr(arrow: &swc::ArrowExpr) -> Result<Expression, LowerError> {
         swc::BlockStmtOrExpr::Expr(expr) => ArrowBody::Expression(lower_expr(expr)?),
     };
     Ok(Expression::ArrowFunction { params, body: Box::new(body) })
+}
+
+/// Lower a parameter pattern, extracting default values
+fn lower_param(pat: &swc::Pat) -> Param {
+    match pat {
+        swc::Pat::Ident(ident) => Param::new(&atom_to_string(&ident.id.sym)),
+        swc::Pat::Assign(assign) => {
+            let name = match assign.left.as_ref() {
+                swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+                _ => "arg".to_string(),
+            };
+            let default = lower_expr(&assign.right).ok().map(Box::new);
+            Param { name, default }
+        }
+        _ => Param::new("arg"),
+    }
 }
 
 fn lower_yield_expr(yield_expr: &swc::YieldExpr) -> Result<Expression, LowerError> {

@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::ast::{ArrowBody, Statement};
+use crate::ast::{ArrowBody, Param, Statement};
 use crate::env::Environment;
 use crate::value::error::JsError;
 use crate::value::object::Object;
@@ -28,8 +28,8 @@ type NativeFn = std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>;
 pub struct ValueFunction {
     /// Function name (for toString and debugging)
     pub name: Option<String>,
-    /// Parameter names
-    pub params: Vec<String>,
+    /// Parameter list with optional defaults
+    pub params: Vec<Param>,
     /// Function body (for regular functions)
     pub body: std::rc::Rc<Vec<Statement>>,
     /// Arrow function body (expression or block)
@@ -60,7 +60,7 @@ impl ValueFunction {
     /// Create a new regular function
     pub fn new(
         name: Option<String>,
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Vec<Statement>,
         closure: Rc<RefCell<Environment>>,
     ) -> Self {
@@ -78,7 +78,7 @@ impl ValueFunction {
     /// Create a new arrow function
     #[allow(clippy::boxed_local)] // Box needed to avoid copying large Expression type
     pub fn new_arrow(
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Box<ArrowBody>,
         closure: Rc<RefCell<Environment>>,
     ) -> Self {

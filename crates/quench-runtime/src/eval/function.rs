@@ -1,6 +1,6 @@
 //! Function calls
 
-use crate::ast::ArrowBody;
+use crate::ast::{ArrowBody, Param};
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::statement::eval_statements;
@@ -70,22 +70,30 @@ fn call_js_function_impl(
     let params = f.params.clone();
     let mut call_env = Environment::with_parent(Rc::clone(&closure));
     call_env.current_scope_mut().set_this(this_val);
+    let call_env_rc = Rc::new(RefCell::new(call_env));
     for (i, param) in params.iter().enumerate() {
-        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
+        let arg = args.get(i).cloned();
+        let value = match arg {
+            Some(Value::Undefined) if param.default.is_some() => {
+                eval_expression(&param.default.as_ref().unwrap(), &call_env_rc)?
+            }
+            Some(v) => v,
+            None if param.default.is_some() => eval_expression(&param.default.as_ref().unwrap(), &call_env_rc)?,
+            None => Value::Undefined,
+        };
+        call_env_rc.borrow_mut().define(param.name.clone(), value);
     }
     // Create arguments object for non-arrow functions
     if !f.is_arrow {
         let args_obj = create_arguments_object(&f, args);
-        call_env.define("arguments".to_string(), args_obj);
-        predeclare_var(&f.body, &mut call_env);
-        predeclare_let_const(&f.body, &mut call_env);
+        call_env_rc.borrow_mut().define("arguments".to_string(), args_obj);
+        predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
+        predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
     }
-    let call_env = Rc::new(RefCell::new(call_env));
     if f.is_arrow {
-        call_arrow_body(&f, &call_env)
+        call_arrow_body(&f, &call_env_rc)
     } else {
-        eval_statements(&f.body, &call_env, false)
+        eval_statements(&f.body, &call_env_rc, false)
     }
 }
 
@@ -280,9 +288,10 @@ fn create_class_prototype(
     // Add methods to prototype
     let closure = Rc::new(RefCell::new(Environment::new()));
     for (name, params, body) in &class.methods {
+        let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
         let func = ValueFunction::new(
             Some(prop_key_to_string(name)),
-            params.clone(),
+            params_vec,
             body.clone(),
             Rc::clone(&closure),
         );
