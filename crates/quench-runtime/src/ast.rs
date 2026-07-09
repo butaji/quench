@@ -51,6 +51,29 @@ pub enum Statement {
     Throw(Box<Expression>),
 }
 
+impl Statement {
+    /// Returns true if this statement (or any statement reachable from it)
+    /// contains an explicit `return`. Does NOT recurse into nested function
+    /// declarations, because their returns belong to those functions.
+    pub fn has_explicit_return(&self) -> bool {
+        match self {
+            Statement::Return(_) => true,
+            Statement::Block(stmts) => stmts.iter().any(Statement::has_explicit_return),
+            Statement::If { consequent, alternate, .. } => {
+                consequent.has_explicit_return()
+                    || alternate.as_ref().map_or(false, |a| a.has_explicit_return())
+            }
+            Statement::While { body, .. } => body.has_explicit_return(),
+            Statement::For { body, .. } => body.has_explicit_return(),
+            Statement::TryCatch { body, handler, .. } => {
+                body.has_explicit_return() || handler.has_explicit_return()
+            }
+            // Do not recurse into nested function declarations
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
     Expression(Box<Expression>),
@@ -128,7 +151,7 @@ pub enum PropertyKey {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArrowBody {
     Expression(Expression),
-    Block(Vec<Statement>),
+    Block(std::rc::Rc<Vec<Statement>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

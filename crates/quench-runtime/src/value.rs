@@ -7,10 +7,13 @@
 //! - Functions have interior mutability (RefCell) for prototype caching
 //! - Values are immutable reference-counted handles
 
-use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
+
+use indexmap::IndexMap;
+
+use crate::arena::ObjectId;
 
 // =============================================================================
 // Value - The core runtime type
@@ -27,6 +30,8 @@ pub enum Value {
     String(String),
     /// Objects are reference-counted with interior mutability
     Object(Rc<RefCell<Object>>),
+    /// Arena-resident object handles used by the shadow-tree path
+    ObjectId(ObjectId),
     /// Functions hold their closure environment and have cached prototypes
     Function(ValueFunction),
     /// Native functions (host functions) are Arc-wrapped closures
@@ -45,6 +50,7 @@ impl PartialEq for Value {
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
+            (Value::ObjectId(a), Value::ObjectId(b)) => a == b,
             _ => false,
         }
     }
@@ -83,14 +89,14 @@ pub struct Getter {
 /// Getter storage in object - stores body directly (closure is created at call time)
 #[derive(Debug, Clone)]
 pub struct GetterStorage {
-    pub body: Vec<crate::ast::Statement>,
+    pub body: std::rc::Rc<Vec<crate::ast::Statement>>,
 }
 
 /// Setter storage in object
 #[derive(Debug, Clone)]
 pub struct SetterStorage {
     pub param: String,
-    pub body: Vec<crate::ast::Statement>,
+    pub body: std::rc::Rc<Vec<crate::ast::Statement>>,
     /// Closure environment at the time the object was created
     pub closure: std::rc::Rc<std::cell::RefCell<crate::env::Environment>>,
 }
@@ -104,11 +110,11 @@ pub struct Setter {
 }
 
 /// JavaScript object with prototype chain support.
-/// Uses HashMap for properties and Vec for array elements.
+/// Uses IndexMap for insertion-ordered properties and Vec for array elements.
 #[derive(Debug, Clone)]
 pub struct Object {
-    /// Own properties of the object
-    pub properties: HashMap<String, Value>,
+    /// Own properties of the object (insertion-ordered)
+    pub properties: IndexMap<String, Value>,
     /// Array elements (for dense arrays)
     pub elements: Vec<Value>,
     /// Kind of object for special behavior
@@ -116,33 +122,33 @@ pub struct Object {
     /// Prototype object for inheritance chain (or null for end of chain)
     pub prototype: Option<Rc<RefCell<Object>>>,
     /// Getter functions for properties (stores body for later evaluation)
-    getters: HashMap<String, GetterStorage>,
+    getters: IndexMap<String, GetterStorage>,
     /// Setter functions for properties
-    setters: HashMap<String, SetterStorage>,
+    setters: IndexMap<String, SetterStorage>,
 }
 
 impl Object {
     /// Create a new ordinary object with no prototype
     pub fn new(kind: ObjectKind) -> Self {
         Object {
-            properties: HashMap::new(),
+            properties: IndexMap::new(),
             elements: Vec::new(),
             kind,
             prototype: None,
-            getters: HashMap::new(),
-            setters: HashMap::new(),
+            getters: IndexMap::new(),
+            setters: IndexMap::new(),
         }
     }
 
     /// Create a new object with a specific prototype
     pub fn with_prototype(kind: ObjectKind, prototype: Rc<RefCell<Object>>) -> Self {
         Object {
-            properties: HashMap::new(),
+            properties: IndexMap::new(),
             elements: Vec::new(),
             kind,
             prototype: Some(prototype),
-            getters: HashMap::new(),
-            setters: HashMap::new(),
+            getters: IndexMap::new(),
+            setters: IndexMap::new(),
         }
     }
 
@@ -187,14 +193,14 @@ impl Object {
     }
 
     /// Set a getter function for a property (stores body for later evaluation)
-    pub fn set_getter(&mut self, key: &str, body: Vec<crate::ast::Statement>) {
+    pub fn set_getter(&mut self, key: &str, body: std::rc::Rc<Vec<crate::ast::Statement>>) {
         self.getters.insert(key.to_string(), GetterStorage {
             body,
         });
     }
 
     /// Set a setter function for a property
-    pub fn set_setter(&mut self, key: &str, param: String, body: Vec<crate::ast::Statement>, closure: std::rc::Rc<std::cell::RefCell<crate::env::Environment>>) {
+    pub fn set_setter(&mut self, key: &str, param: String, body: std::rc::Rc<Vec<crate::ast::Statement>>, closure: std::rc::Rc<std::cell::RefCell<crate::env::Environment>>) {
         self.setters.insert(key.to_string(), SetterStorage {
             param,
             body,
@@ -222,13 +228,44 @@ impl Object {
         self.setters.get(key)
     }
 
-    /// Get all property keys (own properties only, including getters/setters)
+    /// Get all property keys (own properties only, including getters/setters).
+    ///
+    /// Order follows the JavaScript [[OwnPropertyKeys]] convention:
+    /// 1. Numeric string keys (array indices) sorted numerically ascending.
+    /// 2. Non-numeric string keys in insertion order.
+    /// 3. Getter/setter keys in insertion order.
     pub fn own_keys(&self) -> Vec<String> {
-        let mut keys: Vec<String> = self.properties.keys().cloned().collect();
-        keys.extend(self.getters.keys().cloned());
-        keys.extend(self.setters.keys().cloned());
-        keys.sort();
-        keys.dedup();
+        let mut numeric: Vec<String> = Vec::new();
+        let mut non_numeric: Vec<String> = Vec::new();
+
+        for key in self.properties.keys() {
+            if key.parse::<usize>().is_ok() {
+                numeric.push(key.clone());
+            } else {
+                non_numeric.push(key.clone());
+            }
+        }
+
+        numeric.sort_by(|a, b| {
+            let ai = a.parse::<usize>().unwrap();
+            let bi = b.parse::<usize>().unwrap();
+            ai.cmp(&bi)
+        });
+
+        let mut keys = numeric;
+        keys.extend(non_numeric);
+
+        for key in self.getters.keys() {
+            if !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+        for key in self.setters.keys() {
+            if !keys.contains(key) && !self.getters.contains_key(key) {
+                keys.push(key.clone());
+            }
+        }
+
         keys
     }
 
@@ -249,7 +286,7 @@ impl Object {
 
     /// Delete own property
     pub fn delete(&mut self, key: &str) -> bool {
-        self.properties.remove(key).is_some()
+        self.properties.shift_remove(key).is_some()
     }
 }
 
@@ -266,10 +303,11 @@ pub struct ValueFunction {
     pub name: Option<String>,
     /// Parameter names
     pub params: Vec<String>,
-    /// Function body (for regular functions)
-    pub body: Vec<crate::ast::Statement>,
-    /// Arrow function body (expression or block)
-    pub arrow_body: Option<Box<crate::ast::ArrowBody>>,
+    /// Function body (for regular functions). Stored in an Rc so the explicit-stack
+    /// interpreter can share it across work items without cloning.
+    pub body: std::rc::Rc<Vec<crate::ast::Statement>>,
+    /// Arrow function body (expression or block). Stored in an Rc for the same reason.
+    pub arrow_body: std::rc::Rc<Option<crate::ast::ArrowBody>>,
     /// Closure environment - variables visible in this scope
     pub closure: Rc<RefCell<crate::env::Environment>>,
     /// Whether this is an arrow function (doesn't bind its own 'this')
@@ -287,8 +325,8 @@ impl Clone for ValueFunction {
         ValueFunction {
             name: self.name.clone(),
             params: self.params.clone(),
-            body: self.body.clone(),
-            arrow_body: self.arrow_body.clone(),
+            body: Rc::clone(&self.body),
+            arrow_body: Rc::clone(&self.arrow_body),
             closure: Rc::clone(&self.closure),
             is_arrow: self.is_arrow,
             // Share the proto_cell - both functions should point to the same
@@ -310,8 +348,8 @@ impl ValueFunction {
         ValueFunction {
             name,
             params,
-            body,
-            arrow_body: None,
+            body: Rc::new(body),
+            arrow_body: Rc::new(None),
             closure,
             is_arrow: false,
             proto_cell: Rc::new(RefCell::new(None)),
@@ -327,8 +365,8 @@ impl ValueFunction {
         ValueFunction {
             name: None,
             params,
-            body: Vec::new(),
-            arrow_body: Some(body),
+            body: Rc::new(Vec::new()),
+            arrow_body: Rc::new(Some(*body)),
             closure,
             is_arrow: true,
             proto_cell: Rc::new(RefCell::new(None)),
@@ -522,6 +560,7 @@ pub fn to_js_string(v: &Value) -> String {
                 _ => "[object Object]".to_string(),
             }
         }
+        Value::ObjectId(_) => "[object Object]".to_string(),
         Value::Function(_) => "[Function]".to_string(),
         Value::NativeFunction(_) => "[Function]".to_string(),
         Value::NativeConstructor(_) => "[Function]".to_string(),
@@ -536,7 +575,7 @@ pub fn to_bool(v: &Value) -> bool {
         Value::Boolean(b) => *b,
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
-        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
+        Value::Object(_) | Value::ObjectId(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
         Value::Symbol(_) => false,
     }
 }
@@ -578,6 +617,7 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Number(ai), Value::Number(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::ObjectId(ai), Value::ObjectId(bi)) => ai == bi,
         // Functions are compared by reference (same closure)
         (Value::Function(ai), Value::Function(bi)) => Rc::ptr_eq(&ai.closure, &bi.closure),
         // Native functions are compared by reference
@@ -613,6 +653,8 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
             Value::String(s) => Value::String(s.clone()),
             // Symbol stays as-is
             Value::Symbol(s) => Value::Symbol(s.clone()),
+            // Arena object handles are represented by their object string
+            Value::ObjectId(_) => Value::String("[object Object]".to_string()),
             // Objects need conversion
             Value::Object(obj) => {
                 // Try valueOf first
@@ -696,6 +738,14 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
         (other, Value::Boolean(bv)) => {
             let num = if *bv { 1.0 } else { 0.0 };
             return loose_eq(other, &Value::Number(num));
+        }
+        _ => {}
+    }
+
+    // ObjectId values cannot be compared to primitives without arena access.
+    match (a, b) {
+        (Value::ObjectId(_), other) | (other, Value::ObjectId(_)) if !matches!(other, Value::ObjectId(_) | Value::Object(_)) => {
+            return false;
         }
         _ => {}
     }
@@ -803,9 +853,49 @@ pub fn to_primitive(value: &Value, hint: Option<&str>) -> Value {
             // Fallback: use to_js_string
             Value::String(to_js_string(value))
         }
+        // Arena object handles become their object string without arena access
+        Value::ObjectId(_) => Value::String("[object Object]".to_string()),
         // For functions, return them as-is (can't convert to primitive)
         Value::Function(_) => Value::String("[Function]".to_string()),
         Value::NativeFunction(_) => Value::String("[Function]".to_string()),
         Value::NativeConstructor(_) => Value::String("[Function]".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_object_keys_insertion_order() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.set("a", Value::Number(1.0));
+        obj.set("b", Value::Number(2.0));
+        obj.set("c", Value::Number(3.0));
+        assert_eq!(obj.own_keys(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_object_keys_delete_readd_moves_to_end() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.set("a", Value::Number(1.0));
+        obj.set("b", Value::Number(2.0));
+        obj.set("c", Value::Number(3.0));
+        obj.delete("b");
+        obj.set("b", Value::Number(4.0));
+        assert_eq!(obj.own_keys(), vec!["a", "c", "b"]);
+    }
+
+    #[test]
+    fn test_object_keys_numeric_first() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        // Insert directly into properties so numeric keys are not treated as
+        // array indices (which would also create a "length" property).
+        obj.properties.insert("c".to_string(), Value::Number(1.0));
+        obj.properties.insert("10".to_string(), Value::Number(2.0));
+        obj.properties.insert("a".to_string(), Value::Number(3.0));
+        obj.properties.insert("2".to_string(), Value::Number(4.0));
+        obj.properties.insert("b".to_string(), Value::Number(5.0));
+        assert_eq!(obj.own_keys(), vec!["2", "10", "c", "a", "b"]);
     }
 }

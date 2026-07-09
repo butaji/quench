@@ -2,7 +2,7 @@
 
 # Task 323: Make object property enumeration insertion-ordered
 
-## Status: PENDING
+## Status: COMPLETED
 
 ## Problem
 
@@ -10,13 +10,23 @@ Properties are stored in `HashMap`, whose iteration order is unspecified. ECMA-2
 
 ## Fix
 
-Replace `HashMap<String, Value>` for own properties with `IndexMap` (or maintain an insertion-order list alongside the map).
+Replaced `HashMap<String, Value>` for own properties with `IndexMap` in `crates/quench-runtime/src/value.rs`. Numeric keys are still sorted first per spec.
 
 ## Acceptance criteria
 
-- [ ] `Object.keys({a:1, b:2, c:3})` returns `["a","b","c"]`.
-- [ ] Deleting and re-adding a key moves it to the end.
-- [ ] Regression tests and fixtures added.
+- [x] `Object.keys({a:1, b:2, c:3})` returns `["a","b","c"]`.
+- [x] Deleting and re-adding a key moves it to the end.
+- [x] Regression tests and fixtures added (`value::tests::test_object_keys_insertion_order`, `test_object_keys_delete_readd_moves_to_end`, `test_object_keys_numeric_first`).
+
+## Verification
+
+```bash
+cargo test -p quench-runtime --lib value::tests::test_object_keys_insertion_order
+cargo test -p quench-runtime --lib value::tests::test_object_keys_delete_readd_moves_to_end
+cargo test -p quench-runtime --lib value::tests::test_object_keys_numeric_first
+```
+
+Expected: all pass.
 
 ## Files
 

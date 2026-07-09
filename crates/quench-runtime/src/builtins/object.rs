@@ -1,5 +1,5 @@
 // linter-skip
-#![allow(clippy::too_many_lines, clippy::function_body_length, clippy::complexity)]
+#![allow(clippy::too_many_lines, clippy::complexity)]
 //! Object built-in
 
 use std::cell::RefCell;
@@ -29,8 +29,9 @@ pub fn register_object(ctx: &mut Context) {
     object.borrow_mut().set("keys", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let obj = args.first().ok_or_else(|| JsError::from("Object.keys requires argument"))?;
         if let Value::Object(o) = obj {
-            let keys: Vec<Value> = o.borrow().properties.keys()
-                .map(|k| Value::String(k.clone()))
+            let keys: Vec<Value> = o.borrow().own_keys()
+                .into_iter()
+                .map(Value::String)
                 .collect();
             Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(keys)))))
         } else {
@@ -41,7 +42,11 @@ pub fn register_object(ctx: &mut Context) {
     object.borrow_mut().set("values", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let obj = args.first().ok_or_else(|| JsError::from("Object.values requires argument"))?;
         if let Value::Object(o) = obj {
-            let values: Vec<Value> = o.borrow().properties.values().cloned().collect();
+            let obj = o.borrow();
+            let values: Vec<Value> = obj.own_keys()
+                .into_iter()
+                .map(|k| obj.get(&k).unwrap_or(Value::Undefined))
+                .collect();
             Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(values)))))
         } else {
             Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))))
@@ -51,10 +56,12 @@ pub fn register_object(ctx: &mut Context) {
     object.borrow_mut().set("entries", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let obj = args.first().ok_or_else(|| JsError::from("Object.entries requires argument"))?;
         if let Value::Object(o) = obj {
-            let entries: Vec<Value> = o.borrow().properties.iter()
-                .map(|(k, v)| Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
+            let obj = o.borrow();
+            let entries: Vec<Value> = obj.own_keys()
+                .into_iter()
+                .map(|k| Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
                     Value::String(k.clone()),
-                    v.clone()
+                    obj.get(&k).unwrap_or(Value::Undefined)
                 ])))))
                 .collect();
             Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(entries)))))

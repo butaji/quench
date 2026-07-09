@@ -4,6 +4,7 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ast::*;
 use crate::value::{Value, JsError, Object, ObjectKind, ValueFunction, NativeFunction, to_js_string, to_bool, to_number, strict_eq, loose_eq};
@@ -11,7 +12,7 @@ use crate::env::Environment;
 
 /// Control flow for break/continue statements
 #[derive(Debug, Clone, Copy)]
-enum ControlFlow {
+pub(crate) enum ControlFlow {
     Break,
     Continue,
 }
@@ -22,12 +23,12 @@ thread_local! {
 }
 
 /// Set the control flow flag
-fn set_control_flow(cf: ControlFlow) {
+pub(crate) fn set_control_flow(cf: ControlFlow) {
     CONTROL_FLOW.with(|cell| cell.set(Some(cf)));
 }
 
 /// Get and clear the control flow flag
-fn take_control_flow() -> Option<ControlFlow> {
+pub(crate) fn take_control_flow() -> Option<ControlFlow> {
     CONTROL_FLOW.with(|cell| cell.take())
 }
 
@@ -54,16 +55,18 @@ thread_local! {
 }
 
 // Global counter for recursion depth (simpler than thread-local for this use case)
-use std::sync::atomic::{AtomicUsize, Ordering};
-static CURRENT_DEPTH: AtomicUsize = AtomicUsize::new(0);
+// Thread-local depth tracking - each thread has independent recursion depth
+thread_local! {
+    static CURRENT_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 /// Set the current "this" binding for native function calls
-pub fn set_native_this(this_val: Value) {
+pub(crate) fn set_native_this(this_val: Value) {
     CURRENT_THIS.with(|cell| cell.set(Some(this_val)));
 }
 
 /// Get the current "this" binding for native function calls
-pub fn get_native_this() -> Option<Value> {
+pub(crate) fn get_native_this() -> Option<Value> {
     CURRENT_THIS.with(|cell| cell.take())
 }
 
@@ -72,10 +75,14 @@ pub fn get_native_this() -> Option<Value> {
 /// MUST call release_depth() to decrement. On success, caller also calls
 /// release_depth() when done.
 fn check_depth() -> Result<(), JsError> {
-    let depth = CURRENT_DEPTH.fetch_add(1, Ordering::SeqCst);
+    let depth = CURRENT_DEPTH.with(|cell| {
+        let d = cell.get();
+        cell.set(d + 1);
+        d
+    });
     if depth >= get_max_depth() {
-        // DO NOT decrement here - caller must call release_depth()
-        // This allows caller to always release on both success and error paths
+        // Decrement since we incremented
+        CURRENT_DEPTH.with(|cell| cell.set(cell.get().saturating_sub(1)));
         Err(JsError("Maximum call stack size exceeded".to_string()))
     } else {
         Ok(())
@@ -84,12 +91,12 @@ fn check_depth() -> Result<(), JsError> {
 
 /// Decrement depth when returning from a recursive call
 fn release_depth() {
-    CURRENT_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    CURRENT_DEPTH.with(|cell| cell.set(cell.get().saturating_sub(1)));
 }
 
 /// Reset depth counter (call before evaluating a new top-level script)
 pub fn reset_depth() {
-    CURRENT_DEPTH.store(0, Ordering::SeqCst);
+    CURRENT_DEPTH.with(|cell| cell.set(0));
 }
 
 /// Evaluate a complete program with hoisting
@@ -99,8 +106,14 @@ pub fn eval_program(program: &Program, env: &mut Rc<RefCell<Environment>>) -> Re
             // First pass: hoist function declarations
             hoist_functions(statements, env);
             
-            // Second pass: execute statements (global scope has undefined as "this")
-            set_this_binding(env, Value::Undefined);
+            // First pass also: pre-declare let/const in TDZ
+            predeclare_let_const(statements, &mut env.borrow_mut());
+            
+            // Second pass: execute statements
+            // At global level, "this" should be the global object (globalThis)
+            let global_this = env.borrow().get("globalThis")
+                .unwrap_or(Value::Undefined);
+            set_this_binding(env, global_this);
             let mut last_value = Value::Undefined;
             for stmt in statements {
                 last_value = eval_statement(stmt, env, false)?;
@@ -111,13 +124,13 @@ pub fn eval_program(program: &Program, env: &mut Rc<RefCell<Environment>>) -> Re
 }
 
 /// Set the "this" binding in the current scope
-fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value) {
+pub(crate) fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value) {
     // Store "this" in the innermost scope
     env.borrow_mut().current_scope_mut().set_this(this_value);
 }
 
 /// Get the current "this" binding
-fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
+pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
     for scope in env.borrow().scopes.iter().rev() {
         if let Some(this_val) = scope.get_this() {
             return this_val;
@@ -129,22 +142,22 @@ fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
 /// Hoist function declarations to the top of the scope
 /// Only creates functions that don't already exist (to avoid overwriting hoisted functions
 /// with newly created ones during normal execution).
-fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
+pub(crate) fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
     for stmt in statements {
         match stmt {
             Statement::FunctionDeclaration { name, params, body } => {
-                // Only create if not already defined (to avoid overwriting hoisted functions)
-                if !env.borrow().has(name) {
-                    let func = ValueFunction::new(
-                        Some(name.clone()),
-                        params.clone(),
-                        body.clone(),
-                        Rc::clone(env),
-                    );
-                    env.borrow_mut().define(name.clone(), Value::Function(func));
-                } else {
-                    // Already defined, skip (was hoisted)
-                }
+                // Always define/overwrite. This ensures that duplicate function
+                // declarations in the same scope use the last declaration, and
+                // that a later script evaluated in the same global scope can
+                // override functions defined by an earlier script (e.g. user
+                // code overriding runtime.js builtins).
+                let func = ValueFunction::new(
+                    Some(name.clone()),
+                    params.clone(),
+                    body.clone(),
+                    Rc::clone(env),
+                );
+                env.borrow_mut().define(name.clone(), Value::Function(func));
             }
             Statement::Block(stmts) => {
                 // Recursively hoist in nested blocks
@@ -164,6 +177,96 @@ fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
             }
             _ => {}
         }
+    }
+}
+
+/// Collect var declaration names from the statement list for hoisting.
+/// Does NOT recurse into nested functions.
+pub(crate) fn collect_var_names(stmts: &[Statement]) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_var_names_recursive(stmts, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+pub(crate) fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDeclaration { kind: VarKind::Var, name, .. } => {
+                names.push(name.clone());
+            }
+            // Recurse into block statements
+            Statement::Block(inner_stmts) => {
+                collect_var_names_recursive(inner_stmts, names);
+            }
+            // If/while/for statements - collect from their bodies
+            Statement::If { consequent, alternate, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(consequent.as_ref()), names);
+                if let Some(alt) = alternate {
+                    collect_var_names_recursive(std::slice::from_ref(alt.as_ref()), names);
+                }
+            }
+            Statement::While { body, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+            }
+            Statement::For { body, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+            }
+            Statement::TryCatch { body, handler, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+                collect_var_names_recursive(std::slice::from_ref(handler.as_ref()), names);
+            }
+            // Do NOT recurse into FunctionDeclaration or FunctionExpression
+            _ => {}
+        }
+    }
+}
+
+/// Collect let/const declaration names for TDZ enforcement.
+/// Returns declarations grouped by scope level.
+pub(crate) fn collect_let_const_declarations(stmts: &[Statement]) -> Vec<(String, VarKind)> {
+    let mut decls = Vec::new();
+    collect_let_const_recursive(stmts, &mut decls);
+    // Sort and dedup - later declarations shadow earlier ones
+    decls.sort_by(|a, b| a.0.cmp(&b.0));
+    decls.dedup_by(|a, b| a.0 == b.0);
+    decls
+}
+
+pub(crate) fn collect_let_const_recursive(stmts: &[Statement], decls: &mut Vec<(String, VarKind)>) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDeclaration { kind: VarKind::Let, name, .. } => {
+                decls.push((name.clone(), VarKind::Let));
+            }
+            Statement::VarDeclaration { kind: VarKind::Const, name, .. } => {
+                decls.push((name.clone(), VarKind::Const));
+            }
+            // Do NOT recurse into Block, If, While, For, or TryCatch bodies.
+            // let/const are block-scoped, so they must be pre-declared only in
+            // the scope that owns them. Those nested blocks pre-declare their
+            // own let/const when they execute.
+            // Do NOT recurse into FunctionDeclaration or FunctionExpression.
+            _ => {}
+        }
+    }
+}
+
+/// Pre-declare var bindings in the current scope for hoisting.
+pub(crate) fn predeclare_var(stmts: &[Statement], env: &mut Environment) {
+    let names = collect_var_names(stmts);
+    for name in names {
+        env.declare_var(name, VarKind::Var);
+    }
+}
+
+/// Pre-declare let/const bindings in TDZ for the current scope.
+/// This must be called before executing any statements in a scope.
+pub(crate) fn predeclare_let_const(stmts: &[Statement], env: &mut Environment) {
+    let decls = collect_let_const_declarations(stmts);
+    for (name, kind) in decls {
+        env.declare_var(name, kind);
     }
 }
 
@@ -189,8 +292,13 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
     
     let result = match stmt {
         Statement::VarDeclaration { kind, name, init } => {
-            // First, declare the variable (puts it in TDZ for let/const)
-            env.borrow_mut().declare_var(name.clone(), kind.clone());
+            // For var, check if already declared in outer scope (function hoisting).
+            // If so, don't create a new binding in current scope.
+            // For let/const, always declare in current scope (block scoping).
+            let already_declared = *kind == VarKind::Var && env.borrow().has(name);
+            if !already_declared {
+                env.borrow_mut().declare_var(name.clone(), kind.clone());
+            }
             
             // Then initialize it (for all var kinds)
             let value = if let Some(expr) = init {
@@ -199,26 +307,22 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
                 Value::Undefined
             };
             
-            // Check for const reassignment - need to track this differently
-            // For now, just initialize
             env.borrow_mut().initialize_declared(name, value);
             Ok(Value::Undefined)
         }
 
         Statement::FunctionDeclaration { name, params, body } => {
-            // Don't overwrite existing function (from hoisting) - this keeps the hoisted
-            // function's identity, which is important for prototype caching.
-            if !env.borrow().has(name) {
-                let func = ValueFunction::new(
-                    Some(name.clone()),
-                    params.clone(),
-                    body.clone(),
-                    Rc::clone(env),
-                );
-                env.borrow_mut().define(name.clone(), Value::Function(func));
-            } else {
-                // Already defined, skip (was hoisted)
-            }
+            // Define/overwrite the function binding. The function was already
+            // hoisted by hoist_functions, but redefining here ensures the
+            // correct semantics for duplicate declarations and keeps the
+            // binding in sync with the current environment.
+            let func = ValueFunction::new(
+                Some(name.clone()),
+                params.clone(),
+                body.clone(),
+                Rc::clone(env),
+            );
+            env.borrow_mut().define(name.clone(), Value::Function(func));
             Ok(Value::Undefined)
         }
 
@@ -309,6 +413,8 @@ pub fn eval_statement(stmt: &Statement, env: &Rc<RefCell<Environment>>, _is_expr
 
         Statement::Block(stmts) => {
             env.borrow_mut().push_scope();
+            // Pre-scan for let/const declarations to establish TDZ
+            predeclare_let_const(stmts, &mut env.borrow_mut());
             let result = eval_statements(stmts, env, _is_expr_body);
             env.borrow_mut().pop_scope();
             result
@@ -406,11 +512,11 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                     }
                     PropertyValue::Getter { params: _, body } => {
                         // Store the getter body for later evaluation
-                        obj.set_getter(&key_str, body.clone());
+                        obj.set_getter(&key_str, Rc::new(body.clone()));
                     }
                     PropertyValue::Setter { param, body } => {
                         // Store the setter body for later evaluation, with the current closure
-                        obj.set_setter(&key_str, param.clone(), body.clone(), Rc::clone(env));
+                        obj.set_setter(&key_str, param.clone(), Rc::new(body.clone()), Rc::clone(env));
                     }
                 }
             }
@@ -776,6 +882,9 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
                     // Use the function's built-in prototype getter (interior mutability)
                     Some(f.get_prototype())
                 }
+                Value::NativeConstructor(nc) => {
+                    Some(Rc::clone(&nc.prototype))
+                }
                 _ => None,
             };
             
@@ -787,14 +896,20 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
             };
             let new_obj_rc = Rc::new(RefCell::new(new_obj));
             
-            // Call the constructor with "this" bound to the new object
+            // Call the constructor with "this" bound to the new object.
+            // Per ECMAScript [[Construct]]: if the constructor explicitly returns
+            // an object, use that; otherwise use the newly created object.
+            // Native constructors always create and return the object directly.
             let result = call_value_with_this(actual_constructor, args, Value::Object(Rc::clone(&new_obj_rc)))?;
-            
-            // If the constructor returns an object, return that; otherwise return the new object
-            match result {
-                Value::Undefined => Ok(Value::Object(new_obj_rc)),
-                Value::Object(_) => Ok(result),
-                _ => Ok(Value::Object(new_obj_rc)),
+            let use_constructor_result = match &constructor_val {
+                Value::NativeConstructor(_) => true,
+                Value::Function(f) => f.body.iter().any(crate::ast::Statement::has_explicit_return),
+                _ => false,
+            };
+            if use_constructor_result && matches!(result, Value::Object(_)) {
+                Ok(result)
+            } else {
+                Ok(Value::Object(new_obj_rc))
             }
         }
 
@@ -891,7 +1006,7 @@ pub fn eval_expression(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Res
 }
 
 /// Evaluate a binary operator
-fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, JsError> {
+pub(crate) fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, JsError> {
     match op {
         BinaryOp::Add => {
             if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
@@ -1016,7 +1131,7 @@ fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, Js
 }
 
 /// Evaluate a unary operator
-fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
+pub(crate) fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
     match op {
         UnaryOp::Not => Ok(Value::Boolean(!to_bool(val))),
         UnaryOp::Neg => Ok(Value::Number(-to_number(val))),
@@ -1029,7 +1144,7 @@ fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
                 Value::Number(_) => "number",
                 Value::String(_) => "string",
                 Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => "function",
-                Value::Object(_) => "object",
+                Value::Object(_) | Value::ObjectId(_) => "object",
                 Value::Symbol(_) => "symbol",
             };
             Ok(Value::String(type_str.to_string()))
@@ -1043,6 +1158,12 @@ fn assign_to(target: &Expression, value: &Value, env: &Rc<RefCell<Environment>>)
     match target {
         Expression::Identifier(name) => {
             if env.borrow().has(name) {
+                // Check if the variable is const
+                if let Some(kind) = env.borrow().get_kind(name) {
+                    if kind == VarKind::Const {
+                        return Err(JsError("TypeError: Assignment to constant variable".to_string()));
+                    }
+                }
                 env.borrow_mut().set(name, value.clone());
             } else {
                 env.borrow_mut().define(name.clone(), value.clone());
@@ -1223,24 +1344,31 @@ pub fn call_value_with_this(func: Value, args: Vec<Value>, this_val: Value) -> R
                 call_env.define(param.clone(), arg);
             }
             
+            // Hoist var declarations before executing function body
+            if !f.is_arrow {
+                predeclare_var(&f.body, &mut call_env);
+                // Also pre-scan for let/const to establish TDZ
+                predeclare_let_const(&f.body, &mut call_env);
+            }
+            
             let call_env = Rc::new(RefCell::new(call_env));
             
             if f.is_arrow {
                 // Arrow functions don't change "this"
-                if let Some(arrow_body) = &f.arrow_body {
-                    match arrow_body.as_ref() {
+                if let Some(arrow_body) = f.arrow_body.as_ref() {
+                    match arrow_body {
                         ArrowBody::Expression(expr) => {
                             eval_expression(expr, &call_env)
                         }
                         ArrowBody::Block(stmts) => {
-                            eval_statements(stmts, &call_env, true)
+                            eval_statements(&*stmts, &call_env, true)
                         }
                     }
                 } else {
                     Ok(Value::Undefined)
                 }
             } else {
-                eval_statements(&f.body, &call_env, false)
+                eval_statements(&*f.body, &call_env, false)
             }
         }
         Value::NativeFunction(nf) => {
@@ -1311,23 +1439,30 @@ pub fn call_value(func: Value, args: Vec<Value>) -> Result<Value, JsError> {
                 call_env.define(param.clone(), arg);
             }
             
+            // Hoist var declarations before executing function body
+            if !f.is_arrow {
+                predeclare_var(&f.body, &mut call_env);
+                // Also pre-scan for let/const to establish TDZ
+                predeclare_let_const(&f.body, &mut call_env);
+            }
+            
             let call_env = Rc::new(RefCell::new(call_env));
             
             if f.is_arrow {
-                if let Some(arrow_body) = &f.arrow_body {
-                    match arrow_body.as_ref() {
+                if let Some(arrow_body) = f.arrow_body.as_ref() {
+                    match arrow_body {
                         ArrowBody::Expression(expr) => {
                             eval_expression(expr, &call_env)
                         }
                         ArrowBody::Block(stmts) => {
-                            eval_statements(stmts, &call_env, true)
+                            eval_statements(&*stmts, &call_env, true)
                         }
                     }
                 } else {
                     Ok(Value::Undefined)
                 }
             } else {
-                eval_statements(&f.body, &call_env, false)
+                eval_statements(&*f.body, &call_env, false)
             }
         }
         Value::NativeFunction(nf) => {
@@ -1406,7 +1541,7 @@ fn call_setter(
 }
 
 /// Get an iterator for for-of/for-in loops
-fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
+pub(crate) fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
     match value {
         Value::Object(o) => {
             // Check if it's an array
@@ -1456,20 +1591,19 @@ fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
 }
 
 /// Get enumerable property keys for for-in loop
-fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
+pub(crate) fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
     match value {
         Value::Object(o) => {
             let obj = o.borrow();
-            let mut keys: Vec<String> = Vec::new();
-            
-            // Collect own property keys (for simplicity, not using proper enumeration)
-            for key in obj.properties.keys() {
-                keys.push(key.clone());
-            }
+            let mut keys = obj.own_keys();
+            // Dense-array elements created without backing properties (e.g. `new_array_from`)
+            // still need to be enumerable.
             for i in 0..obj.elements.len() {
-                keys.push(i.to_string());
+                let key = i.to_string();
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
             }
-            
             Ok(keys)
         }
         Value::String(s) => {

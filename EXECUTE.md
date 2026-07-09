@@ -1,6 +1,9 @@
 > **Execution contract for the Quench runtime.**
 >
 > Run sub-agents in parallel to move faster on independent tasks.
+> No comments, no guessing, tdd
+> Linter rules. File: 500 lines max, function: 40 lines max, 10 complexity max. All *.rs files, not exceptions.
+> Commit and push after each successful step
 
 # Goal
 

@@ -8,15 +8,17 @@
 
 The JavaScript interpreter is recursive. Deep call chains in `runtime.js` exhaust the native Rust stack before the depth counter catches them.
 
-## Current state (2026-07-08)
+## Current state (2026-07-09)
 
-The examples no longer crash with a stack overflow, but they hit `ReferenceError: Cannot access '...' before initialization` because hoisting/TDZ is not fully correct. That work is tracked in Task 292.
+The examples no longer crash with a stack overflow. Task 292 (var hoisting / TDZ) is now completed, which resolved the earlier `rootId`/`props` initialization errors. The examples now all reach `Root node: Some(1)`.
+
+A remaining `ReferenceError: Cannot access 'inst' before initialization` is still logged during `render: mountTree`, but it no longer prevents the examples from producing a valid root node. That error is separate from hoisting/TDZ and is not a stack-overflow issue.
 
 | Example | Result |
 |---|---|
-| `cargo run -- examples/counter.js` | Logs `ReferenceError: Cannot access 'rootId' before initialization`; returns `Root node: Some(1)` |
-| `cargo run -- examples/use-bridge.tsx --prop theme=dark` | `ReferenceError: Cannot access 'props' before initialization`; `Root node: None` |
-| `cargo run -- examples/animations.tsx` | `ReferenceError: Cannot access 'props' before initialization`; `Root node: None` |
+| `cargo run -- examples/counter.js` | Logs `ReferenceError: Cannot access 'inst' before initialization`; returns `Root node: Some(1)` |
+| `cargo run -- examples/use-bridge.tsx` | Logs `ReferenceError: Cannot access 'inst' before initialization`; returns `Root node: Some(1)` |
+| `cargo run -- examples/animations.tsx` | Logs `ReferenceError: Cannot access 'inst' before initialization`; returns `Root node: Some(1)` |
 
 ## Fix options
 

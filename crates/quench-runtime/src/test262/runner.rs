@@ -348,6 +348,19 @@ pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
     None
 }
 
+/// Assert that a single test262 test file passes.
+pub fn assert_test262_file_passes(path: &Path) {
+    match run_test_file(path) {
+        TestOutcome::Pass => {}
+        TestOutcome::Skip { reason } => {
+            panic!("test262 file skipped: {} ({})", path.display(), reason);
+        }
+        TestOutcome::Fail { error } => {
+            panic!("test262 file failed: {} - {}", path.display(), error);
+        }
+    }
+}
+
 /// Run a single test262 test file with a fresh Context
 /// This prevents state leakage between tests and allows proper cleanup
 pub fn run_test_file(path: &Path) -> TestOutcome {
@@ -452,105 +465,148 @@ pub fn run_test_file(path: &Path) -> TestOutcome {
     }
 }
 
-/// Run the test262 suite over a directory using iterative BFS
-/// This avoids stack overflow from recursive directory traversal
-pub fn run_suite(root: &Path, subset: Option<&str>) -> Result<Test262Report, JsError> {
+/// Collect test262 `.js` files under `root` (optionally scoped to `subset`) in
+/// deterministic lexicographic order. Uses iterative BFS to avoid native-stack
+/// overflow from recursive directory traversal.
+pub fn collect_test_files(root: &Path, subset: Option<&str>) -> Vec<PathBuf> {
     let start_dir = match subset {
         Some(s) => root.join(s),
         None => root.to_path_buf(),
     };
-    
-    eprintln!("Starting walk of {:?}...", start_dir);
-    
-    // Collect all test files first to avoid issues with mutable borrows
+
     let mut test_files: Vec<PathBuf> = Vec::new();
-    
-    // Use BFS with VecDeque to avoid stack overflow from recursive directory traversal
     let mut dirs_to_visit: VecDeque<PathBuf> = VecDeque::new();
     dirs_to_visit.push_back(start_dir.clone());
-    
+
     const MAX_DEPTH: usize = 20;
-    let mut dir_count = 0;
-    let mut file_count = 0;
-    
+
     while let Some(current_dir) = dirs_to_visit.pop_front() {
-        dir_count += 1;
-        if dir_count % 100 == 0 {
-            eprintln!("Scanned {} directories, found {} files so far...", dir_count, file_count);
-        }
-        
-        // Read directory entries
         let entries = match fs::read_dir(&current_dir) {
             Ok(e) => e,
-            Err(e) => {
-                eprintln!("Error reading directory {:?}: {}", current_dir, e);
-                continue;
-            }
+            Err(_) => continue,
         };
-        
+
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            
-            // Check depth (compare path depth to start_dir depth)
-            let depth = path.components().count().saturating_sub(start_dir.components().count());
-            
+            let depth = path
+                .components()
+                .count()
+                .saturating_sub(start_dir.components().count());
+
             if path.is_dir() {
-                // Only recurse if within depth limit
                 if depth < MAX_DEPTH {
                     dirs_to_visit.push_back(path);
                 }
             } else {
-                // Only process .js files
                 if path.extension().and_then(|e| e.to_str()) != Some("js") {
                     continue;
                 }
-                
-                // Skip non-test files
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with(".") || name.contains("_FIXTURE") {
+                    if name.starts_with('.') || name.contains("_FIXTURE") {
                         continue;
                     }
                 }
-                
-                file_count += 1;
                 test_files.push(path);
             }
         }
     }
-    
-    eprintln!("Found {} test files in {} directories", file_count, dir_count);
-    
-    // Process test files one at a time in the current thread
-    // This avoids stack overflow from recursive interpreter + thread overhead
+
+    test_files.sort();
+    test_files
+}
+
+/// Run the test262 suite over a directory using iterative BFS
+/// This avoids stack overflow from recursive directory traversal
+pub fn run_suite(root: &Path, subset: Option<&str>) -> Result<Test262Report, JsError> {
+    let test_files = collect_test_files(root, subset);
+
+    eprintln!("Found {} test files", test_files.len());
+
     let mut all_results: Vec<TestResult> = Vec::new();
-    let mut count = 0;
-    
-    for path in test_files {
-        count += 1;
-        if count % 100 == 0 {
-            eprintln!("Processed {} files...", count);
+
+    for (count, path) in test_files.into_iter().enumerate() {
+        let idx = count + 1;
+        if idx % 100 == 0 {
+            eprintln!("Processed {} files...", idx);
         }
-        
-        // Each test gets a fresh Context to prevent state leakage
+
         let outcome = run_test_file(&path);
-        all_results.push(TestResult {
-            path,
-            outcome,
-        });
+        all_results.push(TestResult { path, outcome });
     }
-    
-    // Compute statistics
+
     let total = all_results.len();
-    let passed = all_results.iter()
+    let passed = all_results
+        .iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Pass))
         .count();
-    let failed = all_results.iter()
+    let failed = all_results
+        .iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Fail { .. }))
         .count();
-    let skipped = all_results.iter()
+    let skipped = all_results
+        .iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Skip { .. }))
         .count();
-    
+
+    Ok(Test262Report {
+        total,
+        passed,
+        failed,
+        skipped,
+        results: all_results,
+    })
+}
+
+/// Run test262 files in deterministic order and stop at the first failure.
+/// Returns the report up to that point, or an error describing the first
+/// failing file so the caller can turn it into a regression test.
+pub fn run_suite_stop_on_fail(
+    root: &Path,
+    subset: Option<&str>,
+) -> Result<Test262Report, JsError> {
+    let test_files = collect_test_files(root, subset);
+
+    eprintln!(
+        "Running {} test files in deterministic order (stop on first failure)...",
+        test_files.len()
+    );
+
+    let mut all_results: Vec<TestResult> = Vec::new();
+
+    for (count, path) in test_files.into_iter().enumerate() {
+        let idx = count + 1;
+        if idx % 100 == 0 {
+            eprintln!("Processed {} files...", idx);
+        }
+
+        let outcome = run_test_file(&path);
+
+        if let TestOutcome::Fail { ref error } = outcome {
+            let msg = format!("{} failed: {}", path.display(), error);
+            all_results.push(TestResult {
+                path: path.clone(),
+                outcome,
+            });
+            return Err(JsError(msg));
+        }
+
+        all_results.push(TestResult { path, outcome });
+    }
+
+    let total = all_results.len();
+    let passed = all_results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Pass))
+        .count();
+    let failed = all_results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Fail { .. }))
+        .count();
+    let skipped = all_results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Skip { .. }))
+        .count();
+
     Ok(Test262Report {
         total,
         passed,

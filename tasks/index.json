@@ -127,6 +127,20 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
+      "id": "355",
+      "title": "Incremental conformance harness prep",
+      "file": "tasks/355-incremental-conformance-harness.md",
+      "status": "completed",
+      "priority": "P0",
+      "notes": "Deterministic test file collection, stop-on-fail runner, single-file assertion helper, regression template, and workflow docs for incremental 100% compat.",
+      "category": "harness",
+      "suite": "harness",
+      "batch": 0,
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
+      "blocked_by": [],
+      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
+    },
+    {
       "id": "85",
       "title": "Implement trampoline interpreter with explicit call stack",
       "file": "tasks/85-trampoline-interpreter.md",
@@ -158,7 +172,7 @@
       "id": "286",
       "title": "Remove redundant Context::globals HashMap",
       "file": "tasks/286-remove-context-globals-duplicate.md",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0",
       "notes": "`Context` maintains both `self.globals` and `self.env`, inserting globals into both maps. This duplicates storage and adds extra clones.",
       "category": "interpreter",
@@ -298,7 +312,7 @@
       "id": "323",
       "title": "Make object property enumeration insertion-ordered",
       "file": "tasks/323-insertion-order-enumeration.md",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0",
       "notes": "New win. HashMap iteration is unordered; Object.keys must follow insertion order. Low-medium effort, high impact.",
       "category": "objects",
@@ -878,15 +892,15 @@
       "id": "292",
       "title": "Implement var hoisting and let/const TDZ",
       "file": "tasks/292-var-hoisting-tdz.md",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "P2",
-      "notes": "- **var hoisting**: `var` declarations are now hoisted to function scope (or script scope at top level). The variable is declared as `DeclaredOnly` (undefined value) at scope entry, then initialized when the declaration statement is evaluated.",
-      "category": "statements",
-      "suite": "tooling",
+      "notes": "Focused tasks 339 and 340 landed. `var_hoisting_tdz.rs` passes 17/17 tests. test262 variable/let/const subsets are unblocked for incremental conformance.",
+      "category": "errors",
+      "suite": "test262",
       "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
+      "target_subset": "tests/test262/test/language/statements/variable; tests/test262/test/language/statements/let; tests/test262/test/language/statements/const",
       "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
+      "exit_criteria": "test262 language/statements/variable/, language/statements/let/, and language/statements/const/ subsets pass at 100% with zero spec skips."
     },
     {
       "id": "293",
@@ -1479,6 +1493,22 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
+      "id": "356",
+      "title": "SWC Type Extraction Pipeline",
+      "file": "tasks/356-swc-type-extraction-pipeline.md",
+      "status": "backlog",
+      "priority": "P0",
+      "notes": "Harvest TS type annotations from SWC AST at parse time. Build TypeMap (node_id → ExecType), lower to typed shadow tree nodes with speculative fast-path dispatch. Target: 3–6× faster on typed TS.",
+      "category": "interpreter",
+      "suite": "runtime",
+      "batch": 8,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [
+        "264"
+      ],
+      "exit_criteria": "Benchmark shows 3–6× improvement on typed TS workload vs untyped shadow tree."
     }
   ]
 }
