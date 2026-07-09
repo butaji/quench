@@ -11,14 +11,16 @@ use crate::eval::member::eval_member_access;
 use crate::eval::object::{assign_to, eval_callee_with_this};
 use crate::eval::operators::{eval_binary_op, eval_unary_op};
 use crate::eval::statement::eval_statement;
-use crate::value::{
-    to_js_string, to_number, to_bool, JsError, Object, ObjectKind, Value,
-};
 use crate::interpreter::{
-    get_this_binding, take_control_flow, ControlFlow,
+    get_this_binding, predeclare_let_const, take_control_flow, ControlFlow,
+};
+use crate::value::{
+    ClassValue, to_js_string, to_number, to_bool, JsError, Object, ObjectKind, Value, ValueFunction,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+pub use crate::eval::statement::eval_statements;
 
 /// Evaluate an expression
 pub fn eval_expression(
@@ -361,6 +363,11 @@ fn eval_new(
     let args: Result<Vec<Value>, _> = arguments.iter().map(|a| eval_expression(a, env)).collect();
     let args = args?;
 
+    // Handle class instantiation
+    if let Value::Class(class) = &constructor_val {
+        return instantiate_class_from_ast_with_env(class.clone(), args, env);
+    }
+
     let actual_constructor = match &constructor_val {
         Value::Object(o) => {
             let obj = o.borrow();
@@ -398,6 +405,225 @@ fn eval_new(
     } else {
         Ok(Value::Object(new_obj_rc))
     }
+}
+
+/// Instantiate a class from its AST representation
+/// Takes the class, arguments, and the environment for evaluating superclass
+fn instantiate_class_from_ast_with_env(
+    class: crate::value::ClassValue,
+    args: Vec<Value>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Get or create the prototype for this class
+    let proto_rc = get_or_create_class_prototype(&class, env)?;
+    
+    // Create the new instance object
+    let mut instance = Object::new(ObjectKind::Ordinary);
+    instance.prototype = Some(Rc::clone(&proto_rc));
+    let instance_rc = Rc::new(RefCell::new(instance));
+    
+    // Set constructor property on prototype pointing to this class
+    // (will be used for instanceof checks)
+    proto_rc.borrow_mut().set("constructor", Value::Object(Rc::clone(&instance_rc)));
+    
+    // Call the constructor
+    let params = class.constructor_params.clone();
+    let body = class.constructor_body.clone();
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+    
+    let mut call_env = Environment::with_parent(Rc::clone(env));
+    call_env.current_scope_mut().set_this(this_val.clone());
+    
+    for (i, param) in params.iter().enumerate() {
+        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
+        call_env.define(param.clone(), arg);
+    }
+    
+    let args_obj = create_arguments_object_simple(args.clone());
+    call_env.define("arguments".to_string(), args_obj);
+    
+    let call_env = Rc::new(RefCell::new(call_env));
+    
+    let result = if body.is_empty() {
+        // For classes with no explicit constructor:
+        // - If there's a superclass, call super(...args)
+        // - Otherwise, just return this
+        if class.super_class.is_some() {
+            // Call super constructor with arguments
+            let super_class_val = eval_expression(
+                class.super_class.as_ref().unwrap(),
+                env,
+            )?;
+            // Get super constructor and call it
+            match super_class_val {
+                Value::Class(super_class) => {
+                    // Instantiate the superclass with the same args
+                    instantiate_class_from_ast_with_env(super_class, args, env)?
+                }
+                Value::Object(o) => {
+                    // Call the constructor from the object
+                    if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
+                        crate::eval::function::call_value_with_this(
+                            Value::Function(constructor.clone()),
+                            args,
+                            this_val.clone(),
+                        )?
+                    } else {
+                        this_val.clone()
+                    }
+                }
+                _ => this_val.clone(),
+            }
+        } else {
+            this_val.clone()
+        }
+    } else {
+        predeclare_let_const(&body, &mut call_env.borrow_mut());
+        eval_statements(&body, &call_env, false)?
+    };
+    
+    // If constructor returns an object, use it; otherwise use the instance
+    match result {
+        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
+        _ => Ok(this_val),
+    }
+}
+
+/// Instantiate a class from its AST representation (legacy signature)
+fn instantiate_class_from_ast(
+    class: crate::value::ClassValue,
+    args: Vec<Value>,
+) -> Result<Value, JsError> {
+    instantiate_class_from_ast_with_env(class, args, &Rc::new(RefCell::new(Environment::new())))
+}
+
+/// Helper to create a simple arguments object
+fn create_arguments_object_simple(args: Vec<Value>) -> Value {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    for (i, arg) in args.iter().enumerate() {
+        obj.set(&i.to_string(), arg.clone());
+    }
+    obj.set("length", Value::Number(args.len() as f64));
+    Value::Object(Rc::new(RefCell::new(obj)))
+}
+
+/// Get or create the prototype for a class, caching it in the ClassValue
+pub fn get_or_create_class_prototype(
+    class: &crate::value::ClassValue,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    // Check if prototype is already cached (all ClassValue clones share the cache)
+    {
+        let cell = class.prototype_cell.borrow();
+        if let Some(ref proto) = *cell {
+            return Ok(Rc::clone(proto));
+        }
+    }
+    
+    // Create the prototype
+    let proto_rc = create_class_prototype_helper_with_env(class, env)?;
+    
+    // Cache it (the set_prototype method handles the nested Rc)
+    {
+        let mut cell = class.prototype_cell.borrow_mut();
+        *cell = Some(Rc::clone(&proto_rc));
+    }
+    
+    Ok(proto_rc)
+}
+
+/// Get prototype from a class value (used for extends)
+fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> {
+    match val {
+        Value::Object(o) => {
+            let proto = o.borrow().get("prototype");
+            if let Some(Value::Object(proto_obj)) = proto {
+                Some(proto_obj.clone())
+            } else {
+                None
+            }
+        }
+        Value::Class(class) => {
+            // Try to get cached prototype (all ClassValue clones share the cache)
+            let cell = class.prototype_cell.borrow();
+            if let Some(ref proto) = *cell {
+                return Some(Rc::clone(proto));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Create a prototype for a class value (helper for extends)
+fn create_class_prototype_helper_with_env(
+    class: &crate::value::ClassValue,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    // Get parent prototype from superclass
+    let parent_proto = if let Some(ref super_class) = class.super_class {
+        let super_class_val = eval_expression(
+            super_class,
+            env,
+        )?;
+        get_prototype_from_class_val(&super_class_val)
+    } else {
+        crate::builtins::get_object_prototype()
+    };
+    
+    // Create the prototype object inheriting from parent
+    let mut proto = if let Some(parent) = parent_proto {
+        Object::with_prototype(ObjectKind::Ordinary, parent)
+    } else {
+        Object::new(ObjectKind::Ordinary)
+    };
+    
+    // Add methods to prototype
+    let closure = Rc::clone(env);
+    for (name, params, body) in &class.methods {
+        let func = ValueFunction::new(
+            Some(prop_key_to_string(name)),
+            params.clone(),
+            body.clone(),
+            Rc::clone(&closure),
+        );
+        proto.set(&prop_key_to_string(name), Value::Function(func));
+    }
+    
+    // Add getters to prototype
+    for (name, body) in &class.getters {
+        let key = prop_key_to_string(name);
+        proto.set_getter(&key, Rc::new(body.clone()), Rc::clone(&closure));
+    }
+    
+    // Add setters to prototype
+    for (name, param, body) in &class.setters {
+        let key = prop_key_to_string(name);
+        proto.set_setter(&key, param.clone(), Rc::new(body.clone()), Rc::clone(&closure));
+    }
+    
+    Ok(Rc::new(RefCell::new(proto)))
+}
+
+/// Legacy helper for creating prototype without environment (for operators.rs)
+fn create_class_prototype_helper(class: &crate::value::ClassValue) -> Result<Rc<RefCell<Object>>, JsError> {
+    create_class_prototype_helper_with_env(class, &Rc::new(RefCell::new(Environment::new())))
+}
+
+/// Helper to convert PropertyKey to string
+fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
+    match key {
+        crate::ast::PropertyKey::Ident(s) => s.clone(),
+        crate::ast::PropertyKey::String(s) => s.clone(),
+        crate::ast::PropertyKey::Number(n) => n.to_string(),
+        crate::ast::PropertyKey::Computed(_) => "[computed]".to_string(),
+    }
+}
+
+/// Create a class marker for instanceof checks
+fn constructor_val_to_class_marker(class: &crate::value::ClassValue) -> Value {
+    // Return the class itself as a marker - used for instanceof checks
+    Value::Class(class.clone())
 }
 
 fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object>>>, JsError> {
@@ -478,11 +704,36 @@ fn eval_super(_env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
     Err(JsError("ReferenceError: super is only valid in class methods".to_string()))
 }
 
-fn eval_class_expr(class: &Class, _env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    // Classes require special constructor support that is not yet implemented.
-    // The AST types exist but evaluation is incomplete.
-    let _ = class;
-    Err(JsError("Class support is not yet fully implemented".to_string()))
+// Cache for ClassValue instances to ensure the same instance is reused
+use std::collections::HashMap;
+
+// Use thread-local storage for the cache
+thread_local! {
+    static CLASS_VALUE_CACHE: std::cell::RefCell<HashMap<usize, ClassValue>> = std::cell::RefCell::new(HashMap::new());
+}
+
+fn eval_class_expr(class: &Class, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    // Use pointer address of the Class AST node as cache key
+    let class_ptr = class as *const Class as usize;
+    
+    // Check if we already have a ClassValue for this AST node
+    let class_value = CLASS_VALUE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(cached) = cache.get(&class_ptr) {
+            cached.clone()
+        } else {
+            let new_value = ClassValue::from_ast(class);
+            cache.insert(class_ptr, new_value.clone());
+            new_value
+        }
+    });
+    
+    // Eagerly create the prototype for this class
+    // This ensures that when a subclass extends this class, the parent prototype
+    // is already available for building the inheritance chain
+    let _ = get_or_create_class_prototype(&class_value, env)?;
+    
+    Ok(Value::Class(class_value))
 }
 
 

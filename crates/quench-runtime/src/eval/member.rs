@@ -19,37 +19,119 @@ pub fn eval_member_access(
         Value::NativeFunction(nf) => eval_native_function_member(nf, prop_name),
         Value::NativeConstructor(nc) => eval_native_constructor_member(nc, prop_name),
         Value::Number(_) => eval_number_member(obj_val, prop_name, env),
+        Value::Class(class) => eval_class_member(class, prop_name, env),
         _ => Ok(Value::Undefined),
     }
 }
 
-fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
-    // Check getter first (on this object only, not prototype)
-    {
-        let obj = o.borrow();
-        if let Some(getter_storage) = obj.get_getter(prop_name) {
-            let getter_clone = getter_storage.clone();
-            drop(obj);
-            return call_getter(o, &getter_clone, &Rc::new(RefCell::new(Environment::new())));
+/// Evaluate member access on a class (static methods and prototype)
+pub fn eval_class_member(
+    class: &crate::value::ClassValue,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match prop_name {
+        "prototype" => {
+            // Create and cache the prototype for this class
+            let proto = get_class_prototype_cached(class, env)?;
+            Ok(Value::Object(proto))
         }
-    }
-    // Check regular properties and prototype chain
-    let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
-    while let Some(obj_rc) = current {
-        {
-            let obj = obj_rc.borrow();
-            // Check if this object has the property
-            if let Some(val) = obj.properties.get(prop_name) {
-                return Ok(val.clone());
-            }
-            // Check array elements
-            if let Ok(idx) = prop_name.parse::<usize>() {
-                if idx < obj.elements.len() {
-                    return Ok(obj.elements[idx].clone());
+        "name" => {
+            Ok(Value::String(class.name.clone().unwrap_or_default()))
+        }
+        _ => {
+            // Check static methods
+            for (name, params, body) in &class.static_methods {
+                if prop_key_matches(name, prop_name) {
+                    let func = crate::value::ValueFunction::new(
+                        Some(prop_name.to_string()),
+                        params.clone(),
+                        body.clone(),
+                        Rc::clone(env),
+                    );
+                    return Ok(Value::Function(func));
                 }
             }
-            // Move to prototype
-            current = obj.prototype.as_ref().map(Rc::clone);
+            Ok(Value::Undefined)
+        }
+    }
+}
+
+/// Check if a property key matches a name
+fn prop_key_matches(key: &crate::ast::PropertyKey, name: &str) -> bool {
+    match key {
+        crate::ast::PropertyKey::Ident(s) => s == name,
+        crate::ast::PropertyKey::String(s) => s == name,
+        crate::ast::PropertyKey::Number(n) => n.to_string() == name,
+        crate::ast::PropertyKey::Computed(_) => false,
+    }
+}
+
+/// Get or create the prototype for a class (for member access)
+fn get_class_prototype_cached(
+    class: &crate::value::ClassValue,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    // Use the shared prototype from ClassValue
+    // This ensures that instanceof checks work correctly
+    crate::eval::expression::get_or_create_class_prototype(class, env)
+}
+
+/// Helper to convert PropertyKey to string
+fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
+    match key {
+        crate::ast::PropertyKey::Ident(s) => s.clone(),
+        crate::ast::PropertyKey::String(s) => s.clone(),
+        crate::ast::PropertyKey::Number(n) => n.to_string(),
+        crate::ast::PropertyKey::Computed(_) => "[computed]".to_string(),
+    }
+}
+
+/// Get prototype from a class value
+fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> {
+    match val {
+        Value::Object(o) => {
+            let proto = o.borrow().get("prototype");
+            if let Some(Value::Object(proto_obj)) = proto {
+                Some(proto_obj.clone())
+            } else {
+                None
+            }
+        }
+        Value::Class(class) => {
+            // Recursively get prototype - this is a simplified version
+            None
+        }
+        _ => None,
+    }
+}
+
+fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
+    // Check getter first (on this object and prototype chain)
+    {
+        let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
+        while let Some(obj_rc) = current {
+            {
+                let obj = obj_rc.borrow();
+                if let Some(getter_storage) = obj.get_getter(prop_name) {
+                    let getter_clone = getter_storage.clone();
+                    drop(obj);
+                    // Use the original object 'o' as 'this' for the getter
+                    return call_getter(o, &getter_clone, &Rc::new(RefCell::new(Environment::new())));
+                }
+                // Check regular property
+                if let Some(val) = obj.properties.get(prop_name) {
+                    return Ok(val.clone());
+                }
+                // Check array elements
+                if let Ok(idx) = prop_name.parse::<usize>() {
+                    if idx < obj.elements.len() {
+                        return Ok(obj.elements[idx].clone());
+                    }
+                }
+                // Move to prototype
+                current = obj.prototype.as_ref().map(Rc::clone);
+            }
         }
     }
     // Handle Date.prototype specially

@@ -145,6 +145,7 @@ fn value_to_debug_string(v: &Value) -> String {
         Value::NativeFunction(_) => "[NativeFunction]".to_string(),
         Value::NativeConstructor(_) => "[NativeConstructor]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s),
+        Value::Class(_) => "[Class]".to_string(),
     }
 }
 

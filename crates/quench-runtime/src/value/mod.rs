@@ -18,7 +18,7 @@ pub use error::JsError;
 pub use function::{NativeFunction, NativeConstructor, ValueFunction};
 pub use kind::ObjectKind;
 pub use object::{Getter, GetterStorage, Object, Setter, SetterStorage};
-pub use val::Value;
+pub use val::{ClassValue, Value};
 
 // =============================================================================
 // Tests

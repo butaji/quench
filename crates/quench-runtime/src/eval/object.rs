@@ -137,6 +137,7 @@ fn get_member_function(
         Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => crate::eval::member::eval_native_function_member(nf, prop_name),
         Value::NativeConstructor(nc) => crate::eval::member::eval_native_constructor_member(nc, prop_name),
+        Value::Class(class) => crate::eval::member::eval_class_member(class, prop_name, env),
         _ => Ok(Value::Undefined),
     }
 }

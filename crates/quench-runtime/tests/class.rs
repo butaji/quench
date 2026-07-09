@@ -7,7 +7,6 @@ use quench_runtime::Context;
 use quench_runtime::Value;
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_declaration_basic() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -25,7 +24,6 @@ fn test_class_declaration_basic() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_with_method() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -48,7 +46,6 @@ fn test_class_with_method() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_extends() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -73,7 +70,6 @@ fn test_class_extends() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_static_method() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -89,7 +85,6 @@ fn test_class_static_method() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_expression() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -110,7 +105,6 @@ fn test_class_expression() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_named_expression() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -129,7 +123,6 @@ fn test_class_named_expression() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_getter() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -148,7 +141,6 @@ fn test_class_getter() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_setter() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -172,7 +164,6 @@ fn test_class_setter() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_prototype_chain() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -194,7 +185,6 @@ fn test_class_prototype_chain() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_instanceof() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -208,7 +198,6 @@ fn test_class_instanceof() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_constructor_returns_object() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -224,7 +213,6 @@ fn test_class_constructor_returns_object() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_multiple_methods() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -241,7 +229,6 @@ fn test_class_multiple_methods() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_no_constructor() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
@@ -254,7 +241,6 @@ fn test_class_no_constructor() {
 }
 
 #[test]
-#[ignore = "class support not yet implemented"]
 fn test_class_property_access() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(r#"
