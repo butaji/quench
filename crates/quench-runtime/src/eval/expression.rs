@@ -307,8 +307,30 @@ fn eval_call(
         }
     }
     let (func, this_val) = eval_callee_with_this(callee, env)?;
-    let args: Result<Vec<Value>, _> = arguments.iter().map(|a| eval_expression(a, env)).collect();
-    call_value_with_this(func, args?, this_val)
+    let args = eval_call_arguments(arguments, env)?;
+    call_value_with_this(func, args, this_val)
+}
+
+/// Evaluate call arguments, expanding spread expressions
+fn eval_call_arguments(
+    arguments: &[Expression],
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Vec<Value>, JsError> {
+    let mut result = Vec::new();
+    for arg in arguments.iter() {
+        match arg {
+            Expression::Spread(expr) => {
+                let spread_val = eval_expression(expr, env)?;
+                let items = get_iterator(&spread_val)?;
+                result.extend(items);
+            }
+            _ => {
+                let val = eval_expression(arg, env)?;
+                result.push(val);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// Evaluate a super() call - invokes the parent constructor with the given arguments
@@ -319,7 +341,7 @@ fn eval_super_call(
     let super_val = get_super_from_env(env)
         .ok_or_else(|| JsError("ReferenceError: super is only valid in class methods".to_string()))?;
     
-    let args: Vec<Value> = arguments.iter().map(|a| eval_expression(a, env)).collect::<Result<_, _>>()?;
+    let args = eval_call_arguments(arguments, env)?;
     let this_val = get_this_binding(env);
     
     // Call the super constructor with the current 'this' binding
@@ -390,8 +412,7 @@ fn eval_new(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let constructor_val = eval_expression(constructor, env)?;
-    let args: Result<Vec<Value>, _> = arguments.iter().map(|a| eval_expression(a, env)).collect();
-    let args = args?;
+    let args = eval_call_arguments(arguments, env)?;
 
     // Handle class instantiation
     if let Value::Class(class) = &constructor_val {

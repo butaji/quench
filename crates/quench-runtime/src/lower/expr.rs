@@ -170,17 +170,31 @@ fn lower_call_expr(call: &swc::CallExpr) -> Result<Expression, LowerError> {
             return Err(LowerError::new("import callee not supported"));
         }
     };
-    let args: Vec<Expression> = call.args.iter()
-        .filter_map(|arg| lower_expr(&arg.expr).ok())
-        .collect();
+    let mut args = Vec::new();
+    for arg in &call.args {
+        let expr = if arg.spread.is_some() {
+            Expression::Spread(Box::new(lower_expr(&arg.expr)?))
+        } else {
+            lower_expr(&arg.expr)?
+        };
+        args.push(expr);
+    }
     Ok(Expression::Call { callee: Box::new(callee), arguments: args })
 }
 
 fn lower_new_expr(new_expr: &swc::NewExpr) -> Result<Expression, LowerError> {
     let constructor = lower_expr(&new_expr.callee)?;
-    let args: Vec<Expression> = new_expr.args.as_ref()
-        .map(|args| args.iter().filter_map(|arg| lower_expr(&arg.expr).ok()).collect())
-        .unwrap_or_default();
+    let mut args = Vec::new();
+    if let Some(ref call_args) = new_expr.args {
+        for arg in call_args {
+            let expr = if arg.spread.is_some() {
+                Expression::Spread(Box::new(lower_expr(&arg.expr)?))
+            } else {
+                lower_expr(&arg.expr)?
+            };
+            args.push(expr);
+        }
+    }
     Ok(Expression::New { constructor: Box::new(constructor), arguments: args })
 }
 
