@@ -53,6 +53,9 @@ LANGUAGE_CATEGORIES = {
 CANONICAL_FILES = {
     "309": "309-expressions-coverage.md",
     "310": "310-statements-coverage.md",
+    # 357 is the live test262 harness task (compareArray); the older
+    # 357-split-large-files.md is completed lint work and must not take the id.
+    "357": "357-implement-assert-compareArray.md",
 }
 
 # Explicit overrides for tasks whose title/notes are ambiguous.
@@ -71,7 +74,7 @@ MANUAL_OVERRIDES = {
     "330": {"suite": "tooling", "category": "testing", "priority": "P0", "batch": 0},
     "331": {"suite": "tooling", "category": "testing"},
     "332": {"suite": "tooling", "category": "testing"},
-    "334": {"suite": "harness", "category": "measurement", "batch": 0},
+    "334": {"suite": "harness", "category": "measurement", "batch": 8, "exit_criteria": "DEFERRED: mutually exclusive with the active custom-Rust-runner track (Tasks 355/357/358, which complete the in-repo runner). Revisit only if that track is abandoned; do not pick this up while 357/358 are open."},
     "335": {"suite": "both", "category": "objects", "batch": 1, "priority": "P0"},
     "336": {"suite": "both", "category": "built-ins", "batch": 2},
     "337": {"suite": "tooling", "category": "testing", "batch": 6},
@@ -103,6 +106,37 @@ MANUAL_OVERRIDES = {
         "category": "measurement",
         "target_subset": "target/test262_report.md and target/conformance_report.md accuracy",
         "exit_criteria": "test262 negative tests match by expected error type and phase with inheritance support, and the harness report is regenerated.",
+    },
+    # --- test262 unlock sequence: keep at the front of the queue (batch 0). 357 -> 358. ---
+    "357": {
+        "suite": "harness",
+        "category": "harness",
+        "priority": "P0",
+        "batch": 0,
+        "target_subset": "crates/quench-runtime/src/test262/harness.rs assert.compareArray / assert.arrayContains",
+        "exit_criteria": "assert.compareArray and assert.arrayContains implemented natively with SameValue semantics (NaN==NaN, +0!=-0); the harness:: tests pass and test262 cases using them flip from fail/skip to pass.",
+    },
+    "358": {
+        "suite": "harness",
+        "category": "harness",
+        "priority": "P0",
+        "batch": 0,
+        "target_subset": "tests/test262/harness/ helpers (propertyHelper.js, nativeErrors.js, deepEqual.js)",
+        "exit_criteria": "The include allowlist in crates/quench-runtime/src/test262/batches.rs admits propertyHelper.js, nativeErrors.js and deepEqual.js, their helpers are registered natively, the 'unsupported include' skip count drops, and the test262 subset pass rate rises.",
+    },
+    "359": {
+        "suite": "harness",
+        "category": "measurement",
+        "batch": 0,
+        "target_subset": "tests/test262/harness/ -> conformance-area mapping",
+        "exit_criteria": "Harness files are mapped to conformance areas with a priority order; the 'measure skip reasons' command is recorded as Step 0 of Task 358.",
+    },
+    "360": {
+        "suite": "both",
+        "category": "measurement",
+        "batch": 7,
+        "target_subset": "tests/test262 + tests/typescript (umbrella tracker; see task body for the current concrete subtask)",
+        "exit_criteria": "Umbrella tracker. Do not work directly; advance the current concrete subtask (first 357, then 358). Complete only when both suites reach 100% with zero spec skips.",
     },
     "304": {
         "target_subset": "tests/test262/test/language/function-code",
@@ -317,6 +351,9 @@ def blocked_by_for(tid: str) -> list:
         deps.append("322")
     if tid in {"289a", "289b", "289c"}:
         deps.append("289")
+    # test262 unlock sequence: harness-include expansion needs compareArray first.
+    if tid == "358":
+        deps.append("357")
     return deps
 
 

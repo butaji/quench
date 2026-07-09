@@ -57,20 +57,6 @@
       "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed."
     },
     {
-      "id": "334",
-      "title": "Adopt test262-harness",
-      "file": "tasks/334-adopt-test262-harness.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "> **Minimum custom code.** Reuse the standard test262 runner instead of maintaining a custom one.",
-      "category": "measurement",
-      "suite": "harness",
-      "batch": 0,
-      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
-      "blocked_by": [],
-      "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
-    },
-    {
       "id": "344",
       "title": "JS/TS Compatibility Harness",
       "file": "tasks/344-js-ts-compatibility-harness.md",
@@ -139,6 +125,51 @@
       "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
       "blocked_by": [],
       "exit_criteria": "Harness loads real helpers, reports accurate pass/fail/skip counts, and no test is skipped due to missing helper stubs."
+    },
+    {
+      "id": "357",
+      "title": "Implement assert.compareArray and assert.arrayContains",
+      "file": "tasks/357-implement-assert-compareArray.md",
+      "status": "done",
+      "priority": "P0",
+      "completed": "2026-07-09",
+      "notes": "Replace stub implementations of `assert.compareArray` and `assert.arrayContains` with working Rust implementations that pass the test262 harness tests.",
+      "category": "harness",
+      "suite": "harness",
+      "batch": 0,
+      "target_subset": "crates/quench-runtime/src/test262/harness.rs assert.compareArray / assert.arrayContains",
+      "exit_criteria": "assert.compareArray and assert.arrayContains implemented natively with SameValue semantics (NaN==NaN, +0!=-0); the harness:: tests pass and test262 cases using them flip from fail/skip to pass.",
+      "blocked_by": []
+    },
+    {
+      "id": "358",
+      "title": "Expand SUPPORTED_INCLUDES to Cover More Harness Files",
+      "file": "tasks/358-expand-supported-harness-includes.md",
+      "status": "pending",
+      "priority": "P0",
+      "notes": "Expand `SUPPORTED_INCLUDES` in the test262 runner to include more harness files, reducing the number of skipped tests and increasing conformance coverage.",
+      "category": "harness",
+      "suite": "harness",
+      "batch": 0,
+      "target_subset": "tests/test262/harness/ helpers (propertyHelper.js, nativeErrors.js, deepEqual.js)",
+      "blocked_by": [
+        "357"
+      ],
+      "exit_criteria": "The include allowlist in crates/quench-runtime/src/test262/batches.rs admits propertyHelper.js, nativeErrors.js and deepEqual.js, their helpers are registered natively, the 'unsupported include' skip count drops, and the test262 subset pass rate rises."
+    },
+    {
+      "id": "359",
+      "title": "Map Harness Files to Conformance Areas",
+      "file": "tasks/359-harness-to-conformance-mapping.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Create a mapping from test262 harness files to conformance areas and estimate conformance % increase when each is implemented. This guides prioritization of harness implementation work.",
+      "category": "measurement",
+      "suite": "harness",
+      "batch": 0,
+      "target_subset": "tests/test262/harness/ -> conformance-area mapping",
+      "blocked_by": [],
+      "exit_criteria": "Harness files are mapped to conformance areas with a priority order; the 'measure skip reasons' command is recorded as Step 0 of Task 358."
     },
     {
       "id": "85",
@@ -1157,62 +1188,6 @@
       "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
-      "id": "357",
-      "title": "Split large files to meet 500-line limit",
-      "file": "tasks/357-split-large-files.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "**OPEN** - High Priority",
-      "category": "refactor",
-      "suite": "runtime",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
-    },
-    {
-      "id": "358",
-      "title": "Expand SUPPORTED_INCLUDES to Cover More Harness Files",
-      "file": "tasks/358-expand-supported-harness-includes.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "Expand `SUPPORTED_INCLUDES` in the test262 runner to include more harness files, reducing the number of skipped tests and increasing conformance coverage.",
-      "category": "harness",
-      "suite": "test262",
-      "batch": 6,
-      "target_subset": "tests/test262 harness/ subset",
-      "blocked_by": [],
-      "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
-    },
-    {
-      "id": "359",
-      "title": "Map Harness Files to Conformance Areas",
-      "file": "tasks/359-harness-to-conformance-mapping.md",
-      "status": "pending",
-      "priority": "P2",
-      "notes": "Create a mapping from test262 harness files to conformance areas and estimate conformance % increase when each is implemented. This guides prioritization of harness implementation work.",
-      "category": "harness",
-      "suite": "test262",
-      "batch": 6,
-      "target_subset": "tests/test262 harness/ subset",
-      "blocked_by": [],
-      "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
-    },
-    {
-      "id": "360",
-      "title": "100% JS/TS Compatibility Push",
-      "file": "tasks/360-100-percent-compatibility-push.md",
-      "status": "in_progress",
-      "priority": "P2",
-      "notes": "- Do not edit `tests/test262/`, `tests/typescript/`, `examples/`",
-      "category": "refactor",
-      "suite": "test262",
-      "batch": 6,
-      "target_subset": "tests/test262 refactor/ subset",
-      "blocked_by": [],
-      "exit_criteria": "Relevant test262 refactor subset passes at 100% with zero spec skips and the harness report is regenerated."
-    },
-    {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
@@ -1255,6 +1230,20 @@
       "blocked_by": []
     },
     {
+      "id": "360",
+      "title": "100% JS/TS Compatibility Push",
+      "file": "tasks/360-100-percent-compatibility-push.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "- Do not edit `tests/test262/`, `tests/typescript/`, `examples/`",
+      "category": "measurement",
+      "suite": "both",
+      "batch": 7,
+      "target_subset": "tests/test262 + tests/typescript (umbrella tracker; see task body for the current concrete subtask)",
+      "blocked_by": [],
+      "exit_criteria": "Umbrella tracker. Do not work directly; advance the current concrete subtask (first 357, then 358). Complete only when both suites reach 100% with zero spec skips."
+    },
+    {
       "id": "88",
       "title": "Task 88 \u2014 Leverage Rust for runtime execution model",
       "file": "tasks/88-rust-runtime-leverage.md",
@@ -1295,6 +1284,20 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
+      "id": "334",
+      "title": "Adopt test262-harness",
+      "file": "tasks/334-adopt-test262-harness.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "> **Minimum custom code.** Reuse the standard test262 runner instead of maintaining a custom one.",
+      "category": "measurement",
+      "suite": "harness",
+      "batch": 8,
+      "target_subset": "tests/test262/harness/ + tests/typescript/tests/cases/conformance harness integration",
+      "blocked_by": [],
+      "exit_criteria": "DEFERRED: mutually exclusive with the active custom-Rust-runner track (Tasks 355/357/358, which complete the in-repo runner). Revisit only if that track is abandoned; do not pick this up while 357/358 are open."
     }
   ]
 }

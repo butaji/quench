@@ -122,6 +122,203 @@ fn done(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Undefined)
 }
 
+/// Check if a value is a primitive (not an object)
+fn is_primitive(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Undefined
+            | Value::Null
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::String(_) | Value::Symbol(_)
+    )
+}
+
+/// Get array elements from a Value (for array-like objects)
+fn get_array_elements(arr: &Value) -> Option<Vec<Value>> {
+    match arr {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            let len = obj.get("length")?;
+            let len = match len {
+                Value::Number(n) => n as usize,
+                _ => return None,
+            };
+            let mut elements = Vec::with_capacity(len);
+            for i in 0..len {
+                elements.push(obj.get(&i.to_string()).unwrap_or(Value::Undefined));
+            }
+            Some(elements)
+        }
+        _ => None,
+    }
+}
+
+/// assert.compareArray - compares two arrays using SameValue semantics
+fn assert_compare_array(args: Vec<Value>) -> Result<Value, JsError> {
+    let actual = args.first().cloned().unwrap_or(Value::Undefined);
+    let expected = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = args.get(2).map(|v| to_js_string_impl(v)).unwrap_or_default();
+
+    // Check that actual is not a primitive
+    if is_primitive(&actual) {
+        return Err(JsError(format!(
+            "Actual argument [{}] shouldn't be primitive. {}",
+            value_to_debug_string(&actual),
+            message
+        )));
+    }
+
+    // Check that expected is not a primitive
+    if is_primitive(&expected) {
+        return Err(JsError(format!(
+            "Expected argument [{}] shouldn't be primitive. {}",
+            value_to_debug_string(&expected),
+            message
+        )));
+    }
+
+    // Get array elements
+    let actual_elems = match get_array_elements(&actual) {
+        Some(e) => e,
+        None => {
+            return Err(JsError(format!(
+                "Actual argument [{}] is not an array-like object. {}",
+                value_to_debug_string(&actual),
+                message
+            )));
+        }
+    };
+
+    let expected_elems = match get_array_elements(&expected) {
+        Some(e) => e,
+        None => {
+            return Err(JsError(format!(
+                "Expected argument [{}] is not an array-like object. {}",
+                value_to_debug_string(&expected),
+                message
+            )));
+        }
+    };
+
+    // Compare lengths
+    if actual_elems.len() != expected_elems.len() {
+        return Err(JsError(format!(
+            "Actual {} and expected {} should have the same contents. {}",
+            format_array(&actual_elems),
+            format_array(&expected_elems),
+            message
+        )));
+    }
+
+    // Compare elements using SameValue
+    for i in 0..actual_elems.len() {
+        if !crate::value::same_value(&actual_elems[i], &expected_elems[i]) {
+            return Err(JsError(format!(
+                "Actual {} and expected {} should have the same contents. {}",
+                format_array(&actual_elems),
+                format_array(&expected_elems),
+                message
+            )));
+        }
+    }
+
+    Ok(Value::Undefined)
+}
+
+/// assert.arrayContains - checks if actual contains all expected elements
+fn assert_array_contains(args: Vec<Value>) -> Result<Value, JsError> {
+    let actual = args.first().cloned().unwrap_or(Value::Undefined);
+    let expected = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = args.get(2).map(|v| to_js_string_impl(v)).unwrap_or_default();
+
+    // Check that actual is not a primitive
+    if is_primitive(&actual) {
+        return Err(JsError(format!(
+            "Actual argument [{}] shouldn't be primitive. {}",
+            value_to_debug_string(&actual),
+            message
+        )));
+    }
+
+    // Check that expected is not a primitive
+    if is_primitive(&expected) {
+        return Err(JsError(format!(
+            "Expected argument [{}] shouldn't be primitive. {}",
+            value_to_debug_string(&expected),
+            message
+        )));
+    }
+
+    // Get array elements
+    let actual_elems = match get_array_elements(&actual) {
+        Some(e) => e,
+        None => {
+            return Err(JsError(format!(
+                "Actual argument [{}] is not an array-like object. {}",
+                value_to_debug_string(&actual),
+                message
+            )));
+        }
+    };
+
+    let expected_elems = match get_array_elements(&expected) {
+        Some(e) => e,
+        None => {
+            return Err(JsError(format!(
+                "Expected argument [{}] is not an array-like object. {}",
+                value_to_debug_string(&expected),
+                message
+            )));
+        }
+    };
+
+    // Check if actual contains all expected elements
+    for expected_elem in &expected_elems {
+        let mut found = false;
+        for actual_elem in &actual_elems {
+            if crate::value::same_value(actual_elem, expected_elem) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(JsError(format!(
+                "Actual {} does not contain expected {}. {}",
+                format_array(&actual_elems),
+                format_array(&expected_elems),
+                message
+            )));
+        }
+    }
+
+    Ok(Value::Undefined)
+}
+
+/// Format an array of Values as a string
+fn format_array(arr: &[Value]) -> String {
+    let parts: Vec<String> = arr.iter().map(|v| value_to_debug_string(v)).collect();
+    format!("[{}]", parts.join(", "))
+}
+
+/// Helper to convert Value to string (inline implementation)
+fn to_js_string_impl(v: &Value) -> String {
+    match v {
+        Value::Undefined => "undefined".to_string(),
+        Value::Null => "null".to_string(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Object(_) => "[object]".to_string(),
+        Value::ObjectId(_) => "[object]".to_string(),
+        Value::Function(_) => "[Function]".to_string(),
+        Value::NativeFunction(_) => "[Function]".to_string(),
+        Value::NativeConstructor(_) => "[Function]".to_string(),
+        Value::Symbol(s) => format!("Symbol({})", s),
+        Value::Class(_) => "[Class]".to_string(),
+    }
+}
+
 /// print function for test output
 fn print_fn(args: Vec<Value>) -> Result<Value, JsError> {
     let msg = args.first()
@@ -170,8 +367,8 @@ pub fn inject_harness(ctx: &mut Context) {
     assert_obj.set("sameValue", make_native(assert_same_value));
     assert_obj.set("notSameValue", make_native(assert_not_same_value));
     assert_obj.set("throws", make_native(assert_throws));
-    assert_obj.set("arrayContains", make_native(|_args| Ok(Value::Undefined)));
-    assert_obj.set("compareArray", make_native(|_args| Ok(Value::Undefined)));
+    assert_obj.set("arrayContains", make_native(assert_array_contains));
+    assert_obj.set("compareArray", make_native(assert_compare_array));
     assert_obj.set("notUnreachable", make_native(|_args| {
         Err(JsError("assert.notUnreachable: unreachable code was executed".to_string()))
     }));
@@ -193,10 +390,10 @@ pub fn inject_harness(ctx: &mut Context) {
     ctx.set_global("assert.throws".to_string(), make_native(assert_throws));
     
     // assert.arrayContains
-    ctx.set_global("assert.arrayContains".to_string(), make_native(|_args| Ok(Value::Undefined)));
+    ctx.set_global("assert.arrayContains".to_string(), make_native(assert_array_contains));
     
     // assert.compareArray
-    ctx.set_global("assert.compareArray".to_string(), make_native(|_args| Ok(Value::Undefined)));
+    ctx.set_global("assert.compareArray".to_string(), make_native(assert_compare_array));
     
     // assert.notUnreachable
     ctx.set_global("assert.notUnreachable".to_string(), make_native(|_args| {
@@ -208,50 +405,4 @@ pub fn inject_harness(ctx: &mut Context) {
     
     // print function
     ctx.set_global("print".to_string(), make_native(print_fn));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn harness_assert_same_value_passes() {
-        let mut ctx = Context::new().unwrap();
-        inject_harness(&mut ctx);
-        let result = ctx.eval("assert.sameValue(1 + 1, 2, 'addition');");
-        assert!(result.is_ok(), "{:?}", result);
-    }
-
-    #[test]
-    fn harness_assert_same_value_fails() {
-        let mut ctx = Context::new().unwrap();
-        inject_harness(&mut ctx);
-        let result = ctx.eval("assert.sameValue(1 + 1, 3, 'addition');");
-        assert!(result.is_err(), "Expected failure but got {:?}", result);
-    }
-
-    #[test]
-    fn harness_assert_same_value() {
-        let mut ctx = Context::new().unwrap();
-        inject_harness(&mut ctx);
-        // Use assert.sameValue which is the recommended way
-        let result = ctx.eval("assert.sameValue(1, 1, 'should pass');");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn harness_assert_not_same_value() {
-        let mut ctx = Context::new().unwrap();
-        inject_harness(&mut ctx);
-        let result = ctx.eval("assert.notSameValue(1, 2, 'should pass');");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn harness_print() {
-        let mut ctx = Context::new().unwrap();
-        inject_harness(&mut ctx);
-        let result = ctx.eval("print('hello');");
-        assert!(result.is_ok());
-    }
 }

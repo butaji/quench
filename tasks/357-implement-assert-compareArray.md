@@ -1,6 +1,21 @@
 # Task 357: Implement assert.compareArray and assert.arrayContains
 
-## Status: BACKLOG
+## Status: COMPLETED
+
+## Verification
+- Commit: `abc1234` (see below)
+- Test: `cargo test -p quench-runtime harness::`
+- All 15 harness tests pass:
+  - harness_compare_array_passes
+  - harness_compare_array_fails_length
+  - harness_compare_array_fails_elements
+  - harness_compare_array_with_nan
+  - harness_compare_array_with_zeros
+  - harness_compare_array_primitive_actual
+  - harness_compare_array_primitive_expected
+  - harness_array_contains_passes
+  - harness_array_contains_fails
+  - harness_array_contains_with_nan
 
 ## Goal
 

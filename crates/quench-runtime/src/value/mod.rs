@@ -13,7 +13,7 @@ pub mod kind;
 pub mod object;
 mod val;
 
-pub use convert::{to_js_string, to_bool, to_number, strict_eq, loose_eq, to_primitive, PrimitiveHint};
+pub use convert::{to_js_string, to_bool, to_number, strict_eq, loose_eq, to_primitive, PrimitiveHint, same_value};
 pub use error::{
     JsError, set_thrown_value, take_thrown_value,
 };

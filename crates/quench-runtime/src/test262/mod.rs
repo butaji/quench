@@ -6,6 +6,7 @@
 
 pub mod batches;
 pub mod harness;
+pub mod harness_tests;
 pub mod metadata;
 pub mod runner;
 pub mod skip;
