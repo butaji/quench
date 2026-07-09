@@ -64,9 +64,10 @@ pub fn register_array(ctx: &mut Context) {
     }))));
 
     // Create the native constructor with the prototype
+    let array_proto_clone = Rc::clone(&array_proto_rc);
     let array_constructor = NativeConstructor::new(
         move |args: Vec<Value>| {
-            let arr = if args.is_empty() {
+            let mut arr = if args.is_empty() {
                 Object::new_array(0)
             } else if args.len() == 1 {
                 if let Value::Number(n) = args[0] {
@@ -81,6 +82,8 @@ pub fn register_array(ctx: &mut Context) {
             } else {
                 Object::new_array_from(args)
             };
+            // Set prototype for instanceof checks
+            arr.prototype = Some(Rc::clone(&array_proto_clone));
             Ok(Value::Object(Rc::new(RefCell::new(arr))))
         },
         Rc::clone(&array_proto_rc),

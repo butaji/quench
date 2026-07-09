@@ -938,3 +938,90 @@ fn test_array_named_properties() {
         panic!("Expected array, got {:?}", result);
     }
 }
+
+// Task 289: Register Array, Error, Date as constructors
+
+#[test]
+fn test_new_array_creates_array() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Array(3)").unwrap();
+    match &result {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            assert_eq!(obj.kind, quench_runtime::value::ObjectKind::Array, "Should be ObjectKind::Array");
+            assert_eq!(obj.elements.len(), 3, "Should have 3 elements");
+        }
+        _ => panic!("Expected Array object, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_new_array_instanceof() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Array(1, 2) instanceof Array").unwrap();
+    assert_eq!(result, Value::Boolean(true), "new Array() should be instanceof Array");
+}
+
+#[test]
+fn test_new_array_literal_vs_constructor() {
+    let mut ctx = Context::new().unwrap();
+    // Constructor with single number arg creates sparse array
+    let result = ctx.eval("new Array(3).length").unwrap();
+    assert_eq!(result, Value::Number(3.0), "Array(3) should have length 3");
+    // Constructor with multiple args creates filled array
+    let result2 = ctx.eval("new Array(1, 2, 3).length").unwrap();
+    assert_eq!(result2, Value::Number(3.0), "Array(1,2,3) should have length 3");
+}
+
+#[test]
+fn test_new_error_is_error_instance() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Error('test message')").unwrap();
+    match &result {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            assert!(obj.has("message"), "Error should have message property");
+            assert!(obj.has("toString"), "Error should have toString from prototype");
+        }
+        _ => panic!("Expected Error object, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_new_error_instanceof() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Error() instanceof Error").unwrap();
+    assert_eq!(result, Value::Boolean(true), "new Error() should be instanceof Error");
+}
+
+#[test]
+fn test_error_subtypes_instanceof() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new TypeError() instanceof TypeError").unwrap();
+    assert_eq!(result, Value::Boolean(true), "new TypeError() should be instanceof TypeError");
+    let result2 = ctx.eval("new TypeError() instanceof Error").unwrap();
+    assert_eq!(result2, Value::Boolean(true), "new TypeError() should be instanceof Error");
+    let result3 = ctx.eval("new ReferenceError() instanceof ReferenceError").unwrap();
+    assert_eq!(result3, Value::Boolean(true), "new ReferenceError() should be instanceof ReferenceError");
+}
+
+#[test]
+fn test_new_date_creates_date() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Date()").unwrap();
+    match &result {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            assert!(obj.has("toString"), "Date should have toString");
+            assert!(obj.has("valueOf"), "Date should have valueOf");
+        }
+        _ => panic!("Expected Date object, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_new_date_instanceof() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("new Date() instanceof Date").unwrap();
+    assert_eq!(result, Value::Boolean(true), "new Date() should be instanceof Date");
+}

@@ -10,6 +10,11 @@ pub fn register_error(ctx: &mut Context) {
     let error_proto = create_error_proto("Error");
     let error_proto_rc = Rc::new(RefCell::new(error_proto));
 
+    // Error.prototype inherits from Object.prototype
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        error_proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
     register_error_constructor(ctx, "Error", &error_proto_rc);
     register_type_error(ctx, &error_proto_rc);
     register_reference_error(ctx, &error_proto_rc);
@@ -49,26 +54,20 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
 fn register_type_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
     let proto = create_error_proto("TypeError");
     let proto_rc = Rc::new(RefCell::new(proto));
-    proto_rc
-        .borrow_mut()
-        .set("__proto__", Value::Object(Rc::clone(parent_proto)));
+    proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     register_error_constructor(ctx, "TypeError", &proto_rc);
 }
 
 fn register_reference_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
     let proto = create_error_proto("ReferenceError");
     let proto_rc = Rc::new(RefCell::new(proto));
-    proto_rc
-        .borrow_mut()
-        .set("__proto__", Value::Object(Rc::clone(parent_proto)));
+    proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     register_error_constructor(ctx, "ReferenceError", &proto_rc);
 }
 
 fn register_syntax_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
     let proto = create_error_proto("SyntaxError");
     let proto_rc = Rc::new(RefCell::new(proto));
-    proto_rc
-        .borrow_mut()
-        .set("__proto__", Value::Object(Rc::clone(parent_proto)));
+    proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     register_error_constructor(ctx, "SyntaxError", &proto_rc);
 }
