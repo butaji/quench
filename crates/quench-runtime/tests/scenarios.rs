@@ -494,5 +494,43 @@ mod tests {
         ctx.eval("myGlobal = 99").unwrap();
         assert_eq!(ctx.get_global("myGlobal"), Some(Value::Number(99.0)));
     }
+
+    // =========================================================================
+    // Delete operator scenarios
+    // =========================================================================
+
+    #[test]
+    fn scenario_delete_property() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("delete ({ x: 1 }).x").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn scenario_delete_nonexistent_property() {
+        let mut ctx = Context::new().unwrap();
+        // Deleting a non-existent own property returns true
+        let result = ctx.eval("var obj = { x: 1 }; delete obj.y; obj.x").unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn scenario_delete_array_element() {
+        let mut ctx = Context::new().unwrap();
+        // Delete array element should return true
+        let result = ctx.eval("delete [1, 2, 3][0]").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn scenario_delete_computed_property() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(r#"
+            const obj = { a: 1, b: 2 };
+            delete obj['a'];
+            obj.a
+        "#).unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
 }
 
