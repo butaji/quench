@@ -440,6 +440,7 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
                 UnaryOp::BitNot => "~",
                 UnaryOp::Typeof => "typeof",
                 UnaryOp::Void => "void",
+                UnaryOp::Delete => "delete",
             };
             format!("{} {}", op_str, expr_to_js(argument))
         }

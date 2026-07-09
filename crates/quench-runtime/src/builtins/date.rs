@@ -334,6 +334,10 @@ pub fn register_date(ctx: &mut Context) {
     date_proto_rc.borrow_mut().set("valueOf", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         Ok(Value::Number(chrono_now() as f64))
     }))));
+    // Date.prototype inherits from Object.prototype
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        date_proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
 
     let date_proto_clone = Rc::clone(&date_proto_rc);
     let date_constructor = NativeConstructor::new(
