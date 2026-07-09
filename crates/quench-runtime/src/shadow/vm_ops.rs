@@ -179,22 +179,10 @@ impl<'a> ShadowVm<'a> {
     }
 
     fn string_symbol(&mut self, v: JSValue) -> Symbol {
-        if let Some(sym) = v.as_string() { return sym; }
-        let s = if v.is_int32() {
-            format!("{}", v.as_int32_unchecked())
-        } else if v.is_double() {
-            format!("{}", v.as_double_unchecked())
-        } else if v.is_true() {
-            "true".to_string()
-        } else if v.is_false() {
-            "false".to_string()
-        } else if v.is_null() {
-            "null".to_string()
-        } else if v.is_undefined() {
-            "undefined".to_string()
-        } else {
-            "[object Object]".to_string()
-        };
+        if let Some(sym) = v.as_string() {
+            return sym;
+        }
+        let s = value_to_string(&v);
         self.ctx.string_interner.intern(s)
     }
 
@@ -438,5 +426,25 @@ fn extract_static_write_info(node: &ShadowNode) -> Result<(crate::shape::ShapeId
         Ok((*shape_id, *offset as usize, *is_inline, *prop))
     } else {
         Err(JsError("ApplyStaticPropWrite on non-static node".into()))
+    }
+}
+
+/// Convert a JSValue to its string representation for concatenation.
+fn value_to_string(v: &JSValue) -> String {
+    use crate::nanbox::JSValue;
+    if v.is_int32() {
+        format!("{}", v.as_int32_unchecked())
+    } else if v.is_double() {
+        format!("{}", v.as_double_unchecked())
+    } else if v.is_true() {
+        "true".to_string()
+    } else if v.is_false() {
+        "false".to_string()
+    } else if v.is_null() {
+        "null".to_string()
+    } else if v.is_undefined() {
+        "undefined".to_string()
+    } else {
+        "[object Object]".to_string()
     }
 }
