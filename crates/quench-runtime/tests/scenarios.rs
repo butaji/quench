@@ -459,6 +459,26 @@ mod tests {
     }
 
     // =========================================================================
+    // Try/catch scenarios
+    // =========================================================================
+
+    #[test]
+    fn scenario_optional_catch_binding() {
+        // optional-catch-binding: catch without parameter (ES2019)
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("try { throw 42; } catch { true; }").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn scenario_optional_catch_binding_ignores_value() {
+        // The caught value should be discarded when no catch param
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("try { throw 'error'; } catch { return 'caught'; }").unwrap();
+        assert_eq!(result, Value::String("caught".to_string()));
+    }
+
+    // =========================================================================
     // Global scenarios
     // =========================================================================
 

@@ -703,3 +703,109 @@ fn test_typeof_undeclared() {
     let result = ctx.eval("typeof totally_undeclared_variable_xyz").unwrap();
     assert_eq!(result, Value::String("undefined".to_string()));
 }
+
+// ============================================================================
+// Throw/catch value preservation tests (Task 250)
+// ============================================================================
+
+#[test]
+fn test_throw_preserves_error_type() {
+    // try { throw new TypeError('x'); } catch (e) { e instanceof TypeError; }
+    // should be true
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            throw new TypeError('test message');
+        } catch (e) {
+            e instanceof TypeError;
+        }
+        "#,
+    ).unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_throw_preserves_message() {
+    // The caught error should have the original message
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            throw new Error('specific error message');
+        } catch (e) {
+            e.message;
+        }
+        "#,
+    ).unwrap();
+    assert_eq!(result, Value::String("specific error message".to_string()));
+}
+
+#[test]
+fn test_throw_preserves_number() {
+    // Throwing a number should preserve it
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            throw 42;
+        } catch (e) {
+            e;
+        }
+        "#,
+    ).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_throw_preserves_object() {
+    // Throwing an object should preserve it
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            throw { code: 'CUSTOM_ERROR', value: 123 };
+        } catch (e) {
+            e.code;
+        }
+        "#,
+    ).unwrap();
+    assert_eq!(result, Value::String("CUSTOM_ERROR".to_string()));
+}
+
+#[test]
+fn test_rethrow_preserves_error() {
+    // Re-throwing should preserve the original error type
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            try {
+                throw new ReferenceError('original');
+            } catch (inner) {
+                throw inner;
+            }
+        } catch (e) {
+            e instanceof ReferenceError;
+        }
+        "#,
+    ).unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_catch_binds_original_value() {
+    // The catch parameter should be the exact thrown value, not a stringified version
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        try {
+            throw new TypeError('test');
+        } catch (e) {
+            typeof e;
+        }
+        "#,
+    ).unwrap();
+    // Should be 'object', not 'string'
+    assert_eq!(result, Value::String("object".to_string()));
+}

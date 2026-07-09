@@ -3,7 +3,10 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::value::{to_js_string, to_bool, JsError, Value, Object, ObjectKind};
+use crate::value::{
+    to_js_string, to_bool, JsError, Value, Object, ObjectKind,
+    set_thrown_value, take_thrown_value,
+};
 use crate::interpreter::{
     predeclare_let_const, take_control_flow, is_control_flow_set, set_control_flow, ControlFlow,
 };
@@ -92,7 +95,10 @@ pub fn eval_statement(
             eval_try_catch(body, param, handler, env)
         }
         Statement::Throw(expr) => {
-            let msg = to_js_string(&eval_expression(expr, env)?);
+            let value = eval_expression(expr, env)?;
+            let msg = to_js_string(&value);
+            // Store the original thrown value for catch blocks to retrieve
+            set_thrown_value(value);
             Err(JsError(msg))
         }
         Statement::Export(stmt) => {
@@ -241,10 +247,11 @@ fn eval_try_catch(
 ) -> Result<Value, JsError> {
     match eval_statement(body, env, false) {
         Ok(v) => Ok(v),
-        Err(e) => {
+        Err(_e) => {
+            // Retrieve the original thrown value (set by throw statement)
+            let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
             if let Some(name) = param {
-                env.borrow_mut()
-                    .define(name.to_string(), Value::String(e.to_string()));
+                env.borrow_mut().define(name.to_string(), thrown_value);
             }
             eval_statement(handler, env, false)
         }
