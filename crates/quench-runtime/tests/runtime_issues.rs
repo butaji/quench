@@ -120,6 +120,50 @@ fn test_boolean_constructor_has_prototype() {
 }
 
 #[test]
+fn test_new_boolean_returns_object_not_primitive() {
+    let mut ctx = Context::new().unwrap();
+    
+    // new Boolean(false) should return an object, not false
+    let result = ctx.eval("typeof new Boolean(false)").unwrap();
+    assert_eq!(result, Value::String("object".to_string()));
+}
+
+#[test]
+fn test_new_boolean_vs_boolean_conversion() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Boolean(false) === false (conversion returns primitive)
+    let result = ctx.eval("Boolean(false) === false").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+    
+    // new Boolean(false) !== false (object vs primitive)
+    let result = ctx.eval("new Boolean(false) !== false").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_new_number_returns_object_not_primitive() {
+    let mut ctx = Context::new().unwrap();
+    
+    // new Number(42) should return an object, not 42
+    let result = ctx.eval("typeof new Number(42)").unwrap();
+    assert_eq!(result, Value::String("object".to_string()));
+}
+
+#[test]
+fn test_new_number_vs_number_conversion() {
+    let mut ctx = Context::new().unwrap();
+    
+    // Number(42) === 42 (conversion returns primitive)
+    let result = ctx.eval("Number(42) === 42").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+    
+    // new Number(42) !== 42 (object vs primitive)
+    let result = ctx.eval("new Number(42) !== 42").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn test_function_constructor_has_prototype() {
     let mut ctx = Context::new().unwrap();
     
@@ -808,4 +852,89 @@ fn test_catch_binds_original_value() {
     ).unwrap();
     // Should be 'object', not 'string'
     assert_eq!(result, Value::String("object".to_string()));
+}
+
+// ============================================================================
+// Object storage for array indices tests (Task 320)
+// ============================================================================
+
+#[test]
+fn test_object_keys_array() {
+    // Object.keys([1,2,3]) should return ["0","1","2"]
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Object.keys([1,2,3])").unwrap();
+    if let Value::Object(arr) = result {
+        let arr = arr.borrow();
+        let keys: Vec<String> = (0..arr.elements.len())
+            .map(|i| {
+                if let Some(Value::String(s)) = arr.elements.get(i) {
+                    s.clone()
+                } else {
+                    panic!("Expected string at index {}", i);
+                }
+            })
+            .collect();
+        assert_eq!(keys, vec!["0", "1", "2"]);
+    } else {
+        panic!("Expected array, got {:?}", result);
+    }
+}
+
+#[test]
+fn test_delete_array_index_direct() {
+    // Test Object.delete directly (without the delete operator, which is separate)
+    use quench_runtime::value::{Object, ObjectKind, Value};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let mut obj = Object::new_array(3);
+    obj.set("0", Value::Number(1.0));
+    obj.set("1", Value::Number(2.0));
+    obj.set("2", Value::Number(3.0));
+
+    // Delete index 0
+    let result = obj.delete("0");
+    assert!(result, "delete should return true");
+
+    // Verify the element is now undefined
+    assert_eq!(obj.get("0"), Some(Value::Undefined));
+
+    // Verify other elements are unchanged
+    assert_eq!(obj.get("1"), Some(Value::Number(2.0)));
+    assert_eq!(obj.get("2"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn test_array_named_properties() {
+    // Named properties on arrays should still work alongside numeric indices
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        var arr = [1, 2, 3];
+        arr.customProp = 'hello';
+        var keys = Object.keys(arr);
+        var customValue = arr.customProp;
+        [keys, customValue]
+        "#,
+    ).unwrap();
+    if let Value::Object(result) = result {
+        let result = result.borrow();
+        // result[0] is the keys array
+        if let Some(Value::Object(keys_arr)) = result.elements.get(0) {
+            let keys_arr = keys_arr.borrow();
+            let keys: Vec<String> = keys_arr.elements.iter().filter_map(|v| {
+                if let Value::String(s) = v { Some(s.clone()) } else { None }
+            }).collect();
+            // Should have numeric keys plus 'customProp'
+            assert!(keys.contains(&"0".to_string()), "Should contain '0'");
+            assert!(keys.contains(&"1".to_string()), "Should contain '1'");
+            assert!(keys.contains(&"2".to_string()), "Should contain '2'");
+            assert!(keys.contains(&"customProp".to_string()), "Should contain 'customProp'");
+            assert_eq!(keys.len(), 4, "Should have exactly 4 keys");
+        }
+        // result[1] is the custom value
+        assert_eq!(result.elements.get(1), Some(&Value::String("hello".to_string())));
+    } else {
+        panic!("Expected array, got {:?}", result);
+    }
 }
