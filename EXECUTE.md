@@ -9,31 +9,52 @@
 
 Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crates/quench-runtime/`, executing `.ts/.tsx/.js/.jsx` natively, with the **minimum amount of code**, the **maximum possible performance**, and **complete coverage of fast Rust unit tests** so every spec behavior is verified and regressions are caught immediately. Keep it Ink-compatible.
 
-## Current priority — drive test262 (in order)
+## Current priority — drive test262 toward 100%, incrementally
 
-The build is green again (Task 330 done). Most test262 cases are **skipped on missing
-harness helpers**, not failing on language bugs. Work this sequence, one verified step
-at a time, before any other feature:
+**Progress so far:** build is green; Task 357 (`assert.compareArray` /
+`assert.arrayContains`) is implemented and landed. Current conformance baseline
+(`target/test262_report.md`): **51 passed, 298 skipped, ~11.8%** on the active
+431-file subset. Most cases are **skipped on missing harness helpers**, not failing
+on language bugs — so the highest-leverage work is un-skipping via harness support,
+then fixing the language features each newly-active test reveals.
 
-1. **Un-stub `assert.compareArray` / `assert.arrayContains` — Task 357 (start here).**
-   Stubs returning `undefined` at `crates/quench-runtime/src/test262/harness.rs:173-174`;
-   violates Principle 7 (No stubs). SameValue semantics (NaN == NaN, +0 != -0). Unblocks 358.
-2. **Expand the harness include allowlist — Task 358 (blocked by 357).** Inline slice at
-   `crates/quench-runtime/src/test262/batches.rs:47` (currently 3 files). Add
-   `propertyHelper.js`, `nativeErrors.js`, `deepEqual.js` first. Measure:
-   `cargo test --test test262 -- --ignored 2>&1 | grep "unsupported include" | sort | uniq -c | sort -rn`.
-3. **Then one directory at a time** via the incremental loop (Task 355,
-   `docs/incremental-conformance-workflow.md`).
+**The long haul (read this every iteration).** Full test262 is ~53,000 files;
+TypeScript conformance is ~18,000 cases. Getting from ~12% to 100% is a large,
+multi-stage effort that **cannot be done in one pass**. It advances only by repeating
+a small loop and watching the pass rate climb in small steps:
+
+1. **Un-skip a batch** by adding/loading the next harness helper (Task 358 next).
+2. **Drive one directory at a time** with the incremental harness
+   (`docs/incremental-conformance-workflow.md`): `run_suite_stop_on_fail` → convert
+   the first failure into a focused regression test from the template → make the
+   smallest fix that passes it → advance to the next failure.
+3. **Track the metric:** rising pass rate and shrinking skip count on the active
+   subset. Expect steady, incremental gains — not big jumps.
+
+**Rules:**
+- One behavior, one fix, one regression test per iteration. Never batch unrelated
+  fixes and never declare an area complete until its subset reports **100% pass /
+  0 spec skips**.
+- Do not try to "finish test262" in a single change. Pick the next unchecked area in
+  `docs/conformance-coverage-matrix.md`, add it to the active subset, and grind it to
+  100% before moving on.
+
+**Next concrete step — Task 358 (expand the harness include allowlist).** 357 is done,
+so 358 is unblocked. The allowlist is the inline slice at
+`crates/quench-runtime/src/test262/batches.rs:47` (still `["assert.js","sta.js","eq.js"]`;
+everything else is skipped as `unsupported include`). Add `propertyHelper.js`,
+`nativeErrors.js`, `deepEqual.js` first (highest block count), registering their helpers
+natively. Measure before/after:
+`cargo test --test test262 -- --ignored 2>&1 | grep "unsupported include" | sort | uniq -c | sort -rn`.
+After 358, continue with the remaining helpers in block-count order, then keep driving
+directories to 100% via the loop above.
 
 **Do not re-add or re-complete removed tasks.** Reopened to TODO (not actually implemented)
-— do not mark complete without a verifying test: 97 (negative-test matching not wired into
-the runner), 253 (harness_loader absent), 305 (rest params not collected into an array),
-306 (linter enforces file-length only; `#[allow]` exemptions present), 350 (no per-iteration
-for-of `Let` rebinding).
+— do not mark complete without a verifying test: 97, 253, 305, 306, 350.
 
 **Task hygiene (every iteration):** verified done (cite test/commit) → remove
-`tasks/<id>-*.md`; `COMPLETED` but not verifiable against current code → set `TODO`. Keep
-`tasks/` lean. Regenerate `tasks/index.json` with `python3 scripts/target_tasks.py`.
+`tasks/<id>-*.md`; `COMPLETED` but not verifiable against current code → set `TODO`.
+Regenerate `tasks/index.json` with `python3 scripts/target_tasks.py`. Keep `tasks/` lean.
 
 ## Principles
 
