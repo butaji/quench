@@ -1,4 +1,3 @@
-// linter-skip
 //! Number built-in
 
 use std::cell::RefCell;

@@ -123,11 +123,6 @@ fn collect_all_rs_files_rec(dir: &Path, root: &Path, files: &mut Vec<PathBuf>) -
 
 fn check_file(path: &Path, violations: &mut Vec<Violation>) -> Result<(), String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    
-    // Skip files with // linter-skip directive
-    if content.contains("// linter-skip") {
-        return Ok(());
-    }
 
     let lines = content.lines().count();
 

@@ -1,4 +1,3 @@
-// linter-skip
 //! JavaScript interpreter - evaluates AST nodes
 
 use std::rc::Rc;

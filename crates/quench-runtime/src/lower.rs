@@ -1,4 +1,3 @@
-// linter-skip
 //! Lower SWC AST to runtime AST
 //!
 //! Converts swc_ecma_ast nodes to our runtime AST representation.

@@ -1,4 +1,3 @@
-// linter-skip
 //! TypeScript conformance test skip rules
 //!
 //! Determines which test cases should be skipped based on their
