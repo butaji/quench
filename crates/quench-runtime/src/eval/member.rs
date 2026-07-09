@@ -277,6 +277,28 @@ pub fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) ->
                 }
             ))))
         }
+        "bind" => {
+            // Create a bound function that remembers 'this' and initial arguments
+            let func_clone = f.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
+                    let bound_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+                    // Return a wrapper that combines bound args with call args
+                    let target_func = func_clone.clone();
+                    Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                        move |call_args: Vec<Value>| {
+                            let all_args: Vec<Value> = bound_args.iter().cloned().chain(call_args).collect();
+                            crate::eval::function::call_js_function_with_this(
+                                target_func.clone(),
+                                all_args,
+                                bound_this.clone(),
+                            )
+                        }
+                    ))))
+                }
+            ))))
+        }
         _ => Ok(Value::Undefined),
     }
 }
@@ -324,6 +346,24 @@ pub fn eval_native_function_member(nf: &Rc<NativeFunction>, prop_name: &str) -> 
                     crate::interpreter::set_native_this(this_val);
                     nf_clone.call(spread_args)
                 },
+            ))))
+        }
+        "bind" => {
+            // Create a bound function for native functions
+            let nf_clone = nf.clone();
+            Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                move |args: Vec<Value>| {
+                    let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
+                    let bound_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+                    let target_nf = nf_clone.clone();
+                    Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
+                        move |call_args: Vec<Value>| {
+                            let all_args: Vec<Value> = bound_args.iter().cloned().chain(call_args).collect();
+                            crate::interpreter::set_native_this(bound_this.clone());
+                            target_nf.call(all_args)
+                        }
+                    ))))
+                }
             ))))
         }
         _ => Ok(Value::Undefined),

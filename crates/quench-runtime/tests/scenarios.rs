@@ -281,6 +281,93 @@ mod tests {
         }
     }
 
+    // =========================================================================
+    // Object.prototype methods scenarios
+    // =========================================================================
+
+    #[test]
+    fn test_object_prototype_to_string() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("({}).toString()").unwrap();
+        assert_eq!(result, Value::String("[object Object]".to_string()));
+    }
+
+    #[test]
+    fn test_object_prototype_value_of() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("({}).valueOf()").unwrap();
+        match result {
+            Value::Object(_) => {}
+            _ => panic!("Expected object, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_object_prototype_has_own_property() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("({x: 1}).hasOwnProperty('x')").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+        let result = ctx.eval("({x: 1}).hasOwnProperty('y')").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_object_prototype_is_prototype_of() {
+        let mut ctx = Context::new().unwrap();
+        // Object.prototype should be in the chain of regular objects
+        let result = ctx.eval("Object.prototype.isPrototypeOf({})").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+        // But not for null prototype objects
+        let result = ctx.eval("Object.prototype.isPrototypeOf(Object.create(null))").unwrap();
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_object_prototype_property_is_enumerable() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("({x: 1}).propertyIsEnumerable('x')").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    // =========================================================================
+    // Function.prototype methods scenarios
+    // =========================================================================
+
+    #[test]
+    fn test_function_prototype_call() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("(function(a) { return a + 1; }).call(null, 5)").unwrap();
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn test_function_prototype_call_with_this() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("(function() { return this.x; }).call({x: 42})").unwrap();
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn test_function_prototype_apply() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("(function(a, b) { return a + b; }).apply(null, [5, 3])").unwrap();
+        assert_eq!(result, Value::Number(8.0));
+    }
+
+    #[test]
+    fn test_function_prototype_bind() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("(function(a, b) { return this.x + a + b; }).bind({x: 10}, 5)(3)").unwrap();
+        assert_eq!(result, Value::Number(18.0));
+    }
+
+    #[test]
+    fn test_function_prototype_bind_no_args() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("let f = (function() { return this.n; }).bind({n: 7}); f()").unwrap();
+        assert_eq!(result, Value::Number(7.0));
+    }
+
     #[test]
     fn scenario_instanceof_with_inheritance() {
         let mut ctx = Context::new().unwrap();
