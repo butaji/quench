@@ -11,6 +11,7 @@ use crate::arena::ObjectId;
 use crate::value::function::{NativeFunction, NativeConstructor, ValueFunction};
 use crate::value::object::Object;
 
+#[allow(unused_imports)] // Re-exported for external use
 pub use crate::value::convert::{to_js_string, to_bool, to_number, strict_eq, loose_eq, to_primitive};
 
 /// A JavaScript value - the fundamental runtime type.

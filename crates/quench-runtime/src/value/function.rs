@@ -11,6 +11,12 @@ use crate::value::object::Object;
 use crate::value::kind::ObjectKind;
 use crate::value::Value;
 
+/// Type alias for function prototype storage
+type ProtoCell = Rc<RefCell<Option<Rc<RefCell<Object>>>>>;
+
+/// Type alias for native function implementation
+type NativeFn = std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>;
+
 // =============================================================================
 // ValueFunction - JavaScript function values
 // =============================================================================
@@ -33,7 +39,7 @@ pub struct ValueFunction {
     /// Whether this is an arrow function (doesn't bind its own 'this')
     pub is_arrow: bool,
     /// Cached prototype object
-    proto_cell: Rc<RefCell<Option<Rc<RefCell<Object>>>>>
+    proto_cell: ProtoCell
 }
 
 impl Clone for ValueFunction {
@@ -70,6 +76,7 @@ impl ValueFunction {
     }
 
     /// Create a new arrow function
+    #[allow(clippy::boxed_local)] // Box needed to avoid copying large Expression type
     pub fn new_arrow(
         params: Vec<String>,
         body: Box<ArrowBody>,
@@ -117,9 +124,7 @@ impl ValueFunction {
 
 /// Native function - a host-provided function wrapped in Arc for shared ownership.
 /// These are functions provided by the runtime (e.g., console.log, Math.sin).
-pub struct NativeFunction(
-    pub std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>,
-);
+pub struct NativeFunction(pub NativeFn);
 
 impl NativeFunction {
     /// Create a new native function from a closure
@@ -156,7 +161,7 @@ impl Clone for NativeFunction {
 /// Similar to NativeFunction but has a prototype property for instanceof checks.
 pub struct NativeConstructor {
     /// The constructor function wrapped in Rc for shared ownership
-    func: std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>,
+    func: NativeFn,
     /// The prototype object for instanceof checks
     pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
 }
@@ -179,7 +184,7 @@ impl NativeConstructor {
     }
 
     /// Get the internal function Rc for comparison
-    pub(crate) fn func_rc(&self) -> &std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>> {
+    pub(crate) fn func_rc(&self) -> &NativeFn {
         &self.func
     }
 }

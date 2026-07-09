@@ -11,14 +11,14 @@ pub mod error;
 pub mod function;
 pub mod kind;
 pub mod object;
-pub mod value;
+mod val;
 
 pub use convert::{to_js_string, to_bool, to_number, strict_eq, loose_eq, to_primitive, PrimitiveHint};
 pub use error::JsError;
 pub use function::{NativeFunction, NativeConstructor, ValueFunction};
 pub use kind::ObjectKind;
 pub use object::{Getter, GetterStorage, Object, Setter, SetterStorage};
-pub use value::Value;
+pub use val::Value;
 
 // =============================================================================
 // Tests
