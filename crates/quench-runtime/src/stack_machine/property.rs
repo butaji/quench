@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use crate::ast::*;
-use crate::value::{Value, JsError, Object, ObjectKind, GetterStorage, to_js_string, to_number};
+use crate::value::{Value, JsError, Object, ObjectKind, GetterStorage, ValueFunction, to_js_string, to_number};
 use crate::env::Environment;
 
 use crate::eval::operators::eval_binary_op;
@@ -27,94 +27,113 @@ pub fn read_property(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     match obj_val {
-        Value::Object(o) => {
-            // Check for getter first
-            {
-                let obj = o.borrow();
-                if let Some(getter_storage) = obj.get_getter(prop_name) {
-                    let getter_clone = getter_storage.clone();
-                    drop(obj);
-                    return call_getter(o, &getter_clone, env);
-                }
-            }
-            // Check regular property
-            {
-                let obj = o.borrow();
-                if let Some(val) = obj.get(prop_name) {
-                    return Ok(val);
-                }
-            }
-            // Check global object for globals
-            {
-                let obj = o.borrow();
-                if obj.kind == ObjectKind::Global {
-                    drop(obj);
-                    if let Some(val) = env.borrow().get(prop_name) {
-                        return Ok(val);
-                    }
-                    return Ok(Value::Undefined);
-                }
-            }
-            // Handle Date.prototype specially
-            {
-                let obj = o.borrow();
-                if obj.kind == ObjectKind::Date && prop_name == "prototype" {
-                    let mut proto = Object::new(ObjectKind::Ordinary);
-                    let date_constructor = Value::Object(Rc::clone(o));
-                    proto.set("constructor", date_constructor);
-                    return Ok(Value::Object(Rc::new(RefCell::new(proto))));
-                }
-            }
-            Ok(Value::Undefined)
-        }
+        Value::Object(o) => read_object_property(o, prop_name, env),
         Value::String(s) => read_string_property(s, prop_name),
-        Value::Function(f) => {
-            if prop_name == "name" {
-                Ok(Value::String(f.name.clone().unwrap_or_default()))
-            } else if prop_name == "prototype" {
-                Ok(Value::Object(f.get_prototype()))
-            } else {
-                let proto = f.get_prototype();
-                let result = proto.borrow().get(prop_name)
-                    .unwrap_or(Value::Undefined);
-                Ok(result)
-            }
-        }
-        Value::NativeFunction(nf) => {
-            match prop_name {
-                "name" => Ok(Value::String("anonymous".to_string())),
-                "prototype" => {
-                    let mut proto = Object::new(ObjectKind::Ordinary);
-                    proto.set("constructor", Value::NativeFunction(Rc::clone(nf)));
-                    Ok(Value::Object(Rc::new(RefCell::new(proto))))
-                }
-                "length" => Ok(Value::Number(0.0)),
-                "call" | "apply" => Ok(Value::NativeFunction(Rc::clone(nf))),
-                _ => Ok(Value::Undefined),
-            }
-        }
-        Value::NativeConstructor(nc) => {
-            match prop_name {
-                "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
-                "length" => Ok(Value::Number(0.0)),
-                "name" => Ok(Value::String("anonymous".to_string())),
-                _ => Ok(Value::Undefined),
-            }
-        }
-        Value::Number(_) => {
-            if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
-                let num_obj = num_obj.borrow();
-                if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
-                    let proto_obj = proto.borrow();
-                    if let Some(val) = proto_obj.get(prop_name) {
-                        return Ok(val);
-                    }
-                }
-            }
-            Ok(Value::Undefined)
-        }
+        Value::Function(f) => read_function_property(f, prop_name),
+        Value::NativeFunction(nf) => read_native_function_property(nf, prop_name),
+        Value::NativeConstructor(nc) => read_native_constructor_property(nc, prop_name),
+        Value::Number(_) => read_number_property(prop_name, env),
         _ => Ok(Value::Undefined),
     }
+}
+
+/// Read a property from an object value.
+fn read_object_property(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    // Check for getter first
+    {
+        let obj = o.borrow();
+        if let Some(getter_storage) = obj.get_getter(prop_name) {
+            let getter_clone = getter_storage.clone();
+            drop(obj);
+            return call_getter(o, &getter_clone, env);
+        }
+    }
+    // Check regular property
+    {
+        let obj = o.borrow();
+        if let Some(val) = obj.get(prop_name) {
+            return Ok(val);
+        }
+    }
+    // Check global object for globals
+    {
+        let obj = o.borrow();
+        if obj.kind == ObjectKind::Global {
+            drop(obj);
+            if let Some(val) = env.borrow().get(prop_name) {
+                return Ok(val);
+            }
+            return Ok(Value::Undefined);
+        }
+    }
+    // Handle Date.prototype specially
+    {
+        let obj = o.borrow();
+        if obj.kind == ObjectKind::Date && prop_name == "prototype" {
+            let mut proto = Object::new(ObjectKind::Ordinary);
+            let date_constructor = Value::Object(Rc::clone(o));
+            proto.set("constructor", date_constructor);
+            return Ok(Value::Object(Rc::new(RefCell::new(proto))));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+/// Read a property from a function value.
+fn read_function_property(f: &ValueFunction, prop_name: &str) -> Result<Value, JsError> {
+    if prop_name == "name" {
+        Ok(Value::String(f.name.clone().unwrap_or_default()))
+    } else if prop_name == "prototype" {
+        Ok(Value::Object(f.get_prototype()))
+    } else {
+        let proto = f.get_prototype();
+        let result = proto.borrow().get(prop_name)
+            .unwrap_or(Value::Undefined);
+        Ok(result)
+    }
+}
+
+/// Read a property from a native function value.
+fn read_native_function_property(nf: &Rc<crate::value::NativeFunction>, prop_name: &str) -> Result<Value, JsError> {
+    match prop_name {
+        "name" => Ok(Value::String("anonymous".to_string())),
+        "prototype" => {
+            let mut proto = Object::new(ObjectKind::Ordinary);
+            proto.set("constructor", Value::NativeFunction(Rc::clone(nf)));
+            Ok(Value::Object(Rc::new(RefCell::new(proto))))
+        }
+        "length" => Ok(Value::Number(0.0)),
+        "call" | "apply" => Ok(Value::NativeFunction(Rc::clone(nf))),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+/// Read a property from a native constructor value.
+fn read_native_constructor_property(nc: &crate::value::NativeConstructor, prop_name: &str) -> Result<Value, JsError> {
+    match prop_name {
+        "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
+        "length" => Ok(Value::Number(0.0)),
+        "name" => Ok(Value::String("anonymous".to_string())),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+/// Read a property from a number value.
+fn read_number_property(prop_name: &str, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
+        let num_obj = num_obj.borrow();
+        if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
+            let proto_obj = proto.borrow();
+            if let Some(val) = proto_obj.get(prop_name) {
+                return Ok(val);
+            }
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 /// Read a property from a string value.
