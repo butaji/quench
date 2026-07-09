@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use regress::Regex;
 
 use crate::ast::Statement;
 use crate::env::Environment;
@@ -145,6 +146,12 @@ pub struct Object {
     descriptors: IndexMap<String, PropertyFlags>,
     /// Promise-specific data (only for Promise objects)
     pub promise_data: Option<PromiseObjectData>,
+    /// Internal regex (for RegExp objects)
+    pub internal_regex: Option<Regex>,
+    /// Internal regex source string
+    pub internal_regex_source: Option<String>,
+    /// Internal regex flags string
+    pub internal_regex_flags: Option<String>,
 }
 
 impl Object {
@@ -159,6 +166,9 @@ impl Object {
             setters: IndexMap::new(),
             descriptors: IndexMap::new(),
             promise_data: None,
+            internal_regex: None,
+            internal_regex_source: None,
+            internal_regex_flags: None,
         }
     }
 
@@ -173,6 +183,9 @@ impl Object {
             setters: IndexMap::new(),
             descriptors: IndexMap::new(),
             promise_data: None,
+            internal_regex: None,
+            internal_regex_source: None,
+            internal_regex_flags: None,
         }
     }
 

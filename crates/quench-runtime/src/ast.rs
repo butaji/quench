@@ -157,6 +157,8 @@ pub enum Expression {
     JsxElement { tag: JsxTagName, props: Vec<JsxProp>, children: Vec<JsxChild> },
     /// JSX fragment: <>children</>
     JsxFragment { children: Vec<JsxChild> },
+    /// RegExp literal: /pattern/flags
+    RegExp { pattern: String, flags: String },
 }
 
 /// JSX tag name (element name or component reference)

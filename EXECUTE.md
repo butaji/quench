@@ -9,6 +9,32 @@
 
 Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crates/quench-runtime/`, executing `.ts/.tsx/.js/.jsx` natively, with the **minimum amount of code**, the **maximum possible performance**, and **complete coverage of fast Rust unit tests** so every spec behavior is verified and regressions are caught immediately. Keep it Ink-compatible.
 
+## Current priority — drive test262 (in order)
+
+The build is green again (Task 330 done). Most test262 cases are **skipped on missing
+harness helpers**, not failing on language bugs. Work this sequence, one verified step
+at a time, before any other feature:
+
+1. **Un-stub `assert.compareArray` / `assert.arrayContains` — Task 357 (start here).**
+   Stubs returning `undefined` at `crates/quench-runtime/src/test262/harness.rs:173-174`;
+   violates Principle 7 (No stubs). SameValue semantics (NaN == NaN, +0 != -0). Unblocks 358.
+2. **Expand the harness include allowlist — Task 358 (blocked by 357).** Inline slice at
+   `crates/quench-runtime/src/test262/batches.rs:47` (currently 3 files). Add
+   `propertyHelper.js`, `nativeErrors.js`, `deepEqual.js` first. Measure:
+   `cargo test --test test262 -- --ignored 2>&1 | grep "unsupported include" | sort | uniq -c | sort -rn`.
+3. **Then one directory at a time** via the incremental loop (Task 355,
+   `docs/incremental-conformance-workflow.md`).
+
+**Do not re-add or re-complete removed tasks.** Reopened to TODO (not actually implemented)
+— do not mark complete without a verifying test: 97 (negative-test matching not wired into
+the runner), 253 (harness_loader absent), 305 (rest params not collected into an array),
+306 (linter enforces file-length only; `#[allow]` exemptions present), 350 (no per-iteration
+for-of `Let` rebinding).
+
+**Task hygiene (every iteration):** verified done (cite test/commit) → remove
+`tasks/<id>-*.md`; `COMPLETED` but not verifiable against current code → set `TODO`. Keep
+`tasks/` lean. Regenerate `tasks/index.json` with `python3 scripts/target_tasks.py`.
+
 ## Principles
 
 1. **High impact, low effort first.** Every decision is filtered by effort vs. payoff. Prefer the change that fixes the most failures, unblocks the most examples, or removes the biggest stability risk with the smallest patch.

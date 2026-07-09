@@ -147,6 +147,7 @@ pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsEr
         Expression::Boolean(b) => machine.current_frame().values.push(Value::Boolean(*b)),
         Expression::Null => machine.current_frame().values.push(Value::Null),
         Expression::Undefined => machine.current_frame().values.push(Value::Undefined),
+        Expression::RegExp { pattern, flags } => eval_regexp_literal_stack(machine, pattern, flags)?,
         // Identifier, object, array
         Expression::Identifier(name) => eval_identifier(machine, name)?,
         Expression::Object(props) => eval_object(machine, props)?,
@@ -384,5 +385,38 @@ fn eval_for_in_expr(machine: &mut Machine, variable: &Box<Expression>, object: &
     let frame = machine.current_frame();
     frame.work.push(Work::BeginForIn { variable: Rc::new((**variable).clone()), body: Rc::new((**body).clone()) });
     frame.work.push(Work::EvalExpr(Rc::new((**object).clone())));
+    Ok(())
+}
+
+fn eval_regexp_literal_stack(machine: &mut Machine, pattern: &str, flags: &str) -> Result<(), JsError> {
+    use regress::Regex;
+    use crate::value::ObjectKind;
+
+    // Validate the pattern
+    let _regex = Regex::new(pattern).map_err(|e| {
+        JsError::new(format!("Invalid regular expression: {}", e))
+    })?;
+
+    // Create a RegExp object
+    let mut obj = Object::new(ObjectKind::RegExp);
+    obj.internal_regex_source = Some(pattern.to_string());
+    obj.internal_regex_flags = Some(flags.to_string());
+    obj.set("source", Value::String(pattern.to_string()));
+    obj.set("global", Value::Boolean(flags.contains('g')));
+    obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
+    obj.set("multiline", Value::Boolean(flags.contains('m')));
+    obj.set("lastIndex", Value::Number(0.0));
+    obj.set("flags", Value::String(flags.to_string()));
+
+    // Store the compiled regex
+    obj.internal_regex = Regex::new(pattern).ok();
+
+    let obj_rc = std::rc::Rc::new(std::cell::RefCell::new(obj));
+
+    // Set up prototype chain
+    let proto = crate::builtins::regex::get_regexp_prototype();
+    obj_rc.borrow_mut().prototype = Some(proto);
+
+    machine.current_frame().values.push(Value::Object(obj_rc));
     Ok(())
 }
