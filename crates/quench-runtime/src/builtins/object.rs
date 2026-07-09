@@ -134,4 +134,15 @@ fn register_object_prototype(object: &Rc<RefCell<Object>>) {
     OBJECT_PROTOTYPE.with(|op| {
         *op.borrow_mut() = Some(Rc::clone(&object_proto_rc));
     });
+
+    // Object.prototype.toString
+    object_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        Ok(Value::String(to_js_string(&this_val)))
+    }))));
+
+    // Object.prototype.valueOf
+    object_proto_rc.borrow_mut().set("valueOf", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Ok(crate::builtins::get_native_this().unwrap_or(Value::Undefined))
+    }))));
 }

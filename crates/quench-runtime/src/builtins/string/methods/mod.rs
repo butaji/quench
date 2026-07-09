@@ -13,7 +13,7 @@ pub mod to_string;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{NativeFunction, Object, Value};
+use crate::value::Object;
 
 /// Install all String.prototype methods on the prototype object
 pub fn install_string_methods(proto: &Rc<RefCell<Object>>) {
