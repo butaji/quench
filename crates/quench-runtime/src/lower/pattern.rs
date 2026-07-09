@@ -45,7 +45,7 @@ fn lower_elem_pat(elem: &swc::Pat) -> Option<BindingElement> {
 
 fn lower_object_pattern(obj: &swc::ObjectPat) -> Result<BindingElement, LowerError> {
     let props: Vec<(PropertyKey, BindingElement)> = obj.props.iter()
-        .filter_map(|prop| lower_object_pat_prop(prop))
+        .filter_map(lower_object_pat_prop)
         .collect();
     Ok(BindingElement::ObjectPattern(props))
 }
@@ -105,29 +105,26 @@ pub fn expand_nested_array_pattern(
 ) -> Vec<Statement> {
     let mut stmts = Vec::new();
     for (i, elem) in arr.elems.iter().enumerate() {
-        match elem {
-            Some(elem) => {
-                let member = array_member_expr(source_var, i);
-                match elem {
-                    swc::Pat::Ident(id) => {
-                        stmts.push(Statement::VarDeclaration {
-                            kind,
-                            name: atom_to_string(&id.id.sym),
-                            init: Some(member),
-                        });
-                    }
-                    _ => {
-                        let temp_name = format!("{}_item_{}", source_var, i);
-                        stmts.push(Statement::VarDeclaration {
-                            kind,
-                            name: temp_name.clone(),
-                            init: Some(member),
-                        });
-                        stmts.extend(expand_nested_pattern(kind, elem, &temp_name));
-                    }
+        if let Some(elem) = elem {
+            let member = array_member_expr(source_var, i);
+            match elem {
+                swc::Pat::Ident(id) => {
+                    stmts.push(Statement::VarDeclaration {
+                        kind,
+                        name: atom_to_string(&id.id.sym),
+                        init: Some(member),
+                    });
+                }
+                _ => {
+                    let temp_name = format!("{}_item_{}", source_var, i);
+                    stmts.push(Statement::VarDeclaration {
+                        kind,
+                        name: temp_name.clone(),
+                        init: Some(member),
+                    });
+                    stmts.extend(expand_nested_pattern(kind, elem, &temp_name));
                 }
             }
-            None => {}
         }
     }
     stmts
