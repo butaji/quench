@@ -23,6 +23,8 @@ pub enum PromiseState {
 pub struct PromiseObjectData {
     pub state: PromiseState,
     pub result: Value,
+    pub on_fulfilled_callbacks: Vec<Value>,
+    pub on_rejected_callbacks: Vec<Value>,
 }
 
 impl Default for PromiseObjectData {
@@ -33,7 +35,12 @@ impl Default for PromiseObjectData {
 
 impl PromiseObjectData {
     pub fn new() -> Self {
-        PromiseObjectData { state: PromiseState::Pending, result: Value::Undefined }
+        PromiseObjectData {
+            state: PromiseState::Pending,
+            result: Value::Undefined,
+            on_fulfilled_callbacks: Vec::new(),
+            on_rejected_callbacks: Vec::new(),
+        }
     }
 
     pub fn fulfill(&mut self, value: Value) {
@@ -44,6 +51,14 @@ impl PromiseObjectData {
     pub fn reject(&mut self, reason: Value) {
         self.state = PromiseState::Rejected;
         self.result = reason;
+    }
+
+    pub fn add_fulfilled_callback(&mut self, callback: Value) {
+        self.on_fulfilled_callbacks.push(callback);
+    }
+
+    pub fn add_rejected_callback(&mut self, callback: Value) {
+        self.on_rejected_callbacks.push(callback);
     }
 }
 
