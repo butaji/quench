@@ -53,6 +53,8 @@ pub enum Statement {
     Throw(Box<Expression>),
     /// Sequence of var declarations (avoids block scope for var hoisting)
     SequenceDecls(Vec<Statement>),
+    /// Export statement (ES module export)
+    Export(Box<Statement>),
 }
 
 impl Statement {

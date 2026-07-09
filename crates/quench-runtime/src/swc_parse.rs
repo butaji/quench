@@ -17,7 +17,7 @@ use swc_ecma_parser::{
 };
 use crate::ast::Program;
 use crate::value::JsError;
-use crate::lower::lower_script;
+use crate::lower::stmt::{lower_module, lower_script};
 
 /// Parse JavaScript source into an swc `Script` AST.
 pub fn parse_swc_script(source: &str) -> Result<swc_ecma_ast::Script, JsError> {
@@ -71,6 +71,33 @@ pub fn parse_swc(source: &str) -> Result<Program, JsError> {
     
     // Lower swc AST to our runtime AST
     lower_script(&script).map_err(|e| JsError(e.to_string()))
+}
+
+/// Parse ES module source using swc's parse_module()
+pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        Lrc::new(FileName::Custom("input".into())),
+        source.to_string(),
+    );
+    
+    let lexer = Lexer::new(
+        Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
+        Default::default(),
+        StringInput::from(&*fm),
+        None,
+    );
+    
+    let mut parser = Parser::new_from(lexer);
+    
+    let module = parser.parse_module().map_err(|e| {
+        JsError(format!("Module parse error: {:?}", e))
+    })?;
+    
+    lower_module(&module).map_err(|e| JsError(e.to_string()))
 }
 
 /// Parse JavaScript/JSX source using swc (script mode)

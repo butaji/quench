@@ -95,6 +95,10 @@ pub fn eval_statement(
             let msg = to_js_string(&eval_expression(expr, env)?);
             Err(JsError(msg))
         }
+        Statement::Export(stmt) => {
+            // Export statements wrap other statements (like assignments)
+            eval_statement(stmt, env, _is_expr_body)
+        }
     }
 }
 
