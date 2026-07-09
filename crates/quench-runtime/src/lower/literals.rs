@@ -113,7 +113,16 @@ pub fn lower_method_prop(method: &swc::MethodProp) -> Result<(PropertyKey, Prope
 }
 
 /// Lower a property name to PropertyKey
+/// Handles computed property keys by lowering the expression.
 fn lower_prop_name_key(key: &swc::PropName) -> Result<PropertyKey, LowerError> {
-    use super::helpers::lower_prop_name;
-    lower_prop_name(key)
+    use super::helpers::{atom_to_string, wtf8_atom_to_string};
+    match key {
+        swc::PropName::Str(s) => Ok(PropertyKey::String(wtf8_atom_to_string(&s.value))),
+        swc::PropName::Ident(i) => Ok(PropertyKey::Ident(atom_to_string(&i.sym))),
+        swc::PropName::Num(n) => Ok(PropertyKey::Number(n.value)),
+        swc::PropName::Computed(comp) => {
+            Ok(PropertyKey::Computed(Box::new(super::lower_expr(&comp.expr)?)))
+        }
+        swc::PropName::BigInt(b) => Ok(PropertyKey::String(b.value.to_string())),
+    }
 }
