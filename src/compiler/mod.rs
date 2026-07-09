@@ -300,6 +300,11 @@ fn stmt_to_js(stmt: &quench_runtime::ast::Statement) -> String {
             let body_str = body.iter().map(stmt_to_js).collect::<Vec<_>>().join("\n");
             format!("function {}({}) {{\n{}}}", name, params_str, body_str)
         }
+        Statement::ClassDeclaration { name, class: _ } => {
+            // Class declarations are not fully supported in the compiler output
+            // Return a placeholder that will fail at runtime
+            format!("var {} = null; // class not supported", name)
+        }
         Statement::Return(Some(expr)) => format!("return {};", expr_to_js(expr)),
         Statement::Return(None) => "return;".to_string(),
         Statement::Block(stmts) => {
@@ -580,6 +585,10 @@ fn expr_to_js(expr: &quench_runtime::ast::Expression) -> String {
         Expression::ArrayPattern(_) | Expression::ObjectPattern(_) => {
             // Destructuring patterns - simplified representation
             "[]".to_string()
+        }
+        Expression::Class(_) => {
+            // Class expressions are not supported in the compiler output
+            "null".to_string()
         }
     }
 }

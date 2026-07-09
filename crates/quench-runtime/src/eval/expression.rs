@@ -107,6 +107,9 @@ pub fn eval_expression(
         Expression::JsxFragment { children } => {
             eval_jsx_fragment(children, env)
         }
+        Expression::Class(class) => {
+            eval_class_expr(class, env)
+        }
     }
 }
 
@@ -211,6 +214,9 @@ fn eval_jsx_fragment(
 fn eval_identifier(name: &str, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
     if name == "this" {
         return Ok(get_this_binding(env));
+    }
+    if name == "super" {
+        return eval_super(env);
     }
     if env.borrow().is_tdz(name) {
         return Err(JsError(format!(
@@ -450,4 +456,24 @@ fn eval_for_in(
         }
     }
     Ok(last)
+}
+
+fn eval_super(_env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    Err(JsError("ReferenceError: super is only valid in class methods".to_string()))
+}
+
+fn eval_class_expr(class: &Class, _env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    // Classes require special constructor support that is not yet implemented.
+    // The AST types exist but evaluation is incomplete.
+    let _ = class;
+    Err(JsError("Class support is not yet fully implemented".to_string()))
+}
+
+fn property_key_to_string(key: &PropertyKey, env: &Rc<RefCell<Environment>>) -> Result<String, JsError> {
+    match key {
+        PropertyKey::Ident(s) => Ok(s.clone()),
+        PropertyKey::String(s) => Ok(s.clone()),
+        PropertyKey::Number(n) => Ok(n.to_string()),
+        PropertyKey::Computed(e) => Ok(to_js_string(&eval_expression(e, env)?)),
+    }
 }

@@ -39,6 +39,10 @@ pub fn eval_stmt(machine: &mut Machine, stmt: Rc<Statement>, is_expr_body: bool)
             machine.current_frame().env.borrow_mut().define(name.clone(), Value::Function(func));
             machine.current_frame().values.push(Value::Undefined);
         }
+        Statement::ClassDeclaration { name, class } => {
+            // Class declarations need recursive interpreter for full class semantics
+            return Err(JsError("Class declarations must be evaluated with the recursive interpreter".to_string()));
+        }
         Statement::If { condition, consequent, alternate } => {
             let frame = machine.current_frame();
             frame.work.push(Work::ApplyIf { consequent: Rc::new((**consequent).clone()), alternate: alternate.as_deref().map(|s| Rc::new(s.clone())), is_expr_body });

@@ -14,6 +14,7 @@ pub enum ObjectKind {
     Date,            // Date object
     Global,          // Global object (fallback lookup)
     Promise,         // Promise object
+    Class,           // Class object (constructor with prototype)
 }
 
 impl fmt::Display for ObjectKind {
@@ -28,6 +29,7 @@ impl fmt::Display for ObjectKind {
             ObjectKind::Date => write!(f, "date"),
             ObjectKind::Global => write!(f, "global"),
             ObjectKind::Promise => write!(f, "promise"),
+            ObjectKind::Class => write!(f, "class"),
         }
     }
 }

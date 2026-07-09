@@ -2,7 +2,7 @@
 
 use swc_ecma_ast as swc;
 use crate::ast::{
-    ArrowBody, BinaryOp, Expression, PropertyKey, PropertyValue, UpdateOp,
+    ArrowBody, BinaryOp, Class, ClassMember, Expression, PropertyKey, PropertyValue, UpdateOp,
 };
 use super::helpers::{
     lower_bin_op, lower_unary_op, assign_op_to_bin, lower_prop_name,
@@ -38,7 +38,7 @@ pub fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
         swc::Expr::Lit(lit) => lower_literal(lit),
         swc::Expr::TaggedTpl(_) => Err(LowerError::new("Tagged templates not supported")),
         swc::Expr::Tpl(tpl) => lower_template_literal(tpl),
-        swc::Expr::Class(_) => Err(LowerError::new("Class expressions not supported")),
+        swc::Expr::Class(class_expr) => lower_class_expr(class_expr),
         swc::Expr::Invalid(_) => Err(LowerError::new("Invalid expression")),
         swc::Expr::PrivateName(_) => Ok(Expression::Undefined),
         swc::Expr::JSXMember(member) => lower_jsx_member(member),
@@ -158,8 +158,12 @@ fn lower_member_expr(member: &swc::MemberExpr) -> Result<Expression, LowerError>
 fn lower_call_expr(call: &swc::CallExpr) -> Result<Expression, LowerError> {
     let callee = match &call.callee {
         swc::Callee::Expr(expr) => lower_expr(expr)?,
-        swc::Callee::Super(_) | swc::Callee::Import(_) => {
-            return Err(LowerError::new("super/import callee not supported"));
+        swc::Callee::Super(_) => {
+            // super() call - lower to Identifier so eval_call can recognize it
+            Expression::Identifier("super".to_string())
+        }
+        swc::Callee::Import(_) => {
+            return Err(LowerError::new("import callee not supported"));
         }
     };
     let args: Vec<Expression> = call.args.iter()
@@ -366,5 +370,85 @@ fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerErr
         swc::Prop::Setter(setter) => lower_setter_prop(setter),
         swc::Prop::Method(method) => lower_method_prop(method),
         swc::Prop::Assign(_) => Err(LowerError::new("Assignment property not supported")),
+    }
+}
+
+fn lower_class_expr(class_expr: &swc::ClassExpr) -> Result<Expression, LowerError> {
+    // ClassExpr has a nested class field
+    let class = &class_expr.class;
+    let name = class_expr.ident.as_ref().map(|i| atom_to_string(&i.sym));
+    let super_class = class.super_class.as_ref().map(|e| lower_expr(e)).transpose()?;
+    let body = class.body.iter().map(lower_class_member).collect::<Result<Vec<_>, _>>()?;
+    Ok(Expression::Class(Class {
+        name,
+        super_class: super_class.map(Box::new),
+        body,
+    }))
+}
+
+fn lower_class_member(member: &swc::ClassMember) -> Result<ClassMember, LowerError> {
+    use swc::ClassMember::*;
+    match member {
+        Constructor(params) => {
+            let ps: Vec<String> = params.params.iter().filter_map(|p| {
+                match p {
+                    swc::ParamOrTsParamProp::Param(param) => {
+                        match &param.pat {
+                            swc::Pat::Ident(ident) => Some(atom_to_string(&ident.id.sym)),
+                            _ => None,
+                        }
+                    }
+                    swc::ParamOrTsParamProp::TsParamProp(_) => None,
+                }
+            }).collect();
+            let body = params.body.as_ref()
+                .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+                .unwrap_or_default();
+            Ok(ClassMember::Constructor { params: ps, body })
+        }
+        Method(method) => {
+            let name = lower_prop_name(&method.key)?;
+            let is_static = method.is_static;
+            let ps: Vec<String> = method.function.params.iter().filter_map(|p| {
+                match &p.pat {
+                    swc::Pat::Ident(ident) => Some(atom_to_string(&ident.id.sym)),
+                    _ => None,
+                }
+            }).collect();
+            let body = method.function.body.as_ref()
+                .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+                .unwrap_or_default();
+            match method.kind {
+                swc::MethodKind::Getter => {
+                    Ok(ClassMember::Getter { name, body })
+                }
+                swc::MethodKind::Setter => {
+                    let param = ps.get(0).cloned().unwrap_or_default();
+                    Ok(ClassMember::Setter { name, param, body })
+                }
+                swc::MethodKind::Method => {
+                    if is_static {
+                        Ok(ClassMember::StaticMethod { name, params: ps, body })
+                    } else {
+                        Ok(ClassMember::Method { name, params: ps, body })
+                    }
+                }
+                _ => Err(LowerError::new("Unknown method kind")),
+            }
+        }
+        PrivateMethod(_) => Err(LowerError::new("Private methods not supported")),
+        ClassProp(_) => Err(LowerError::new("Class fields not supported")),
+        PrivateProp(_) => Err(LowerError::new("Private fields not supported")),
+        Empty(_) => Err(LowerError::new("Empty class members not supported")),
+        StaticBlock(_) => Err(LowerError::new("Static blocks not supported")),
+        TsIndexSignature(_) => Err(LowerError::new("TypeScript index signatures not supported")),
+        AutoAccessor(_) => Err(LowerError::new("Auto accessors not supported")),
+    }
+}
+
+fn extract_param_name(param: &swc::Param) -> String {
+    match &param.pat {
+        swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+        _ => "arg".to_string(),
     }
 }

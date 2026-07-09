@@ -27,6 +27,8 @@ pub enum Statement {
     VarDeclaration { kind: VarKind, name: String, init: Option<Expression> },
     /// Function declaration
     FunctionDeclaration { name: String, params: Vec<String>, body: Vec<Statement> },
+    /// Class declaration
+    ClassDeclaration { name: String, class: Class },
     /// If statement
     If { condition: Box<Expression>, consequent: Box<Statement>, alternate: Option<Box<Statement>> },
     /// While loop
@@ -118,6 +120,8 @@ pub enum Expression {
     Update { op: UpdateOp, argument: Box<Expression>, prefix: bool },
     New { constructor: Box<Expression>, arguments: Vec<Expression> },
     Sequence(Vec<Expression>),
+    /// Class expression
+    Class(Class),
     /// Block expression (for arrow functions with block bodies)
     BlockExpr(Vec<Statement>),
     /// Array destructuring pattern: [a, b] = expr
@@ -194,6 +198,32 @@ pub enum PropertyKey {
     String(String),
     Number(f64),
     Computed(Box<Expression>),
+}
+
+/// Class definition - used for both class declarations and expressions
+#[derive(Debug, Clone, PartialEq)]
+pub struct Class {
+    /// Optional class name (for named class expressions)
+    pub name: Option<String>,
+    /// Superclass expression (None for no extends)
+    pub super_class: Option<Box<Expression>>,
+    /// Class body members
+    pub body: Vec<ClassMember>,
+}
+
+/// Class member - method, getter, setter, or static member
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember {
+    /// Constructor
+    Constructor { params: Vec<String>, body: Vec<Statement> },
+    /// Regular method
+    Method { name: PropertyKey, params: Vec<String>, body: Vec<Statement> },
+    /// Getter
+    Getter { name: PropertyKey, body: Vec<Statement> },
+    /// Setter
+    Setter { name: PropertyKey, param: String, body: Vec<Statement> },
+    /// Static method
+    StaticMethod { name: PropertyKey, params: Vec<String>, body: Vec<Statement> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

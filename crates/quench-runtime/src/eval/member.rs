@@ -24,7 +24,7 @@ pub fn eval_member_access(
 }
 
 fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
-    // Check getter first
+    // Check getter first (on this object only, not prototype)
     {
         let obj = o.borrow();
         if let Some(getter_storage) = obj.get_getter(prop_name) {
@@ -33,11 +33,23 @@ fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value,
             return call_getter(o, &getter_clone, &Rc::new(RefCell::new(Environment::new())));
         }
     }
-    // Check regular properties
-    {
-        let obj = o.borrow();
-        if let Some(val) = obj.get(prop_name) {
-            return Ok(val);
+    // Check regular properties and prototype chain
+    let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
+    while let Some(obj_rc) = current {
+        {
+            let obj = obj_rc.borrow();
+            // Check if this object has the property
+            if let Some(val) = obj.properties.get(prop_name) {
+                return Ok(val.clone());
+            }
+            // Check array elements
+            if let Ok(idx) = prop_name.parse::<usize>() {
+                if idx < obj.elements.len() {
+                    return Ok(obj.elements[idx].clone());
+                }
+            }
+            // Move to prototype
+            current = obj.prototype.as_ref().map(|p| Rc::clone(p));
         }
     }
     // Handle Date.prototype specially
