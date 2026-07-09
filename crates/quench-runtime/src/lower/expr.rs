@@ -435,7 +435,7 @@ fn lower_class_member(member: &swc::ClassMember) -> Result<ClassMember, LowerErr
                     Ok(ClassMember::Getter { name, body })
                 }
                 swc::MethodKind::Setter => {
-                    let param = ps.get(0).cloned().unwrap_or_default();
+                    let param = ps.first().cloned().unwrap_or_default();
                     Ok(ClassMember::Setter { name, param, body })
                 }
                 swc::MethodKind::Method => {
@@ -445,7 +445,6 @@ fn lower_class_member(member: &swc::ClassMember) -> Result<ClassMember, LowerErr
                         Ok(ClassMember::Method { name, params: ps, body })
                     }
                 }
-                _ => Err(LowerError::new("Unknown method kind")),
             }
         }
         PrivateMethod(_) => Err(LowerError::new("Private methods not supported")),
@@ -458,9 +457,4 @@ fn lower_class_member(member: &swc::ClassMember) -> Result<ClassMember, LowerErr
     }
 }
 
-fn extract_param_name(param: &swc::Param) -> String {
-    match &param.pat {
-        swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-        _ => "arg".to_string(),
-    }
-}
+

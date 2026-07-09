@@ -54,14 +54,8 @@ thread_local! {
     static CURRENT_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Stack to track the current superclass during construction
 thread_local! {
     static SUPER_CLASS: RefCell<Option<Value>> = const { RefCell::new(None) };
-}
-
-/// Set the current superclass
-pub(crate) fn set_super_class(super_val: Option<Value>) {
-    SUPER_CLASS.with(|cell| *cell.borrow_mut() = super_val);
 }
 
 /// Get the current superclass
@@ -183,7 +177,7 @@ pub(crate) fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environ
 pub(crate) fn hoist_classes(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
     for stmt in statements {
         match stmt {
-            Statement::ClassDeclaration { name, class } => {
+            Statement::ClassDeclaration { name, class: _ } => {
                 // Create class value placeholder for hoisting
                 // The actual class is evaluated when the statement is executed
                 env.borrow_mut().declare_var(name.clone(), VarKind::Let);
