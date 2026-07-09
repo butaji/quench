@@ -144,7 +144,7 @@
       "id": "358",
       "title": "Expand SUPPORTED_INCLUDES to Cover More Harness Files",
       "file": "tasks/358-expand-supported-harness-includes.md",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0",
       "notes": "Expand `SUPPORTED_INCLUDES` in the test262 runner to include more harness files, reducing the number of skipped tests and increasing conformance coverage.",
       "category": "harness",
