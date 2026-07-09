@@ -156,7 +156,7 @@ fn eval_var_decl(
 
 fn eval_func_decl(
     name: &str,
-    params: &[String],
+    params: &[Param],
     body: &[Statement],
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {

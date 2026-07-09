@@ -3,7 +3,7 @@
 //! This module handles class instantiation, prototype creation,
 //! and class expression evaluation.
 
-use crate::ast::{Class, Expression, Statement};
+use crate::ast::{Class, Expression, Param, Statement};
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::statement::eval_statements;
@@ -265,9 +265,10 @@ fn create_class_prototype_helper_with_env(
 
     let closure = Rc::clone(env);
     for (name, params, body) in &class.methods {
+        let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
         let func = ValueFunction::new(
             Some(prop_key_to_string(name)),
-            params.clone(),
+            params_vec,
             body.clone(),
             Rc::clone(&closure),
         );

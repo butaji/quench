@@ -1,7 +1,7 @@
 //! Declaration lowering functions
 
 use swc_ecma_ast as swc;
-use crate::ast::{Class, ClassMember, PropertyKey, Statement, VarKind};
+use crate::ast::{Class, ClassMember, Param, PropertyKey, Statement, VarKind};
 
 use super::lower_stmt;
 use crate::lower::expr::lower_expr;
@@ -53,16 +53,26 @@ pub fn lower_var_decl(var_decl: &swc::VarDecl) -> Option<Statement> {
 
 fn lower_fn_decl(func_decl: &swc::FnDecl) -> Option<Statement> {
     let name = func_decl.ident.sym.to_string();
-    let params = func_decl.function.params.iter().map(|p| {
-        match &p.pat {
-            swc::Pat::Ident(ident) => ident.id.sym.to_string(),
-            _ => "".to_string(),
-        }
-    }).collect();
+    let params: Vec<Param> = func_decl.function.params.iter().map(|p| lower_param_decl(&p.pat)).collect();
     let body = func_decl.function.body.as_ref()
         .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
     Some(Statement::FunctionDeclaration { name, params, body })
+}
+
+pub fn lower_param_decl(pat: &swc::Pat) -> Param {
+    match pat {
+        swc::Pat::Ident(ident) => Param::new(&ident.id.sym.to_string()),
+        swc::Pat::Assign(assign) => {
+            let name = match assign.left.as_ref() {
+                swc::Pat::Ident(ident) => ident.id.sym.to_string(),
+                _ => "arg".to_string(),
+            };
+            let default = lower_expr(&assign.right).ok().map(Box::new);
+            Param { name, default }
+        }
+        _ => Param::new("arg"),
+    }
 }
 
 fn lower_class_decl(class_decl: &swc::ClassDecl) -> Option<Statement> {

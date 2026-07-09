@@ -3,8 +3,9 @@
 //! Handles lowering of literals, template literals, and property getters/setters.
 
 use swc_ecma_ast as swc;
-use crate::ast::{Expression, PropertyKey, PropertyValue};
-use super::helpers::{wtf8_atom_to_string, LowerError};
+use crate::ast::{Expression, Param, PropertyKey, PropertyValue};
+use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+use super::expr::lower_expr;
 use super::stmt::lower_stmt;
 
 /// Lower a literal expression
@@ -100,10 +101,18 @@ pub fn lower_method_prop(method: &swc::MethodProp) -> Result<(PropertyKey, Prope
     use super::helpers::atom_to_string;
 
     let key = lower_prop_name_key(&method.key)?;
-    let params = method.function.params.iter().map(|p| {
+    let params: Vec<Param> = method.function.params.iter().map(|p| {
         match &p.pat {
-            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
-            _ => "arg".to_string(),
+            swc::Pat::Ident(ident) => Param::new(&atom_to_string(&ident.id.sym)),
+            swc::Pat::Assign(assign) => {
+                let name = match assign.left.as_ref() {
+                    swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+                    _ => "arg".to_string(),
+                };
+                let default = lower_expr(&assign.right).ok().map(Box::new);
+                Param { name, default }
+            }
+            _ => Param::new("arg"),
         }
     }).collect();
     let body = method.function.body.as_ref()
