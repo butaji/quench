@@ -57,6 +57,20 @@
       "exit_criteria": "Real test262 harness includes (assert.js, sta.js, compareArray.js, etc.) load and run; no test is skipped solely because a helper is stubbed."
     },
     {
+      "id": "330",
+      "title": "Restore green build for quench-runtime",
+      "file": "tasks/330-restore-green-build.md",
+      "status": "completed",
+      "priority": "P0",
+      "notes": "- Three warnings remain in `quench-runtime` (unused `Getter`, `Setter`, and `set_this_binding`). These are not build blockers and are tracked by normal cleanup work.",
+      "category": "testing",
+      "suite": "tooling",
+      "batch": 0,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
+    },
+    {
       "id": "334",
       "title": "Adopt test262-harness",
       "file": "tasks/334-adopt-test262-harness.md",
@@ -349,6 +363,20 @@
       "target_subset": "tests/test262/test/built-ins/Object/prototype; tests/test262/test/built-ins/Function/prototype",
       "blocked_by": [],
       "exit_criteria": "test262 built-ins/Object/prototype/ and built-ins/Function/prototype/ subsets pass at 100% with zero spec skips."
+    },
+    {
+      "id": "356",
+      "title": "SWC Type Extraction Pipeline",
+      "file": "tasks/356-swc-type-extraction-pipeline.md",
+      "status": "pending",
+      "priority": "P0",
+      "notes": "Harvest TS type annotations from SWC AST at parse time. Build TypeMap (node_id \u2192 ExecType), lower to typed shadow tree nodes with speculative fast-path dispatch. Target: 3\u20136\u00d7 faster on typed TS.",
+      "category": "statements",
+      "suite": "tooling",
+      "batch": 3,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
       "id": "182",
@@ -1257,20 +1285,6 @@
       "exit_criteria": "Task acceptance criteria in the task file are met."
     },
     {
-      "id": "330",
-      "title": "Restore green build for quench-runtime",
-      "file": "tasks/330-restore-green-build.md",
-      "status": "completed",
-      "priority": "P2",
-      "notes": "- Three warnings remain in `quench-runtime` (unused `Getter`, `Setter`, and `set_this_binding`). These are not build blockers and are tracked by normal cleanup work.",
-      "category": "refactor",
-      "suite": "tooling",
-      "batch": 6,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [],
-      "exit_criteria": "Task acceptance criteria in the task file are met."
-    },
-    {
       "id": "331",
       "title": "Task Tracker - 2026-07-07",
       "file": "tasks/331-task-tracker.md",
@@ -1411,6 +1425,62 @@
       "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
+      "id": "357",
+      "title": "Split large files to meet 500-line limit",
+      "file": "tasks/357-split-large-files.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "**OPEN** - High Priority",
+      "category": "refactor",
+      "suite": "runtime",
+      "batch": 6,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
+      "id": "358",
+      "title": "Expand SUPPORTED_INCLUDES to Cover More Harness Files",
+      "file": "tasks/358-expand-supported-harness-includes.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Expand `SUPPORTED_INCLUDES` in the test262 runner to include more harness files, reducing the number of skipped tests and increasing conformance coverage.",
+      "category": "harness",
+      "suite": "test262",
+      "batch": 6,
+      "target_subset": "tests/test262 harness/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+    },
+    {
+      "id": "359",
+      "title": "Map Harness Files to Conformance Areas",
+      "file": "tasks/359-harness-to-conformance-mapping.md",
+      "status": "pending",
+      "priority": "P2",
+      "notes": "Create a mapping from test262 harness files to conformance areas and estimate conformance % increase when each is implemented. This guides prioritization of harness implementation work.",
+      "category": "harness",
+      "suite": "test262",
+      "batch": 6,
+      "target_subset": "tests/test262 harness/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant test262 harness subset passes at 100% with zero spec skips and the harness report is regenerated."
+    },
+    {
+      "id": "360",
+      "title": "100% JS/TS Compatibility Push",
+      "file": "tasks/360-100-percent-compatibility-push.md",
+      "status": "in_progress",
+      "priority": "P2",
+      "notes": "- Do not edit `tests/test262/`, `tests/typescript/`, `examples/`",
+      "category": "refactor",
+      "suite": "test262",
+      "batch": 6,
+      "target_subset": "tests/test262 refactor/ subset",
+      "blocked_by": [],
+      "exit_criteria": "Relevant test262 refactor subset passes at 100% with zero spec skips and the harness report is regenerated."
+    },
+    {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
@@ -1493,22 +1563,6 @@
       "target_subset": "n/a (runtime/tooling task)",
       "blocked_by": [],
       "exit_criteria": "Task acceptance criteria in the task file are met."
-    },
-    {
-      "id": "356",
-      "title": "SWC Type Extraction Pipeline",
-      "file": "tasks/356-swc-type-extraction-pipeline.md",
-      "status": "backlog",
-      "priority": "P0",
-      "notes": "Harvest TS type annotations from SWC AST at parse time. Build TypeMap (node_id → ExecType), lower to typed shadow tree nodes with speculative fast-path dispatch. Target: 3–6× faster on typed TS.",
-      "category": "interpreter",
-      "suite": "runtime",
-      "batch": 8,
-      "target_subset": "n/a (runtime/tooling task)",
-      "blocked_by": [
-        "264"
-      ],
-      "exit_criteria": "Benchmark shows 3–6× improvement on typed TS workload vs untyped shadow tree."
     }
   ]
 }
