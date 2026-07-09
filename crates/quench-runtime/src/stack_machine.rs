@@ -183,6 +183,7 @@ enum ObjectPropertyKind {
 #[derive(Debug, Clone)]
 enum AssignmentTarget {
     Identifier(String),
+    #[allow(dead_code)]
     Member { obj: Rc<RefCell<Object>>, key: String },
 }
 
@@ -216,7 +217,7 @@ impl Machine {
                     Some(w) => w,
                     None => {
                         let result = frame.values.pop().unwrap_or(Value::Undefined);
-                        drop(frame);
+                        let _ = frame;
                         self.frames.pop();
                         if let Some(caller) = self.frames.last_mut() {
                             caller.values.push(result);
@@ -748,6 +749,20 @@ impl Machine {
         Ok(())
     }
 
+    /// Create the JavaScript arguments object for a function call
+    fn create_arguments_object(&self, f: &ValueFunction, args: Vec<Value>) -> Value {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        // Set indexed arguments (arguments[0], arguments[1], etc.)
+        for (i, arg) in args.iter().enumerate() {
+            obj.set(&i.to_string(), arg.clone());
+        }
+        // Set length property
+        obj.set("length", Value::Number(args.len() as f64));
+        // Set callee property (the function itself)
+        obj.set("callee", Value::Function(f.clone()));
+        Value::Object(Rc::new(RefCell::new(obj)))
+    }
+
     fn apply_new(&mut self, argc: usize) -> Result<(), JsError> {
         let mut args = Vec::with_capacity(argc);
         for _ in 0..argc {
@@ -1235,7 +1250,10 @@ impl Machine {
                     call_env.define(param.clone(), arg);
                 }
 
+                // Create arguments object for non-arrow functions
                 if !f.is_arrow {
+                    let args_obj = self.create_arguments_object(&f, args);
+                    call_env.define("arguments".to_string(), args_obj);
                     hir::predeclare_var(&*f.body, &mut call_env);
                     hir::predeclare_let_const(&*f.body, &mut call_env);
                 }
@@ -1292,7 +1310,7 @@ impl Machine {
                 let constructor_opt = {
                     let obj = o.borrow();
                     if let Some(constructor) = obj.get("constructor") {
-                        if matches!(constructor, Value::Function(_) | Value::NativeFunction(_)) {
+                        if matches!(constructor, Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) {
                             Some(constructor.clone())
                         } else {
                             None

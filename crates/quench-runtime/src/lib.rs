@@ -210,6 +210,7 @@ impl Context {
     }
 
     /// Get the inner environment (used by stack machine tests).
+    #[allow(dead_code)]
     pub(crate) fn env(&self) -> &Rc<RefCell<Environment>> {
         &self.env
     }

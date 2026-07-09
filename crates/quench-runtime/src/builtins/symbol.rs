@@ -21,7 +21,7 @@ pub fn register_symbol(ctx: &mut Context) {
     // Symbol constructor function
     let symbol_constructor = NativeFunction::new(move |args| {
         let desc = args.first()
-            .map(|v| crate::value::to_js_string(v))
+            .map(crate::value::to_js_string)
             .unwrap_or_default();
         let symbol_id = next_symbol_desc();
         let symbol_val = Value::Symbol(format!("Symbol({}):{}", desc, symbol_id));

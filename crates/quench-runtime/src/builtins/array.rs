@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{NativeFunction, Object, ObjectKind, Value};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 pub mod methods;
@@ -25,17 +25,11 @@ pub fn get_array_prototype() -> Option<Rc<RefCell<Object>>> {
 // ============================================================================
 
 pub fn register_array(ctx: &mut Context) {
-    let array = Object::new(ObjectKind::Ordinary);
-    let array = Rc::new(RefCell::new(array));
-
-    register_array_static_methods(&array);
     let array_proto = Object::new(ObjectKind::Array);
     let array_proto_rc = Rc::new(RefCell::new(array_proto));
 
     setup_prototype_methods(&array_proto_rc);
     setup_array_length_getter(&array_proto_rc);
-
-    array.borrow_mut().set("prototype", Value::Object(Rc::clone(&array_proto_rc)));
 
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         array_proto_rc.borrow_mut().prototype = Some(object_proto);
@@ -43,15 +37,17 @@ pub fn register_array(ctx: &mut Context) {
 
     setup_array_prototype_global(&array_proto_rc);
 
-    ctx.set_global("Array".to_string(), Value::Object(array));
-}
+    // Create a wrapper object that has both the static methods AND the callable constructor
+    let array_wrapper = Object::new(ObjectKind::Ordinary);
+    let array_wrapper_rc = Rc::new(RefCell::new(array_wrapper));
 
-fn register_array_static_methods(array: &Rc<RefCell<Object>>) {
-    array.borrow_mut().set("isArray", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+    // Set up static methods
+    array_wrapper_rc.borrow_mut().set("prototype", Value::Object(Rc::clone(&array_proto_rc)));
+    array_wrapper_rc.borrow_mut().set("isArray", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         Ok(Value::Boolean(matches!(arg, Value::Object(ref o) if o.borrow().kind == ObjectKind::Array)))
     }))));
-    array.borrow_mut().set("from", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+    array_wrapper_rc.borrow_mut().set("from", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let items = args.first().cloned().unwrap_or(Value::Undefined);
         let arr = match items {
             Value::Object(o) => {
@@ -62,10 +58,39 @@ fn register_array_static_methods(array: &Rc<RefCell<Object>>) {
         };
         Ok(Value::Object(Rc::new(RefCell::new(arr))))
     }))));
-    array.borrow_mut().set("of", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+    array_wrapper_rc.borrow_mut().set("of", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
         let arr = Object::new_array_from(args.to_vec());
         Ok(Value::Object(Rc::new(RefCell::new(arr))))
     }))));
+
+    // Create the native constructor with the prototype
+    let array_constructor = NativeConstructor::new(
+        move |args: Vec<Value>| {
+            let arr = if args.is_empty() {
+                Object::new_array(0)
+            } else if args.len() == 1 {
+                if let Value::Number(n) = args[0] {
+                    if n == n.floor() && n >= 0.0 && n < 4294967296.0 {
+                        Object::new_array(n as usize)
+                    } else {
+                        return Err(JsError("Invalid array length".to_string()));
+                    }
+                } else {
+                    Object::new_array_from(vec![args[0].clone()])
+                }
+            } else {
+                Object::new_array_from(args)
+            };
+            Ok(Value::Object(Rc::new(RefCell::new(arr))))
+        },
+        Rc::clone(&array_proto_rc),
+    );
+
+    // Set the constructor property to point to the native constructor
+    array_wrapper_rc.borrow_mut().set("constructor", Value::NativeConstructor(Rc::new(array_constructor)));
+
+    // Register the wrapper object as Array
+    ctx.set_global("Array".to_string(), Value::Object(array_wrapper_rc));
 }
 
 fn setup_array_length_getter(array_proto: &Rc<RefCell<Object>>) {
