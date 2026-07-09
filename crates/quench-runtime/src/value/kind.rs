@@ -13,6 +13,7 @@ pub enum ObjectKind {
     Set,             // Set collection
     Date,            // Date object
     Global,          // Global object (fallback lookup)
+    Promise,         // Promise object
 }
 
 impl fmt::Display for ObjectKind {
@@ -26,6 +27,7 @@ impl fmt::Display for ObjectKind {
             ObjectKind::Set => write!(f, "set"),
             ObjectKind::Date => write!(f, "date"),
             ObjectKind::Global => write!(f, "global"),
+            ObjectKind::Promise => write!(f, "promise"),
         }
     }
 }

@@ -10,6 +10,43 @@ use crate::env::Environment;
 use crate::value::Value;
 use crate::value::kind::ObjectKind;
 
+/// Promise state for Promise objects
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled,
+    Rejected,
+}
+
+/// Promise-specific data stored in Promise objects
+#[derive(Debug, Clone)]
+pub struct PromiseObjectData {
+    pub state: PromiseState,
+    pub result: Value,
+}
+
+impl Default for PromiseObjectData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PromiseObjectData {
+    pub fn new() -> Self {
+        PromiseObjectData { state: PromiseState::Pending, result: Value::Undefined }
+    }
+
+    pub fn fulfill(&mut self, value: Value) {
+        self.state = PromiseState::Fulfilled;
+        self.result = value;
+    }
+
+    pub fn reject(&mut self, reason: Value) {
+        self.state = PromiseState::Rejected;
+        self.result = reason;
+    }
+}
+
 /// Getter function representation - stores closure and body for lazy evaluation
 #[derive(Debug, Clone)]
 pub struct Getter {
@@ -17,10 +54,12 @@ pub struct Getter {
     pub body: Vec<Statement>,
 }
 
-/// Getter storage in object - stores body directly (closure is created at call time)
+/// Getter storage in object - stores body and closure for proper scope capture
 #[derive(Debug, Clone)]
 pub struct GetterStorage {
     pub body: std::rc::Rc<Vec<Statement>>,
+    /// Closure environment at the time the getter was created
+    pub closure: std::rc::Rc<std::cell::RefCell<Environment>>,
 }
 
 /// Setter storage in object
@@ -56,6 +95,8 @@ pub struct Object {
     getters: IndexMap<String, GetterStorage>,
     /// Setter functions for properties
     setters: IndexMap<String, SetterStorage>,
+    /// Promise-specific data (only for Promise objects)
+    pub promise_data: Option<PromiseObjectData>,
 }
 
 impl Object {
@@ -68,6 +109,7 @@ impl Object {
             prototype: None,
             getters: IndexMap::new(),
             setters: IndexMap::new(),
+            promise_data: None,
         }
     }
 
@@ -80,6 +122,7 @@ impl Object {
             prototype: Some(prototype),
             getters: IndexMap::new(),
             setters: IndexMap::new(),
+            promise_data: None,
         }
     }
 
@@ -120,8 +163,9 @@ impl Object {
     }
 
     /// Set a getter function for a property
-    pub fn set_getter(&mut self, key: &str, body: std::rc::Rc<Vec<Statement>>) {
-        self.getters.insert(key.to_string(), GetterStorage { body });
+    pub fn set_getter(&mut self, key: &str, body: std::rc::Rc<Vec<Statement>>,
+                       closure: std::rc::Rc<std::cell::RefCell<Environment>>) {
+        self.getters.insert(key.to_string(), GetterStorage { body, closure });
     }
 
     /// Set a setter function for a property

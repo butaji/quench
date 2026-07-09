@@ -114,6 +114,11 @@ fn read_native_function_property(nf: &Rc<crate::value::NativeFunction>, prop_nam
 
 /// Read a property from a native constructor value.
 fn read_native_constructor_property(nc: &crate::value::NativeConstructor, prop_name: &str) -> Result<Value, JsError> {
+    // Check static methods first
+    if let Some(val) = nc.get_static_method(prop_name) {
+        return Ok(val);
+    }
+
     match prop_name {
         "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
         "length" => Ok(Value::Number(0.0)),
@@ -225,9 +230,9 @@ pub fn read_string_property(s: &str, prop_name: &str) -> Result<Value, JsError> 
 pub fn call_getter(
     obj: &Rc<RefCell<Object>>,
     getter_storage: &GetterStorage,
-    env: &Rc<RefCell<Environment>>,
+    _env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let closure = Rc::clone(env);
+    let closure = Rc::clone(&getter_storage.closure);
 
     let mut call_env = Environment::with_parent(closure);
     call_env.current_scope_mut().set_this(Value::Object(Rc::clone(obj)));
@@ -258,7 +263,7 @@ pub fn apply_object_property(
         }
         ObjectPropertyKind::Getter => {
             if let Value::Function(f) = value {
-                obj.set_getter(&key, Rc::clone(&f.body));
+                obj.set_getter(&key, Rc::clone(&f.body), Rc::clone(&f.closure));
             }
         }
         ObjectPropertyKind::Setter => {
