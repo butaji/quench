@@ -1,0 +1,497 @@
+//! Expression lowering - convert SWC expressions to runtime AST expressions
+
+use swc_ecma_ast as swc;
+use crate::ast::{
+    ArrowBody, BinaryOp, CompoundOp, Expression, PropertyKey, PropertyValue, UnaryOp, UpdateOp,
+};
+use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+
+/// Lower a swc Expr to our Expression
+pub fn lower_expr(expr: &swc::Expr) -> Result<Expression, LowerError> {
+    match expr {
+        swc::Expr::Ident(ident) => Ok(Expression::Identifier(atom_to_string(&ident.sym))),
+        swc::Expr::This(_) => Ok(Expression::Identifier("this".to_string())),
+        swc::Expr::Array(arr) => lower_array_expr(arr),
+        swc::Expr::Object(obj) => lower_object_expr(obj),
+        swc::Expr::Fn(func) => lower_fn_expr(func),
+        swc::Expr::Arrow(arrow) => lower_arrow_expr(arrow),
+        swc::Expr::Yield(yield_expr) => lower_yield_expr(yield_expr),
+        swc::Expr::MetaProp(_) => Ok(Expression::Undefined),
+        swc::Expr::Await(await_expr) => lower_expr(&await_expr.arg).map(|e| e),
+        swc::Expr::Paren(paren) => lower_expr(&paren.expr),
+        swc::Expr::Bin(bin) => lower_bin_expr(bin),
+        swc::Expr::Unary(unary) => lower_unary_expr(unary),
+        swc::Expr::Update(update) => lower_update_expr(update),
+        swc::Expr::Assign(assign) => lower_assign_expr(assign),
+        swc::Expr::Member(member) => lower_member_expr(member),
+        swc::Expr::SuperProp(_) => Ok(Expression::Undefined),
+        swc::Expr::Call(call) => lower_call_expr(call),
+        swc::Expr::New(new_expr) => lower_new_expr(new_expr),
+        swc::Expr::Seq(seq) => lower_seq_expr(seq),
+        swc::Expr::Cond(cond) => lower_cond_expr(cond),
+        swc::Expr::OptChain(opt_chain) => lower_opt_chain(opt_chain),
+        swc::Expr::Lit(lit) => lower_literal(lit),
+        swc::Expr::TaggedTpl(_) => Err(LowerError::new("Tagged templates not supported")),
+        swc::Expr::Tpl(tpl) => lower_template_literal(tpl),
+        swc::Expr::Class(_) => Err(LowerError::new("Class expressions not supported")),
+        swc::Expr::Invalid(_) => Err(LowerError::new("Invalid expression")),
+        swc::Expr::PrivateName(_) => Ok(Expression::Undefined),
+        swc::Expr::JSXMember(_) => Err(LowerError::new("JSX not supported")),
+        swc::Expr::JSXNamespacedName(_) => Err(LowerError::new("JSX not supported")),
+        swc::Expr::JSXEmpty(_) => Err(LowerError::new("JSX not supported")),
+        swc::Expr::JSXElement(_) => Err(LowerError::new("JSX not supported")),
+        swc::Expr::JSXFragment(_) => Err(LowerError::new("JSX not supported")),
+        swc::Expr::TsTypeAssertion(e) => lower_expr(&e.expr),
+        swc::Expr::TsAs(e) => lower_expr(&e.expr),
+        swc::Expr::TsSatisfies(e) => lower_expr(&e.expr),
+        swc::Expr::TsNonNull(e) => lower_expr(&e.expr),
+        swc::Expr::TsConstAssertion(e) => lower_expr(&e.expr),
+        swc::Expr::TsInstantiation(e) => lower_expr(&e.expr),
+    }
+}
+
+fn lower_array_expr(arr: &swc::ArrayLit) -> Result<Expression, LowerError> {
+    let elements: Vec<Expression> = arr.elems.iter()
+        .filter_map(|e| e.as_ref().and_then(|e| lower_expr(&e.expr).ok()))
+        .collect();
+    Ok(Expression::Array(elements))
+}
+
+fn lower_object_expr(obj: &swc::ObjectLit) -> Result<Expression, LowerError> {
+    let props: Vec<(PropertyKey, PropertyValue)> = obj.props.iter()
+        .filter_map(|prop| lower_prop_or_spread(prop).ok())
+        .collect();
+    Ok(Expression::Object(props))
+}
+
+fn lower_fn_expr(func: &swc::FnExpr) -> Result<Expression, LowerError> {
+    let name = func.ident.as_ref().map(|i| atom_to_string(&i.sym));
+    let params = func.function.params.iter().map(|p| {
+        match &p.pat {
+            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+            _ => "arg".to_string(),
+        }
+    }).collect();
+    let body = func.function.body.as_ref()
+        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+        .unwrap_or_default();
+    Ok(Expression::FunctionExpression { name, params, body })
+}
+
+fn lower_arrow_expr(arrow: &swc::ArrowExpr) -> Result<Expression, LowerError> {
+    let params: Vec<String> = arrow.params.iter().map(|p| {
+        match p {
+            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+            _ => "arg".to_string(),
+        }
+    }).collect();
+    let body = match arrow.body.as_ref() {
+        swc::BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowBody::Block(std::rc::Rc::new(
+                block.stmts.iter().filter_map(super::stmt::lower_stmt).collect()
+            ))
+        }
+        swc::BlockStmtOrExpr::Expr(expr) => {
+            ArrowBody::Expression(lower_expr(expr)?)
+        }
+    };
+    Ok(Expression::ArrowFunction { params, body: Box::new(body) })
+}
+
+fn lower_yield_expr(yield_expr: &swc::YieldExpr) -> Result<Expression, LowerError> {
+    if yield_expr.delegate {
+        return Err(LowerError::new("Yield delegate not supported"));
+    }
+    let arg = yield_expr.arg.as_ref().map(|e| lower_expr(e)).transpose()?;
+    Ok(arg.unwrap_or(Expression::Undefined))
+}
+
+fn lower_bin_expr(bin: &swc::BinExpr) -> Result<Expression, LowerError> {
+    let left = lower_expr(&bin.left)?;
+    let right = lower_expr(&bin.right)?;
+    let op = lower_bin_op(&bin.op)?;
+    Ok(Expression::Binary { op, left: Box::new(left), right: Box::new(right) })
+}
+
+fn lower_unary_expr(unary: &swc::UnaryExpr) -> Result<Expression, LowerError> {
+    let arg = lower_expr(&unary.arg)?;
+    let op = lower_unary_op(&unary.op)?;
+    Ok(Expression::Unary { op, argument: Box::new(arg) })
+}
+
+fn lower_update_expr(update: &swc::UpdateExpr) -> Result<Expression, LowerError> {
+    let arg = lower_expr(&update.arg)?;
+    let op = if update.op == swc::op!("++") {
+        UpdateOp::Increment
+    } else {
+        UpdateOp::Decrement
+    };
+    Ok(Expression::Update { op, argument: Box::new(arg), prefix: update.prefix })
+}
+
+fn lower_assign_expr(assign: &swc::AssignExpr) -> Result<Expression, LowerError> {
+    let left = lower_assign_target(&assign.left)?;
+    let right = lower_expr(&assign.right)?;
+    if assign.op == swc::AssignOp::Assign {
+        Ok(Expression::Assignment { left: Box::new(left), right: Box::new(right) })
+    } else {
+        let bin_op = assign_op_to_bin(&assign.op)?;
+        Ok(Expression::CompoundAssignment {
+            op: bin_op,
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+    }
+}
+
+fn lower_member_expr(member: &swc::MemberExpr) -> Result<Expression, LowerError> {
+    let obj = lower_expr(&member.obj)?;
+    let (property, computed) = lower_member_prop(&member.prop)?;
+    Ok(Expression::Member { object: Box::new(obj), property, computed })
+}
+
+fn lower_call_expr(call: &swc::CallExpr) -> Result<Expression, LowerError> {
+    let callee = match &call.callee {
+        swc::Callee::Expr(expr) => lower_expr(expr)?,
+        swc::Callee::Super(_) | swc::Callee::Import(_) => {
+            return Err(LowerError::new("super/import callee not supported"));
+        }
+    };
+    let args: Vec<Expression> = call.args.iter()
+        .filter_map(|arg| lower_expr(&arg.expr).ok())
+        .collect();
+    Ok(Expression::Call { callee: Box::new(callee), arguments: args })
+}
+
+fn lower_new_expr(new_expr: &swc::NewExpr) -> Result<Expression, LowerError> {
+    let constructor = lower_expr(&new_expr.callee)?;
+    let args: Vec<Expression> = new_expr.args.as_ref()
+        .map(|args| args.iter().filter_map(|arg| lower_expr(&arg.expr).ok()).collect())
+        .unwrap_or_default();
+    Ok(Expression::New { constructor: Box::new(constructor), arguments: args })
+}
+
+fn lower_seq_expr(seq: &swc::SeqExpr) -> Result<Expression, LowerError> {
+    let exprs: Vec<Expression> = seq.exprs.iter()
+        .filter_map(|e| lower_expr(e).ok())
+        .collect();
+    Ok(Expression::Sequence(exprs))
+}
+
+fn lower_cond_expr(cond: &swc::CondExpr) -> Result<Expression, LowerError> {
+    let test = lower_expr(&cond.test)?;
+    let consequent = lower_expr(&cond.cons)?;
+    let alternate = lower_expr(&cond.alt)?;
+    Ok(Expression::Conditional {
+        condition: Box::new(test),
+        consequent: Box::new(consequent),
+        alternate: Box::new(alternate),
+    })
+}
+
+fn lower_opt_chain(opt_chain: &swc::OptChainExpr) -> Result<Expression, LowerError> {
+    let base_expr = match &*opt_chain.base {
+        swc::OptChainBase::Member(member) => lower_expr(&member.obj)?,
+        swc::OptChainBase::Call(opt_call) => {
+            match &*opt_call.callee {
+                swc::Expr::Member(member) => lower_expr(&member.obj)?,
+                swc::Expr::Ident(ident) => Expression::Identifier(atom_to_string(&ident.sym)),
+                _ => return Err(LowerError::new("Unsupported optional call base")),
+            }
+        }
+    };
+    process_opt_chain_expr(opt_chain, base_expr)
+}
+
+fn process_opt_chain_expr(expr: &swc::OptChainExpr, base_expr: Expression) -> Result<Expression, LowerError> {
+    match &*expr.base {
+        swc::OptChainBase::Member(member) => {
+            let (property, computed) = lower_member_prop(&member.prop)?;
+            let member_expr = Expression::Member {
+                object: Box::new(base_expr.clone()),
+                property,
+                computed,
+            };
+            make_optional_check(base_expr, member_expr)
+        }
+        swc::OptChainBase::Call(opt_call) => {
+            match &*opt_call.callee {
+                swc::Expr::OptChain(nested) => {
+                    let inner = process_opt_chain_expr(nested, base_expr)?;
+                    let args: Vec<Expression> = opt_call.args.iter()
+                        .filter_map(|arg| lower_expr(&arg.expr).ok())
+                        .collect();
+                    let call_expr = Expression::Call {
+                        callee: Box::new(inner),
+                        arguments: args,
+                    };
+                    Ok(call_expr)
+                }
+                swc::Expr::Member(member) => {
+                    let inner_obj = lower_expr(&member.obj)?;
+                    let (property, computed) = lower_member_prop(&member.prop)?;
+                    let inner_checked = make_optional_check(
+                        inner_obj,
+                        Expression::Member {
+                            object: Box::new(base_expr.clone()),
+                            property,
+                            computed,
+                        },
+                    )?;
+                    let args: Vec<Expression> = opt_call.args.iter()
+                        .filter_map(|arg| lower_expr(&arg.expr).ok())
+                        .collect();
+                    let call_expr = Expression::Call {
+                        callee: Box::new(inner_checked),
+                        arguments: args,
+                    };
+                    make_optional_check(base_expr, call_expr)
+                }
+                swc::Expr::Ident(ident) => {
+                    let args: Vec<Expression> = opt_call.args.iter()
+                        .filter_map(|arg| lower_expr(&arg.expr).ok())
+                        .collect();
+                    let callee = Expression::Identifier(atom_to_string(&ident.sym));
+                    let call_expr = Expression::Call {
+                        callee: Box::new(callee),
+                        arguments: args,
+                    };
+                    make_optional_check(base_expr, call_expr)
+                }
+                _ => Err(LowerError::new("Unsupported optional call callee")),
+            }
+        }
+    }
+}
+
+fn make_optional_check(obj: Expression, expr: Expression) -> Result<Expression, LowerError> {
+    let null_check = Expression::Binary {
+        op: BinaryOp::Or,
+        left: Box::new(Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left: Box::new(obj.clone()),
+            right: Box::new(Expression::Null),
+        }),
+        right: Box::new(Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left: Box::new(obj),
+            right: Box::new(Expression::Undefined),
+        }),
+    };
+    Ok(Expression::Conditional {
+        condition: Box::new(null_check),
+        consequent: Box::new(Expression::Undefined),
+        alternate: Box::new(expr),
+    })
+}
+
+fn lower_member_prop(prop: &swc::MemberProp) -> Result<(PropertyKey, bool), LowerError> {
+    match prop {
+        swc::MemberProp::Ident(ident) => Ok((PropertyKey::Ident(atom_to_string(&ident.sym)), false)),
+        swc::MemberProp::PrivateName(_) => Err(LowerError::new("Private names not supported")),
+        swc::MemberProp::Computed(expr) => {
+            let expr = lower_expr(&expr.expr)?;
+            Ok((PropertyKey::Computed(Box::new(expr)), true))
+        }
+    }
+}
+
+fn lower_assign_target(target: &swc::AssignTarget) -> Result<Expression, LowerError> {
+    match target {
+        swc::AssignTarget::Simple(simple) => lower_simple_assign_target(simple),
+        swc::AssignTarget::Pat(_) => Err(LowerError::new("Destructuring assignment not supported")),
+    }
+}
+
+fn lower_simple_assign_target(target: &swc::SimpleAssignTarget) -> Result<Expression, LowerError> {
+    match target {
+        swc::SimpleAssignTarget::Ident(ident) => {
+            Ok(Expression::Identifier(atom_to_string(&ident.id.sym)))
+        }
+        swc::SimpleAssignTarget::Member(member) => {
+            let obj = lower_expr(&member.obj)?;
+            let (property, computed) = lower_member_prop(&member.prop)?;
+            Ok(Expression::Member { object: Box::new(obj), property, computed })
+        }
+        _ => Err(LowerError::new("Complex assignment target not supported")),
+    }
+}
+
+fn lower_prop_or_spread(prop: &swc::PropOrSpread) -> Result<(PropertyKey, PropertyValue), LowerError> {
+    match prop {
+        swc::PropOrSpread::Prop(prop) => lower_prop(prop),
+        swc::PropOrSpread::Spread(_) => Err(LowerError::new("Spread not supported")),
+    }
+}
+
+fn lower_literal(lit: &swc::Lit) -> Result<Expression, LowerError> {
+    match lit {
+        swc::Lit::Num(n) => Ok(Expression::Number(n.value)),
+        swc::Lit::Str(s) => Ok(Expression::String(wtf8_atom_to_string(&s.value))),
+        swc::Lit::Bool(b) => Ok(Expression::Boolean(b.value)),
+        swc::Lit::Null(_) => Ok(Expression::Null),
+        swc::Lit::Regex(regex) => Ok(Expression::String(format!("/{}/{}", regex.exp, regex.flags))),
+        swc::Lit::BigInt(_) => Err(LowerError::new("BigInt not supported")),
+        swc::Lit::JSXText(t) => Ok(Expression::String(t.value.to_string())),
+    }
+}
+
+fn lower_template_literal(tpl: &swc::Tpl) -> Result<Expression, LowerError> {
+    if tpl.exprs.is_empty() {
+        let mut result = String::new();
+        for elem in &tpl.quasis {
+            if let Some(cooked) = &elem.cooked {
+                result.push_str(&wtf8_atom_to_string(cooked));
+            }
+        }
+        return Ok(Expression::String(result));
+    }
+    let mut exprs: Vec<Expression> = Vec::new();
+    let quasi_count = tpl.quasis.len();
+    let expr_count = tpl.exprs.len();
+    for i in 0..quasi_count {
+        if let Some(cooked) = &tpl.quasis.get(i).and_then(|q| q.cooked.as_ref()) {
+            let s = wtf8_atom_to_string(cooked);
+            if !s.is_empty() {
+                exprs.push(Expression::String(s));
+            }
+        }
+        if i < expr_count {
+            exprs.push(lower_expr(&tpl.exprs[i])?);
+        }
+    }
+    if exprs.len() == 1 {
+        return Ok(exprs.remove(0));
+    }
+    let mut result = exprs.remove(0);
+    while !exprs.is_empty() {
+        let right = exprs.remove(0);
+        result = Expression::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(result),
+            right: Box::new(right),
+        };
+    }
+    Ok(result)
+}
+
+fn lower_prop(prop: &swc::Prop) -> Result<(PropertyKey, PropertyValue), LowerError> {
+    match prop {
+        swc::Prop::Shorthand(ident) => {
+            let name = atom_to_string(&ident.sym);
+            Ok((PropertyKey::Ident(name.clone()), PropertyValue::Value(Expression::Identifier(name))))
+        }
+        swc::Prop::KeyValue(kv) => {
+            let key = lower_prop_name(&kv.key)?;
+            let value = lower_expr(&kv.value)?;
+            Ok((key, PropertyValue::Value(value)))
+        }
+        swc::Prop::Getter(getter) => lower_getter_prop(getter),
+        swc::Prop::Setter(setter) => lower_setter_prop(setter),
+        swc::Prop::Method(method) => lower_method_prop(method),
+        swc::Prop::Assign(_) => Err(LowerError::new("Assignment property not supported")),
+    }
+}
+
+fn lower_getter_prop(getter: &swc::GetterProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
+    let key = lower_prop_name(&getter.key)?;
+    let body = getter.body.as_ref()
+        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+        .unwrap_or_default();
+    Ok((key, PropertyValue::Getter { params: vec![], body }))
+}
+
+fn lower_setter_prop(setter: &swc::SetterProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
+    let key = lower_prop_name(&setter.key)?;
+    let param = match &*setter.param {
+        swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+        _ => "value".to_string(),
+    };
+    let body = setter.body.as_ref()
+        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+        .unwrap_or_default();
+    Ok((key, PropertyValue::Setter { param, body }))
+}
+
+fn lower_method_prop(method: &swc::MethodProp) -> Result<(PropertyKey, PropertyValue), LowerError> {
+    let key = lower_prop_name(&method.key)?;
+    let params = method.function.params.iter().map(|p| {
+        match &p.pat {
+            swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+            _ => "arg".to_string(),
+        }
+    }).collect();
+    let body = method.function.body.as_ref()
+        .map(|b| b.stmts.iter().filter_map(super::stmt::lower_stmt).collect())
+        .unwrap_or_default();
+    Ok((key, PropertyValue::Value(Expression::FunctionExpression { name: None, params, body })))
+}
+
+fn lower_prop_name(key: &swc::PropName) -> Result<PropertyKey, LowerError> {
+    match key {
+        swc::PropName::Str(s) => Ok(PropertyKey::String(wtf8_atom_to_string(&s.value))),
+        swc::PropName::Ident(i) => Ok(PropertyKey::Ident(atom_to_string(&i.sym))),
+        swc::PropName::Num(n) => Ok(PropertyKey::Number(n.value)),
+        swc::PropName::Computed(_) => Err(LowerError::new("Computed property name not supported")),
+        swc::PropName::BigInt(b) => Ok(PropertyKey::String(b.value.to_string())),
+    }
+}
+
+fn lower_bin_op(op: &swc::BinaryOp) -> Result<BinaryOp, LowerError> {
+    match op {
+        swc::BinaryOp::Mul => Ok(BinaryOp::Mul),
+        swc::BinaryOp::Div => Ok(BinaryOp::Div),
+        swc::BinaryOp::Mod => Ok(BinaryOp::Mod),
+        swc::BinaryOp::Add => Ok(BinaryOp::Add),
+        swc::BinaryOp::Sub => Ok(BinaryOp::Sub),
+        swc::BinaryOp::LShift => Ok(BinaryOp::Shl),
+        swc::BinaryOp::RShift => Ok(BinaryOp::Shr),
+        swc::BinaryOp::ZeroFillRShift => Ok(BinaryOp::Ushr),
+        swc::BinaryOp::Lt => Ok(BinaryOp::Lt),
+        swc::BinaryOp::LtEq => Ok(BinaryOp::Le),
+        swc::BinaryOp::Gt => Ok(BinaryOp::Gt),
+        swc::BinaryOp::GtEq => Ok(BinaryOp::Ge),
+        swc::BinaryOp::EqEq => Ok(BinaryOp::Eq),
+        swc::BinaryOp::EqEqEq => Ok(BinaryOp::StrictEq),
+        swc::BinaryOp::NotEq => Ok(BinaryOp::Neq),
+        swc::BinaryOp::NotEqEq => Ok(BinaryOp::StrictNeq),
+        swc::BinaryOp::BitAnd => Ok(BinaryOp::BitAnd),
+        swc::BinaryOp::BitXor => Ok(BinaryOp::BitXor),
+        swc::BinaryOp::BitOr => Ok(BinaryOp::BitOr),
+        swc::BinaryOp::LogicalAnd => Ok(BinaryOp::And),
+        swc::BinaryOp::LogicalOr => Ok(BinaryOp::Or),
+        swc::BinaryOp::NullishCoalescing => Ok(BinaryOp::NullishCoalescing),
+        swc::BinaryOp::In => Ok(BinaryOp::In),
+        swc::BinaryOp::InstanceOf => Ok(BinaryOp::Instanceof),
+        _ => Err(LowerError::new(format!("Unsupported binary operator: {:?}", op))),
+    }
+}
+
+fn lower_unary_op(op: &swc::UnaryOp) -> Result<UnaryOp, LowerError> {
+    match op {
+        swc::UnaryOp::Minus => Ok(UnaryOp::Neg),
+        swc::UnaryOp::Plus => Err(LowerError::new("Unary + not supported")),
+        swc::UnaryOp::Tilde => Ok(UnaryOp::BitNot),
+        swc::UnaryOp::Bang => Ok(UnaryOp::Not),
+        swc::UnaryOp::TypeOf => Ok(UnaryOp::Typeof),
+        swc::UnaryOp::Void => Ok(UnaryOp::Void),
+        swc::UnaryOp::Delete => Err(LowerError::new("Delete not supported")),
+    }
+}
+
+fn assign_op_to_bin(op: &swc::AssignOp) -> Result<CompoundOp, LowerError> {
+    match op {
+        swc::AssignOp::AddAssign => Ok(CompoundOp::Add),
+        swc::AssignOp::SubAssign => Ok(CompoundOp::Sub),
+        swc::AssignOp::MulAssign => Ok(CompoundOp::Mul),
+        swc::AssignOp::DivAssign => Ok(CompoundOp::Div),
+        swc::AssignOp::ModAssign => Ok(CompoundOp::Mod),
+        swc::AssignOp::LShiftAssign => Ok(CompoundOp::Shl),
+        swc::AssignOp::RShiftAssign => Ok(CompoundOp::Shr),
+        swc::AssignOp::ZeroFillRShiftAssign => Ok(CompoundOp::Ushr),
+        swc::AssignOp::BitAndAssign => Ok(CompoundOp::BitAnd),
+        swc::AssignOp::BitXorAssign => Ok(CompoundOp::BitXor),
+        swc::AssignOp::BitOrAssign => Ok(CompoundOp::BitOr),
+        _ => Err(LowerError::new(format!("Unsupported assign operator: {:?}", op))),
+    }
+}
