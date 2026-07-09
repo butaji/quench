@@ -1,5 +1,7 @@
 //! Expression evaluation for the stack machine.
 
+#![allow(clippy::borrowed_box)] // Box<T> patterns are intentional for AST memory efficiency
+
 use std::rc::Rc;
 use std::cell::RefCell;
 
