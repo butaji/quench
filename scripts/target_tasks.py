@@ -68,7 +68,7 @@ MANUAL_OVERRIDES = {
     "320": {"category": "objects"},
     "286": {"suite": "both", "category": "objects", "priority": "P0"},
     "287": {"suite": "tooling", "category": "refactor", "priority": "P0"},
-    "330": {"suite": "tooling", "category": "refactor"},
+    "330": {"suite": "tooling", "category": "testing", "priority": "P0", "batch": 0},
     "331": {"suite": "tooling", "category": "testing"},
     "332": {"suite": "tooling", "category": "testing"},
     "334": {"suite": "harness", "category": "measurement", "batch": 0},
