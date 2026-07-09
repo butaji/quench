@@ -48,6 +48,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn scenario_computed_property_key() {
+        let mut ctx = Context::new().unwrap();
+        // Test basic computed property key
+        let result = ctx.eval("var k = 'x'; ({ [k]: 1 }).x").unwrap();
+        assert_eq!(result, Value::Number(1.0));
+
+        // Test computed property key with expression
+        let result = ctx.eval("({ ['a' + 'b']: 42 }).ab").unwrap();
+        assert_eq!(result, Value::Number(42.0));
+    }
+
     // =========================================================================
     // Error scenarios
     // =========================================================================
