@@ -8,13 +8,26 @@ Reach **100% compatibility with JavaScript, TypeScript, TSX, and JSX** in `crate
 ## Current State
 
 ### Test Status (2026-07-09)
-- **Total tests**: 321
-- **Passing**: 321
+- **Total tests**: 519
+- **Passing**: 499
 - **Failing**: 0
+- **Ignored**: 20
 
-### File Size Issues (Priority P1)
-- `builtins/promise/mod.rs`: 501 lines (exceeds 500)
-- Total files: 18912 lines across ~50 files
+### Implemented Features
+1. **RegExp builtin** - Basic regex support with:
+   - Regex literal parsing `/pattern/flags`
+   - `RegExp.prototype.test()` method
+   - `RegExp.prototype.exec()` method
+   - `RegExp.prototype.toString()` method
+   - `String.prototype.match()` with regex support
+   - `String.prototype.search()` with regex support
+   - Uses `regress` crate for ECMAScript-compatible regex
+
+### File Size Status
+- `builtins/regex.rs`: 568 lines (new file)
+- `eval/expression.rs`: 510 lines (exceeds 500)
+- `eval/member.rs`: 474 lines (acceptable)
+- Total files: ~19500 lines across ~55 files
 
 ### Conformance Status
 | Suite | Subset | Pass Rate |
