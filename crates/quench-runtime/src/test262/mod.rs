@@ -8,6 +8,7 @@ pub mod batches;
 pub mod harness;
 pub mod metadata;
 pub mod runner;
+pub mod skip;
 
 pub use metadata::Test262Metadata;
 pub use runner::{
