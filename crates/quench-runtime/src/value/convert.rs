@@ -28,6 +28,7 @@ pub fn to_js_string(v: &Value) -> String {
         Value::NativeFunction(_) => "[Function]".to_string(),
         Value::NativeConstructor(_) => "[Function]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s),
+        Value::Class(_) => "[Function]".to_string(),
     }
 }
 
@@ -53,7 +54,7 @@ pub fn to_bool(v: &Value) -> bool {
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
         Value::Object(_) | Value::ObjectId(_) | Value::Function(_) |
-        Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
+        Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => true,
         Value::Symbol(_) => false,
     }
 }
@@ -224,6 +225,7 @@ fn to_primitive_for_compare(v: &Value) -> Value {
         Value::Function(_) => Value::String("[object Function]".to_string()),
         Value::NativeFunction(_) => Value::String("[object Function]".to_string()),
         Value::NativeConstructor(_) => Value::String("[object Function]".to_string()),
+        Value::Class(_) => Value::String("[object Function]".to_string()),
     }
 }
 
@@ -245,7 +247,7 @@ pub fn to_primitive(value: &Value, hint: Option<&str>) -> Value {
         Value::Symbol(s) => Value::Symbol(s.clone()),
         Value::Object(obj) => to_primitive_object(&obj.borrow(), hint),
         Value::ObjectId(_) => Value::String("[object Object]".to_string()),
-        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => {
             Value::String("[Function]".to_string())
         }
     }
