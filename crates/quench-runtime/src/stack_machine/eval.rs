@@ -184,7 +184,7 @@ pub fn eval_expr(machine: &mut Machine, expr: Rc<Expression>) -> Result<(), JsEr
         Expression::JsxFragment { .. } => {
             return Err(JsError("JSX fragments must be evaluated with the recursive interpreter".to_string()));
         }
-        Expression::Class(class) => {
+        Expression::Class(_class) => {
             // Class expressions are evaluated using the recursive interpreter
             // Fall back to the recursive interpreter for class support
             return Err(JsError("Class expressions must be evaluated with the recursive interpreter".to_string()));

@@ -164,7 +164,7 @@ fn lower_class_member_stmt(member: &swc::ClassMember) -> Option<ClassMember> {
                     Some(ClassMember::Getter { name, body })
                 }
                 swc::MethodKind::Setter => {
-                    let param = ps.get(0).cloned().unwrap_or_default();
+                    let param = ps.first().cloned().unwrap_or_default();
                     Some(ClassMember::Setter { name, param, body })
                 }
                 swc::MethodKind::Method => {
@@ -174,7 +174,6 @@ fn lower_class_member_stmt(member: &swc::ClassMember) -> Option<ClassMember> {
                         Some(ClassMember::Method { name, params: ps, body })
                     }
                 }
-                _ => None,
             }
         }
         PrivateMethod(_) => None,
@@ -184,13 +183,6 @@ fn lower_class_member_stmt(member: &swc::ClassMember) -> Option<ClassMember> {
         StaticBlock(_) => None,
         TsIndexSignature(_) => None,
         AutoAccessor(_) => None,
-    }
-}
-
-fn extract_param_name_stmt(param: &swc::Param) -> String {
-    match &param.pat {
-        swc::Pat::Ident(ident) => ident.id.sym.to_string(),
-        _ => "arg".to_string(),
     }
 }
 
