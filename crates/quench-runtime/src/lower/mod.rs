@@ -2,6 +2,7 @@
 //!
 //! Converts swc_ecma_ast nodes to our runtime AST representation.
 
+pub mod control_flow;
 pub mod helpers;
 pub mod pattern;
 pub mod stmt;
