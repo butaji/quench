@@ -1345,7 +1345,7 @@ impl Machine {
         Ok(())
     }
 
-    fn for_init_var(&mut self, kind: VarKind, name: String) -> Result<(), JsError> {
+    fn for_init_var(&mut self, _kind: VarKind, name: String) -> Result<(), JsError> {
         let value = self.pop_value();
         self.current_frame().env.borrow_mut().initialize_declared(&name, value);
         Ok(())
@@ -1360,7 +1360,7 @@ fn property_key_static(key: &PropertyKey) -> Result<&str, JsError> {
     match key {
         PropertyKey::Ident(s) => Ok(s),
         PropertyKey::String(s) => Ok(s),
-        PropertyKey::Number(n) => Err(JsError("expected static property key".to_string())),
+        PropertyKey::Number(_n) => Err(JsError("expected static property key".to_string())),
         PropertyKey::Computed(_) => Err(JsError("expected static property key".to_string())),
     }
 }
@@ -1471,7 +1471,7 @@ fn call_getter(obj: &Rc<RefCell<Object>>, getter_storage: &GetterStorage, env: &
 
     let call_env = Rc::new(RefCell::new(call_env));
 
-    let mut machine = Machine::new(call_env);
+    let machine = Machine::new(call_env);
     if getter_storage.body.is_empty() {
         Ok(Value::Undefined)
     } else {
