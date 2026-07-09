@@ -4,12 +4,13 @@
 //! the quench-runtime. It parses test262 frontmatter, implements skip policy,
 //! and provides minimal harness helpers as Rust native functions.
 
-pub mod metadata;
+pub mod batches;
 pub mod harness;
+pub mod metadata;
 pub mod runner;
 
 pub use metadata::Test262Metadata;
 pub use runner::{
     TestOutcome, TestResult, Test262Report, assert_test262_file_passes, collect_test_files,
-    run_suite, run_suite_stop_on_fail, run_test_file, should_skip, write_report,
+    run_suite, run_suite_stop_on_fail, should_skip, write_report,
 };
