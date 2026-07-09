@@ -1,5 +1,3 @@
-// linter-skip
-#![allow(clippy::too_many_lines)]
 //! Date built-in and global utility functions
 
 use std::cell::RefCell;

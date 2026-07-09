@@ -1,4 +1,3 @@
-// linter-skip
 //! test262 harness helpers implemented as Rust native functions
 //!
 //! All harness helpers are implemented as Rust native functions registered

@@ -1,4 +1,3 @@
-// linter-skip
 //! test262 test runner with skip policy and reporting
 //!
 //! Runs test262 tests against quench-runtime, skipping unsupported features,

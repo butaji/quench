@@ -1,4 +1,3 @@
-// linter-skip
 //! Explicit-stack interpreter for the JavaScript runtime AST.
 //!
 //! This is a drop-in replacement for the recursive evaluator in
