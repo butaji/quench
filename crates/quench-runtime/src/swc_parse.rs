@@ -259,4 +259,12 @@ mod tests {
         let result = parse_swc(&source);
         assert!(result.is_ok(), "Failed to parse runtime.js: {:?}", result);
     }
+
+    #[test]
+    fn test_parse_dashboard_tsx() {
+        // Test parsing the actual dashboard.tsx file
+        let source = std::fs::read_to_string("../../examples/dashboard.tsx").unwrap();
+        let result = parse_typescript(&source);
+        assert!(result.is_ok(), "Failed to parse dashboard.tsx: {:?}", result);
+    }
 }
