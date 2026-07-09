@@ -190,39 +190,58 @@ fn add_object_kv_stmts(
     stmts: &mut Vec<Statement>,
 ) {
     match kv_value_ref {
-        swc::Pat::Ident(_) => {
-            stmts.push(Statement::VarDeclaration {
-                kind,
-                name: var_name,
-                init: Some(member),
-            });
-        }
+        swc::Pat::Ident(_) => push_simple_decl(kind, var_name, member, stmts),
         swc::Pat::Object(nested_obj) => {
-            let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
-            stmts.push(Statement::VarDeclaration {
-                kind: VarKind::Const,
-                name: nested_temp_name.clone(),
-                init: Some(member),
-            });
-            stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+            handle_nested_object(kind, member, source_var, key_str, nested_obj, stmts);
         }
         swc::Pat::Array(nested_arr) => {
-            let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
-            stmts.push(Statement::VarDeclaration {
-                kind: VarKind::Const,
-                name: nested_temp_name.clone(),
-                init: Some(member),
-            });
-            stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
+            handle_nested_array(kind, member, source_var, key_str, nested_arr, stmts);
         }
-        _ => {
-            stmts.push(Statement::VarDeclaration {
-                kind,
-                name: var_name,
-                init: Some(member),
-            });
-        }
+        _ => push_simple_decl(kind, var_name, member, stmts),
     }
+}
+
+fn push_simple_decl(
+    kind: VarKind,
+    name: String,
+    init: Expression,
+    stmts: &mut Vec<Statement>,
+) {
+    stmts.push(Statement::VarDeclaration { kind, name, init: Some(init) });
+}
+
+fn handle_nested_object(
+    kind: VarKind,
+    member: Expression,
+    source_var: &str,
+    key_str: String,
+    nested_obj: &swc::ObjectPat,
+    stmts: &mut Vec<Statement>,
+) {
+    let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
+    push_const_decl(nested_temp_name.clone(), member, stmts);
+    stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+}
+
+fn handle_nested_array(
+    kind: VarKind,
+    member: Expression,
+    source_var: &str,
+    key_str: String,
+    nested_arr: &swc::ArrayPat,
+    stmts: &mut Vec<Statement>,
+) {
+    let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
+    push_const_decl(nested_temp_name.clone(), member, stmts);
+    stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
+}
+
+fn push_const_decl(name: String, init: Expression, stmts: &mut Vec<Statement>) {
+    stmts.push(Statement::VarDeclaration {
+        kind: VarKind::Const,
+        name,
+        init: Some(init),
+    });
 }
 
 fn object_member_expr(source_var: &str, key: &str) -> Expression {
