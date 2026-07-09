@@ -131,6 +131,20 @@ pub fn eval_stmt(machine: &mut Machine, stmt: Rc<Statement>, is_expr_body: bool)
             // Export statements just evaluate their wrapped statement
             machine.current_frame().work.push(Work::EvalStmt(Rc::new((**stmt).clone()), is_expr_body));
         }
+        Statement::Import { default, named, namespace, source } => {
+            // ES module imports - delegate to the recursive interpreter
+            return Err(JsError("ES module imports must be evaluated with the recursive interpreter".to_string()));
+        }
+        Statement::ForIn { variable, object, body } => {
+            // ForIn is handled by first getting the keys, then iterating
+            // The begin_for_in function will create the ApplyForIn work with empty keys
+            // which will be populated when the object is evaluated
+            machine.current_frame().work.push(Work::BeginForIn {
+                variable: Rc::new((**variable).clone()),
+                body: Rc::new((**body).clone()),
+            });
+            machine.current_frame().work.push(Work::EvalExpr(Rc::new((**object).clone())));
+        }
     }
     Ok(())
 }
