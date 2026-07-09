@@ -233,6 +233,12 @@ fn string_method(s: &str, method: &str) -> Result<Value, JsError> {
 }
 
 pub fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) -> Result<Value, JsError> {
+    // Arrow functions are always strict mode and cannot have 'arguments' or 'caller'
+    if f.is_arrow {
+        if prop_name == "arguments" || prop_name == "caller" {
+            return Err(JsError("TypeError: 'arguments' and 'caller' are restricted properties and cannot be accessed on arrow functions".to_string()));
+        }
+    }
     match prop_name {
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
         "prototype" => {
@@ -299,7 +305,12 @@ pub fn eval_function_member(f: &crate::value::ValueFunction, prop_name: &str) ->
                 }
             ))))
         }
-        _ => Ok(Value::Undefined),
+        // For other properties, look up on the prototype chain
+        _ => {
+            let proto = f.get_prototype();
+            let result = proto.borrow().get(prop_name).unwrap_or(Value::Undefined);
+            Ok(result)
+        }
     }
 }
 
