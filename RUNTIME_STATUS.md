@@ -6,7 +6,11 @@ The quench-runtime is a custom TypeScript/JavaScript/TSX runtime built in Rust. 
 
 ## Current Status (2026-07-09)
 
-**Status**: ✅ **VM FOUNDATION READY** — The runtime compiles, all tests pass, examples no longer stack-overflow, and the VM is ready for incremental JS/TS conformance work.
+**Status**: ✅ **BUILD CLEAN** — All lint rules pass:
+- ✅ 0 files over 500 lines
+- ✅ 0 clippy warnings
+- ✅ All tests pass
+- ✅ Examples run without stack overflow
 
 ### Test Results
 
@@ -47,6 +51,15 @@ cargo test -p quench-runtime --test test262     → 0 passed, 4 ignored ✅
 - **Legacy interpreter**: recursive AST walker with a depth counter.
 - **SSTI (Self-Optimizing Shadow Tree Interpreter)**: explicit value/call stack in `shadow.rs`, NaN-boxed values, shape-based objects, and AST-level inline caches. This path prevents native-stack overflow and is the VM foundation for conformance work.
 - **HIR path**: `lower_hir.rs` / `eval_hir_source` provide a second explicit-stack execution path.
+
+## Lint Compliance
+
+| Rule | Status |
+|------|--------|
+| Max 500 lines/file | ✅ All files compliant |
+| Max 40 lines/function | ✅ All functions compliant |
+| Max 10 complexity | ✅ All functions compliant |
+| Clippy warnings | ✅ 0 warnings |
 
 ## Next Work
 
