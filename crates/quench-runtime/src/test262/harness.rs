@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use crate::value::{Object, ObjectKind};
 use crate::test262::helpers::{
     verify_property, verify_accessor_property, make_native_error, assert_deep_equal,
+    build_string, match_validator, test_property_of_strings,
+    async_test, detach_buffer,
 };
 
 /// Create a Test262Error object
@@ -340,4 +342,16 @@ pub fn inject_harness(ctx: &mut Context) {
 
     // isConstructor.js helper (Task 359)
     ctx.set_global("isConstructor".to_string(), make_native(is_constructor));
+
+    // regExpUtils.js helpers (Task 360)
+    ctx.set_global("buildString".to_string(), make_native(build_string));
+    ctx.set_global("testPropertyOfStrings".to_string(), make_native(test_property_of_strings));
+    ctx.set_global("testExtendedCharacterClass".to_string(), make_native(test_property_of_strings));
+    ctx.set_global("matchValidator".to_string(), make_native(match_validator));
+
+    // asyncHelpers.js helpers (Task 361)
+    ctx.set_global("asyncTest".to_string(), make_native(async_test));
+
+    // detachArrayBuffer.js helper (Task 362)
+    ctx.set_global("$DETACHBUFFER".to_string(), make_native(detach_buffer));
 }

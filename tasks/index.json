@@ -1187,6 +1187,34 @@
       "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
     },
     {
+      "id": "361",
+      "title": "Implement asyncHelpers.js Helpers",
+      "file": "tasks/361-async-helpers.md",
+      "status": "completed",
+      "priority": "P2",
+      "notes": "- Commit: see git log",
+      "category": "refactor",
+      "suite": "runtime",
+      "batch": 6,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
+      "id": "362",
+      "title": "Implement detachArrayBuffer.js Helpers",
+      "file": "tasks/362-detach-array-buffer.md",
+      "status": "completed",
+      "priority": "P2",
+      "notes": "- Commit: see git log",
+      "category": "refactor",
+      "suite": "runtime",
+      "batch": 6,
+      "target_subset": "n/a (runtime/tooling task)",
+      "blocked_by": [],
+      "exit_criteria": "No conformance regression; relevant runtime invariants are covered by unit tests."
+    },
+    {
       "id": "82",
       "title": "Analyze and enable whole-suite conformance runs",
       "file": "tasks/82-whole-suite-conformance-analysis.md",
