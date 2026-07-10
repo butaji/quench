@@ -30,6 +30,12 @@ const SUPPORTED_INCLUDES: &[&str] = &[
     "isConstructor.js",
     // Function global object helper
     "fnGlobalObject.js",
+    // RegExp utilities (Task 360)
+    "regExpUtils.js",
+    // Async test helpers (Task 361)
+    "asyncHelpers.js",
+    // ArrayBuffer detachment (Task 362)
+    "detachArrayBuffer.js",
 ];
 
 /// Run a single test262 test file with a fresh Context.
