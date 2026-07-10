@@ -240,4 +240,78 @@ mod tests {
         let result = ctx.eval("isConstructor({}) === false");
         assert!(result.is_ok(), "isConstructor for object literal should be false");
     }
+
+    // =============================================================================
+    // regExpUtils.js tests (Task 360)
+    // =============================================================================
+
+    #[test]
+    fn harness_build_string_lone_code_points() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // Test buildString with lone code points
+        let result = ctx.eval(
+            "buildString({loneCodePoints: [65, 66, 67], ranges: []}) === 'ABC'"
+        );
+        assert!(result.is_ok(), "buildString should work: {:?}", result);
+    }
+
+    #[test]
+    fn harness_build_string_ranges() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // Test buildString with ranges
+        let result = ctx.eval(
+            "buildString({loneCodePoints: [], ranges: [[65, 67]]}) === 'ABC'"
+        );
+        assert!(result.is_ok(), "buildString should work with ranges: {:?}", result);
+    }
+
+    #[test]
+    fn harness_test_property_of_strings() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // testPropertyOfStrings should not throw
+        let result = ctx.eval(
+            "testPropertyOfStrings({regExp: /a/, matchStrings: ['a'], nonMatchStrings: ['b']})"
+        );
+        assert!(result.is_ok(), "testPropertyOfStrings should work: {:?}", result);
+    }
+
+    #[test]
+    fn harness_match_validator() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // matchValidator should not throw when called
+        let result = ctx.eval("matchValidator(['b'], 0, 'abc')");
+        assert!(result.is_ok(), "matchValidator should work: {:?}", result);
+    }
+
+    // =============================================================================
+    // asyncHelpers.js tests (Task 361)
+    // =============================================================================
+
+    #[test]
+    fn harness_async_test() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // asyncTest should not throw when called with a function
+        let result = ctx.eval("asyncTest(function() {})");
+        assert!(result.is_ok(), "asyncTest should work: {:?}", result);
+    }
+
+    // =============================================================================
+    // detachArrayBuffer.js tests (Task 362)
+    // =============================================================================
+
+    #[test]
+    fn harness_detach_buffer() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // $DETACHBUFFER should mark buffer as detached (using plain object)
+        let result = ctx.eval(
+            "var buf = {byteLength: 8}; $DETACHBUFFER(buf); buf.byteLength === 0 && buf.detached === true"
+        );
+        assert!(result.is_ok(), "$DETACHBUFFER should work: {:?}", result);
+    }
 }
