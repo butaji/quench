@@ -253,6 +253,33 @@ where
     Value::NativeFunction(Rc::new(NativeFunction::new(f)))
 }
 
+// Storage for fnGlobalObject - stores a reference to globalThis
+thread_local! {
+    static GLOBAL_OBJECT: std::cell::RefCell<Option<Rc<RefCell<Object>>>> = std::cell::RefCell::new(None);
+}
+
+/// fnGlobalObject - returns a reference to the global object
+fn fn_global_object(_args: Vec<Value>) -> Result<Value, JsError> {
+    GLOBAL_OBJECT.with(|g| {
+        match g.borrow().as_ref() {
+            Some(obj) => Ok(Value::Object(Rc::clone(obj))),
+            None => Ok(Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Global))))),
+        }
+    })
+}
+
+/// isConstructor - checks if a value is a constructor
+fn is_constructor(args: Vec<Value>) -> Result<Value, JsError> {
+    let f = args.first().cloned().unwrap_or(Value::Undefined);
+    match &f {
+        Value::NativeConstructor(_) => Ok(Value::Boolean(true)),
+        Value::Class(_) => Ok(Value::Boolean(true)),
+        Value::NativeFunction(_) => Ok(Value::Boolean(true)),
+        Value::Function(_) => Ok(Value::Boolean(true)),
+        _ => Ok(Value::Boolean(false)),
+    }
+}
+
 /// Inject all test262 harness helpers into the context
 pub fn inject_harness(ctx: &mut Context) {
     ctx.set_global("Test262Error".to_string(), make_native(test262_error));
@@ -301,4 +328,16 @@ pub fn inject_harness(ctx: &mut Context) {
             assert_obj.borrow_mut().set("deepEqual", make_native(assert_deep_equal));
         }
     }
+
+    // fnGlobalObject.js helper (Task 359)
+    // Register the globalThis reference for fnGlobalObject
+    if let Some(global) = ctx.get_global("globalThis") {
+        if let Value::Object(obj) = global {
+            GLOBAL_OBJECT.with(|g| { *g.borrow_mut() = Some(obj); });
+        }
+    }
+    ctx.set_global("fnGlobalObject".to_string(), make_native(fn_global_object));
+
+    // isConstructor.js helper (Task 359)
+    ctx.set_global("isConstructor".to_string(), make_native(is_constructor));
 }

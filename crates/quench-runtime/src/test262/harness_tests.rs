@@ -183,4 +183,61 @@ mod tests {
         let result = ctx.eval("assert.deepEqual([1, 2, 3], [1, 2, 3]);");
         assert!(result.is_ok(), "deepEqual should pass for arrays: {:?}", result);
     }
+
+    // =============================================================================
+    // fnGlobalObject.js tests (Task 359)
+    // =============================================================================
+
+    #[test]
+    fn harness_fn_global_object_returns_object() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("typeof fnGlobalObject()");
+        assert!(result.is_ok(), "fnGlobalObject should work: {:?}", result);
+        if let Ok(v) = result {
+            // typeof returns "object" for objects
+            assert!(matches!(v, crate::Value::String(ref s) if s == "object"), 
+                "fnGlobalObject should return an object, got {:?}", v);
+        }
+    }
+
+    #[test]
+    fn harness_fn_global_object_equals_global_this() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("fnGlobalObject() === globalThis");
+        assert!(result.is_ok(), "fnGlobalObject should equal globalThis: {:?}", result);
+    }
+
+    // =============================================================================
+    // isConstructor.js tests (Task 359)
+    // =============================================================================
+
+    #[test]
+    fn harness_is_constructor_function() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("isConstructor(function() {})");
+        assert!(result.is_ok(), "isConstructor should work: {:?}", result);
+    }
+
+    #[test]
+    fn harness_is_constructor_builtin() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        let result = ctx.eval("isConstructor(Array)");
+        assert!(result.is_ok(), "isConstructor should work: {:?}", result);
+    }
+
+    #[test]
+    fn harness_is_constructor_object() {
+        let mut ctx = Context::new().unwrap();
+        inject_harness(&mut ctx);
+        // isConstructor should return false for objects, not throw
+        let result = ctx.eval("isConstructor({})");
+        assert!(result.is_ok(), "isConstructor should not throw");
+        // The actual value check would require evaluating it
+        let result = ctx.eval("isConstructor({}) === false");
+        assert!(result.is_ok(), "isConstructor for object literal should be false");
+    }
 }

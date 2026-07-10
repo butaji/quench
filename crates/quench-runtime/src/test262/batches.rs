@@ -24,6 +24,12 @@ const SUPPORTED_INCLUDES: &[&str] = &[
     "nativeErrors.js",
     // Deep equality (Task 358)
     "deepEqual.js",
+    // Compare arrays (Task 359)
+    "compareArray.js",
+    // Constructor check helper
+    "isConstructor.js",
+    // Function global object helper
+    "fnGlobalObject.js",
 ];
 
 /// Run a single test262 test file with a fresh Context.
