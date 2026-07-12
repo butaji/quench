@@ -19,8 +19,26 @@ pub use string_methods::register_string_regex_methods;
 // RegExp object kind
 // ============================================================================
 
-/// Setup the RegExp prototype object
+thread_local! {
+    static REGEXP_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
+/// Get the cached RegExp prototype object
 pub fn get_regexp_prototype() -> Rc<RefCell<Object>> {
+    // Check if cached
+    if let Some(p) = REGEXP_PROTOTYPE.with(|rp| rp.borrow().clone()) {
+        return p;
+    }
+    // Not cached yet - create and cache it
+    let proto_rc = create_regexp_prototype();
+    REGEXP_PROTOTYPE.with(|rp| {
+        *rp.borrow_mut() = Some(proto_rc.clone());
+    });
+    proto_rc
+}
+
+/// Create the RegExp prototype object
+fn create_regexp_prototype() -> Rc<RefCell<Object>> {
     let proto = Object::new(ObjectKind::Ordinary);
     let proto_rc = Rc::new(RefCell::new(proto));
     setup_regexp_prototype(&proto_rc);

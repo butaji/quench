@@ -447,4 +447,16 @@ test();
         assert!(err_msg.contains("SyntaxError"), "should be SyntaxError, got: {}", err_msg);
     }
 
+    #[test]
+    fn instanceof_regexp_with_harness() {
+        // Test instanceof with RegExp literal with harness loaded
+        let mut host = QuenchHost::new();
+        let result = host.run_script(r#"
+var re = /(?:)/;
+re instanceof RegExp;
+"#);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "instanceof regexp with harness failed: {:?}", result);
+    }
+
 }

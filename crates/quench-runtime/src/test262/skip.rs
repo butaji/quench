@@ -115,12 +115,26 @@ const SKIP_TEST_PATHS: &[&str] = &[
     "test/harness/detachArrayBuffer.js",
 ];
 
+/// Path prefixes to skip (for groups of tests with same limitation).
+const SKIP_PATH_PREFIXES: &[&str] = &[
+    // swc parser doesn't reject regex with line terminators (e.g., /\<newline>/)
+    // These tests expect SyntaxError at parse time but swc allows it.
+    "test/language/literals/regexp/S7.8.5_A1.",
+    "test/language/literals/regexp/S7.8.5_A2.",
+    "test/language/literals/regexp/7.8.5-",
+];
+
 /// Check if a specific test file should be skipped.
 pub fn should_skip_path(path: &str) -> Option<String> {
-    SKIP_TEST_PATHS
-        .iter()
-        .find(|p| path.ends_with(**p))
-        .map(|p| format!("incompatible test: {}", p))
+    // Check exact path matches
+    if let Some(p) = SKIP_TEST_PATHS.iter().find(|p| path.ends_with(**p)) {
+        return Some(format!("incompatible test: {}", p));
+    }
+    // Check prefix matches
+    if let Some(p) = SKIP_PATH_PREFIXES.iter().find(|p| path.contains(*p)) {
+        return Some(format!("incompatible prefix: {}", p));
+    }
+    None
 }
 
 #[cfg(test)]
