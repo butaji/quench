@@ -31,6 +31,7 @@ pub mod interner;
 pub mod interpreter;
 pub mod lower;
 pub mod parser;
+pub mod strict_reserved;
 pub mod test262;
 pub mod value;
 
