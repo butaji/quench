@@ -26,7 +26,7 @@ pub fn eval_native_function_member(
 }
 
 fn eval_native_prototype(nf: &Rc<NativeFunction>) -> Result<Value, JsError> {
-    if let Some(ref proto) = nf.prototype {
+    if let Some(proto) = nf.prototype.borrow().as_ref() {
         Ok(Value::Object(Rc::clone(proto)))
     } else {
         let mut proto = Object::new(ObjectKind::Ordinary);

@@ -576,4 +576,39 @@ mod tests {
         let v = ctx.eval("typeof foo").unwrap();
         assert_eq!(v, crate::value::Value::String("number".to_string()));
     }
+
+    #[test]
+    fn debug_symbol_member() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("Symbol.prototype.test262 = 'sym-proto';").unwrap();
+        let v = ctx.eval("Symbol().test262").unwrap();
+        assert_eq!(v, crate::value::Value::String("sym-proto".to_string()));
+    }
+
+    #[test]
+    fn debug_number_member() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("Number.prototype.test262 = 'num-proto';").unwrap();
+        let v = ctx.eval("(1).test262").unwrap();
+        assert_eq!(v, crate::value::Value::String("num-proto".to_string()));
+    }
+
+    #[test]
+    fn debug_symbol_proto_lookup() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("Symbol.prototype.test262 = 'sym-proto';").unwrap();
+        let direct = ctx.eval("Symbol.prototype.test262").unwrap();
+        assert_eq!(direct, crate::value::Value::String("sym-proto".to_string()));
+        let s = ctx.eval("Symbol()").unwrap();
+        assert!(matches!(s, crate::value::Value::Symbol(_)));
+    }
+
+    #[test]
+    fn debug_symbol_dot_member() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("Symbol.prototype.test262 = 'sym-proto';").unwrap();
+        // Run in same eval to avoid any state issue
+        let v = ctx.eval("var s = Symbol(); s.test262;").unwrap();
+        assert_eq!(v, crate::value::Value::String("sym-proto".to_string()));
+    }
 }

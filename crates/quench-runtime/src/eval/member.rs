@@ -32,7 +32,9 @@ pub fn eval_member_access(
         Value::Function(f) => eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => eval_native_function_member(nf, prop_name),
         Value::NativeConstructor(nc) => eval_native_constructor_member(nc, prop_name),
-        Value::Number(_) => eval_number_member(obj_val, prop_name, env),
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {
+            eval_number_member(obj_val, prop_name, env)
+        }
         Value::Class(class) => eval_class_member(class, prop_name, env),
         Value::Null | Value::Undefined => {
             let msg = format!("Cannot read property '{}' of {}", prop_name, obj_val);
@@ -114,19 +116,28 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
-/// Evaluate member access on a number
+/// Evaluate member access on a number (or boolean / symbol) primitive via ToObject coercion.
 fn eval_number_member(
     _obj_val: &Value,
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    if let Some(num_val) = env.borrow().get("Number") {
-        let proto = match &num_val {
-            Value::Object(num_obj) => {
-                let num_obj = num_obj.borrow();
-                num_obj.get("prototype")
-            }
-            Value::NativeFunction(nf) => nf.prototype.as_ref().map(|p| Value::Object(Rc::clone(p))),
+    // Try Number, Boolean, Symbol as constructor names.
+    let ctor_name = match _obj_val {
+        Value::Number(_) => "Number",
+        Value::Boolean(_) => "Boolean",
+        Value::Symbol(_) => "Symbol",
+        _ => return Ok(Value::Undefined),
+    };
+    if let Some(ctor_val) = env.borrow().get(ctor_name) {
+        let proto = match &ctor_val {
+            Value::Object(o) => o.borrow().get("prototype"),
+            Value::NativeFunction(nf) => nf
+                .prototype
+                .borrow()
+                .as_ref()
+                .map(|p| Value::Object(Rc::clone(p))),
+            Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
             _ => None,
         };
         if let Some(Value::Object(proto_obj)) = proto {

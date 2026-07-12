@@ -243,8 +243,10 @@ impl ValueFunction {
 /// These are functions provided by the runtime (e.g., console.log, Math.sin).
 pub struct NativeFunction {
     pub func: NativeFn,
-    /// Optional prototype object (for built-in constructors like Number)
-    pub prototype: Option<Rc<RefCell<Object>>>,
+    /// Optional prototype object (for built-in constructors like Number).
+    /// Wrapped in RefCell so set_property can lazily install it without
+    /// requiring a mutable receiver.
+    pub prototype: std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Object>>>>>,
     /// Additional properties (for JS compatibility) - shared via Rc so clones share properties
     properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
 }
@@ -257,7 +259,7 @@ impl NativeFunction {
     {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
-            prototype: None,
+            prototype: std::rc::Rc::new(std::cell::RefCell::new(None)),
             properties: std::rc::Rc::new(std::cell::RefCell::new(
                 std::collections::HashMap::new(),
             )),
@@ -271,7 +273,7 @@ impl NativeFunction {
     {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
-            prototype: Some(prototype),
+            prototype: std::rc::Rc::new(std::cell::RefCell::new(Some(prototype))),
             properties: std::rc::Rc::new(std::cell::RefCell::new(
                 std::collections::HashMap::new(),
             )),
@@ -300,9 +302,11 @@ impl NativeFunction {
                     "constructor",
                     Value::NativeFunction(std::rc::Rc::new(self.clone())),
                 );
-                // Update the prototype reference
-                if let Some(ref proto) = self.prototype {
-                    *proto.borrow_mut() = (*o.borrow()).clone();
+                // Lazily install the prototype reference so later reads via
+                // fn.prototype return the same instance instead of a fresh
+                // synthesized object.
+                if self.prototype.borrow().is_none() {
+                    *self.prototype.borrow_mut() = Some(Rc::clone(o));
                 }
             }
             // Keep the prototype readable via get_property; otherwise a
@@ -326,7 +330,7 @@ impl Clone for NativeFunction {
     fn clone(&self) -> Self {
         NativeFunction {
             func: self.func.clone(),
-            prototype: self.prototype.clone(),
+            prototype: std::rc::Rc::clone(&self.prototype),
             // Share the properties HashMap via Rc so clones see the same properties
             properties: std::rc::Rc::clone(&self.properties),
         }

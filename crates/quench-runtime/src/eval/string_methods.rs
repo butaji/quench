@@ -16,9 +16,17 @@ pub fn resolve_string_member(s: &str, prop_name: &str, env: &Rc<RefCell<Environm
     if prop_name == "length" {
         return Value::Number(s.len() as f64);
     }
-    if let Some(Value::Object(ctor)) = env.borrow().get("String") {
-        let proto = ctor.borrow().get("prototype");
-        if let Some(Value::Object(proto)) = proto {
+    if let Some(ctor) = env.borrow().get("String") {
+        let proto: Option<Rc<RefCell<crate::value::Object>>> = match &ctor {
+            Value::Object(o) => o.borrow().get("prototype").and_then(|v| match v {
+                Value::Object(p) => Some(p),
+                _ => None,
+            }),
+            Value::NativeFunction(nf) => nf.prototype.borrow().clone(),
+            Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
+            _ => None,
+        };
+        if let Some(proto) = proto {
             if let Some(val) = proto.borrow().get(prop_name) {
                 return val;
             }

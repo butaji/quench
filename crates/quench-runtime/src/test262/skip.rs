@@ -125,8 +125,6 @@ const SKIP_TEST_PATHS: &[&str] = &[
     // uses the outer environment directly instead of creating a proper eval-scope
     // environment for `var` declarations.
     "test/language/comments/S7.4_A5.js",
-    // Needs $262.createRealm() to test cross-realm property access.
-    "test/language/types/reference/get-value-prop-base-primitive-realm.js",
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).

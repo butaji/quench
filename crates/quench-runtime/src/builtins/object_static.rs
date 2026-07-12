@@ -542,6 +542,7 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
         }
         Value::NativeFunction(nf) => Ok(nf
             .prototype
+            .borrow()
             .clone()
             .map(Value::Object)
             .unwrap_or(Value::Null)),
