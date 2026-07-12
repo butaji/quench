@@ -636,8 +636,40 @@ pub(crate) fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<S
             Statement::SequenceDecls(inner) => {
                 collect_var_names_recursive(inner, names);
             }
+            Statement::ForIn { variable, body, .. } => {
+                // `for (var x in obj)` — `x` is hoisted to the enclosing var scope.
+                if let Expression::Identifier(name) = variable.as_ref() {
+                    names.push(name.clone());
+                }
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+            }
+            Statement::Expression(expr) => {
+                // `for-in` and `for-of` are lowered as Statement::Expression
+                // wrapping Expression::ForIn / Expression::ForOf; hoist their
+                // loop variable like any other `var x` declaration.
+                collect_var_names_from_expr(expr, names);
+            }
             _ => {}
         }
+    }
+}
+
+/// Hoist `var` names from for-in/for-of expressions wrapped in a statement.
+fn collect_var_names_from_expr(expr: &Expression, names: &mut Vec<String>) {
+    match expr {
+        Expression::ForIn { variable, body, .. } => {
+            if let Expression::Identifier(name) = variable.as_ref() {
+                names.push(name.clone());
+            }
+            collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+        }
+        Expression::ForOf { variable, body, .. } => {
+            if let Expression::Identifier(name) = variable.as_ref() {
+                names.push(name.clone());
+            }
+            collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
+        }
+        _ => {}
     }
 }
 

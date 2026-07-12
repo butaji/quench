@@ -117,6 +117,14 @@ fn assign_to_identifier(
         }
         env.borrow_mut().set(name, value.clone());
     } else {
+        // Strict mode: assignment to unresolvable reference must throw ReferenceError.
+        if crate::interpreter::is_strict_mode() {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                &format!("{} is not defined", name),
+                "ReferenceError",
+            );
+            return Err(js_err);
+        }
         env.borrow_mut().define(name.to_string(), value.clone());
     }
     Ok(())
@@ -217,6 +225,26 @@ fn assign_to_member(
             // Reject property sets on frozen objects
             if crate::builtins::object_static::is_frozen_object(&o) {
                 return Ok(());
+            }
+            // Strict mode: assignment to a non-writable property or to a new
+            // property on a non-extensible object must throw TypeError.
+            if crate::interpreter::is_strict_mode() {
+                let obj_ref = o.borrow();
+                if let Some(flags) = obj_ref.get_descriptor(&prop_name) {
+                    if !flags.writable {
+                        let (_, js_err) = crate::value::error::create_js_error_with_type(
+                            "Cannot assign to read only property",
+                            "TypeError",
+                        );
+                        return Err(js_err);
+                    }
+                } else if !obj_ref.extensible && !obj_ref.properties.contains_key(&prop_name) {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Cannot add property to non-extensible object",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
             }
             o.borrow_mut().set(&prop_name, value.clone());
             // Mirror writes on the globalThis object into the global binding,
@@ -426,5 +454,39 @@ pub fn call_setter(
         Ok(Value::Undefined)
     } else {
         eval_function_body(&body, &call_env, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+
+    #[test]
+    fn strict_for_in_var_iterates() {
+        let mut ctx = Context::new().unwrap();
+        // Strict mode + var-hoisted for-in. The body assigns to the
+        // hoisted `property` binding each iteration; must not throw.
+        ctx.eval(
+            "\"use strict\";\
+             var obj = {a:1, b:2};\
+             var count = 0;\
+             for (var property in obj) { count++; }\
+             if (count !== 2) throw new Error(\"count=\" + count);",
+        )
+        .expect("strict for-in should iterate");
+    }
+
+    #[test]
+    fn strict_assign_undeclared_throws() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("\"use strict\"; undeclared = 5;");
+        assert!(res.is_err(), "strict assignment to undeclared should throw");
+    }
+
+    #[test]
+    fn sloppy_assign_undeclared_no_throw() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("undeclared = 5;");
+        assert!(res.is_ok(), "sloppy assignment to undeclared should not throw");
     }
 }

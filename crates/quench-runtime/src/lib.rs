@@ -1,10 +1,10 @@
 //! quench-runtime — Rust-native JavaScript runtime targeting 100% test262 ECMAScript conformance.
 //!
-//! Uses swc for parsing and a custom interpreter for execution.
+//! Uses OXC for parsing and a custom tree-walking interpreter for execution.
 //!
 //! ## Architecture
 //!
-//! - **Parser**: Uses swc_ecma_parser to parse JS source into swc AST,
+//! - **Parser**: Uses the OXC parser to parse JS source into the OXC AST,
 //!   then lowers to our smaller runtime AST.
 //! - **Value model**: Custom Value enum with object/function/prototype support.
 //! - **Interpreter**: Recursive-descent evaluator for the runtime AST.
@@ -30,7 +30,7 @@ pub mod host;
 pub mod interner;
 pub mod interpreter;
 pub mod lower;
-pub mod swc_parse;
+pub mod parser;
 pub mod test262;
 pub mod value;
 
