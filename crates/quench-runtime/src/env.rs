@@ -1,17 +1,18 @@
 //! Environment (scope chain) for the JavaScript interpreter
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 
-use crate::value::Value;
 use crate::ast::VarKind;
+use crate::value::Value;
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VarState {
     /// Variable is declared with a value (may be undefined)
-    Initialized(Value),
+    Initialized(Rc<Value>),
     /// Variable was declared with `var` but initialization hasn't been evaluated yet
     DeclaredOnly,
     /// Variable is in the Temporal Dead Zone (TDZ) - declared but not yet initialized
@@ -20,7 +21,7 @@ pub enum VarState {
 
 /// An environment frame that holds variable bindings
 pub struct Scope {
-    bindings: HashMap<String, Value>,
+    bindings: HashMap<String, Rc<Value>>,
     /// Track variables that are declared but not initialized (var hoisting / TDZ)
     declarations: HashMap<String, VarState>,
     /// Track var kinds for const enforcement
@@ -33,7 +34,10 @@ impl std::fmt::Debug for Scope {
         // Print bindings keys only to avoid potential recursion with Values
         f.debug_struct("Scope")
             .field("bindings", &self.bindings.keys().collect::<Vec<_>>())
-            .field("declarations", &self.declarations.keys().collect::<Vec<_>>())
+            .field(
+                "declarations",
+                &self.declarations.keys().collect::<Vec<_>>(),
+            )
             .field("has_this", &self.this_value.is_some())
             .finish()
     }
@@ -42,7 +46,11 @@ impl std::fmt::Debug for Scope {
 impl Clone for Scope {
     fn clone(&self) -> Self {
         Scope {
-            bindings: self.bindings.clone(),
+            bindings: self
+                .bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), Rc::clone(v)))
+                .collect(),
             declarations: self.declarations.clone(),
             var_kinds: self.var_kinds.clone(),
             this_value: self.this_value.clone(),
@@ -86,7 +94,10 @@ impl Scope {
 
     /// Check if a variable is declared but not yet initialized
     pub fn is_declared_only(&self, name: &str) -> bool {
-        matches!(self.declarations.get(name), Some(VarState::DeclaredOnly) | Some(VarState::TDZ))
+        matches!(
+            self.declarations.get(name),
+            Some(VarState::DeclaredOnly) | Some(VarState::TDZ)
+        )
     }
 
     /// Get the kind of a variable
@@ -97,7 +108,7 @@ impl Scope {
     /// Initialize a declared variable
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         self.declarations.remove(name);
-        self.bindings.insert(name.to_string(), value);
+        self.bindings.insert(name.to_string(), Rc::new(value));
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
@@ -109,18 +120,18 @@ impl Scope {
         if matches!(self.declarations.get(name), Some(VarState::TDZ)) {
             return None;
         }
-        self.bindings.get(name).cloned()
+        self.bindings.get(name).map(|v| v.as_ref().clone())
     }
 
     /// Get a reference-counted value (for interpreter use)
     pub fn get_rc(&self, name: &str) -> Option<Rc<Value>> {
-        self.bindings.get(name).map(|v| Rc::new(v.clone()))
+        self.bindings.get(name).map(Rc::clone)
     }
 
     pub fn set(&mut self, name: String, value: Value) -> bool {
         match self.bindings.entry(name) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.insert(value);
+                e.insert(Rc::new(value));
                 true
             }
             std::collections::hash_map::Entry::Vacant(_) => false,
@@ -129,7 +140,7 @@ impl Scope {
 
     pub fn define(&mut self, name: String, value: Value) {
         self.declarations.remove(&name);
-        self.bindings.insert(name, value);
+        self.bindings.insert(name, Rc::new(value));
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -167,7 +178,10 @@ impl std::fmt::Debug for Environment {
         // Avoid printing parent to prevent infinite recursion
         f.debug_struct("Environment")
             .field("scopes", &self.scopes)
-            .field("parent", &if self.parent.is_some() { "..." } else { "None" })
+            .field(
+                "parent",
+                &if self.parent.is_some() { "..." } else { "None" },
+            )
             .finish()
     }
 }
@@ -223,34 +237,68 @@ impl Environment {
         self.get_global_this_property(name)
     }
 
+    /// Get a variable as Rc<Value> for identity preservation.
+    /// This ensures function properties persist across multiple accesses.
+    pub fn get_shared(&self, name: &str) -> Option<Rc<Value>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(rc) = scope.get_rc(name) {
+                return Some(rc);
+            }
+        }
+        // Look up in parent if not found
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get_shared(name);
+        }
+        None
+    }
+
     /// Get a property from globalThis if it exists.
     fn get_global_this_property(&self, name: &str) -> Option<Value> {
         if self.parent.is_none() {
             // Look for globalThis in our own scopes (not via get() to avoid recursion)
             for scope in &self.scopes {
-                if let Some(value) = scope.get("globalThis") {
-                    if let Value::Object(global_obj) = value {
-                        return global_obj.borrow().get(name);
-                    }
+                if let Some(Value::Object(global_obj)) = scope.get("globalThis") {
+                    return global_obj.borrow().get(name);
                 }
             }
         }
         None
     }
-    
+
     /// Get a variable by name, returning an Rc for identity preservation.
     /// For function values, this ensures the same closure is used.
     pub fn get_rc(&self, name: &str) -> Option<Rc<Value>> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(Rc::new(value));
+        self.get_shared(name)
+    }
+
+    /// Set a property on a variable stored by name (for function properties).
+    /// Modifies the Value in place via RefCell to preserve Rc identity.
+    /// Returns true if the property was set successfully.
+    pub fn set_property(&mut self, name: &str, prop: &str, value: Value) -> bool {
+        // Try current scopes first - use get_mut for in-place modification
+        for scope in self.scopes.iter_mut().rev() {
+            if let std::collections::hash_map::Entry::Occupied(entry) =
+                scope.bindings.entry(name.to_string())
+            {
+                let rc = entry.get();
+                match rc.as_ref() {
+                    Value::Function(ref f) => {
+                        f.set_property(prop, value.clone());
+                        return true;
+                    }
+                    Value::NativeFunction(ref nf) => {
+                        nf.set_property(prop, value.clone());
+                        return true;
+                    }
+                    _ => return false,
+                }
             }
         }
-        // Look up in parent if not found
+        // Try parent
         if let Some(ref parent) = self.parent {
-            return parent.borrow().get_rc(name);
+            return parent.borrow_mut().set_property(name, prop, value);
         }
-        None
+        false
     }
 
     /// Set a variable by name (assigns to existing binding)
@@ -292,25 +340,28 @@ impl Environment {
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         // Search from innermost scope outward so block-scoped declarations
         // shadow outer declarations, matching JavaScript lexical scoping.
-        let mut decl_scope_index = None;
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             if scope.declarations.contains_key(name) {
-                decl_scope_index = Some(i);
-                break;
+                self.scopes[i].initialize_declared(name, value);
+                return;
             }
         }
-        
-        // Also check parent environments
-        if decl_scope_index.is_none() {
-            if let Some(ref parent) = self.parent {
-                return parent.borrow_mut().initialize_declared(name, value);
+
+        // No pending declaration: the variable was already initialized earlier
+        // (e.g. a function-scoped `var` re-initialized on a later loop
+        // iteration). Update the existing local binding instead of letting
+        // the write escape to the parent environment.
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.bindings.contains_key(name) {
+                scope.set(name.to_string(), value);
+                return;
             }
         }
-        
-        // Initialize in the scope where it was declared
-        if let Some(index) = decl_scope_index {
-            let scope = &mut self.scopes[index];
-            scope.initialize_declared(name, value);
+
+        // Otherwise delegate to the parent environment (declaration or
+        // binding may live in a closure scope).
+        if let Some(ref parent) = self.parent {
+            parent.borrow_mut().initialize_declared(name, value);
         }
     }
 
@@ -387,7 +438,10 @@ impl Environment {
 
     /// Get all variable names in the current scope
     pub fn keys(&self) -> Vec<String> {
-        self.scopes.last().map(|s| s.bindings.keys().cloned().collect()).unwrap_or_default()
+        self.scopes
+            .last()
+            .map(|s| s.bindings.keys().cloned().collect())
+            .unwrap_or_default()
     }
 }
 
@@ -399,12 +453,13 @@ impl Default for Environment {
 
 impl Clone for Environment {
     fn clone(&self) -> Self {
-        // Note: parent is not cloned - this creates a flat copy
-        // For closures that need the parent, use with_parent instead
+        // Preserve the parent chain (shared via Rc) and super_class; dropping
+        // them would silently break variable and `super` resolution for any
+        // code that clones an environment.
         Environment {
             scopes: self.scopes.clone(),
-            parent: None,
-            super_class: None,
+            parent: self.parent.clone(),
+            super_class: self.super_class.clone(),
         }
     }
 }
@@ -417,7 +472,7 @@ mod tests {
     fn test_basic_define_and_get() {
         let mut env = Environment::new();
         env.define("x".to_string(), Value::Number(42.0));
-        
+
         assert_eq!(env.get("x"), Some(Value::Number(42.0)));
     }
 
@@ -425,15 +480,15 @@ mod tests {
     fn test_scope_chain() {
         let mut env = Environment::new();
         env.define("outer".to_string(), Value::Number(1.0));
-        
+
         env.push_scope();
         env.define("inner".to_string(), Value::Number(2.0));
-        
+
         assert_eq!(env.get("inner"), Some(Value::Number(2.0)));
         assert_eq!(env.get("outer"), Some(Value::Number(1.0)));
-        
+
         env.pop_scope();
-        
+
         assert_eq!(env.get("inner"), None);
         assert_eq!(env.get("outer"), Some(Value::Number(1.0)));
     }
@@ -442,7 +497,7 @@ mod tests {
     fn test_set_existing() {
         let mut env = Environment::new();
         env.define("x".to_string(), Value::Number(1.0));
-        
+
         assert!(env.set("x", Value::Number(2.0)));
         assert_eq!(env.get("x"), Some(Value::Number(2.0)));
     }
@@ -451,7 +506,7 @@ mod tests {
     fn test_has() {
         let mut env = Environment::new();
         env.define("x".to_string(), Value::Number(1.0));
-        
+
         assert!(env.has("x"));
         assert!(!env.has("y"));
     }

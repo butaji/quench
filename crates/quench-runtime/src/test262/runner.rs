@@ -1,402 +1,460 @@
-//! test262 test runner with skip policy and reporting
+//! test262 staged runner — checkpointed, fail-fast
 //!
-//! Runs test262 tests against quench-runtime, skipping unsupported features,
-//! and producing a JSON report.
+//! `Test262Runner` walks STAGES in order, stops at first failure,
+//! writes `.test262_checkpoint`, and resumes on rerun.
 
-#![allow(unknown_lints, clippy::function_length, clippy::complexity, renamed_and_removed_lints)]
-
-use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
-use serde::Serialize;
 
-use crate::test262::batches;
+use crate::test262::checkpoint::Checkpoint;
+use crate::test262::harness::HarnessLoader;
+use crate::test262::host::{Test262Host, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
-pub use batches::{
-    collect_test_files, run_and_report, run_suite, run_suite_stop_on_fail, write_report,
-};
+use crate::test262::skip::{should_skip, should_skip_path, should_skip_source};
 
-/// Features to skip (not yet supported by quench-runtime)
-const SKIP_FEATURES: &[&str] = &[
-    "Promise",
-    "async-functions",
-    "async-iteration",
-    "generators",
-    "class",
-    "class-fields-private",
-    "class-fields-public",
-    "class-static-fields-private",
-    "class-static-fields-public",
-    "BigInt",
-    "Proxy",
-    "Reflect",
-    "WeakMap",
-    "WeakSet",
-    "WeakRef",
-    "TypedArray",
-    "RegExp",
-    "RegExp Unicode property escapes",
-    "Symbol",
-    "Symbol.iterator",
-    "Symbol.asyncIterator",
-    "Symbol.hasInstance",
-    "Symbol.isConcatSpreadable",
-    "Symbol.match",
-    "Symbol.matchAll",
-    "Symbol.replace",
-    "Symbol.search",
-    "Symbol.species",
-    "Symbol.split",
-    "Symbol.toPrimitive",
-    "Symbol.toStringTag",
-    "Symbol.unscopables",
-    "default-parameters",
-    "destructuring-binding",
-    "spread",
-    "spread-syntax",
-    "template-literals",
-    "optional-chaining",
-    "optional-chaining-expression",
-    "optional-chaining-member-expression",
-    "optional-chaining-call-expression",
-    "private-fields",
-    "private-methods",
-    "export",
-    "import",
-    "export-star-as-namespace-from-module",
-    "nullish-coalescing",
-    "logical-assignment",
-    "numeric-separator",
-    "regexp-match-indices",
-    "decorators",
-    "decorators-support-transition",
-    " decorator",
-    "top-level-await",
-    "import.meta",
-    "Array.prototype.groupBy",
-    "Array.prototype.groupByToMap",
-    "Array.prototype.at",
-    "Array.prototype.findLast",
-    "Array.prototype.findLastIndex",
-    "Array.prototype.toReversed",
-    "Array.prototype.toSorted",
-    "Array.prototype.toSpliced",
-    "Array.prototype.with",
-    "Object.hasOwn",
-    "Object.entries",
-    "Object.fromEntries",
-    "Object.is",
-    "String.prototype.at",
-    "String.prototype.replaceAll",
-    "String.prototype.trimStart",
-    "String.prototype.trimEnd",
-    "String.prototype.trimLeft",
-    "String.prototype.trimRight",
-    "String.prototype.matchAll",
-    "Intl.DateTimeFormat",
-    "Intl.NumberFormat",
-    "Intl.Segmenter",
-    "globalThis",
-    "hashbang",
-    "Tailored Comments",
-    "New Function.prototype.toString",
-    "Hashbang",
+/// Ordered stages (relative to test262/test/).
+pub const STAGES: &[&str] = &[
+    "test/harness",
+    "test/language/literals",
+    "test/language/identifiers",
+    "test/language/white-space",
+    "test/language/comments",
+    "test/language/line-terminators",
+    "test/language/types",
+    "test/language/expressions",
+    "test/language/statements",
+    "test/language/variable-statement",
+    "test/language/function-code",
+    "test/language/arguments-object",
+    "test/language/object-literal",
+    "test/language/directive-prologue",
+    "test/language/global-code",
+    "test/language/source-text",
+    "test/built-ins/global",
+    "test/built-ins/parseInt",
+    "test/built-ins/parseFloat",
+    "test/built-ins/isNaN",
+    "test/built-ins/isFinite",
+    "test/built-ins/decodeURI",
+    "test/built-ins/eval",
+    "test/built-ins/Object",
+    "test/built-ins/Function",
+    "test/built-ins/Boolean",
+    "test/built-ins/Error",
+    "test/built-ins/Number",
+    "test/built-ins/Math",
+    "test/built-ins/Date",
+    "test/built-ins/String",
+    "test/built-ins/RegExp",
+    "test/built-ins/Array",
+    "test/built-ins/Symbol",
+    "test/built-ins/ArrayBuffer",
+    "test/built-ins/TypedArray",
+    "test/built-ins/DataView",
+    "test/built-ins/Map",
+    "test/built-ins/Set",
+    "test/built-ins/WeakMap",
+    "test/built-ins/WeakSet",
+    "test/built-ins/JSON",
+    "test/built-ins/GeneratorFunction",
+    "test/built-ins/AsyncFunction",
+    "test/built-ins/Promise",
+    "test/built-ins/Reflect",
+    "test/built-ins/Proxy",
+    "test/language/module-code",
+    "test/language/import",
+    "test/language/export",
+    "test/annexB",
 ];
 
-/// Flags to skip
-const SKIP_FLAGS: &[&str] = &[
-    "module",
-    "async",
-    "CanBlockIsFalse",
-    "CanBlockIsTrue",
-    "raw",
-    "noStrict",
-    "generated",
-];
-
-/// Test outcome enumeration
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "outcome", rename_all = "lowercase")]
-pub enum TestOutcome {
-    Pass,
-    Fail { error: String },
-    Skip { reason: String },
-}
-
-/// Individual test result
-#[derive(Debug, Clone, Serialize)]
-pub struct TestResult {
-    pub path: PathBuf,
-    #[serde(flatten)]
-    pub outcome: TestOutcome,
-}
-
-/// Test262 conformance report
-#[derive(Debug, Clone, Serialize)]
-pub struct Test262Report {
-    pub total: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub skipped: usize,
-    pub results: Vec<TestResult>,
-}
-
-impl Test262Report {
-    pub fn pass_rate(&self) -> f64 {
-        if self.total == 0 {
-            0.0
-        } else {
-            (self.passed as f64 / self.total as f64) * 100.0
+/// Collect all .js test files under `dir` (excludes _FIXTURE.js).
+fn collect_tests(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if dir.is_file() {
+        if dir.extension().map(|e| e == "js").unwrap_or(false) {
+            let fname = dir.file_name().unwrap().to_string_lossy();
+            if !fname.ends_with("_FIXTURE.js") {
+                out.push(dir.to_path_buf());
+            }
         }
+        return out;
     }
-
-    pub fn print_summary(&self, name: &str) {
-        eprintln!("=== {name} test262 results ===");
-        eprintln!(
-            "Total: {}  Passed: {}  Failed: {}  Skipped: {}",
-            self.total, self.passed, self.failed, self.skipped
-        );
-        eprintln!("Pass rate: {:.1}%", self.pass_rate());
-        print_top_errors(self, 10);
-        print_category_breakdown(self, 10);
-    }
-
-    pub fn write_markdown(&self, path: &Path, name: &str) -> Result<(), std::io::Error> {
-        use std::io::Write;
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let mut file = std::fs::File::create(path)?;
-        writeln!(file, "# {name} test262 Summary")?;
-        writeln!(file)?;
-        writeln!(file, "- **Total:** {}", self.total)?;
-        writeln!(file, "- **Passed:** {}", self.passed)?;
-        writeln!(file, "- **Failed:** {}", self.failed)?;
-        writeln!(file, "- **Skipped:** {}", self.skipped)?;
-        writeln!(file, "- **Pass rate:** {:.1}%", self.pass_rate())?;
-        writeln!(file)?;
-
-        write_markdown_top_errors(&mut file, self, 20)?;
-        write_markdown_category_breakdown(&mut file, self)?;
-
-        Ok(())
-    }
-}
-
-fn print_top_errors(report: &Test262Report, n: usize) {
-    let buckets = error_buckets(report);
-    if buckets.is_empty() {
-        return;
-    }
-    eprintln!("\nTop failure signatures:");
-    for (signature, count, example) in buckets.into_iter().take(n) {
-        eprintln!(
-            "  [{:4}] {}  (example: {})",
-            count,
-            signature,
-            example.display()
-        );
-    }
-}
-
-fn print_category_breakdown(report: &Test262Report, n: usize) {
-    let by_cat = by_category(report);
-    if by_cat.is_empty() {
-        return;
-    }
-    eprintln!("\nTop categories by failure count:");
-    let mut categories: Vec<_> = by_cat.into_iter().collect();
-    categories.sort_by(|a, b| b.1.1.cmp(&a.1.1));
-    for (cat, (total, failed, pass_rate)) in categories.into_iter().take(n) {
-        eprintln!(
-            "  {:20} total={:4} failed={:4} pass={:.1}%",
-            cat, total, failed, pass_rate
-        );
-    }
-}
-
-fn error_buckets(report: &Test262Report) -> Vec<(String, usize, PathBuf)> {
-    let mut map: BTreeMap<String, (usize, PathBuf)> = BTreeMap::new();
-    for case in &report.results {
-        if let TestOutcome::Fail { error } = &case.outcome {
-            let signature = error_signature(error);
-            let entry = map.entry(signature).or_insert_with(|| (0, case.path.clone()));
-            entry.0 += 1;
-        }
-    }
-    let mut buckets: Vec<_> = map
-        .into_iter()
-        .map(|(sig, (count, example))| (sig, count, example))
-        .collect();
-    buckets.sort_by(|a, b| b.1.cmp(&a.1));
-    buckets
-}
-
-fn by_category(report: &Test262Report) -> BTreeMap<String, (usize, usize, f64)> {
-    let mut map: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-    for case in &report.results {
-        let cat = category_from_path(&case.path);
-        let (total, failed) = map.entry(cat).or_insert((0, 0));
-        *total += 1;
-        if matches!(case.outcome, TestOutcome::Fail { .. }) {
-            *failed += 1;
-        }
-    }
-    map.into_iter()
-        .map(|(cat, (total, failed))| {
-            let pass_rate = if total > 0 {
-                ((total - failed) as f64 / total as f64) * 100.0
-            } else {
-                0.0
-            };
-            (cat, (total, failed, pass_rate))
-        })
-        .collect()
-}
-
-fn category_from_path(path: &Path) -> String {
-    path.components()
-        .nth(1)
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn error_signature(error: &str) -> String {
-    let line = error.lines().next().unwrap_or(error);
-    let trimmed: String = line.split_whitespace().take(12).collect::<Vec<_>>().join(" ");
-    if trimmed.len() > 100 {
-        format!("{}...", &trimmed[..97])
-    } else {
-        trimmed
-    }
-}
-
-fn write_markdown_top_errors(
-    file: &mut std::fs::File,
-    report: &Test262Report,
-    n: usize,
-) -> Result<(), std::io::Error> {
-    use std::io::Write;
-
-    let buckets = error_buckets(report);
-    if buckets.is_empty() {
-        return Ok(());
-    }
-    writeln!(file, "## Top failure signatures")?;
-    writeln!(file)?;
-    writeln!(file, "| Count | Signature | Example |")?;
-    writeln!(file, "|------:|-----------|---------|")?;
-    for (signature, count, example) in buckets.into_iter().take(n) {
-        writeln!(
-            file,
-            "| {} | {} | `{}` |",
-            count,
-            signature,
-            example.display()
-        )?;
-    }
-    writeln!(file)?;
-    Ok(())
-}
-
-fn write_markdown_category_breakdown(
-    file: &mut std::fs::File,
-    report: &Test262Report,
-) -> Result<(), std::io::Error> {
-    use std::io::Write;
-
-    let by_cat = by_category(report);
-    if by_cat.is_empty() {
-        return Ok(());
-    }
-    writeln!(file, "## Pass rate by category")?;
-    writeln!(file)?;
-    writeln!(file, "| Category | Total | Failed | Pass rate |")?;
-    writeln!(file, "|----------|------:|-------:|----------:|")?;
-    let mut categories: Vec<_> = by_cat.into_iter().collect();
-    categories.sort_by(|a, b| b.1.1.cmp(&a.1.1));
-    for (cat, (total, failed, pass_rate)) in categories {
-        writeln!(
-            file,
-            "| {} | {} | {} | {:.1}% |",
-            cat, total, failed, pass_rate
-        )?;
-    }
-    writeln!(file)?;
-    Ok(())
-}
-
-/// Check if a test should be skipped based on its metadata
-pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
-    // Check flags
-    for flag in &meta.flags {
-        if SKIP_FLAGS.contains(&flag.as_str()) {
-            return Some(format!("unsupported flag: {}", flag));
-        }
-    }
-
-    // Check features
-    for feature in &meta.features {
-        for skip_feat in SKIP_FEATURES {
-            if feature.eq_ignore_ascii_case(skip_feat) {
-                return Some(format!("unsupported feature: {}", feature));
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                out.extend(collect_tests(&p));
+            } else if p.extension().map(|e| e == "js").unwrap_or(false) {
+                let fname = p.file_name().unwrap().to_string_lossy();
+                if !fname.ends_with("_FIXTURE.js") {
+                    out.push(p);
+                }
             }
         }
     }
-
-    None
+    out
 }
 
-/// Assert that a single test262 test file passes.
-pub fn assert_test262_file_passes(path: &Path) {
-    use crate::test262::batches::run_test_file;
+/// Summary of a staged run: outcome counts, aggregated skip reasons,
+/// and the first failure (if any).
+#[derive(Debug, Default, Clone)]
+pub struct RunSummary {
+    pub passed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    /// Skip reason -> how many tests were skipped for it.
+    pub skip_reasons: std::collections::BTreeMap<String, usize>,
+    /// (test path, failure reason) of the first failure.
+    pub first_failure: Option<(String, String)>,
+}
 
-    match run_test_file(path) {
-        TestOutcome::Pass => {}
-        TestOutcome::Skip { reason } => {
-            panic!("test262 file skipped: {} ({})", path.display(), reason);
-        }
-        TestOutcome::Fail { error } => {
-            panic!("test262 file failed: {} - {}", path.display(), error);
+/// Combine a host result with the test's negative expectation (item 11):
+/// - phase "parse": any error passes.
+/// - phase "runtime"/"early" (or unset): an error must occur, and when an
+///   expected error type is given its name must appear in the error message.
+fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutcome {
+    match (&meta.negative, result) {
+        (None, Ok(())) => TestOutcome::Pass,
+        (None, Err(msg)) => TestOutcome::Fail {
+            reason: format!("unexpected error: {}", msg),
+        },
+        (Some(_), Ok(())) => TestOutcome::Fail {
+            reason: "expected error but passed".into(),
+        },
+        (Some(neg), Err(_)) if neg.phase == "parse" => TestOutcome::Pass,
+        (Some(neg), Err(msg)) => {
+            if !neg.typ.is_empty() && !msg.contains(&neg.typ) {
+                TestOutcome::Fail {
+                    reason: format!("negative test expected {} but got: {}", neg.typ, msg),
+                }
+            } else {
+                TestOutcome::Pass
+            }
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Run a single test and return its outcome.
+fn run_single_test(
+    host: &mut dyn Test262Host,
+    harness: &HarnessLoader,
+    test_path: &Path,
+) -> TestOutcome {
+    let source = match fs::read_to_string(test_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return TestOutcome::Fail {
+                reason: format!("read error: {}", e),
+            }
+        }
+    };
 
-    #[test]
-    fn test_should_skip_flags() {
-        let meta = Test262Metadata { flags: vec!["module".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_some());
+    let meta = match Test262Metadata::parse(&source) {
+        Some(m) => m,
+        None => {
+            return TestOutcome::Fail {
+                reason: "failed to parse frontmatter".into(),
+            }
+        }
+    };
 
-        let meta = Test262Metadata { flags: vec!["async".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_some());
-
-        let meta = Test262Metadata { flags: vec!["raw".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_some());
-
-        let meta = Test262Metadata { flags: vec!["onlyStrict".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_none());
+    for feat in &meta.features {
+        if !host.has_feature(feat) {
+            return TestOutcome::Skip {
+                reason: format!("feature: {}", feat),
+            };
+        }
+    }
+    if let Some(reason) = should_skip(&meta) {
+        return TestOutcome::Skip { reason };
+    }
+    if let Some(reason) = should_skip_path(&test_path.to_string_lossy()) {
+        return TestOutcome::Skip { reason };
+    }
+    if let Some(reason) = should_skip_source(&source) {
+        return TestOutcome::Skip { reason };
     }
 
-    #[test]
-    fn test_should_skip_features() {
-        let meta = Test262Metadata { features: vec!["Promise".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_some());
+    let is_raw = meta.flags.contains(&"raw".to_string());
 
-        let meta = Test262Metadata { features: vec!["class".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_some());
+    let script = if is_raw {
+        // raw: run the source exactly as-is, no harness prelude.
+        source.clone()
+    } else {
+        // For async tests (flag: async), set up $DONE before loading asyncHelpers.js.
+        // For non-async tests that include asyncHelpers.js, load the harness normally
+        // so asyncTest is defined and throws when $DONE is not defined.
+        let is_async = meta.flags.contains(&"async".to_string());
+        let has_async_helper = meta.includes.iter().any(|i| i.contains("asyncHelpers"));
 
-        let meta = Test262Metadata { features: vec!["arrowFunctions".to_string()], ..Default::default() };
-        assert!(should_skip(&meta).is_none());
+        if is_async && has_async_helper {
+            // Define $DONE before loading asyncHelpers.js for async tests
+            let prelude = "$DONE = function(error) { if (error !== undefined && error !== null) throw error; };\n";
+            match harness.build_script(&source, &meta.includes) {
+                Ok(s) => format!("{}{}", prelude, s),
+                Err(e) => return TestOutcome::Fail { reason: e },
+            }
+        } else {
+            // Load harness normally (asyncHelpers.js will throw when called without $DONE)
+            match harness.build_script(&source, &meta.includes) {
+                Ok(s) => s,
+                Err(e) => return TestOutcome::Fail { reason: e },
+            }
+        }
+    };
+
+    // Strict-mode variants (item 8): tests run sloppy AND strict unless flags
+    // say otherwise. raw/noStrict => sloppy only; onlyStrict => strict only.
+    let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
+    let only_strict = meta.flags.contains(&"onlyStrict".to_string());
+
+    if !only_strict {
+        match check_outcome(&meta, host.run_script(&script)) {
+            TestOutcome::Pass => {}
+            other => return other,
+        }
+        if no_strict {
+            return TestOutcome::Pass;
+        }
+    }
+    let strict_script = format!("\"use strict\";\n{}", script);
+    match check_outcome(&meta, host.run_script(&strict_script)) {
+        TestOutcome::Fail { reason } => TestOutcome::Fail {
+            reason: format!("strict mode: {}", reason),
+        },
+        other => other,
+    }
+}
+
+/// Staged, checkpointed, fail-fast test262 runner.
+pub struct Test262Runner {
+    test262_dir: PathBuf,
+    checkpoint_path: PathBuf,
+    harness: HarnessLoader,
+}
+
+impl Test262Runner {
+    pub fn new(test262_dir: PathBuf, checkpoint_path: PathBuf) -> Self {
+        // Harness files are at tests/test262/harness/
+        // HarnessLoader appends /harness, so pass tests/test262
+        Self {
+            harness: HarnessLoader::new(test262_dir.to_str().unwrap_or(".")),
+            checkpoint_path,
+            test262_dir,
+        }
     }
 
-    #[test]
-    fn test_should_skip_none() {
-        let meta = Test262Metadata::default();
-        assert!(should_skip(&meta).is_none());
+    /// Run tests stage by stage, stopping at first failure. Checkpoint auto-saved.
+    /// Set `TEST262_STAGE` env var to run only a specific stage (for CI); in that
+    /// mode the checkpoint file is never read, written, or deleted.
+    /// Set `TEST262_LIMIT` to run at most N tests this invocation; the checkpoint
+    /// is saved at the resume position so reruns continue incrementally.
+    pub fn run(&self, host: &mut dyn Test262Host) -> RunSummary {
+        let mut summary = RunSummary::default();
+
+        // TEST262_STAGE=N: run ONLY stage N, never touching the checkpoint.
+        if let Some(stage) = std::env::var("TEST262_STAGE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            let ok = self.run_stage(host, stage);
+            if !ok {
+                summary.failed = 1;
+            }
+            return summary;
+        }
+
+        let limit: Option<usize> = std::env::var("TEST262_LIMIT")
+            .ok()
+            .and_then(|s| s.parse().ok());
+        let mut executed: usize = 0;
+
+        let checkpoint = Checkpoint::load(
+            self.checkpoint_path
+                .to_str()
+                .unwrap_or(".test262_checkpoint"),
+        );
+        let start_stage = checkpoint.map(|c| c.stage).unwrap_or(0);
+        let start_index = checkpoint.map(|c| c.index).unwrap_or(0);
+
+        let mut current = checkpoint.unwrap_or(Checkpoint { stage: 0, index: 0 });
+        let ckpt_path = self
+            .checkpoint_path
+            .to_str()
+            .unwrap_or(".test262_checkpoint");
+
+        for (stage_idx, stage_dir) in STAGES.iter().enumerate() {
+            if stage_idx < start_stage {
+                println!("[SKIP] Stage {}: {}", stage_idx, stage_dir);
+                continue;
+            }
+
+            let full_path = self.test262_dir.join(stage_dir);
+            if !full_path.exists() {
+                println!("[MISSING] {}", full_path.display());
+                current.advance_stage();
+                let _ = current.save(ckpt_path);
+                continue;
+            }
+
+            let mut tests = collect_tests(&full_path);
+            tests.sort();
+            let test_count = tests.len();
+
+            println!(
+                "\n=== Stage {}: {} ({} tests) ===",
+                stage_idx, stage_dir, test_count
+            );
+
+            let mut stage_passed: usize = 0;
+            let mut stage_skipped: usize = 0;
+
+            for (test_idx, test_path) in tests.iter().enumerate() {
+                if stage_idx == start_stage && test_idx < start_index {
+                    continue;
+                }
+
+                if let Some(n) = limit {
+                    if executed >= n {
+                        current = Checkpoint {
+                            stage: stage_idx,
+                            index: test_idx,
+                        };
+                        let _ = current.save(ckpt_path);
+                        println!("\n[LIMIT] Reached TEST262_LIMIT={} ({} tests run, {} passed, {} skipped). \
+                                  Checkpoint saved at stage {}, index {} — rerun to continue.",
+                                 n, executed, summary.passed, summary.skipped, stage_idx, test_idx);
+                        return summary;
+                    }
+                }
+                executed += 1;
+
+                let outcome = run_single_test(host, &self.harness, test_path);
+
+                match &outcome {
+                    TestOutcome::Pass => {
+                        summary.passed += 1;
+                        stage_passed += 1;
+                        if limit.is_some() {
+                            println!("  [PASS] {}", test_path.display());
+                        } else if summary.passed % 100 == 0 {
+                            println!("  ... {} passed so far", summary.passed);
+                        }
+                    }
+                    TestOutcome::Skip { reason } => {
+                        summary.skipped += 1;
+                        stage_skipped += 1;
+                        *summary.skip_reasons.entry(reason.clone()).or_insert(0) += 1;
+                        if limit.is_some() {
+                            println!("  [SKIP] {} ({})", test_path.display(), reason);
+                        }
+                    }
+                    TestOutcome::Fail { reason } => {
+                        summary.failed += 1;
+                        summary.first_failure =
+                            Some((test_path.display().to_string(), reason.clone()));
+                        println!("\n═══════════════════════════════════════════════════");
+                        println!("FIRST FAILURE");
+                        println!("File: {}", test_path.display());
+                        println!("Stage: {} | Index: {}", stage_idx, test_idx);
+                        println!("───────────────────────────────────────────────────");
+                        println!("{}", reason);
+                        println!("───────────────────────────────────────────────────");
+                        println!("Fix this test, then rerun.");
+                        println!("Checkpoint: {}", self.checkpoint_path.display());
+                        println!("═══════════════════════════════════════════════════");
+                        current = Checkpoint {
+                            stage: stage_idx,
+                            index: test_idx,
+                        };
+                        let _ = current.save(ckpt_path);
+                        return summary;
+                    }
+                }
+            }
+
+            println!(
+                "Stage {} complete ({} tests, {} passed, {} skipped)",
+                stage_idx, test_count, stage_passed, stage_skipped
+            );
+            current = Checkpoint {
+                stage: stage_idx + 1,
+                index: 0,
+            };
+            let _ = current.save(ckpt_path);
+        }
+
+        let _ = fs::remove_file(&self.checkpoint_path);
+        println!("\n═══════════════════════════════════════════════════");
+        println!(
+            "ALL STAGES COMPLETE — {} passed, {} skipped",
+            summary.passed, summary.skipped
+        );
+        if !summary.skip_reasons.is_empty() {
+            println!("Skip reasons:");
+            for (reason, count) in &summary.skip_reasons {
+                println!("  {} × {}", count, reason);
+            }
+        }
+        println!("═══════════════════════════════════════════════════");
+        summary
+    }
+
+    /// Run only a single stage by index. Returns true if complete without failures.
+    pub fn run_stage(&self, host: &mut dyn Test262Host, stage_idx: usize) -> bool {
+        let stage_dir = match STAGES.get(stage_idx) {
+            Some(s) => *s,
+            None => return true,
+        };
+        let full_path = self.test262_dir.join(stage_dir);
+        if !full_path.exists() {
+            println!("[MISSING] {}", full_path.display());
+            return true;
+        }
+
+        let mut tests = collect_tests(&full_path);
+        tests.sort();
+        let test_count = tests.len();
+        println!(
+            "\n=== Stage {}: {} ({} tests) ===",
+            stage_idx, stage_dir, test_count
+        );
+
+        let mut passed = 0;
+        let mut skipped = 0;
+        let mut skip_reasons: std::collections::BTreeMap<String, usize> = Default::default();
+        for (test_idx, test_path) in tests.iter().enumerate() {
+            let outcome = run_single_test(host, &self.harness, test_path);
+            match &outcome {
+                TestOutcome::Pass => {
+                    passed += 1;
+                    if passed % 100 == 0 {
+                        println!("  ... {} passed", passed);
+                    }
+                }
+                TestOutcome::Skip { reason } => {
+                    skipped += 1;
+                    *skip_reasons.entry(reason.clone()).or_insert(0) += 1;
+                }
+                TestOutcome::Fail { reason } => {
+                    println!("\n═══════════════════════════════════════════════════");
+                    println!("FIRST FAILURE");
+                    println!("File: {}", test_path.display());
+                    println!("Stage: {} | Index: {}", stage_idx, test_idx);
+                    println!("───────────────────────────────────────────────────");
+                    println!("{}", reason);
+                    println!("═══════════════════════════════════════════════════");
+                    return false;
+                }
+            }
+        }
+        println!(
+            "Stage {} complete ({} tests, {} passed, {} skipped)",
+            stage_idx, test_count, passed, skipped
+        );
+        for (reason, count) in &skip_reasons {
+            println!("  {} × {}", count, reason);
+        }
+        true
     }
 }

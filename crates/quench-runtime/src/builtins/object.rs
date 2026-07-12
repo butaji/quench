@@ -3,7 +3,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_bool, JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
+use indexmap::IndexMap;
+
+use crate::builtins::object_static::{
+    object_assign, object_create, object_define_property, object_entries, object_freeze,
+    object_from_entries, object_get_own_property_descriptor, object_get_own_property_names,
+    object_get_prototype_of, object_has_own, object_is, object_is_frozen, object_keys,
+    object_values,
+};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 thread_local! {
@@ -15,192 +23,409 @@ pub fn get_object_prototype() -> Option<Rc<RefCell<Object>>> {
 }
 
 pub fn register_object(ctx: &mut Context) {
-    let object = Object::new(ObjectKind::Ordinary);
-    let object = Rc::new(RefCell::new(object));
+    // Object.prototype - the prototype object for all ordinary objects
+    let object_proto = Object::new(ObjectKind::Ordinary);
+    let object_proto_rc = Rc::new(RefCell::new(object_proto));
+    let object_proto_for_ctor = Rc::clone(&object_proto_rc);
 
-    register_object_methods(&object);
-    register_object_prototype(&object);
+    // Set up Object.prototype methods
+    register_object_prototype_methods(&object_proto_rc);
 
-    ctx.set_global("Object".to_string(), Value::Object(object));
+    // Store Object.prototype for later use
+    OBJECT_PROTOTYPE.with(|op| {
+        *op.borrow_mut() = Some(Rc::clone(&object_proto_rc));
+    });
+
+    // Create Object constructor as a NativeConstructor
+    let object_constructor = NativeConstructor::new(
+        move |args: Vec<Value>| create_object_from_arg(&args),
+        object_proto_for_ctor,
+    );
+
+    // Register static methods on Object constructor
+    let mut constructor = object_constructor;
+    constructor.set_static_method(
+        "keys",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_keys))),
+    );
+    constructor.set_static_method(
+        "values",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_values))),
+    );
+    constructor.set_static_method(
+        "entries",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_entries))),
+    );
+    constructor.set_static_method(
+        "assign",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_assign))),
+    );
+    constructor.set_static_method(
+        "create",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_create))),
+    );
+    constructor.set_static_method(
+        "defineProperty",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_define_property))),
+    );
+    constructor.set_static_method(
+        "getOwnPropertyDescriptor",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_get_own_property_descriptor,
+        ))),
+    );
+    constructor.set_static_method(
+        "getOwnPropertyNames",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_get_own_property_names))),
+    );
+    constructor.set_static_method(
+        "freeze",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_freeze))),
+    );
+    constructor.set_static_method(
+        "isFrozen",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_frozen))),
+    );
+    constructor.set_static_method(
+        "hasOwn",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_has_own))),
+    );
+    constructor.set_static_method(
+        "is",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is))),
+    );
+    constructor.set_static_method(
+        "fromEntries",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_from_entries))),
+    );
+    constructor.set_static_method(
+        "getPrototypeOf",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_get_prototype_of))),
+    );
+
+    constructor.set_name("Object");
+    let object_ctor = Value::NativeConstructor(Rc::new(constructor));
+    // Set Object.prototype.constructor = Object
+    object_proto_rc
+        .borrow_mut()
+        .set("constructor", object_ctor.clone());
+    ctx.set_global("Object".to_string(), object_ctor);
 }
 
-fn register_object_methods(object: &Rc<RefCell<Object>>) {
-    object.borrow_mut().set("keys", Value::NativeFunction(Rc::new(NativeFunction::new(object_keys))));
-    object.borrow_mut().set("values", Value::NativeFunction(Rc::new(NativeFunction::new(object_values))));
-    object.borrow_mut().set("entries", Value::NativeFunction(Rc::new(NativeFunction::new(object_entries))));
-    object.borrow_mut().set("assign", Value::NativeFunction(Rc::new(NativeFunction::new(object_assign))));
-    object.borrow_mut().set("create", Value::NativeFunction(Rc::new(NativeFunction::new(object_create))));
-    object.borrow_mut().set("defineProperty", Value::NativeFunction(Rc::new(NativeFunction::new(object_define_property))));
-    object.borrow_mut().set("getOwnPropertyDescriptor", Value::NativeFunction(Rc::new(NativeFunction::new(object_get_own_property_descriptor))));
-    object.borrow_mut().set("freeze", Value::NativeFunction(Rc::new(NativeFunction::new(object_freeze))));
-    object.borrow_mut().set("isFrozen", Value::NativeFunction(Rc::new(NativeFunction::new(object_is_frozen))));
-}
-
-fn object_keys(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = args.first().ok_or_else(|| JsError::from("Object.keys requires argument"))?;
-    if let Value::Object(o) = obj {
-        let keys: Vec<Value> = o.borrow().own_keys().into_iter().map(Value::String).collect();
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(keys)))))
+/// Create an object from the argument to Object()
+fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
+    let obj = if args.is_empty() {
+        Object::new(ObjectKind::Ordinary)
     } else {
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))))
+        match &args[0] {
+            Value::Undefined | Value::Null => Object::new(ObjectKind::Ordinary),
+            Value::Boolean(b) => {
+                let mut obj = boxed_object("Boolean");
+                obj.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+                set_boxed_value(&mut obj, Value::Boolean(*b));
+                obj
+            }
+            Value::Number(n) => {
+                let mut obj = boxed_object("Number");
+                obj.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+                set_boxed_value(&mut obj, Value::Number(*n));
+                obj
+            }
+            Value::String(s) => {
+                let mut obj = boxed_object("String");
+                obj.exotic_kind = Some(crate::value::kind::ExoticKind::String);
+                set_boxed_value(&mut obj, Value::String(s.clone()));
+                // String exotic object: one indexed property per character plus length
+                let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+                let len = chars.len();
+                for (i, ch) in chars.iter().enumerate() {
+                    obj.properties.insert(i.to_string(), ch.clone());
+                }
+                obj.elements = chars;
+                obj.properties
+                    .insert("length".to_string(), Value::Number(len as f64));
+                obj
+            }
+            Value::Symbol(_) => {
+                let mut obj = boxed_object("Symbol");
+                set_boxed_value(&mut obj, args[0].clone());
+                obj
+            }
+            Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_) => {
+                return Ok(args[0].clone());
+            }
+        }
+    };
+    Ok(Value::Object(Rc::new(RefCell::new(obj))))
+}
+
+/// Create a boxed-primitive object linked to the named constructor's
+/// prototype (String/Number/Boolean/Symbol), so `instanceof` and prototype
+/// methods like `valueOf` behave as specified.
+fn boxed_object(constructor_name: &str) -> Object {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    if let Some(proto) = constructor_prototype(constructor_name) {
+        obj.prototype = Some(proto);
+    }
+    obj
+}
+
+/// Store the primitive payload of a boxed wrapper as a non-enumerable
+/// internal property (stands in for the spec's [[PrimitiveData]] slot).
+pub(crate) fn set_boxed_value(obj: &mut Object, value: Value) {
+    obj.define(
+        "_value",
+        value,
+        crate::value::PropertyFlags {
+            value: None,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+}
+
+/// Resolve a global constructor's `prototype` object via the current context.
+fn constructor_prototype(name: &str) -> Option<Rc<RefCell<Object>>> {
+    let ctx_ptr = crate::context::CURRENT_CONTEXT.with(|cell| *cell.borrow());
+    let p = ctx_ptr?;
+    // SAFETY: CURRENT_CONTEXT is set for the duration of eval, and native
+    // functions only run during eval.
+    let ctx = unsafe { &*p };
+    match ctx.get_global(name) {
+        Some(Value::Object(o)) => match o.borrow().get("prototype") {
+            Some(Value::Object(p)) => Some(p),
+            _ => None,
+        },
+        Some(Value::NativeFunction(nf)) => match nf.get_property("prototype") {
+            Some(Value::Object(p)) => Some(p),
+            _ => None,
+        },
+        Some(Value::NativeConstructor(nc)) => Some(Rc::clone(&nc.prototype)),
+        _ => None,
     }
 }
 
-fn object_values(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = args.first().ok_or_else(|| JsError::from("Object.values requires argument"))?;
-    if let Value::Object(o) = obj {
-        let obj = o.borrow();
-        let values: Vec<Value> = obj.own_keys()
-            .into_iter()
-            .map(|k| obj.get(&k).unwrap_or(Value::Undefined))
-            .collect();
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(values)))))
+/// Get builtin tag for simple value types.
+fn simple_builtin_tag(val: &Value) -> Option<String> {
+    let tag = if matches!(val, Value::Undefined) {
+        "Undefined"
+    } else if matches!(val, Value::Null) {
+        "Null"
+    } else if matches!(val, Value::Boolean(_)) {
+        "Boolean"
+    } else if matches!(val, Value::Number(_)) {
+        "Number"
+    } else if matches!(val, Value::String(_)) {
+        "String"
+    } else if matches!(val, Value::Symbol(_)) {
+        "Symbol"
+    } else if matches!(
+        val,
+        Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
+    ) {
+        "Function"
     } else {
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))))
+        return None;
+    };
+    Some(tag.to_string())
+}
+
+/// Get the builtin tag string for Object.prototype.toString based on value type
+fn get_builtin_tag(this_val: &Value) -> String {
+    if let Some(tag) = simple_builtin_tag(this_val) {
+        return tag;
+    }
+    if let Value::Object(o) = this_val {
+        return get_object_builtin_tag(o);
+    }
+    "Object".to_string()
+}
+
+/// Get builtin tag for object values
+fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
+    let obj = o.borrow();
+
+    // Check for @@toStringTag first
+    if let Some(tag) = get_to_string_tag(&obj.properties) {
+        return tag;
+    }
+
+    // Check exotic kind for boxed primitives
+    if let Some(tag) = get_exotic_kind_tag(&obj.exotic_kind) {
+        return tag;
+    }
+
+    // Fall back to ObjectKind-based tag
+    get_object_kind_tag(obj.kind.clone())
+}
+
+/// Extract @@toStringTag from properties.
+fn get_to_string_tag(properties: &IndexMap<String, Value>) -> Option<String> {
+    for (k, v) in properties {
+        if k.starts_with("Symbol(") && k.contains("toStringTag") {
+            if let Value::String(tag) = v {
+                return Some(tag.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Get tag from exotic kind.
+fn get_exotic_kind_tag(exotic: &Option<crate::value::kind::ExoticKind>) -> Option<String> {
+    if let Some(e) = exotic {
+        match e {
+            crate::value::kind::ExoticKind::String => Some("String".to_string()),
+            crate::value::kind::ExoticKind::Number => Some("Number".to_string()),
+            crate::value::kind::ExoticKind::Boolean => Some("Boolean".to_string()),
+        }
+    } else {
+        None
     }
 }
 
-fn object_entries(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = args.first().ok_or_else(|| JsError::from("Object.entries requires argument"))?;
-    if let Value::Object(o) = obj {
-        let obj = o.borrow();
-        let entries: Vec<Value> = obj.own_keys()
-            .into_iter()
-            .map(|k| Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
-                Value::String(k.clone()),
-                obj.get(&k).unwrap_or(Value::Undefined)
-            ])))))
-            .collect();
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array_from(entries)))))
+/// Get tag from ObjectKind.
+fn get_object_kind_tag(kind: ObjectKind) -> String {
+    let tag = if kind == ObjectKind::Ordinary {
+        "Object"
+    } else if kind == ObjectKind::Array {
+        "Array"
+    } else if matches!(
+        kind,
+        ObjectKind::Function | ObjectKind::ArrowFunction | ObjectKind::Class
+    ) {
+        "Function"
+    } else if kind == ObjectKind::Date {
+        "Date"
+    } else if kind == ObjectKind::RegExp {
+        "RegExp"
+    } else if kind == ObjectKind::Map {
+        "Map"
+    } else if kind == ObjectKind::Set {
+        "Set"
+    } else if kind == ObjectKind::Promise {
+        "Promise"
     } else {
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))))
-    }
+        "global"
+    };
+    tag.to_string()
 }
 
-fn object_assign(args: Vec<Value>) -> Result<Value, JsError> {
-    let target = args.first().cloned().unwrap_or(Value::Undefined);
-    for arg in args.iter().skip(1) {
-        if let Value::Object(src) = arg {
-            for (k, v) in src.borrow().properties.iter() {
-                if let Value::Object(to) = &target {
-                    to.borrow_mut().set(k, v.clone());
+/// Register methods on Object.prototype
+fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
+    // Object.prototype.toString
+    object_proto_rc.borrow_mut().set(
+        "toString",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let tag = get_builtin_tag(&this_val);
+            Ok(Value::String(format!("[object {}]", tag)))
+        }))),
+    );
+
+    // Object.prototype.valueOf
+    object_proto_rc.borrow_mut().set(
+        "valueOf",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            if let Value::Object(_) = &this_val {
+                return Ok(this_val);
+            }
+            Ok(crate::value::to_object(&this_val))
+        }))),
+    );
+
+    // Object.prototype.hasOwnProperty
+    object_proto_rc.borrow_mut().set(
+        "hasOwnProperty",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_prototype_has_own_property,
+        ))),
+    );
+
+    // Object.prototype.isPrototypeOf
+    object_proto_rc.borrow_mut().set(
+        "isPrototypeOf",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_prototype_is_prototype_of,
+        ))),
+    );
+
+    // Object.prototype.propertyIsEnumerable
+    object_proto_rc.borrow_mut().set(
+        "propertyIsEnumerable",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_prototype_property_is_enumerable,
+        ))),
+    );
+}
+
+/// Object.prototype.hasOwnProperty - checks if property exists directly on object
+fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let key_val = args.first();
+    if let Some(key_val) = key_val {
+        if let Value::Object(o) = &this_val {
+            let obj = o.borrow();
+
+            // Check for symbol properties
+            if let Value::Symbol(_) = key_val {
+                if obj.has_symbol(key_val) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+
+            // Check string properties and numeric array indices
+            if let Some(key_str) = get_property_key(key_val) {
+                if obj.has_own(&key_str) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+        } else if let Value::Function(f) = &this_val {
+            // ValueFunction stores properties in a HashMap
+            if let Some(key_str) = get_property_key(key_val) {
+                // Check built-in properties: name, length, prototype
+                if key_str == "name" || key_str == "length" {
+                    return Ok(Value::Boolean(true));
+                }
+                // Check prototype (cached)
+                if key_str == "prototype" && f.has_prototype() {
+                    return Ok(Value::Boolean(true));
+                }
+                // Check user-defined properties
+                if f.get_property(&key_str).is_some() {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+        } else if let Value::NativeFunction(nf) = &this_val {
+            if let Some(key_str) = get_property_key(key_val) {
+                // Check built-in properties
+                if key_str == "name" || key_str == "length" {
+                    return Ok(Value::Boolean(true));
+                }
+                // Check prototype
+                if key_str == "prototype" && nf.prototype.is_some() {
+                    return Ok(Value::Boolean(true));
+                }
+                // Check user-defined properties
+                if nf.get_property(&key_str).is_some() {
+                    return Ok(Value::Boolean(true));
                 }
             }
         }
     }
-    Ok(target)
-}
-
-fn object_create(args: Vec<Value>) -> Result<Value, JsError> {
-    let proto = args.first().and_then(|v| {
-        if let Value::Object(o) = v { Some(Rc::clone(o)) } else { None }
-    });
-    let mut obj = if let Some(p) = proto {
-        Object::with_prototype(ObjectKind::Ordinary, p)
-    } else {
-        Object::new(ObjectKind::Ordinary)
-    };
-    if let Some(Value::Object(props_obj)) = args.get(1) {
-        for (k, v) in props_obj.borrow().properties.iter() {
-            obj.set(k, v.clone());
-        }
-    }
-    Ok(Value::Object(Rc::new(RefCell::new(obj))))
-}
-
-fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let prop = args.get(1).map(to_js_string).unwrap_or_default();
-
-    let desc = args.get(2).ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
-
-    let mut flags = PropertyFlags::default_data();
-
-    if let Value::Object(desc_obj) = desc {
-        let desc_borrowed = desc_obj.borrow();
-        if let Some(val) = desc_borrowed.properties.get("value") {
-            flags.value = Some(val.clone());
-        }
-        if let Some(writable) = desc_borrowed.properties.get("writable") {
-            flags.writable = to_bool(writable);
-        }
-        if let Some(enumerable) = desc_borrowed.properties.get("enumerable") {
-            flags.enumerable = to_bool(enumerable);
-        }
-        if let Some(configurable) = desc_borrowed.properties.get("configurable") {
-            flags.configurable = to_bool(configurable);
-        }
-    }
-
-    let value = flags.value.clone().unwrap_or(Value::Undefined);
-
-    if let Value::Object(o) = &obj {
-        o.borrow_mut().define(&prop, value, flags);
-    }
-    Ok(obj)
-}
-
-fn object_get_own_property_descriptor(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = args.first().ok_or_else(|| JsError::from("Object.getOwnPropertyDescriptor requires argument"))?;
-    let prop = args.get(1).map(to_js_string).unwrap_or_default();
-
-    if let Value::Object(o) = obj {
-        let obj = o.borrow();
-
-        // Check if property exists
-        let has_property = obj.properties.contains_key(&prop)
-            || (prop.parse::<usize>().map(|i| i < obj.elements.len()).unwrap_or(false));
-
-        if !has_property {
-            return Ok(Value::Undefined);
-        }
-
-        // Get value
-        let value = obj.get(&prop).unwrap_or(Value::Undefined);
-
-        // Check for existing descriptor flags
-        let flags = obj.get_descriptor(&prop).unwrap_or_else(|| {
-            PropertyFlags { value: Some(value.clone()), writable: true, enumerable: true, configurable: true }
-        });
-
-        // Build descriptor object
-        let mut desc = Object::new(ObjectKind::Ordinary);
-        desc.properties.insert("value".to_string(), flags.value.unwrap_or(value));
-        desc.properties.insert("writable".to_string(), Value::Boolean(flags.writable));
-        desc.properties.insert("enumerable".to_string(), Value::Boolean(flags.enumerable));
-        desc.properties.insert("configurable".to_string(), Value::Boolean(flags.configurable));
-
-        Ok(Value::Object(Rc::new(RefCell::new(desc))))
-    } else {
-        Ok(Value::Undefined)
-    }
-}
-
-fn object_freeze(args: Vec<Value>) -> Result<Value, JsError> {
-    Ok(args.first().cloned().unwrap_or(Value::Undefined))
-}
-
-fn object_is_frozen(_args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Boolean(false))
 }
 
-fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsError> {
-    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let key = args.first().map(to_js_string).unwrap_or_default();
-    if let Value::Object(o) = &this_val {
-        let obj = o.borrow();
-        if obj.properties.contains_key(&key) {
-            return Ok(Value::Boolean(true));
-        }
-        if let Ok(idx) = key.parse::<usize>() {
-            if idx < obj.elements.len() {
-                return Ok(Value::Boolean(true));
-            }
-        }
-    }
-    Ok(Value::Boolean(false))
-}
-
+/// Object.prototype.isPrototypeOf - checks if this object is in prototype chain
 fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Some(Value::Object(v)) = args.first() else {
@@ -208,10 +433,13 @@ fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsError> 
     };
     let mut current = v.borrow().prototype.clone();
     while let Some(proto) = current {
-        if Rc::ptr_eq(&proto, match &this_val {
-            Value::Object(o) => o,
-            _ => return Ok(Value::Boolean(false)),
-        }) {
+        if Rc::ptr_eq(
+            &proto,
+            match &this_val {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Boolean(false)),
+            },
+        ) {
             return Ok(Value::Boolean(true));
         }
         current = proto.borrow().prototype.clone();
@@ -219,48 +447,43 @@ fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsError> 
     Ok(Value::Boolean(false))
 }
 
+/// Object.prototype.propertyIsEnumerable - checks if property is enumerable
 fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let key = args.first().map(to_js_string).unwrap_or_default();
-    if let Value::Object(o) = &this_val {
-        let obj = o.borrow();
-        if obj.properties.contains_key(&key) && key != "length" {
-            return Ok(Value::Boolean(true));
-        }
-        if let Ok(idx) = key.parse::<usize>() {
-            if idx < obj.elements.len() && obj.kind == ObjectKind::Array {
-                return Ok(Value::Boolean(true));
+    let key_val = args.first();
+    if let Some(key_val) = key_val {
+        if let Value::Object(o) = &this_val {
+            let obj = o.borrow();
+
+            // Check for symbol properties first (stored in symbol_properties)
+            if let Value::Symbol(_) = key_val {
+                if obj.has_symbol(key_val) {
+                    // Symbol properties are enumerable by default
+                    return Ok(Value::Boolean(true));
+                }
+            }
+
+            // Check string properties and numeric array indices
+            if let Some(key) = get_property_key(key_val) {
+                if obj.has_own(&key) {
+                    return Ok(Value::Boolean(obj.is_enumerable(&key)));
+                }
             }
         }
     }
     Ok(Value::Boolean(false))
 }
 
-fn register_object_prototype(object: &Rc<RefCell<Object>>) {
-    let object_proto = Object::new(ObjectKind::Ordinary);
-    let object_proto_rc = Rc::new(RefCell::new(object_proto));
-    object.borrow_mut().set("prototype", Value::Object(Rc::clone(&object_proto_rc)));
-    OBJECT_PROTOTYPE.with(|op| {
-        *op.borrow_mut() = Some(Rc::clone(&object_proto_rc));
-    });
-
-    // Object.prototype.toString
-    object_proto_rc.borrow_mut().set("toString", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-        Ok(Value::String(to_js_string(&this_val)))
-    }))));
-
-    // Object.prototype.valueOf
-    object_proto_rc.borrow_mut().set("valueOf", Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-        Ok(crate::builtins::get_native_this().unwrap_or(Value::Undefined))
-    }))));
-
-    // Object.prototype.hasOwnProperty
-    object_proto_rc.borrow_mut().set("hasOwnProperty", Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_has_own_property))));
-
-    // Object.prototype.isPrototypeOf
-    object_proto_rc.borrow_mut().set("isPrototypeOf", Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_is_prototype_of))));
-
-    // Object.prototype.propertyIsEnumerable
-    object_proto_rc.borrow_mut().set("propertyIsEnumerable", Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_property_is_enumerable))));
+/// Get a property key from argument (handles strings and symbols)
+/// For symbols, returns the raw symbol string (e.g., "Symbol():123")
+/// This matches how symbols are stored in properties map
+fn get_property_key(arg: &Value) -> Option<String> {
+    match arg {
+        Value::String(s) => Some(s.clone()),
+        // For symbols, return the raw symbol string (e.g., "Symbol():123")
+        // Note: to_js_string wraps this as "Symbol(...)" for display purposes,
+        // but the raw string is what's stored in properties
+        Value::Symbol(s) => Some(s.clone()),
+        _ => None,
+    }
 }
