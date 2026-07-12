@@ -13,9 +13,7 @@ thread_local! {
 
 /// Get all pending microtasks and drain the queue
 pub fn get_pending_microtasks() -> Vec<Value> {
-    MICROTASK_QUEUE.with(|queue| {
-        queue.borrow_mut().drain(..).collect()
-    })
+    MICROTASK_QUEUE.with(|queue| queue.borrow_mut().drain(..).collect())
 }
 
 /// Execute all pending microtasks

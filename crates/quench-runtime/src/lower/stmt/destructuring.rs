@@ -1,10 +1,10 @@
 //! Destructuring pattern lowering functions
 
-use swc_ecma_ast as swc;
 use crate::ast::{Expression, PropertyKey, Statement, VarKind};
+use swc_ecma_ast as swc;
 
 use crate::lower::helpers::{atom_to_string, wtf8_atom_to_string};
-use crate::lower::pattern::{expand_nested_pattern, expand_nested_array_pattern};
+use crate::lower::pattern::{expand_nested_array_pattern, expand_nested_pattern};
 
 /// Lower array destructuring pattern
 pub fn lower_array_destructuring(
@@ -41,6 +41,39 @@ fn lower_array_elems(
                         init: Some(member),
                     });
                 }
+                swc::Pat::Assign(assign) => {
+                    // [a = default] pattern: use nullish coalescing
+                    if let Ok(default_expr) = crate::lower::expr::lower_expr(&assign.right) {
+                        let initializer = Expression::Binary {
+                            left: Box::new(member),
+                            op: crate::ast::BinaryOp::NullishCoalescing,
+                            right: Box::new(default_expr),
+                        };
+                        match assign.left.as_ref() {
+                            swc::Pat::Ident(id) => {
+                                stmts.push(Statement::VarDeclaration {
+                                    kind,
+                                    name: atom_to_string(&id.id.sym),
+                                    init: Some(initializer),
+                                });
+                            }
+                            _ => {
+                                // Nested default pattern (e.g., [[a = 1] = []])
+                                let elem_temp_name = format!("__arr_elem_{}", i);
+                                stmts.push(Statement::VarDeclaration {
+                                    kind: VarKind::Const,
+                                    name: elem_temp_name.clone(),
+                                    init: Some(initializer),
+                                });
+                                stmts.extend(expand_nested_pattern(
+                                    kind,
+                                    assign.left.as_ref(),
+                                    &elem_temp_name,
+                                ));
+                            }
+                        }
+                    }
+                }
                 _ => {
                     let elem_temp_name = format!("__arr_elem_{}", i);
                     stmts.push(Statement::VarDeclaration {
@@ -58,7 +91,7 @@ fn lower_array_elems(
 fn array_member_access(source_var: &str, index: usize) -> Expression {
     Expression::Member {
         object: Box::new(Expression::Identifier(source_var.to_string())),
-        property: PropertyKey::Number(index as f64),
+        property: PropertyKey::String(index.to_string()),
         computed: false,
     }
 }
@@ -140,11 +173,28 @@ fn handle_obj_assign_prop(
         property: PropertyKey::Ident(var_name.clone()),
         computed: false,
     };
-    stmts.push(Statement::VarDeclaration {
-        kind,
-        name: var_name,
-        init: Some(member),
-    });
+    // {x = 10} pattern: use nullish coalescing
+    if let Some(ref default_expr) = assign.value {
+        if let Ok(default_expr) = crate::lower::expr::lower_expr(default_expr) {
+            let initializer = Expression::Binary {
+                left: Box::new(member),
+                op: crate::ast::BinaryOp::NullishCoalescing,
+                right: Box::new(default_expr),
+            };
+            stmts.push(Statement::VarDeclaration {
+                kind,
+                name: var_name,
+                init: Some(initializer),
+            });
+        }
+    } else {
+        // {x} shorthand pattern: just declare the variable
+        stmts.push(Statement::VarDeclaration {
+            kind,
+            name: var_name,
+            init: Some(member),
+        });
+    }
 }
 
 fn add_obj_destructure_stmts(
@@ -193,7 +243,11 @@ fn handle_obj_nested(
         name: nested_temp_name.clone(),
         init: Some(member),
     });
-    stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+    stmts.extend(expand_nested_object_pattern(
+        kind,
+        nested_obj,
+        &nested_temp_name,
+    ));
 }
 
 fn handle_arr_nested(
@@ -209,13 +263,16 @@ fn handle_arr_nested(
         name: nested_temp_name.clone(),
         init: Some(member),
     });
-    stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
+    stmts.extend(expand_nested_array_pattern(
+        kind,
+        nested_arr,
+        &nested_temp_name,
+    ));
 }
 
 /// Wrap declarations in appropriate statement(s).
-/// For var declarations, return them as individual statements to avoid
-/// creating a new block scope (var is function-scoped, not block-scoped).
-/// For let/const, wrap in a Block since they're block-scoped.
+/// Always use SequenceDecls to avoid creating spurious block scopes.
+/// Block scope is only created by explicit `{ ... }` in the source.
 pub fn wrap_decls(decls: Vec<Statement>) -> Option<Statement> {
     if decls.is_empty() {
         return Some(Statement::Empty);
@@ -223,18 +280,7 @@ pub fn wrap_decls(decls: Vec<Statement>) -> Option<Statement> {
     if decls.len() == 1 {
         return Some(decls.into_iter().next().unwrap());
     }
-
-    // Check if all declarations are var - if so, don't wrap in Block
-    // to avoid creating a new scope (var is function-scoped)
-    let all_var = decls.iter().all(|s| {
-        matches!(s, Statement::VarDeclaration { kind: VarKind::Var, .. })
-    });
-
-    if all_var {
-        // Return as Sequence of individual statements
-        // This is handled specially in the stack machine
-        Some(Statement::SequenceDecls(decls))
-    } else {
-        Some(Statement::Block(decls))
-    }
+    // SequenceDecls evaluates statements without introducing a new lexical scope,
+    // which is correct for declarations at any level (var, let, const).
+    Some(Statement::SequenceDecls(decls))
 }
