@@ -23,7 +23,7 @@ pub fn eval_class_expr(class: &Class, env: &Rc<RefCell<Environment>>) -> Result<
     // Initialize static fields on the class object
     for (name, value_expr) in &new_value.static_fields {
         let field_value = eval_expression(value_expr, env, false)?;
-        let key_str = prop_key_to_string(name);
+        let key_str = prop_key_to_string(name, env, false)?;
         new_value.set_static_field(&key_str, field_value);
     }
 
@@ -138,7 +138,7 @@ fn instantiate_with_fields(
     // Phase 2: initialize instance fields on 'this'
     for (name, value_expr) in &class.instance_fields {
         let field_val = eval_expression(value_expr, &call_env, false)?;
-        let key_str = prop_key_to_string(name);
+        let key_str = prop_key_to_string(name, &call_env, false)?;
         instance_rc.borrow_mut().set(&key_str, field_val);
     }
 
@@ -351,24 +351,25 @@ fn create_class_prototype_helper_with_env(
     let closure = Rc::clone(env);
     for (name, params, body) in &class.methods {
         let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
+        let key_str = prop_key_to_string(name, &closure, false)?;
         let mut func = ValueFunction::new(
-            Some(prop_key_to_string(name)),
+            Some(key_str.clone()),
             params_vec,
             body.clone(),
             Rc::clone(&closure),
         );
         // Class bodies are always strict mode (ES spec 15.7).
         func.strict = true;
-        proto.set(&prop_key_to_string(name), Value::Function(func));
+        proto.set(&key_str, Value::Function(func));
     }
 
     for (name, body) in &class.getters {
-        let key = prop_key_to_string(name);
+        let key = prop_key_to_string(name, &closure, false)?;
         proto.set_getter(&key, Rc::new(body.clone()), Rc::clone(&closure));
     }
 
     for (name, param, body) in &class.setters {
-        let key = prop_key_to_string(name);
+        let key = prop_key_to_string(name, &closure, false)?;
         proto.set_setter(
             &key,
             param.clone(),
@@ -385,13 +386,20 @@ pub fn create_class_prototype_helper(class: &ClassValue) -> Result<Rc<RefCell<Ob
     create_class_prototype_helper_with_env(class, &Rc::new(RefCell::new(Environment::new())))
 }
 
-/// Helper to convert PropertyKey to string
-fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
+/// Helper to convert PropertyKey to string, evaluating computed expressions
+fn prop_key_to_string(
+    key: &crate::ast::PropertyKey,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow: bool,
+) -> Result<String, JsError> {
     match key {
-        crate::ast::PropertyKey::Ident(s) => s.clone(),
-        crate::ast::PropertyKey::String(s) => s.clone(),
-        crate::ast::PropertyKey::Number(n) => n.to_string(),
-        crate::ast::PropertyKey::Computed(_) => "[computed]".to_string(),
+        crate::ast::PropertyKey::Ident(s) => Ok(s.clone()),
+        crate::ast::PropertyKey::String(s) => Ok(s.clone()),
+        crate::ast::PropertyKey::Number(n) => Ok(n.to_string()),
+        crate::ast::PropertyKey::Computed(expr) => {
+            let val = eval_expression(expr, env, in_arrow)?;
+            Ok(crate::value::to_js_string(&val))
+        }
     }
 }
 

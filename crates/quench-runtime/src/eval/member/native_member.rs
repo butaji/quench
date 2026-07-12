@@ -150,13 +150,7 @@ pub fn eval_native_constructor_member(
                 Ok(Value::Number(0.0))
             }
         }
-        "name" => {
-            if is_function_constructor {
-                Ok(Value::String("Function".to_string()))
-            } else {
-                Ok(Value::String("anonymous".to_string()))
-            }
-        }
+        "name" => Ok(Value::String(nc.name().to_string())),
         _ => Ok(Value::Undefined),
     }
 }

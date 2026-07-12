@@ -20,7 +20,11 @@ use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 
 pub mod tests;
 
-/// eval function implementation - executes JavaScript code in the current context
+/// eval function implementation - executes JavaScript code in the current context.
+/// Per ES spec §19.2.1, eval code inherits strict mode from its calling context
+/// (handled automatically since ctx.eval -> eval_program preserves STRICT_MODE when
+/// the source has no "use strict" directive). The legacy octal check is in
+/// eval_program, after it sets strictness based on the source's directive.
 fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let source = args
         .first()
@@ -29,7 +33,20 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     if source.is_empty() {
         return Ok(Value::Undefined);
     }
-    ctx.eval(&source)
+    match ctx.eval(&source) {
+        // eval threw a JS exception (SyntaxError, etc.) — propagate it.
+        // eval_program sets the thrown value before returning Err.
+        // We peek at it (don't consume) so eval_try_catch can also retrieve it.
+        Err(_) => {
+            if let Some(thrown) = crate::value::get_thrown_value() {
+                let msg = crate::value::to_js_string(&thrown);
+                Err(JsError(msg))
+            } else {
+                Err(JsError("unknown eval error".to_string()))
+            }
+        }
+        Ok(v) => Ok(v),
+    }
 }
 
 /// Runtime context - holds the execution environment and globals
@@ -149,40 +166,42 @@ impl Context {
         self.set_global("eval".to_string(), Value::NativeFunction(Rc::new(eval_fn)));
         Ok(())
     }
+}
 
-    /// Evaluate a JavaScript source string using the recursive interpreter.
-    pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
-        interpreter::reset_depth();
+impl Context {
+/// Evaluate a JavaScript source string using the recursive interpreter.
+pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
+    interpreter::reset_depth();
 
-        // Set thread-local for eval function to access this context
-        let ctx_ptr: *mut Context = self;
-        CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = Some(ctx_ptr);
-        });
+    // Set thread-local for eval function to access this context
+    let ctx_ptr: *mut Context = self;
+    CURRENT_CONTEXT.with(|cell| {
+        *cell.borrow_mut() = Some(ctx_ptr);
+    });
 
-        let result = (|| {
-            let program = self.parse(source)?;
-            interpreter::eval_program(&program, &mut self.env)
-        })();
+    let result = (|| {
+        let program = self.parse(source)?;
+        interpreter::eval_program(&program, &mut self.env, Some(source))
+    })();
 
-        // Microtask checkpoint: drain promise reactions queued during script
-        // execution. Reactions can enqueue more microtasks, so drain to a
-        // fixpoint (execute_pending_microtasks loops until the queue is empty).
-        let microtask_result = crate::builtins::execute_pending_microtasks();
+    // Microtask checkpoint: drain promise reactions queued during script
+    // execution. Reactions can enqueue more microtasks, so drain to a
+    // fixpoint (execute_pending_microtasks loops until the queue is empty).
+    let microtask_result = crate::builtins::execute_pending_microtasks();
 
-        // Clear thread-local after eval completes
-        CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
+    // Clear thread-local after eval completes
+    CURRENT_CONTEXT.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
 
-        match result {
-            Ok(value) => {
-                microtask_result?;
-                Ok(value)
-            }
-            Err(e) => Err(e),
+    match result {
+        Ok(value) => {
+            microtask_result?;
+            Ok(value)
         }
+        Err(e) => Err(e),
     }
+}
 
     /// Evaluate an ES module source string using the recursive interpreter.
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
@@ -196,7 +215,7 @@ impl Context {
 
         let result = (|| {
             let program = swc_parse::parse_es_module(source)?;
-            interpreter::eval_program(&program, &mut self.env)
+            interpreter::eval_program(&program, &mut self.env, Some(source))
         })();
 
         // Microtask checkpoint (see Context::eval)
@@ -235,7 +254,7 @@ impl Context {
         });
         let result = (|| {
             let program = self.parse_typescript(source)?;
-            interpreter::eval_program(&program, &mut self.env)
+            interpreter::eval_program(&program, &mut self.env, Some(source))
         })();
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
