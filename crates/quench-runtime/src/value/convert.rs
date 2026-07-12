@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::eval::call_value_with_this;
-use crate::value::Value;
+use crate::value::{JsError, Value};
 
 /// Convert a Value to its JavaScript string representation
 pub fn to_js_string(v: &Value) -> String {
@@ -123,7 +123,10 @@ pub fn to_number(v: &Value) -> f64 {
     if let Some(n) = simple_number_value(v) {
         return n;
     }
-    to_number_complex(v)
+    match to_number_complex(v) {
+        Ok(n) => n,
+        Err(_) => f64::NAN,
+    }
 }
 
 fn simple_number_value(v: &Value) -> Option<f64> {
@@ -137,14 +140,14 @@ fn simple_number_value(v: &Value) -> Option<f64> {
     }
 }
 
-fn to_number_complex(v: &Value) -> f64 {
+fn to_number_complex(v: &Value) -> Result<f64, JsError> {
     match v {
         Value::Object(_)
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => to_number(&to_primitive(v, Some("number"))),
-        _ => f64::NAN,
+        | Value::Class(_) => Ok(to_number(&to_primitive(v, Some("number"))?)),
+        _ => Ok(f64::NAN),
     }
 }
 
@@ -417,17 +420,17 @@ pub enum PrimitiveHint {
 }
 
 /// Convert a Value to a primitive using JavaScript's ToPrimitive abstract operation.
-pub fn to_primitive(value: &Value, hint: Option<&str>) -> Value {
+pub fn to_primitive(value: &Value, hint: Option<&str>) -> Result<Value, JsError> {
     if let Some(prim) = primitive_direct(value) {
-        return prim;
+        return Ok(prim);
     }
     match value {
         Value::Object(obj) => to_primitive_object(obj, hint),
         Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => Value::String("[Function]".to_string()),
-        _ => Value::Undefined,
+        | Value::Class(_) => Ok(Value::String("[Function]".to_string())),
+        _ => Ok(Value::Undefined),
     }
 }
 
@@ -446,12 +449,12 @@ fn primitive_direct(v: &Value) -> Option<Value> {
 fn to_primitive_object(
     obj: &Rc<RefCell<crate::value::object::Object>>,
     hint: Option<&str>,
-) -> Value {
+) -> Result<Value, JsError> {
     let hint = resolve_hint(hint);
 
     // Check Symbol.toPrimitive first
     if let Some(result) = try_to_primitive_symbol(obj, hint) {
-        return result;
+        return Ok(result);
     }
 
     // Try valueOf then toString (or vice versa for string hint)
@@ -460,18 +463,20 @@ fn to_primitive_object(
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
-    if let Some(result) = try_method(obj, first) {
-        return result;
+    // Per ES spec: if valueOf throws, the throw propagates — we must NOT fall
+    // through to toString.
+    if let Some(result) = try_method(obj, first)? {
+        return Ok(result);
     }
-    if let Some(result) = try_method(obj, second) {
-        return result;
+    if let Some(result) = try_method(obj, second)? {
+        return Ok(result);
     }
 
-    Value::String(to_js_string(&Value::Object(std::rc::Rc::new(
+    Ok(Value::String(to_js_string(&Value::Object(std::rc::Rc::new(
         std::cell::RefCell::new(crate::value::object::Object::new(
             crate::value::kind::ObjectKind::Ordinary,
         )),
-    ))))
+    )))))
 }
 
 fn resolve_hint(hint: Option<&str>) -> PrimitiveHint {
@@ -507,17 +512,31 @@ fn try_to_primitive_symbol(
     }
 }
 
-fn try_method(obj: &Rc<RefCell<crate::value::object::Object>>, method_name: &str) -> Option<Value> {
-    let method = obj.borrow().get(method_name)?;
-    if let Value::NativeFunction(nf) = &method {
-        let this_val = Value::Object(Rc::clone(obj));
-        if let Ok(result) = nf.call(this_val, vec![]) {
+fn try_method(
+    obj: &Rc<RefCell<crate::value::object::Object>>,
+    method_name: &str,
+) -> Result<Option<Value>, JsError> {
+    let method = obj.borrow().get(method_name);
+    let Some(method) = method else { return Ok(None) };
+    let this_val = Value::Object(Rc::clone(obj));
+    match &method {
+        Value::NativeFunction(nf) => {
+            // Per ES spec: if valueOf throws, ToPrimitive must propagate that throw.
+            let result = nf.call(this_val, vec![])?;
             if !matches!(result, Value::Object(_)) {
-                return Some(result);
+                return Ok(Some(result));
             }
+            Ok(None)
         }
+        Value::Function(_) => {
+            let result = call_value_with_this(method.clone(), vec![], this_val)?;
+            if !matches!(result, Value::Object(_)) {
+                return Ok(Some(result));
+            }
+            Ok(None)
+        }
+        _ => Ok(None),
     }
-    None
 }
 
 /// ToObject per ECMAScript spec - converts primitives to boxed objects

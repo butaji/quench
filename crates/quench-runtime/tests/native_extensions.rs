@@ -3,7 +3,7 @@
 //! Run with: cargo test -p quench-runtime
 
 use quench_runtime::value::to_js_string;
-use quench_runtime::{swc_parse, swc_parse::parse_es_module, Context, Value};
+use quench_runtime::{parser, parser::parse_es_module, Context, Value};
 
 // =============================================================================
 // Native JS / TS / TSX / JSX parsing
@@ -19,13 +19,13 @@ fn native_js_eval() {
 
 #[test]
 fn native_jsx_basic() {
-    let result = swc_parse::parse_jsx("const el = <div>hello</div>;");
+    let result = parser::parse_jsx("const el = <div>hello</div>;");
     assert!(result.is_ok(), "Failed to parse JSX: {:?}", result);
 }
 
 #[test]
 fn native_tsx_with_children() {
-    let result = swc_parse::parse_jsx("const el = <Box><Text>hi</Text></Box>;");
+    let result = parser::parse_jsx("const el = <Box><Text>hi</Text></Box>;");
     assert!(
         result.is_ok(),
         "Failed to parse JSX with children: {:?}",
@@ -35,7 +35,7 @@ fn native_tsx_with_children() {
 
 #[test]
 fn native_tsx_with_props() {
-    let result = swc_parse::parse_jsx("const el = <Box color=\"red\"><Text>hi</Text></Box>;");
+    let result = parser::parse_jsx("const el = <Box color=\"red\"><Text>hi</Text></Box>;");
     assert!(
         result.is_ok(),
         "Failed to parse JSX with props: {:?}",
@@ -45,7 +45,7 @@ fn native_tsx_with_props() {
 
 #[test]
 fn native_tsx_fragment() {
-    let result = swc_parse::parse_jsx("const el = <ink.Fragment><Box /><Box /></ink.Fragment>;");
+    let result = parser::parse_jsx("const el = <ink.Fragment><Box /><Box /></ink.Fragment>;");
     assert!(result.is_ok(), "Failed to parse JSX Fragment: {:?}", result);
 }
 
@@ -110,7 +110,7 @@ interface Metrics { cpu: number; memory: number; }
 interface ProgressBarProps { label: string; value: number; max?: number; }
 function ProgressBar(props: ProgressBarProps): JSX.Element { return <Box>test</Box>; }
 "#;
-    let result = swc_parse::parse_typescript(code);
+    let result = parser::parse_typescript(code);
     assert!(result.is_ok(), "Parse failed: {:?}", result.err());
 }
 
@@ -121,7 +121,7 @@ interface Metrics { cpu: number; }
 function App(): JSX.Element { return <Box>Hello</Box>; }
 render(<App />);
 "#;
-    let result = swc_parse::parse_typescript(code);
+    let result = parser::parse_typescript(code);
     assert!(result.is_ok(), "Parse failed: {:?}", result.err());
 }
 
