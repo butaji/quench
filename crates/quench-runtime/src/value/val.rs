@@ -207,7 +207,7 @@ impl Value {
                 }
             }),
             Value::Function(f) => Some(f.get_prototype()),
-            Value::NativeFunction(nf) => nf.prototype.as_ref().map(Rc::clone),
+            Value::NativeFunction(nf) => nf.prototype.borrow().as_ref().map(Rc::clone),
             Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
             _ => None,
         }
