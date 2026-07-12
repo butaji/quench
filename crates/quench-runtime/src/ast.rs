@@ -24,17 +24,37 @@ pub enum Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     /// Variable declaration
-    VarDeclaration { kind: VarKind, name: String, init: Option<Expression> },
+    VarDeclaration {
+        kind: VarKind,
+        name: String,
+        init: Option<Expression>,
+    },
     /// Function declaration
-    FunctionDeclaration { name: String, params: Vec<Param>, body: Vec<Statement> },
+    FunctionDeclaration {
+        name: String,
+        params: Vec<Param>,
+        body: Vec<Statement>,
+    },
     /// Class declaration
     ClassDeclaration { name: String, class: Class },
     /// If statement
-    If { condition: Box<Expression>, consequent: Box<Statement>, alternate: Option<Box<Statement>> },
+    If {
+        condition: Box<Expression>,
+        consequent: Box<Statement>,
+        alternate: Option<Box<Statement>>,
+    },
     /// While loop
-    While { condition: Box<Expression>, body: Box<Statement> },
+    While {
+        condition: Box<Expression>,
+        body: Box<Statement>,
+    },
     /// For loop
-    For { init: Option<ForInit>, condition: Option<Box<Expression>>, update: Option<Box<Expression>>, body: Box<Statement> },
+    For {
+        init: Option<ForInit>,
+        condition: Option<Box<Expression>>,
+        update: Option<Box<Expression>>,
+        body: Box<Statement>,
+    },
     /// Block statement
     Block(Vec<Statement>),
     /// Return statement
@@ -48,7 +68,11 @@ pub enum Statement {
     /// Continue statement
     Continue(Option<String>),
     /// Try-catch statement
-    TryCatch { body: Box<Statement>, param: Option<String>, handler: Box<Statement> },
+    TryCatch {
+        body: Box<Statement>,
+        param: Option<String>,
+        handler: Box<Statement>,
+    },
     /// Throw statement
     Throw(Box<Expression>),
     /// Sequence of var declarations (avoids block scope for var hoisting)
@@ -67,18 +91,27 @@ pub enum Statement {
     },
     /// For-in loop (ES6)
     /// for (x in object) { body }
-    ForIn { variable: Box<Expression>, object: Box<Expression>, body: Box<Statement> },
+    ForIn {
+        variable: Box<Expression>,
+        object: Box<Expression>,
+        body: Box<Statement>,
+    },
 }
 
 impl Statement {
     /// Returns true if this statement (or any statement reachable from it)
     /// contains an explicit `return`. Does NOT recurse into nested function
     /// declarations, because their returns belong to those functions.
+    #[allow(clippy::complexity)]
     pub fn has_explicit_return(&self) -> bool {
         match self {
             Statement::Return(_) => true,
             Statement::Block(stmts) => stmts.iter().any(Statement::has_explicit_return),
-            Statement::If { consequent, alternate, .. } => {
+            Statement::If {
+                consequent,
+                alternate,
+                ..
+            } => {
                 consequent.has_explicit_return()
                     || alternate.as_ref().is_some_and(|a| a.has_explicit_return())
             }
@@ -96,18 +129,29 @@ impl Statement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
     Expression(Box<Expression>),
-    VarDeclaration { kind: VarKind, name: String, init: Option<Expression> },
+    VarDeclaration {
+        kind: VarKind,
+        name: String,
+        init: Option<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VarKind { Var, Let, Const }
+pub enum VarKind {
+    Var,
+    Let,
+    Const,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyValue {
     /// Regular value expression
     Value(Expression),
     /// Getter property: { get x() { return 42; } }
-    Getter { params: Vec<String>, body: Vec<Statement> },
+    Getter {
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
     /// Setter property: { set x(v) { this._x = v; } }
     Setter { param: String, body: Vec<Statement> },
 }
@@ -125,17 +169,62 @@ pub enum Expression {
     Array(Vec<Expression>),
     /// Spread element: ...expr (used in array literals)
     Spread(Box<Expression>),
-    FunctionExpression { name: Option<String>, params: Vec<Param>, body: Vec<Statement> },
-    ArrowFunction { params: Vec<Param>, body: Box<ArrowBody> },
-    Binary { op: BinaryOp, left: Box<Expression>, right: Box<Expression> },
-    Unary { op: UnaryOp, argument: Box<Expression> },
-    Assignment { left: Box<Expression>, right: Box<Expression> },
-    CompoundAssignment { op: CompoundOp, left: Box<Expression>, right: Box<Expression> },
-    Call { callee: Box<Expression>, arguments: Vec<Expression> },
-    Member { object: Box<Expression>, property: PropertyKey, computed: bool },
-    Conditional { condition: Box<Expression>, consequent: Box<Expression>, alternate: Box<Expression> },
-    Update { op: UpdateOp, argument: Box<Expression>, prefix: bool },
-    New { constructor: Box<Expression>, arguments: Vec<Expression> },
+    FunctionExpression {
+        name: Option<String>,
+        params: Vec<Param>,
+        body: Vec<Statement>,
+    },
+    ArrowFunction {
+        params: Vec<Param>,
+        body: Box<ArrowBody>,
+    },
+    Binary {
+        op: BinaryOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Unary {
+        op: UnaryOp,
+        argument: Box<Expression>,
+    },
+    Assignment {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    CompoundAssignment {
+        op: CompoundOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// Logical compound assignment with short-circuit evaluation (||=, &&=, ??=)
+    LogicalCompoundAssignment {
+        op: CompoundOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Call {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
+    Member {
+        object: Box<Expression>,
+        property: PropertyKey,
+        computed: bool,
+    },
+    Conditional {
+        condition: Box<Expression>,
+        consequent: Box<Expression>,
+        alternate: Box<Expression>,
+    },
+    Update {
+        op: UpdateOp,
+        argument: Box<Expression>,
+        prefix: bool,
+    },
+    New {
+        constructor: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
     Sequence(Vec<Expression>),
     /// Class expression
     Class(Class),
@@ -146,19 +235,32 @@ pub enum Expression {
     /// Object destructuring pattern: {a, b} = expr
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
     /// For-of loop: for (x of iterable) { ... }
-    ForOf { variable: Box<Expression>, iterable: Box<Expression>, body: Box<Statement> },
+    ForOf {
+        variable: Box<Expression>,
+        iterable: Box<Expression>,
+        body: Box<Statement>,
+    },
     /// For-in loop: for (x in object) { ... }
-    ForIn { variable: Box<Expression>, object: Box<Expression>, body: Box<Statement> },
-    /// Optional chain member access: obj?.prop
-    OptChain { object: Box<Expression>, property: PropertyKey, computed: bool },
-    /// Optional chain call: obj?.method()
-    OptChainCall { object: Box<Expression>, property: PropertyKey, computed: bool, arguments: Vec<Expression> },
+    ForIn {
+        variable: Box<Expression>,
+        object: Box<Expression>,
+        body: Box<Statement>,
+    },
     /// JSX element: <tag {...props}>{children}</tag>
-    JsxElement { tag: JsxTagName, props: Vec<JsxProp>, children: Vec<JsxChild> },
+    JsxElement {
+        tag: JsxTagName,
+        props: Vec<JsxProp>,
+        children: Vec<JsxChild>,
+    },
     /// JSX fragment: <>children</>
-    JsxFragment { children: Vec<JsxChild> },
+    JsxFragment {
+        children: Vec<JsxChild>,
+    },
     /// RegExp literal: /pattern/flags
-    RegExp { pattern: String, flags: String },
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
 }
 
 /// JSX tag name (element name or component reference)
@@ -221,12 +323,18 @@ pub struct Param {
 impl Param {
     /// Create a simple parameter without default
     pub fn new(name: &str) -> Self {
-        Param { name: name.to_string(), default: None }
+        Param {
+            name: name.to_string(),
+            default: None,
+        }
     }
 
     /// Create a parameter with a default value
     pub fn with_default(name: &str, default: Expression) -> Self {
-        Param { name: name.to_string(), default: Some(Box::new(default)) }
+        Param {
+            name: name.to_string(),
+            default: Some(Box::new(default)),
+        }
     }
 }
 
@@ -249,19 +357,47 @@ pub struct Class {
     pub body: Vec<ClassMember>,
 }
 
-/// Class member - method, getter, setter, or static member
+/// Class member - method, getter, setter, static member, or field
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClassMember {
     /// Constructor
-    Constructor { params: Vec<String>, body: Vec<Statement> },
+    Constructor {
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
     /// Regular method
-    Method { name: PropertyKey, params: Vec<String>, body: Vec<Statement> },
+    Method {
+        name: PropertyKey,
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
     /// Getter
-    Getter { name: PropertyKey, body: Vec<Statement> },
+    Getter {
+        name: PropertyKey,
+        body: Vec<Statement>,
+    },
     /// Setter
-    Setter { name: PropertyKey, param: String, body: Vec<Statement> },
+    Setter {
+        name: PropertyKey,
+        param: String,
+        body: Vec<Statement>,
+    },
     /// Static method
-    StaticMethod { name: PropertyKey, params: Vec<String>, body: Vec<Statement> },
+    StaticMethod {
+        name: PropertyKey,
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
+    /// Instance field: x = expr
+    Field {
+        name: PropertyKey,
+        value: Expression,
+    },
+    /// Static field: static x = expr
+    StaticField {
+        name: PropertyKey,
+        value: Expression,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -272,11 +408,27 @@ pub enum ArrowBody {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
-    And, Or,
-    Eq, Neq, StrictEq, StrictNeq,
-    Lt, Gt, Le, Ge,
-    Add, Sub, Mul, Div, Mod,
-    BitAnd, BitOr, BitXor, Shl, Shr, Ushr,
+    And,
+    Or,
+    Eq,
+    Neq,
+    StrictEq,
+    StrictNeq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    Ushr,
     /// The `in` operator - checks if property exists in object
     In,
     /// The `instanceof` operator - checks if object is instance of constructor
@@ -286,6 +438,7 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
+    #[allow(clippy::complexity)]
     pub fn precedence(&self) -> u8 {
         match self {
             BinaryOp::Or | BinaryOp::NullishCoalescing => 1,
@@ -304,14 +457,39 @@ impl BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp { Not, Neg, Plus, BitNot, Typeof, Void, Delete }
+pub enum UnaryOp {
+    Not,
+    Neg,
+    Plus,
+    BitNot,
+    Typeof,
+    Void,
+    Delete,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompoundOp {
-    Add, Sub, Mul, Div, Mod, BitAnd, BitOr, BitXor, Shl, Shr, Ushr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    Ushr,
+    /// Logical OR assignment: x ||= y
+    LogicalOrAssign,
+    /// Logical AND assignment: x &&= y
+    LogicalAndAssign,
+    /// Nullish coalescing assignment: x ??= y
+    NullishCoalescingAssign,
 }
 
 impl CompoundOp {
+    #[allow(clippy::complexity)]
     pub fn to_binary(&self) -> BinaryOp {
         match self {
             CompoundOp::Add => BinaryOp::Add,
@@ -325,9 +503,18 @@ impl CompoundOp {
             CompoundOp::Shl => BinaryOp::Shl,
             CompoundOp::Shr => BinaryOp::Shr,
             CompoundOp::Ushr => BinaryOp::Ushr,
+            // Logical compound ops don't map to binary ops (they short-circuit)
+            CompoundOp::LogicalOrAssign
+            | CompoundOp::LogicalAndAssign
+            | CompoundOp::NullishCoalescingAssign => {
+                unreachable!("Logical compound ops don't use to_binary()")
+            }
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpdateOp { Increment, Decrement }
+pub enum UpdateOp {
+    Increment,
+    Decrement,
+}

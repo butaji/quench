@@ -1,36 +1,32 @@
 //! Expression evaluation
 //!
-//! This module contains the main expression evaluator and helper functions
-//! for evaluating different expression types.
+//! Main expression evaluator that dispatches to specialized modules
+//! based on expression type.
+
+#![allow(clippy::complexity)]
 
 use crate::ast::*;
-use crate::builtins;
 use crate::env::Environment;
-use crate::eval::class::{
-    eval_class_expr, get_constructor_prototype, instantiate_class_from_ast_with_env,
-};
-use crate::eval::function::call_value_with_this;
-use crate::eval::iteration::{eval_for_in, eval_for_of, get_enumerable_keys, get_iterator};
+use crate::eval::call::{eval_call, eval_member, eval_new, extract_property_name};
+use crate::eval::class::eval_class_expr;
+use crate::eval::iteration::{eval_for_in, eval_for_of};
 use crate::eval::jsx::{eval_jsx_element, eval_jsx_fragment};
-use crate::eval::member::eval_member_access;
-use crate::eval::object::{assign_to, eval_callee_with_this};
+use crate::eval::literal::{
+    eval_array_literal, eval_identifier, eval_object_literal, eval_regexp_literal,
+};
+pub use crate::eval::literal::{eval_property_key, get_super_value};
 use crate::eval::operators::{eval_binary_op, eval_unary_op};
 use crate::eval::statement::eval_statement;
-use crate::interpreter::{
-    get_this_binding, predeclare_let_const, take_control_flow, ControlFlow,
-};
-use crate::value::{
-    to_js_string, to_number, to_bool, JsError, Object, ObjectKind, Value, ValueFunction,
-};
+pub use crate::eval::statement::eval_statements;
+use crate::value::{to_bool, to_number, JsError, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
-
-pub use crate::eval::statement::eval_statements;
 
 /// Evaluate an expression
 pub fn eval_expression(
     expr: &Expression,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     match expr {
         Expression::Number(n) => Ok(Value::Number(*n)),
@@ -39,215 +35,229 @@ pub fn eval_expression(
         Expression::Null => Ok(Value::Null),
         Expression::Undefined => Ok(Value::Undefined),
         Expression::RegExp { pattern, flags } => eval_regexp_literal(pattern, flags),
-        Expression::Identifier(name) => eval_identifier(name, env),
-        Expression::Object(props) => eval_object_literal(props, env),
-        Expression::Array(elements) => eval_array_literal(elements, env),
+        Expression::Identifier(name) => eval_identifier(name, env, in_arrow_function),
+        Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
+        Expression::Array(elements) => eval_array_literal(elements, env, in_arrow_function),
         Expression::FunctionExpression { name, params, body } => {
-            Ok(Value::Function(ValueFunction::new(
-                name.clone(),
-                params.clone(),
-                body.clone(),
-                Rc::clone(env),
-            )))
+            let mut func =
+                ValueFunction::new(name.clone(), params.clone(), body.clone(), Rc::clone(env));
+            func.strict = crate::interpreter::is_strict_mode();
+            Ok(Value::Function(func))
         }
         Expression::ArrowFunction { params, body } => {
-            Ok(Value::Function(ValueFunction::new_arrow(
-                params.clone(),
-                body.clone(),
-                Rc::clone(env),
-            )))
+            let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), Rc::clone(env));
+            func.strict = crate::interpreter::is_strict_mode();
+            Ok(Value::Function(func))
         }
         Expression::Binary { op, left, right } => {
-            let left_val = eval_expression(left, env)?;
-            let right_val = eval_expression(right, env)?;
+            let left_val = eval_expression(left, env, in_arrow_function)?;
+            // Short-circuit logical operators before evaluating the right operand
+            match op {
+                BinaryOp::And => {
+                    if !to_bool(&left_val) {
+                        return Ok(left_val);
+                    }
+                }
+                BinaryOp::Or => {
+                    if to_bool(&left_val) {
+                        return Ok(left_val);
+                    }
+                }
+                BinaryOp::NullishCoalescing
+                    if !matches!(left_val, Value::Null | Value::Undefined) =>
+                {
+                    return Ok(left_val);
+                }
+                _ => {}
+            }
+            let right_val = eval_expression(right, env, in_arrow_function)?;
             eval_binary_op(*op, &left_val, &right_val)
         }
-        Expression::Unary { op, argument } => eval_unary_expr(*op, argument, env),
+        Expression::Unary { op, argument } => {
+            eval_unary_expr(*op, argument, env, in_arrow_function)
+        }
         Expression::Assignment { left, right } => {
-            let right_val = eval_expression(right, env)?;
-            assign_to(left, &right_val, env)?;
+            let right_val = eval_expression(right, env, in_arrow_function)?;
+            // Special case: identifier.prop = value - use set_property to preserve identity
+            if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = left.as_ref()
+            {
+                if !*computed {
+                    if let Expression::Identifier(name) = object.as_ref() {
+                        let prop_name = match property {
+                            crate::ast::PropertyKey::Ident(s) => Some(s.clone()),
+                            crate::ast::PropertyKey::String(s) => Some(s.clone()),
+                            crate::ast::PropertyKey::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        };
+                        if let Some(prop) = prop_name {
+                            if env
+                                .borrow_mut()
+                                .set_property(name, &prop, right_val.clone())
+                            {
+                                return Ok(right_val);
+                            }
+                        }
+                    }
+                }
+            }
+            crate::eval::object::assign_to(left, &right_val, env)?;
             Ok(right_val)
         }
         Expression::CompoundAssignment { op, left, right } => {
-            let left_val = eval_expression(left, env)?;
-            let right_val = eval_expression(right, env)?;
+            let left_val = eval_expression(left, env, in_arrow_function)?;
+            let right_val = eval_expression(right, env, in_arrow_function)?;
             let result = eval_binary_op(op.to_binary(), &left_val, &right_val)?;
-            assign_to(left, &result, env)?;
+            crate::eval::object::assign_to(left, &result, env)?;
             Ok(result)
         }
-        Expression::Call { callee, arguments } => eval_call(callee, arguments, env),
-        Expression::Member { object, property, computed } => {
-            eval_member(object, property, *computed, env)
+        Expression::LogicalCompoundAssignment { op, left, right } => {
+            let left_val = eval_expression(left, env, in_arrow_function)?;
+            let result =
+                eval_logical_compound_assign(op, left, &left_val, right, env, in_arrow_function)?;
+            Ok(result)
         }
-        Expression::Conditional { condition, consequent, alternate } => {
-            if to_bool(&eval_expression(condition, env)?) {
-                eval_expression(consequent, env)
+        Expression::Call { callee, arguments } => {
+            eval_call(callee, arguments, env, in_arrow_function)
+        }
+        Expression::Member {
+            object,
+            property,
+            computed,
+        } => eval_member(object, property, *computed, env, in_arrow_function),
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            if to_bool(&eval_expression(condition, env, in_arrow_function)?) {
+                eval_expression(consequent, env, in_arrow_function)
             } else {
-                eval_expression(alternate, env)
+                eval_expression(alternate, env, in_arrow_function)
             }
         }
-        Expression::Update { op, argument, prefix } => {
-            eval_update(*op, argument, *prefix, env)
-        }
-        Expression::New { constructor, arguments } => {
-            eval_new(constructor, arguments, env)
-        }
-        Expression::Sequence(exprs) => eval_sequence(exprs, env),
-        Expression::BlockExpr(stmts) => eval_block_expr(stmts, env),
-        Expression::ArrayPattern(_) => {
-            Err(JsError("Array pattern must be used in assignment context".to_string()))
-        }
-        Expression::ObjectPattern(_) => {
-            Err(JsError("Object pattern must be used in assignment context".to_string()))
-        }
-        Expression::ForOf { variable, iterable, body } => {
-            eval_for_of(variable, iterable, body, env)
-        }
-        Expression::ForIn { variable, object, body } => {
-            eval_for_in(variable, object, body, env)
-        }
-        Expression::OptChain { .. } | Expression::OptChainCall { .. } => {
-            Err(JsError("Internal error: optional chaining not lowered".to_string()))
-        }
-        Expression::JsxElement { tag, props, children } => {
-            eval_jsx_element(tag, props, children, env)
-        }
-        Expression::JsxFragment { children } => {
-            eval_jsx_fragment(children, env)
-        }
-        Expression::Class(class) => {
-            eval_class_expr(class, env)
-        }
-        Expression::Spread(_) => {
-            Err(JsError("Spread must be used inside an array literal context".to_string()))
-        }
+        Expression::Update {
+            op,
+            argument,
+            prefix,
+        } => eval_update(*op, argument, *prefix, env, in_arrow_function),
+        Expression::New {
+            constructor,
+            arguments,
+        } => eval_new(constructor, arguments, env, in_arrow_function),
+        Expression::Sequence(exprs) => eval_sequence(exprs, env, in_arrow_function),
+        Expression::BlockExpr(stmts) => eval_block_expr(stmts, env, in_arrow_function),
+        Expression::ArrayPattern(_) => Err(JsError(
+            "Array pattern must be used in assignment context".to_string(),
+        )),
+        Expression::ObjectPattern(_) => Err(JsError(
+            "Object pattern must be used in assignment context".to_string(),
+        )),
+        Expression::ForOf {
+            variable,
+            iterable,
+            body,
+        } => eval_for_of(variable, iterable, body, env, in_arrow_function),
+        Expression::ForIn {
+            variable,
+            object,
+            body,
+        } => eval_for_in(variable, object, body, env, in_arrow_function),
+        Expression::JsxElement {
+            tag,
+            props,
+            children,
+        } => eval_jsx_element(tag, props, children, env),
+        Expression::JsxFragment { children } => eval_jsx_fragment(children, env),
+        Expression::Class(class) => eval_class_expr(class, env),
+        Expression::Spread(_) => Err(JsError(
+            "Spread must be used inside an array literal context".to_string(),
+        )),
     }
 }
 
-fn eval_identifier(name: &str, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    if name == "this" {
-        return Ok(get_this_binding(env));
-    }
-    if name == "super" {
-        return eval_super(env);
-    }
-    if env.borrow().is_tdz(name) {
-        return Err(JsError(format!(
-            "ReferenceError: Cannot access '{}' before initialization",
-            name
-        )));
-    }
-    env.borrow()
-        .get(name)
-        .ok_or_else(|| JsError(format!("ReferenceError: {} is not defined", name)))
-}
-
-/// Get the super class value from the environment chain
-fn get_super_from_env(env: &Rc<RefCell<Environment>>) -> Option<Value> {
-    let mut current = Some(env.clone());
-    while let Some(e) = current {
-        if let Some(super_class) = e.borrow().get_super_class() {
-            return Some(super_class);
-        }
-        current = e.borrow().get_parent();
-    }
-    None
-}
-
-fn eval_super(env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    get_super_from_env(env)
-        .ok_or_else(|| JsError("ReferenceError: super is only valid in class methods".to_string()))
-}
-
-fn eval_object_literal(
-    props: &[(PropertyKey, PropertyValue)],
+/// Evaluate logical compound assignment (||=, &&=, ??=)
+fn eval_logical_compound_assign(
+    op: &crate::ast::CompoundOp,
+    left: &Expression,
+    left_val: &Value,
+    right: &Expression,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let mut obj = Object::new(ObjectKind::Ordinary);
-    if let Some(prototype) = builtins::get_object_prototype() {
-        obj.prototype = Some(prototype);
-    }
-    for (key, value) in props {
-        let key_str = eval_property_key(key, env)?;
-        match value {
-            PropertyValue::Value(expr) => {
-                let val = eval_expression(expr, env)?;
-                obj.set(&key_str, val);
-            }
-            PropertyValue::Getter { params: _, body } => {
-                obj.set_getter(&key_str, Rc::new(body.clone()), Rc::clone(env));
-            }
-            PropertyValue::Setter { param, body } => {
-                obj.set_setter(&key_str, param.clone(), Rc::new(body.clone()), Rc::clone(env));
+    match op {
+        crate::ast::CompoundOp::LogicalOrAssign => {
+            if to_bool(left_val) {
+                Ok(left_val.clone())
+            } else {
+                let right_val = eval_expression(right, env, in_arrow_function)?;
+                crate::eval::object::assign_to(left, &right_val, env)?;
+                Ok(right_val)
             }
         }
-    }
-    Ok(Value::Object(Rc::new(RefCell::new(obj))))
-}
-
-fn eval_property_key(key: &PropertyKey, env: &Rc<RefCell<Environment>>) -> Result<String, JsError> {
-    match key {
-        PropertyKey::Ident(s) => Ok(s.clone()),
-        PropertyKey::String(s) => Ok(s.clone()),
-        PropertyKey::Number(n) => Ok(n.to_string()),
-        PropertyKey::Computed(e) => Ok(to_js_string(&eval_expression(e, env)?)),
-    }
-}
-
-fn eval_array_literal(
-    elements: &[Expression],
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    let mut arr = Object::new_array(0);
-    for elem_expr in elements.iter() {
-        match elem_expr {
-            Expression::Spread(spread_expr) => {
-                let spread_val = eval_expression(spread_expr, env)?;
-                let items = get_iterator(&spread_val)?;
-                for item in items {
-                    let idx = arr.elements.len();
-                    arr.set(&idx.to_string(), item);
-                }
-            }
-            _ => {
-                let value = eval_expression(elem_expr, env)?;
-                let idx = arr.elements.len();
-                arr.set(&idx.to_string(), value);
+        crate::ast::CompoundOp::LogicalAndAssign => {
+            if !to_bool(left_val) {
+                Ok(left_val.clone())
+            } else {
+                let right_val = eval_expression(right, env, in_arrow_function)?;
+                crate::eval::object::assign_to(left, &right_val, env)?;
+                Ok(right_val)
             }
         }
+        crate::ast::CompoundOp::NullishCoalescingAssign => match left_val {
+            Value::Null | Value::Undefined => {
+                let right_val = eval_expression(right, env, in_arrow_function)?;
+                crate::eval::object::assign_to(left, &right_val, env)?;
+                Ok(right_val)
+            }
+            _ => Ok(left_val.clone()),
+        },
+        _ => Err(JsError("Invalid logical compound assignment".to_string())),
     }
-    if let Some(prototype) = builtins::get_array_prototype() {
-        arr.prototype = Some(prototype);
-    }
-    Ok(Value::Object(Rc::new(RefCell::new(arr))))
 }
 
+/// Evaluate a unary expression
 fn eval_unary_expr(
     op: UnaryOp,
     argument: &Expression,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     if op == UnaryOp::Typeof {
         if let Expression::Identifier(name) = argument {
+            if in_arrow_function && name == "arguments" {
+                return Err(JsError(format!("ReferenceError: {} is not defined", name)));
+            }
             if name != "this" && !env.borrow().has(name) {
                 return Ok(Value::String("undefined".to_string()));
             }
         }
     }
-    // Handle delete specially - needs the object reference, not just the value
     if op == UnaryOp::Delete {
-        return eval_delete(argument, env);
+        return eval_delete(argument, env, in_arrow_function);
     }
-    let val = eval_expression(argument, env)?;
+    let val = eval_expression(argument, env, in_arrow_function)?;
     eval_unary_op(op, &val)
 }
 
-/// Evaluate a delete expression.
-fn eval_delete(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+/// Evaluate a delete expression
+fn eval_delete(
+    expr: &Expression,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
     match expr {
-        Expression::Member { object, property, computed } => {
-            let obj_val = eval_expression(object, env)?;
-            let prop_key = extract_property_name(property.clone(), *computed, env)?;
+        Expression::Member {
+            object,
+            property,
+            computed,
+        } => {
+            let obj_val = eval_expression(object, env, in_arrow_function)?;
+            let prop_key =
+                extract_property_name(property.clone(), *computed, env, in_arrow_function)?;
             match obj_val {
                 Value::Null | Value::Undefined => Err(JsError(
                     "TypeError: Cannot delete property of null or undefined".to_string(),
@@ -256,150 +266,32 @@ fn eval_delete(expr: &Expression, env: &Rc<RefCell<Environment>>) -> Result<Valu
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
                     Ok(Value::Boolean(deleted))
                 }
-                Value::ObjectId(_id) => {
-                    // Arena objects - for now, return false
-                    Ok(Value::Boolean(false))
-                }
                 _ => Ok(Value::Boolean(false)),
             }
         }
         Expression::Identifier(_name) => {
-            // In strict mode, delete of an unqualified identifier is a SyntaxError
-            // For simplicity, we return true without actually removing
+            // In strict mode, delete of unqualified identifier is SyntaxError
             Ok(Value::Boolean(true))
         }
         _ => Ok(Value::Boolean(false)),
     }
 }
 
-/// Extract a property name from a PropertyKey, evaluating computed keys.
-fn extract_property_name(
-    key: PropertyKey,
-    computed: bool,
-    env: &Rc<RefCell<Environment>>,
-) -> Result<String, JsError> {
-    match key {
-        PropertyKey::Ident(name) => {
-            if computed {
-                let val = eval_expression(&Expression::Identifier(name), env)?;
-                Ok(to_js_string(&val))
-            } else {
-                Ok(name)
-            }
-        }
-        PropertyKey::String(s) => Ok(s),
-        PropertyKey::Number(n) => Ok(n.to_string()),
-        PropertyKey::Computed(expr) => {
-            let val = eval_expression(&expr, env)?;
-            Ok(to_js_string(&val))
-        }
-    }
-}
-
-fn eval_call(
-    callee: &Expression,
-    arguments: &[Expression],
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    // Handle super() calls specially
-    if let Expression::Identifier(name) = callee {
-        if name == "super" {
-            return eval_super_call(arguments, env);
-        }
-    }
-    let (func, this_val) = eval_callee_with_this(callee, env)?;
-    let args = eval_call_arguments(arguments, env)?;
-    call_value_with_this(func, args, this_val)
-}
-
-/// Evaluate call arguments, expanding spread expressions
-fn eval_call_arguments(
-    arguments: &[Expression],
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Vec<Value>, JsError> {
-    let mut result = Vec::new();
-    for arg in arguments.iter() {
-        match arg {
-            Expression::Spread(expr) => {
-                let spread_val = eval_expression(expr, env)?;
-                let items = get_iterator(&spread_val)?;
-                result.extend(items);
-            }
-            _ => {
-                let val = eval_expression(arg, env)?;
-                result.push(val);
-            }
-        }
-    }
-    Ok(result)
-}
-
-/// Evaluate a super() call - invokes the parent constructor with the given arguments
-fn eval_super_call(
-    arguments: &[Expression],
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    let super_val = get_super_from_env(env)
-        .ok_or_else(|| JsError("ReferenceError: super is only valid in class methods".to_string()))?;
-    
-    let args = eval_call_arguments(arguments, env)?;
-    let this_val = get_this_binding(env);
-    
-    // Call the super constructor with the current 'this' binding
-    match super_val {
-        Value::Class(super_class) => {
-            // For AST-based classes, we need to call the constructor
-            // but ensure 'this' is bound correctly
-            crate::eval::class::call_super_constructor(super_class, args, this_val, env)
-        }
-        Value::Object(o) => {
-            if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
-                crate::eval::function::call_value_with_this(
-                    Value::Function(constructor.clone()),
-                    args,
-                    this_val,
-                )
-            } else {
-                Ok(Value::Undefined)
-            }
-        }
-        Value::NativeConstructor(nc) => {
-            // For native constructors, we need special handling
-            // Call with 'new' semantics but with provided 'this'
-            crate::eval::function::call_value_with_this(
-                Value::NativeConstructor(nc.clone()),
-                args,
-                this_val,
-            )
-        }
-        _ => Err(JsError("TypeError: super is not a constructor".to_string())),
-    }
-}
-
-fn eval_member(
-    object: &Expression,
-    property: &PropertyKey,
-    _computed: bool,
-    env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
-    let obj_val = eval_expression(object, env)?;
-    let prop_name = eval_property_key(property, env)?;
-    eval_member_access(&obj_val, &prop_name, env)
-}
-
+/// Evaluate an update expression (++ or --)
 fn eval_update(
     op: UpdateOp,
     argument: &Expression,
     prefix: bool,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let current = eval_expression(argument, env)?;
+    let current = eval_expression(argument, env, in_arrow_function)?;
     let current_num = to_number(&current);
     let new_val = match op {
         UpdateOp::Increment => current_num + 1.0,
         UpdateOp::Decrement => current_num - 1.0,
     };
-    assign_to(argument, &Value::Number(new_val), env)?;
+    crate::eval::object::assign_to(argument, &Value::Number(new_val), env)?;
     if prefix {
         Ok(Value::Number(new_val))
     } else {
@@ -407,104 +299,124 @@ fn eval_update(
     }
 }
 
-fn eval_new(
-    constructor: &Expression,
-    arguments: &[Expression],
+/// Evaluate a sequence expression (comma operator)
+fn eval_sequence(
+    exprs: &[Expression],
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let constructor_val = eval_expression(constructor, env)?;
-    let args = eval_call_arguments(arguments, env)?;
-
-    // Handle class instantiation
-    if let Value::Class(class) = &constructor_val {
-        return instantiate_class_from_ast_with_env(class.clone(), args, env);
-    }
-
-    let actual_constructor = match &constructor_val {
-        Value::Object(o) => {
-            let obj = o.borrow();
-            if let Some(constructor) = obj.get("constructor") {
-                constructor.clone()
-            } else {
-                return Err(JsError("Object is not a constructor".to_string()));
-            }
-        }
-        other => other.clone(),
-    };
-
-    let prototype = get_constructor_prototype(&constructor_val)?;
-    let new_obj = if let Some(proto) = prototype {
-        Object::with_prototype(ObjectKind::Ordinary, proto)
-    } else {
-        Object::new(ObjectKind::Ordinary)
-    };
-    let new_obj_rc = Rc::new(RefCell::new(new_obj));
-
-    let result = call_value_with_this(
-        actual_constructor.clone(),
-        args,
-        Value::Object(Rc::clone(&new_obj_rc)),
-    )?;
-
-    // Check actual_constructor for whether to use the constructor result
-    let use_constructor_result = match &actual_constructor {
-        Value::NativeConstructor(_) => true,
-        Value::NativeFunction(_) => true,  // Native functions can also be constructors
-        Value::Function(f) => f.body.iter().any(Statement::has_explicit_return),
-        _ => false,
-    };
-
-    if use_constructor_result && matches!(result, Value::Object(_)) {
-        Ok(result)
-    } else {
-        Ok(Value::Object(new_obj_rc))
-    }
-}
-
-fn eval_sequence(exprs: &[Expression], env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
     let mut last = Value::Undefined;
     for e in exprs {
-        last = eval_expression(e, env)?;
+        last = eval_expression(e, env, in_arrow_function)?;
     }
     Ok(last)
 }
 
-fn eval_block_expr(stmts: &[Statement], env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+/// Evaluate a block expression
+fn eval_block_expr(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
     let mut last = Value::Undefined;
     for stmt in stmts {
-        last = eval_statement(stmt, env, false)?;
+        last = eval_statement(stmt, env, false, in_arrow_function)?;
     }
     Ok(last)
 }
 
-fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError> {
-    use regress::Regex;
-    use crate::value::ObjectKind;
+#[cfg(test)]
+mod tests {
+    use crate::{Context, Value};
 
-    // Validate the pattern
-    let _regex = Regex::new(pattern).map_err(|e| {
-        JsError::new(format!("Invalid regular expression: {}", e))
-    })?;
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src)
+    }
 
-    // Create a RegExp object
-    let mut obj = Object::new(ObjectKind::RegExp);
-    obj.internal_regex_source = Some(pattern.to_string());
-    obj.internal_regex_flags = Some(flags.to_string());
-    obj.set("source", Value::String(pattern.to_string()));
-    obj.set("global", Value::Boolean(flags.contains('g')));
-    obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
-    obj.set("multiline", Value::Boolean(flags.contains('m')));
-    obj.set("lastIndex", Value::Number(0.0));
-    obj.set("flags", Value::String(flags.to_string()));
+    #[test]
+    fn test_logical_and_short_circuits() {
+        assert_eq!(
+            eval("false && (() => { throw 1; })()").unwrap(),
+            Value::Boolean(false)
+        );
+        assert_eq!(
+            eval("true || (() => { throw 1; })()").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            eval("1 ?? (() => { throw 1; })()").unwrap(),
+            Value::Number(1.0)
+        );
+    }
 
-    // Store the compiled regex
-    obj.internal_regex = Regex::new(pattern).ok();
+    #[test]
+    fn test_logical_compound_assign_targets_left() {
+        assert_eq!(eval("let x = 0; x ||= 5; x").unwrap(), Value::Number(5.0));
+        assert_eq!(eval("let y = 3; y &&= 7; y").unwrap(), Value::Number(7.0));
+        assert_eq!(
+            eval("let z = null; z ??= 9; z").unwrap(),
+            Value::Number(9.0)
+        );
+        assert_eq!(eval("let w = 2; w ||= 5; w").unwrap(), Value::Number(2.0));
+    }
 
-    let obj_rc = Rc::new(RefCell::new(obj));
+    #[test]
+    fn test_class_instantiation() {
+        assert_eq!(
+            eval("class A { constructor(v) { this.v = v; } getV() { return this.v; } } let a = new A(42); a.getV()").unwrap(),
+            Value::Number(42.0)
+        );
+    }
 
-    // Set up prototype chain
-    let proto = crate::builtins::regex::get_regexp_prototype();
-    obj_rc.borrow_mut().prototype = Some(proto);
+    #[test]
+    fn test_do_while_desugaring() {
+        assert_eq!(
+            eval("let i = 0; do { i++; } while (i < 3); i").unwrap(),
+            Value::Number(3.0)
+        );
+        // Body runs at least once even when condition is false
+        assert_eq!(
+            eval("let j = 0; do { j++; } while (false); j").unwrap(),
+            Value::Number(1.0)
+        );
+    }
 
-    Ok(Value::Object(obj_rc))
+    #[test]
+    fn test_for_in_object_pattern_throws() {
+        assert!(eval("for ({a} in {a: 1}) {}").is_err());
+    }
+
+    #[test]
+    fn test_for_condition_error_propagates() {
+        assert!(eval("for (let i = 0; (() => { throw 1; })(); i++) {}").is_err());
+    }
+
+    #[test]
+    fn test_export_default_expr_lowers_to_assignment() {
+        let program = crate::swc_parse::parse_es_module("export default 42;").unwrap();
+        let crate::ast::Program::Script(stmts) = program;
+        let last = stmts.last().expect("expected lowered export statement");
+        match last {
+            crate::ast::Statement::Expression(expr) => match expr.as_ref() {
+                crate::ast::Expression::Assignment { left, .. } => match left.as_ref() {
+                    crate::ast::Expression::Member {
+                        object, property, ..
+                    } => {
+                        assert!(matches!(
+                            object.as_ref(),
+                            crate::ast::Expression::Identifier(name) if name == "exports"
+                        ));
+                        assert!(matches!(
+                            property,
+                            crate::ast::PropertyKey::Ident(name) if name == "default"
+                        ));
+                    }
+                    other => panic!("expected member assignment target, got {:?}", other),
+                },
+                other => panic!("expected assignment, got {:?}", other),
+            },
+            other => panic!("expected expression statement, got {:?}", other),
+        }
+    }
 }

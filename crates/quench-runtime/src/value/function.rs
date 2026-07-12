@@ -7,12 +7,48 @@ use std::rc::Rc;
 use crate::ast::{ArrowBody, Param, Statement};
 use crate::env::Environment;
 use crate::value::error::JsError;
-use crate::value::object::Object;
 use crate::value::kind::ObjectKind;
+use crate::value::object::Object;
 use crate::value::Value;
 
 /// Type alias for function prototype storage
 type ProtoCell = Rc<RefCell<Option<Rc<RefCell<Object>>>>>;
+
+/// Reference to a function's cached prototype cell.
+///
+/// Normal clones share the cell strongly. The clone stored as the
+/// prototype object's `constructor` property holds it weakly, breaking the
+/// Rc cycle `function -> proto_cell -> prototype object -> constructor ->
+/// proto_cell` that would otherwise leak every function prototype forever.
+///
+/// Known limitation: the closure cycle `function -> closure env -> function`
+/// (a function whose environment binds the function itself) is still a
+/// strong Rc cycle and leaks; breaking it requires a real GC.
+#[derive(Clone)]
+enum ProtoCellRef {
+    Strong(ProtoCell),
+    Weak(std::rc::Weak<RefCell<Option<Rc<RefCell<Object>>>>>),
+}
+
+impl ProtoCellRef {
+    /// Get a strong reference to the cell, if it is still alive.
+    fn upgrade(&self) -> Option<ProtoCell> {
+        match self {
+            ProtoCellRef::Strong(rc) => Some(Rc::clone(rc)),
+            ProtoCellRef::Weak(w) => w.upgrade(),
+        }
+    }
+
+    /// Address of the cell allocation, usable as a function identity key.
+    /// A live Weak keeps the RcBox allocation reserved, so the address
+    /// cannot be reused while a weak reference to it exists.
+    fn as_ptr(&self) -> *const RefCell<Option<Rc<RefCell<Object>>>> {
+        match self {
+            ProtoCellRef::Strong(rc) => Rc::as_ptr(rc),
+            ProtoCellRef::Weak(w) => w.as_ptr(),
+        }
+    }
+}
 
 /// Type alias for native function implementation
 type NativeFn = std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>;
@@ -24,7 +60,6 @@ type NativeFn = std::rc::Rc<Box<dyn Fn(Vec<Value>) -> Result<Value, JsError>>>;
 /// Function value - holds function data with closure and cached prototype.
 /// Uses interior mutability (RefCell) for the prototype to allow mutation
 /// even when we only have an immutable reference to the function.
-#[derive(Debug)]
 pub struct ValueFunction {
     /// Function name (for toString and debugging)
     pub name: Option<String>,
@@ -38,8 +73,13 @@ pub struct ValueFunction {
     pub closure: Rc<RefCell<Environment>>,
     /// Whether this is an arrow function (doesn't bind its own 'this')
     pub is_arrow: bool,
+    /// Strictness captured where the function was DEFINED (per spec),
+    /// never inherited from the call site.
+    pub strict: bool,
     /// Cached prototype object
-    proto_cell: ProtoCell
+    proto_cell: ProtoCellRef,
+    /// Additional properties (e.g., sameValue, notSameValue on assert)
+    properties: std::cell::RefCell<std::collections::HashMap<String, Value>>,
 }
 
 impl Clone for ValueFunction {
@@ -51,8 +91,16 @@ impl Clone for ValueFunction {
             arrow_body: Rc::clone(&self.arrow_body),
             closure: Rc::clone(&self.closure),
             is_arrow: self.is_arrow,
+            strict: self.strict,
             proto_cell: self.proto_cell.clone(),
+            properties: std::cell::RefCell::new(self.properties.borrow().clone()),
         }
+    }
+}
+
+impl fmt::Debug for ValueFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ValueFunction({:?})", self.name)
     }
 }
 
@@ -71,7 +119,9 @@ impl ValueFunction {
             arrow_body: Rc::new(None),
             closure,
             is_arrow: false,
-            proto_cell: Rc::new(RefCell::new(None)),
+            strict: false,
+            proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
+            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -89,45 +139,95 @@ impl ValueFunction {
             arrow_body: Rc::new(Some(*body)),
             closure,
             is_arrow: true,
-            proto_cell: Rc::new(RefCell::new(None)),
+            strict: false,
+            proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
+            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
     /// Get the prototype object for this function, creating it if needed.
     pub fn get_prototype(&self) -> Rc<RefCell<Object>> {
-        let mut cell = self.proto_cell.borrow_mut();
-        
-        if let Some(ref proto) = *cell {
-            return Rc::clone(proto);
+        if let Some(cell) = self.proto_cell.upgrade() {
+            let mut cell_ref = cell.borrow_mut();
+            if let Some(ref proto) = *cell_ref {
+                return Rc::clone(proto);
+            }
+            let proto_rc = Rc::new(RefCell::new(self.new_prototype_object()));
+            *cell_ref = Some(Rc::clone(&proto_rc));
+            return proto_rc;
         }
-        
+        // Weak back-edge expired: the original function was dropped while its
+        // prototype object outlived it. Build an uncached prototype.
+        Rc::new(RefCell::new(self.new_prototype_object()))
+    }
+
+    /// Build the prototype object for this function.
+    fn new_prototype_object(&self) -> Object {
         let mut proto = Object::new(ObjectKind::Ordinary);
-        proto.set("constructor", Value::Function(self.clone()));
+        proto.set("constructor", self.constructor_value());
         if let Some(func_proto) = crate::builtins::get_function_prototype() {
             proto.prototype = Some(func_proto);
         }
-        let proto_rc = Rc::new(RefCell::new(proto));
-        
-        *cell = Some(Rc::clone(&proto_rc));
-        proto_rc
+        proto
+    }
+
+    /// `constructor` property value for the prototype object.
+    /// Holds the proto cell weakly so the prototype does not keep the
+    /// function (and its own proto cell) alive forever.
+    fn constructor_value(&self) -> Value {
+        let mut ctor = self.clone();
+        if let Some(cell) = self.proto_cell.upgrade() {
+            ctor.proto_cell = ProtoCellRef::Weak(Rc::downgrade(&cell));
+        }
+        Value::Function(ctor)
     }
 
     /// Check if function has a prototype (cached)
     pub fn has_prototype(&self) -> bool {
-        self.proto_cell.borrow().is_some()
+        self.proto_cell
+            .upgrade()
+            .is_some_and(|cell| cell.borrow().is_some())
     }
 
-    /// Set a property on this function (e.g., prototype)
-    pub fn set_property(&self, key: &str, value: Value) {
-        if key == "prototype" {
-            // Handle prototype assignment
-            if let Value::Object(o) = value {
-                // Ensure constructor points back to this function
-                o.borrow_mut().set("constructor", Value::Function(self.clone()));
-                // Store the prototype object
-                *self.proto_cell.borrow_mut() = Some(o);
+    /// Identity key for strict equality: distinct function declarations get
+    /// distinct proto cells at construction, and clones share the same cell.
+    pub(crate) fn identity_ptr(&self) -> *const RefCell<Option<Rc<RefCell<Object>>>> {
+        self.proto_cell.as_ptr()
+    }
+
+    /// Compute the function's length per ECMA-262 10.2.3.
+    /// Length is the number of parameters that don't have defaults or rest.
+    pub fn length(&self) -> usize {
+        let mut count = 0;
+        for p in &self.params {
+            if p.default.is_some() {
+                break;
             }
+            count += 1;
         }
+        count
+    }
+
+    /// Get a property from this function (e.g., sameValue, notSameValue)
+    pub fn get_property(&self, key: &str) -> Option<Value> {
+        self.properties.borrow().get(key).cloned()
+    }
+
+    /// Set a property on this function (e.g., prototype).
+    /// Uses with_mut to work around nested borrow issues.
+    pub fn set_property(&self, key: &str, value: Value) {
+        self.with_mut(|props| {
+            props.insert(key.to_string(), value);
+        });
+    }
+
+    /// Access properties with mutable borrow, works around outer borrow issues.
+    fn with_mut<F>(&self, f: F)
+    where
+        F: FnOnce(&mut std::collections::HashMap<String, Value>),
+    {
+        let mut map = self.properties.borrow_mut();
+        f(&mut map);
     }
 }
 
@@ -141,6 +241,8 @@ pub struct NativeFunction {
     pub func: NativeFn,
     /// Optional prototype object (for built-in constructors like Number)
     pub prototype: Option<Rc<RefCell<Object>>>,
+    /// Additional properties (for JS compatibility)
+    properties: std::cell::RefCell<std::collections::HashMap<String, Value>>,
 }
 
 impl NativeFunction {
@@ -152,6 +254,7 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: None,
+            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -163,12 +266,45 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: Some(prototype),
+            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Call the native function with arguments
-    pub fn call(&self, args: Vec<Value>) -> Result<Value, JsError> {
-        (self.func)(args)
+    /// Get a property from this native function
+    pub fn get_property(&self, key: &str) -> Option<Value> {
+        self.properties.borrow().get(key).cloned()
+    }
+
+    /// Call the native function with arguments and a this binding
+    pub fn call(&self, this_val: Value, args: Vec<Value>) -> Result<Value, JsError> {
+        crate::interpreter::set_native_this(this_val);
+        let result = (self.func)(args);
+        crate::interpreter::take_native_this();
+        result
+    }
+
+    /// Set a property on this native function (e.g., prototype)
+    pub fn set_property(&self, key: &str, value: Value) {
+        if key == "prototype" {
+            if let Value::Object(o) = &value {
+                // Set constructor on the prototype
+                o.borrow_mut().set(
+                    "constructor",
+                    Value::NativeFunction(std::rc::Rc::new(self.clone())),
+                );
+                // Update the prototype reference
+                if let Some(ref proto) = self.prototype {
+                    *proto.borrow_mut() = (*o.borrow()).clone();
+                }
+            }
+            // Keep the prototype readable via get_property; otherwise a
+            // NativeFunction created without a prototype would synthesize a
+            // fresh (wrong) object on every `fn.prototype` read.
+            self.properties.borrow_mut().insert(key.to_string(), value);
+        } else {
+            // Store other properties
+            self.properties.borrow_mut().insert(key.to_string(), value);
+        }
     }
 }
 
@@ -183,6 +319,7 @@ impl Clone for NativeFunction {
         NativeFunction {
             func: self.func.clone(),
             prototype: self.prototype.clone(),
+            properties: std::cell::RefCell::new(self.properties.borrow().clone()),
         }
     }
 }
@@ -200,6 +337,8 @@ pub struct NativeConstructor {
     pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
     /// Static methods on the constructor
     static_methods: std::collections::HashMap<String, Value>,
+    /// The name of the constructor (for Error.name matching)
+    name: String,
 }
 
 impl NativeConstructor {
@@ -212,7 +351,18 @@ impl NativeConstructor {
             func: std::rc::Rc::new(Box::new(f)),
             prototype,
             static_methods: std::collections::HashMap::new(),
+            name: String::new(),
         }
+    }
+
+    /// Get the name of this constructor
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Set the name of this constructor
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
 
     /// Set a static method on the constructor
@@ -225,14 +375,27 @@ impl NativeConstructor {
         self.static_methods.get(name).cloned()
     }
 
-    /// Call the constructor with arguments
-    pub fn call(&self, args: Vec<Value>) -> Result<Value, JsError> {
-        (self.func)(args)
+    /// Call the constructor with arguments and a this binding
+    pub fn call(&self, this_val: Value, args: Vec<Value>) -> Result<Value, JsError> {
+        crate::interpreter::set_native_this(this_val);
+        let result = (self.func)(args);
+        crate::interpreter::take_native_this();
+        result
     }
 
     /// Get the internal function Rc for comparison
     pub(crate) fn func_rc(&self) -> &NativeFn {
         &self.func
+    }
+
+    /// Call the inner function directly, setting native_this to this constructor.
+    pub(crate) fn call_func(&self, args: Vec<Value>) -> Result<Value, JsError> {
+        (self.func)(args)
+    }
+
+    /// Set a property on this native constructor (e.g., prototype)
+    pub fn set_property(&self, _key: &str, _value: Value) {
+        // No-op for now - NativeConstructor stores prototype differently
     }
 }
 
@@ -248,6 +411,7 @@ impl Clone for NativeConstructor {
             func: std::rc::Rc::clone(&self.func),
             prototype: std::rc::Rc::clone(&self.prototype),
             static_methods: self.static_methods.clone(),
+            name: self.name.clone(),
         }
     }
 }
