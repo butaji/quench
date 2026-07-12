@@ -200,6 +200,7 @@ fn eval_func_decl(
         Rc::clone(env),
     );
     func.strict = crate::interpreter::is_strict_mode();
+    func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
     env.borrow_mut().define(name.to_owned(), value.clone());
     // Top-level function declarations are globals (same as var).

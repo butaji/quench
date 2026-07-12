@@ -237,14 +237,3 @@ fn get_prototype_from_class_val(
         _ => None,
     }
 }
-
-/// Helper to convert PropertyKey to string
-#[allow(dead_code)]
-fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
-    match key {
-        crate::ast::PropertyKey::Ident(s) => s.clone(),
-        crate::ast::PropertyKey::String(s) => s.clone(),
-        crate::ast::PropertyKey::Number(n) => n.to_string(),
-        crate::ast::PropertyKey::Computed(_) => "[computed]".to_string(),
-    }
-}

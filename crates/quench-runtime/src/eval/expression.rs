@@ -231,8 +231,16 @@ fn eval_unary_expr(
             if in_arrow_function && name == "arguments" {
                 return Err(JsError(format!("ReferenceError: {} is not defined", name)));
             }
-            if name != "this" && !env.borrow().has(name) {
-                return Ok(Value::String("undefined".to_string()));
+            if name != "this" {
+                if !env.borrow().has(name) {
+                    return Ok(Value::String("undefined".to_string()));
+                }
+                if env.borrow().is_tdz(name) {
+                    return Err(JsError(format!(
+                        "ReferenceError: cannot access '{}' before initialization",
+                        name
+                    )));
+                }
             }
         }
     }
@@ -269,8 +277,14 @@ fn eval_delete(
                 _ => Ok(Value::Boolean(false)),
             }
         }
-        Expression::Identifier(_name) => {
+        Expression::Identifier(name) => {
             // In strict mode, delete of unqualified identifier is SyntaxError
+            if crate::interpreter::is_strict_mode() {
+                return Err(JsError(format!(
+                    "SyntaxError: cannot delete property '{}'",
+                    name
+                )));
+            }
             Ok(Value::Boolean(true))
         }
         _ => Ok(Value::Boolean(false)),

@@ -106,8 +106,9 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
         // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval
         let ctx = unsafe { &mut *p };
         let ctor = match error_type {
-            "TypeError" => ctx
-                .get_global("TypeError")
+            "SyntaxError" | "TypeError" | "ReferenceError" | "RangeError"
+            | "EvalError" | "URIError" | "InternalError" => ctx
+                .get_global(error_type)
                 .or_else(|| ctx.get_global("Test262Error"))
                 .or_else(|| ctx.get_global("Error")),
             _ => ctx
