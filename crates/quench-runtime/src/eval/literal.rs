@@ -49,11 +49,13 @@ pub fn eval_identifier(
         return Err(js_err);
     }
 
+    // Use get() which handles DeclaredOnly (hoisted var) → undefined
+    // and truly unknown vars → None (caught below as ReferenceError).
     match env.borrow().get(name) {
         Some(v) => Ok(v),
         None => {
             let (_, js_err) = create_js_error_with_type(
-                &format!("ReferenceError: {} is not defined", name),
+                &format!("{} is not defined", name),
                 "ReferenceError",
             );
             Err(js_err)
@@ -81,6 +83,7 @@ fn eval_super(env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
 
 /// Evaluate a RegExp literal
 pub fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError> {
+    use crate::value::PropertyFlags;
     use regress::Regex;
     let regex = Regex::new(pattern).map_err(|_| JsError::new("Invalid regular expression"))?;
     let mut obj = Object::new(ObjectKind::RegExp);
@@ -90,7 +93,17 @@ pub fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError>
     obj.set("global", Value::Boolean(flags.contains('g')));
     obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
     obj.set("multiline", Value::Boolean(flags.contains('m')));
-    obj.set("lastIndex", Value::Number(0.0));
+    // lastIndex must be writable, non-enumerable, non-configurable per spec
+    obj.define(
+        "lastIndex",
+        Value::Number(0.0),
+        PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: true,
+            enumerable: false,
+            configurable: false,
+        },
+    );
     obj.set("flags", Value::String(flags.to_string()));
     obj.internal_regex = Some(regex);
     let obj_rc = Rc::new(RefCell::new(obj));

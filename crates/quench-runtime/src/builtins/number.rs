@@ -42,7 +42,6 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
         "valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
-            // Try to get _value from the object, or convert this to number
             if let Value::Object(obj) = &this_val {
                 if let Some(Value::Number(n)) = obj.borrow().get("_value") {
                     return Ok(Value::Number(n));
@@ -83,21 +82,15 @@ fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 
 fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     // Number() returns a primitive, new Number() returns an object
-    let proto_for_fn = Rc::clone(proto);
-    let proto_for_closure = Rc::clone(&proto_for_fn);
-    let number_fn = Value::NativeFunction(Rc::new(NativeFunction::new_with_prototype(
-        move |args| {
+    let proto_for_closure = Rc::clone(proto);
+    let mut number_ctor = crate::value::NativeConstructor::new(
+        move |args: Vec<Value>| {
             let n = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            // If called with 'new', 'this' is the newly created object
             if let Value::Object(this_obj) = this_val {
-                crate::builtins::object::set_boxed_value(
-                    &mut this_obj.borrow_mut(),
-                    Value::Number(n),
-                );
-                // Set exotic_kind for proper toString behavior
-                this_obj.borrow_mut().exotic_kind = Some(crate::value::kind::ExoticKind::Number);
-                // Set prototype if not already set
+                crate::builtins::object::set_boxed_value(&mut this_obj.borrow_mut(), Value::Number(n));
+                this_obj.borrow_mut().exotic_kind =
+                    Some(crate::value::kind::ExoticKind::Number);
                 if this_obj.borrow().prototype.is_none() {
                     this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_for_closure));
                 }
@@ -106,29 +99,30 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
                 Ok(Value::Number(n))
             }
         },
-        proto_for_fn,
-    )));
+        Rc::clone(proto),
+    );
+    number_ctor.set_name("Number");
 
+    // Create number_obj and define all properties first
     let number_obj = Object::new(ObjectKind::Ordinary);
     let number_obj = Rc::new(RefCell::new(number_obj));
+    number_obj.borrow_mut().define(
+        "prototype",
+        Value::Object(Rc::clone(proto)),
+        PropertyFlags {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+            value: None,
+        },
+    );
+
+    // Number constants
+    number_obj.borrow_mut().define("MAX_VALUE", Value::Number(f64::MAX), constant_flags(f64::MAX));
     number_obj
         .borrow_mut()
-        .set("prototype", Value::Object(Rc::clone(proto)));
-    number_obj.borrow_mut().set("constructor", number_fn);
-    // Number constants: non-writable, non-enumerable, non-configurable per spec
-    number_obj.borrow_mut().define(
-        "MAX_VALUE",
-        Value::Number(f64::MAX),
-        constant_flags(f64::MAX),
-    );
-    number_obj.borrow_mut().define(
-        "MIN_VALUE",
-        Value::Number(f64::MIN_POSITIVE),
-        constant_flags(f64::MIN_POSITIVE),
-    );
-    number_obj
-        .borrow_mut()
-        .define("NaN", Value::Number(f64::NAN), constant_flags(f64::NAN));
+        .define("MIN_VALUE", Value::Number(f64::MIN_POSITIVE), constant_flags(f64::MIN_POSITIVE));
+    number_obj.borrow_mut().define("NaN", Value::Number(f64::NAN), constant_flags(f64::NAN));
     number_obj.borrow_mut().define(
         "NEGATIVE_INFINITY",
         Value::Number(f64::NEG_INFINITY),
@@ -139,11 +133,9 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         Value::Number(f64::INFINITY),
         constant_flags(f64::INFINITY),
     );
-    number_obj.borrow_mut().define(
-        "EPSILON",
-        Value::Number(f64::EPSILON),
-        constant_flags(f64::EPSILON),
-    );
+    number_obj
+        .borrow_mut()
+        .define("EPSILON", Value::Number(f64::EPSILON), constant_flags(f64::EPSILON));
     number_obj.borrow_mut().define(
         "MAX_SAFE_INTEGER",
         Value::Number(9007199254740991.0),
@@ -155,41 +147,56 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         constant_flags(-9007199254740991.0),
     );
 
-    number_obj.borrow_mut().set(
+    // Static methods
+    let static_flags = PropertyFlags {
+        writable: false,
+        enumerable: false,
+        configurable: false,
+        value: None,
+    };
+    number_obj.borrow_mut().define(
         "isInteger",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let n = args.first().map(to_number).unwrap_or(f64::NAN);
-            Ok(Value::Boolean(n.is_finite() && n.fract() == 0.0))
+            // Per spec: only returns true if arg is already Number type and integer
+            Ok(Value::Boolean(matches!(
+                args.first(),
+                Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0
+            )))
         }))),
+        static_flags.clone(),
     );
-    // Number.isNaN / Number.isFinite: no coercion, only true numbers qualify
-    number_obj.borrow_mut().set(
+    number_obj.borrow_mut().define(
         "isNaN",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            Ok(Value::Boolean(
-                matches!(args.first(), Some(Value::Number(n)) if n.is_nan()),
-            ))
+            // Per spec: returns true only if arg is already Number type AND is NaN
+            Ok(Value::Boolean(matches!(args.first(), Some(Value::Number(n)) if n.is_nan())))
         }))),
+        static_flags.clone(),
     );
-    number_obj.borrow_mut().set(
+    number_obj.borrow_mut().define(
         "isFinite",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            Ok(Value::Boolean(
-                matches!(args.first(), Some(Value::Number(n)) if n.is_finite()),
-            ))
+            // Per spec: only returns true if arg is already Number type and finite
+            Ok(Value::Boolean(matches!(
+                args.first(),
+                Some(Value::Number(n)) if n.is_finite()
+            )))
         }))),
+        static_flags.clone(),
     );
-    number_obj.borrow_mut().set(
+    number_obj.borrow_mut().define(
         "isSafeInteger",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let n = args.first().map(to_number).unwrap_or(f64::NAN);
-            Ok(Value::Boolean(
-                n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0,
-            ))
+            // Per spec: only returns true if arg is already Number and safe integer
+            Ok(Value::Boolean(matches!(
+                args.first(),
+                Some(Value::Number(n))
+                    if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0
+            )))
         }))),
+        static_flags.clone(),
     );
-    // Number.parseInt / Number.parseFloat behave identically to the globals
-    number_obj.borrow_mut().set(
+    number_obj.borrow_mut().define(
         "parseInt",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
@@ -198,25 +205,192 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
             if !(2..=36).contains(&radix) {
                 return Ok(Value::Number(f64::NAN));
             }
-            Ok(Value::Number(crate::builtins::date::spec_parse_int(
-                &s,
-                radix as u32,
-            )))
+            Ok(Value::Number(crate::builtins::date::spec_parse_int(&s, radix as u32)))
         }))),
+        static_flags.clone(),
     );
-    number_obj.borrow_mut().set(
+    number_obj.borrow_mut().define(
         "parseFloat",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
             Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
         }))),
+        static_flags.clone(),
     );
-    ctx.set_global("Number".to_string(), Value::Object(number_obj));
+
+    // Add static methods to number_ctor before it's moved
+    number_ctor.set_static_method("isInteger", number_obj.borrow().get("isInteger").unwrap());
+    number_ctor.set_static_method("isNaN", number_obj.borrow().get("isNaN").unwrap());
+    number_ctor.set_static_method("isFinite", number_obj.borrow().get("isFinite").unwrap());
+    number_ctor.set_static_method(
+        "isSafeInteger",
+        number_obj.borrow().get("isSafeInteger").unwrap(),
+    );
+    number_ctor.set_static_method("parseInt", number_obj.borrow().get("parseInt").unwrap());
+    number_ctor.set_static_method("parseFloat", number_obj.borrow().get("parseFloat").unwrap());
+    number_ctor.set_static_method("MAX_VALUE", Value::Number(f64::MAX));
+    number_ctor.set_static_method("MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
+    number_ctor.set_static_method("NaN", Value::Number(f64::NAN));
+    number_ctor.set_static_method("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY));
+    number_ctor.set_static_method("POSITIVE_INFINITY", Value::Number(f64::INFINITY));
+    number_ctor.set_static_method("EPSILON", Value::Number(f64::EPSILON));
+    number_ctor.set_static_method("MAX_SAFE_INTEGER", Value::Number(9007199254740991.0));
+    number_ctor.set_static_method("MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
+
+    // Number.prototype.constructor = Number
+    proto.borrow_mut().set("constructor", Value::NativeConstructor(Rc::new(number_ctor.clone())));
+
+    // Set constructor on number_obj
+    let number_fn = Value::NativeConstructor(Rc::new(number_ctor.clone()));
+    number_obj.borrow_mut().define(
+        "constructor",
+        number_fn,
+        PropertyFlags {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+            value: None,
+        },
+    );
+
+    // Set Number as the constructor function
+    ctx.set_global("Number".to_string(), Value::NativeConstructor(Rc::new(number_ctor)));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn eval(src: &str) -> Value {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
+    fn eval_bool(src: &str) -> bool {
+        match eval(src) {
+            Value::Boolean(b) => b,
+            other => panic!("expected boolean from {:?}, got {:?}", src, other),
+        }
+    }
+
+    fn eval_num(src: &str) -> f64 {
+        match eval(src) {
+            Value::Number(n) => n,
+            other => panic!("expected number from {:?}, got {:?}", src, other),
+        }
+    }
+
+    #[test]
+    fn test_number_constructor_returns_primitive() {
+        let n = eval("Number(42)");
+        assert!(matches!(n, Value::Number(42.0)));
+    }
+
+    #[test]
+    fn test_number_string_not_a_number() {
+        let n = eval("Number('Not-a-Number')");
+        match n {
+            Value::Number(n) => assert!(n.is_nan(), "Number('Not-a-Number') should be NaN"),
+            _ => panic!("expected Number, got {:?}", n),
+        }
+    }
+
+    #[test]
+    fn test_number_is_nan_true() {
+        // NaN itself
+        assert!(eval_bool("Number.isNaN(NaN)"));
+        // Number.NaN
+        assert!(eval_bool("Number.isNaN(Number.NaN)"));
+        // 0/0
+        assert!(eval_bool("Number.isNaN(0/0)"));
+        // Infinity/Infinity
+        assert!(eval_bool("Number.isNaN(Infinity/Infinity)"));
+        // Number("Not-a-Number") - string that doesn't parse as number
+        assert!(eval_bool("Number.isNaN(Number('Not-a-Number'))"));
+        // NaN * 0
+        assert!(eval_bool("Number.isNaN(NaN * 0)"));
+    }
+
+    #[test]
+    fn test_number_is_nan_false() {
+        // Regular numbers
+        assert!(!eval_bool("Number.isNaN(0)"));
+        assert!(!eval_bool("Number.isNaN(1)"));
+        assert!(!eval_bool("Number.isNaN(-1)"));
+        assert!(!eval_bool("Number.isNaN(1.5)"));
+        assert!(!eval_bool("Number.isNaN(Infinity)"));
+        assert!(!eval_bool("Number.isNaN(-Infinity)"));
+        // Strings that parse as numbers
+        assert!(!eval_bool("Number.isNaN('42')"));
+        assert!(!eval_bool("Number.isNaN('NaN')"));
+        assert!(!eval_bool("Number.isNaN('123.456')"));
+        // Other types
+        assert!(!eval_bool("Number.isNaN(null)"));
+        assert!(!eval_bool("Number.isNaN(undefined)"));
+        assert!(!eval_bool("Number.isNaN({})"));
+        assert!(!eval_bool("Number.isNaN([])"));
+    }
+
+    #[test]
+    fn test_number_is_finite() {
+        // Per spec: Number.isFinite does NOT coerce (unlike global isFinite)
+        assert!(!eval_bool("Number.isFinite(NaN)"));
+        assert!(!eval_bool("Number.isFinite(Infinity)"));
+        assert!(!eval_bool("Number.isFinite(-Infinity)"));
+        assert!(eval_bool("Number.isFinite(0)"));
+        assert!(eval_bool("Number.isFinite(1)"));
+        assert!(eval_bool("Number.isFinite(1.5)"));
+        assert!(eval_bool("Number.isFinite(-1)"));
+        // These are strings/objects — no coercion per spec → false
+        assert!(!eval_bool("Number.isFinite('42')"));
+        assert!(!eval_bool("Number.isFinite(null)"));
+    }
+
+    #[test]
+    fn test_number_is_integer() {
+        assert!(eval_bool("Number.isInteger(0)"));
+        assert!(eval_bool("Number.isInteger(1)"));
+        assert!(eval_bool("Number.isInteger(-1)"));
+        assert!(eval_bool("Number.isInteger(1e10)"));
+        assert!(!eval_bool("Number.isInteger(1.5)"));
+        assert!(!eval_bool("Number.isInteger(NaN)"));
+        assert!(!eval_bool("Number.isInteger(Infinity)"));
+        assert!(!eval_bool("Number.isInteger('42')"));
+        assert!(!eval_bool("Number.isInteger(null)"));
+    }
+
+    #[test]
+    fn test_number_is_safe_integer() {
+        // Per spec: no coercion
+        assert!(eval_bool("Number.isSafeInteger(0)"));
+        assert!(eval_bool("Number.isSafeInteger(1)"));
+        assert!(eval_bool("Number.isSafeInteger(9007199254740991)"));
+        assert!(eval_bool("Number.isSafeInteger(-9007199254740991)"));
+        assert!(!eval_bool("Number.isSafeInteger(9007199254740992)")); // above max safe
+        assert!(!eval_bool("Number.isSafeInteger(NaN)"));
+        assert!(!eval_bool("Number.isSafeInteger(Infinity)"));
+        assert!(!eval_bool("Number.isSafeInteger('42')"));
+        assert!(!eval_bool("Number.isSafeInteger(null)"));
+    }
+
+    #[test]
+    fn test_number_constants() {
+        assert_eq!(eval_num("Number.MAX_VALUE"), f64::MAX);
+        assert_eq!(eval_num("Number.MIN_VALUE"), f64::MIN_POSITIVE);
+        let nan: f64 = eval_num("Number.NaN");
+        assert!(nan.is_nan());
+        assert_eq!(eval_num("Number.POSITIVE_INFINITY"), f64::INFINITY);
+        assert_eq!(eval_num("Number.NEGATIVE_INFINITY"), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn test_number_parse_float() {
+        assert_eq!(eval_num("Number.parseFloat('123.456')"), 123.456);
+        assert_eq!(eval_num("Number.parseFloat('42')"), 42.0);
+        assert_eq!(eval_num("Number.parseFloat('3.14abc')"), 3.14);
+        let nan: f64 = eval_num("Number.parseFloat('not a number')");
+        assert!(nan.is_nan());
+    }
 
     #[test]
     fn test_constant_flags_non_writable() {
@@ -229,11 +403,7 @@ mod tests {
 
     #[test]
     fn test_number_constants_correct_values() {
-        // Verify the constant_flags function produces correct values
-        assert_eq!(
-            constant_flags(f64::MAX).value,
-            Some(Value::Number(f64::MAX))
-        );
+        assert_eq!(constant_flags(f64::MAX).value, Some(Value::Number(f64::MAX)));
         assert_eq!(
             constant_flags(f64::MIN_POSITIVE).value,
             Some(Value::Number(f64::MIN_POSITIVE))
@@ -254,53 +424,7 @@ mod tests {
 
     #[test]
     fn test_to_fixed_handles_special_values() {
-        // Test proto_to_fixed_impl handles NaN
         let nan_result = proto_to_fixed_impl(vec![]);
         assert!(nan_result.is_ok());
-    }
-
-    #[test]
-    fn test_number_statics() {
-        let mut ctx = Context::new().unwrap();
-        assert_eq!(
-            ctx.eval("Number.isInteger(4)").unwrap(),
-            Value::Boolean(true)
-        );
-        assert_eq!(
-            ctx.eval("Number.isInteger(4.5)").unwrap(),
-            Value::Boolean(false)
-        );
-        assert_eq!(
-            ctx.eval("Number.isInteger(NaN)").unwrap(),
-            Value::Boolean(false)
-        );
-        assert_eq!(
-            ctx.eval("Number.isSafeInteger(9007199254740991)").unwrap(),
-            Value::Boolean(true)
-        );
-        assert_eq!(
-            ctx.eval("Number.isSafeInteger(9007199254740992)").unwrap(),
-            Value::Boolean(false)
-        );
-        assert_eq!(
-            ctx.eval("Number.EPSILON").unwrap(),
-            Value::Number(f64::EPSILON)
-        );
-        assert_eq!(
-            ctx.eval("Number.MAX_SAFE_INTEGER").unwrap(),
-            Value::Number(9007199254740991.0)
-        );
-        assert_eq!(
-            ctx.eval("Number.MIN_SAFE_INTEGER").unwrap(),
-            Value::Number(-9007199254740991.0)
-        );
-        assert_eq!(
-            ctx.eval("Number.parseInt('42')").unwrap(),
-            Value::Number(42.0)
-        );
-        assert_eq!(
-            ctx.eval("Number.parseFloat('3.5')").unwrap(),
-            Value::Number(3.5)
-        );
     }
 }

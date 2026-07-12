@@ -21,10 +21,10 @@ use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 pub mod tests;
 
 /// eval function implementation - executes JavaScript code in the current context.
-/// Per ES spec §19.2.1, eval code inherits strict mode from its calling context
-/// (handled automatically since ctx.eval -> eval_program preserves STRICT_MODE when
-/// the source has no "use strict" directive). The legacy octal check is in
-/// eval_program, after it sets strictness based on the source's directive.
+/// Per ES spec §19.2.1, eval code inherits strict mode from its calling context.
+/// We check for legacy octals here (before parsing the eval string) so that
+/// eval in strict mode throws even when the eval string itself has no
+/// "use strict" directive.
 fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let source = args
         .first()
@@ -33,7 +33,39 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     if source.is_empty() {
         return Ok(Value::Undefined);
     }
-    match ctx.eval(&source) {
+
+    // Check for legacy octal BEFORE parsing, using inherited strict mode from
+    // the outer context (is_strict_mode returns true if the code calling eval
+    // is itself strict, e.g. "use strict"; eval("01;")).
+    // Capture strict mode BEFORE calling ctx.eval() since ctx.eval -> eval_program
+    // will modify strict mode (setting from directive, then restoring).
+    let strict_inherited = crate::interpreter::is_strict_mode();
+    let has_octal = crate::interpreter::has_legacy_octal(&source);
+    if strict_inherited && has_octal {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "legacy octal literals are not allowed in strict mode",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
+
+    // eval_impl is called from within ctx.eval(), which set CURRENT_CONTEXT.
+    // We need to re-set it (and restore afterward) so that the test's second
+    // (and third, ...) eval() call still has a valid context pointer.
+    let ctx_ptr: *mut Context = ctx;
+    let prev_ctx = CURRENT_CONTEXT.with(|cell| {
+        let prev = cell.borrow();
+        *prev
+    });
+    CURRENT_CONTEXT.with(|cell| {
+        *cell.borrow_mut() = Some(ctx_ptr);
+    });
+    let result = ctx.eval(&source);
+    CURRENT_CONTEXT.with(|cell| {
+        *cell.borrow_mut() = prev_ctx;
+    });
+    match result {
         // eval threw a JS exception (SyntaxError, etc.) — propagate it.
         // eval_program sets the thrown value before returning Err.
         // We peek at it (don't consume) so eval_try_catch can also retrieve it.
@@ -169,39 +201,39 @@ impl Context {
 }
 
 impl Context {
-/// Evaluate a JavaScript source string using the recursive interpreter.
-pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
-    interpreter::reset_depth();
+    /// Evaluate a JavaScript source string using the recursive interpreter.
+    pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
+        interpreter::reset_depth();
 
-    // Set thread-local for eval function to access this context
-    let ctx_ptr: *mut Context = self;
-    CURRENT_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = Some(ctx_ptr);
-    });
+        // Set thread-local for eval function to access this context
+        let ctx_ptr: *mut Context = self;
+        CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = Some(ctx_ptr);
+        });
 
-    let result = (|| {
-        let program = self.parse(source)?;
-        interpreter::eval_program(&program, &mut self.env, Some(source))
-    })();
+        let result = (|| {
+            let program = self.parse(source)?;
+            interpreter::eval_program(&program, &mut self.env, Some(source))
+        })();
 
-    // Microtask checkpoint: drain promise reactions queued during script
-    // execution. Reactions can enqueue more microtasks, so drain to a
-    // fixpoint (execute_pending_microtasks loops until the queue is empty).
-    let microtask_result = crate::builtins::execute_pending_microtasks();
+        // Microtask checkpoint: drain promise reactions queued during script
+        // execution. Reactions can enqueue more microtasks, so drain to a
+        // fixpoint (execute_pending_microtasks loops until the queue is empty).
+        let microtask_result = crate::builtins::execute_pending_microtasks();
 
-    // Clear thread-local after eval completes
-    CURRENT_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
+        // Clear thread-local after eval completes
+        CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
 
-    match result {
-        Ok(value) => {
-            microtask_result?;
-            Ok(value)
+        match result {
+            Ok(value) => {
+                microtask_result?;
+                Ok(value)
+            }
+            Err(e) => Err(e),
         }
-        Err(e) => Err(e),
     }
-}
 
     /// Evaluate an ES module source string using the recursive interpreter.
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {

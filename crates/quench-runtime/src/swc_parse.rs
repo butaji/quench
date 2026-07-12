@@ -1,118 +1,69 @@
-//! SWC parser integration
+//! OXC parser integration
 //!
-//! Uses swc to parse JavaScript/JSX/TypeScript source code into the swc AST,
+//! Uses OXC to parse JavaScript/JSX/TypeScript source code into the OXC AST,
 //! then lower to our runtime AST via lower.rs.
 
 use crate::ast::Program;
-use crate::lower::stmt::{lower_module, lower_script};
+use crate::lower::stmt::lower_program;
 use crate::value::JsError;
-use swc_common::{sync::Lrc, FileName, SourceMap};
-use swc_ecma_parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
+use oxc::allocator::Allocator;
+use oxc::parser::Parser;
+use oxc::span::SourceType;
+use std::sync::Arc;
 
-/// Parse JavaScript source into an swc `Script` AST.
-pub fn parse_swc_script(source: &str) -> Result<swc_ecma_ast::Script, JsError> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom("input".into())),
-        source.to_string(),
-    );
-
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: false,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-
-    let mut parser = Parser::new_from(lexer);
-
-    parser
-        .parse_script()
-        .map_err(|e| JsError(format!("Parse error: {:?}", e)))
-}
-
-/// Parse JavaScript source using swc (script mode, not module)
+/// Parse JavaScript source using OXC (script mode, not module)
 pub fn parse_swc(source: &str) -> Result<Program, JsError> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom("input".into())),
-        source.to_string(),
-    );
-
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-
-    let mut parser = Parser::new_from(lexer);
-
-    // Use parse_script for regular JS/JSX code (not ES modules)
-    let script = parser
-        .parse_script()
-        .map_err(|e| JsError(format!("Parse error: {:?}", e)))?;
-
-    // Lower swc AST to our runtime AST
-    lower_script(&script).map_err(|e| JsError(e.to_string()))
+    let source_type = SourceType::default().with_jsx(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    // allocator is dropped here, but result is already computed
+    drop(allocator);
+    result
 }
 
-/// Parse ES module source using swc's parse_module()
+/// Parse ES module source using OXC
 pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom("input".into())),
-        source.to_string(),
-    );
-
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-
-    let mut parser = Parser::new_from(lexer);
-
-    let module = parser
-        .parse_module()
-        .map_err(|e| JsError(format!("Module parse error: {:?}", e)))?;
-
-    lower_module(&module).map_err(|e| JsError(e.to_string()))
+    let source_type = SourceType::default().with_module(true).with_jsx(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
 }
 
-/// Parse JavaScript/JSX source using swc (script mode)
+/// Parse JavaScript/JSX source using OXC (script mode)
 pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
-    parse_with_syntax(
-        source,
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-    )
+    let source_type = SourceType::default().with_jsx(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
 }
 
 /// Parse TypeScript source and strip type annotations
 pub fn parse_typescript(source: &str) -> Result<Program, JsError> {
     // Strip import/export statements as they are not supported in script mode
     let stripped = strip_imports_exports(source);
-    parse_with_syntax(
-        &stripped,
-        Syntax::Typescript(TsSyntax {
-            tsx: true,
-            decorators: true,
-            ..Default::default()
-        }),
-    )
+    let source_type = SourceType::default().with_typescript(true).with_jsx(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), &stripped, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
 }
 
 /// Strip import/export statements for script-mode parsing
@@ -136,30 +87,15 @@ fn strip_imports_exports(source: &str) -> String {
 /// Parse TypeScript without JSX support
 #[allow(dead_code)]
 pub fn parse_ts(source: &str) -> Result<Program, JsError> {
-    parse_with_syntax(
-        source,
-        Syntax::Typescript(TsSyntax {
-            tsx: false,
-            decorators: true,
-            ..Default::default()
-        }),
-    )
-}
-
-fn parse_with_syntax(source: &str, syntax: Syntax) -> Result<Program, JsError> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom("input".into())),
-        source.to_string(),
-    );
-
-    let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
-    let mut parser = Parser::new_from(lexer);
-
-    let script = parser
-        .parse_script()
-        .map_err(|e| JsError(format!("Parse error: {:?}", e)))?;
-    lower_script(&script).map_err(|e| JsError(e.to_string()))
+    let source_type = SourceType::default().with_typescript(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
 }
 
 #[cfg(test)]
@@ -249,13 +185,51 @@ mod tests {
     fn test_parse_legacy_octal_sloppy() {
         // Legacy octal literals (e.g. 01, 07) are allowed in sloppy mode
         let result = parse_swc("a = 01;");
-        assert!(result.is_ok(), "swc should parse legacy octal in sloppy mode: {:?}", result);
+        assert!(result.is_ok(), "OXC should parse legacy octal in sloppy mode: {:?}", result);
     }
 
     #[test]
-    fn test_parse_legacy_octal_strict() {
-        // Legacy octal literals are rejected in strict mode
-        let result = parse_swc("\"use strict\";\na = 01;");
-        eprintln!("Strict mode octal parse result: {:?}", result);
+    fn test_directives_in_program() {
+        // Check that OXC captures directives separately from body
+        use oxc::allocator::Allocator;
+        use oxc::parser::Parser;
+        use oxc::span::SourceType;
+
+        let source = r#""use strict"; eval("01;")"#;
+        let source_type = SourceType::default().with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, source_type).parse();
+        println!("directives.len() = {}", ret.program.directives.len());
+        for d in &ret.program.directives {
+            println!("  directive: {:?}", d.directive);
+            println!("  expression.value: {:?}", d.expression.value);
+        }
+        println!("body.len() = {}", ret.program.body.len());
+        assert!(ret.program.directives.len() > 0, "Expected directives but got none");
+    }
+
+    #[test]
+    fn test_lowered_program_has_directive() {
+        // Verify that lower_program correctly preprends directives
+        let result = parse_swc(r#""use strict"; eval("01;")"#);
+        match &result {
+            Ok(crate::ast::Program::Script(stmts)) => {
+                println!("lowered statements count: {}", stmts.len());
+                if let Some(crate::ast::Statement::Expression(expr)) = stmts.first() {
+                    println!("first statement expr: {:?}", expr);
+                }
+                // First statement should be "use strict" directive
+                assert!(stmts.len() >= 1, "Expected at least 1 statement");
+                if let Some(crate::ast::Statement::Expression(expr)) = stmts.first() {
+                    if let crate::ast::Expression::String(s) = expr.as_ref() {
+                        assert_eq!(s.trim(), "use strict", "Expected 'use strict' directive");
+                    } else {
+                        panic!("Expected String expression, got {:?}", expr);
+                    }
+                }
+            }
+            Ok(_) => panic!("Expected Script, got something else"),
+            Err(e) => panic!("Parse failed: {:?}", e),
+        }
     }
 }

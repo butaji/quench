@@ -3,15 +3,15 @@
 //! Handles lowering of JSX elements, fragments, attributes, and children.
 
 use super::expr::lower_expr;
-use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+use super::helpers::LowerError;
 use crate::ast::{Expression, JsxAttrValue, JsxChild, JsxProp, JsxTagName};
-use swc_ecma_ast as swc;
+use oxc::ast::ast as ast;
 
 /// Lower a JSX member expression (e.g., Foo.Bar.Baz)
-pub fn lower_jsx_member(member: &swc::JSXMemberExpr) -> Result<Expression, LowerError> {
-    let obj = match &member.obj {
-        swc::JSXObject::Ident(ident) => atom_to_string(&ident.sym),
-        swc::JSXObject::JSXMemberExpr(nested) => {
+pub fn lower_jsx_member(member: &ast::JSXMemberExpression) -> Result<Expression, LowerError> {
+    let obj = match &member.object {
+        ast::JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.as_str().to_string(),
+        ast::JSXMemberExpressionObject::MemberExpression(nested) => {
             let nested_result = lower_jsx_member(nested)?;
             match nested_result {
                 Expression::JsxElement {
@@ -23,8 +23,9 @@ pub fn lower_jsx_member(member: &swc::JSXMemberExpr) -> Result<Expression, Lower
                 _ => return Err(LowerError::new("Invalid nested JSX member expression")),
             }
         }
+        ast::JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
     };
-    let property = atom_to_string(&member.prop.sym);
+    let property = member.property.name.as_str().to_string();
     Ok(Expression::JsxElement {
         tag: JsxTagName::Member {
             object: obj,
@@ -36,9 +37,9 @@ pub fn lower_jsx_member(member: &swc::JSXMemberExpr) -> Result<Expression, Lower
 }
 
 /// Lower a JSX namespaced name (e.g., ns:Name)
-pub fn lower_jsx_namespaced(ns: &swc::JSXNamespacedName) -> Result<Expression, LowerError> {
-    let namespace = atom_to_string(&ns.ns.sym);
-    let name = atom_to_string(&ns.name.sym);
+pub fn lower_jsx_namespaced(ns: &ast::JSXNamespacedName) -> Result<Expression, LowerError> {
+    let namespace = ns.namespace.name.as_str().to_string();
+    let name = ns.property.name.as_str().to_string();
     Ok(Expression::JsxElement {
         tag: JsxTagName::Namespaced { namespace, name },
         props: vec![],
@@ -47,9 +48,9 @@ pub fn lower_jsx_namespaced(ns: &swc::JSXNamespacedName) -> Result<Expression, L
 }
 
 /// Lower a JSX element
-pub fn lower_jsx_element(elem: &swc::JSXElement) -> Result<Expression, LowerError> {
-    let tag = lower_jsx_element_name(&elem.opening.name)?;
-    let props = lower_jsx_attributes(&elem.opening.attrs)?;
+pub fn lower_jsx_element(elem: &ast::JSXElement) -> Result<Expression, LowerError> {
+    let tag = lower_jsx_element_name(&elem.opening_element.name)?;
+    let props = lower_jsx_attributes(&elem.opening_element.attributes)?;
     let children = lower_jsx_children(&elem.children)?;
 
     Ok(Expression::JsxElement {
@@ -60,20 +61,21 @@ pub fn lower_jsx_element(elem: &swc::JSXElement) -> Result<Expression, LowerErro
 }
 
 /// Lower a JSX fragment
-pub fn lower_jsx_fragment(frag: &swc::JSXFragment) -> Result<Expression, LowerError> {
+pub fn lower_jsx_fragment(frag: &ast::JSXFragment) -> Result<Expression, LowerError> {
     let children = lower_jsx_children(&frag.children)?;
     Ok(Expression::JsxFragment { children })
 }
 
 /// Lower a JSX element name to JsxTagName
-#[allow(clippy::complexity)]
-pub fn lower_jsx_element_name(name: &swc::JSXElementName) -> Result<JsxTagName, LowerError> {
+pub fn lower_jsx_element_name(name: &ast::JSXElementName) -> Result<JsxTagName, LowerError> {
     match name {
-        swc::JSXElementName::Ident(ident) => Ok(JsxTagName::Ident(atom_to_string(&ident.sym))),
-        swc::JSXElementName::JSXMemberExpr(member) => {
-            let obj = match &member.obj {
-                swc::JSXObject::Ident(ident) => atom_to_string(&ident.sym),
-                swc::JSXObject::JSXMemberExpr(nested) => {
+        ast::JSXElementName::IdentifierReference(ident) => Ok(JsxTagName::Ident(ident.name.as_str().to_string())),
+        ast::JSXElementName::Identifier(ident) => Ok(JsxTagName::Ident(ident.name.as_str().to_string())),
+        ast::JSXElementName::ThisExpression(_) => Ok(JsxTagName::Ident("this".to_string())),
+        ast::JSXElementName::MemberExpression(member) => {
+            let obj = match &member.object {
+                ast::JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.as_str().to_string(),
+                ast::JSXMemberExpressionObject::MemberExpression(nested) => {
                     let nested_result = lower_jsx_member(nested)?;
                     match nested_result {
                         Expression::JsxElement {
@@ -85,43 +87,47 @@ pub fn lower_jsx_element_name(name: &swc::JSXElementName) -> Result<JsxTagName, 
                         _ => return Err(LowerError::new("Invalid nested JSX member expression")),
                     }
                 }
+                ast::JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
             };
-            let property = atom_to_string(&member.prop.sym);
+            let property = member.property.name.as_str().to_string();
             Ok(JsxTagName::Member {
                 object: obj,
                 property,
             })
         }
-        swc::JSXElementName::JSXNamespacedName(ns) => {
-            let namespace = atom_to_string(&ns.ns.sym);
-            let name = atom_to_string(&ns.name.sym);
+        ast::JSXElementName::NamespacedName(ns) => {
+            let namespace = ns.namespace.name.as_str().to_string();
+            let name = ns.property.name.as_str().to_string();
             Ok(JsxTagName::Namespaced { namespace, name })
         }
     }
 }
 
 /// Lower JSX attributes/props
-#[allow(clippy::complexity)]
-pub fn lower_jsx_attributes(attrs: &[swc::JSXAttrOrSpread]) -> Result<Vec<JsxProp>, LowerError> {
+pub fn lower_jsx_attributes(attrs: &[ast::JSXAttributeItem]) -> Result<Vec<JsxProp>, LowerError> {
     let mut props = Vec::new();
-    for attr_or_spread in attrs {
-        match attr_or_spread {
-            swc::JSXAttrOrSpread::JSXAttr(attr) => {
+    for attr in attrs {
+        match attr {
+            ast::JSXAttributeItem::Attribute(attr) => {
                 let name = lower_jsx_attr_name(&attr.name)?;
                 let value = match &attr.value {
-                    Some(swc::JSXAttrValue::JSXExprContainer(expr)) => match &expr.expr {
-                        swc::JSXExpr::Expr(expr) => JsxAttrValue::Expression(lower_expr(expr)?),
-                        swc::JSXExpr::JSXEmptyExpr(_) => JsxAttrValue::Expression(Expression::Null),
-                    },
-                    Some(swc::JSXAttrValue::Str(s)) => {
-                        JsxAttrValue::String(wtf8_atom_to_string(&s.value))
+                    Some(ast::JSXAttributeValue::StringLiteral(s)) => {
+                        JsxAttrValue::String(s.value.to_string())
+                    }
+                    Some(ast::JSXAttributeValue::ExpressionContainer(expr)) => {
+                        // JSXExpression inherits from Expression, use as_expression()
+                        if let Some(inner) = expr.expression.as_expression() {
+                            JsxAttrValue::Expression(lower_expr(inner)?)
+                        } else {
+                            JsxAttrValue::Expression(Expression::Null)
+                        }
                     }
                     Some(_) | None => JsxAttrValue::Expression(Expression::Null),
                 };
                 props.push(JsxProp::Attr { name, value });
             }
-            swc::JSXAttrOrSpread::SpreadElement(spread) => {
-                let expr = lower_expr(&spread.expr)?;
+            ast::JSXAttributeItem::SpreadAttribute(spread) => {
+                let expr = lower_expr(&spread.argument)?;
                 props.push(JsxProp::Spread(expr));
             }
         }
@@ -130,48 +136,38 @@ pub fn lower_jsx_attributes(attrs: &[swc::JSXAttrOrSpread]) -> Result<Vec<JsxPro
 }
 
 /// Lower a JSX attribute name
-fn lower_jsx_attr_name(name: &swc::JSXAttrName) -> Result<String, LowerError> {
+fn lower_jsx_attr_name(name: &ast::JSXAttributeName) -> Result<String, LowerError> {
     match name {
-        swc::JSXAttrName::Ident(ident) => Ok(atom_to_string(&ident.sym)),
-        swc::JSXAttrName::JSXNamespacedName(ns) => Ok(format!(
-            "{}:{}",
-            atom_to_string(&ns.ns.sym),
-            atom_to_string(&ns.name.sym)
-        )),
+        ast::JSXAttributeName::Identifier(ident) => Ok(ident.name.as_str().to_string()),
+        ast::JSXAttributeName::NamespacedName(ns) => Ok(format!("{}:{}", ns.namespace.name.as_str(), ns.property.name.as_str())),
     }
 }
 
 /// Lower JSX children
-#[allow(clippy::complexity)]
-pub fn lower_jsx_children(children: &[swc::JSXElementChild]) -> Result<Vec<JsxChild>, LowerError> {
+pub fn lower_jsx_children(children: &[ast::JSXChild]) -> Result<Vec<JsxChild>, LowerError> {
     let mut result = Vec::new();
     for child in children {
         match child {
-            swc::JSXElementChild::JSXText(text) => {
+            ast::JSXChild::Text(text) => {
                 result.push(JsxChild::Text(text.value.to_string()));
             }
-            swc::JSXElementChild::JSXExprContainer(expr) => {
-                match &expr.expr {
-                    swc::JSXExpr::Expr(inner) => {
-                        result.push(JsxChild::Expression(lower_expr(inner)?));
-                    }
-                    swc::JSXExpr::JSXEmptyExpr(_) => {
-                        // Empty expression, skip
-                    }
+            ast::JSXChild::ExpressionContainer(expr) => {
+                // JSXExpression inherits from Expression, use as_expression()
+                if let Some(inner) = expr.expression.as_expression() {
+                    result.push(JsxChild::Expression(lower_expr(inner)?));
                 }
+                // Empty expression is skipped
             }
-            swc::JSXElementChild::JSXSpreadChild(spread) => {
-                let expr = lower_expr(&spread.expr)?;
-                result.push(JsxChild::Spread(expr));
-            }
-            swc::JSXElementChild::JSXElement(elem) => {
+            ast::JSXChild::Element(elem) => {
                 let elem_expr = lower_jsx_element(elem)?;
                 result.push(JsxChild::Element(Box::new(elem_expr)));
             }
-            swc::JSXElementChild::JSXFragment(frag) => {
+            ast::JSXChild::Fragment(frag) => {
                 let frag_expr = lower_jsx_fragment(frag)?;
                 result.push(JsxChild::Element(Box::new(frag_expr)));
             }
+            // SpreadChild might not exist in all OXC versions, skip if not present
+            _ => {}
         }
     }
     Ok(result)

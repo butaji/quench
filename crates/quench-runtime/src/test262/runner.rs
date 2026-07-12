@@ -135,7 +135,7 @@ fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutc
 }
 
 /// Run a single test and return its outcome.
-fn run_single_test(
+pub(crate) fn run_single_test(
     host: &mut dyn Test262Host,
     harness: &HarnessLoader,
     test_path: &Path,
@@ -208,14 +208,20 @@ fn run_single_test(
     let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
 
+    // Run sloppy mode unless onlyStrict
     if !only_strict {
-        match check_outcome(&meta, host.run_script(&script)) {
-            TestOutcome::Pass => {}
-            other => return other,
+        let outcome = check_outcome(&meta, host.run_script(&script));
+        if !matches!(outcome, TestOutcome::Pass) {
+            return outcome;
         }
         if no_strict {
             return TestOutcome::Pass;
         }
+    }
+
+    // Run strict mode (only reached if noStrict is false and onlyStrict is false)
+    if no_strict {
+        return TestOutcome::Pass;
     }
     let strict_script = format!("\"use strict\";\n{}", script);
     match check_outcome(&meta, host.run_script(&strict_script)) {
