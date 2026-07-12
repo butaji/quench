@@ -19,10 +19,29 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
+    check_strict_reserved(&ret.program)?;
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
     // allocator is dropped here, but result is already computed
     drop(allocator);
     result
+}
+
+/// Reject strict-mode future reserved words used as binding identifiers.
+/// Strict mode applies when the program has a "use strict" directive prologue
+/// or when it is inherited from the calling context (e.g. strict eval).
+fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError> {
+    let strict = crate::strict_reserved::has_use_strict_directive(program)
+        || crate::interpreter::is_strict_mode();
+    if !strict {
+        return Ok(());
+    }
+    if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(program) {
+        return Err(JsError(format!(
+            "SyntaxError: Unexpected strict mode reserved word: {}",
+            name
+        )));
+    }
+    Ok(())
 }
 
 /// Parse ES module source using OXC
@@ -32,6 +51,12 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(&ret.program) {
+        return Err(JsError(format!(
+            "SyntaxError: Unexpected strict mode reserved word: {}",
+            name
+        )));
     }
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
     drop(allocator);
