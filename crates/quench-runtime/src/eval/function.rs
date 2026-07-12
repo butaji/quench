@@ -213,7 +213,7 @@ fn call_native_constructor(
     crate::interpreter::take_native_this();
     crate::interpreter::take_this_value();
 
-    // If the constructor returned an object, use it; otherwise use the original this_val
+    // Per ES spec: if constructor returns an object, use it; otherwise return primitive
     match result {
         Ok(Value::Object(_))
         | Ok(Value::Function(_))
@@ -221,7 +221,7 @@ fn call_native_constructor(
         | Ok(Value::NativeConstructor(_))
         | Ok(Value::Class(_)) => result,
         Err(e) => Err(e),
-        _ => Ok(effective_this),
+        Ok(other) => Ok(other), // return primitive (Number, String, Boolean, etc.)
     }
 }
 
@@ -284,7 +284,11 @@ fn call_object_as_constructor(
             // Ignore this_val (use undefined) — the apply method decides what 'this' means.
             call_value_with_this(apply, args, Value::Undefined)
         } else {
-            Err(JsError("Object is not a constructor".to_string()))
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "object is not a constructor",
+                "TypeError",
+            );
+            Err(js_err)
         }
     }
 }

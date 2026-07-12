@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 use crate::builtins::object_static::{
     object_assign, object_create, object_define_property, object_entries, object_freeze,
     object_from_entries, object_get_own_property_descriptor, object_get_own_property_names,
-    object_get_prototype_of, object_has_own, object_is, object_is_frozen, object_keys,
-    object_values,
+    object_get_prototype_of, object_has_own, object_is, object_is_extensible, object_is_frozen,
+    object_keys, object_prevent_extensions, object_values,
 };
 use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -102,6 +102,14 @@ pub fn register_object(ctx: &mut Context) {
         "getPrototypeOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_get_prototype_of))),
     );
+    constructor.set_static_method(
+        "preventExtensions",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_prevent_extensions))),
+    );
+    constructor.set_static_method(
+        "isExtensible",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_extensible))),
+    );
 
     constructor.set_name("Object");
     let object_ctor = Value::NativeConstructor(Rc::new(constructor));
@@ -115,7 +123,11 @@ pub fn register_object(ctx: &mut Context) {
 /// Create an object from the argument to Object()
 fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
     let obj = if args.is_empty() {
-        Object::new(ObjectKind::Ordinary)
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        if let Some(proto) = get_object_prototype() {
+            obj.prototype = Some(proto);
+        }
+        obj
     } else {
         match &args[0] {
             Value::Undefined | Value::Null => Object::new(ObjectKind::Ordinary),

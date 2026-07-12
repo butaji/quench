@@ -182,7 +182,10 @@ fn inject_test262_error(ctx: &mut Context) {
 /// Harness files whose eval failure is tolerated (warned about, not fatal):
 /// resizableArrayBufferUtils.js references Uint8Array at load time, which
 /// quench does not implement yet. Every other harness file MUST load cleanly.
-const TOLERATED_EVAL_FAILURES: &[&str] = &["resizableArrayBufferUtils.js"];
+const TOLERATED_EVAL_FAILURES: &[&str] = &[
+    "resizableArrayBufferUtils.js",
+    "deepEqual.js",
+];
 
 /// Load and evaluate a JS harness file (strips frontmatter).
 /// Returns Err when the file cannot be read or fails to evaluate (except

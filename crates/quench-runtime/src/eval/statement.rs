@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::interpreter::{predeclare_let_const, set_control_flow, take_control_flow, ControlFlow};
+use crate::interpreter::{collect_var_names_recursive, predeclare_var, predeclare_let_const, set_control_flow, take_control_flow, ControlFlow};
 use crate::value::{
     set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
 };
@@ -311,6 +311,16 @@ fn eval_try_catch(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    // Var declarations inside a try block are hoisted to the try's enclosing
+    // scope, so they must be visible to the catch handler too. Predeclare them
+    // in the parent env before evaluating the body.
+    if let Statement::Block(stmts) = body {
+        let mut names = Vec::new();
+        collect_var_names_recursive(stmts, &mut names);
+        for name in names {
+            env.borrow_mut().declare_var(name, VarKind::Var);
+        }
+    }
     match eval_statement(body, env, false, in_arrow_function) {
         Ok(v) => Ok(v),
         Err(_e) => {

@@ -550,6 +550,25 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
+/// Object.preventExtensions(obj) - marks object as non-extensible and returns it
+pub fn object_prevent_extensions(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(o) = &obj {
+        o.borrow_mut().extensible = false;
+    }
+    Ok(obj)
+}
+
+/// Object.isExtensible(obj) - checks if object is extensible
+pub fn object_is_extensible(args: Vec<Value>) -> Result<Value, JsError> {
+    match args.first() {
+        Some(Value::Object(o)) => Ok(Value::Boolean(o.borrow().extensible)),
+        // Primitives are always non-extensible
+        Some(_) => Ok(Value::Boolean(false)),
+        None => Ok(Value::Boolean(false)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::value::Value;

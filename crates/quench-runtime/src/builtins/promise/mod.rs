@@ -130,8 +130,14 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var u = 0; Promise.resolve().then(() => Promise.resolve(42)).then(v => u = v);")
             .unwrap();
-        let result = ctx.eval("u").unwrap();
-        assert_eq!(result, crate::value::Value::Number(42.0));
+        // Also check if u is set right after the first eval
+        let result_before = ctx.eval("u").unwrap();
+        // Reset u and try again
+        ctx.eval("u = 0;").unwrap();
+        // Trigger microtask checkpoint again
+        crate::builtins::execute_pending_microtasks().ok();
+        let result_after = ctx.eval("u").unwrap();
+        assert_eq!(result_before, crate::value::Value::Number(42.0));
     }
 
     #[test]

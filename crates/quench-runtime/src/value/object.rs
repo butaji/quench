@@ -181,6 +181,9 @@ pub struct Object {
     pub exotic_kind: Option<ExoticKind>,
     /// Symbol-keyed properties (stored separately from string-keyed)
     pub symbol_properties: IndexMap<String, Value>,
+    /// Whether new properties can be added (false after Object.preventExtensions).
+    /// Object.freeze also sets this to false.
+    pub extensible: bool,
 }
 
 impl fmt::Debug for Object {
@@ -211,6 +214,7 @@ impl Object {
             internal_regex_flags: None,
             exotic_kind: None,
             symbol_properties: IndexMap::new(),
+            extensible: true,
         }
     }
 
@@ -230,6 +234,7 @@ impl Object {
             internal_regex_flags: None,
             exotic_kind: None,
             symbol_properties: IndexMap::new(),
+            extensible: true,
         }
     }
 

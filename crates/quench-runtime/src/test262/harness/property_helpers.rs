@@ -116,6 +116,7 @@ fn deep_equal_internal(a: &Value, b: &Value) -> bool {
         (Value::Boolean(_), Value::Boolean(_)) => crate::value::strict_eq(a, b),
         (Value::Undefined, Value::Undefined) => true,
         (Value::Null, Value::Null) => true,
+        (Value::Symbol(_), Value::Symbol(_)) => false,
         (Value::Object(_), Value::Object(_)) => deep_equal_objects(a, b),
         _ => false,
     }

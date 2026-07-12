@@ -11,6 +11,7 @@ use crate::eval::iteration::get_iterator;
 use crate::eval::literal::{eval_property_key, get_super_value};
 use crate::eval::member::eval_member_access;
 use crate::interpreter::get_this_binding;
+use crate::value::error::create_js_error_with_type;
 use crate::value::{to_js_string, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -83,7 +84,13 @@ fn eval_super_call(
         Value::NativeConstructor(nc) => {
             call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
         }
-        _ => Err(JsError("TypeError: super is not a constructor".to_string())),
+        _ => {
+            let (_, js_err) = create_js_error_with_type(
+                "super is not a constructor",
+                "TypeError",
+            );
+            Err(js_err)
+        }
     }
 }
 
@@ -184,9 +191,11 @@ pub fn eval_new(
     // Arrow functions are not constructors
     if let Value::Function(ref f) = constructor_val {
         if f.is_arrow {
-            return Err(JsError(
-                "TypeError: function is not a constructor".to_string(),
-            ));
+            let (_, js_err) = create_js_error_with_type(
+                "function is not a constructor",
+                "TypeError",
+            );
+            return Err(js_err);
         }
     }
 
@@ -203,7 +212,11 @@ pub fn eval_new(
             if let Some(constructor) = obj.get("constructor") {
                 constructor.clone()
             } else {
-                return Err(JsError("Object is not a constructor".to_string()));
+                let (_, js_err) = create_js_error_with_type(
+                    "object is not a constructor",
+                    "TypeError",
+                );
+                return Err(js_err);
             }
         }
         other => other.clone(),

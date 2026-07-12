@@ -431,17 +431,7 @@ mod tests {
     #[test]
     fn test_match_returns_array() {
         let mut ctx = Context::new().unwrap();
-        // Test with a simple string match first
-        let result = ctx.eval("'hello'.indexOf('l')");
-        if let Err(e) = &result {
-            eprintln!("indexOf error: {:?}", e);
-        }
-        eprintln!("indexOf result: {:?}", result);
-
         let result = ctx.eval("'hello world'.match('o')");
-        if let Err(e) = &result {
-            eprintln!("match error: {:?}", e);
-        }
         assert!(result.is_ok());
         let val = result.unwrap();
         assert!(matches!(val, Value::Object(_)));
@@ -451,9 +441,6 @@ mod tests {
     fn test_match_returns_null_on_no_match() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("'hello'.match('x')");
-        if let Err(e) = &result {
-            eprintln!("match error: {:?}", e);
-        }
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::Null);
     }
@@ -462,11 +449,7 @@ mod tests {
     fn test_match_global_returns_all_matches() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("'abab'.match(/ab/g)");
-        if let Err(e) = &result {
-            eprintln!("match error: {:?}", e);
-        }
         assert!(result.is_ok());
-        // Should return array with 2 matches
     }
 
     // Tests for replace() with $-substitution

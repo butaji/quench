@@ -1,6 +1,6 @@
-//! Lower SWC AST to runtime AST
+//! Lower OXC AST to runtime AST
 //!
-//! Converts swc_ecma_ast nodes to our runtime AST representation.
+//! Converts oxc::ast nodes to our runtime AST representation.
 
 pub mod control_flow;
 pub mod expr;
@@ -13,7 +13,7 @@ pub mod stmt;
 
 pub use expr::lower_expr;
 pub use helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
-pub use stmt::{lower_module, lower_script, lower_stmt};
+pub use stmt::{lower_module, lower_program, lower_script, lower_stmt};
 
 #[cfg(test)]
 mod tests {

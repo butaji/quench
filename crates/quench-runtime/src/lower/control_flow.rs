@@ -3,20 +3,19 @@
 //! Handles lowering of if, while, for, try-catch, switch statements.
 
 use super::expr::lower_expr;
-use super::helpers::atom_to_string;
-use super::pattern::{lower_elem_pat, lower_object_pat_prop};
+use super::pattern::{lower_elem_pat, lower_object_pat_prop, lower_assignment_target_to_binding, lower_object_assignment_target, lower_array_assignment_target, binding_to_expr};
 use super::stmt::lower_stmt;
 use crate::ast::{
     BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, UnaryOp, VarKind,
 };
-use swc_ecma_ast as swc;
+use oxc::ast::ast as ast;
 
 /// Lower an if statement
-pub fn lower_if_stmt(if_stmt: &swc::IfStmt) -> Option<Statement> {
+pub fn lower_if_stmt(if_stmt: &ast::IfStatement) -> Option<Statement> {
     let condition = lower_expr(&if_stmt.test).ok()?;
-    let consequent = Box::new(lower_stmt(&if_stmt.cons).unwrap_or(Statement::Empty));
+    let consequent = Box::new(lower_stmt(&if_stmt.consequent).unwrap_or(Statement::Empty));
     let alternate = if_stmt
-        .alt
+        .alternate
         .as_ref()
         .map(|a| Box::new(lower_stmt(a).unwrap_or(Statement::Empty)));
     Some(Statement::If {
@@ -27,7 +26,7 @@ pub fn lower_if_stmt(if_stmt: &swc::IfStmt) -> Option<Statement> {
 }
 
 /// Lower a while statement
-pub fn lower_while_stmt(while_stmt: &swc::WhileStmt) -> Option<Statement> {
+pub fn lower_while_stmt(while_stmt: &ast::WhileStatement) -> Option<Statement> {
     let condition = lower_expr(&while_stmt.test).ok()?;
     let body = Box::new(lower_stmt(&while_stmt.body).unwrap_or(Statement::Empty));
     Some(Statement::While {
@@ -38,7 +37,7 @@ pub fn lower_while_stmt(while_stmt: &swc::WhileStmt) -> Option<Statement> {
 
 /// Lower a do-while statement: do { body } while (cond)
 /// Desugars to: while (true) { body; if (!cond) break; }
-pub fn lower_do_while_stmt(do_while: &swc::DoWhileStmt) -> Option<Statement> {
+pub fn lower_do_while_stmt(do_while: &ast::DoWhileStatement) -> Option<Statement> {
     let condition = lower_expr(&do_while.test).ok()?;
     let body = lower_stmt(&do_while.body).unwrap_or(Statement::Empty);
     let break_check = Statement::If {
@@ -56,7 +55,7 @@ pub fn lower_do_while_stmt(do_while: &swc::DoWhileStmt) -> Option<Statement> {
 }
 
 /// Lower a for statement
-pub fn lower_for_stmt(for_stmt: &swc::ForStmt) -> Option<Statement> {
+pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
     let init = for_stmt.init.as_ref().and_then(lower_for_init);
     let condition = for_stmt
         .test
@@ -78,7 +77,7 @@ pub fn lower_for_stmt(for_stmt: &swc::ForStmt) -> Option<Statement> {
 }
 
 /// Lower a for-in statement
-pub fn lower_for_in_stmt(for_in_stmt: &swc::ForInStmt) -> Option<Statement> {
+pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement> {
     let left = lower_for_lhs(&for_in_stmt.left)?;
     let iterable = lower_expr(&for_in_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_in_stmt.body).unwrap_or(Statement::Empty));
@@ -90,7 +89,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &swc::ForInStmt) -> Option<Statement> {
 }
 
 /// Lower a for-of statement
-pub fn lower_for_of_stmt(for_of_stmt: &swc::ForOfStmt) -> Option<Statement> {
+pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement> {
     let left = lower_for_lhs(&for_of_stmt.left)?;
     let iterable = lower_expr(&for_of_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_of_stmt.body).unwrap_or(Statement::Empty));
@@ -102,29 +101,35 @@ pub fn lower_for_of_stmt(for_of_stmt: &swc::ForOfStmt) -> Option<Statement> {
 }
 
 /// Lower a try-catch statement
-pub fn lower_try_stmt(try_stmt: &swc::TryStmt) -> Option<Statement> {
-    let body =
-        Box::new(lower_stmt(&swc::Stmt::Block(try_stmt.block.clone())).unwrap_or(Statement::Empty));
+pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
+    let body = try_stmt
+        .block
+        .body
+        .iter()
+        .filter_map(lower_stmt)
+        .collect::<Vec<_>>();
     let catch_param = try_stmt.handler.as_ref().and_then(|catch| {
-        catch.param.as_ref().and_then(|pat| match pat {
-            swc::Pat::Ident(ident) => Some(ident.id.sym.to_string()),
+        catch.param.as_ref().and_then(|pat| match &pat.pattern.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
             _ => None,
         })
     });
     let handler = if let Some(catch) = &try_stmt.handler {
-        Box::new(lower_stmt(&swc::Stmt::Block(catch.body.clone())).unwrap_or(Statement::Empty))
+        Box::new(Statement::Block(
+            catch.body.body.iter().filter_map(lower_stmt).collect(),
+        ))
     } else {
         Box::new(Statement::Empty)
     };
     Some(Statement::TryCatch {
-        body,
+        body: Box::new(Statement::Block(body)),
         param: catch_param,
         handler,
     })
 }
 
 /// Lower a switch statement into nested if-else chains
-pub fn lower_switch(switch: &swc::SwitchStmt) -> Option<Statement> {
+pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     let discriminant = lower_expr(&switch.discriminant).ok()?;
 
     // Compute each case's effective body: a case with no statements falls
@@ -132,7 +137,7 @@ pub fn lower_switch(switch: &swc::SwitchStmt) -> Option<Statement> {
     let mut effective_bodies: Vec<Vec<Statement>> = Vec::with_capacity(switch.cases.len());
     let mut next_body: Vec<Statement> = Vec::new();
     for case in switch.cases.iter().rev() {
-        let own: Vec<Statement> = case.cons.iter().filter_map(lower_stmt).collect();
+        let own: Vec<Statement> = case.consequent.iter().filter_map(lower_stmt).collect();
         let effective = if own.is_empty() {
             next_body.clone()
         } else {
@@ -188,67 +193,89 @@ pub fn lower_switch(switch: &swc::SwitchStmt) -> Option<Statement> {
 
 /// Lower a for loop init (variable declaration or expression)
 #[allow(clippy::complexity)]
-pub fn lower_for_init(init: &swc::VarDeclOrExpr) -> Option<ForInit> {
+pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
     match init {
-        swc::VarDeclOrExpr::VarDecl(decl) => {
-            let first = decl.decls.first()?;
+        ast::ForStatementInit::VariableDeclaration(decl) => {
+            let first = decl.declarations.first()?;
             let kind = match decl.kind {
-                swc::VarDeclKind::Var => VarKind::Var,
-                swc::VarDeclKind::Let => VarKind::Let,
-                swc::VarDeclKind::Const => VarKind::Const,
+                ast::VariableDeclarationKind::Var => VarKind::Var,
+                ast::VariableDeclarationKind::Let => VarKind::Let,
+                ast::VariableDeclarationKind::Const => VarKind::Const,
+                // Using/AwaitUsing not supported in this runtime
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
+                    return None;
+                }
             };
-            let name = match &first.name {
-                swc::Pat::Ident(ident) => atom_to_string(&ident.id.sym),
+            let name = match &first.id.kind {
+                ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
                 _ => return None,
             };
             let init = first.init.as_ref().and_then(|e| lower_expr(e).ok());
             Some(ForInit::VarDeclaration { kind, name, init })
         }
-        swc::VarDeclOrExpr::Expr(expr) => {
-            Some(ForInit::Expression(Box::new(lower_expr(expr).ok()?)))
+        // ForStatementInit inherits Expression variants via macro
+        _ => {
+            // Try to match as expression
+            if let Some(expr) = init.as_expression() {
+                Some(ForInit::Expression(Box::new(lower_expr(expr).ok()?)))
+            } else {
+                None
+            }
         }
     }
 }
 
 /// Lower the left-hand side of a for-in/for-of loop
 #[allow(clippy::complexity)]
-pub fn lower_for_lhs(left: &swc::ForHead) -> Option<Expression> {
+pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
     match left {
-        swc::ForHead::VarDecl(decl) => {
-            let first = decl.decls.first()?;
-            match &first.name {
-                swc::Pat::Ident(ident) => {
-                    Some(Expression::Identifier(atom_to_string(&ident.id.sym)))
+        ast::ForStatementLeft::VariableDeclaration(decl) => {
+            let first = decl.declarations.first()?;
+            match &first.id.kind {
+                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    Some(Expression::Identifier(ident.name.as_str().to_string()))
                 }
-                swc::Pat::Array(arr) => lower_array_lhs(arr),
-                swc::Pat::Object(obj) => lower_object_lhs(obj),
-                _ => None,
+                ast::BindingPatternKind::ArrayPattern(arr) => lower_array_lhs(arr),
+                ast::BindingPatternKind::ObjectPattern(obj) => lower_object_lhs(obj),
+                ast::BindingPatternKind::AssignmentPattern(_) => None,
             }
         }
-        swc::ForHead::Pat(pat) => match pat.as_ref() {
-            swc::Pat::Ident(ident) => Some(Expression::Identifier(atom_to_string(&ident.id.sym))),
-            swc::Pat::Array(arr) => lower_array_lhs(arr),
-            swc::Pat::Object(obj) => lower_object_lhs(obj),
-            _ => None,
-        },
-        swc::ForHead::UsingDecl(_) => None,
+        // ForStatementLeft inherits AssignmentTarget variants via macro
+        ast::ForStatementLeft::AssignmentTargetIdentifier(ident_ref) => {
+            Some(Expression::Identifier(ident_ref.name.as_str().to_string()))
+        }
+        // Array and object assignment targets in for-in/for-of
+        ast::ForStatementLeft::ArrayAssignmentTarget(arr) => {
+            lower_array_assignment_target(arr).ok().map(binding_to_expr)
+        }
+        ast::ForStatementLeft::ObjectAssignmentTarget(obj) => {
+            lower_object_assignment_target(obj).ok().map(binding_to_expr)
+        }
+        // TS type assertions on for-statement left side
+        ast::ForStatementLeft::TSAsExpression(e) => lower_expr(&e.expression).ok(),
+        ast::ForStatementLeft::TSSatisfiesExpression(e) => lower_expr(&e.expression).ok(),
+        ast::ForStatementLeft::TSNonNullExpression(e) => lower_expr(&e.expression).ok(),
+        ast::ForStatementLeft::TSTypeAssertion(e) => lower_expr(&e.expression).ok(),
+        ast::ForStatementLeft::TSInstantiationExpression(e) => lower_expr(&e.expression).ok(),
+        // Member expression variants on for-statement left side — not bindings, return None
+        ast::ForStatementLeft::ComputedMemberExpression(_) => None,
+        ast::ForStatementLeft::StaticMemberExpression(_) => None,
+        ast::ForStatementLeft::PrivateFieldExpression(_) => None,
     }
 }
 
-fn lower_array_lhs(arr: &swc::ArrayPat) -> Option<Expression> {
+fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
     let elements: Vec<BindingElement> = arr
-        .elems
+        .elements
         .iter()
-        .filter_map(|e| match e {
-            Some(elem) => lower_elem_pat(elem),
-            None => Some(BindingElement::Identifier("__hole".to_string())),
-        })
+        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
+        .chain(arr.rest.as_ref().map(|r| lower_elem_pat(&r.argument)).flatten())
         .collect();
     Some(Expression::ArrayPattern(elements))
 }
 
-fn lower_object_lhs(obj: &swc::ObjectPat) -> Option<Expression> {
+fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
     let props: Vec<(PropertyKey, BindingElement)> =
-        obj.props.iter().filter_map(lower_object_pat_prop).collect();
+        obj.properties.iter().filter_map(lower_object_pat_prop).collect();
     Some(Expression::ObjectPattern(props))
 }

@@ -192,32 +192,20 @@ pub fn eval_program(
     match program {
         Program::Script(statements) => {
             // Check for "use strict"; directive at the beginning of the script
-            let script_is_strict = check_use_strict_directive(statements);
             let prev_strict = is_strict_mode();
+            let script_is_strict = check_use_strict_directive(statements);
             // Strict mode is inherited from the calling context (eval inherits strict
             // mode from its enclosing code per ECMAScript spec), OR from the script itself.
             let eval_is_strict = script_is_strict || is_strict_mode();
             set_strict_mode(eval_is_strict);
 
-            // In strict mode, reject legacy octal literals (e.g. `01`, `07`).
-            // Return Err so eval_impl propagates the pending JS exception.
-            if eval_is_strict {
-                if let Some(src) = source {
-                    if has_legacy_octal(src) {
-                        set_strict_mode(prev_strict);
-                        let (err_val, js_err) =
-                            crate::value::error::create_js_error_with_type(
-                                "legacy octal literals are not allowed in strict mode",
-                                "SyntaxError",
-                            );
-                        crate::value::set_thrown_value(err_val);
-                        return Err(js_err);
-                    }
-                }
-            }
+            // Legacy octal check is handled in eval_impl before the eval string is
+            // parsed, so we inherit the correct strict mode from the outer context.
+            // (eval_program is only called via ctx.eval, never for top-level scripts.)
 
             hoist_functions(statements, env);
             hoist_classes(statements, env);
+            predeclare_var(statements, &mut env.borrow_mut());
             predeclare_let_const(statements, &mut env.borrow_mut());
             let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
             set_this_binding(env, global_this);
@@ -244,7 +232,7 @@ pub fn eval_program(
 /// literals, and comments before scanning. Then flags `0` followed by `1-7`
 /// when NOT preceded by a digit (avoids `2015`), `.` (avoids `1.07`), or a
 /// quote (avoids `"%01"` in strings).
-fn has_legacy_octal(source: &str) -> bool {
+pub(crate) fn has_legacy_octal(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -259,7 +247,18 @@ fn has_legacy_octal(source: &str) -> bool {
                     break;
                 }
                 if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
+                    if bytes[i + 1] == b'u' {
+                        i += 2;
+                        for _ in 0..4 {
+                            if i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        i += 2;
+                    }
                     continue;
                 }
                 i += 1;
@@ -275,7 +274,18 @@ fn has_legacy_octal(source: &str) -> bool {
                     break;
                 }
                 if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
+                    if bytes[i + 1] == b'u' {
+                        i += 2;
+                        for _ in 0..4 {
+                            if i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        i += 2;
+                    }
                     continue;
                 }
                 i += 1;
@@ -297,6 +307,34 @@ fn has_legacy_octal(source: &str) -> bool {
                     i += 2;
                     break;
                 }
+                // Skip Unicode escape sequences in block comments
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    if bytes[i + 1] == b'u' {
+                        i += 2;
+                        if i < bytes.len() && bytes[i] == b'{' {
+                            // \u{...} form
+                            i += 1;
+                            while i < bytes.len() && bytes[i] != b'}' {
+                                i += 1;
+                            }
+                            if i < bytes.len() {
+                                i += 1;
+                            }
+                        } else {
+                            // \uXXXX form — skip 4 hex digits
+                            for _ in 0..4 {
+                                if i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                                    i += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    i += 2;
+                    continue;
+                }
                 i += 1;
             }
             continue;
@@ -310,12 +348,24 @@ fn has_legacy_octal(source: &str) -> bool {
                 true
             } else {
                 let prev = bytes[i - 1];
-                matches!(prev, b'(' | b'[' | b'{' | b'=' | b',' | b';'
-                    | b'+' | b'-' | b' ' | b'\t' | b'\n' | b'\r')
-                    || matches!(prev, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
+                matches!(
+                    prev,
+                    b'(' | b'['
+                        | b'{'
+                        | b'='
+                        | b','
+                        | b';'
+                        | b'+'
+                        | b'-'
+                        | b' '
+                        | b'\t'
+                        | b'\n'
+                        | b'\r'
+                ) || matches!(prev, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
                         | b'_' | b'$' | b')' | b']')
             };
-            if at_regex_start && i + 1 < bytes.len() && bytes[i + 1] != b'/' && bytes[i + 1] != b'*' {
+            if at_regex_start && i + 1 < bytes.len() && bytes[i + 1] != b'/' && bytes[i + 1] != b'*'
+            {
                 // Skip to closing '/', handling \[...\] and \\...
                 i += 1;
                 while i < bytes.len() {
@@ -357,6 +407,43 @@ fn has_legacy_octal(source: &str) -> bool {
         }
         // Check for legacy octal: `0` followed by `1-7` (but NOT `8` or `9`)
         if b == b'0' {
+            // Skip '0' if it's part of a Unicode or hex escape sequence
+            if i + 2 < bytes.len() && bytes[i + 1] == b'u' {
+                if bytes[i + 2] == b'{' {
+                    // \u{...} form — skip to '}'
+                    i += 3;
+                    while i < bytes.len() && bytes[i] != b'}' {
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                    continue;
+                } else {
+                    // \uXXXX form — only skip if followed by 4 hex digits
+                    i += 2; // past '\' and 'u'
+                    if i + 3 < bytes.len()
+                        && bytes[i].is_ascii_hexdigit()
+                        && bytes[i + 1].is_ascii_hexdigit()
+                        && bytes[i + 2].is_ascii_hexdigit()
+                        && bytes[i + 3].is_ascii_hexdigit()
+                    {
+                        // Valid \uXXXX — skip 4 hex digits; `continue` skips outer `i += 1`
+                        i += 4;
+                        continue;
+                    }
+                    // Not a valid \uXXXX. Back up so outer loop processes '0' normally.
+                    i -= 2;
+                }
+            }
+            if i + 2 < bytes.len() && bytes[i + 1] == b'x' {
+                // \xNN form — skip 2 hex digits
+                i += 2;
+                if bytes[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                continue;
+            }
             let rest = &bytes[i + 1..];
             if let Some(&next) = rest.first() {
                 // If next is 8 or 9, skip the '0' (non-octal decimal like 08, 09)
@@ -372,15 +459,36 @@ fn has_legacy_octal(source: &str) -> bool {
                         i += 3; // skip '0', '1-7', and '8/9'
                         continue;
                     }
+                    // Scan all remaining consecutive octal digits, then check for 8/9.
+                    // This handles "0708" where "070" precedes "8": all three chars
+                    // must be skipped so the whole thing is treated as NonOctalDecimalIntegerLiteral.
+                    let mut j = 1;
+                    while j < rest.len() && matches!(rest[j], b'0'..=b'7') {
+                        j += 1;
+                    }
+                    if j < rest.len() && (rest[j] == b'8' || rest[j] == b'9') {
+                        i += 1 + j; // skip '0' plus all octal digits
+                        continue;
+                    }
                 }
                 // Skip if preceded by digit, '.', quote, 'e'/'E' (exponent indicator),
                 // '+'/'-' (exponent sign), or '_' (numeric separator)
                 let prev_is_non_octal = i > 0
-                    && matches!(bytes[i - 1], b'0'..=b'9' | b'.' | b'\'' | b'"' | b'e' | b'E'
-                        | b'+' | b'-' | b'_');
+                    && matches!(
+                        bytes[i - 1],
+                        b'0'..=b'9' | b'.' | b'\'' | b'"' | b'e' | b'E' | b'+' | b'-' | b'_'
+                    );
                 let prev_is_xbo =
                     i > 0 && matches!(bytes[i - 1], b'x' | b'X' | b'b' | b'B' | b'o' | b'O');
-                if !prev_is_non_octal && !prev_is_xbo && next != b'n' && matches!(next, b'1'..=b'7') {
+                // Skip if this '0' is a UTF-8 continuation byte (high bit set means
+                // it's part of a multi-byte sequence, not a standalone ASCII '0')
+                let prev_is_utf8_cont = i > 0 && (bytes[i - 1] & 0x80) != 0;
+                if !prev_is_non_octal
+                    && !prev_is_xbo
+                    && !prev_is_utf8_cont
+                    && next != b'n'
+                    && matches!(next, b'1'..=b'7')
+                {
                     return true;
                 }
             }
@@ -608,8 +716,14 @@ mod tests {
         assert!(!has_legacy_octal("0O1"), "0O1 is octal, not legacy");
         assert!(!has_legacy_octal("0n"), "0n is bigint, not octal");
         assert!(has_legacy_octal("a = 01;"), "a = 01; has octal");
-        assert!(has_legacy_octal("\"use strict\";\na = 01;"), "with strict prefix");
-        assert!(!has_legacy_octal("\"use strict\";\nvar threw = false;"), "strict source, no octal");
+        assert!(
+            has_legacy_octal("\"use strict\";\na = 01;"),
+            "with strict prefix"
+        );
+        assert!(
+            !has_legacy_octal("\"use strict\";\nvar threw = false;"),
+            "strict source, no octal"
+        );
         // Copyright year like "// (C) 2015" must NOT be flagged
         assert!(
             !has_legacy_octal("// Copyright (C) 2015 the V8 project authors."),
@@ -665,15 +779,26 @@ assert.sameValue(decimalToPercentHexString(1), "%01");"#
         );
         // Regex literal with \u02C1 — the '0' in \u02C1 must NOT be flagged as octal
         assert!(
-            !has_legacy_octal(r#""use strict";
-var UnicodeIDStart = /[a-zA-Z\xF6\xF8-\u02C1]/u;"#),
+            !has_legacy_octal(
+                r#""use strict";
+var UnicodeIDStart = /[a-zA-Z\xF6\xF8-\u02C1]/u;"#
+            ),
             "regex literal with \\u02C1 is not octal"
         );
         // [native code] matcher regex — must NOT be flagged
         assert!(
-            !has_legacy_octal(r#""use strict";
-var re = /\[native code\]/"#),
+            !has_legacy_octal(
+                r#""use strict";
+var re = /\[native code\]/"#
+            ),
             "regex literal [native code] is not octal"
+        );
+        // UTF-8 multi-byte sequences: \u{11A01} encodes as F0 91 A8 81.
+        // The byte 0xA8 (high bit set) precedes 0x81; neither is a standalone '0'.
+        // The fix: skip '0' when preceded by a UTF-8 continuation byte.
+        assert!(
+            !has_legacy_octal("var _\u{0AFA}\u{0AFB}\u{0AFC};"),
+            "UTF-8 multi-byte chars should not trigger octal false positive"
         );
         // Regex with char class containing 0+N — must NOT be flagged
         assert!(
@@ -681,17 +806,44 @@ var re = /\[native code\]/"#),
             "regex literal with char class 01 is not octal"
         );
         // Non-octal decimal integers (08, 09, 018, etc.) — 8 and 9 are not octal digits
-        assert!(!has_legacy_octal("08"), "08 is not octal (8 is not an octal digit)");
-        assert!(!has_legacy_octal("09"), "09 is not octal (9 is not an octal digit)");
-        assert!(!has_legacy_octal("018"), "018 is not octal (8 is not an octal digit)");
-        assert!(!has_legacy_octal("019"), "019 is not octal (9 is not an octal digit)");
-        assert!(!has_legacy_octal("assert.sameValue(08, 8);"), "08 in assert is not octal");
-        assert!(!has_legacy_octal("assert.sameValue(018, 18);"), "018 in assert is not octal");
+        assert!(
+            !has_legacy_octal("08"),
+            "08 is not octal (8 is not an octal digit)"
+        );
+        assert!(
+            !has_legacy_octal("09"),
+            "09 is not octal (9 is not an octal digit)"
+        );
+        assert!(
+            !has_legacy_octal("018"),
+            "018 is not octal (8 is not an octal digit)"
+        );
+        assert!(
+            !has_legacy_octal("019"),
+            "019 is not octal (9 is not an octal digit)"
+        );
+        assert!(
+            !has_legacy_octal("assert.sameValue(08, 8);"),
+            "08 in assert is not octal"
+        );
+        assert!(
+            !has_legacy_octal("assert.sameValue(018, 18);"),
+            "018 in assert is not octal"
+        );
         // Numeric separators in decimals (00_01, 10.00_01e2) — underscores are not octal
-        assert!(!has_legacy_octal("var x = 00_01;"), "00_01 with separator is not octal");
-        assert!(!has_legacy_octal("assert.sameValue(10.00_01e2, 10.0001e2);"), "10.00_01e2 is not octal");
+        assert!(
+            !has_legacy_octal("var x = 00_01;"),
+            "00_01 with separator is not octal"
+        );
+        assert!(
+            !has_legacy_octal("assert.sameValue(10.00_01e2, 10.0001e2);"),
+            "10.00_01e2 is not octal"
+        );
         // Actual octal numbers in code must still be detected
         assert!(has_legacy_octal("var x = 01;"), "01 in code is octal");
-        assert!(has_legacy_octal("assert.sameValue(01, 1);"), "01 in assert is octal");
+        assert!(
+            has_legacy_octal("assert.sameValue(01, 1);"),
+            "01 in assert is octal"
+        );
     }
 }

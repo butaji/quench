@@ -253,14 +253,19 @@ impl Environment {
     }
 
     /// Get a property from globalThis if it exists.
+    /// This is called as a fallback when the variable is not found in the scope chain.
     fn get_global_this_property(&self, name: &str) -> Option<Value> {
-        if self.parent.is_none() {
-            // Look for globalThis in our own scopes (not via get() to avoid recursion)
-            for scope in &self.scopes {
-                if let Some(Value::Object(global_obj)) = scope.get("globalThis") {
-                    return global_obj.borrow().get(name);
+        // Look for globalThis in all environments in the chain (including parents)
+        for scope in &self.scopes {
+            if let Some(Value::Object(global_obj)) = scope.get("globalThis") {
+                if let Some(val) = global_obj.borrow().get(name) {
+                    return Some(val);
                 }
             }
+        }
+        // Also check parent environments
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get_global_this_property(name);
         }
         None
     }
