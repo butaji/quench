@@ -285,7 +285,14 @@ fn eval_delete(
                     name
                 )));
             }
-            Ok(Value::Boolean(true))
+            // Sloppy mode: delete of a var/let/const binding returns false
+            // (you can only delete properties from objects).
+            if env.borrow().has(name) {
+                Ok(Value::Boolean(false))
+            } else {
+                // Resolving a non-existent identifier to delete it succeeds.
+                Ok(Value::Boolean(true))
+            }
         }
         _ => Ok(Value::Boolean(false)),
     }
@@ -408,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_export_default_expr_lowers_to_assignment() {
-        let program = crate::swc_parse::parse_es_module("export default 42;").unwrap();
+        let program = crate::parser::parse_es_module("export default 42;").unwrap();
         let crate::ast::Program::Script(stmts) = program;
         let last = stmts.last().expect("expected lowered export statement");
         match last {

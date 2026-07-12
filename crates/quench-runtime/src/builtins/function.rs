@@ -209,7 +209,7 @@ fn make_function_constructor(
                 .collect::<Vec<_>>()
                 .join(",");
             let source = format!("function anonymous({}) {{\n{}\n}}", params_src, body_src);
-            match crate::swc_parse::parse_swc(&source) {
+            match crate::parser::parse_script(&source) {
                 Ok(crate::ast::Program::Script(stmts)) => {
                     if let Some(crate::ast::Statement::FunctionDeclaration { name, params, body }) =
                         stmts.into_iter().next()

@@ -4,7 +4,7 @@ Guidance for agentic work in this repository.
 
 ## What this is
 
-Quench — a Rust-native JavaScript runtime (swc parser + custom tree-walking
+Quench — a Rust-native JavaScript runtime (OXC parser + custom tree-walking
 interpreter) targeting 100% test262 conformance. Single crate:
 `crates/quench-runtime`. The test262 suite lives in the `tests/test262`
 submodule; never modify files inside it.
@@ -44,7 +44,7 @@ A `strict mode:` prefix on the failure means only the strict run failed.
 
 ```
 crates/quench-runtime/src/
-├── swc_parse.rs   # swc JS/TS/TSX/JSX parsing → internal AST
+├── parser.rs   # OXC JS/TS/TSX/JSX parsing → internal AST
 ├── lower/         # AST lowering (tagged templates, switch→if-chains, etc.)
 ├── ast.rs         # internal AST
 ├── interpreter.rs # entry points, strict-mode flag, native-this, hoisting
@@ -60,7 +60,7 @@ crates/quench-runtime/src/
                    #   injection + JS harness loading), skip.rs, metadata.rs
 ```
 
-Pipeline: source → `swc_parse` → `lower/` → `interpreter::eval` → `eval/`.
+Pipeline: source → `parser` → `lower/` → `interpreter::eval` → `eval/`.
 
 ## Conventions
 

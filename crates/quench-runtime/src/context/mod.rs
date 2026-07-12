@@ -15,7 +15,7 @@ use crate::eval;
 use crate::host;
 use crate::interner::StringInterner;
 use crate::interpreter;
-use crate::swc_parse;
+use crate::parser;
 use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 
 pub mod tests;
@@ -246,7 +246,7 @@ impl Context {
         });
 
         let result = (|| {
-            let program = swc_parse::parse_es_module(source)?;
+            let program = parser::parse_es_module(source)?;
             interpreter::eval_program(&program, &mut self.env, Some(source))
         })();
 
@@ -267,14 +267,14 @@ impl Context {
         }
     }
 
-    /// Parse JavaScript source into an AST using swc
+    /// Parse JavaScript source into an AST using OXC
     pub fn parse(&self, source: &str) -> Result<crate::ast::Program, JsError> {
-        swc_parse::parse_swc(source)
+        parser::parse_script(source)
     }
 
-    /// Parse TypeScript/TSX source into an AST using swc (strips type annotations)
+    /// Parse TypeScript/TSX source into an AST using OXC (strips type annotations)
     pub fn parse_typescript(&self, source: &str) -> Result<crate::ast::Program, JsError> {
-        swc_parse::parse_typescript(source)
+        parser::parse_typescript(source)
     }
 
     /// Evaluate a TypeScript/TSX source string using the recursive interpreter.

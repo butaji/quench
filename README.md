@@ -2,7 +2,7 @@
 
 Rust-native JavaScript runtime targeting **100% test262 ECMAScript conformance**.
 
-Native TypeScript/TSX/JSX support via swc parsing + custom interpreter.
+Native TypeScript/TSX/JSX support via OXC parsing + custom interpreter.
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ rm crates/quench-runtime/.test262_checkpoint && cargo test -p quench-runtime --t
 ```
 crates/quench-runtime/src/
 ├── test262/      # Staged runner + checkpoint logic
-├── swc_parse.rs  # swc-based JS/TS/TSX/JSX parser
+├── parser.rs  # OXC-based JS/TS/TSX/JSX parser
 ├── interpreter.rs # AST interpreter
 ├── builtins/     # Rust-native built-in implementations
 ├── context/      # Runtime execution context
@@ -38,7 +38,7 @@ crates/quench-runtime/src/
 
 ## TypeScript / JSX Support
 
-Native TS/TSX/JSX support via swc. Parse and execute directly:
+Native TS/TSX/JSX support via OXC. Parse and execute directly:
 
 ```rust
 use quench_runtime::Context;

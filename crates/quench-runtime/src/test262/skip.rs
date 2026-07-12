@@ -55,7 +55,7 @@ const SKIP_FEATURES: &[&str] = &[
     "regexp-match-indices",
     "regexp-named-groups",
     "regexp-sticky",
-    // U+180E is not treated as whitespace by our parser (swc handles it as whitespace).
+    // U+180E is not treated as whitespace by our parser (OXC handles it as whitespace).
     // Tests with feature: [u180e] expect SyntaxError but get ReferenceError.
     "u180e",
     "hashbang",
@@ -129,8 +129,8 @@ const SKIP_TEST_PATHS: &[&str] = &[
 
 /// Path prefixes to skip (for groups of tests with same limitation).
 const SKIP_PATH_PREFIXES: &[&str] = &[
-    // swc parser doesn't reject regex with line terminators (e.g., /\<newline>/)
-    // These tests expect SyntaxError at parse time but swc allows it.
+    // OXC parser doesn't reject regex with line terminators (e.g., /\<newline>/)
+    // These tests expect SyntaxError at parse time but OXC allows it.
     "test/language/literals/regexp/S7.8.5_A1.",
     "test/language/literals/regexp/S7.8.5_A2.",
     "test/language/literals/regexp/7.8.5-",
@@ -139,7 +139,7 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     // Sticky flag (y) not fully implemented
     "test/language/literals/regexp/y-",
     // ES5 treated \u2028/\u2029/\uFFFF as whitespace or string terminators.
-    // ES2019 corrected this; swc follows the modern spec.
+    // ES2019 corrected this; OXC follows the modern spec.
     "test/language/line-terminators/7.3-",
 ];
 
