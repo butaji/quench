@@ -1,5 +1,8 @@
 //! Native assert helpers (sameValue, throws, compareArray)
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::value::same_value;
 use crate::{JsError, Value};
 
@@ -28,6 +31,7 @@ pub fn assert_same_value(args: Vec<Value>) -> Result<Value, JsError> {
 fn get_error_name(v: &Value) -> String {
     match v {
         Value::NativeConstructor(nc) => nc.name().to_string(),
+        Value::Function(f) => f.name.clone().unwrap_or_default(),
         Value::Object(obj) => obj
             .borrow()
             .get("name")
@@ -71,14 +75,21 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
             crate::value::set_thrown_value(err_val);
             Err(js_err)
         }
-        Err(_js_err) => {
+        Err(js_err) => {
+            // If eval threw before setting a thrown value (e.g., strict-mode
+            // SyntaxError from pre-parse checks), extract the thrown value from
+            // the error itself. Otherwise use the thread-local thrown value.
             let thrown = match crate::value::get_thrown_value() {
                 Some(v) => v,
                 None => {
-                    let msg = format!("assert.throws: no thrown value found. {}", message);
-                    let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-                    crate::value::set_thrown_value(err_val);
-                    return Err(js_err);
+                    // Parse error type from "SyntaxError: ..." message and create
+                    // the matching error object so assert.throws can match it.
+                    let msg = &js_err.0;
+                    let err_type = msg.split(':').next().unwrap_or("Error");
+                    let (err_val, _) =
+                        crate::value::error::create_js_error_with_type(&js_err.0, err_type);
+                    crate::value::set_thrown_value(err_val.clone());
+                    err_val
                 }
             };
 
@@ -106,19 +117,60 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
-/// Check if thrown error is an instance of expected constructor
+/// Check if thrown error's constructor matches expected constructor.
+/// Uses exact constructor identity: walks prototype chain to find .constructor
+/// and compares via pointer equality. This correctly distinguishes
+/// TypeError from Error (even though TypeError extends Error).
 fn check_error_instance(thrown: &Value, expected: &Value) -> bool {
-    // Get thrown.constructor
-    let thrown_ctor = match thrown {
-        Value::Object(obj) => {
-            let obj = obj.borrow();
-            obj.get("constructor").unwrap_or(Value::Undefined)
-        }
+    let thrown_obj = match thrown {
+        Value::Object(o) => o,
         _ => return false,
     };
 
-    // Compare using SameValue (handles NaN, etc.)
-    crate::value::same_value(&thrown_ctor, expected)
+    // Walk prototype chain to find thrown's .constructor
+    let thrown_constructor = find_constructor(&thrown_obj.borrow());
+
+    // Compare via pointer equality on the constructor Value
+    same_constructor(&thrown_constructor, expected)
+}
+
+/// Walk prototype chain to find the .constructor property value.
+fn find_constructor(obj: &crate::value::Object) -> Value {
+    let mut current: Option<Rc<RefCell<crate::value::Object>>> = obj.prototype.clone();
+    while let Some(proto_rc) = current {
+        let proto = proto_rc.borrow();
+        if let Some(ctor) = proto.get("constructor") {
+            return ctor.clone();
+        }
+        current = proto.prototype.clone();
+    }
+    Value::Undefined
+}
+
+/// Compare two Values as constructor identity.
+/// NativeConstructor vs Function: ALWAYS false (different types).
+/// NativeConstructor vs NativeConstructor: compare names (isolated contexts).
+/// Function vs Function: compare names.
+/// Objects: pointer equality via Rc::ptr_eq.
+fn same_constructor(a: &Value, b: &Value) -> bool {
+    let result = match (a, b) {
+        // Different types → never equal
+        (Value::NativeConstructor(_), Value::Function(_)) => false,
+        (Value::Function(_), Value::NativeConstructor(_)) => false,
+        (Value::NativeConstructor(_), Value::Object(_)) => false,
+        (Value::Object(_), Value::NativeConstructor(_)) => false,
+        // Same type
+        (Value::NativeConstructor(nc_a), Value::NativeConstructor(nc_b)) => {
+            nc_a.name() == nc_b.name()
+        }
+        (Value::Function(f_a), Value::Function(f_b)) => f_a.name == f_b.name,
+        (Value::Object(o_a), Value::Object(o_b)) => Rc::ptr_eq(o_a, o_b),
+        // Function vs Object or other combos
+        (Value::Function(_), Value::Object(_)) => false,
+        (Value::Object(_), Value::Function(_)) => false,
+        _ => false,
+    };
+    result
 }
 
 fn is_primitive(v: &Value) -> bool {

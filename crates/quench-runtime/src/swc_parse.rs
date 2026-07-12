@@ -244,4 +244,18 @@ mod tests {
         );
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
+
+    #[test]
+    fn test_parse_legacy_octal_sloppy() {
+        // Legacy octal literals (e.g. 01, 07) are allowed in sloppy mode
+        let result = parse_swc("a = 01;");
+        assert!(result.is_ok(), "swc should parse legacy octal in sloppy mode: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_legacy_octal_strict() {
+        // Legacy octal literals are rejected in strict mode
+        let result = parse_swc("\"use strict\";\na = 01;");
+        eprintln!("Strict mode octal parse result: {:?}", result);
+    }
 }

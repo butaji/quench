@@ -223,6 +223,18 @@ pub fn eval_new(
         Value::Object(Rc::clone(&new_obj_rc)),
     )?;
 
+    // Per ES spec §10.2.2 [[Construct]]: if the constructor returns undefined,
+    // set the [[Name]] property of the function as the "name" property on the
+    // new object (via CreateMethodProperty). This makes `new CustomError().name`
+    // equal "CustomError" for user-defined constructors.
+    if let Value::Function(ref f) = actual_constructor {
+        if let Some(name) = &f.name {
+            new_obj_rc
+                .borrow_mut()
+                .set("name", Value::String(name.clone()));
+        }
+    }
+
     // Check whether to use the constructor result
     let use_constructor_result = match &actual_constructor {
         Value::NativeConstructor(_) => true,

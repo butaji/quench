@@ -188,6 +188,7 @@ const TOLERATED_EVAL_FAILURES: &[&str] = &["resizableArrayBufferUtils.js"];
 /// Returns Err when the file cannot be read or fails to evaluate (except
 /// TOLERATED_EVAL_FAILURES, which only warn) — callers should treat this as
 /// fatal rather than running with a partial harness.
+/// Harness files always run in sloppy mode (legacy octal literals are allowed).
 fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     let path = harness_dir().join(filename);
     let content = std::fs::read_to_string(&path)
@@ -214,7 +215,12 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     } else {
         js_code
     };
-    if let Err(e) = ctx.eval(&code) {
+    // Harness files must run in sloppy mode (legacy octal literals are permitted).
+    let was_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(false);
+    let result = ctx.eval(&code);
+    crate::interpreter::set_strict_mode(was_strict);
+    if let Err(e) = result {
         if TOLERATED_EVAL_FAILURES.contains(&filename) {
             eprintln!(
                 "WARNING: harness file {} failed to evaluate (tolerated): {:?}",
