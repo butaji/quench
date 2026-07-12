@@ -19,10 +19,10 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
         BinaryOp::Instanceof => eval_instanceof(left, right),
         BinaryOp::StrictEq => Ok(Value::Boolean(strict_eq(left, right))),
         BinaryOp::StrictNeq => Ok(Value::Boolean(!strict_eq(left, right))),
-        BinaryOp::Lt => Ok(Value::Boolean(to_number(left) < to_number(right))),
-        BinaryOp::Gt => Ok(Value::Boolean(to_number(left) > to_number(right))),
-        BinaryOp::Le => Ok(Value::Boolean(to_number(left) <= to_number(right))),
-        BinaryOp::Ge => Ok(Value::Boolean(to_number(left) >= to_number(right))),
+        BinaryOp::Lt => eval_relational(left, right, |a, b| a < b),
+        BinaryOp::Gt => eval_relational(left, right, |a, b| a > b),
+        BinaryOp::Le => eval_relational(left, right, |a, b| a <= b),
+        BinaryOp::Ge => eval_relational(left, right, |a, b| a >= b),
         BinaryOp::And => Ok(if to_bool(left) {
             right.clone()
         } else {
@@ -52,6 +52,29 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         )))
     } else {
         Ok(Value::Number(to_number(left) + to_number(right)))
+    }
+}
+
+/// Per ES spec §7.2.13 IsLessThan: if both operands are Strings, compare
+/// lexicographically; otherwise coerce to Number and compare numerically.
+fn eval_relational<F>(left: &Value, right: &Value, num_cmp: F) -> Result<Value, JsError>
+where
+    F: Fn(f64, f64) -> bool,
+{
+    if let (Value::String(a), Value::String(b)) = (left, right) {
+        let cmp = string_compare(a, b);
+        return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
+    }
+    Ok(Value::Boolean(num_cmp(to_number(left), to_number(right))))
+}
+
+fn string_compare(a: &str, b: &str) -> i32 {
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
     }
 }
 
