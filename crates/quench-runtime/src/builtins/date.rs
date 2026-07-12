@@ -330,7 +330,12 @@ fn register_string_converter(ctx: &mut Context) {
     let string_proto_clone = Rc::clone(&string_proto);
     let string_fn = create_string_constructor_fn(string_proto_clone);
 
-    let string_obj = create_string_constructor_object(string_proto, string_fn);
+    let string_obj = create_string_constructor_object(string_proto.clone(), string_fn.clone());
+    // Set String.prototype.constructor so primitive string access returns
+    // the String constructor (matches Object.prototype.constructor pattern).
+    string_proto
+        .borrow_mut()
+        .set("constructor", Value::Object(Rc::clone(&string_obj)));
     ctx.set_global("String".to_string(), Value::Object(string_obj));
 }
 
