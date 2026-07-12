@@ -61,6 +61,18 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx_ptr);
     });
+    // Attempt to parse first so a syntax error becomes a catchable SyntaxError
+    // (ES §19.2.1.1 step 6). Parse errors carry no thrown value, and a stale
+    // thrown value from earlier code must not be mistaken for the eval result.
+    if let Err(e) = ctx.parse(&source) {
+        CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = prev_ctx;
+        });
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
     let result = ctx.eval(&source);
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = prev_ctx;
@@ -168,10 +180,43 @@ impl Context {
     fn init_js_globals(&mut self) -> Result<(), JsError> {
         let global_obj = Object::new(ObjectKind::Global);
         let global_obj = Rc::new(RefCell::new(global_obj));
+        // Mark globalThis itself as writable, non-enumerable, configurable so
+        // property-descriptor.js's verifyProperty(this, "globalThis", {...})
+        // passes (the verifyProperty helper uses getOwnPropertyDescriptor).
+        global_obj.borrow_mut().define(
+            "globalThis",
+            Value::Object(Rc::clone(&global_obj)),
+            crate::value::PropertyFlags {
+                value: Some(Value::Object(Rc::clone(&global_obj))),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.set_global(
             "globalThis".to_string(),
             Value::Object(Rc::clone(&global_obj)),
         );
+
+        // Spec-mandated value properties of the global object: non-writable,
+        // non-enumerable, non-configurable. assign_to_identifier checks these
+        // descriptors in strict mode and throws TypeError when assigning.
+        let value_flags = crate::value::PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        };
+        let mut define_value_prop =
+            |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
+                let mut flags = value_flags.clone();
+                flags.value = Some(val.clone());
+                global_obj.borrow_mut().define(key, val, flags);
+            };
+        define_value_prop("undefined", Value::Undefined, &global_obj);
+        define_value_prop("Infinity", Value::Number(f64::INFINITY), &global_obj);
+        define_value_prop("NaN", Value::Number(f64::NAN), &global_obj);
+
         self.set_global("undefined".to_string(), Value::Undefined);
         self.set_global("Infinity".to_string(), Value::Number(f64::INFINITY));
         self.set_global("NaN".to_string(), Value::Number(f64::NAN));
