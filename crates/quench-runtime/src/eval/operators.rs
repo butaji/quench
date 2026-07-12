@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 use crate::value::{
-    loose_eq, strict_eq, to_bool, to_js_string, to_number, to_uint32, JsError, Value,
+    loose_eq, strict_eq, to_bool, to_js_string, to_number, to_primitive, to_uint32, JsError, Value,
 };
 
 /// Evaluate a binary operator
@@ -44,14 +44,20 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
 }
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
+    // Per ES §7.1.1 ToPrimitive: if valueOf throws, propagate.
     if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
-        Ok(Value::String(format!(
-            "{}{}",
-            to_js_string(left),
-            to_js_string(right)
-        )))
+        let l = to_js_string(left);
+        let r = to_js_string(right);
+        Ok(Value::String(format!("{}{}", l, r)))
     } else {
-        Ok(Value::Number(to_number(left) + to_number(right)))
+        let l = to_number(left);
+        let r = to_number(right);
+        // to_number swallows ToPrimitive errors and returns NaN — recover the
+        // thrown value (set by Statement::Throw) so callers can propagate.
+        if let Some(thrown) = crate::value::take_thrown_value() {
+            return Err(JsError(crate::value::to_js_string(&thrown)));
+        }
+        Ok(Value::Number(l + r))
     }
 }
 
