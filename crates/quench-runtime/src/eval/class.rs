@@ -6,8 +6,9 @@
 use crate::ast::{Class, Expression, Param, Statement};
 use crate::builtins;
 use crate::env::Environment;
-use crate::eval::statement::eval_statements;
-use crate::interpreter::{predeclare_let_const, take_control_flow, ControlFlow};
+use crate::eval::expression::eval_expression;
+use crate::eval::statement::eval_function_body;
+use crate::interpreter::{check_depth_guard, predeclare_let_const};
 use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,6 +20,13 @@ pub fn eval_class_expr(class: &Class, env: &Rc<RefCell<Environment>>) -> Result<
     // Eagerly create the prototype for this class
     let _ = get_or_create_class_prototype(&new_value, env)?;
 
+    // Initialize static fields on the class object
+    for (name, value_expr) in &new_value.static_fields {
+        let field_value = eval_expression(value_expr, env, false)?;
+        let key_str = prop_key_to_string(name);
+        new_value.set_static_field(&key_str, field_value);
+    }
+
     Ok(Value::Class(new_value))
 }
 
@@ -28,79 +36,159 @@ pub fn instantiate_class_from_ast_with_env(
     args: Vec<Value>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let proto_rc = get_or_create_class_prototype(&class, env)?;
+    // Fast path: no instance fields → use simpler logic
+    if class.instance_fields.is_empty() {
+        return instantiate_simple(&class, args, env);
+    }
+    instantiate_with_fields(&class, args, env)
+}
+
+/// Instantiate without instance fields (fast path)
+fn instantiate_simple(
+    class: &ClassValue,
+    args: Vec<Value>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let _depth = check_depth_guard()?;
+    let proto_rc = get_or_create_class_prototype(class, env)?;
 
     let mut instance = Object::new(ObjectKind::Ordinary);
     instance.prototype = Some(Rc::clone(&proto_rc));
     let instance_rc = Rc::new(RefCell::new(instance));
 
-    proto_rc.borrow_mut().set("constructor", Value::Object(Rc::clone(&instance_rc)));
+    proto_rc
+        .borrow_mut()
+        .set("constructor", Value::Object(Rc::clone(&instance_rc)));
 
-    let params = class.constructor_params.clone();
+    let _params = class.constructor_params.clone();
     let body = class.constructor_body.clone();
     let this_val = Value::Object(Rc::clone(&instance_rc));
 
-    let mut call_env = Environment::with_parent(Rc::clone(env));
-    call_env.current_scope_mut().set_this(this_val.clone());
-
-    // Set the super class reference in the environment for super() calls
-    if class.super_class.is_some() {
-        let super_class_val = crate::eval::expression::eval_expression(
-            class.super_class.as_ref().unwrap(),
-            env,
-        )?;
-        call_env.set_super_class(super_class_val);
-    }
-
-    for (i, param) in params.iter().enumerate() {
-        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
-    }
-
-    let args_obj = create_arguments_object_simple(args.clone());
-    call_env.define("arguments".to_string(), args_obj);
-
+    let call_env = build_constructor_env(class, &args, &this_val, env)?;
     let call_env = Rc::new(RefCell::new(call_env));
 
-    // Check if body is empty
     if body.is_empty() {
-        // No constructor body - call super() if there's a superclass
-        if let Some(super_class_val) = class.super_class.as_ref() {
-            let super_val = crate::eval::expression::eval_expression(super_class_val, env)?;
-            call_super_or_default(&super_val, args, &this_val, env)?;
+        if let Some(ref sc) = class.super_class {
+            let sv = eval_expression(sc, env, false)?;
+            call_super_or_default(&sv, args, &this_val, env)?;
         }
         Ok(this_val)
     } else {
-        // Check if the first statement is an explicit super() call
-        let first_is_super_call = check_first_is_super_call(&body);
-
-        if first_is_super_call {
-            // First statement is explicit super() call - just evaluate normally
+        let first_is_super = check_first_is_super_call(&body);
+        if first_is_super {
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let result = eval_statements(&body, &call_env, false)?;
-            match result {
-                Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
-                _ => Ok(this_val),
-            }
+            let result = eval_function_body(&body, &call_env, false)?;
+            finish_constructor(result, &this_val)
         } else {
-            // No explicit super() call - call super() automatically first
-            if let Some(super_class_val) = class.super_class.as_ref() {
-                let super_val = crate::eval::expression::eval_expression(super_class_val, env)?;
-                call_super_or_default(&super_val, args.clone(), &this_val, env)?;
+            if let Some(ref sc) = class.super_class {
+                let sv = eval_expression(sc, env, false)?;
+                call_super_or_default(&sv, args, &this_val, env)?;
             }
-            // Then evaluate the constructor body
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let result = eval_statements(&body, &call_env, false)?;
-            match result {
-                Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
-                _ => Ok(this_val),
-            }
+            let result = eval_function_body(&body, &call_env, false)?;
+            finish_constructor(result, &this_val)
         }
     }
 }
 
+/// Instantiate with instance fields: fields init after super(), before body
+fn instantiate_with_fields(
+    class: &ClassValue,
+    args: Vec<Value>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let _depth = check_depth_guard()?;
+    let proto_rc = get_or_create_class_prototype(class, env)?;
+
+    let mut instance = Object::new(ObjectKind::Ordinary);
+    instance.prototype = Some(Rc::clone(&proto_rc));
+    let instance_rc = Rc::new(RefCell::new(instance));
+
+    proto_rc
+        .borrow_mut()
+        .set("constructor", Value::Object(Rc::clone(&instance_rc)));
+
+    let body = class.constructor_body.clone();
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+
+    let call_env = build_constructor_env(class, &args, &this_val, env)?;
+    let call_env = Rc::new(RefCell::new(call_env));
+
+    let has_super = class.super_class.is_some();
+    let first_is_super = !body.is_empty() && check_first_is_super_call(&body);
+
+    // Phase 1: evaluate constructor body (includes super() call handling)
+    if body.is_empty() {
+        if has_super {
+            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+            call_super_or_default(&sv, args, &this_val, env)?;
+        }
+    } else if first_is_super {
+        predeclare_let_const(&body, &mut call_env.borrow_mut());
+        eval_function_body(&body, &call_env, false)?;
+    } else {
+        if has_super {
+            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+            call_super_or_default(&sv, args.clone(), &this_val, env)?;
+        }
+        predeclare_let_const(&body, &mut call_env.borrow_mut());
+        eval_function_body(&body, &call_env, false)?;
+    }
+
+    // Phase 2: initialize instance fields on 'this'
+    for (name, value_expr) in &class.instance_fields {
+        let field_val = eval_expression(value_expr, &call_env, false)?;
+        let key_str = prop_key_to_string(name);
+        instance_rc.borrow_mut().set(&key_str, field_val);
+    }
+
+    Ok(this_val)
+}
+
+/// Build constructor environment (params, arguments, super reference)
+fn build_constructor_env(
+    class: &ClassValue,
+    args: &[Value],
+    this_val: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Environment, JsError> {
+    let mut call_env = Environment::with_parent(Rc::clone(env));
+    call_env.current_scope_mut().set_this(this_val.clone());
+
+    if let Some(ref sc) = class.super_class {
+        let sv = eval_expression(sc, env, false)?;
+        call_env.set_super_class(sv);
+    }
+
+    for (i, param) in class.constructor_params.iter().enumerate() {
+        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
+        call_env.define(param.clone(), arg);
+    }
+
+    let args_obj = create_arguments_object_simple(args.to_vec());
+    call_env.define("arguments".to_string(), args_obj);
+
+    Ok(call_env)
+}
+
+/// Handle constructor return value (constructors return `this` by default)
+fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsError> {
+    match result {
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_) => Ok(result),
+        _ => Ok(this_val.clone()),
+    }
+}
+
 /// Call the super constructor or use default behavior
-fn call_super_or_default(super_val: &Value, args: Vec<Value>, this_val: &Value, env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+fn call_super_or_default(
+    super_val: &Value,
+    args: Vec<Value>,
+    this_val: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
     match super_val {
         Value::Class(super_class) => {
             // Use call_super_constructor to ensure 'this' is properly bound
@@ -129,15 +217,8 @@ fn call_super_or_default(super_val: &Value, args: Vec<Value>, this_val: &Value, 
 }
 
 /// Instantiate a class from its AST representation (legacy signature)
-pub fn instantiate_class_from_ast(
-    class: ClassValue,
-    args: Vec<Value>,
-) -> Result<Value, JsError> {
-    instantiate_class_from_ast_with_env(
-        class,
-        args,
-        &Rc::new(RefCell::new(Environment::new())),
-    )
+pub fn instantiate_class_from_ast(class: ClassValue, args: Vec<Value>) -> Result<Value, JsError> {
+    instantiate_class_from_ast_with_env(class, args, &Rc::new(RefCell::new(Environment::new())))
 }
 
 /// Call a super constructor with the given arguments and 'this' binding
@@ -147,15 +228,15 @@ pub fn call_super_constructor(
     this_val: Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let proto_rc = get_or_create_class_prototype(&class, env)?;
+    let _proto_rc = get_or_create_class_prototype(&class, env)?;
 
-    let params = class.constructor_params.clone();
+    let _params = class.constructor_params.clone();
     let body = class.constructor_body.clone();
 
     let mut call_env = Environment::with_parent(Rc::clone(env));
     call_env.current_scope_mut().set_this(this_val.clone());
 
-    for (i, param) in params.iter().enumerate() {
+    for (i, param) in _params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
         call_env.define(param.clone(), arg);
     }
@@ -171,9 +252,12 @@ pub fn call_super_constructor(
     } else {
         // Evaluate constructor body
         predeclare_let_const(&body, &mut call_env.borrow_mut());
-        let result = eval_statements(&body, &call_env, false)?;
+        let result = eval_function_body(&body, &call_env, false)?;
         match result {
-            Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(result),
+            Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_) => Ok(result),
             _ => Ok(this_val),
         }
     }
@@ -224,6 +308,7 @@ pub fn get_or_create_class_prototype(
 }
 
 /// Get prototype from a class value (used for extends)
+#[allow(dead_code)]
 fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> {
     match val {
         Value::Object(o) => {
@@ -251,7 +336,7 @@ fn create_class_prototype_helper_with_env(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Rc<RefCell<Object>>, JsError> {
     let parent_proto = if let Some(ref super_class) = class.super_class {
-        let super_class_val = crate::eval::expression::eval_expression(super_class, env)?;
+        let super_class_val = crate::eval::expression::eval_expression(super_class, env, false)?;
         get_prototype_from_class_val(&super_class_val)
     } else {
         builtins::get_object_prototype()
@@ -266,12 +351,14 @@ fn create_class_prototype_helper_with_env(
     let closure = Rc::clone(env);
     for (name, params, body) in &class.methods {
         let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
-        let func = ValueFunction::new(
+        let mut func = ValueFunction::new(
             Some(prop_key_to_string(name)),
             params_vec,
             body.clone(),
             Rc::clone(&closure),
         );
+        // Class bodies are always strict mode (ES spec 15.7).
+        func.strict = true;
         proto.set(&prop_key_to_string(name), Value::Function(func));
     }
 
@@ -282,7 +369,12 @@ fn create_class_prototype_helper_with_env(
 
     for (name, param, body) in &class.setters {
         let key = prop_key_to_string(name);
-        proto.set_setter(&key, param.clone(), Rc::new(body.clone()), Rc::clone(&closure));
+        proto.set_setter(
+            &key,
+            param.clone(),
+            Rc::new(body.clone()),
+            Rc::clone(&closure),
+        );
     }
 
     Ok(Rc::new(RefCell::new(proto)))

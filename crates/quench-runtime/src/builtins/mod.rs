@@ -1,40 +1,48 @@
 //! Built-in JavaScript objects and functions
 
 // Re-export submodules
-pub mod console;
-pub mod json;
-pub mod math;
-pub mod object;
 pub mod array;
-pub mod map;
-pub mod promise;
-pub mod string;
+pub mod array_buffer;
+pub mod console;
 pub mod date;
 pub mod error;
 pub mod function;
+pub mod json;
+pub mod map;
+pub mod math;
 pub mod number;
+pub mod object;
+pub mod object_static;
+pub mod promise;
+pub mod reflect;
+pub mod regex; // regex module includes string_methods submodule
+pub mod string;
 pub mod symbol;
-pub mod regex;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
+pub use function::{get_function_prototype, get_restricted_prop_error, is_function_prototype};
 pub use object::get_object_prototype;
-pub use function::get_function_prototype;
 pub use promise::execute_pending_microtasks;
 
 // Re-export get_native_this for use by submodules
 pub(crate) use crate::interpreter::get_native_this;
+pub(crate) use crate::interpreter::get_this_value;
+
 use serde::ser::{SerializeMap, SerializeSeq};
 
 // ============================================================================
 // JsValueProxy — serde serializer for JS values
 // ============================================================================
 
+#[allow(dead_code)]
 pub(crate) struct JsValueProxy<'a>(&'a crate::value::Value);
 
 impl serde::Serialize for JsValueProxy<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         use crate::value::Value;
         match self.0 {
             Value::Undefined => serializer.serialize_unit(),
@@ -66,12 +74,13 @@ impl serde::Serialize for JsValueProxy<'_> {
                     map.end()
                 }
             }
-            #[allow(unused_variables)] Value::Function(_) => serializer.serialize_str("[Function]"),
-            Value::ObjectId(_) => serializer.serialize_str("[object Object]"),
+            #[allow(unused_variables)]
+            Value::Function(_) => serializer.serialize_str("[Function]"),
             Value::NativeFunction(_) => serializer.serialize_str("[Function]"),
             Value::NativeConstructor(_) => serializer.serialize_str("[Function]"),
             Value::Symbol(s) => serializer.serialize_str(&format!("Symbol({})", s)),
-            #[allow(unused_variables)] Value::Class(_) => serializer.serialize_str("[Function]"),
+            #[allow(unused_variables)]
+            Value::Class(_) => serializer.serialize_str("[Function]"),
         }
     }
 }
@@ -85,7 +94,11 @@ impl Object {
     pub(crate) fn new_array_from(items: Vec<Value>) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = items.clone();
-        obj.properties.insert("length".to_string(), Value::Number(items.len() as f64));
+        obj.properties
+            .insert("length".to_string(), Value::Number(items.len() as f64));
+        if let Some(proto) = crate::builtins::array::get_array_prototype() {
+            obj.prototype = Some(proto);
+        }
         obj
     }
 }
@@ -101,6 +114,9 @@ pub fn register_builtins(ctx: &mut Context) {
     math::register_math(ctx);
     object::register_object(ctx);
     array::register_array(ctx);
+    // Symbol must be registered before Map/Set so their prototypes can carry
+    // the Symbol.iterator method.
+    symbol::register_symbol(ctx);
     map::register_map_and_set(ctx);
     // String must be registered for string support
     string::register_string(ctx);
@@ -111,15 +127,17 @@ pub fn register_builtins(ctx: &mut Context) {
     error::register_error(ctx);
     // Date needs to be registered after global functions (for Number, String, etc.)
     date::register_date(ctx);
-    // Symbol needs to be registered for symbol support
-    symbol::register_symbol(ctx);
     // Promise needs to be registered for async support
     promise::register_promise(ctx);
     // RegExp needs to be registered for regex support
     regex::register_regexp(ctx);
     // String regex methods need to be registered after RegExp
     regex::register_string_regex_methods(ctx);
+    // Minimal Reflect (ownKeys) — needed by the test262 harness
+    reflect::register_reflect(ctx);
+    // Minimal ArrayBuffer — needed by the test262 harness (detachArrayBuffer.js)
+    array_buffer::register_array_buffer(ctx);
 }
 
-use crate::Context;
 use crate::value::{Object, ObjectKind, Value};
+use crate::Context;

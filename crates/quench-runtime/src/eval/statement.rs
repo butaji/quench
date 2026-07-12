@@ -3,12 +3,9 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
+use crate::interpreter::{predeclare_let_const, set_control_flow, take_control_flow, ControlFlow};
 use crate::value::{
-    to_js_string, to_bool, JsError, Value, Object, ObjectKind,
-    set_thrown_value, take_thrown_value,
-};
-use crate::interpreter::{
-    predeclare_let_const, take_control_flow, is_control_flow_set, set_control_flow, ControlFlow,
+    set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,15 +15,46 @@ pub fn eval_statements(
     stmts: &[Statement],
     env: &Rc<RefCell<Environment>>,
     is_expr_body: bool,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let mut last_value = Value::Undefined;
+    let mut last_val = Value::Undefined;
     for stmt in stmts {
-        last_value = eval_statement(stmt, env, is_expr_body)?;
-        if is_control_flow_set() {
-            break;
+        last_val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
+        match take_control_flow() {
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            // Propagate break/continue so enclosing loops can observe them.
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+                set_control_flow(cf);
+                return Ok(last_val);
+            }
+            None => {}
         }
     }
-    Ok(last_value)
+    Ok(last_val)
+}
+
+/// Evaluate a function body: completion value is discarded — only an
+/// explicit `return` produces a value, per ES function semantics.
+pub fn eval_function_body(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    for stmt in stmts {
+        eval_statement(stmt, env, false, in_arrow_function)?;
+        match take_control_flow() {
+            Some(ControlFlow::Return(val)) => return Ok(val),
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
+            None => {}
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 /// Evaluate a single statement
@@ -34,54 +62,55 @@ pub fn eval_statement(
     stmt: &Statement,
     env: &Rc<RefCell<Environment>>,
     _is_expr_body: bool,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     match stmt {
         Statement::VarDeclaration { kind, name, init } => {
-            eval_var_decl(kind, name, init, env)
+            eval_var_decl(kind, name, init, env, in_arrow_function)
         }
         Statement::FunctionDeclaration { name, params, body } => {
             eval_func_decl(name, params, body, env)
         }
-        Statement::ClassDeclaration { name, class } => {
-            eval_class_decl(name, class, env)
-        }
-        Statement::If { condition, consequent, alternate } => {
-            let cond_val = eval_expression(condition, env)?;
+        Statement::ClassDeclaration { name, class } => eval_class_decl(name, class, env),
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            let cond_val = eval_expression(condition, env, in_arrow_function)?;
             if to_bool(&cond_val) {
-                eval_statement(consequent.as_ref(), env, _is_expr_body)
+                eval_statement(consequent.as_ref(), env, _is_expr_body, in_arrow_function)
             } else if let Some(alt) = alternate {
-                eval_statement(alt.as_ref(), env, _is_expr_body)
+                eval_statement(alt.as_ref(), env, _is_expr_body, in_arrow_function)
             } else {
                 Ok(Value::Undefined)
             }
         }
-        Statement::While { condition, body } => {
-            eval_while(condition, body, env)
-        }
-        Statement::For { init, condition, update, body } => {
-            eval_for(init, condition, update, body, env)
-        }
-        Statement::Block(stmts) => {
-            eval_block(stmts, env)
-        }
+        Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => eval_for(init, condition, update, body, env, in_arrow_function),
+        Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
         Statement::SequenceDecls(stmts) => {
             // Evaluate var declarations in sequence without creating a new scope
             let mut result = Value::Undefined;
             for stmt in stmts {
-                result = eval_statement(stmt, env, false)?;
+                result = eval_statement(stmt, env, false, in_arrow_function)?;
             }
             Ok(result)
         }
         Statement::Return(expr) => {
-            if let Some(e) = expr {
-                eval_expression(e, env)
-            } else {
-                Ok(Value::Undefined)
-            }
+            let val = match expr {
+                Some(e) => eval_expression(e, env, in_arrow_function)?,
+                None => Value::Undefined,
+            };
+            set_control_flow(ControlFlow::Return(val));
+            Ok(Value::Undefined)
         }
-        Statement::Expression(expr) => {
-            eval_expression(expr, env)
-        }
+        Statement::Expression(expr) => eval_expression(expr, env, in_arrow_function),
         Statement::Empty => Ok(Value::Undefined),
         Statement::Break(_) => {
             set_control_flow(ControlFlow::Break);
@@ -91,11 +120,13 @@ pub fn eval_statement(
             set_control_flow(ControlFlow::Continue);
             Ok(Value::Undefined)
         }
-        Statement::TryCatch { body, param, handler } => {
-            eval_try_catch(body, param, handler, env)
-        }
+        Statement::TryCatch {
+            body,
+            param,
+            handler,
+        } => eval_try_catch(body, param, handler, env, in_arrow_function),
         Statement::Throw(expr) => {
-            let value = eval_expression(expr, env)?;
+            let value = eval_expression(expr, env, in_arrow_function)?;
             let msg = to_js_string(&value);
             // Store the original thrown value for catch blocks to retrieve
             set_thrown_value(value);
@@ -103,23 +134,24 @@ pub fn eval_statement(
         }
         Statement::Export(stmt) => {
             // Export statements wrap other statements (like assignments)
-            eval_statement(stmt, env, _is_expr_body)
+            eval_statement(stmt, env, _is_expr_body, in_arrow_function)
         }
-        Statement::Import { default, named, namespace, source } => {
-            eval_import(default, named, namespace, source, env)
-        }
-        Statement::ForIn { variable, object, body } => {
-            eval_for_in_stmt(variable, object, body, env)
-        }
+        Statement::Import {
+            default,
+            named,
+            namespace,
+            source,
+        } => eval_import(default, named, namespace, source, env),
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => eval_for_in_stmt(variable, object, body, env, in_arrow_function),
     }
 }
 
 /// Helper to set a property on globalThis if we're at the top level.
-fn set_on_global_this(
-    env: &Rc<RefCell<Environment>>,
-    name: &str,
-    value: Value,
-) {
+fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
     // Only set on globalThis if this is the top-level environment
     let is_top_level = env.borrow().get_parent().is_none();
     if is_top_level {
@@ -136,13 +168,14 @@ fn eval_var_decl(
     name: &str,
     init: &Option<Expression>,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let already_declared = *kind == VarKind::Var && env.borrow().has(name);
+    let already_declared = env.borrow().has(name);
     if !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let value = if let Some(expr) = init {
-        eval_expression(expr, env)?
+        eval_expression(expr, env, in_arrow_function)?
     } else {
         Value::Undefined
     };
@@ -160,14 +193,19 @@ fn eval_func_decl(
     body: &[Statement],
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let func = crate::value::ValueFunction::new(
+    let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
         params.to_vec(),
         body.to_vec(),
         Rc::clone(env),
     );
-    env.borrow_mut()
-        .define(name.to_owned(), Value::Function(func));
+    func.strict = crate::interpreter::is_strict_mode();
+    let value = Value::Function(func);
+    env.borrow_mut().define(name.to_owned(), value.clone());
+    // Top-level function declarations are globals (same as var).
+    if env.borrow().get_parent().is_none() {
+        set_on_global_this(env, name, value);
+    }
     Ok(Value::Undefined)
 }
 
@@ -177,7 +215,7 @@ fn eval_class_decl(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     // Evaluate the class expression
-    let class_val = eval_expression(&Expression::Class(class.clone()), env)?;
+    let class_val = eval_expression(&Expression::Class(class.clone()), env, false)?;
     env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }
@@ -186,18 +224,22 @@ fn eval_while(
     condition: &Expression,
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let mut last = Value::Undefined;
-    while to_bool(&eval_expression(condition, env)?) {
-        let _ = take_control_flow();
-        last = eval_statement(body, env, false)?;
+    while to_bool(&eval_expression(condition, env, in_arrow_function)?) {
+        take_control_flow();
+        let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
             Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
-    Ok(last)
+    Ok(Value::Undefined)
 }
 
 fn eval_for(
@@ -206,39 +248,44 @@ fn eval_for(
     update: &Option<Box<Expression>>,
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     if let Some(for_init) = init {
         match for_init {
             ForInit::Expression(expr) => {
-                let _ = eval_expression(expr, env)?;
+                let _ = eval_expression(expr, env, in_arrow_function)?;
             }
             ForInit::VarDeclaration { kind, name, init } => {
                 env.borrow_mut().declare_var(name.to_string(), *kind);
                 let value = init
                     .as_ref()
-                    .map(|e| eval_expression(e, env))
+                    .map(|e| eval_expression(e, env, in_arrow_function))
                     .unwrap_or(Ok(Value::Undefined))?;
                 env.borrow_mut().initialize_declared(name, value);
             }
         }
     }
-    let check_condition = || -> bool {
+    let check_condition = || -> Result<bool, JsError> {
         if let Some(c) = condition.as_ref() {
-            to_bool(&eval_expression(c, env).unwrap_or(Value::Undefined))
+            Ok(to_bool(&eval_expression(c, env, in_arrow_function)?))
         } else {
-            true
+            Ok(true)
         }
     };
-    while check_condition() {
+    while check_condition()? {
         take_control_flow();
-        let _ = eval_statement(body, env, false)?;
+        let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
             Some(ControlFlow::Continue) => {}
             None => {}
         }
         if let Some(update) = update {
-            let _ = eval_expression(update, env)?;
+            let _ = eval_expression(update, env, in_arrow_function)?;
         }
     }
     Ok(Value::Undefined)
@@ -247,10 +294,11 @@ fn eval_for(
 fn eval_block(
     stmts: &[Statement],
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     env.borrow_mut().push_scope();
     predeclare_let_const(stmts, &mut env.borrow_mut());
-    let result = eval_statements(stmts, env, false);
+    let result = eval_statements(stmts, env, false, in_arrow_function);
     env.borrow_mut().pop_scope();
     result
 }
@@ -260,16 +308,17 @@ fn eval_try_catch(
     param: &Option<String>,
     handler: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    match eval_statement(body, env, false) {
+    match eval_statement(body, env, false, in_arrow_function) {
         Ok(v) => Ok(v),
         Err(_e) => {
-            // Retrieve the original thrown value (set by throw statement)
+            // Take the thrown value and bind it to the catch param.
             let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
             if let Some(name) = param {
                 env.borrow_mut().define(name.to_string(), thrown_value);
             }
-            eval_statement(handler, env, false)
+            eval_statement(handler, env, false, in_arrow_function)
         }
     }
 }
@@ -285,68 +334,72 @@ fn eval_import(
 ) -> Result<Value, JsError> {
     // Get the module's exports from our module cache
     let module_exports = get_module_exports(source, env)?;
-    
+
     // Handle default import: `import x from 'mod'`
     if let Some(name) = default {
-        let default_val = module_exports.borrow().get("default")
+        let default_val = module_exports
+            .borrow()
+            .get("default")
             .unwrap_or(Value::Undefined);
         env.borrow_mut().define(name.clone(), default_val);
     }
-    
+
     // Handle named imports: `import { x, y as z } from 'mod'`
     for (local_name, exported_name) in named {
-        let val = module_exports.borrow().get(exported_name)
+        let val = module_exports
+            .borrow()
+            .get(exported_name)
             .unwrap_or(Value::Undefined);
         env.borrow_mut().define(local_name.clone(), val);
     }
-    
+
     // Handle namespace import: `import * as ns from 'mod'`
     if let Some(name) = namespace {
-        env.borrow_mut().define(name.clone(), Value::Object(module_exports.clone()));
+        env.borrow_mut()
+            .define(name.clone(), Value::Object(module_exports.clone()));
     }
-    
+
     Ok(Value::Undefined)
 }
 
 /// Get exports from a module (CommonJS-style lookup)
-fn get_module_exports(source: &str, env: &Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Object>>, JsError> {
+fn get_module_exports(
+    source: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
     // Check if we have a cached module in the global __quench_modules__
     let cache = env.borrow().get("__quench_modules__");
-    
+
     if let Some(Value::Object(cache_obj)) = &cache {
         let key = normalize_module_path(source);
-        if let Some(exports) = cache_obj.borrow().get(&key) {
-            if let Value::Object(exports_obj) = exports {
+        if let Some(Value::Object(exports_obj)) = cache_obj.borrow().get(&key) {
+            return Ok(exports_obj.clone());
+        }
+    }
+
+    // Check globalThis.__quench_modules__
+    let global = env.borrow().get("globalThis");
+    if let Some(Value::Object(global_obj)) = &global {
+        if let Some(Value::Object(modules_obj)) = global_obj.borrow().get("__quench_modules__") {
+            let key = normalize_module_path(source);
+            if let Some(Value::Object(exports_obj)) = modules_obj.borrow().get(&key) {
                 return Ok(exports_obj.clone());
             }
         }
     }
-    
-    // Check globalThis.__quench_modules__
-    let global = env.borrow().get("globalThis");
-    if let Some(Value::Object(global_obj)) = &global {
-        if let Some(modules) = global_obj.borrow().get("__quench_modules__") {
-            if let Value::Object(modules_obj) = modules {
-                let key = normalize_module_path(source);
-                if let Some(exports) = modules_obj.borrow().get(&key) {
-                    if let Value::Object(exports_obj) = exports {
-                        return Ok(exports_obj.clone());
-                    }
-                }
-            }
-        }
-    }
-    
+
     // Create a new empty exports object for this module
     let exports = Object::new(ObjectKind::Ordinary);
     let exports_rc = Rc::new(RefCell::new(exports));
-    
+
     // Cache it for future imports
     let key = normalize_module_path(source);
     if let Some(Value::Object(cache_obj)) = cache {
-        cache_obj.borrow_mut().set(&key, Value::Object(exports_rc.clone()));
+        cache_obj
+            .borrow_mut()
+            .set(&key, Value::Object(exports_rc.clone()));
     }
-    
+
     Ok(exports_rc)
 }
 
@@ -361,21 +414,28 @@ fn eval_for_in_stmt(
     object: &Expression,
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     use crate::eval::iteration::get_enumerable_keys;
     use crate::eval::object::assign_to;
-    
-    let obj_value = eval_expression(object, env)?;
+
+    let obj_value = eval_expression(object, env, in_arrow_function)?;
     let keys = get_enumerable_keys(&obj_value)?;
-    let mut last = Value::Undefined;
+    if matches!(variable, Expression::ObjectPattern(_)) {
+        return Err(JsError("unsupported pattern in for-in loop".to_string()));
+    }
     for key in keys {
         assign_to(variable, &Value::String(key), env)?;
-        last = eval_statement(body, env, false)?;
+        let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
             Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
-    Ok(last)
+    Ok(Value::Undefined)
 }
