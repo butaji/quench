@@ -3,14 +3,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_bool, to_number, JsError, Object, ObjectKind, Value};
 use crate::eval::call_value_with_this;
+use crate::value::{to_bool, to_number, JsError, Object, ObjectKind, Value};
 
 // ============================================================================
 // Helper functions for Array methods
 // ============================================================================
 
 /// Get the array elements from 'this'
+/// Array methods are intentionally generic - they work on any array-like object
 pub fn get_this_array() -> Result<Vec<Value>, JsError> {
     match crate::builtins::get_native_this() {
         Some(Value::Object(o)) => {
@@ -18,9 +19,14 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
             } else {
-                Err(JsError(
-                    "Array.prototype method called on non-array".to_string(),
-                ))
+                // For non-Array objects (array-likes, arguments), extract indexed properties
+                let mut elements = Vec::new();
+                let mut i = 0u32;
+                while let Some(val) = arr.properties.get(&i.to_string()) {
+                    elements.push(val.clone());
+                    i += 1;
+                }
+                Ok(elements)
             }
         }
         _ => Err(JsError(
@@ -46,13 +52,16 @@ pub fn call_callback(
     index: usize,
     elements: &[Value],
 ) -> Result<Value, JsError> {
-    let array_copy =
-        Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements.to_vec()))));
+    let array_copy = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
+        elements.to_vec(),
+    ))));
     let callback_args = vec![elem.clone(), Value::Number(index as f64), array_copy];
 
     match callback {
-        Value::Function(_) => call_value_with_this(callback.clone(), callback_args, Value::Undefined),
-        Value::NativeFunction(nf) => nf.call(callback_args),
+        Value::Function(_) => {
+            call_value_with_this(callback.clone(), callback_args, Value::Undefined)
+        }
+        Value::NativeFunction(nf) => nf.call(Value::Undefined, callback_args),
         _ => Err(JsError("Callback is not a function".to_string())),
     }
 }
@@ -123,7 +132,7 @@ pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
 
     for (i, elem) in elements.iter().enumerate() {
-        let _ = call_callback(&callback, elem, i, &elements);
+        call_callback(&callback, elem, i, &elements)?;
     }
     Ok(Value::Undefined)
 }

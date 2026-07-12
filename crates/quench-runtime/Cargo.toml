@@ -13,11 +13,11 @@ swc_ecma_parser = { version = "41", features = ["typescript"] }
 swc_ecma_ast = "25"
 swc_atoms = "9"
 
+# Compile-time static maps
+phf = { version = "0.11", features = ["macros"] }
+
 # Ordered map for object property insertion-order enumeration
 indexmap = "2"
-
-# Bump allocator for the SSTI shadow tree
-bumpalo = "3.20.3"
 
 # JSON serialization
 serde = { version = "1", features = ["derive"] }
@@ -38,7 +38,6 @@ anyhow = "1"
 # Conformance testing
 walkdir = "2"
 chrono = "0.4"
-serde_yaml = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

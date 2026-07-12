@@ -1,33 +1,38 @@
 //! Export and import lowering functions
 
-use swc_ecma_ast as swc;
 use crate::ast::Param;
 use crate::ast::{Expression, PropertyKey, Statement};
 use crate::lower::expr::lower_expr;
 use crate::lower::helpers::{atom_to_string, wtf8_atom_to_string};
+use swc_ecma_ast as swc;
 
 use super::declarations::lower_param_decl;
 use super::lower_stmt;
 
 /// Lower a swc ModuleDecl to a Statement
+#[allow(clippy::complexity)]
 pub fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
     match decl {
         // export default function foo() { ... }
-        swc::ModuleDecl::ExportDefaultDecl(export_decl) => {
-            lower_export_default_decl(export_decl)
-        }
+        swc::ModuleDecl::ExportDefaultDecl(export_decl) => lower_export_default_decl(export_decl),
         // export default expr
         swc::ModuleDecl::ExportDefaultExpr(expr) => {
-            Some(Statement::Expression(Box::new(lower_expr(&expr.expr).ok()?)))
+            let value = lower_expr(&expr.expr).ok()?;
+            Some(Statement::Export(Box::new(Statement::Expression(
+                Box::new(Expression::Assignment {
+                    left: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("exports".to_string())),
+                        property: PropertyKey::Ident("default".to_string()),
+                        computed: false,
+                    }),
+                    right: Box::new(value),
+                }),
+            ))))
         }
         // export const/let/function/class declarations
-        swc::ModuleDecl::ExportDecl(export_decl) => {
-            lower_decl(&export_decl.decl)
-        }
+        swc::ModuleDecl::ExportDecl(export_decl) => lower_decl(&export_decl.decl),
         // export { foo, bar } or export { foo } from 'module'
-        swc::ModuleDecl::ExportNamed(named) => {
-            lower_export_named(named)
-        }
+        swc::ModuleDecl::ExportNamed(named) => lower_export_named(named),
         // export * from 'module' - re-export all
         swc::ModuleDecl::ExportAll(export_all) => {
             // Lower to: import * as _re_export from 'module'; Object.assign(exports, _re_export);
@@ -35,9 +40,7 @@ pub fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
             Some(lower_export_star_from(&source))
         }
         // import statements
-        swc::ModuleDecl::Import(import) => {
-            lower_import(import)
-        }
+        swc::ModuleDecl::Import(import) => lower_import(import),
         // TypeScript export =
         swc::ModuleDecl::TsExportAssignment(_) => None,
         // TypeScript import =
@@ -48,6 +51,7 @@ pub fn lower_module_decl(decl: &swc::ModuleDecl) -> Option<Statement> {
 }
 
 /// Lower an import statement to our Import statement
+#[allow(clippy::complexity)]
 fn lower_import(import: &swc::ImportDecl) -> Option<Statement> {
     let source = wtf8_atom_to_string(&import.src.value);
     let default = import.specifiers.iter().find_map(|spec| {
@@ -64,21 +68,32 @@ fn lower_import(import: &swc::ImportDecl) -> Option<Statement> {
             None
         }
     });
-    let named: Vec<(String, String)> = import.specifiers.iter().filter_map(|spec| {
-        if let swc::ImportSpecifier::Named(named_spec) = spec {
-            let local = atom_to_string(&named_spec.local.sym);
-            let imported = named_spec.imported.as_ref()
-                .map(|i| match i {
-                    swc::ModuleExportName::Ident(ident) => atom_to_string(&ident.sym),
-                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-                })
-                .unwrap_or_else(|| local.clone());
-            Some((local, imported))
-        } else {
-            None
-        }
-    }).collect();
-    Some(Statement::Import { default, named, namespace, source })
+    let named: Vec<(String, String)> = import
+        .specifiers
+        .iter()
+        .filter_map(|spec| {
+            if let swc::ImportSpecifier::Named(named_spec) = spec {
+                let local = atom_to_string(&named_spec.local.sym);
+                let imported = named_spec
+                    .imported
+                    .as_ref()
+                    .map(|i| match i {
+                        swc::ModuleExportName::Ident(ident) => atom_to_string(&ident.sym),
+                        swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+                    })
+                    .unwrap_or_else(|| local.clone());
+                Some((local, imported))
+            } else {
+                None
+            }
+        })
+        .collect();
+    Some(Statement::Import {
+        default,
+        named,
+        namespace,
+        source,
+    })
 }
 
 /// Lower `export * from 'module'` to re-export all bindings
@@ -116,20 +131,33 @@ fn lower_export_star_from(source: &str) -> Statement {
     Statement::Block(vec![import_stmt, for_in])
 }
 
+#[allow(clippy::complexity)]
 fn lower_export_default_decl(export_decl: &swc::ExportDefaultDecl) -> Option<Statement> {
     match &export_decl.decl {
         swc::DefaultDecl::Fn(func_expr) => {
-            let name = func_expr.ident.as_ref()
+            let name = func_expr
+                .ident
+                .as_ref()
                 .map(|i| i.sym.to_string())
                 .unwrap_or_else(|| "default".to_string());
-            let params: Vec<Param> = func_expr.function.params.iter().map(|p| lower_param_decl(&p.pat)).collect();
-            let body = func_expr.function.body.as_ref()
+            let params: Vec<Param> = func_expr
+                .function
+                .params
+                .iter()
+                .map(|p| lower_param_decl(&p.pat))
+                .collect();
+            let body = func_expr
+                .function
+                .body
+                .as_ref()
                 .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
             Some(Statement::FunctionDeclaration { name, params, body })
         }
         swc::DefaultDecl::Class(class_expr) => {
-            let name = class_expr.ident.as_ref()
+            let name = class_expr
+                .ident
+                .as_ref()
                 .map(|i| i.sym.to_string())
                 .unwrap_or_else(|| "default".to_string());
             let class = lower_class(&class_expr.class)?;
@@ -146,7 +174,7 @@ pub fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
     if let Some(src) = &named.src {
         return lower_export_from(named, src);
     }
-    
+
     let mut stmts = Vec::new();
     for spec in &named.specifiers {
         match spec {
@@ -161,11 +189,13 @@ pub fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
             }
         }
     }
-    
+
     if stmts.is_empty() {
         None
     } else if stmts.len() == 1 {
-        Some(Statement::Export(Box::new(stmts.into_iter().next().unwrap())))
+        Some(Statement::Export(Box::new(
+            stmts.into_iter().next().unwrap(),
+        )))
     } else {
         Some(Statement::Export(Box::new(Statement::Block(stmts))))
     }
@@ -174,92 +204,85 @@ pub fn lower_export_named(named: &swc::NamedExport) -> Option<Statement> {
 /// Lower `export { x } from 'module'` to import and re-export
 fn lower_export_from(named: &swc::NamedExport, src: &swc::Str) -> Option<Statement> {
     let source = wtf8_atom_to_string(&src.value);
-    let unique_name = format!("_re_export_src_{}", source.replace(['/', '-', '.'], "_"));
-    
-    let mut stmts = Vec::new();
-    let mut imports = Vec::new();
-    
-    for spec in &named.specifiers {
-        match spec {
-            swc::ExportSpecifier::Named(named_spec) => {
-                let exported = named_spec.exported.as_ref()
-                    .map(|e| match e {
-                        swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
-                        swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-                    })
-                    .unwrap_or_else(|| {
-                        match &named_spec.orig {
-                            swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
-                            swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-                        }
-                    });
-                let local = match &named_spec.orig {
-                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
-                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-                };
-                imports.push((local.clone(), local.clone()));
-                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
-                    left: Box::new(Expression::Member {
-                        object: Box::new(Expression::Identifier("exports".to_string())),
-                        property: PropertyKey::Ident(exported),
-                        computed: false,
-                    }),
-                    right: Box::new(Expression::Identifier(local)),
-                })));
-            }
-            swc::ExportSpecifier::Default(_) => {
-                imports.push(("default".to_string(), "default".to_string()));
-                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
-                    left: Box::new(Expression::Member {
-                        object: Box::new(Expression::Identifier("exports".to_string())),
-                        property: PropertyKey::Ident("default".to_string()),
-                        computed: false,
-                    }),
-                    right: Box::new(Expression::Identifier("default".to_string())),
-                })));
-            }
-            swc::ExportSpecifier::Namespace(ns) => {
-                let name = match &ns.name {
-                    swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
-                    swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-                };
-                stmts.push(Statement::Expression(Box::new(Expression::Assignment {
-                    left: Box::new(Expression::Member {
-                        object: Box::new(Expression::Identifier("exports".to_string())),
-                        property: PropertyKey::Ident(name.clone()),
-                        computed: false,
-                    }),
-                    right: Box::new(Expression::Identifier(name)),
-                })));
-            }
-        }
-    }
-    
-    // Add import statement for the source module
+    let (imports, stmts) = collect_export_from_specs(&named.specifiers);
     let import_stmt = Statement::Import {
         default: None,
         named: imports,
         namespace: None,
         source,
     };
-    
     let mut all_stmts = vec![import_stmt];
     all_stmts.extend(stmts);
-    
     Some(Statement::Block(all_stmts))
 }
 
+fn collect_export_from_specs(
+    specs: &[swc::ExportSpecifier],
+) -> (Vec<(String, String)>, Vec<Statement>) {
+    let mut imports = Vec::new();
+    let mut stmts = Vec::new();
+    for spec in specs {
+        match spec {
+            swc::ExportSpecifier::Named(named_spec) => {
+                let (imp, stmt) = lower_named_export_from_spec(named_spec);
+                imports.push(imp);
+                stmts.push(stmt);
+            }
+            swc::ExportSpecifier::Default(_) => {
+                imports.push(("default".to_string(), "default".to_string()));
+                stmts.push(make_export_assignment("default", "default"));
+            }
+            swc::ExportSpecifier::Namespace(ns) => {
+                let name = module_export_name_to_string(&ns.name);
+                stmts.push(make_export_assignment(&name, &name));
+            }
+        }
+    }
+    (imports, stmts)
+}
+
+fn lower_named_export_from_spec(
+    named_spec: &swc::ExportNamedSpecifier,
+) -> ((String, String), Statement) {
+    let exported = named_spec.exported.as_ref().map_or_else(
+        || module_export_name_to_string(&named_spec.orig),
+        module_export_name_to_string,
+    );
+    let local = module_export_name_to_string(&named_spec.orig);
+    let stmt = make_export_assignment(&exported, &local);
+    ((local.clone(), local), stmt)
+}
+
+fn module_export_name_to_string(name: &swc::ModuleExportName) -> String {
+    match name {
+        swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+        swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
+    }
+}
+
+fn make_export_assignment(prop: &str, value: &str) -> Statement {
+    Statement::Expression(Box::new(Expression::Assignment {
+        left: Box::new(Expression::Member {
+            object: Box::new(Expression::Identifier("exports".to_string())),
+            property: PropertyKey::Ident(prop.to_string()),
+            computed: false,
+        }),
+        right: Box::new(Expression::Identifier(value.to_string())),
+    }))
+}
+
+#[allow(clippy::complexity)]
 fn lower_named_export_specifier(named_spec: &swc::ExportNamedSpecifier) -> Statement {
-    let exported = named_spec.exported.as_ref()
+    let exported = named_spec
+        .exported
+        .as_ref()
         .map(|e| match e {
             swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
             swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
         })
-        .unwrap_or_else(|| {
-            match &named_spec.orig {
-                swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
-                swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
-            }
+        .unwrap_or_else(|| match &named_spec.orig {
+            swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
+            swc::ModuleExportName::Str(s) => wtf8_atom_to_string(&s.value),
         });
     let local = match &named_spec.orig {
         swc::ModuleExportName::Ident(i) => atom_to_string(&i.sym),
@@ -302,5 +325,5 @@ fn lower_namespace_export_specifier(ns: &swc::ExportNamespaceSpecifier) -> State
 }
 
 // Re-export declaration lowering functions
-pub use crate::lower::stmt::declarations::lower_decl;
 pub use crate::lower::stmt::declarations::lower_class;
+pub use crate::lower::stmt::declarations::lower_decl;

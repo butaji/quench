@@ -1,7 +1,9 @@
 //! JavaScript operators evaluation
 
 use crate::ast::*;
-use crate::value::{to_js_string, to_number, to_bool, strict_eq, loose_eq, JsError, Value};
+use crate::value::{
+    loose_eq, strict_eq, to_bool, to_js_string, to_number, to_uint32, JsError, Value,
+};
 
 /// Evaluate a binary operator
 pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, JsError> {
@@ -21,8 +23,16 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
         BinaryOp::Gt => Ok(Value::Boolean(to_number(left) > to_number(right))),
         BinaryOp::Le => Ok(Value::Boolean(to_number(left) <= to_number(right))),
         BinaryOp::Ge => Ok(Value::Boolean(to_number(left) >= to_number(right))),
-        BinaryOp::And => Ok(if to_bool(left) { right.clone() } else { left.clone() }),
-        BinaryOp::Or => Ok(if to_bool(left) { left.clone() } else { right.clone() }),
+        BinaryOp::And => Ok(if to_bool(left) {
+            right.clone()
+        } else {
+            left.clone()
+        }),
+        BinaryOp::Or => Ok(if to_bool(left) {
+            left.clone()
+        } else {
+            right.clone()
+        }),
         BinaryOp::NullishCoalescing => eval_nullish(left, right),
         BinaryOp::BitAnd => bit_op(left, right, |a, b| a & b),
         BinaryOp::BitOr => bit_op(left, right, |a, b| a | b),
@@ -35,7 +45,11 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
     if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
-        Ok(Value::String(format!("{}{}", to_js_string(left), to_js_string(right))))
+        Ok(Value::String(format!(
+            "{}{}",
+            to_js_string(left),
+            to_js_string(right)
+        )))
     } else {
         Ok(Value::Number(to_number(left) + to_number(right)))
     }
@@ -91,6 +105,14 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
             let result = has_prototype_in_chain(&obj.borrow(), &ctor.prototype);
             Ok(Value::Boolean(result))
         }
+        (Value::Object(obj), Value::NativeFunction(nf)) => {
+            if let Some(Value::Object(proto)) = nf.get_property("prototype") {
+                let result = has_prototype_in_chain(&obj.borrow(), &proto);
+                Ok(Value::Boolean(result))
+            } else {
+                Ok(Value::Boolean(false))
+            }
+        }
         (Value::Function(func), Value::NativeConstructor(ctor)) => {
             let func_proto = func.get_prototype();
             let result = has_prototype_in_chain(&func_proto.borrow(), &ctor.prototype);
@@ -129,7 +151,9 @@ fn bit_op<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
 where
     F: FnOnce(i64, i64) -> i64,
 {
-    Ok(Value::Number(f(to_number(left) as i64, to_number(right) as i64) as f64))
+    Ok(Value::Number(
+        f(to_number(left) as i64, to_number(right) as i64) as f64,
+    ))
 }
 
 fn shift_op<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
@@ -145,9 +169,11 @@ fn shift_op_u<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
 where
     F: FnOnce(u64, u64) -> u64,
 {
-    Ok(Value::Number(
-        f(to_number(left) as u64, to_number(right) as u64) as f64,
-    ))
+    // Use to_uint32 per JavaScript spec for unsigned right shift
+    let l = to_uint32(to_number(left)) as u64;
+    let r = to_uint32(to_number(right)) as u64;
+    let result = f(l, r);
+    Ok(Value::Number(result as f64))
 }
 
 /// Evaluate a unary operator
@@ -171,26 +197,33 @@ fn eval_typeof(val: &Value) -> Result<Value, JsError> {
         Value::Boolean(_) => "boolean",
         Value::Number(_) => "number",
         Value::String(_) => "string",
-        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => "function",
-        Value::Object(_) | Value::ObjectId(_) => "object",
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => "function",
+        Value::Object(_) => "object",
         Value::Symbol(_) => "symbol",
     };
     Ok(Value::String(type_str.to_string()))
 }
 
 /// Get the prototype object for instanceof checks with class values
-fn get_class_prototype_for_instanceof(class: &crate::value::ClassValue) -> Result<std::rc::Rc<std::cell::RefCell<crate::value::Object>>, JsError> {
+fn get_class_prototype_for_instanceof(
+    class: &crate::value::ClassValue,
+) -> Result<std::rc::Rc<std::cell::RefCell<crate::value::Object>>, JsError> {
     // Use the shared prototype from ClassValue
     // This ensures that instanceof checks work correctly
-    crate::eval::class::get_or_create_class_prototype(class, &std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())))
+    crate::eval::class::get_or_create_class_prototype(
+        class,
+        &std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())),
+    )
 }
 
 /// Get prototype from a class value (used for extends)
-fn get_prototype_from_class_val(val: &Value) -> Option<std::rc::Rc<std::cell::RefCell<crate::value::Object>>> {
-    use crate::value::Object;
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    
+#[allow(dead_code)]
+fn get_prototype_from_class_val(
+    val: &Value,
+) -> Option<std::rc::Rc<std::cell::RefCell<crate::value::Object>>> {
     match val {
         Value::Object(o) => {
             let proto = o.borrow().get("prototype");
@@ -200,14 +233,13 @@ fn get_prototype_from_class_val(val: &Value) -> Option<std::rc::Rc<std::cell::Re
                 None
             }
         }
-        Value::Class(class) => {
-            get_class_prototype_for_instanceof(class).ok()
-        }
+        Value::Class(class) => get_class_prototype_for_instanceof(class).ok(),
         _ => None,
     }
 }
 
 /// Helper to convert PropertyKey to string
+#[allow(dead_code)]
 fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
     match key {
         crate::ast::PropertyKey::Ident(s) => s.clone(),

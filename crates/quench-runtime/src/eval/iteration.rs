@@ -9,7 +9,7 @@ use crate::eval::expression::eval_expression;
 use crate::eval::function::call_value;
 use crate::eval::object::assign_to;
 use crate::eval::statement::eval_statement;
-use crate::interpreter::{take_control_flow, ControlFlow};
+use crate::interpreter::{set_control_flow, take_control_flow, ControlFlow};
 use crate::value::{JsError, Object, ObjectKind, Value};
 
 /// Get an iterator for for-of/for-in loops
@@ -88,20 +88,28 @@ pub fn eval_for_of(
     iterable: &Expression,
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let iter_value = eval_expression(iterable, env)?;
+    let iter_value = eval_expression(iterable, env, in_arrow_function)?;
     let items = get_iterator(&iter_value)?;
-    let mut last = Value::Undefined;
     for item in items {
         assign_to(variable, &item, env)?;
-        last = eval_statement(body, env, false)?;
+        let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
             Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
-    Ok(last)
+    if let Some(ControlFlow::Return(val)) = take_control_flow() {
+        Ok(val)
+    } else {
+        Ok(Value::Undefined)
+    }
 }
 
 /// Evaluate a for-in loop
@@ -110,18 +118,29 @@ pub fn eval_for_in(
     object: &Expression,
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let obj_value = eval_expression(object, env)?;
+    let obj_value = eval_expression(object, env, in_arrow_function)?;
     let keys = get_enumerable_keys(&obj_value)?;
-    let mut last = Value::Undefined;
+    if matches!(variable, Expression::ObjectPattern(_)) {
+        return Err(JsError("unsupported pattern in for-in loop".to_string()));
+    }
     for key in keys {
         assign_to(variable, &Value::String(key), env)?;
-        last = eval_statement(body, env, false)?;
+        let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
             Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
-    Ok(last)
+    if let Some(ControlFlow::Return(val)) = take_control_flow() {
+        Ok(val)
+    } else {
+        Ok(Value::Undefined)
+    }
 }

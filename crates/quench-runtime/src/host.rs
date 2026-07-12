@@ -9,11 +9,11 @@
 
 use std::rc::Rc;
 
-use crate::value::{Value, NativeFunction};
+use crate::value::{NativeFunction, Value};
 use crate::Context;
 
 /// Context extension trait for host function registration
-/// 
+///
 /// Implement this trait to provide host functions from the embedding application.
 pub trait HostFunctions {
     /// Register all host functions into the given context
@@ -25,12 +25,13 @@ pub fn register_native<F>(ctx: &mut Context, name: &str, f: F)
 where
     F: Fn(Vec<Value>) -> Result<Value, crate::value::JsError> + 'static,
 {
-    ctx.set_global(name.to_string(), Value::NativeFunction(Rc::new(NativeFunction::new(f))));
+    ctx.set_global(
+        name.to_string(),
+        Value::NativeFunction(Rc::new(NativeFunction::new(f))),
+    );
 }
 
 /// Internal - used by Context::init_builtins
 pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     crate::builtins::register_builtins(ctx);
 }
-
-

@@ -1,15 +1,13 @@
 //! Pattern lowering - destructuring and binding patterns
 
-use swc_ecma_ast as swc;
-use crate::ast::{BindingElement, Expression, PropertyKey, Statement, VarKind};
 use super::helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+use crate::ast::{BindingElement, Expression, PropertyKey, Statement, VarKind};
+use swc_ecma_ast as swc;
 
 /// Lower a binding pattern (for destructuring) to BindingElement
 pub fn lower_binding_elem(pat: &swc::Pat) -> Result<BindingElement, LowerError> {
     match pat {
-        swc::Pat::Ident(ident) => {
-            Ok(BindingElement::Identifier(atom_to_string(&ident.id.sym)))
-        }
+        swc::Pat::Ident(ident) => Ok(BindingElement::Identifier(atom_to_string(&ident.id.sym))),
         swc::Pat::Array(arr) => lower_array_pattern(arr),
         swc::Pat::Object(obj) => lower_object_pattern(obj),
         swc::Pat::Rest(rest) => lower_binding_elem(&rest.arg),
@@ -19,22 +17,20 @@ pub fn lower_binding_elem(pat: &swc::Pat) -> Result<BindingElement, LowerError> 
 }
 
 fn lower_array_pattern(arr: &swc::ArrayPat) -> Result<BindingElement, LowerError> {
-    let elements: Vec<BindingElement> = arr.elems.iter()
-        .filter_map(|e| {
-            match e {
-                Some(elem) => lower_elem_pat(elem),
-                None => Some(BindingElement::Identifier("__hole".to_string())),
-            }
+    let elements: Vec<BindingElement> = arr
+        .elems
+        .iter()
+        .filter_map(|e| match e {
+            Some(elem) => lower_elem_pat(elem),
+            None => Some(BindingElement::Identifier("__hole".to_string())),
         })
         .collect();
     Ok(BindingElement::ArrayPattern(elements))
 }
 
-fn lower_elem_pat(elem: &swc::Pat) -> Option<BindingElement> {
+pub fn lower_elem_pat(elem: &swc::Pat) -> Option<BindingElement> {
     match elem {
-        swc::Pat::Ident(id) => {
-            Some(BindingElement::Identifier(atom_to_string(&id.id.sym)))
-        }
+        swc::Pat::Ident(id) => Some(BindingElement::Identifier(atom_to_string(&id.id.sym))),
         swc::Pat::Array(arr) => lower_binding_elem(&swc::Pat::Array(arr.clone())).ok(),
         swc::Pat::Object(obj) => lower_binding_elem(&swc::Pat::Object(obj.clone())).ok(),
         swc::Pat::Rest(rest) => lower_binding_elem(&rest.arg).ok(),
@@ -44,13 +40,12 @@ fn lower_elem_pat(elem: &swc::Pat) -> Option<BindingElement> {
 }
 
 fn lower_object_pattern(obj: &swc::ObjectPat) -> Result<BindingElement, LowerError> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj.props.iter()
-        .filter_map(lower_object_pat_prop)
-        .collect();
+    let props: Vec<(PropertyKey, BindingElement)> =
+        obj.props.iter().filter_map(lower_object_pat_prop).collect();
     Ok(BindingElement::ObjectPattern(props))
 }
 
-fn lower_object_pat_prop(prop: &swc::ObjectPatProp) -> Option<(PropertyKey, BindingElement)> {
+pub fn lower_object_pat_prop(prop: &swc::ObjectPatProp) -> Option<(PropertyKey, BindingElement)> {
     match prop {
         swc::ObjectPatProp::KeyValue(kv) => {
             let key = lower_prop_name_key(&kv.key)?;
@@ -77,11 +72,7 @@ fn lower_prop_name_key(key: &swc::PropName) -> Option<PropertyKey> {
 }
 
 /// Expand a nested binding pattern into variable declarations
-pub fn expand_nested_pattern(
-    kind: VarKind,
-    pat: &swc::Pat,
-    source_var: &str,
-) -> Vec<Statement> {
+pub fn expand_nested_pattern(kind: VarKind, pat: &swc::Pat, source_var: &str) -> Vec<Statement> {
     let source = Expression::Identifier(source_var.to_string());
     match pat {
         swc::Pat::Ident(ident) => {
@@ -163,7 +154,15 @@ pub fn expand_nested_object_pattern(
                     _ => format!("{}_prop_{}", source_var, key_str),
                 };
                 let member = object_member_expr(source_var, &key_str);
-                add_object_kv_stmts(kind, kv_value_ref, var_name, member, source_var, key_str, &mut stmts);
+                add_object_kv_stmts(
+                    kind,
+                    kv_value_ref,
+                    var_name,
+                    member,
+                    source_var,
+                    key_str,
+                    &mut stmts,
+                );
             }
             swc::ObjectPatProp::Assign(assign) => {
                 let var_name = atom_to_string(&assign.key.sym);
@@ -201,13 +200,12 @@ fn add_object_kv_stmts(
     }
 }
 
-fn push_simple_decl(
-    kind: VarKind,
-    name: String,
-    init: Expression,
-    stmts: &mut Vec<Statement>,
-) {
-    stmts.push(Statement::VarDeclaration { kind, name, init: Some(init) });
+fn push_simple_decl(kind: VarKind, name: String, init: Expression, stmts: &mut Vec<Statement>) {
+    stmts.push(Statement::VarDeclaration {
+        kind,
+        name,
+        init: Some(init),
+    });
 }
 
 fn handle_nested_object(
@@ -220,7 +218,11 @@ fn handle_nested_object(
 ) {
     let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
     push_const_decl(nested_temp_name.clone(), member, stmts);
-    stmts.extend(expand_nested_object_pattern(kind, nested_obj, &nested_temp_name));
+    stmts.extend(expand_nested_object_pattern(
+        kind,
+        nested_obj,
+        &nested_temp_name,
+    ));
 }
 
 fn handle_nested_array(
@@ -233,7 +235,11 @@ fn handle_nested_array(
 ) {
     let nested_temp_name = format!("{}_prop_{}", source_var, key_str);
     push_const_decl(nested_temp_name.clone(), member, stmts);
-    stmts.extend(expand_nested_array_pattern(kind, nested_arr, &nested_temp_name));
+    stmts.extend(expand_nested_array_pattern(
+        kind,
+        nested_arr,
+        &nested_temp_name,
+    ));
 }
 
 fn push_const_decl(name: String, init: Expression, stmts: &mut Vec<Statement>) {

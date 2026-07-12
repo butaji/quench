@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{Object, ObjectKind, Value};
 use crate::value::object::PromiseObjectData;
+use crate::value::{Object, ObjectKind, Value};
 use crate::JsError;
 
 // Thread-local storage for Promise prototype
@@ -15,13 +15,21 @@ thread_local! {
 /// Get the stored Promise prototype
 pub fn get_promise_proto() -> Rc<RefCell<Object>> {
     PROMISE_PROTO.with(|p| {
-        p.borrow().clone().expect("Promise prototype not initialized")
+        p.borrow()
+            .clone()
+            .expect("Promise prototype not initialized")
     })
 }
 
 /// Store the Promise prototype in thread-local storage
 pub fn set_promise_proto(proto: Rc<RefCell<Object>>) {
     PROMISE_PROTO.with(|p| *p.borrow_mut() = Some(Rc::clone(&proto)));
+}
+
+/// Clear the stored Promise prototype (called on context reset, so a reset
+/// context never hands out promises with a previous context's prototype)
+pub fn clear_promise_proto() {
+    PROMISE_PROTO.with(|p| *p.borrow_mut() = None);
 }
 
 /// Create a new Promise prototype object
@@ -68,6 +76,8 @@ pub fn create_callback_promise(
     let obj_rc = Rc::new(RefCell::new(obj));
     obj_rc.borrow_mut().set("_onFulfilled", on_fulfilled);
     obj_rc.borrow_mut().set("_onRejected", on_rejected);
-    obj_rc.borrow_mut().set("_targetPromise", Value::Object(target_promise));
+    obj_rc
+        .borrow_mut()
+        .set("_targetPromise", Value::Object(target_promise));
     Value::Object(obj_rc)
 }

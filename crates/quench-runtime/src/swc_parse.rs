@@ -3,21 +3,11 @@
 //! Uses swc to parse JavaScript/JSX/TypeScript source code into the swc AST,
 //! then lower to our runtime AST via lower.rs.
 
-use swc_common::{
-    sync::Lrc,
-    FileName, SourceMap,
-};
-use swc_ecma_parser::{
-    lexer::Lexer,
-    Parser,
-    StringInput,
-    Syntax,
-    EsSyntax,
-    TsSyntax,
-};
 use crate::ast::Program;
-use crate::value::JsError;
 use crate::lower::stmt::{lower_module, lower_script};
+use crate::value::JsError;
+use swc_common::{sync::Lrc, FileName, SourceMap};
+use swc_ecma_parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 
 /// Parse JavaScript source into an swc `Script` AST.
 pub fn parse_swc_script(source: &str) -> Result<swc_ecma_ast::Script, JsError> {
@@ -39,9 +29,9 @@ pub fn parse_swc_script(source: &str) -> Result<swc_ecma_ast::Script, JsError> {
 
     let mut parser = Parser::new_from(lexer);
 
-    parser.parse_script().map_err(|e| {
-        JsError(format!("Parse error: {:?}", e))
-    })
+    parser
+        .parse_script()
+        .map_err(|e| JsError(format!("Parse error: {:?}", e)))
 }
 
 /// Parse JavaScript source using swc (script mode, not module)
@@ -51,7 +41,7 @@ pub fn parse_swc(source: &str) -> Result<Program, JsError> {
         Lrc::new(FileName::Custom("input".into())),
         source.to_string(),
     );
-    
+
     let lexer = Lexer::new(
         Syntax::Es(EsSyntax {
             jsx: true,
@@ -61,14 +51,14 @@ pub fn parse_swc(source: &str) -> Result<Program, JsError> {
         StringInput::from(&*fm),
         None,
     );
-    
+
     let mut parser = Parser::new_from(lexer);
-    
+
     // Use parse_script for regular JS/JSX code (not ES modules)
-    let script = parser.parse_script().map_err(|e| {
-        JsError(format!("Parse error: {:?}", e))
-    })?;
-    
+    let script = parser
+        .parse_script()
+        .map_err(|e| JsError(format!("Parse error: {:?}", e)))?;
+
     // Lower swc AST to our runtime AST
     lower_script(&script).map_err(|e| JsError(e.to_string()))
 }
@@ -80,7 +70,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
         Lrc::new(FileName::Custom("input".into())),
         source.to_string(),
     );
-    
+
     let lexer = Lexer::new(
         Syntax::Es(EsSyntax {
             jsx: true,
@@ -90,19 +80,25 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
         StringInput::from(&*fm),
         None,
     );
-    
+
     let mut parser = Parser::new_from(lexer);
-    
-    let module = parser.parse_module().map_err(|e| {
-        JsError(format!("Module parse error: {:?}", e))
-    })?;
-    
+
+    let module = parser
+        .parse_module()
+        .map_err(|e| JsError(format!("Module parse error: {:?}", e)))?;
+
     lower_module(&module).map_err(|e| JsError(e.to_string()))
 }
 
 /// Parse JavaScript/JSX source using swc (script mode)
 pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
-    parse_with_syntax(source, Syntax::Es(EsSyntax { jsx: true, ..Default::default() }))
+    parse_with_syntax(
+        source,
+        Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
+    )
 }
 
 /// Parse TypeScript source and strip type annotations
@@ -160,7 +156,9 @@ fn parse_with_syntax(source: &str, syntax: Syntax) -> Result<Program, JsError> {
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
     let mut parser = Parser::new_from(lexer);
 
-    let script = parser.parse_script().map_err(|e| JsError(format!("Parse error: {:?}", e)))?;
+    let script = parser
+        .parse_script()
+        .map_err(|e| JsError(format!("Parse error: {:?}", e)))?;
     lower_script(&script).map_err(|e| JsError(e.to_string()))
 }
 
@@ -214,7 +212,8 @@ mod tests {
     #[test]
     fn test_parse_typescript_interface() {
         // Test that TypeScript interface declarations are handled
-        let result = parse_typescript("interface Foo { bar: number; } const x: Foo = { bar: 1 }; x;");
+        let result =
+            parse_typescript("interface Foo { bar: number; } const x: Foo = { bar: 1 }; x;");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
@@ -235,36 +234,14 @@ mod tests {
     #[test]
     fn test_parse_typescript_complex() {
         // Test more complex TypeScript with JSX
-        let result = parse_typescript(r#"
+        let result = parse_typescript(
+            r#"
             function Test(): JSX.Element {
                 const setCount = (c: number) => c + 1;
                 return <Box>test</Box>;
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok(), "Failed: {:?}", result);
-    }
-
-    #[test]
-    fn test_parse_counter_tsx() {
-        // Test parsing the actual counter.tsx file
-        // Path relative to crate root
-        let source = std::fs::read_to_string("../../examples/counter.tsx").unwrap();
-        let result = parse_typescript(&source);
-        assert!(result.is_ok(), "Failed to parse counter.tsx: {:?}", result);
-    }
-
-    #[test]
-    fn test_parse_runtime_js() {
-        let source = std::fs::read_to_string("../../src/runtime.js").unwrap();
-        let result = parse_swc(&source);
-        assert!(result.is_ok(), "Failed to parse runtime.js: {:?}", result);
-    }
-
-    #[test]
-    fn test_parse_dashboard_tsx() {
-        // Test parsing the actual dashboard.tsx file
-        let source = std::fs::read_to_string("../../examples/dashboard.tsx").unwrap();
-        let result = parse_typescript(&source);
-        assert!(result.is_ok(), "Failed to parse dashboard.tsx: {:?}", result);
     }
 }

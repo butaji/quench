@@ -2,12 +2,8 @@
 /target/
 **/target/
 
-# Cargo lock fragments that some toolchains leave behind
+# Cargo lock fragments
 **/*.rs.bk
-
-# Embedded quickjs build dir
-/quickjs/
-/quickjs2020/
 
 # Editor / OS junk
 .DS_Store
@@ -22,12 +18,12 @@ Thumbs.db
 /tmp/
 /scratch/
 
-# Agent / RALPH logs (ephemeral session traces)
-/.ralph/
+# Agent session artifacts
+.pi/
 
-# Local benchmark output
-/criterion/
+# Test262 checkpoint (auto-created by staged runner)
+.test262_checkpoint
 
-# Generated docs (built from markdown with mdbook, etc.)
-/book/
-/docs/_book/
+# test262 report
+/target/test262_report.json
+/target/test262_report.md
