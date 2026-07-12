@@ -12,7 +12,7 @@ use oxc::span::SourceType;
 use std::sync::Arc;
 
 /// Parse JavaScript source using OXC (script mode, not module)
-pub fn parse_swc(source: &str) -> Result<Program, JsError> {
+pub fn parse_script(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_jsx(true);
     let allocator = Arc::new(Allocator::default());
     let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
@@ -104,37 +104,37 @@ mod tests {
 
     #[test]
     fn test_parse_simple() {
-        let result = parse_swc("42");
+        let result = parse_script("42");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
     #[test]
     fn test_parse_binary() {
-        let result = parse_swc("1 + 2;");
+        let result = parse_script("1 + 2;");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
     #[test]
     fn test_parse_var() {
-        let result = parse_swc("var x = 1 + 2;");
+        let result = parse_script("var x = 1 + 2;");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
     #[test]
     fn test_parse_object() {
-        let result = parse_swc(r#"const x = { a: 1, b: 2 };"#);
+        let result = parse_script(r#"const x = { a: 1, b: 2 };"#);
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
     #[test]
     fn test_parse_function() {
-        let result = parse_swc("function add(a, b) { return a + b; }");
+        let result = parse_script("function add(a, b) { return a + b; }");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
     #[test]
     fn test_parse_arrow() {
-        let result = parse_swc("const add = (a, b) => a + b;");
+        let result = parse_script("const add = (a, b) => a + b;");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_parse_legacy_octal_sloppy() {
         // Legacy octal literals (e.g. 01, 07) are allowed in sloppy mode
-        let result = parse_swc("a = 01;");
+        let result = parse_script("a = 01;");
         assert!(result.is_ok(), "OXC should parse legacy octal in sloppy mode: {:?}", result);
     }
 
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_lowered_program_has_directive() {
         // Verify that lower_program correctly preprends directives
-        let result = parse_swc(r#""use strict"; eval("01;")"#);
+        let result = parse_script(r#""use strict"; eval("01;")"#);
         match &result {
             Ok(crate::ast::Program::Script(stmts)) => {
                 println!("lowered statements count: {}", stmts.len());
