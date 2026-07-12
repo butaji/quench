@@ -1,48 +1,52 @@
 //! Declaration lowering functions
 
 use crate::ast::{Class, ClassMember, Expression, Param, PropertyKey, Statement, VarKind};
-use swc_ecma_ast as swc;
+use oxc::ast::ast as ast;
 
 use super::lower_stmt;
 use crate::lower::expr::lower_expr;
 use crate::lower::helpers::wtf8_atom_to_string;
 
 /// Lower a declaration (function, var, const, let, class)
-pub fn lower_decl(decl: &swc::Decl) -> Option<Statement> {
+pub fn lower_decl(decl: &ast::Declaration) -> Option<Statement> {
     match decl {
-        swc::Decl::Fn(func_decl) => lower_fn_decl(func_decl),
-        swc::Decl::Var(var_decl) => lower_var_decl(var_decl),
-        swc::Decl::Class(class_decl) => lower_class_decl(class_decl),
+        ast::Declaration::FunctionDeclaration(func_decl) => lower_fn_decl(func_decl),
+        ast::Declaration::VariableDeclaration(var_decl) => lower_var_decl(var_decl),
+        ast::Declaration::ClassDeclaration(class_decl) => lower_class_decl(class_decl),
         _ => None,
     }
 }
 
 #[allow(clippy::complexity)]
-pub fn lower_var_decl(var_decl: &swc::VarDecl) -> Option<Statement> {
+pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> {
     use crate::lower::stmt::destructuring::{
         lower_array_destructuring, lower_object_destructuring, wrap_decls,
     };
 
     let kind = match var_decl.kind {
-        swc::VarDeclKind::Var => VarKind::Var,
-        swc::VarDeclKind::Let => VarKind::Let,
-        swc::VarDeclKind::Const => VarKind::Const,
+        ast::VariableDeclarationKind::Var => VarKind::Var,
+        ast::VariableDeclarationKind::Let => VarKind::Let,
+        ast::VariableDeclarationKind::Const => VarKind::Const,
+        // Using/AwaitUsing not supported
+        ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
+            return None;
+        }
     };
     let mut decls = Vec::new();
-    for binding in &var_decl.decls {
+    for binding in &var_decl.declarations {
         let init_expr = binding.init.as_ref().and_then(|e| lower_expr(e).ok());
-        match &binding.name {
-            swc::Pat::Ident(ident) => {
+        match &binding.id.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
                 decls.push(Statement::VarDeclaration {
                     kind,
-                    name: ident.id.sym.to_string(),
+                    name: ident.name.as_str().to_string(),
                     init: init_expr,
                 });
             }
-            swc::Pat::Array(arr) => {
+            ast::BindingPatternKind::ArrayPattern(arr) => {
                 decls.extend(lower_array_destructuring(kind, arr, init_expr, decls.len()));
             }
-            swc::Pat::Object(obj) => {
+            ast::BindingPatternKind::ObjectPattern(obj) => {
                 decls.extend(lower_object_destructuring(
                     kind,
                     obj,
@@ -50,35 +54,42 @@ pub fn lower_var_decl(var_decl: &swc::VarDecl) -> Option<Statement> {
                     decls.len(),
                 ));
             }
-            _ => continue,
+            ast::BindingPatternKind::AssignmentPattern(_) => {
+                // Fall through - not a valid pattern for variable declaration
+                continue;
+            }
         }
     }
     wrap_decls(decls)
 }
 
-fn lower_fn_decl(func_decl: &swc::FnDecl) -> Option<Statement> {
-    let name = func_decl.ident.sym.to_string();
+pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
+    let name = func_decl.id.as_ref().map(|i| i.name.as_str().to_string())?;
     let params: Vec<Param> = func_decl
-        .function
         .params
+        .items
         .iter()
-        .map(|p| lower_param_decl(&p.pat))
+        .map(lower_param_decl)
         .collect();
     let body = func_decl
-        .function
         .body
         .as_ref()
-        .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
+        .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
     Some(Statement::FunctionDeclaration { name, params, body })
 }
 
-pub fn lower_param_decl(pat: &swc::Pat) -> Param {
-    match pat {
-        swc::Pat::Ident(ident) => Param::new(ident.id.sym.as_ref()),
-        swc::Pat::Assign(assign) => {
-            let name = match assign.left.as_ref() {
-                swc::Pat::Ident(ident) => ident.id.sym.to_string(),
+pub fn lower_param_decl(param: &ast::FormalParameter) -> Param {
+    lower_binding_pattern(&param.pattern)
+}
+
+/// Lower a binding pattern to Param
+fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
+    match &binding.kind {
+        ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
+        ast::BindingPatternKind::AssignmentPattern(assign) => {
+            let name = match &assign.left.kind {
+                ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
                 _ => "arg".to_string(),
             };
             let default = lower_expr(&assign.right).ok().map(Box::new);
@@ -88,17 +99,18 @@ pub fn lower_param_decl(pat: &swc::Pat) -> Param {
     }
 }
 
-fn lower_class_decl(class_decl: &swc::ClassDecl) -> Option<Statement> {
-    let name = class_decl.ident.sym.to_string();
-    let class = lower_class(&class_decl.class)?;
+pub fn lower_class_decl(class_decl: &ast::Class) -> Option<Statement> {
+    let name = class_decl.id.as_ref().map(|i| i.name.as_str().to_string())?;
+    let class = lower_class(class_decl)?;
     Some(Statement::ClassDeclaration { name, class })
 }
 
-pub fn lower_class(class: &swc::Class) -> Option<Class> {
+pub fn lower_class(class: &ast::Class) -> Option<Class> {
     // Class name is not stored in the Class struct, only in ClassDecl
     let name: Option<String> = None;
     let super_class = class.super_class.as_ref().and_then(|e| lower_expr(e).ok());
     let body: Vec<ClassMember> = class
+        .body
         .body
         .iter()
         .filter_map(lower_class_member_stmt)
@@ -110,63 +122,68 @@ pub fn lower_class(class: &swc::Class) -> Option<Class> {
     })
 }
 
-fn lower_class_member_stmt(member: &swc::ClassMember) -> Option<ClassMember> {
-    use swc::ClassMember::*;
+fn lower_class_member_stmt(member: &ast::ClassElement) -> Option<ClassMember> {
     match member {
-        Constructor(params) => lower_constructor_stmt(params),
-        Method(method) => lower_method_stmt(method),
-        ClassProp(prop) => lower_class_prop_stmt(prop),
-        PrivateMethod(_) | PrivateProp(_) | Empty(_) | StaticBlock(_) | TsIndexSignature(_)
-        | AutoAccessor(_) => None,
+        ast::ClassElement::MethodDefinition(method) => {
+            // Check if this method is a constructor
+            if method.kind == ast::MethodDefinitionKind::Constructor {
+                lower_constructor_stmt(method)
+            } else {
+                lower_method_stmt(method)
+            }
+        }
+        ast::ClassElement::PropertyDefinition(prop) => lower_class_prop_stmt(prop),
+        _ => None,
     }
 }
 
-fn lower_constructor_stmt(params: &swc::Constructor) -> Option<ClassMember> {
-    let ps: Vec<String> = params
+fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
+    let ps: Vec<String> = method
+        .value
         .params
+        .items
         .iter()
-        .filter_map(|p| match p {
-            swc::ParamOrTsParamProp::Param(param) => match &param.pat {
-                swc::Pat::Ident(ident) => Some(ident.id.sym.to_string()),
-                _ => None,
-            },
-            swc::ParamOrTsParamProp::TsParamProp(_) => None,
+        .filter_map(|p| match &p.pattern.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            _ => None,
         })
         .collect();
-    let body = params
+    let body = method
+        .value
         .body
         .as_ref()
-        .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
+        .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
     Some(ClassMember::Constructor { params: ps, body })
 }
 
 #[allow(clippy::complexity)]
-fn lower_method_stmt(method: &swc::ClassMethod) -> Option<ClassMember> {
+fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
     let name = lower_prop_name_stmt(&method.key)?;
-    let is_static = method.is_static;
+    let is_static = method.r#static;
     let ps: Vec<String> = method
-        .function
+        .value
         .params
+        .items
         .iter()
-        .filter_map(|p| match &p.pat {
-            swc::Pat::Ident(ident) => Some(ident.id.sym.to_string()),
+        .filter_map(|p| match &p.pattern.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
             _ => None,
         })
         .collect();
     let body = method
-        .function
+        .value
         .body
         .as_ref()
-        .map(|b| b.stmts.iter().filter_map(lower_stmt).collect())
+        .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
     match method.kind {
-        swc::MethodKind::Getter => Some(ClassMember::Getter { name, body }),
-        swc::MethodKind::Setter => {
+        ast::MethodDefinitionKind::Get => Some(ClassMember::Getter { name, body }),
+        ast::MethodDefinitionKind::Set => {
             let param = ps.first().cloned().unwrap_or_default();
             Some(ClassMember::Setter { name, param, body })
         }
-        swc::MethodKind::Method => {
+        _ => {
             if is_static {
                 Some(ClassMember::StaticMethod {
                     name,
@@ -184,25 +201,31 @@ fn lower_method_stmt(method: &swc::ClassMethod) -> Option<ClassMember> {
     }
 }
 
-fn lower_class_prop_stmt(prop: &swc::ClassProp) -> Option<ClassMember> {
+fn lower_class_prop_stmt(prop: &ast::PropertyDefinition) -> Option<ClassMember> {
     let name = lower_prop_name_stmt(&prop.key)?;
     let value = match &prop.value {
         Some(expr) => lower_expr(expr).ok()?,
         None => Expression::Undefined,
     };
-    if prop.is_static {
+    if prop.r#static {
         Some(ClassMember::StaticField { name, value })
     } else {
         Some(ClassMember::Field { name, value })
     }
 }
 
-pub fn lower_prop_name_stmt(key: &swc::PropName) -> Option<PropertyKey> {
+pub fn lower_prop_name_stmt(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
-        swc::PropName::Ident(i) => Some(PropertyKey::Ident(i.sym.to_string())),
-        swc::PropName::Str(s) => Some(PropertyKey::String(wtf8_atom_to_string(&s.value))),
-        swc::PropName::Num(n) => Some(PropertyKey::Number(n.value)),
-        swc::PropName::Computed(_) => None,
-        swc::PropName::BigInt(b) => Some(PropertyKey::String(format!("{}n", b.value))),
+        ast::PropertyKey::StaticIdentifier(i) => Some(PropertyKey::Ident(i.name.as_str().to_string())),
+        ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
+        ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
+        ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
+        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(format!("{}n", b.raw))),
+        ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
+        ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
+        ast::PropertyKey::TemplateLiteral(_) => None,
+        // In OXC, computed property names are Expression variants in PropertyKey
+        // These require runtime evaluation and can't be handled as static keys
+        _ => None,
     }
 }

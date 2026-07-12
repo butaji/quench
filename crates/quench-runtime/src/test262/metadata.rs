@@ -243,4 +243,38 @@ const f = () => 1;
         let meta = Test262Metadata::parse("1 + 1;");
         assert!(meta.is_none());
     }
+
+    #[test]
+    fn parse_nostrict_flag() {
+        // flags: [noStrict] — inline flow sequence format
+        let src = r#"/*---
+description: legacy octal test
+flags: [noStrict]
+---*/
+var x = 01;
+"#;
+        let meta = Test262Metadata::parse(src).unwrap();
+        assert!(
+            meta.flags.contains(&"noStrict".to_string()),
+            "flags: {:?}",
+            meta.flags
+        );
+    }
+
+    #[test]
+    fn parse_actual_legacy_octal_test() {
+        // The actual test262 test for legacy octal integers
+        use std::path::PathBuf;
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo = manifest.parent().unwrap().parent().unwrap();
+        let path =
+            repo.join("tests/test262/test/language/literals/numeric/legacy-octal-integer.js");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let meta = Test262Metadata::parse(&source).unwrap();
+        assert!(
+            meta.flags.contains(&"noStrict".to_string()),
+            "noStrict flag missing! flags: {:?}",
+            meta.flags
+        );
+    }
 }

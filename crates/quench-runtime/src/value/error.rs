@@ -106,8 +106,8 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
         // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval
         let ctx = unsafe { &mut *p };
         let ctor = match error_type {
-            "SyntaxError" | "TypeError" | "ReferenceError" | "RangeError"
-            | "EvalError" | "URIError" | "InternalError" => ctx
+            "SyntaxError" | "TypeError" | "ReferenceError" | "RangeError" | "EvalError"
+            | "URIError" | "InternalError" => ctx
                 .get_global(error_type)
                 .or_else(|| ctx.get_global("Test262Error"))
                 .or_else(|| ctx.get_global("Error")),
@@ -121,7 +121,7 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
             let result = crate::eval::call_value_with_this(ctor_val, vec![arg], Value::Undefined);
             if let Ok(v) = result {
                 set_thrown_value(v.clone());
-                return (v, JsError(message.to_string()));
+                return (v, JsError(format!("{}: {}", error_type, message)));
             }
         }
     }
@@ -151,7 +151,7 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
         obj.set("name", Value::String(error_type.to_string()));
         let err_val = Value::Object(Rc::new(RefCell::new(obj)));
         set_thrown_value(err_val.clone());
-        return (err_val, JsError(message.to_string()));
+        return (err_val, JsError(format!("{}: {}", error_type, message)));
     }
 
     // Last resort: create minimal object without prototype chain
@@ -160,5 +160,5 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
     obj.set("name", Value::String(error_type.to_string()));
     let err = Value::Object(Rc::new(RefCell::new(obj)));
     set_thrown_value(err.clone());
-    (err, JsError(message.to_string()))
+    (err, JsError(format!("{}: {}", error_type, message)))
 }

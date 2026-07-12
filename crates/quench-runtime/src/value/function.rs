@@ -147,6 +147,10 @@ impl ValueFunction {
 
     /// Get the prototype object for this function, creating it if needed.
     pub fn get_prototype(&self) -> Rc<RefCell<Object>> {
+        // First check if prototype was explicitly set via FooObj.prototype = ...
+        if let Some(Value::Object(proto)) = self.properties.borrow().get("prototype") {
+            return Rc::clone(proto);
+        }
         if let Some(cell) = self.proto_cell.upgrade() {
             let mut cell_ref = cell.borrow_mut();
             if let Some(ref proto) = *cell_ref {
@@ -241,8 +245,8 @@ pub struct NativeFunction {
     pub func: NativeFn,
     /// Optional prototype object (for built-in constructors like Number)
     pub prototype: Option<Rc<RefCell<Object>>>,
-    /// Additional properties (for JS compatibility)
-    properties: std::cell::RefCell<std::collections::HashMap<String, Value>>,
+    /// Additional properties (for JS compatibility) - shared via Rc so clones share properties
+    properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
 }
 
 impl NativeFunction {
@@ -254,7 +258,9 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: None,
-            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -266,7 +272,9 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: Some(prototype),
-            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -319,7 +327,8 @@ impl Clone for NativeFunction {
         NativeFunction {
             func: self.func.clone(),
             prototype: self.prototype.clone(),
-            properties: std::cell::RefCell::new(self.properties.borrow().clone()),
+            // Share the properties HashMap via Rc so clones see the same properties
+            properties: std::rc::Rc::clone(&self.properties),
         }
     }
 }
