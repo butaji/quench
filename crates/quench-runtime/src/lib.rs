@@ -1,7 +1,6 @@
-//! quench-runtime - Custom JavaScript runtime for Quench
+//! quench-runtime — Rust-native JavaScript runtime targeting 100% test262 ECMAScript conformance.
 //!
-//! A minimal interpreter that supports the JS subset used by the Quench
-//! compiler and runtime.js. Uses swc for parsing.
+//! Uses swc for parsing and a custom interpreter for execution.
 //!
 //! ## Architecture
 //!
@@ -22,32 +21,23 @@
 //! assert_eq!(result, quench_runtime::Value::Number(3.0));
 //! ```
 
-pub mod arena;
 pub mod ast;
 pub mod builtins;
-pub mod callframe;
-pub mod conformance;
 pub mod context;
 pub mod env;
 pub mod eval;
-pub mod hir;
 pub mod host;
 pub mod interner;
 pub mod interpreter;
 pub mod lower;
-pub mod lower_hir;
-pub mod nanbox;
-pub mod shadow;
-pub mod shape;
-pub mod stack_machine;
 pub mod swc_parse;
 pub mod test262;
 pub mod value;
 
 // Re-export commonly used types from the context module
-pub use context::Context;
-pub use value::{Value, JsError};
 pub use ast::Program;
-pub use host::{HostFunctions, register_native};
-pub use value::{Object, ObjectKind, ValueFunction, NativeFunction};
+pub use context::Context;
 pub use env::Environment;
+pub use host::{register_native, HostFunctions};
+pub use value::{JsError, Value};
+pub use value::{NativeFunction, Object, ObjectKind, ValueFunction};

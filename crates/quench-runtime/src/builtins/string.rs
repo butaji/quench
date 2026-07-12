@@ -22,29 +22,37 @@ pub fn get_string_prototype() -> Option<Rc<RefCell<Object>>> {
 
 /// Register String.fromCharCode and String.fromCodePoint methods
 fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
-    string_obj.borrow_mut().set("fromCharCode", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let chars: String = args.iter()
-            .map(|v| {
-                let code = to_number(v) as u16;
-                std::char::from_u32(code as u32).unwrap_or('\u{FFFD}')
-            })
-            .collect();
-        Ok(Value::String(chars))
-    }))));
+    string_obj.borrow_mut().set(
+        "fromCharCode",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let chars: String = args
+                .iter()
+                .map(|v| {
+                    let code = to_number(v) as u16;
+                    std::char::from_u32(code as u32).unwrap_or('\u{FFFD}')
+                })
+                .collect();
+            Ok(Value::String(chars))
+        }))),
+    );
 
-    string_obj.borrow_mut().set("fromCodePoint", Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let chars: String = args.iter()
-            .map(|v| {
-                let code = to_number(v) as u32;
-                std::char::from_u32(code).unwrap_or('\u{FFFD}')
-            })
-            .collect();
-        Ok(Value::String(chars))
-    }))));
+    string_obj.borrow_mut().set(
+        "fromCodePoint",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let chars: String = args
+                .iter()
+                .map(|v| {
+                    let code = to_number(v) as u32;
+                    std::char::from_u32(code).unwrap_or('\u{FFFD}')
+                })
+                .collect();
+            Ok(Value::String(chars))
+        }))),
+    );
 }
 
 /// Register the String object and String.prototype
-pub fn register_string(ctx: &mut Context) {
+pub fn register_string(_ctx: &mut Context) {
     let string_obj = Object::new(ObjectKind::Ordinary);
     let string_obj = Rc::new(RefCell::new(string_obj));
 
@@ -55,11 +63,14 @@ pub fn register_string(ctx: &mut Context) {
     let string_proto_rc = Rc::new(RefCell::new(string_proto));
 
     install_string_methods(&string_proto_rc);
-    string_obj.borrow_mut().set("prototype", Value::Object(Rc::clone(&string_proto_rc)));
+    string_obj
+        .borrow_mut()
+        .set("prototype", Value::Object(Rc::clone(&string_proto_rc)));
 
     STRING_PROTOTYPE.with(|sp| {
         *sp.borrow_mut() = Some(Rc::clone(&string_proto_rc));
     });
 
-    ctx.set_global("String".to_string(), Value::Object(string_obj));
+    // Note: String global is registered by date::register_type_converters
+    // with proper constructor behavior for new String()
 }

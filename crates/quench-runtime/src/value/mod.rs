@@ -13,11 +13,15 @@ pub mod kind;
 pub mod object;
 mod val;
 
-pub use convert::{to_js_string, to_bool, to_number, strict_eq, loose_eq, to_primitive, PrimitiveHint, same_value};
-pub use error::{
-    JsError, set_thrown_value, take_thrown_value,
+pub use convert::{
+    loose_eq, same_value, strict_eq, to_bool, to_js_string, to_number, to_object, to_primitive,
+    to_uint32, PrimitiveHint,
 };
-pub use function::{NativeFunction, NativeConstructor, ValueFunction};
+pub use error::{
+    create_js_error, get_thrown_value, register_error_constructor, set_thrown_value,
+    take_thrown_value, JsError,
+};
+pub use function::{NativeConstructor, NativeFunction, ValueFunction};
 pub use kind::ObjectKind;
 pub use object::{Getter, GetterStorage, Object, PropertyFlags, Setter, SetterStorage};
 pub use val::{ClassValue, Value};

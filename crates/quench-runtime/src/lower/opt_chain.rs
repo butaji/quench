@@ -2,34 +2,38 @@
 //!
 //! Converts swc optional chain expressions to conditional expressions.
 
-use swc_ecma_ast as swc;
-use crate::ast::{BinaryOp, Expression};
-use super::helpers::{atom_to_string, LowerError};
 use super::expr::{lower_expr, lower_member_prop};
+use super::helpers::{atom_to_string, LowerError};
+use crate::ast::{BinaryOp, Expression};
+use swc_ecma_ast as swc;
 
 /// Lower optional chaining expression
 pub fn lower_opt_chain(opt_chain: &swc::OptChainExpr) -> Result<Expression, LowerError> {
     let base_expr = match &*opt_chain.base {
         swc::OptChainBase::Member(member) => lower_expr(&member.obj)?,
-        swc::OptChainBase::Call(opt_call) => {
-            match &*opt_call.callee {
-                swc::Expr::Member(member) => lower_expr(&member.obj)?,
-                swc::Expr::Ident(ident) => Expression::Identifier(atom_to_string(&ident.sym)),
-                _ => return Err(LowerError::new("Unsupported optional call base")),
-            }
-        }
+        swc::OptChainBase::Call(opt_call) => match &*opt_call.callee {
+            swc::Expr::Member(member) => lower_expr(&member.obj)?,
+            swc::Expr::Ident(ident) => Expression::Identifier(atom_to_string(&ident.sym)),
+            _ => return Err(LowerError::new("Unsupported optional call base")),
+        },
     };
     process_opt_chain_expr(opt_chain, base_expr)
 }
 
-fn process_opt_chain_expr(expr: &swc::OptChainExpr, base_expr: Expression) -> Result<Expression, LowerError> {
+fn process_opt_chain_expr(
+    expr: &swc::OptChainExpr,
+    base_expr: Expression,
+) -> Result<Expression, LowerError> {
     match &*expr.base {
         swc::OptChainBase::Member(member) => process_opt_chain_member(member, base_expr),
         swc::OptChainBase::Call(opt_call) => process_opt_chain_call(opt_call, base_expr),
     }
 }
 
-fn process_opt_chain_member(member: &swc::MemberExpr, base_expr: Expression) -> Result<Expression, LowerError> {
+fn process_opt_chain_member(
+    member: &swc::MemberExpr,
+    base_expr: Expression,
+) -> Result<Expression, LowerError> {
     let (property, computed) = lower_member_prop(&member.prop)?;
     let member_expr = Expression::Member {
         object: Box::new(base_expr.clone()),
@@ -39,18 +43,27 @@ fn process_opt_chain_member(member: &swc::MemberExpr, base_expr: Expression) -> 
     make_optional_check(base_expr, member_expr)
 }
 
-fn process_opt_chain_call(opt_call: &swc::OptCall, base_expr: Expression) -> Result<Expression, LowerError> {
+fn process_opt_chain_call(
+    opt_call: &swc::OptCall,
+    base_expr: Expression,
+) -> Result<Expression, LowerError> {
     match &*opt_call.callee {
         swc::Expr::OptChain(nested) => {
             let inner = process_opt_chain_expr(nested, base_expr)?;
             let args = lower_call_args(opt_call);
-            Ok(Expression::Call { callee: Box::new(inner), arguments: args })
+            Ok(Expression::Call {
+                callee: Box::new(inner),
+                arguments: args,
+            })
         }
         swc::Expr::Member(member) => process_opt_chain_member_call(member, opt_call, base_expr),
         swc::Expr::Ident(ident) => {
             let args = lower_call_args(opt_call);
             let callee = Expression::Identifier(atom_to_string(&ident.sym));
-            let call_expr = Expression::Call { callee: Box::new(callee), arguments: args };
+            let call_expr = Expression::Call {
+                callee: Box::new(callee),
+                arguments: args,
+            };
             make_optional_check(base_expr, call_expr)
         }
         _ => Err(LowerError::new("Unsupported optional call callee")),
@@ -73,12 +86,19 @@ fn process_opt_chain_member_call(
         },
     )?;
     let args = lower_call_args(opt_call);
-    let call_expr = Expression::Call { callee: Box::new(inner_checked), arguments: args };
+    let call_expr = Expression::Call {
+        callee: Box::new(inner_checked),
+        arguments: args,
+    };
     make_optional_check(base_expr, call_expr)
 }
 
 fn lower_call_args(opt_call: &swc::OptCall) -> Vec<Expression> {
-    opt_call.args.iter().filter_map(|arg| lower_expr(&arg.expr).ok()).collect()
+    opt_call
+        .args
+        .iter()
+        .filter_map(|arg| lower_expr(&arg.expr).ok())
+        .collect()
 }
 
 fn make_optional_check(obj: Expression, expr: Expression) -> Result<Expression, LowerError> {

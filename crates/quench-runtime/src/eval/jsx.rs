@@ -3,7 +3,7 @@
 //! This module handles evaluation of JSX elements and fragments,
 //! converting them into calls to the virtual DOM library (ink).
 
-use crate::ast::{JsxAttrValue, JsxChild, JsxProp, JsxTagName, Expression};
+use crate::ast::{Expression, JsxAttrValue, JsxChild, JsxProp, JsxTagName};
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::value::{JsError, Value};
@@ -43,7 +43,7 @@ pub fn eval_jsx_element(
         arguments: args,
     };
 
-    eval_expression(&call_expr, env)
+    eval_expression(&call_expr, env, false)
 }
 
 /// Evaluate a JSX fragment expression
@@ -77,7 +77,7 @@ pub fn eval_jsx_fragment(
         arguments: call_args,
     };
 
-    eval_expression(&call_expr, env)
+    eval_expression(&call_expr, env, false)
 }
 
 /// Build props object entries from JSX props

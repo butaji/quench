@@ -1,34 +1,90 @@
 //! Value conversion utilities - to_js_string, to_bool, to_number, etc.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::eval::call_value_with_this;
 use crate::value::Value;
 
 /// Convert a Value to its JavaScript string representation
 pub fn to_js_string(v: &Value) -> String {
+    if let Some(s) = simple_string_value(v) {
+        return s;
+    }
     match v {
-        Value::Undefined => "undefined".to_string(),
-        Value::Null => "null".to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Number(n) => number_to_string(*n),
-        Value::String(s) => s.clone(),
         Value::Object(o) => {
-            let o = o.borrow();
-            match o.kind {
-                crate::value::kind::ObjectKind::Array => {
-                    let parts: Vec<String> = o.elements.iter().map(to_js_string).collect();
-                    format!("[{}]", parts.join(","))
+            let obj = o.borrow();
+            // Try calling toString if it's a function (handles Error objects)
+            if let Some(
+                Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_),
+            ) = obj.get("toString")
+            {
+                let o_clone = Rc::clone(o);
+                drop(obj);
+                let to_string_val = o_clone.borrow().get("toString").unwrap();
+                if let Ok(result) =
+                    call_value_with_this(to_string_val, vec![], Value::Object(Rc::clone(&o_clone)))
+                {
+                    if let Some(s) = simple_string_value(&result) {
+                        return s;
+                    }
                 }
-                crate::value::kind::ObjectKind::Function => "[Function]".to_string(),
-                _ => "[object Object]".to_string(),
+                let fallback = o_clone
+                    .borrow()
+                    .get("message")
+                    .and_then(|v| simple_string_value(&v))
+                    .unwrap_or_else(|| "[object Object]".to_string());
+                return fallback;
+            }
+            object_to_js_string(&obj)
+        }
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => "[Function]".to_string(),
+        Value::Symbol(s) => format!("Symbol({})", crate::builtins::symbol::symbol_description(s)),
+        _ => "undefined".to_string(),
+    }
+}
+
+fn simple_string_value(v: &Value) -> Option<String> {
+    match v {
+        Value::Undefined => Some("undefined".to_string()),
+        Value::Null => Some("null".to_string()),
+        Value::Boolean(b) => Some(b.to_string()),
+        Value::Number(n) => Some(number_to_string(*n)),
+        Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn object_to_js_string(o: &crate::value::object::Object) -> String {
+    match o.kind {
+        crate::value::kind::ObjectKind::Array => {
+            let parts: Vec<String> = o.elements.iter().map(to_js_string).collect();
+            format!("[{}]", parts.join(","))
+        }
+        crate::value::kind::ObjectKind::Function => "[Function]".to_string(),
+        _ => {
+            // Try to format as an Error: "ErrorName: message"
+            let name = o
+                .get("name")
+                .and_then(|v| simple_string_value(&v))
+                .unwrap_or_default();
+            let msg = o
+                .get("message")
+                .and_then(|v| simple_string_value(&v))
+                .unwrap_or_default();
+            if name.is_empty() && msg.is_empty() {
+                "[object Object]".to_string()
+            } else if name.is_empty() {
+                msg
+            } else if msg.is_empty() {
+                name
+            } else {
+                format!("{}: {}", name, msg)
             }
         }
-        Value::ObjectId(_) => "[object Object]".to_string(),
-        Value::Function(_) => "[Function]".to_string(),
-        Value::NativeFunction(_) => "[Function]".to_string(),
-        Value::NativeConstructor(_) => "[Function]".to_string(),
-        Value::Symbol(s) => format!("Symbol({})", s),
-        Value::Class(_) => "[Function]".to_string(),
     }
 }
 
@@ -53,21 +109,41 @@ pub fn to_bool(v: &Value) -> bool {
         Value::Boolean(b) => *b,
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
-        Value::Object(_) | Value::ObjectId(_) | Value::Function(_) |
-        Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => true,
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => true,
         Value::Symbol(_) => false,
     }
 }
 
 /// Convert a Value to a number (JavaScript coercion)
 pub fn to_number(v: &Value) -> f64 {
+    if let Some(n) = simple_number_value(v) {
+        return n;
+    }
+    to_number_complex(v)
+}
+
+fn simple_number_value(v: &Value) -> Option<f64> {
     match v {
-        Value::Undefined => f64::NAN,
-        Value::Null => 0.0,
-        Value::Boolean(true) => 1.0,
-        Value::Boolean(false) => 0.0,
-        Value::Number(n) => *n,
-        Value::String(s) => string_to_number(s),
+        Value::Undefined => Some(f64::NAN),
+        Value::Null => Some(0.0),
+        Value::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+        Value::Number(n) => Some(*n),
+        Value::String(s) => Some(string_to_number(s)),
+        _ => None,
+    }
+}
+
+fn to_number_complex(v: &Value) -> f64 {
+    match v {
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => to_number(&to_primitive(v, Some("number"))),
         _ => f64::NAN,
     }
 }
@@ -89,23 +165,70 @@ fn string_to_number(s: &str) -> f64 {
     s.parse().unwrap_or(f64::NAN)
 }
 
+/// Convert a number to uint32 (JavaScript ToUint32)
+/// Handles edge cases: NaN→0, Infinity→0, fractional→truncated
+pub fn to_uint32(n: f64) -> u32 {
+    if !n.is_finite() || n.abs() < 1.0 {
+        return 0;
+    }
+    // Use modulo 2^32 to get uint32 range
+    let n_mod = n % (u32::MAX as f64 + 1.0);
+    if n_mod < 0.0 {
+        (n_mod + u32::MAX as f64 + 1.0) as u32
+    } else {
+        n_mod as u32
+    }
+}
+
 /// Strict equality comparison
 pub fn strict_eq(a: &Value, b: &Value) -> bool {
+    if std::mem::discriminant(a) == std::mem::discriminant(b) {
+        return strict_eq_same_type(a, b);
+    }
+    if null_undefined_strict_eq(a, b) {
+        return true;
+    }
+    false
+}
+
+fn null_undefined_strict_eq(a: &Value, b: &Value) -> bool {
+    matches!(
+        (a, b),
+        (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null)
+    )
+}
+
+fn strict_eq_same_type(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Undefined, Value::Undefined) => true,
-        (Value::Null, Value::Null) => true,
+        (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
         (Value::Number(ai), Value::Number(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
+        // Symbol payloads embed a unique id (`desc\0id`), so string
+        // comparison is identity comparison.
+        (Value::Symbol(ai), Value::Symbol(bi)) => ai == bi,
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
-        (Value::ObjectId(ai), Value::ObjectId(bi)) => ai == bi,
-        (Value::Function(ai), Value::Function(bi)) => Rc::ptr_eq(&ai.closure, &bi.closure),
-        (Value::NativeFunction(ai), Value::NativeFunction(bi)) => {
-            Rc::ptr_eq(&ai.func, &bi.func)
-        }
+        (Value::Function(_), Value::Function(_))
+        | (Value::NativeFunction(_), Value::NativeFunction(_))
+        | (Value::NativeConstructor(_), Value::NativeConstructor(_))
+        | (Value::Class(_), Value::Class(_)) => strict_eq_funcs(a, b),
+        _ => false,
+    }
+}
+
+fn strict_eq_funcs(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        // Function identity: each declaration gets its own proto cell at
+        // construction; clones share it. (Comparing closure environments
+        // would make distinct functions in the same scope compare equal.)
+        (Value::Function(ai), Value::Function(bi)) => ai.identity_ptr() == bi.identity_ptr(),
+        (Value::NativeFunction(ai), Value::NativeFunction(bi)) => Rc::ptr_eq(&ai.func, &bi.func),
         (Value::NativeConstructor(ai), Value::NativeConstructor(bi)) => {
             Rc::ptr_eq(ai.func_rc(), bi.func_rc())
         }
+        // Class identity: ClassValue::id is assigned at construction and
+        // preserved across the deep-copying Value::clone.
+        (Value::Class(ai), Value::Class(bi)) => ai.id == bi.id,
         _ => false,
     }
 }
@@ -115,44 +238,47 @@ pub fn strict_eq(a: &Value, b: &Value) -> bool {
 /// Implements ECMAScript SameValue algorithm:
 /// - Same as === except NaN equals NaN and +0 != -0
 pub fn same_value(a: &Value, b: &Value) -> bool {
+    // SameValue does NOT equate null and undefined (unlike strict equality).
+    // Only same-type values can be same value.
+    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+        return false;
+    }
+    same_value_same_type(a, b)
+}
+
+#[allow(clippy::complexity)]
+fn same_value_same_type(a: &Value, b: &Value) -> bool {
+    // Fast path for primitives that need special handling
     match (a, b) {
-        (Value::Undefined, Value::Undefined) => true,
-        (Value::Null, Value::Null) => true,
+        (Value::Number(ai), Value::Number(bi)) => return same_value_numbers(*ai, *bi),
+        (Value::Function(_), Value::Function(_))
+        | (Value::NativeFunction(_), Value::NativeFunction(_))
+        | (Value::NativeConstructor(_), Value::NativeConstructor(_))
+        | (Value::Class(_), Value::Class(_)) => return strict_eq_funcs(a, b),
+        _ => {}
+    }
+    // Simple equality for rest
+    match (a, b) {
+        (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
-        (Value::Number(ai), Value::Number(bi)) => {
-            // Handle NaN: NaN != NaN in regular comparison, but SameValue says NaN equals NaN
-            if ai.is_nan() && bi.is_nan() {
-                return true;
-            }
-            // If both are equal in regular comparison
-            if ai == bi {
-                // Handle +0 vs -0: they're equal in === but NOT in SameValue
-                if *ai == 0.0 {
-                    // Check sign: 1/+0 = +Infinity, 1/-0 = -Infinity
-                    let a_sign = (1.0f64 / ai).is_sign_positive();
-                    let b_sign = (1.0f64 / bi).is_sign_positive();
-                    return a_sign == b_sign;
-                }
-                // For non-zero numbers, regular equality works
-                return true;
-            }
-            // Numbers are different (not equal)
-            false
-        }
         (Value::String(ai), Value::String(bi)) => ai == bi,
-        (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
-        (Value::ObjectId(ai), Value::ObjectId(bi)) => ai == bi,
-        (Value::Function(ai), Value::Function(bi)) => Rc::ptr_eq(&ai.closure, &bi.closure),
-        (Value::NativeFunction(ai), Value::NativeFunction(bi)) => {
-            Rc::ptr_eq(&ai.func, &bi.func)
-        }
-        (Value::NativeConstructor(ai), Value::NativeConstructor(bi)) => {
-            Rc::ptr_eq(ai.func_rc(), bi.func_rc())
-        }
         (Value::Symbol(ai), Value::Symbol(bi)) => ai == bi,
-        (Value::Class(_), Value::Class(_)) => false,
+        (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
         _ => false,
     }
+}
+
+fn same_value_numbers(a: f64, b: f64) -> bool {
+    if a.is_nan() && b.is_nan() {
+        return true;
+    }
+    if a == b {
+        if a == 0.0 {
+            return (1.0f64 / a).is_sign_positive() == (1.0f64 / b).is_sign_positive();
+        }
+        return true;
+    }
+    false
 }
 
 /// Loose equality comparison (==)
@@ -171,50 +297,37 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
     if let Some(result) = boolean_coercion_eq(a, b) {
         return result;
     }
-    if objectid_primitive_eq(a, b) {
-        return false;
-    }
     object_vs_primitive_eq(a, b)
 }
 
 fn null_undefined_eq(a: &Value, b: &Value) -> bool {
-    matches!((a, b), (Value::Undefined, Value::Null) | (Value::Null, Value::Undefined))
+    matches!(
+        (a, b),
+        (Value::Undefined, Value::Null) | (Value::Null, Value::Undefined)
+    )
 }
 
 fn number_string_eq(a: &Value, b: &Value) -> Option<bool> {
     match (a, b) {
-        (Value::Number(n), Value::String(s)) => {
-            Some(parse_number_string(s) == Some(*n))
-        }
-        (Value::String(s), Value::Number(n)) => {
-            Some(parse_number_string(s) == Some(*n))
-        }
+        (Value::Number(n), Value::String(s)) => Some(parse_number_string(s) == Some(*n)),
+        (Value::String(s), Value::Number(n)) => Some(parse_number_string(s) == Some(*n)),
         _ => None,
     }
 }
 
 fn boolean_coercion_eq(a: &Value, b: &Value) -> Option<bool> {
     match (a, b) {
-        (Value::Boolean(bv), other) => {
-            Some(loose_eq(&Value::Number(bool_to_num(*bv)), other))
-        }
-        (other, Value::Boolean(bv)) => {
-            Some(loose_eq(other, &Value::Number(bool_to_num(*bv))))
-        }
+        (Value::Boolean(bv), other) => Some(loose_eq(&Value::Number(bool_to_num(*bv)), other)),
+        (other, Value::Boolean(bv)) => Some(loose_eq(other, &Value::Number(bool_to_num(*bv)))),
         _ => None,
     }
 }
 
 fn bool_to_num(b: bool) -> f64 {
-    if b { 1.0 } else { 0.0 }
-}
-
-fn objectid_primitive_eq(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::ObjectId(_), other) | (other, Value::ObjectId(_)) => {
-            !matches!(other, Value::ObjectId(_) | Value::Object(_))
-        }
-        _ => false,
+    if b {
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -242,36 +355,58 @@ fn parse_number_string(s: &str) -> Option<f64> {
 }
 
 fn to_primitive_for_compare(v: &Value) -> Value {
-    match v {
-        Value::Undefined => Value::Undefined,
-        Value::Null => Value::Null,
-        Value::Boolean(b) => Value::Boolean(*b),
-        Value::Number(n) => Value::Number(*n),
-        Value::String(s) => Value::String(s.clone()),
-        Value::Symbol(s) => Value::Symbol(s.clone()),
-        Value::ObjectId(_) => Value::String("[object Object]".to_string()),
-        Value::Object(obj) => {
-            if let Some(Value::NativeFunction(nf)) = obj.borrow().get("valueOf").filter(|m| matches!(m, Value::NativeFunction(_))) {
-                if let Ok(result) = nf.call(vec![]) {
-                    if !matches!(result, Value::Object(_)) {
-                        return result;
-                    }
-                }
-            }
-            if let Some(Value::NativeFunction(nf)) = obj.borrow().get("toString").filter(|m| matches!(m, Value::NativeFunction(_))) {
-                if let Ok(result) = nf.call(vec![]) {
-                    if !matches!(result, Value::Object(_)) {
-                        return result;
-                    }
-                }
-            }
-            Value::String("[object Object]".to_string())
-        }
-        Value::Function(_) => Value::String("[object Function]".to_string()),
-        Value::NativeFunction(_) => Value::String("[object Function]".to_string()),
-        Value::NativeConstructor(_) => Value::String("[object Function]".to_string()),
-        Value::Class(_) => Value::String("[object Function]".to_string()),
+    if let Some(prim) = primitive_for_compare(v) {
+        return prim;
     }
+    match v {
+        Value::Object(obj) => object_to_primitive_for_compare(obj),
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => Value::String("[object Function]".to_string()),
+        _ => Value::Undefined,
+    }
+}
+
+fn primitive_for_compare(v: &Value) -> Option<Value> {
+    match v {
+        Value::Undefined => Some(Value::Undefined),
+        Value::Null => Some(Value::Null),
+        Value::Boolean(b) => Some(Value::Boolean(*b)),
+        Value::Number(n) => Some(Value::Number(*n)),
+        Value::String(s) => Some(Value::String(s.clone())),
+        Value::Symbol(s) => Some(Value::Symbol(s.clone())),
+        _ => None,
+    }
+}
+
+fn object_to_primitive_for_compare(obj: &Rc<std::cell::RefCell<crate::value::Object>>) -> Value {
+    let obj_borrowed = obj.borrow();
+    if let Some(Value::NativeFunction(nf)) = obj_borrowed
+        .get("valueOf")
+        .filter(|m| matches!(m, Value::NativeFunction(_)))
+    {
+        let this_val = Value::Object(Rc::clone(obj));
+        if let Ok(result) = nf.call(this_val, vec![]) {
+            if !matches!(result, Value::Object(_)) {
+                return result;
+            }
+        }
+    }
+    drop(obj_borrowed);
+    let obj_borrowed = obj.borrow();
+    if let Some(Value::NativeFunction(nf)) = obj_borrowed
+        .get("toString")
+        .filter(|m| matches!(m, Value::NativeFunction(_)))
+    {
+        let this_val = Value::Object(Rc::clone(obj));
+        if let Ok(result) = nf.call(this_val, vec![]) {
+            if !matches!(result, Value::Object(_)) {
+                return result;
+            }
+        }
+    }
+    Value::String("[object Object]".to_string())
 }
 
 /// Hint for ToPrimitive conversion
@@ -283,28 +418,43 @@ pub enum PrimitiveHint {
 
 /// Convert a Value to a primitive using JavaScript's ToPrimitive abstract operation.
 pub fn to_primitive(value: &Value, hint: Option<&str>) -> Value {
+    if let Some(prim) = primitive_direct(value) {
+        return prim;
+    }
     match value {
-        Value::Undefined => Value::Undefined,
-        Value::Null => Value::Null,
-        Value::Boolean(b) => Value::Boolean(*b),
-        Value::Number(n) => Value::Number(*n),
-        Value::String(s) => Value::String(s.clone()),
-        Value::Symbol(s) => Value::Symbol(s.clone()),
-        Value::Object(obj) => to_primitive_object(&obj.borrow(), hint),
-        Value::ObjectId(_) => Value::String("[object Object]".to_string()),
-        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => {
-            Value::String("[Function]".to_string())
-        }
+        Value::Object(obj) => to_primitive_object(obj, hint),
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => Value::String("[Function]".to_string()),
+        _ => Value::Undefined,
     }
 }
 
-fn to_primitive_object(obj: &crate::value::object::Object, hint: Option<&str>) -> Value {
-    let hint = match hint {
-        Some("string") => PrimitiveHint::String,
-        Some("number") | None => PrimitiveHint::Number,
-        _ => PrimitiveHint::Number,
-    };
+fn primitive_direct(v: &Value) -> Option<Value> {
+    match v {
+        Value::Undefined => Some(Value::Undefined),
+        Value::Null => Some(Value::Null),
+        Value::Boolean(b) => Some(Value::Boolean(*b)),
+        Value::Number(n) => Some(Value::Number(*n)),
+        Value::String(s) => Some(Value::String(s.clone())),
+        Value::Symbol(s) => Some(Value::Symbol(s.clone())),
+        _ => None,
+    }
+}
 
+fn to_primitive_object(
+    obj: &Rc<RefCell<crate::value::object::Object>>,
+    hint: Option<&str>,
+) -> Value {
+    let hint = resolve_hint(hint);
+
+    // Check Symbol.toPrimitive first
+    if let Some(result) = try_to_primitive_symbol(obj, hint) {
+        return result;
+    }
+
+    // Try valueOf then toString (or vice versa for string hint)
     let (first, second) = match hint {
         PrimitiveHint::Number => ("valueOf", "toString"),
         PrimitiveHint::String => ("toString", "valueOf"),
@@ -324,14 +474,154 @@ fn to_primitive_object(obj: &crate::value::object::Object, hint: Option<&str>) -
     ))))
 }
 
-fn try_method(obj: &crate::value::object::Object, method_name: &str) -> Option<Value> {
-    let method = obj.get(method_name)?;
+fn resolve_hint(hint: Option<&str>) -> PrimitiveHint {
+    match hint {
+        Some("string") => PrimitiveHint::String,
+        _ => PrimitiveHint::Number,
+    }
+}
+
+fn try_to_primitive_symbol(
+    obj: &Rc<RefCell<crate::value::object::Object>>,
+    hint: PrimitiveHint,
+) -> Option<Value> {
+    let to_prim_symbol = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive")?;
+    // Pass the existing object through instead of cloning it: cloning would
+    // break receiver identity (and cost a full object copy per call).
+    let to_prim_method = crate::builtins::symbol::get_symbol_property(
+        &Value::Object(Rc::clone(obj)),
+        &to_prim_symbol,
+    )?;
+    let hint_str = match hint {
+        PrimitiveHint::Number => "number",
+        PrimitiveHint::String => "string",
+    };
+    let arg = Value::String(hint_str.to_string());
+    let this_val = Value::Object(Rc::clone(obj));
+    let result =
+        crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val).ok()?;
+    if !matches!(result, Value::Object(_)) {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+fn try_method(obj: &Rc<RefCell<crate::value::object::Object>>, method_name: &str) -> Option<Value> {
+    let method = obj.borrow().get(method_name)?;
     if let Value::NativeFunction(nf) = &method {
-        if let Ok(result) = nf.call(vec![]) {
+        let this_val = Value::Object(Rc::clone(obj));
+        if let Ok(result) = nf.call(this_val, vec![]) {
             if !matches!(result, Value::Object(_)) {
                 return Some(result);
             }
         }
     }
     None
+}
+
+/// ToObject per ECMAScript spec - converts primitives to boxed objects
+pub fn to_object(value: &Value) -> Value {
+    match value {
+        Value::Undefined | Value::Null => Value::Object(Rc::new(RefCell::new(
+            crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
+        ))),
+        Value::Boolean(_b) => {
+            let mut obj =
+                crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            obj.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+            Value::Object(Rc::new(RefCell::new(obj)))
+        }
+        Value::Number(_n) => {
+            let mut obj =
+                crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            obj.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+            Value::Object(Rc::new(RefCell::new(obj)))
+        }
+        Value::String(s) => {
+            let mut obj =
+                crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            obj.exotic_kind = Some(crate::value::kind::ExoticKind::String);
+            obj.properties
+                .insert("0".to_string(), Value::String(s.clone()));
+            obj.elements = vec![Value::String(s.clone())];
+            obj.properties
+                .insert("length".to_string(), Value::Number(s.len() as f64));
+            Value::Object(Rc::new(RefCell::new(obj)))
+        }
+        Value::Object(_) => value.clone(),
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => value.clone(),
+        Value::Symbol(_s) => {
+            let obj = crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            Value::Object(Rc::new(RefCell::new(obj)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_same_value_nan() {
+        let nan = Value::Number(f64::NAN);
+        assert!(same_value(&nan, &nan), "SameValue(NaN, NaN) must be true");
+        assert!(
+            !same_value(&nan, &Value::Number(0.0)),
+            "SameValue(NaN, 0) must be false"
+        );
+    }
+
+    #[test]
+    fn test_same_value_zero_sign() {
+        let pos_zero = Value::Number(0.0);
+        let neg_zero = Value::Number(-0.0);
+        assert!(
+            !same_value(&pos_zero, &neg_zero),
+            "SameValue(+0, -0) must be false"
+        );
+        assert!(
+            !same_value(&neg_zero, &pos_zero),
+            "SameValue(-0, +0) must be false"
+        );
+    }
+
+    #[test]
+    fn test_to_uint32() {
+        assert_eq!(to_uint32(-1.0), 4294967295);
+        assert_eq!(to_uint32(0.0), 0);
+        assert_eq!(to_uint32(0.5), 0);
+        assert_eq!(to_uint32(1.0), 1);
+        assert_eq!(to_uint32(4294967295.0), 4294967295);
+        assert_eq!(to_uint32(4294967296.0), 0);
+        assert_eq!(to_uint32(f64::NAN), 0);
+        assert_eq!(to_uint32(f64::INFINITY), 0);
+    }
+
+    fn eval_bool(src: &str) -> bool {
+        let mut ctx = crate::Context::new().unwrap();
+        match ctx.eval(src).unwrap() {
+            Value::Boolean(b) => b,
+            other => panic!("expected boolean from {:?}, got {:?}", src, other),
+        }
+    }
+
+    #[test]
+    fn test_function_identity() {
+        // Distinct functions declared in the same scope must not compare ===
+        assert!(!eval_bool("function f(){}; function g(){}; f === g"));
+        assert!(eval_bool("function f(){}; function g(){}; f !== g"));
+        assert!(eval_bool("function f(){}; f === f"));
+        // Constructor property must still point back at the same function
+        assert!(eval_bool("function f(){}; f.prototype.constructor === f"));
+    }
+
+    #[test]
+    fn test_class_identity() {
+        assert!(eval_bool("class C {}; C === C"));
+        assert!(eval_bool("class C {}; class D {}; C !== D"));
+    }
 }
