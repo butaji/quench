@@ -125,7 +125,12 @@ fn assign_to_identifier(
             );
             return Err(js_err);
         }
-        env.borrow_mut().define(name.to_string(), value.clone());
+        // Sloppy mode: create a globalThis property so `delete x` returns true.
+        if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
+            global_obj.borrow_mut().set(name, value.clone());
+        } else {
+            env.borrow_mut().define(name.to_string(), value.clone());
+        }
     }
     Ok(())
 }
@@ -488,5 +493,87 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval("undeclared = 5;");
         assert!(res.is_ok(), "sloppy assignment to undeclared should not throw");
+    }
+
+    #[test]
+    fn sloppy_assign_to_undeclared_creates_global() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("undeclared_var = 42;").unwrap();
+        let v = ctx.eval("typeof undeclared_var").unwrap();
+        assert_eq!(v, crate::value::Value::String("number".to_string()));
+    }
+
+    #[test]
+    fn sloppy_delete_global_property_succeeds() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("__ref = {};").unwrap();
+        let deleted = ctx.eval("delete __ref;").unwrap();
+        assert_eq!(deleted, crate::value::Value::Boolean(true));
+        let after = ctx.eval("typeof __ref").unwrap();
+        assert_eq!(after, crate::value::Value::String("undefined".to_string()));
+    }
+
+    #[test]
+    fn debug_assign_to_global() {
+        let mut ctx = Context::new().unwrap();
+        let has = ctx.eval("typeof globalThis").unwrap();
+        assert_eq!(has, crate::value::Value::String("object".to_string()));
+        ctx.eval("undeclared_var = 42;").unwrap();
+        let v = ctx.eval("globalThis.undeclared_var").unwrap();
+        assert_eq!(v, crate::value::Value::Number(42.0));
+    }
+
+    #[test]
+    fn debug_typeof_undeclared() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("undeclared_var = 42;").unwrap();
+        // Direct globalThis lookup works
+        let via_gt = ctx.eval("globalThis.undeclared_var").unwrap();
+        assert_eq!(via_gt, crate::value::Value::Number(42.0));
+        // typeof via identifier should also work (env fallback)
+        let typeof_v = ctx.eval("typeof undeclared_var").unwrap();
+        assert_eq!(typeof_v, crate::value::Value::String("number".to_string()));
+    }
+
+    #[test]
+    fn debug_known_global() {
+        // Math is a builtin registered at init. typeof should return "object".
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("typeof Math").unwrap();
+        assert_eq!(v, crate::value::Value::String("object".to_string()));
+    }
+
+    #[test]
+    fn debug_set_global_directly() {
+        // Bypass assign_to_identifier: store on globalThis directly via JS.
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("globalThis.test_var = 99;").unwrap();
+        let v = ctx.eval("typeof test_var").unwrap();
+        assert_eq!(v, crate::value::Value::String("number".to_string()));
+    }
+
+    #[test]
+    fn debug_just_undeclared() {
+        // Single eval: assign then read.
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("foo = 1; var x = foo;").unwrap();
+        let v = ctx.eval("x").unwrap();
+        assert_eq!(v, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn debug_across_evals() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("foo = 1;").unwrap();
+        let v = ctx.eval("foo").unwrap();
+        assert_eq!(v, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn debug_typeof_across_evals() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("foo = 1;").unwrap();
+        let v = ctx.eval("typeof foo").unwrap();
+        assert_eq!(v, crate::value::Value::String("number".to_string()));
     }
 }

@@ -285,14 +285,23 @@ fn eval_delete(
                     name
                 )));
             }
-            // Sloppy mode: delete of a var/let/const binding returns false
-            // (you can only delete properties from objects).
-            if env.borrow().has(name) {
-                Ok(Value::Boolean(false))
-            } else {
-                // Resolving a non-existent identifier to delete it succeeds.
-                Ok(Value::Boolean(true))
+            // Sloppy mode: a var/let/const binding cannot be deleted (returns false).
+            // A global property (one created by `x = ...` in sloppy mode and
+            // stored on globalThis) CAN be deleted — remove it and return true.
+            // A reference to nothing resolves silently and delete returns true.
+            let kind = env.borrow().get_kind(name);
+            if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const)) {
+                return Ok(Value::Boolean(false));
             }
+            // Try to delete from globalThis object.
+            let global_this = env.borrow().get("globalThis");
+            if let Some(Value::Object(go)) = global_this {
+                if go.borrow().has(name) {
+                    go.borrow_mut().delete(name);
+                    return Ok(Value::Boolean(true));
+                }
+            }
+            Ok(Value::Boolean(true))
         }
         _ => Ok(Value::Boolean(false)),
     }

@@ -405,7 +405,7 @@ impl Environment {
         None
     }
 
-    /// Check if a variable exists in any scope
+    /// Check if a variable exists in any scope or on globalThis
     pub fn has(&self, name: &str) -> bool {
         for scope in &self.scopes {
             if scope.has(name) {
@@ -416,7 +416,8 @@ impl Environment {
         if let Some(ref parent) = self.parent {
             return parent.borrow().has(name);
         }
-        false
+        // Fall back to globalThis so typeof on a global property works
+        self.get_global_this_property(name).is_some()
     }
 
     /// Push a new scope onto the stack
