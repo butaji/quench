@@ -355,13 +355,29 @@ fn has_legacy_octal(source: &str) -> bool {
                 continue;
             }
         }
-        // Check for legacy octal: `0` followed by `1-7`
+        // Check for legacy octal: `0` followed by `1-7` (but NOT `8` or `9`)
         if b == b'0' {
             let rest = &bytes[i + 1..];
             if let Some(&next) = rest.first() {
-                // Skip if preceded by digit, '.', or quote (not an octal literal)
-                let prev_is_non_octal =
-                    i > 0 && matches!(bytes[i - 1], b'0'..=b'9' | b'.' | b'\'' | b'"');
+                // If next is 8 or 9, skip the '0' (non-octal decimal like 08, 09)
+                if next == b'8' || next == b'9' {
+                    i += 1;
+                    continue;
+                }
+                // If next is 1-7 and the char after that is 8 or 9, this is a non-octal
+                // decimal like 018 or 019. Skip all three to avoid false positive on "01".
+                if matches!(next, b'1'..=b'7') && rest.len() >= 2 {
+                    let after = rest[1];
+                    if after == b'8' || after == b'9' {
+                        i += 3; // skip '0', '1-7', and '8/9'
+                        continue;
+                    }
+                }
+                // Skip if preceded by digit, '.', quote, 'e'/'E' (exponent indicator),
+                // '+'/'-' (exponent sign), or '_' (numeric separator)
+                let prev_is_non_octal = i > 0
+                    && matches!(bytes[i - 1], b'0'..=b'9' | b'.' | b'\'' | b'"' | b'e' | b'E'
+                        | b'+' | b'-' | b'_');
                 let prev_is_xbo =
                     i > 0 && matches!(bytes[i - 1], b'x' | b'X' | b'b' | b'B' | b'o' | b'O');
                 if !prev_is_non_octal && !prev_is_xbo && next != b'n' && matches!(next, b'1'..=b'7') {
@@ -664,7 +680,18 @@ var re = /\[native code\]/"#),
             !has_legacy_octal(r#"var re = /[01]/;"#),
             "regex literal with char class 01 is not octal"
         );
+        // Non-octal decimal integers (08, 09, 018, etc.) — 8 and 9 are not octal digits
+        assert!(!has_legacy_octal("08"), "08 is not octal (8 is not an octal digit)");
+        assert!(!has_legacy_octal("09"), "09 is not octal (9 is not an octal digit)");
+        assert!(!has_legacy_octal("018"), "018 is not octal (8 is not an octal digit)");
+        assert!(!has_legacy_octal("019"), "019 is not octal (9 is not an octal digit)");
+        assert!(!has_legacy_octal("assert.sameValue(08, 8);"), "08 in assert is not octal");
+        assert!(!has_legacy_octal("assert.sameValue(018, 18);"), "018 in assert is not octal");
+        // Numeric separators in decimals (00_01, 10.00_01e2) — underscores are not octal
+        assert!(!has_legacy_octal("var x = 00_01;"), "00_01 with separator is not octal");
+        assert!(!has_legacy_octal("assert.sameValue(10.00_01e2, 10.0001e2);"), "10.00_01e2 is not octal");
         // Actual octal numbers in code must still be detected
         assert!(has_legacy_octal("var x = 01;"), "01 in code is octal");
+        assert!(has_legacy_octal("assert.sameValue(01, 1);"), "01 in assert is octal");
     }
 }
