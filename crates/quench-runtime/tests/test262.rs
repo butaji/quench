@@ -351,6 +351,23 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_assignment_initializes_hoisted_var() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+x = 1;
+assert.sameValue(x, 1);
+var x = 1;
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "hoisted var assignment failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_assignment_ignores_inherited_readonly_property() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
