@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::value::{NativeFunction, Object, ObjectKind, Value};
+use crate::value::{
+    NativeFunction, Object, ObjectKind, Symbol as ValSymbol, Value,
+};
 use crate::Context;
 
 /// Symbol counter for unique IDs - using atomic for thread-safety
@@ -37,19 +39,11 @@ fn next_symbol_desc() -> u64 {
 }
 
 /// Create a new unique symbol value with the given description.
-/// The payload embeds a unique id (`desc\0id`) so each call produces a
-/// symbol that is !== to every other symbol.
 pub fn new_symbol(desc: &str) -> Value {
-    Value::Symbol(format!("{}{}{}", desc, SYMBOL_ID_SEP, next_symbol_desc()))
-}
-
-/// Extract the user-visible description from a symbol payload
-/// (payloads store `desc\0id` for identity).
-pub fn symbol_description(payload: &str) -> &str {
-    match payload.rfind(SYMBOL_ID_SEP) {
-        Some(pos) => &payload[..pos],
-        None => payload,
-    }
+    Value::Symbol(Rc::new(ValSymbol {
+        desc: Some(desc.to_string()),
+        global: false,
+    }))
 }
 
 /// Store a well-known symbol in thread-local storage
@@ -92,9 +86,11 @@ fn symbol_for_impl(key: &str) -> Value {
         if let Some(existing) = reg.get(key) {
             return existing.clone();
         }
-        // Symbol.for stores the key as its description; the registry is keyed
-        // by description so repeated calls return the same unique symbol.
-        let new_symbol = new_symbol(key);
+        // Symbol.for stores with global: true and uses the key as description
+        let new_symbol = Value::Symbol(Rc::new(ValSymbol {
+            desc: Some(key.to_string()),
+            global: true,
+        }));
         reg.insert(key.to_string(), new_symbol.clone());
         new_symbol
     })
@@ -103,14 +99,12 @@ fn symbol_for_impl(key: &str) -> Value {
 /// Implementation of Symbol.keyFor(symbol) - returns the key for a registered symbol.
 fn symbol_key_for_impl(sym: Value) -> Result<Value, crate::JsError> {
     match sym {
-        Value::Symbol(_) => GLOBAL_SYMBOL_REGISTRY.with(|registry| {
+        Value::Symbol(ref input_sym) => GLOBAL_SYMBOL_REGISTRY.with(|registry| {
             let reg = registry.borrow();
             for (key, value) in reg.iter() {
-                if let Value::Symbol(sym_str) = value {
-                    if let Value::Symbol(input_str) = &sym {
-                        if sym_str == input_str {
-                            return Ok(Value::String(key.clone()));
-                        }
+                if let Value::Symbol(registered_sym) = value {
+                    if Rc::ptr_eq(registered_sym, input_sym) {
+                        return Ok(Value::String(key.clone()));
                     }
                 }
             }
@@ -172,7 +166,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let to_string = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
-            Some(s) => Ok(Value::String(format!("Symbol({})", symbol_description(&s)))),
+            Some(s) => Ok(Value::String(format!("Symbol({})", s.desc.as_deref().unwrap_or("")))),
             None => Err(crate::JsError::new(
                 "TypeError: Symbol.prototype.toString requires a Symbol receiver",
             )),
@@ -192,7 +186,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let description = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
-            Some(s) => Ok(Value::String(symbol_description(&s).to_string())),
+            Some(s) => Ok(Value::String(s.desc.clone().unwrap_or_default())),
             None => Err(crate::JsError::new(
                 "TypeError: Symbol.prototype.description requires a Symbol receiver",
             )),
@@ -202,8 +196,8 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     symbol_fn.set_property("prototype", Value::Object(Rc::new(RefCell::new(proto))));
 }
 
-/// Unwrap the symbol payload from a bare Symbol or a boxed Symbol object.
-fn this_symbol_payload(val: &Value) -> Option<String> {
+/// Unwrap the symbol from a bare Symbol or a boxed Symbol object.
+fn this_symbol_payload(val: &Value) -> Option<Rc<ValSymbol>> {
     match val {
         Value::Symbol(s) => Some(s.clone()),
         Value::Object(obj) => match obj.borrow().get("_value") {
@@ -238,7 +232,7 @@ pub fn is_symbol(val: &Value) -> bool {
 /// Extract the symbol key string for property lookup.
 fn symbol_to_string(symbol: &Value) -> Option<String> {
     if let Value::Symbol(sym_key) = symbol {
-        Some(format!("Symbol({})", sym_key))
+        Some(format!("Symbol({})", sym_key.desc.as_deref().unwrap_or("")))
     } else {
         None
     }
@@ -341,9 +335,10 @@ fn get_symbol_property_from_function(
     let obj = func.get_prototype();
     let proto_obj = obj.borrow();
     if let Value::Symbol(sym_key) = symbol {
-        let wrapped = format!("Symbol({})", sym_key);
+        let desc_str = sym_key.desc.as_deref().unwrap_or("");
+        let wrapped = format!("Symbol({})", desc_str);
         for (key, v) in &proto_obj.properties {
-            if key == &wrapped || (key.starts_with("Symbol(") && key.contains(sym_key)) {
+            if key == &wrapped || (key.starts_with("Symbol(") && key.contains(desc_str)) {
                 return Some(v.clone());
             }
         }

@@ -17,6 +17,13 @@ pub use crate::value::convert::{
     loose_eq, strict_eq, to_bool, to_js_string, to_number, to_primitive,
 };
 
+/// ECMA-262 6.1.6 Symbol type — unique, immutable, optionally described.
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub desc: Option<String>,
+    pub global: bool, // Symbol.for / Symbol.keyFor
+}
+
 /// A JavaScript value - the fundamental runtime type.
 /// All values are immutable handles; objects are Rc<RefCell<Object>> for mutation.
 #[derive(Clone)]
@@ -34,8 +41,8 @@ pub enum Value {
     NativeFunction(Rc<NativeFunction>),
     /// Native constructors (Date, Error, etc.) - have a prototype property
     NativeConstructor(Rc<NativeConstructor>),
-    /// Symbols for unique property keys
-    Symbol(String),
+    /// Symbols for unique property keys (TComp: Rc<Symbol> per spec 6.1.6)
+    Symbol(Rc<Symbol>),
     /// ES6 class - callable constructor with prototype chain
     Class(ClassValue),
 }
@@ -272,11 +279,7 @@ fn debug_nullish_or_symbol(v: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result
     match v {
         Value::Undefined => write!(f, "undefined"),
         Value::Null => write!(f, "null"),
-        Value::Symbol(s) => write!(
-            f,
-            "Symbol({:?})",
-            crate::builtins::symbol::symbol_description(s)
-        ),
+        Value::Symbol(s) => write!(f, "Symbol({:?})", s.desc),
         _ => write!(f, "undefined"),
     }
 }
