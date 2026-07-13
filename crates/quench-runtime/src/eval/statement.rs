@@ -262,8 +262,9 @@ fn eval_class_decl(
     class: &Class,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    // Evaluate the class expression
-    let class_val = eval_expression(&Expression::Class(class.clone()), env, false)?;
+    // Evaluate the class expression with the declared name so static field
+    // initializers observe `this.name === "<name>"` per ES §14.6.13.
+    let class_val = crate::eval::class::eval_class_expr(class, env, Some(name))?;
     env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }
