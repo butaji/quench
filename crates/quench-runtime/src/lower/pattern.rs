@@ -3,6 +3,7 @@
 use super::expr::lower_expr;
 use super::helpers::LowerError;
 use crate::ast::{BindingElement, Expression, PropertyKey, Statement, VarKind};
+use crate::lower::expr::lower_assignment_target;
 use oxc::ast::ast;
 
 /// Convert a BindingElement to an Expression for use in for-in/for-of loop headers
@@ -12,6 +13,7 @@ pub fn binding_to_expr(binding: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(props) => Expression::ObjectPattern(props),
         BindingElement::Default(binding, _) => binding_to_expr(*binding),
+        BindingElement::AssignmentTarget(expr) => expr,
     }
 }
 
@@ -192,14 +194,21 @@ fn lower_assignment_target_maybe_default(
     target: &ast::AssignmentTargetMaybeDefault,
 ) -> Option<BindingElement> {
     match target {
-        // `[a = default]` — just extract the binding, ignore default for now
+        // `[a = default]`
         ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(d) => {
-            lower_assignment_target_to_binding(&d.binding)
+            let binding = lower_assignment_target_to_binding(&d.binding)?;
+            let init = lower_expr(&d.init).ok()?;
+            Some(BindingElement::Default(Box::new(binding), Box::new(init)))
         }
         // Regular assignment target
         _ => {
             if let Some(target) = target.as_assignment_target() {
-                lower_assignment_target_to_binding(target)
+                if matches!(target, ast::AssignmentTarget::AssignmentTargetIdentifier(_)) {
+                    lower_assignment_target_to_binding(target)
+                } else {
+                    let expression = lower_assignment_target(target).ok()?;
+                    Some(BindingElement::AssignmentTarget(expression))
+                }
             } else {
                 None
             }

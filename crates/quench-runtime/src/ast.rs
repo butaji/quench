@@ -320,6 +320,10 @@ pub enum BindingElement {
     ArrayPattern(Vec<BindingElement>),
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
     Default(Box<BindingElement>, Box<Expression>),
+    /// Full assignment target as an expression (e.g. `target()[key]` inside an
+    /// object destructuring pattern). Evaluated at the spec-mandated point
+    /// and PutValue'd with the destructured value.
+    AssignmentTarget(Expression),
 }
 
 /// Function parameter - either a simple name, name with default, or rest parameter
