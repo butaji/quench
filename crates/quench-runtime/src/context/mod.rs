@@ -49,6 +49,7 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
+    reject_eval_var_lexical_conflict(&source, ctx)?;
 
     // eval_impl is called from within ctx.eval(), which set CURRENT_CONTEXT.
     // We need to re-set it (and restore afterward) so that the test's second
@@ -90,6 +91,31 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
         }
         Ok(v) => Ok(v),
     }
+}
+
+fn reject_eval_var_lexical_conflict(source: &str, ctx: &Context) -> Result<(), JsError> {
+    let Ok(program) = ctx.parse(source) else {
+        return Ok(());
+    };
+    let ast::Program::Script(body) = program;
+    let mut names = Vec::new();
+    crate::interpreter::collect_var_names_recursive(&body, &mut names);
+    let eval_env =
+        crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
+    for name in names {
+        if matches!(
+            eval_env.borrow().get_kind(&name),
+            Some(ast::VarKind::Let | ast::VarKind::Const)
+        ) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                &format!("Identifier '{}' has already been declared", name),
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
+    Ok(())
 }
 
 /// Runtime context - holds the execution environment and globals
