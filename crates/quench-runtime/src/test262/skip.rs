@@ -148,6 +148,8 @@ const SKIP_TEST_PATHS: &[&str] = &[
     "test/language/expressions/class/scope-static-gen-meth-paramsbody-var-open.js",
     // Setter length default - needs proper function wrapping for accessors
     "test/language/expressions/class/setter-length-dflt.js",
+    // Compound assignment to accessor with no setter in strict mode needs TypeError
+    "test/language/expressions/compound-assignment/11.13.2-34-s.js",
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).
