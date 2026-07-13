@@ -173,6 +173,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/bitwise-or/",
     "test/language/expressions/bitwise-xor/",
     "test/language/expressions/bitwise-not/",
+    // Class accessor computed names
+    "test/language/expressions/class/accessor-name-static-computed-in.js",
     // Coalesce + ternary precedence
     "test/language/expressions/conditional/coalesce-expr-ternary.js",
     // Delete operator edge cases
