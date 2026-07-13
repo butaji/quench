@@ -202,20 +202,16 @@ verifyProperty(f2, "length", {
             "../../../../tests/test262/test/language/expressions/arrow-function/length-dflt.js"
         );
         let test_body = test_src.split_once("---*/").map(|(_, b)| b).unwrap_or(test_src);
+        // Save a reference to each f and check which one we're called on.
         let wrap = r#"
 "use strict";
+var __call_count = 0;
 var origVerify = verifyProperty;
 var verifyProperty = function(obj, name, desc) {
-  console.log('-- call:', name, 'desc.value=' + desc.value);
-  var originalDesc = Object.getOwnPropertyDescriptor(obj, name);
-  console.log('   orig:', originalDesc && (originalDesc.value + ' writable=' + originalDesc.writable));
-  console.log('   obj[name]:', obj[name]);
-  var oldLen = f1.length;
-  console.log('   f1.length:', oldLen);
+  __call_count++;
+  console.log('call#' + __call_count + ': obj.params=' + (obj.params ? obj.params.length : 'n/a') + ' desc.value=' + desc.value);
   return origVerify.apply(this, arguments);
 };
-var f1 = (x = 42) => {};
-verifyProperty(f1, "length", { value: 0, writable: false, enumerable: false, configurable: true });
 "#;
         let combined = format!("{}\n{}\n{}", harness_body, wrap, test_body);
         let r = host.run_script(&combined);
