@@ -168,6 +168,30 @@ fn string_to_number(s: &str) -> f64 {
     if s == "NaN" {
         return f64::NAN;
     }
+    // Per ES §7.1.4.1: ToNumber Applied to the String Type
+    // - Empty string → 0
+    // - Numeric string with possible whitespace and/or sign
+    // - Hex literal (0x...) or octal literal (0o...) or binary literal (0b...)
+    // - Infinity / -Infinity / NaN
+    // Note: Rust's f64::parse doesn't accept hex/octal/binary prefixes.
+    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return u64::from_str_radix(rest, 16)
+            .ok()
+            .map(|n| n as f64)
+            .unwrap_or(f64::NAN);
+    }
+    if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        return u64::from_str_radix(rest, 2)
+            .ok()
+            .map(|n| n as f64)
+            .unwrap_or(f64::NAN);
+    }
+    if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        return u64::from_str_radix(rest, 8)
+            .ok()
+            .map(|n| n as f64)
+            .unwrap_or(f64::NAN);
+    }
     s.parse().unwrap_or(f64::NAN)
 }
 
@@ -354,10 +378,18 @@ fn object_vs_primitive_eq(a: &Value, b: &Value) -> bool {
 fn parse_number_string(s: &str) -> Option<f64> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        Some(0.0)
-    } else {
-        trimmed.parse::<f64>().ok()
+        return Some(0.0);
     }
+    if let Some(rest) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+        return u64::from_str_radix(rest, 16).ok().map(|n| n as f64);
+    }
+    if let Some(rest) = trimmed.strip_prefix("0b").or_else(|| trimmed.strip_prefix("0B")) {
+        return u64::from_str_radix(rest, 2).ok().map(|n| n as f64);
+    }
+    if let Some(rest) = trimmed.strip_prefix("0o").or_else(|| trimmed.strip_prefix("0O")) {
+        return u64::from_str_radix(rest, 8).ok().map(|n| n as f64);
+    }
+    trimmed.parse::<f64>().ok()
 }
 
 fn to_primitive_for_compare(v: &Value) -> Value {
@@ -751,6 +783,15 @@ mod tests {
     fn test_class_identity() {
         assert!(eval_bool("class C {}; C === C"));
         assert!(eval_bool("class C {}; class D {}; C !== D"));
+    }
+
+    #[test]
+    fn test_hex_string_to_number() {
+        // Per ES §7.1.4.1: ToNumber handles 0x... hex literals.
+        assert!(eval_bool("255 == '0xff'"));
+        assert!(eval_bool("255 == '0XFF'"));
+        assert!(eval_bool("2 == '0b10'"));
+        assert!(eval_bool("15 == '0o17'"));
     }
 
     #[test]
