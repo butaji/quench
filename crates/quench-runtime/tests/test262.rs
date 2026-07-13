@@ -351,6 +351,26 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_assignment_ignores_inherited_readonly_property() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, 'bar', { value: 'readonly' });
+var object = new Foo();
+object.bar = 'changed';
+assert.sameValue(object.hasOwnProperty('bar'), false);
+assert.sameValue(object.bar, 'readonly');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "inherited readonly assignment failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_assignment_updates_descriptor_value_snapshot() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
