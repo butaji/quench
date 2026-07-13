@@ -80,6 +80,10 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         let lp = to_primitive(left, hint)?;
         let rp = to_primitive(right, hint)?;
         // Both are now primitives.
+        // After ToPrimitive: surface any thrown value without consuming it.
+        if let Some(thrown) = get_thrown_value() {
+            return Err(JsError(to_js_string(&thrown)));
+        }
         if matches!(&lp, Value::String(_)) || matches!(&rp, Value::String(_)) {
             if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
                 return symbol_conversion_error("string");
@@ -101,6 +105,10 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
             return symbol_conversion_error("string");
         }
+        // Surface any thrown value from earlier evaluation.
+        if let Some(thrown) = get_thrown_value() {
+            return Err(JsError(to_js_string(&thrown)));
+        }
         let l = to_js_string(left);
         let r = to_js_string(right);
         Ok(Value::String(format!("{}{}", l, r)))
@@ -108,12 +116,13 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
             return symbol_conversion_error("number");
         }
-        // to_number may trigger ToPrimitive(valueOf/toString). If a throw was
-        // raised, surface it WITHOUT consuming — eval_try_catch's take will
-        // pick it up next. Do not consume here.
+        // to_number may trigger ToPrimitive(valueOf/toString). Surface any
+        // thrown value (even one that was set before eval_add) WITHOUT consuming
+        // — eval_try_catch's take will pick it up next.
         let l = to_number(left);
         let r = to_number(right);
-        if let Some(thrown) = get_thrown_value() {
+        if get_thrown_value().is_some() {
+            let thrown = get_thrown_value().unwrap();
             return Err(JsError(to_js_string(&thrown)));
         }
         Ok(Value::Number(l + r))

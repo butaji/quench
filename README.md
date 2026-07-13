@@ -86,6 +86,11 @@ must satisfy the test's `negative:` frontmatter expectations.
 
 Single workflow (`.github/workflows/ci.yml`): fmt → clippy → build → integration tests → 51 test262 stages in parallel → summary.
 
+## Dependencies
+
+See `crates/quench-runtime/DEPENDENCIES.md` for the rationale behind every
+direct dependency.
+
 ## License
 
 MIT
