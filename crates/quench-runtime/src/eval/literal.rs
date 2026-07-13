@@ -26,13 +26,11 @@ pub fn eval_identifier(
         return eval_super(env);
     }
     if name == "new.target" {
-        // Per ES §13.2.6 GetNewTarget: in arrow functions, resolve via
-        // lexical scope (the calling function's new.target). Outside a
-        // constructor, new.target is undefined.
-        if let Some(t) = crate::interpreter::get_new_target() {
-            return Ok(t);
-        }
-        return Ok(Value::Undefined);
+        // Per ES §13.2.6 GetNewTarget: arrow functions inherit new.target
+        // via lexical scope (the enclosing function's env binding). For
+        // ordinary functions, call_js_function_impl binds new.target in
+        // the call env, so env.get resolves it correctly here.
+        return Ok(env.borrow().get(name).unwrap_or(Value::Undefined));
     }
     // Arrow functions don't have their own 'arguments' binding
     if in_arrow_function && name == "arguments" {
