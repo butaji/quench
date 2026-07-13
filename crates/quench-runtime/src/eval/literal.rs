@@ -180,6 +180,14 @@ pub fn eval_array_literal(
                     arr.set(&idx.to_string(), item);
                 }
             }
+            Expression::Elision => {
+                // Array hole: advances length but contributes no own property.
+                arr.elements.push(Value::Undefined);
+                arr.properties.insert(
+                    "length".to_string(),
+                    Value::Number(arr.elements.len() as f64),
+                );
+            }
             _ => {
                 let value =
                     crate::eval::expression::eval_expression(elem_expr, env, in_arrow_function)?;
