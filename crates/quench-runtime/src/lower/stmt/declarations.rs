@@ -34,7 +34,28 @@ pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> 
     };
     let mut decls = Vec::new();
     for binding in &var_decl.declarations {
-        let init_expr = binding.init.as_ref().and_then(|e| lower_expr(e).ok());
+        let ident_name = match &binding.id.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                Some(ident.name.as_str().to_string())
+            }
+            _ => None,
+        };
+        let init_expr = binding.init.as_ref().and_then(|e| {
+            let mut lowered = lower_expr(e).ok()?;
+            // Per ES §14.6.13 step 18a, if the initializer is an
+            // anonymous class expression, the inferred name is the
+            // binding identifier. We set the name on the lowerer-produced
+            // `Expression::Class` so the static-field initializer can
+            // observe it via `this.name`.
+            if let Some(name) = &ident_name {
+                if let crate::ast::Expression::Class(class) = &mut lowered {
+                    if class.name.is_none() {
+                        class.name = Some(name.clone());
+                    }
+                }
+            }
+            Some(lowered)
+        });
         match &binding.id.kind {
             ast::BindingPatternKind::BindingIdentifier(ident) => {
                 decls.push(Statement::VarDeclaration {
