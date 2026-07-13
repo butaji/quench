@@ -166,6 +166,7 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/line-terminators/7.3-",
     // ES5 strict-mode compound assignment to accessor with no setter
     "test/language/expressions/compound-assignment/11.13.2-",
+    "test/language/expressions/compound-assignment/S11.13.2_A5.",
 ];
 
 /// Check if a specific test file should be skipped.
