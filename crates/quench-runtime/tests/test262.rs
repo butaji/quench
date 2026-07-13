@@ -351,6 +351,25 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_class_name_bound_during_static_field_initializer() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var className;
+var C = class {
+  static f = (className = this.name);
+}
+assert.sameValue(className, 'C');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "class name during static field initializer failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_destructuring_iterator_close_error_precedence() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

@@ -13,21 +13,48 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Evaluate a class expression
-pub fn eval_class_expr(class: &Class, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
-    let new_value = ClassValue::from_ast(class);
+    fn class_static_field_this_name() {
+        let _ = 42;
+    }
+
+/// Evaluate a class expression. The `inferred_name` parameter provides the
+/// inferred class name per ES §14.6.13 step 18 when the class is anonymous
+/// and the surrounding context supplies the name (e.g. via assignment to an
+/// identifier or as a variable initializer).
+pub fn eval_class_expr(
+    class: &Class,
+    env: &Rc<RefCell<Environment>>,
+    inferred_name: Option<&str>,
+) -> Result<Value, JsError> {
+    let mut new_value = ClassValue::from_ast(class);
+    if let Some(name) = inferred_name {
+        new_value.set_name(name);
+    }
 
     // Eagerly create the prototype for this class
     let _ = get_or_create_class_prototype(&new_value, env)?;
 
-    // Initialize static fields on the class object
+    // Initialize static fields on the class object. The initializer's
+    // `this` is the class itself per ES §13.2.1.5 step 6.
+    let class_value = Value::Class(new_value.clone());
     for (name, value_expr) in &new_value.static_fields {
-        let field_value = eval_expression(value_expr, env, false)?;
+        let child_env: Rc<RefCell<Environment>> =
+            Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+        child_env
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .set_this(class_value.clone());
+        let field_value = eval_expression(value_expr, &child_env, false)?;
         let key_str = prop_key_to_string(name, env, false)?;
         new_value.set_static_field(&key_str, field_value);
     }
 
     Ok(Value::Class(new_value))
+}
+
+fn infer_class_name_from_env(_env: &Rc<RefCell<Environment>>) -> Option<String> {
+    None
 }
 
 /// Instantiate a class from its AST representation
@@ -161,7 +188,8 @@ fn build_constructor_env(
     // the same constructor (or inside an arrow) throws ReferenceError per
     // ES §8.1.1.3.1.
     call_env
-        .current_scope_mut()
+        .current_scope()
+        .borrow_mut()
         .set_this_value(this_val.clone());
 
     if let Some(ref sc) = class.super_class {
@@ -247,7 +275,10 @@ pub fn call_super_constructor(
     let body = class.constructor_body.clone();
 
     let mut call_env = Environment::with_parent(Rc::clone(env));
-    call_env.current_scope_mut().set_this(this_val.clone());
+    call_env
+        .current_scope()
+        .borrow_mut()
+        .set_this(this_val.clone());
 
     for (i, param) in _params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
@@ -434,6 +465,11 @@ fn create_class_prototype_helper_with_env(
             crate::eval::expression::eval_expression(super_class_expr, env, false)?;
         closure.borrow_mut().set_super_class(super_class_val);
     }
+    // Class methods, getters, and setters share the enclosing lexical
+    // Environment Records with the class expression. Each captures via
+    // the same helper so block-scoped bindings declared around the class
+    // remain reachable from inside its members.
+    let member_closure = crate::eval::expression::capture_env_for_closure(&closure);
     for (name, params, body) in &class.methods {
         let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
         let key_str = prop_key_to_string(name, &closure, false)?;
@@ -441,7 +477,7 @@ fn create_class_prototype_helper_with_env(
             Some(key_str.clone()),
             params_vec,
             body.clone(),
-            Rc::clone(&closure),
+            Rc::clone(&member_closure),
         );
         // Class bodies are always strict mode (ES spec 15.7).
         func.strict = true;
@@ -450,7 +486,7 @@ fn create_class_prototype_helper_with_env(
 
     for (name, body) in &class.getters {
         let key = prop_key_to_string(name, &closure, false)?;
-        proto.set_getter(&key, Rc::new(body.clone()), Rc::clone(&closure));
+        proto.set_getter(&key, Rc::new(body.clone()), Rc::clone(&member_closure));
     }
 
     for (name, param, body) in &class.setters {
@@ -459,7 +495,7 @@ fn create_class_prototype_helper_with_env(
             &key,
             param.clone(),
             Rc::new(body.clone()),
-            Rc::clone(&closure),
+            Rc::clone(&member_closure),
         );
     }
 
@@ -518,6 +554,7 @@ mod static_field_tests {
 
     #[test]
     fn class_static_field_this_name() {
+        let _ = 42;
         let mut ctx = Context::new().unwrap();
         // Check what `this.name` returns inside a static field of an anonymous class.
         let v = ctx.eval("var C = class { static f = this.name; }; C.f");
