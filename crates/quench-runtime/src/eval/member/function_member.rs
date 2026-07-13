@@ -1,6 +1,6 @@
 //! Function member access evaluation
 
-use crate::value::{JsError, NativeFunction, Value, ValueFunction};
+use crate::value::{create_js_error_with_type, set_thrown_value, JsError, NativeFunction, Value, ValueFunction};
 use std::rc::Rc;
 
 /// Evaluate member access on a JS function
@@ -10,9 +10,12 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         return Ok(val);
     }
     if f.is_arrow && (prop_name == "arguments" || prop_name == "caller") {
-        return Err(JsError(
-            "TypeError: 'arguments' and 'caller' are restricted properties and cannot be accessed on arrow functions".to_string()
-        ));
+        let msg = format!(
+            "'caller' and 'arguments' are restricted properties and cannot be accessed on arrow functions"
+        );
+        let (err, js_err) = create_js_error_with_type(&msg, "TypeError");
+        set_thrown_value(err);
+        return Err(js_err);
     }
     match prop_name {
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),

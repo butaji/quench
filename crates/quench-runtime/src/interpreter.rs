@@ -701,9 +701,12 @@ pub(crate) fn collect_let_const_recursive(stmts: &[Statement], decls: &mut Vec<(
             Statement::SequenceDecls(inner) => {
                 collect_let_const_recursive(inner, decls);
             }
-            Statement::Block(inner) => {
-                collect_let_const_recursive(inner, decls);
-            }
+            // `let`/`const` inside a block are block-scoped. They must NOT
+            // be hoisted into the enclosing function/script scope, otherwise
+            // the block's `let x` would silently merge with an outer `let x`
+            // and shadow it for any closure that captures the inner binding.
+            // Block-scoped declarations are predeclared by `eval_block` when
+            // the block is entered.
             _ => {}
         }
     }
@@ -719,9 +722,13 @@ pub(crate) fn predeclare_var(stmts: &[Statement], env: &mut Environment) {
 pub(crate) fn predeclare_let_const(stmts: &[Statement], env: &mut Environment) {
     let decls = collect_let_const_declarations(stmts);
     for (name, kind) in decls {
-        // Skip if already declared in any outer scope (let/const cannot be shadowed
-        // by redeclaring in an inner block - they share the same binding)
-        if !env.has(&name) {
+        // `let`/`const` declarations always create a new binding in the
+        // current (innermost) scope, even if the same name exists in an
+        // outer scope — that's lexical shadowing. We only skip if the name
+        // is already declared in THIS scope, which would be a redeclaration
+        // (e.g. `let x; let x;` in the same block is a SyntaxError in strict
+        // mode; callers tolerate the silent override for now).
+        if !env.current_scope().has(&name) {
             env.declare_var(name, kind);
         }
     }
