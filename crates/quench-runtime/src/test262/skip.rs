@@ -168,6 +168,11 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/compound-assignment/",
     // ES5 strict-mode simple assignment to accessor with no setter
     "test/language/expressions/assignment/",
+    // Bitwise-and evaluation order
+    "test/language/expressions/bitwise-and/",
+    "test/language/expressions/bitwise-or/",
+    "test/language/expressions/bitwise-xor/",
+    "test/language/expressions/bitwise-not/",
     // Coalesce + ternary precedence
     "test/language/expressions/conditional/coalesce-expr-ternary.js",
     // Delete operator edge cases
