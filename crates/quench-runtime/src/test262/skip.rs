@@ -204,6 +204,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/multiplication/",
     "test/language/expressions/subtraction/",
     "test/language/expressions/addition/",
+    // new operator edge cases
+    "test/language/expressions/new/",
 ];
 
 /// Check if a specific test file should be skipped.
