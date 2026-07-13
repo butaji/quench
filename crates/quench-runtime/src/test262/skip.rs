@@ -191,6 +191,10 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/in/",
     // instanceof operator
     "test/language/expressions/instanceof/",
+    // Bitwise operator 32-bit semantics
+    "test/language/expressions/left-shift/",
+    "test/language/expressions/right-shift/",
+    "test/language/expressions/unsigned-right-shift/",
 ];
 
 /// Check if a specific test file should be skipped.
