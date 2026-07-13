@@ -70,13 +70,12 @@ fn eval_super_call(
     // the relevant scope is in the lexical parent chain.
     let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
     while let Some(e) = current {
-        for scope in e.borrow().scopes.iter() {
-            if scope.is_this_initialized() {
-                return Err(JsError(
-                    "ReferenceError: super() called after `this` was already initialized"
-                        .to_string(),
-                ));
-            }
+        let initialized = e.borrow().scopes.iter().any(|s| s.is_this_initialized());
+        if initialized {
+            return Err(JsError(
+                "ReferenceError: super() called after `this` was already initialized"
+                    .to_string(),
+            ));
         }
         current = e.borrow().get_parent();
     }
