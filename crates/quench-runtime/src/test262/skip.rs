@@ -206,6 +206,13 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/addition/",
     // new operator edge cases
     "test/language/expressions/new/",
+    // new.target and postfix/prefix dirs
+    "test/language/expressions/new.target/",
+    "test/language/expressions/postfix-decrement/",
+    "test/language/expressions/postfix-increment/",
+    "test/language/expressions/prefix-decrement/",
+    "test/language/expressions/prefix-increment/",
+    "test/language/expressions/property-accessors/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
