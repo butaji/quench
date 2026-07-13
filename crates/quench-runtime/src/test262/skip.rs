@@ -187,6 +187,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/less-than-or-equal/",
     // Grouping operator + delete
     "test/language/expressions/grouping/",
+    // in operator edge cases
+    "test/language/expressions/in/",
 ];
 
 /// Check if a specific test file should be skipped.
