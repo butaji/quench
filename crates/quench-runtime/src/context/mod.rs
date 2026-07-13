@@ -489,3 +489,27 @@ impl Default for Context {
         Self::new().expect("Failed to create JS context")
     }
 }
+
+/// Get a global value from the current context's globals.
+/// Returns None if no context is active.
+pub fn get_global_from_context(name: &str) -> Option<Value> {
+    let ctx_ptr = CURRENT_CONTEXT.with(|cell| *cell.borrow())?;
+    if ctx_ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval.
+    let ctx = unsafe { &*ctx_ptr };
+    ctx.get_global(name)
+}
+
+/// Get the global environment from the current context.
+/// Returns None if no context is active.
+pub fn get_current_env() -> Option<std::rc::Rc<std::cell::RefCell<Environment>>> {
+    let ctx_ptr = CURRENT_CONTEXT.with(|cell| *cell.borrow())?;
+    if ctx_ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval.
+    let ctx = unsafe { &*ctx_ptr };
+    Some(Rc::clone(&ctx.env))
+}
