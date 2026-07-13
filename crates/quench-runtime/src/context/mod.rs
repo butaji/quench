@@ -102,9 +102,9 @@ fn reject_eval_var_lexical_conflict(source: &str, ctx: &Context) -> Result<(), J
     crate::interpreter::collect_var_names_recursive(&body, &mut names);
     let eval_env =
         crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
-    for name in names {
+    for name in &names {
         if matches!(
-            eval_env.borrow().get_kind(&name),
+            eval_env.borrow().get_kind(name),
             Some(ast::VarKind::Let | ast::VarKind::Const)
         ) {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
@@ -113,6 +113,17 @@ fn reject_eval_var_lexical_conflict(source: &str, ctx: &Context) -> Result<(), J
             );
             crate::value::set_thrown_value(error);
             return Err(js_error);
+        }
+    }
+    for name in names {
+        let is_local = eval_env.borrow().current_scope().borrow().has(&name);
+        if !is_local {
+            eval_env
+                .borrow_mut()
+                .declare_var(name.clone(), ast::VarKind::Var);
+            eval_env
+                .borrow_mut()
+                .initialize_declared(&name, Value::Undefined);
         }
     }
     Ok(())

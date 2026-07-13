@@ -39,15 +39,14 @@ pub fn eval_expression(
         Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
         Expression::Array(elements) => eval_array_literal(elements, env, in_arrow_function),
         Expression::FunctionExpression { name, params, body } => {
-            env.borrow_mut().mark_closure_created();
-            let mut func =
-                ValueFunction::new(name.clone(), params.clone(), body.clone(), Rc::clone(env));
+            let closure = capture_env_for_closure(env);
+            let mut func = ValueFunction::new(name.clone(), params.clone(), body.clone(), closure);
             func.strict = crate::interpreter::is_strict_mode();
             Ok(Value::Function(func))
         }
         Expression::ArrowFunction { params, body } => {
-            env.borrow_mut().mark_closure_created();
-            let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), Rc::clone(env));
+            let closure = capture_env_for_closure(env);
+            let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), closure);
             func.strict = crate::interpreter::is_strict_mode();
             // Per ES §14.2.1 step 5: arrow functions have name "" unless
             // assigned (e.g. `var x = () => {}`). The "" is stored as the
@@ -83,6 +82,10 @@ pub fn eval_expression(
             eval_unary_expr(*op, argument, env, in_arrow_function)
         }
         Expression::Assignment { left, right } => {
+            let identifier_scope = match left.as_ref() {
+                Expression::Identifier(name) => env.borrow().binding_scope(name),
+                _ => None,
+            };
             let right_val = eval_expression(right, env, in_arrow_function)?;
             // Special case: identifier.prop = value - use set_property to preserve identity
             if let Expression::Member {
@@ -109,6 +112,10 @@ pub fn eval_expression(
                         }
                     }
                 }
+            }
+            if let (Expression::Identifier(name), Some(scope)) = (left.as_ref(), identifier_scope) {
+                scope.borrow_mut().set(name.clone(), right_val.clone());
+                return Ok(right_val);
             }
             crate::eval::object::assign_to(left, &right_val, env)?;
             Ok(right_val)
@@ -226,6 +233,23 @@ fn eval_logical_compound_assign(
         },
         _ => Err(JsError("Invalid logical compound assignment".to_string())),
     }
+}
+
+/// Build the environment captured by a closure (function expression,
+/// arrow function, getter/setter body, class method, function
+/// declaration in a block, …). The captured environment holds the
+/// SAME `Rc<RefCell<Scope>>` records as the active environment, so:
+/// two closures created in the same block share the same block scope
+/// and see each other's writes; a closure defined in a nested block
+/// keeps the entire chain of block scopes down to the outer block;
+/// a `let` initialized AFTER the closure was created is visible
+/// because the closure shares storage with the live scope; scopes
+/// that get popped after a block exits remain reachable to the
+/// closure (via its `Rc`) but are skipped by lookups on the active
+/// environment.
+pub fn capture_env_for_closure(env: &Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
+    let captured = env.borrow().capture_env();
+    Rc::new(RefCell::new(captured))
 }
 
 /// Evaluate a unary expression
