@@ -159,30 +159,20 @@ pub fn lower_array_assignment_target(
     let mut elements: Vec<BindingElement> = Vec::new();
     for elem in &arr.elements {
         let elem_binding = match elem {
-            Some(ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(d)) => {
-                let binding = match lower_assignment_target_to_binding(&d.binding) {
-                    Some(b) => b,
-                    None => continue,
-                };
-                let init = lower_expr(&d.init)?;
-                Some(BindingElement::Default(Box::new(binding), Box::new(init)))
-            }
-            Some(elem) => {
-                if let Some(target) = elem.as_assignment_target() {
-                    lower_assignment_target_to_binding(target)
-                } else {
-                    Some(BindingElement::Identifier("__hole".to_string()))
-                }
-            }
+            Some(maybe_default) => lower_assignment_target_maybe_default(maybe_default)
+                .or_else(|| Some(BindingElement::Identifier("__hole".to_string()))),
             None => Some(BindingElement::Identifier("__hole".to_string())),
         };
         if let Some(binding) = elem_binding {
             elements.push(binding);
         }
     }
-    // Handle rest element: `for ([...rest] in x)` — rest.target is AssignmentTarget
     if let Some(rest) = &arr.rest {
-        if let Some(binding) = lower_assignment_target_to_binding(&rest.target) {
+        let rest_binding = lower_assignment_target(&rest.target)
+            .ok()
+            .map(BindingElement::AssignmentTarget)
+            .or_else(|| lower_assignment_target_to_binding(&rest.target));
+        if let Some(binding) = rest_binding {
             elements.push(binding);
         }
     }
