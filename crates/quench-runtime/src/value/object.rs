@@ -1,6 +1,7 @@
 //! JavaScript objects with prototype chain support.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
@@ -181,6 +182,8 @@ pub struct Object {
     pub exotic_kind: Option<ExoticKind>,
     /// Symbol-keyed properties (stored separately from string-keyed)
     pub symbol_properties: IndexMap<String, Value>,
+    /// Array holes: indices that were elided (e.g., [,] has hole at index 0).
+    pub holes: HashSet<usize>,
     /// Whether new properties can be added (false after Object.preventExtensions).
     /// Object.freeze also sets this to false.
     pub extensible: bool,
@@ -214,6 +217,7 @@ impl Object {
             internal_regex_flags: None,
             exotic_kind: None,
             symbol_properties: IndexMap::new(),
+            holes: HashSet::new(),
             extensible: true,
         }
     }
@@ -234,6 +238,7 @@ impl Object {
             internal_regex_flags: None,
             exotic_kind: None,
             symbol_properties: IndexMap::new(),
+            holes: HashSet::new(),
             extensible: true,
         }
     }
@@ -336,11 +341,11 @@ impl Object {
     /// Set a property value on this object only (no prototype chain).
     /// Respects writable flag from property descriptor.
     pub fn set(&mut self, key: &str, value: Value) {
-        // Check if property is non-writable
-        if let Some(flags) = self.descriptors.get(key) {
+        if let Some(flags) = self.descriptors.get_mut(key) {
             if !flags.writable {
-                return; // Silently ignore attempt to write to non-writable property
+                return;
             }
+            flags.value = Some(value.clone());
         }
 
         if let Some(idx) = as_array_index(key) {
@@ -348,6 +353,8 @@ impl Object {
                 self.elements.push(Value::Undefined);
             }
             self.elements[idx] = value;
+            // Removing a hole when setting a value
+            self.holes.remove(&idx);
             self.properties.insert(
                 "length".to_string(),
                 Value::Number(self.elements.len() as f64),
@@ -604,7 +611,7 @@ impl Object {
             return true;
         }
         as_array_index(key)
-            .map(|i| i < self.elements.len())
+            .map(|i| i < self.elements.len() && !self.holes.contains(&i))
             .unwrap_or(false)
     }
 
@@ -621,6 +628,8 @@ impl Object {
         if let Some(idx) = as_array_index(key) {
             if idx < self.elements.len() {
                 self.elements[idx] = Value::Undefined;
+                // Deleting an array element creates a hole
+                self.holes.insert(idx);
                 self.properties.insert(
                     "length".to_string(),
                     Value::Number(self.elements.len() as f64),
