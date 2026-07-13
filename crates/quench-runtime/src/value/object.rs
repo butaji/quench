@@ -152,6 +152,59 @@ impl PropertyFlags {
     }
 }
 
+/// ECMA-262 6.2.5 PropertyDescriptor — unified representation of a property.
+/// All fields are Option so we can distinguish "not present" vs "false"
+/// when the spec checks IsDataDescriptor / IsAccessorDescriptor.
+#[derive(Debug, Clone, Default)]
+pub struct PropertyDescriptor {
+    pub value: Option<Value>,
+    pub writable: Option<bool>,
+    pub get: Option<Value>,
+    pub set: Option<Value>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+    // AST-level getter/setter storage (class literal accessors, not defineProperty)
+    pub get_body: Option<Rc<Vec<Statement>>>,
+    pub get_closure: Option<Rc<RefCell<Environment>>>,
+    pub set_body: Option<Rc<Vec<Statement>>>,
+    pub set_closure: Option<Rc<RefCell<Environment>>>,
+    pub set_param: Option<String>,
+}
+
+impl PropertyDescriptor {
+    /// IsDataDescriptor (ES 6.2.6): has [[Value]] or [[Writable]]
+    pub fn is_data(&self) -> bool {
+        self.value.is_some() || self.writable.is_some()
+    }
+
+    /// IsAccessorDescriptor (ES 6.2.6): has [[Get]] or [[Set]]
+    pub fn is_accessor(&self) -> bool {
+        self.get.is_some() || self.set.is_some()
+            || self.get_body.is_some() || self.set_body.is_some()
+    }
+}
+
+/// 11 internal methods + 2 function extras — the spec's object interface.
+pub struct VTable {
+    pub get_prototype_of: fn(&Object) -> Option<Rc<RefCell<Object>>>,
+    pub set_prototype_of: fn(&mut Object, Option<Rc<RefCell<Object>>>) -> bool,
+    pub is_extensible: fn(&Object) -> bool,
+    pub prevent_extensions: fn(&mut Object) -> bool,
+    pub get_own_property: fn(&Object, &str) -> Option<PropertyDescriptor>,
+    pub define_own_property: fn(&mut Object, &str, &PropertyDescriptor) -> bool,
+    pub has_property: fn(&Object, &str) -> bool,
+    pub get: fn(&Object, &str, &Value) -> Value,
+    pub set: fn(&mut Object, &str, Value, &Value) -> bool,
+    pub delete: fn(&mut Object, &str) -> bool,
+    pub own_property_keys: fn(&Object) -> Vec<String>,
+    pub call: Option<fn(&mut Object, Vec<Value>, &Value) -> Result<Value, crate::value::JsError>>,
+    pub construct: Option<fn(&mut Object, Vec<Value>, &Value) -> Result<Value, crate::value::JsError>>,
+}
+
+/// Runtime internal slots storage — replaces scattered fields like
+/// promise_data, internal_regex, exotic_kind, etc.
+pub type Slots = std::collections::HashMap<&'static str, Value>;
+
 /// JavaScript object with prototype chain support.
 #[derive(Clone)]
 pub struct Object {
@@ -186,6 +239,8 @@ pub struct Object {
     /// Whether new properties can be added (false after Object.preventExtensions).
     /// Object.freeze also sets this to false.
     pub extensible: bool,
+    /// TComp: internal slots for ArrayLength, PromiseData, ProxyTarget, etc.
+    pub slots: Slots,
 }
 
 impl fmt::Debug for Object {
@@ -218,6 +273,7 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
+            slots: std::collections::HashMap::new(),
         }
     }
 
@@ -239,6 +295,7 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
+            slots: std::collections::HashMap::new(),
         }
     }
 
@@ -444,6 +501,131 @@ impl Object {
     /// Get property descriptor for a key
     pub fn get_descriptor(&self, key: &str) -> Option<PropertyFlags> {
         self.descriptors.get(key).cloned()
+    }
+
+    // ─── TComp PropertyDescriptor API ──────────────────────────────────
+
+    /// GetOwnProperty (ES 9.1.5): returns the property descriptor for an own
+    /// property, or None if the property doesn't exist.
+    pub fn get_own_property(&self, key: &str) -> Option<PropertyDescriptor> {
+        // Check data properties
+        if let Some(val) = self.properties.get(key) {
+            let flags = self.descriptors.get(key).cloned().unwrap_or_default();
+            return Some(PropertyDescriptor {
+                value: Some(val.clone()),
+                writable: Some(flags.writable),
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                ..Default::default()
+            });
+        }
+        // Check accessor properties
+        if let Some(g) = self.getters.get(key) {
+            let flags = self.descriptors.get(key).cloned().unwrap_or_default();
+            let get_val = g.func.clone().or_else(|| {
+                // AST-defined getter: no function value yet
+                None
+            });
+            return Some(PropertyDescriptor {
+                get: get_val,
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                get_body: Some(Rc::clone(&g.body)),
+                get_closure: Some(Rc::clone(&g.closure)),
+                ..Default::default()
+            });
+        }
+        if let Some(s) = self.setters.get(key) {
+            let flags = self.descriptors.get(key).cloned().unwrap_or_default();
+            let set_val = s.func.clone();
+            return Some(PropertyDescriptor {
+                set: set_val,
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                set_body: Some(Rc::clone(&s.body)),
+                set_closure: Some(Rc::clone(&s.closure)),
+                set_param: Some(s.param.clone()),
+                ..Default::default()
+            });
+        }
+        // Check array elements
+        if let Some(idx) = as_array_index(key) {
+            if idx < self.elements.len() {
+                return Some(PropertyDescriptor {
+                    value: Some(self.elements[idx].clone()),
+                    writable: Some(true),
+                    enumerable: Some(true),
+                    configurable: Some(true),
+                    ..Default::default()
+                });
+            }
+        }
+        None
+    }
+
+    /// DefineOwnProperty (ES 9.1.6): create or update a property with the
+    /// given descriptor. Returns true on success.
+    pub fn define_own_property(&mut self, key: &str, desc: &PropertyDescriptor) -> bool {
+        // Check extensible
+        if !self.extensible && !self.properties.contains_key(key) {
+            return false;
+        }
+        if desc.is_data() {
+            // Data descriptor: store value + flags
+            let value = desc.value.clone().unwrap_or(Value::Undefined);
+            let flags = PropertyFlags {
+                value: Some(value.clone()),
+                writable: desc.writable.unwrap_or(true),
+                enumerable: desc.enumerable.unwrap_or(true),
+                configurable: desc.configurable.unwrap_or(true),
+            };
+            self.properties.insert(key.to_string(), value);
+            self.descriptors.insert(key.to_string(), flags);
+            // Remove any existing accessor
+            self.getters.shift_remove(key);
+            self.setters.shift_remove(key);
+            true
+        } else if desc.is_accessor() {
+            // Accessor descriptor
+            let flags = PropertyFlags {
+                value: None,
+                writable: false,
+                enumerable: desc.enumerable.unwrap_or(true),
+                configurable: desc.configurable.unwrap_or(true),
+            };
+            self.descriptors.insert(key.to_string(), flags);
+            // Update getter
+            if let Some(ref get_val) = desc.get {
+                self.set_getter_func(key, get_val.clone());
+            } else if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure) {
+                self.getters.insert(key.to_string(), GetterStorage {
+                    body: Rc::clone(body),
+                    closure: Rc::clone(closure),
+                    func: None,
+                });
+            }
+            // Update setter
+            if let Some(ref set_val) = desc.set {
+                self.set_setter_func(key, set_val.clone());
+            } else if let (Some(ref body), Some(ref closure)) = (&desc.set_body, &desc.set_closure) {
+                self.setters.insert(key.to_string(), SetterStorage {
+                    param: desc.set_param.clone().unwrap_or_default(),
+                    body: Rc::clone(body),
+                    closure: Rc::clone(closure),
+                    func: None,
+                });
+            }
+            // Remove any existing data property
+            self.properties.shift_remove(key);
+            true
+        } else {
+            // Generic descriptor (only enumerable/configurable): update flags
+            if let Some(ref mut flags) = self.descriptors.get_mut(key) {
+                if let Some(e) = desc.enumerable { flags.enumerable = e; }
+                if let Some(c) = desc.configurable { flags.configurable = c; }
+            }
+            true
+        }
     }
 
     /// Set a getter function for a property
