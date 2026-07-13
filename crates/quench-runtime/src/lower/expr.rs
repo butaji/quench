@@ -456,7 +456,7 @@ pub(crate) fn lower_member_prop(
     Ok((PropertyKey::Ident(prop.name.as_str().to_string()), false))
 }
 
-fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Expression, LowerError> {
+pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Expression, LowerError> {
     if let Some(binding) = crate::lower::pattern::lower_assignment_target_to_binding(target) {
         return Ok(crate::lower::pattern::binding_to_expr(binding));
     }

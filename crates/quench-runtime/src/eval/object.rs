@@ -206,14 +206,43 @@ fn assign_object_destructuring(
         _ => return Err(JsError("Cannot destructure non-object value".to_string())),
     };
     for (key, binding) in props {
-        let key_str = extract_destructure_key(key, env)?;
-        let prop_value = {
-            let obj_ref = obj.borrow();
-            obj_ref.get(&key_str).unwrap_or(Value::Undefined)
-        };
-        assign_binding_elem(binding, &prop_value, env)?;
+        if let BindingElement::AssignmentTarget(target) = binding {
+            // Per ES §13.15.5.4: when the destructuring target is an
+            // arbitrary Reference (e.g. `target()[targetKey()]`), evaluate
+            // it now with the value already evaluated. The GetV is folded
+            // into the PutValue here to keep the source key evaluation
+            // strictly before the target lref.
+            let key_str = compute_property_key(key, env)?;
+            let prop_value = {
+                let obj_ref = obj.borrow();
+                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
+            };
+            crate::eval::object::assign_to(target, &prop_value, env)?;
+        } else {
+            let key_str = extract_destructure_key(key, env)?;
+            let prop_value = {
+                let obj_ref = obj.borrow();
+                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
+            };
+            assign_binding_elem(binding, &prop_value, env)?;
+        }
     }
     Ok(())
+}
+
+fn compute_property_key(
+    key: &PropertyKey,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<String, JsError> {
+    match key {
+        PropertyKey::Ident(s) => Ok(s.clone()),
+        PropertyKey::String(s) => Ok(s.clone()),
+        PropertyKey::Number(n) => Ok(n.to_string()),
+        PropertyKey::Computed(expr) => {
+            let value = eval_expression(expr, env, false)?;
+            Ok(crate::value::to_js_string(&value))
+        }
+    }
 }
 
 fn extract_destructure_key(
@@ -246,6 +275,9 @@ fn assign_binding_elem(
                 value.clone()
             };
             assign_binding_elem(binding, &value, env)
+        }
+        BindingElement::AssignmentTarget(target) => {
+            crate::eval::object::assign_to(target, value, env)
         }
     }
 }

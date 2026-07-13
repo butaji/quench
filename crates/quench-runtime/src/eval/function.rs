@@ -207,6 +207,7 @@ fn binding_pattern_expression(pattern: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
         BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+        BindingElement::AssignmentTarget(expr) => expr,
     }
 }
 
@@ -224,6 +225,7 @@ fn declare_pattern_bindings(pattern: &BindingElement, env: &Rc<RefCell<Environme
             }
         }
         BindingElement::Default(binding, _) => declare_pattern_bindings(binding, env),
+        BindingElement::AssignmentTarget(_) => {}
     }
 }
 
