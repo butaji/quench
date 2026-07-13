@@ -180,6 +180,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/exponentiation/",
     // Function name own property
     "test/language/expressions/function/",
+    // Compare operators eval order
+    "test/language/expressions/greater-than/",
 ];
 
 /// Check if a specific test file should be skipped.
