@@ -374,6 +374,13 @@ impl Clone for NativeFunction {
 // NativeConstructor - Host constructors (Date, Error, etc.)
 // =============================================================================
 
+/// Stored getter/setter for accessor properties on NativeConstructor
+#[derive(Clone)]
+pub struct ConstructorAccessor {
+    pub getter: Option<Value>,
+    pub setter: Option<Value>,
+}
+
 /// Native constructor - a host-provided constructor function.
 /// Similar to NativeFunction but has a prototype property for instanceof checks.
 pub struct NativeConstructor {
@@ -383,6 +390,9 @@ pub struct NativeConstructor {
     pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
     /// Static methods on the constructor
     static_methods: std::collections::HashMap<String, Value>,
+    /// Accessor properties (getters/setters) defined via Object.defineProperty
+    /// Wrapped in RefCell so we can mutate even when shared via Rc
+    accessors: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
     /// The name of the constructor (for Error.name matching)
     name: String,
 }
@@ -397,6 +407,7 @@ impl NativeConstructor {
             func: std::rc::Rc::new(Box::new(f)),
             prototype,
             static_methods: std::collections::HashMap::new(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             name: String::new(),
         }
     }
@@ -419,6 +430,16 @@ impl NativeConstructor {
     /// Get a static method from the constructor
     pub fn get_static_method(&self, name: &str) -> Option<Value> {
         self.static_methods.get(name).cloned()
+    }
+
+    /// Define an accessor property on this constructor (for Object.defineProperty)
+    pub fn define_accessor(&self, name: &str, getter: Option<Value>, setter: Option<Value>) {
+        self.accessors.borrow_mut().insert(name.to_string(), ConstructorAccessor { getter, setter });
+    }
+
+    /// Get an accessor property from this constructor
+    pub fn get_accessor(&self, name: &str) -> Option<ConstructorAccessor> {
+        self.accessors.borrow().get(name).cloned()
     }
 
     /// Call the constructor with arguments and a this binding
@@ -457,6 +478,7 @@ impl Clone for NativeConstructor {
             func: std::rc::Rc::clone(&self.func),
             prototype: std::rc::Rc::clone(&self.prototype),
             static_methods: self.static_methods.clone(),
+            accessors: std::rc::Rc::clone(&self.accessors),
             name: self.name.clone(),
         }
     }

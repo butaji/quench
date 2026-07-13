@@ -135,7 +135,18 @@ pub fn eval_native_constructor_member(
     nc: &Rc<NativeConstructor>,
     prop_name: &str,
 ) -> Result<Value, JsError> {
-    // Check static methods first
+    // Check accessor (getter/setter) first - Object.defineProperty can override
+    if let Some(accessor) = nc.get_accessor(prop_name) {
+        if let Some(getter) = accessor.getter {
+            // Call the getter with this=nc
+            let nc_val = Value::NativeConstructor(Rc::clone(nc));
+            return crate::eval::call_value_with_this(getter, vec![], nc_val);
+        }
+        // Accessor with no getter returns undefined
+        return Ok(Value::Undefined);
+    }
+
+    // Check static methods
     if let Some(val) = nc.get_static_method(prop_name) {
         return Ok(val);
     }

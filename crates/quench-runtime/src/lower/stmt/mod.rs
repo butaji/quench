@@ -246,7 +246,7 @@ fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<S
                         }
                         _ => ("arg".to_string(), None),
                     };
-                    Param { name, default }
+                    Param { name, default, rest: false }
                 })
                 .collect();
             let body = func
