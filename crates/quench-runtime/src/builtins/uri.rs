@@ -6,6 +6,8 @@
 //! are simpler than Date parsing, but the implementation already covers
 //! the spec cases).
 
+use std::rc::Rc;
+
 use crate::value::{to_js_string, to_number, Value};
 use crate::Context;
 
@@ -172,10 +174,51 @@ fn decode_uri_component(s: &str) -> Result<String, crate::JsError> {
 // Registration
 // ============================================================================
 
+/// Convert the first argument to a primitive string per ECMA-262 ToString,
+/// including ToPrimitive with hint "string" for objects. Unlike `to_js_string`,
+/// this propagates thrown errors from `toString` / `valueOf` so callers like
+/// parseFloat / parseInt can surface them (test262 parseFloat T7 #7).
+fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
+    if let Some(s) = crate::value::convert::simple_string_value(arg) {
+        return Ok(s);
+    }
+    if let Value::Object(o) = arg {
+        // Try toString first, then valueOf. A throw from either propagates;
+        // a non-primitive result triggers the fall-through to the next method.
+        let try_call = |name: &str| -> Result<Option<String>, crate::JsError> {
+            let method = o.borrow().get(name);
+            if !matches!(
+                method,
+                Some(Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_))
+            ) {
+                return Ok(None);
+            }
+            let m = method.unwrap();
+            let res = crate::eval::call_value_with_this(m, vec![], Value::Object(Rc::clone(o)))?;
+            Ok(crate::value::convert::simple_string_value(&res))
+        };
+        if let Some(s) = try_call("toString")? {
+            return Ok(s);
+        }
+        if let Some(s) = try_call("valueOf")? {
+            return Ok(s);
+        }
+        // Neither yielded a primitive → TypeError per spec.
+        let (err, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot convert object to primitive value",
+            "TypeError",
+        );
+        crate::value::set_thrown_value(err);
+        return Err(js_err);
+    }
+    Ok(crate::value::to_js_string(arg))
+}
+
 pub fn register_uri(ctx: &mut Context) {
     // parseInt(string, radix)
     ctx.register_native("parseInt", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
+        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+        let s = to_string_for_spec(&arg)?;
         let radix_raw = args.get(1).map(|v| to_number(v) as i32).unwrap_or(0);
         // Clamp radix per spec: 0 means default (10, with 0x prefix → 16);
         // values 2..=36 are accepted, anything else yields NaN.
@@ -189,7 +232,8 @@ pub fn register_uri(ctx: &mut Context) {
 
     // parseFloat(string)
     ctx.register_native("parseFloat", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
+        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+        let s = to_string_for_spec(&arg)?;
         Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
     });
 

@@ -39,6 +39,36 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     );
 
     proto.borrow_mut().set(
+        "toString",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+            // Per spec, Number.prototype.toString unwraps the boxed number and
+            // returns its ToString representation. This must take precedence
+            // over Object.prototype.toString (which yields "[object Number]").
+            // We must not go through to_js_string here — it calls the object's
+            // own toString, which would recurse forever for boxed numbers.
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
+            let n = to_number(&this_val);
+            // Reuse the same number→string rules as to_js_string (NaN, ±Infinity,
+            // integer-only, and general float formatting). -0 must stringify
+            // as "0" per spec.
+            let s = if n.is_nan() {
+                "NaN".to_string()
+            } else if n == f64::INFINITY {
+                "Infinity".to_string()
+            } else if n == f64::NEG_INFINITY {
+                "-Infinity".to_string()
+            } else if n == 0.0 {
+                "0".to_string()
+            } else if n.fract() == 0.0 && n.abs() < 1e15 {
+                format!("{:.0}", n)
+            } else {
+                n.to_string()
+            };
+            Ok(Value::String(s))
+        }))),
+    );
+
+    proto.borrow_mut().set(
         "valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
@@ -452,5 +482,26 @@ mod tests {
     fn test_to_fixed_handles_special_values() {
         let nan_result = proto_to_fixed_impl(vec![]);
         assert!(nan_result.is_ok());
+    }
+
+    #[test]
+    fn test_number_prototype_to_string_unwraps_boxed_value() {
+        // Per ECMA-262, Number.prototype.toString returns ToString(thisNumberValue),
+        // not "[object Number]" (which is what Object.prototype.toString yields).
+        let s = eval("new Number(-1.1).toString()");
+        assert_eq!(s, Value::String("-1.1".to_string()));
+        assert_eq!(
+            eval("new Number(42).toString()"),
+            Value::String("42".to_string())
+        );
+        assert_eq!(
+            eval("String(new Number(-1.1))"),
+            Value::String("-1.1".to_string())
+        );
+        // parseFloat on a boxed Number must equal parseFloat on the unwrapped string.
+        assert_eq!(eval_num("parseFloat(new Number(-1.1))"), -1.1);
+        assert!(eval_num("parseFloat(new Number(Infinity))").is_infinite());
+        assert!(eval_num("parseFloat(new Number(-Infinity)").is_infinite());
+        assert!(eval_num("parseFloat(new Number(-Infinity)").is_sign_negative());
     }
 }
