@@ -114,6 +114,23 @@ pub fn eval_expression(
                 }
             }
             if let (Expression::Identifier(name), Some(scope)) = (left.as_ref(), identifier_scope) {
+                if scope.borrow().object_binding_has(name) == Some(false)
+                    && crate::interpreter::is_strict_mode()
+                {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("{} is not defined", name),
+                        "ReferenceError",
+                    );
+                    return Err(error);
+                }
+                if scope.borrow_mut().set_object_property(
+                    name,
+                    right_val.clone(),
+                    crate::interpreter::is_strict_mode(),
+                ) == Some(true)
+                {
+                    return Ok(right_val);
+                }
                 scope.borrow_mut().set(name.clone(), right_val.clone());
                 return Ok(right_val);
             }

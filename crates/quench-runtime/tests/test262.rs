@@ -351,6 +351,31 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_strict_with_assignment_to_deleted_binding_throws() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var count = 0;
+var scope = {x: 1};
+with (scope) {
+  (function() {
+    'use strict';
+    assert.throws(ReferenceError, () => { count++; x = (delete scope.x, 2); count++; });
+    count++;
+  })();
+}
+assert.sameValue(count, 2);
+assert.sameValue('x' in scope, false);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "strict deleted with binding failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_direct_eval_var_initializes_local_binding() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

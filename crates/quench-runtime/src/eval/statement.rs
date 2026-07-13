@@ -153,28 +153,20 @@ pub fn eval_statement(
                 return eval_statement(body, env, _is_expr_body, in_arrow_function);
             };
             env.borrow_mut().push_scope();
-            let with_keys = {
-                let obj_borrowed = obj_rc.borrow();
-                let keys: Vec<String> = obj_borrowed.properties.keys().cloned().collect();
-                for key in &keys {
-                    if let Some(value) = obj_borrowed.properties.get(key) {
-                        env.borrow_mut()
-                            .current_scope()
-                            .borrow_mut()
-                            .define(key.clone(), value.clone());
-                    }
-                }
-                keys
-            };
-            let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
+            env.borrow()
+                .current_scope()
+                .borrow_mut()
+                .set_object_binding(Rc::clone(&obj_rc));
             {
-                let scope = env.borrow().current_scope();
-                for key in with_keys {
-                    if let Some(value) = scope.borrow().get(&key) {
-                        obj_rc.borrow_mut().set(&key, value);
-                    }
+                let obj_borrowed = obj_rc.borrow();
+                for (key, value) in &obj_borrowed.properties {
+                    env.borrow_mut()
+                        .current_scope()
+                        .borrow_mut()
+                        .define(key.clone(), value.clone());
                 }
             }
+            let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
             env.borrow_mut().pop_scope();
             result
         }
