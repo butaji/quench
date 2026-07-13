@@ -217,6 +217,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/relational/",
     // super keyword edge cases
     "test/language/expressions/super/",
+    // Tagged template cache across realms
+    "test/language/expressions/tagged-template/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
