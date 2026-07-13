@@ -207,11 +207,20 @@ fn eval_var_decl(
     if !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
-    let value = if let Some(expr) = init {
+    let mut value = if let Some(expr) = init {
         eval_expression(expr, env, in_arrow_function)?
     } else {
         Value::Undefined
     };
+    // Per ES §13.3.3 SetFunctionName: when a VariableDeclaration's
+    // initializer evaluates to a function expression that has no name,
+    // bind the variable's name as the function's `name`.
+    if let Value::Function(ref mut f) = value {
+        if f.name.is_none() {
+            f.name = Some(name.to_string());
+            f.set_property("name", Value::String(name.to_string()));
+        }
+    }
     env.borrow_mut().initialize_declared(name, value.clone());
     // For top-level var declarations, also set on globalThis
     if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
