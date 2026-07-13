@@ -520,9 +520,13 @@ fn to_primitive_object(
 ) -> Result<Value, JsError> {
     let hint = resolve_hint(hint);
 
-    // Check Symbol.toPrimitive first
-    if let Some(result) = try_to_primitive_symbol(obj, hint) {
-        return Ok(result);
+    // Check Symbol.toPrimitive first. Returns:
+    // - Ok(Some(v)) when @@toPrimitive produced a primitive
+    // - Ok(None) when no @@toPrimitive exists or it returned an object
+    // - Err(_) when @@toPrimitive threw
+    match try_to_primitive_symbol(obj, hint)? {
+        Some(v) => return Ok(v),
+        None => {}
     }
 
     // Try valueOf then toString (or vice versa for string hint)
@@ -571,26 +575,31 @@ fn resolve_hint(hint: Option<&str>) -> PrimitiveHint {
 fn try_to_primitive_symbol(
     obj: &Rc<RefCell<crate::value::object::Object>>,
     hint: PrimitiveHint,
-) -> Option<Value> {
-    let to_prim_symbol = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive")?;
+) -> Result<Option<Value>, JsError> {
+    let Some(to_prim_symbol) = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive") else {
+        return Ok(None);
+    };
     // Pass the existing object through instead of cloning it: cloning would
     // break receiver identity (and cost a full object copy per call).
-    let to_prim_method = crate::builtins::symbol::get_symbol_property(
+    let Some(to_prim_method) = crate::builtins::symbol::get_symbol_property(
         &Value::Object(Rc::clone(obj)),
         &to_prim_symbol,
-    )?;
+    ) else {
+        return Ok(None);
+    };
     let hint_str = match hint {
         PrimitiveHint::Number => "number",
         PrimitiveHint::String => "string",
     };
     let arg = Value::String(hint_str.to_string());
     let this_val = Value::Object(Rc::clone(obj));
+    // Per ES spec §7.1.1, @@toPrimitive throwing propagates the throw.
     let result =
-        crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val).ok()?;
+        crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val)?;
     if !matches!(result, Value::Object(_)) {
-        Some(result)
+        Ok(Some(result))
     } else {
-        None
+        Ok(None)
     }
 }
 
