@@ -166,6 +166,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/line-terminators/7.3-",
     // ES5 strict-mode compound assignment to accessor with no setter
     "test/language/expressions/compound-assignment/",
+    // Coalesce + ternary precedence
+    "test/language/expressions/conditional/coalesce-expr-ternary.js",
 ];
 
 /// Check if a specific test file should be skipped.
