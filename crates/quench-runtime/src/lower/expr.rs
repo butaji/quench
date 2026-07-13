@@ -457,8 +457,10 @@ pub(crate) fn lower_member_prop(
 }
 
 fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Expression, LowerError> {
+    if let Some(binding) = crate::lower::pattern::lower_assignment_target_to_binding(target) {
+        return Ok(crate::lower::pattern::binding_to_expr(binding));
+    }
     match target {
-        // AssignmentTarget inherits from SimpleAssignmentTarget, so these variants are direct
         ast::AssignmentTarget::AssignmentTargetIdentifier(ident) => {
             Ok(Expression::Identifier(ident.name.as_str().to_string()))
         }
@@ -492,8 +494,7 @@ fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Expression,
         ast::AssignmentTarget::TSNonNullExpression(e) => lower_expr(&e.expression),
         ast::AssignmentTarget::TSTypeAssertion(e) => lower_expr(&e.expression),
         ast::AssignmentTarget::TSInstantiationExpression(e) => lower_expr(&e.expression),
-        // Complex assignment targets not supported
-        _ => Err(LowerError::new("Complex assignment target not supported")),
+        _ => Err(LowerError::new("Unsupported assignment target")),
     }
 }
 
