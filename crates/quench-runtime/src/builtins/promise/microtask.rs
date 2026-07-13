@@ -18,11 +18,10 @@ pub fn get_pending_microtasks() -> Vec<Value> {
 
 /// Execute all pending microtasks
 pub fn execute_pending_microtasks() -> Result<(), JsError> {
-    loop {
+    // Process all microtasks, including those added during callback execution.
+    // Keep looping as long as the queue has tasks.
+    while !MICROTASK_QUEUE.with(|q| q.borrow().is_empty()) {
         let tasks = get_pending_microtasks();
-        if tasks.is_empty() {
-            break;
-        }
         for task in tasks {
             if matches!(task, Value::Function(_) | Value::NativeFunction(_)) {
                 call_value_with_this(task, vec![], Value::Undefined)?;

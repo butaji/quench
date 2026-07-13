@@ -1747,6 +1747,197 @@ try {
     }
 
     #[test]
+    fn block_let_capture_isolated_from_sibling_function() {
+        // Counterexample to a global "in closure call" visibility flag: a
+        // function defined OUTSIDE the captured block must not see the
+        // block-scoped `let x` even when it runs while another function
+        // created inside the block is still in scope. Use `typeof` so the
+        // expected observable is unambiguous if the host throws on a
+        // bare reference.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var inner;
+{
+  let x = 'inner';
+  inner = function () { return x; };
+}
+var siblingProbe = function () { return typeof x; };
+var sibling = siblingProbe();
+var captured = inner();
+if (sibling !== 'undefined') throw new Error('sibling saw block x: ' + sibling);
+if (captured !== 'inner') throw new Error('capture lost inner x: ' + captured);
+if (sibling + ':' + captured !== 'undefined:inner') {
+  throw new Error('unexpected: ' + sibling + ':' + captured);
+}
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "sibling function should not see captured block let: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_capture_does_not_leak_into_foreign_helper() {
+        // Counterexample to a global leaked-scope flag: a helper defined
+        // OUTSIDE the captured block must resolve identifiers via its own
+        // lexical environment when invoked from inside the capturing
+        // closure. The closure calls the helper; the helper sees the outer
+        // `var x`, not the inner `let x`.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var x = 'outer';
+function outsideHelper() { return x; }
+var outer;
+{
+  let x = 'inner';
+  outer = function () { return outsideHelper(); };
+}
+var result = outer();
+if (result !== 'outer') throw new Error('foreign helper leaked inner: ' + result);
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "foreign helper called from closure must use its own scope: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_shared_between_two_closures() {
+        // Two closures defined in the same block must share the same
+        // block-scoped binding — writing through one must be visible to
+        // the other. Distinct per-closure Scope clones would each see
+        // their own private `x`.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var get, bump;
+{
+  let x = 10;
+  get = function () { return x; };
+  bump = function () { x++; };
+}
+bump();
+bump();
+if (get() !== 12) throw new Error('shared binding wrong: ' + get());
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "two closures in same block must share backing: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_captures_nested_block_chain() {
+        // A closure defined in a nested block must see bindings from BOTH
+        // the inner block and the outer block. A per-closure snapshot
+        // that only keeps the innermost scope would lose the outer
+        // block's binding.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var f;
+{
+  let x = 'outer-block';
+  {
+    let y = 'inner-block';
+    f = function () { return x + '|' + y; };
+  }
+}
+if (f() !== 'outer-block|inner-block') throw new Error('nested capture wrong: ' + f());
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "nested block chain must be retained: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_post_initialization_visible_to_closure() {
+        // The closure is created BEFORE `let x = ...` runs, but ES rules
+        // require `let` bindings to be visible to closures that are
+        // defined inside the same block — the closure reads `x` after
+        // initialization. A naive "snapshot at creation time" would
+        // either not see `x` (TDZ) or capture an undefined value.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var f;
+{
+  f = function () { return typeof x; };
+  let x = 'initialized';
+}
+if (f() !== 'string') throw new Error('post-init visibility wrong: ' + f());
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "later let init must be visible to closure created earlier: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_shared_by_object_accessor_pair() {
+        // An object defined inside a block has its getter and setter
+        // bound to the SAME backing lexical binding. Both must agree on
+        // a single backing store — separate per-closure clones would
+        // make `obj.v = 7` only affect the setter's view.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var obj;
+{
+  let backing = 42;
+  obj = { get v() { return backing; }, set v(n) { backing = n; } };
+}
+var a = obj.v;
+obj.v = 7;
+if (a + ':' + obj.v !== '42:7') throw new Error('accessor pair split: ' + a + ':' + obj.v);
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "getter/setter in block must share backing: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_captured_by_class_method() {
+        // A class expression defined inside a block has methods whose
+        // [[HomeObject]]/[[SourceText]] don't change the lexical
+        // capture rules: a method body must see the enclosing block's
+        // `let` binding through the same lexical record as a function
+        // expression would.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var C;
+{
+  let greet = 'hi';
+  C = class { speak() { return greet; } };
+}
+if (new C().speak() !== 'hi') throw new Error('class method missed block let: ' + new C().speak());
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "class method inside block must capture let: {:?}",
+            result
+        );
+    }
+
+    #[test]
     fn debug_promise_resolve_getter() {
         let mut ctx = crate::Context::new().unwrap();
         let result = ctx.eval("Promise.resolve");

@@ -379,7 +379,10 @@ mod tests {
 
         let result = ctx.eval("new RegExp('a', 'zz')");
         assert!(result.is_err(), "invalid flags must throw");
-        assert!(result.unwrap_err().0.contains("SyntaxError"));
+        assert!(result
+            .unwrap_err()
+            .0
+            .contains("Invalid regular expression flags"));
         let dup = ctx.eval("new RegExp('a', 'gg')");
         assert!(dup.is_err(), "duplicate flags must throw");
     }

@@ -140,14 +140,18 @@ pub fn eval_object_literal(
                 obj.set(&key_str, val);
             }
             PropertyValue::Getter { params: _, body } => {
-                obj.set_getter(&key_str, Rc::new(body.clone()), Rc::clone(env));
+                obj.set_getter(
+                    &key_str,
+                    Rc::new(body.clone()),
+                    crate::eval::expression::capture_env_for_closure(env),
+                );
             }
             PropertyValue::Setter { param, body } => {
                 obj.set_setter(
                     &key_str,
                     param.clone(),
                     Rc::new(body.clone()),
-                    Rc::clone(env),
+                    crate::eval::expression::capture_env_for_closure(env),
                 );
             }
         }
@@ -195,7 +199,9 @@ pub fn eval_array_literal(
             }
             Expression::Elision => {
                 // Array hole: advances length but contributes no own property.
+                let idx = arr.elements.len();
                 arr.elements.push(Value::Undefined);
+                arr.holes.insert(idx);
                 arr.properties.insert(
                     "length".to_string(),
                     Value::Number(arr.elements.len() as f64),

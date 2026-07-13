@@ -501,7 +501,7 @@ mod tests {
         // parseFloat on a boxed Number must equal parseFloat on the unwrapped string.
         assert_eq!(eval_num("parseFloat(new Number(-1.1))"), -1.1);
         assert!(eval_num("parseFloat(new Number(Infinity))").is_infinite());
-        assert!(eval_num("parseFloat(new Number(-Infinity)").is_infinite());
-        assert!(eval_num("parseFloat(new Number(-Infinity)").is_sign_negative());
+        assert!(eval_num("parseFloat(new Number(-Infinity))").is_infinite());
+        assert!(eval_num("parseFloat(new Number(-Infinity))").is_sign_negative());
     }
 }

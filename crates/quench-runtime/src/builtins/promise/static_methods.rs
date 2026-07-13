@@ -479,6 +479,8 @@ pub fn promise_race_impl(
     let promise_rc = invoke_promise_constructor(&this_val, &proto)?;
 
     // Create the race result promise's resolve/reject callbacks
+    // Note: We defer enqueue_promise_reactions to a separate microtask to avoid
+    // nested RefCell borrows when the callback chain modifies the same promise.
     let settled = Rc::new(RefCell::new(false));
     let settled_f = Rc::clone(&settled);
     let promise_rc_f = Rc::clone(&promise_rc);
@@ -488,11 +490,16 @@ pub fn promise_race_impl(
             let mut s = settled_f.borrow_mut();
             if !*s {
                 *s = true;
-                drop(s);
-                let mut pr = promise_rc_f.borrow_mut();
-                if let Some(ref mut d) = pr.promise_data {
-                    d.fulfill(result);
+                // Settle promise in a nested scope to release the RefCell borrow
+                // before calling enqueue_promise_reactions
+                {
+                    let mut pr = promise_rc_f.borrow_mut();
+                    if let Some(ref mut d) = pr.promise_data {
+                        d.fulfill(result);
+                    }
                 }
+                // Now the borrow is released, safe to enqueue reactions
+                enqueue_promise_reactions(&promise_rc_f);
             }
             Ok(Value::Undefined)
         })));
@@ -504,11 +511,16 @@ pub fn promise_race_impl(
             let mut s = settled_r.borrow_mut();
             if !*s {
                 *s = true;
-                drop(s);
-                let mut pr = promise_rc_r.borrow_mut();
-                if let Some(ref mut d) = pr.promise_data {
-                    d.reject(reason);
+                // Settle promise in a nested scope to release the RefCell borrow
+                // before calling enqueue_promise_reactions
+                {
+                    let mut pr = promise_rc_r.borrow_mut();
+                    if let Some(ref mut d) = pr.promise_data {
+                        d.reject(reason);
+                    }
                 }
+                // Now the borrow is released, safe to enqueue reactions
+                enqueue_promise_reactions(&promise_rc_r);
             }
             Ok(Value::Undefined)
         })));
@@ -525,14 +537,21 @@ pub fn promise_race_impl(
 
         // Per spec: Perform ? Invoke(nextPromise, "then", « resultCapability.[[Resolve]], resultCapability.[[Reject]] »).
         // Always hook up the handlers, even if the promise is already settled.
-        if let Value::Object(ref p) = next_promise {
-            if let Some(ref then_method) = p.borrow().get("then") {
-                let _ = call_value_with_this(
-                    then_method.clone(),
-                    vec![race_resolve.clone(), race_reject.clone()],
-                    Value::Undefined,
-                );
-            }
+        // Note: We must get the then_method OUTSIDE of the call to avoid nested RefCell borrows.
+        let then_info: Option<(Rc<RefCell<Object>>, Value)> =
+            if let Value::Object(ref p) = next_promise {
+                p.borrow()
+                    .get("then")
+                    .map(|then_method| (Rc::clone(p), then_method))
+            } else {
+                None
+            };
+        if let Some((p_rc, then_method)) = then_info {
+            let _ = call_value_with_this(
+                then_method,
+                vec![race_resolve.clone(), race_reject.clone()],
+                Value::Object(p_rc),
+            );
         }
     }
 

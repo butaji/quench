@@ -101,6 +101,8 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var r = 0; Promise.race([Promise.resolve(1)]).then(v => r = v);")
             .unwrap();
+        // Drain microtasks between eval calls so the .then callback runs
+        crate::builtins::execute_pending_microtasks().ok();
         let result = ctx.eval("r").unwrap();
         assert_eq!(result, crate::value::Value::Number(1.0));
     }
