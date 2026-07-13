@@ -96,6 +96,12 @@ pub enum Statement {
         object: Box<Expression>,
         body: Box<Statement>,
     },
+    /// `with` statement — `with (obj) { body }`. Forbidden in strict mode
+    /// (parser rejects), allowed in sloppy mode.
+    With {
+        object: Box<Expression>,
+        body: Box<Statement>,
+    },
 }
 
 impl Statement {
