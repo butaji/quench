@@ -12,7 +12,7 @@ use crate::ast::Statement;
 use crate::env::Environment;
 use crate::value::function::ValueFunction;
 use crate::value::kind::{ExoticKind, ObjectKind};
-use crate::value::Value;
+use crate::value::{Symbol, Value};
 
 /// Runtime property key — canonicalizes array indices to `Idx(u32)`.
 /// Also used as the key type for `Object.props` (currently separate maps,
@@ -23,8 +23,8 @@ pub enum Key {
     Str(String),
     /// Canonical array index (0 ..= 4294967294)
     Idx(u32),
-    /// Symbol key (stored as raw payload string)
-    Sym(String),
+    /// Symbol key (per spec 6.1.7.1, Sym(Rc<Symbol>))
+    Sym(Rc<Symbol>),
 }
 
 impl From<&str> for Key {

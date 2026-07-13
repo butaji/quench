@@ -18,7 +18,7 @@ pub use crate::value::convert::{
 };
 
 /// ECMA-262 6.1.6 Symbol type — unique, immutable, optionally described.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Symbol {
     pub desc: Option<String>,
     pub global: bool, // Symbol.for / Symbol.keyFor
