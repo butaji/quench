@@ -196,18 +196,17 @@ fn string_to_number(s: &str) -> f64 {
 }
 
 /// Convert a number to uint32 (JavaScript ToUint32)
-/// Handles edge cases: NaN→0, Infinity→0, fractional→truncated
+/// Handles edge cases: NaN→0, Infinity→0, fractional→truncated.
+/// To avoid FP imprecision at power-of-2 boundaries (e.g. -2147483649.1),
+/// route through i64 math via modulo on the integer part.
 pub fn to_uint32(n: f64) -> u32 {
     if !n.is_finite() || n.abs() < 1.0 {
         return 0;
     }
-    // Use modulo 2^32 to get uint32 range
-    let n_mod = n % (u32::MAX as f64 + 1.0);
-    if n_mod < 0.0 {
-        (n_mod + u32::MAX as f64 + 1.0) as u32
-    } else {
-        n_mod as u32
-    }
+    // ToInteger (per ES §7.1.5) truncates toward zero.
+    let i = n.trunc() as i64;
+    // mod 2^32
+    (i.rem_euclid(1i64 << 32)) as u32
 }
 
 /// Strict equality comparison
@@ -837,5 +836,13 @@ mod tests {
         // And parseInt(-0) must yield +0 (sameValue 0).
         assert!(eval_bool("parseInt(-0) === 0"));
         assert!(eval_bool("Object.is(parseInt(-0), 0)"));
+    }
+
+    #[test]
+    fn test_to_uint32_edge_cases() {
+        assert_eq!(super::to_uint32(-2147483649.1), 2147483647);
+        assert_eq!(super::to_uint32(2147483648.0), 2147483648);
+        assert_eq!(super::to_uint32(-1.0), 4294967295);
+        assert_eq!(super::to_uint32(0.0), 0);
     }
 }
