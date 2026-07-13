@@ -282,7 +282,10 @@ where
     if let Some(thrown) = get_thrown_value() {
         return Err(JsError(to_js_string(&thrown)));
     }
-    Ok(Value::Number(f(l as i64, r as i64) as f64))
+    // Per ES §12.9.3.1 / 12.9.4.1: shift count is masked to 5 bits (0-31).
+    // This avoids Rust's panic on shifting by >= bit width.
+    let count = (r as i64) & 0x1F;
+    Ok(Value::Number(f(l as i64, count) as f64))
 }
 
 fn shift_op_u<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
@@ -292,7 +295,9 @@ where
     // Use to_uint32 per JavaScript spec for unsigned right shift
     let l = to_uint32(to_number(left)) as u64;
     let r = to_uint32(to_number(right)) as u64;
-    let result = f(l, r);
+    // Mask shift count to 5 bits (0-31) per ES §12.9.3.1 step 7.
+    let count = r & 0x1F;
+    let result = f(l, count);
     Ok(Value::Number(result as f64))
 }
 
