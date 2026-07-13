@@ -815,6 +815,21 @@ mod tests {
     }
 
     #[test]
+    fn debug_new_target_arrow_2() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "function F() { this.af = () => new.target; } \
+             var f = new F(); \
+             var t = f.af(); \
+             [t === F, typeof t];"
+        ).unwrap();
+        let arr = if let crate::value::Value::Object(o) = v {
+            o.borrow().elements.clone()
+        } else { panic!("not array") };
+        eprintln!("results: eq={:?} type={:?}", arr[0], arr[1]);
+    }
+
+    #[test]
     fn debug_new_target_arrow() {
         let mut ctx = Context::new().unwrap();
         let v = ctx.eval(
