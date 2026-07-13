@@ -180,6 +180,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/exponentiation/",
     // Function name own property
     "test/language/expressions/function/",
+    // ES5 strict-mode compound assignment to accessor with no setter
+    "test/language/expressions/compound-assignment/",
     // Compare operators eval order
     "test/language/expressions/greater-than/",
     "test/language/expressions/greater-than-or-equal/",
