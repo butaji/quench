@@ -287,6 +287,17 @@ fn assign_to_member(
             }
             // Assignment replaces the data property's value while preserving its
             // descriptor flags. It must not mutate a function value in place.
+            // Inherited non-writable data properties reject assignment too.
+            if has_readonly_prototype_property(&o, &prop_name) {
+                if crate::interpreter::is_strict_mode() {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        "Cannot assign to read only property",
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
+                return Ok(());
+            }
             // Reject property sets on frozen objects
             if crate::builtins::object_static::is_frozen_object(&o) {
                 return Ok(());
@@ -388,6 +399,18 @@ fn assign_to_member(
             obj_val
         ))),
     }
+}
+
+fn has_readonly_prototype_property(object: &Rc<RefCell<Object>>, property: &str) -> bool {
+    let mut prototype = object.borrow().prototype.as_ref().map(Rc::clone);
+    while let Some(current) = prototype {
+        let borrowed = current.borrow();
+        if let Some(descriptor) = borrowed.get_descriptor(property) {
+            return !descriptor.writable;
+        }
+        prototype = borrowed.prototype.as_ref().map(Rc::clone);
+    }
+    false
 }
 
 fn is_readonly_constructor_property(constructor: &str, property: &str) -> bool {
