@@ -47,7 +47,7 @@ pub fn to_js_string(v: &Value) -> String {
     }
 }
 
-fn simple_string_value(v: &Value) -> Option<String> {
+pub fn simple_string_value(v: &Value) -> Option<String> {
     match v {
         Value::Undefined => Some("undefined".to_string()),
         Value::Null => Some("null".to_string()),
@@ -95,6 +95,9 @@ fn number_to_string(n: f64) -> String {
         "Infinity".to_string()
     } else if n == f64::NEG_INFINITY {
         "-Infinity".to_string()
+    } else if n == 0.0 {
+        // Per spec, both +0 and -0 stringify to "0".
+        "0".to_string()
     } else if n.fract() == 0.0 && n.abs() < 1e15 {
         format!("{:.0}", n)
     } else {
@@ -748,5 +751,15 @@ mod tests {
     fn test_class_identity() {
         assert!(eval_bool("class C {}; C === C"));
         assert!(eval_bool("class C {}; class D {}; C !== D"));
+    }
+
+    #[test]
+    fn test_to_js_string_negative_zero() {
+        // Per ECMA-262, both +0 and -0 stringify to "0".
+        assert_eq!(to_js_string(&Value::Number(0.0)), "0");
+        assert_eq!(to_js_string(&Value::Number(-0.0)), "0");
+        // And parseInt(-0) must yield +0 (sameValue 0).
+        assert!(eval_bool("parseInt(-0) === 0"));
+        assert!(eval_bool("Object.is(parseInt(-0), 0)"));
     }
 }
