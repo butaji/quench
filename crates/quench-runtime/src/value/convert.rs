@@ -426,12 +426,80 @@ pub fn to_primitive(value: &Value, hint: Option<&str>) -> Result<Value, JsError>
     }
     match value {
         Value::Object(obj) => to_primitive_object(obj, hint),
-        Value::Function(_)
-        | Value::NativeFunction(_)
+        Value::Function(f) => to_primitive_function(&std::rc::Rc::new(f.clone()), hint),
+        Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Class(_) => Ok(Value::String("[Function]".to_string())),
         _ => Ok(Value::Undefined),
     }
+}
+
+/// ToPrimitive for a user-defined JS Function. JS functions inherit
+/// valueOf/toString from Object.prototype, but calling those on a function
+/// recurses (valueOf returns `this`, toString returns "[object Function]").
+/// We only honour OWN properties (e.g. `f.valueOf = function() { return 1 }`).
+/// Inherited methods fall back to a textual representation.
+fn to_primitive_function(
+    f: &Rc<crate::value::function::ValueFunction>,
+    hint: Option<&str>,
+) -> Result<Value, JsError> {
+    let hint = resolve_hint(hint);
+
+    let (first, second) = match hint {
+        PrimitiveHint::Number => ("valueOf", "toString"),
+        PrimitiveHint::String => ("toString", "valueOf"),
+    };
+
+    // Only check OWN properties — walking the prototype chain and calling
+    // Object.prototype.valueOf/toString on a function recurses infinitely.
+    let first_method = f.get_property(first);
+    let second_method = f.get_property(second);
+
+    let this_val = Value::Function((**f).clone());
+
+    let mut first_primitive: Option<Value> = None;
+    let mut first_was_object = false;
+    if let Some(m) = first_method.clone() {
+        match crate::eval::call_value_with_this(m, vec![], this_val.clone()) {
+            Ok(v) => {
+                if !matches!(v, Value::Object(_)) {
+                    return Ok(v);
+                }
+                first_was_object = true;
+                first_primitive = Some(v);
+            }
+            Err(_) => return Err(crate::value::error::create_js_error_with_type(
+                "valueOf/toString threw",
+                "Error",
+            ).1),
+        }
+    }
+    if let Some(m) = second_method.clone() {
+        match crate::eval::call_value_with_this(m, vec![], this_val.clone()) {
+            Ok(v) => {
+                if !matches!(v, Value::Object(_)) {
+                    return Ok(v);
+                }
+                if first_was_object {
+                    // Both returned Object -> TypeError
+                    let (err, _) = crate::value::create_js_error_with_type(
+                        "Cannot convert object to primitive value",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(err);
+                    return Err(crate::value::JsError("TypeError".to_string()));
+                }
+            }
+            Err(_) => return Err(crate::value::error::create_js_error_with_type(
+                "valueOf/toString threw",
+                "Error",
+            ).1),
+        }
+    }
+    let _ = first_primitive; // suppress unused warning
+    // Fallback: match to_js_string's representation for Value::Function so that
+    // `f + ""` and `f.toString() + ""` agree.
+    Ok(Value::String("[Function]".to_string()))
 }
 
 fn primitive_direct(v: &Value) -> Option<Value> {
@@ -465,11 +533,25 @@ fn to_primitive_object(
 
     // Per ES spec: if valueOf throws, the throw propagates — we must NOT fall
     // through to toString.
+    // Track whether either method was callable. If both methods exist but
+    // return non-primitives, ToPrimitive must throw TypeError per ES §7.1.1.
+    let first_called = obj.borrow().get(first).is_some();
+    let second_called = obj.borrow().get(second).is_some();
     if let Some(result) = try_method(obj, first)? {
         return Ok(result);
     }
     if let Some(result) = try_method(obj, second)? {
         return Ok(result);
+    }
+    // Both methods were called and returned non-primitive (object) values —
+    // per ES spec, ToPrimitive must throw TypeError.
+    if first_called && second_called {
+        let (err, _) = crate::value::create_js_error_with_type(
+            "Cannot convert object to primitive value",
+            "TypeError",
+        );
+        crate::value::set_thrown_value(err);
+        return Err(crate::value::JsError("TypeError".to_string()));
     }
 
     Ok(Value::String(to_js_string(&Value::Object(std::rc::Rc::new(

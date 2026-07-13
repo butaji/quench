@@ -684,3 +684,16 @@ mod tests {
         assert!(res.is_ok(), "sloppy assignment to NaN should not throw");
     }
 }
+
+#[cfg(test)]
+mod debug_prim {
+    use crate::Context;
+
+    #[test]
+    fn debug_prim_function() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("function f() {}; f + 1").unwrap();
+        // Just see what we get
+        eprintln!("f+1 = {:?}", v);
+    }
+}
