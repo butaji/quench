@@ -98,7 +98,10 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
         ast::Statement::WithStatement(w) => {
             let object = lower_expr(&w.object).ok()?;
             let body = Box::new(lower_stmt(&w.body)?);
-            Some(Statement::With { object: Box::new(object), body })
+            Some(Statement::With {
+                object: Box::new(object),
+                body,
+            })
         }
         ast::Statement::VariableDeclaration(var_decl) => lower_var_decl(var_decl),
         ast::Statement::FunctionDeclaration(func_decl) => lower_fn_decl(func_decl),
@@ -246,7 +249,11 @@ fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<S
                         }
                         _ => ("arg".to_string(), None),
                     };
-                    Param { name, default, rest: false }
+                    Param {
+                        name,
+                        default,
+                        rest: false,
+                    }
                 })
                 .collect();
             let body = func
