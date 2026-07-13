@@ -32,10 +32,6 @@ pub struct Scope {
     /// super()/this binding should throw ReferenceError. We track it on
     /// the scope that holds the constructor's `this`.
     this_initialized: bool,
-    /// Number of closures created while this scope was the innermost scope.
-    /// `pop_scope` skips popping if this is > 0, so closures that captured
-    /// bindings from this block keep seeing them after the block exits.
-    closures_created: u32,
 }
 
 impl std::fmt::Debug for Scope {
@@ -64,7 +60,6 @@ impl Clone for Scope {
             var_kinds: self.var_kinds.clone(),
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
-            closures_created: self.closures_created,
         }
     }
 }
@@ -77,7 +72,6 @@ impl Scope {
             var_kinds: HashMap::new(),
             this_value: None,
             this_initialized: false,
-            closures_created: 0,
         }
     }
 
@@ -196,9 +190,17 @@ impl Default for Scope {
     }
 }
 
-/// An environment holds a scope chain for variable resolution
+/// An environment holds a scope chain for variable resolution. Each
+/// scope lives behind an `Rc<RefCell<Scope>>` so that closures created
+/// in the same block (or in nested blocks) can share the SAME scope
+/// records as the active environment — writes through one closure are
+/// visible to every other closure that captured the same scope. When a
+/// scope is logically popped (`pop_scope`), it stays in `scopes` so that
+/// closures which captured it via `Rc::clone` can still resolve their
+/// bindings, but the live-environment lookup methods skip scopes whose
+/// `popped` flag is set.
 pub struct Environment {
-    pub scopes: Vec<Scope>,
+    pub scopes: Vec<Rc<RefCell<Scope>>>,
     /// Parent environment (for closures)
     parent: Option<Rc<RefCell<Environment>>>,
     /// Super class reference for class methods/constructors
@@ -228,7 +230,7 @@ impl Environment {
     /// Create a new top-level environment
     pub fn new() -> Self {
         Environment {
-            scopes: vec![Scope::new()],
+            scopes: vec![Rc::new(RefCell::new(Scope::new()))],
             parent: None,
             super_class: None,
         }
@@ -237,10 +239,16 @@ impl Environment {
     /// Create a new environment with a parent
     pub fn with_parent(parent: Rc<RefCell<Environment>>) -> Self {
         Environment {
-            scopes: vec![Scope::new()],
+            scopes: vec![Rc::new(RefCell::new(Scope::new()))],
             parent: Some(parent),
             super_class: None,
         }
+    }
+
+    /// Attach a parent environment. Used by closure-capture code to
+    /// link the new capture env to the live outer chain.
+    pub fn set_parent(&mut self, parent: Rc<RefCell<Environment>>) {
+        self.parent = Some(parent);
     }
 
     /// Set the super class reference for class methods/constructors
@@ -258,12 +266,44 @@ impl Environment {
         self.parent.clone()
     }
 
+    /// Iterate live scopes in stack order (outermost first, innermost last).
+    /// "Live" means still in `self.scopes` (popped scopes are removed).
+    /// Callers should not retain the iterator past a mutation of `self.scopes`.
+    fn live_scopes(&self) -> impl Iterator<Item = &Rc<RefCell<Scope>>> {
+        self.scopes.iter()
+    }
+
+    /// Snapshot the live scope chain as a `Vec<Rc<RefCell<Scope>>>`.
+    /// The returned `Rc`s are SHARED with this environment, so closures
+    /// (and getters/setters, class methods, …) created from this snapshot
+    /// see the same bindings as the active execution — writes propagate
+    /// and later initialization is visible. The closure env keeps these
+    /// `Rc`s alive even after the block pops, so the closure can
+    /// continue to reach its captured bindings.
+    pub fn live_scopes_snapshot(&self) -> Vec<Rc<RefCell<Scope>>> {
+        self.scopes.iter().cloned().collect()
+    }
+
+    /// Build a fresh `Environment` that owns a snapshot of the live
+    /// scope chain AND inherits the active environment's `parent`. Used
+    /// by every closure-capture site (function, arrow, getter/setter,
+    /// class method, function declaration in a block) so they all share
+    /// the same lexical Environment Records.
+    pub fn capture_env(&self) -> Environment {
+        let mut captured = Environment::new();
+        captured.scopes = self.live_scopes_snapshot();
+        captured.parent = self.parent.clone();
+        captured.super_class = self.super_class.clone();
+        captured
+    }
+
     /// Get a variable by name (lexical lookup)
     /// Returns a cloned Value for simplicity.
-    /// Falls back to globalThis if not found in the scope chain.
+    /// Walks the scope chain in this environment and then the parent
+    /// chain. Falls back to globalThis at the top level.
     pub fn get(&self, name: &str) -> Option<Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
+        for scope_rc in self.scopes.iter().rev() {
+            if let Some(value) = scope_rc.borrow().get(name) {
                 return Some(value);
             }
         }
@@ -278,8 +318,8 @@ impl Environment {
     /// Get a variable as Rc<Value> for identity preservation.
     /// This ensures function properties persist across multiple accesses.
     pub fn get_shared(&self, name: &str) -> Option<Rc<Value>> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(rc) = scope.get_rc(name) {
+        for scope_rc in self.scopes.iter().rev() {
+            if let Some(rc) = scope_rc.borrow().get_rc(name) {
                 return Some(rc);
             }
         }
@@ -291,10 +331,9 @@ impl Environment {
     }
 
     /// Get a property from globalThis if it exists.
-    /// This is called as a fallback when the variable is not found in the scope chain.
     fn get_global_this_property(&self, name: &str) -> Option<Value> {
-        // Look for globalThis in all environments in the chain (including parents)
-        for scope in &self.scopes {
+        for scope_rc in self.scopes.iter() {
+            let scope = scope_rc.borrow();
             if let Some(Value::Object(global_obj)) = scope.get("globalThis") {
                 if let Some(val) = global_obj.borrow().get(name) {
                     return Some(val);
@@ -323,8 +362,8 @@ impl Environment {
     /// is silently ignored in sloppy mode; the strict path falls through to
     /// assign_to_member which throws TypeError.
     pub fn set_property(&mut self, name: &str, prop: &str, value: Value) -> bool {
-        // Try current scopes first - use get_mut for in-place modification
-        for scope in self.scopes.iter_mut().rev() {
+        for scope_rc in self.scopes.iter().rev() {
+            let mut scope = scope_rc.borrow_mut();
             if let std::collections::hash_map::Entry::Occupied(entry) =
                 scope.bindings.entry(name.to_string())
             {
@@ -370,8 +409,8 @@ impl Environment {
     /// Set a variable by name (assigns to existing binding)
     /// If not found in current environment, tries to set in parent.
     pub fn set(&mut self, name: &str, value: Value) -> bool {
-        for scope in self.scopes.iter_mut().rev() {
-            if scope.set(name.to_string(), value.clone()) {
+        for scope_rc in self.scopes.iter().rev() {
+            if scope_rc.borrow_mut().set(name.to_string(), value.clone()) {
                 return true;
             }
         }
@@ -382,9 +421,9 @@ impl Environment {
         false
     }
 
-    /// Define a new variable in the current (innermost) scope
+    /// Define a new variable in the current (innermost) scope.
     pub fn define(&mut self, name: String, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
+        if let Some(mut scope) = self.current_scope_ref_mut() {
             scope.define(name, value);
         }
     }
@@ -394,53 +433,48 @@ impl Environment {
         self.define(name, value);
     }
 
-    /// Declare a variable with its kind (for var/let/const handling)
+    /// Declare a variable with its kind (for var/let/const handling).
     pub fn declare_var(&mut self, name: String, kind: VarKind) {
-        if let Some(scope) = self.scopes.last_mut() {
+        if let Some(mut scope) = self.current_scope_ref_mut() {
             scope.declare_var(name, kind);
         }
     }
 
-    /// Initialize a declared variable (removes from declarations, adds to bindings)
-    /// Finds the innermost scope where the variable was declared.
+    /// Initialize a declared variable (removes from declarations, adds
+    /// to bindings). Finds the innermost scope where the variable was
+    /// declared; if no pending declaration exists, updates the existing
+    /// local binding instead of letting the write escape to the parent
+    /// environment.
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         // Search from innermost scope outward so block-scoped declarations
         // shadow outer declarations, matching JavaScript lexical scoping.
-        for (i, scope) in self.scopes.iter().enumerate().rev() {
+        for scope_rc in self.scopes.iter().rev() {
+            let mut scope = scope_rc.borrow_mut();
             if scope.declarations.contains_key(name) {
-                self.scopes[i].initialize_declared(name, value);
+                scope.initialize_declared(name, value);
                 return;
             }
         }
 
-        // No pending declaration: the variable was already initialized earlier
-        // (e.g. a function-scoped `var` re-initialized on a later loop
-        // iteration). Update the existing local binding instead of letting
-        // the write escape to the parent environment.
-        for scope in self.scopes.iter_mut().rev() {
+        // No pending declaration: update the existing local binding in
+        // place (e.g. a `var` re-initialized on a later loop iteration).
+        for scope_rc in self.scopes.iter().rev() {
+            let mut scope = scope_rc.borrow_mut();
             if scope.bindings.contains_key(name) {
                 scope.set(name.to_string(), value);
                 return;
             }
         }
 
-        // Otherwise delegate to the parent environment (declaration or
-        // binding may live in a closure scope).
+        // Otherwise delegate to the parent environment.
         if let Some(ref parent) = self.parent {
             parent.borrow_mut().initialize_declared(name, value);
         }
     }
 
     /// Check if a variable is in TDZ in the current scope.
-    /// If the innermost scope has any record of the name (binding or
-    /// declaration), only that scope's TDZ state matters; an inner binding
-    /// shadows any outer TDZ.
-    /// Check if a variable is in TDZ in the current scope.
-    /// If the innermost scope has any record of the name (binding or
-    /// declaration), only that scope's TDZ state matters; an inner binding
-    /// shadows any outer TDZ.
     pub fn is_tdz(&self, name: &str) -> bool {
-        if let Some(scope) = self.scopes.last() {
+        if let Some(scope) = self.current_scope_ref() {
             if scope.has(name) {
                 return scope.is_tdz(name);
             }
@@ -454,8 +488,8 @@ impl Environment {
 
     /// Get the kind of a variable (Var, Let, Const) by looking up the scope chain
     pub fn get_kind(&self, name: &str) -> Option<VarKind> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(kind) = scope.get_kind(name) {
+        for scope_rc in self.scopes.iter().rev() {
+            if let Some(kind) = scope_rc.borrow().get_kind(name) {
                 return Some(kind);
             }
         }
@@ -468,8 +502,8 @@ impl Environment {
 
     /// Check if a variable exists in any scope or on globalThis
     pub fn has(&self, name: &str) -> bool {
-        for scope in &self.scopes {
-            if scope.has(name) {
+        for scope_rc in self.scopes.iter() {
+            if scope_rc.borrow().has(name) {
                 return true;
             }
         }
@@ -481,54 +515,48 @@ impl Environment {
         self.get_global_this_property(name).is_some()
     }
 
-    /// Push a new scope onto the stack
+    /// Push a new scope onto the live stack. The scope is also retained in
+    /// `scopes` so closures that captured the surrounding chain keep
+    /// working even after it is popped.
     pub fn push_scope(&mut self) {
-        self.scopes.push(Scope::new());
+        self.scopes.push(Rc::new(RefCell::new(Scope::new())));
     }
 
-    /// Record that a closure was created in the current (innermost) scope.
-    /// Used by `pop_scope` to decide whether it's safe to actually pop the
-    /// scope: if a closure captured this scope's bindings, popping would
-    /// silently change the closure's view of those bindings.
-    pub fn mark_closure_created(&mut self) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.closures_created += 1;
-        }
-    }
-
-    /// Pop the current scope from the stack. The pop is skipped if any
-    /// closure was created while this scope was the innermost scope — those
-    /// closures hold a reference to the environment and would lose access
-    /// to bindings that the block shadowed. The "leaked" scope stays in the
-    /// Vec but is harmless for lookups because it's no longer reachable as
-    /// the innermost scope.
+    /// Pop the current (top) scope. The underlying `Rc<RefCell<Scope>>`
+    /// stays alive as long as any captured snapshot in a closure env
+    /// still references it, so closures created inside the block keep
+    /// seeing its bindings even though this environment no longer does.
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
-            let skip = self
-                .scopes
-                .last()
-                .map(|s| s.closures_created > 0)
-                .unwrap_or(false);
-            if !skip {
-                self.scopes.pop();
-            }
+            self.scopes.pop();
         }
     }
 
-    /// Get the current scope
-    pub fn current_scope(&self) -> &Scope {
-        self.scopes.last().unwrap()
+    /// Get the current (innermost) scope. The returned `Rc` shares the
+    /// underlying `Scope` with any other Environment that captured the
+    /// same logical scope.
+    pub fn current_scope(&self) -> Rc<RefCell<Scope>> {
+        Rc::clone(
+            self.scopes
+                .last()
+                .expect("environment always has at least one scope"),
+        )
     }
 
-    /// Get a mutable reference to the current scope
-    pub fn current_scope_mut(&mut self) -> &mut Scope {
-        self.scopes.last_mut().unwrap()
+    /// Convenience for callers that need a `&Scope` view without holding
+    /// the `Rc` themselves.
+    fn current_scope_ref(&self) -> Option<std::cell::Ref<'_, Scope>> {
+        self.scopes.last().map(|s| s.borrow())
+    }
+
+    /// Convenience for callers that need a `&mut Scope` view.
+    fn current_scope_ref_mut(&self) -> Option<std::cell::RefMut<'_, Scope>> {
+        self.scopes.last().map(|s| s.borrow_mut())
     }
 
     /// Get all variable names in the current scope
     pub fn keys(&self) -> Vec<String> {
-        self.scopes
-            .last()
+        self.current_scope_ref()
             .map(|s| s.bindings.keys().cloned().collect())
             .unwrap_or_default()
     }
@@ -544,7 +572,8 @@ impl Clone for Environment {
     fn clone(&self) -> Self {
         // Preserve the parent chain (shared via Rc) and super_class; dropping
         // them would silently break variable and `super` resolution for any
-        // code that clones an environment.
+        // code that clones an environment. Scope entries are shared via
+        // Rc, so captured closures see the same lexical records.
         Environment {
             scopes: self.scopes.clone(),
             parent: self.parent.clone(),

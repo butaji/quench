@@ -351,6 +351,25 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_arrow_lexically_captures_super_property() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var count = 0;
+class A { increment() { count++; } }
+class B extends A { incrementer() { (_ => super.increment())(); } }
+new B().incrementer();
+assert.sameValue(count, 1);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "lexical super in arrow failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_create_realm_uses_its_primitive_prototypes() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
