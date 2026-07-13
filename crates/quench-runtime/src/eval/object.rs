@@ -793,6 +793,42 @@ mod tests {
     }
 
     #[test]
+    fn new_target_in_constructor() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "function F() { this.t = new.target === F; } \
+             var f = new F(); \
+             f.t;"
+        );
+        assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn new_target_in_arrow_inside_constructor() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "function F() { this.af = () => new.target; } \
+             var f = new F(); \
+             f.af() === F;"
+        );
+        assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn debug_new_target_arrow() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "function F() { \
+               this.af = () => new.target; \
+             } \
+             var f = new F(); \
+             var result = f.af() === F; \
+             result;"
+        );
+        eprintln!("new.target in arrow: {:?}", v);
+    }
+
+    #[test]
     fn arrow_length_no_writable_check() {
         let mut ctx = Context::new().unwrap();
         let v = ctx.eval(
