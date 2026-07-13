@@ -680,6 +680,7 @@ dependencies = [
  "oxc",
  "phf 0.14.0",
  "regress",
+ "rustc-hash",
  "serde",
  "serde_json",
  "serial_test",
