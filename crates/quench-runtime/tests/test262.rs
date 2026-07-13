@@ -351,6 +351,19 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_rest_parameter_after_missing_argument_is_empty() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var length;
+((first, ...rest) => { length = rest.length; })();
+assert.sameValue(length, 0);
+"#,
+    );
+    assert!(result.is_ok(), "empty rest parameter failed: {:?}", result);
+}
+
+#[test]
 fn test_arrow_rest_destructuring_default_closes_over_eval_var() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
