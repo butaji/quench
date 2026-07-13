@@ -95,12 +95,10 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
         ast::Statement::BreakStatement(_) => Some(Statement::Break(None)),
         ast::Statement::ContinueStatement(_) => Some(Statement::Continue(None)),
         ast::Statement::DebuggerStatement(_) => Some(Statement::Empty),
-        ast::Statement::WithStatement(_) => {
-            // Nested `with` (where LowerError propagation is not possible):
-            // lower to a statement that throws at eval time instead of vanishing
-            Some(Statement::Throw(Box::new(crate::ast::Expression::String(
-                "SyntaxError: `with` statements are not supported".to_string(),
-            ))))
+        ast::Statement::WithStatement(w) => {
+            let object = lower_expr(&w.object).ok()?;
+            let body = Box::new(lower_stmt(&w.body)?);
+            Some(Statement::With { object: Box::new(object), body })
         }
         ast::Statement::VariableDeclaration(var_decl) => lower_var_decl(var_decl),
         ast::Statement::FunctionDeclaration(func_decl) => lower_fn_decl(func_decl),

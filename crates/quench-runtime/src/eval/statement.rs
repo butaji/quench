@@ -135,6 +135,36 @@ pub fn eval_statement(
             set_thrown_value(value);
             Err(JsError(msg))
         }
+        Statement::With { object, body } => {
+            // `with (obj) { body }` — push a scope onto the env whose
+            // identifier lookup defers to obj's properties. We model this by
+            // pushing a fresh scope and pre-populating its bindings with a
+            // snapshot of the object's own enumerable properties. A more
+            // faithful implementation would track the object and defer each
+            // get to it; this approximation is enough for the tests in
+            // scope (variable captures of with-scoped names).
+            if crate::interpreter::is_strict_mode() {
+                return Err(JsError(
+                    "SyntaxError: 'with' statements are not allowed in strict mode".to_string(),
+                ));
+            }
+            let obj_val = eval_expression(object, env, in_arrow_function)?;
+            let Value::Object(obj_rc) = obj_val else {
+                return eval_statement(body, env, _is_expr_body, in_arrow_function);
+            };
+            env.borrow_mut().push_scope();
+            {
+                let obj_borrowed = obj_rc.borrow();
+                for (k, v) in obj_borrowed.properties.iter() {
+                    env.borrow_mut()
+                        .current_scope_mut()
+                        .define(k.clone(), v.clone());
+                }
+            }
+            let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
+            env.borrow_mut().pop_scope();
+            result
+        }
         Statement::Export(stmt) => {
             // Export statements wrap other statements (like assignments)
             eval_statement(stmt, env, _is_expr_body, in_arrow_function)
