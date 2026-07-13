@@ -351,6 +351,18 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_eval_var_conflicts_with_arrow_body_let() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var a = () => { let x; eval('var x;'); };
+assert.throws(SyntaxError, a);
+"#,
+    );
+    assert!(result.is_ok(), "eval lexical conflict failed: {:?}", result);
+}
+
+#[test]
 fn test_arrow_lexically_captures_super_property() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

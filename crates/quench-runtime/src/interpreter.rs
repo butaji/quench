@@ -56,6 +56,18 @@ pub fn set_max_call_depth(depth: usize) {
 }
 
 thread_local! {
+    static CURRENT_EVAL_ENV: RefCell<Option<Rc<RefCell<Environment>>>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_current_eval_env(env: Option<Rc<RefCell<Environment>>>) {
+    CURRENT_EVAL_ENV.with(|cell| *cell.borrow_mut() = env);
+}
+
+pub(crate) fn get_current_eval_env() -> Option<Rc<RefCell<Environment>>> {
+    CURRENT_EVAL_ENV.with(|cell| cell.borrow().clone())
+}
+
+thread_local! {
     static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
 
@@ -530,7 +542,8 @@ pub(crate) fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value
     // binding set by eval_program. The this_initialized flag is reserved
     // for tracking constructor `this` per ES §8.1.1.3.1.
     env.borrow_mut()
-        .current_scope_mut()
+        .current_scope()
+        .borrow_mut()
         .set_this_value(this_value);
 }
 
@@ -540,7 +553,8 @@ pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
     // `this` from their lexical enclosing scope.
     let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
     while let Some(e) = current {
-        for scope in e.borrow().scopes.iter().rev() {
+        for scope_rc in e.borrow().scopes.iter().rev() {
+            let scope = scope_rc.borrow();
             if let Some(this_val) = scope.get_this() {
                 // Sloppy mode: undefined/null this → globalThis (ESMA-262 12.2.1.1)
                 if !is_strict_mode() && (this_val == Value::Undefined || this_val == Value::Null) {
@@ -757,7 +771,7 @@ pub(crate) fn predeclare_let_const(stmts: &[Statement], env: &mut Environment) {
         // is already declared in THIS scope, which would be a redeclaration
         // (e.g. `let x; let x;` in the same block is a SyntaxError in strict
         // mode; callers tolerate the silent override for now).
-        if !env.current_scope().has(&name) {
+        if !env.current_scope().borrow().has(&name) {
             env.declare_var(name, kind);
         }
     }

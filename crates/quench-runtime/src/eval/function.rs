@@ -106,7 +106,7 @@ pub(crate) fn call_js_function_impl(
     // (closure) scope. Setting this on the new scope would override that
     // capture with the caller-supplied this. Skip for arrows.
     if !f.is_arrow {
-        call_env.current_scope_mut().set_this(this_val);
+        call_env.current_scope().borrow_mut().set_this(this_val);
     }
     // Per ES §13.2.6 GetNewTarget: bind `new.target` in the function's
     // environment for ordinary (non-arrow) functions so they can reference
@@ -116,7 +116,8 @@ pub(crate) fn call_js_function_impl(
     if !f.is_arrow {
         let target = crate::interpreter::get_new_target().unwrap_or(Value::Undefined);
         call_env
-            .current_scope_mut()
+            .current_scope()
+            .borrow_mut()
             .define("new.target".to_string(), target);
     }
     let call_env_rc = Rc::new(RefCell::new(call_env));
@@ -173,11 +174,14 @@ pub(crate) fn call_js_function_impl(
     let prev_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(in_strict);
 
+    let previous_eval_env = crate::interpreter::get_current_eval_env();
+    crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
     let result = if f.is_arrow {
         call_arrow_body(&f, &call_env_rc)
     } else {
         eval_function_body(&f.body, &call_env_rc, false)
     };
+    crate::interpreter::set_current_eval_env(previous_eval_env);
 
     // Restore previous strict mode
     crate::interpreter::set_strict_mode(prev_strict);
