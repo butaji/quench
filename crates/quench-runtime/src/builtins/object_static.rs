@@ -393,7 +393,7 @@ fn get_function_property_descriptor(
                 Value::Number(n) => Some(n),
                 _ => None,
             })
-            .unwrap_or_else(|| f.params.iter().filter(|p| p.default.is_none()).count() as f64);
+            .unwrap_or_else(|| crate::value::function::expected_argument_count(&f.params));
         // Per ES §9.2.4 FunctionInitialize, the `length` property is
         // { [[Value]]: len, [[Writable]]: false, [[Enumerable]]: false,
         // [[Configurable]]: true }.

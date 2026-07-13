@@ -111,6 +111,20 @@ impl fmt::Debug for ValueFunction {
     }
 }
 
+/// Per ES §14.1 ExpectedArgumentCount: count parameters until (and
+/// including) the first one with a default value, then stop. Returns
+/// the count as f64 for use in property descriptors.
+pub(crate) fn expected_argument_count(params: &[Param]) -> f64 {
+    let mut count = 0;
+    for p in params {
+        if p.default.is_some() {
+            break;
+        }
+        count += 1;
+    }
+    count as f64
+}
+
 impl ValueFunction {
     /// Create a new regular function
     pub fn new(
@@ -121,8 +135,9 @@ impl ValueFunction {
     ) -> Self {
         // Per ES §9.2.4 FunctionInitialize: install `length` and (when named)
         // `name` as own properties so Object.getOwnPropertyDescriptor sees them.
-        // `length` counts parameters without default values.
-        let length = params.iter().filter(|p| p.default.is_none()).count() as f64;
+        // `length` counts parameters **before the first default**, not all
+        // params without defaults (see ExpectedArgumentCount in §14.1).
+        let length = expected_argument_count(&params);
         let mut props = std::collections::HashMap::new();
         props.insert("length".to_string(), Value::Number(length));
         if let Some(ref n) = name {
@@ -150,7 +165,7 @@ impl ValueFunction {
     ) -> Self {
         // Per ES §9.2.4 FunctionInitialize: arrow functions are also functions
         // and must have a configurable `length` and (when named) `name`.
-        let length = params.iter().filter(|p| p.default.is_none()).count() as f64;
+        let length = expected_argument_count(&params);
         let mut props = std::collections::HashMap::new();
         props.insert("length".to_string(), Value::Number(length));
         ValueFunction {
@@ -220,17 +235,11 @@ impl ValueFunction {
         self.proto_cell.as_ptr()
     }
 
-    /// Compute the function's length per ECMA-262 10.2.3.
-    /// Length is the number of parameters that don't have defaults or rest.
+    /// Compute the function's length per ECMA-262 14.1 / 9.2.4
+    /// (ExpectedArgumentCount). Length is the number of parameters
+    /// **before the first parameter with a default value** (or rest).
     pub fn length(&self) -> usize {
-        let mut count = 0;
-        for p in &self.params {
-            if p.default.is_some() {
-                break;
-            }
-            count += 1;
-        }
-        count
+        expected_argument_count(&self.params) as usize
     }
 
     /// Get a property from this function (e.g., sameValue, notSameValue)
