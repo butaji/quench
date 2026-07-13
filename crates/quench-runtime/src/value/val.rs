@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::ast::{Class, ClassMember, PropertyKey};
+use crate::ast::{Class, ClassMember, Param, PropertyKey};
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
 
@@ -58,9 +58,9 @@ pub struct ClassValue {
     /// Constructor body statements
     pub constructor_body: Vec<crate::ast::Statement>,
     /// Instance methods (name -> (params, body))
-    pub methods: Vec<(PropertyKey, Vec<String>, Vec<crate::ast::Statement>)>,
+    pub methods: Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     /// Static methods (name -> (params, body))
-    pub static_methods: Vec<(PropertyKey, Vec<String>, Vec<crate::ast::Statement>)>,
+    pub static_methods: Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     /// Instance getters (name -> body)
     pub getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     /// Instance setters (name -> (param, body))
@@ -77,6 +77,8 @@ pub struct ClassValue {
         std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<std::cell::RefCell<Object>>>>>,
     /// Static field values (name -> value), initialized during class expression evaluation
     pub(crate) static_properties_cell: std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>,
+    /// Deleted property names (configurable properties like "name" that were deleted)
+    pub(crate) deleted_properties: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
 }
 
 impl ClassValue {
@@ -118,6 +120,7 @@ impl ClassValue {
             super_class: class.super_class.clone(),
             prototype_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_properties_cell: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+            deleted_properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         }
     }
 
@@ -153,8 +156,8 @@ fn fill_members_from_ast(
     members: &[ClassMember],
     constructor_params: &mut Vec<String>,
     constructor_body: &mut Vec<crate::ast::Statement>,
-    methods: &mut Vec<(PropertyKey, Vec<String>, Vec<crate::ast::Statement>)>,
-    static_methods: &mut Vec<(PropertyKey, Vec<String>, Vec<crate::ast::Statement>)>,
+    methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
+    static_methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
     instance_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,

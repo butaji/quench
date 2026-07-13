@@ -123,14 +123,17 @@ fn make_array_with_new(
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;
                 obj_rc.borrow_mut().elements = vec![Value::Undefined; n as usize];
+                obj_rc.borrow_mut().set("length", Value::Number(n));
             } else {
                 return Err(JsError("Invalid array length".to_string()));
             }
         } else {
             obj_rc.borrow_mut().elements = vec![args[0].clone()];
+            obj_rc.borrow_mut().set("length", Value::Number(1.0));
         }
     } else if args.len() > 1 {
         obj_rc.borrow_mut().elements = args.to_vec();
+        obj_rc.borrow_mut().set("length", Value::Number(args.len() as f64));
     }
     Ok(Value::Object(obj_rc))
 }

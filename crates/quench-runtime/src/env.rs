@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::VarKind;
+use crate::ast::{Expression, PropertyKey, VarKind};
 use crate::value::Value;
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
@@ -236,6 +236,9 @@ pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     /// Super class reference for class methods/constructors
     super_class: Option<Value>,
+    /// Pending field initializers for derived class constructors.
+    /// Evaluated after super() returns, per ES spec.
+    pending_fields: Option<Vec<(PropertyKey, Expression)>>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -264,6 +267,7 @@ impl Environment {
             scopes: vec![Rc::new(RefCell::new(Scope::new()))],
             parent: None,
             super_class: None,
+            pending_fields: None,
         }
     }
 
@@ -273,6 +277,7 @@ impl Environment {
             scopes: vec![Rc::new(RefCell::new(Scope::new()))],
             parent: Some(parent),
             super_class: None,
+            pending_fields: None,
         }
     }
 
@@ -290,6 +295,18 @@ impl Environment {
     /// Get the super class reference
     pub fn get_super_class(&self) -> Option<Value> {
         self.super_class.clone()
+    }
+
+    /// Set pending field initializers (for derived classes with fields).
+    /// These are evaluated after super() returns, per ES §13.2.6.1.
+    pub fn set_pending_fields(&mut self, fields: Vec<(PropertyKey, Expression)>) {
+        self.pending_fields = Some(fields);
+    }
+
+    /// Take pending field initializers, if any (consumes them so they
+    /// only run once).
+    pub fn take_pending_fields(&mut self) -> Option<Vec<(PropertyKey, Expression)>> {
+        self.pending_fields.take()
     }
 
     /// Get the parent environment
@@ -325,6 +342,8 @@ impl Environment {
         captured.scopes = self.live_scopes_snapshot();
         captured.parent = self.parent.clone();
         captured.super_class = self.super_class.clone();
+        // pending_fields intentionally NOT captured — only valid in the
+        // constructor's own environment during instantiation.
         captured
     }
 
@@ -624,10 +643,13 @@ impl Clone for Environment {
         // them would silently break variable and `super` resolution for any
         // code that clones an environment. Scope entries are shared via
         // Rc, so captured closures see the same lexical records.
+        // pending_fields is NOT cloned — only valid for the constructor's
+        // own environment during instantiation.
         Environment {
             scopes: self.scopes.clone(),
             parent: self.parent.clone(),
             super_class: self.super_class.clone(),
+            pending_fields: None,
         }
     }
 }
