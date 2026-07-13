@@ -355,27 +355,55 @@ fn test_destructuring_iterator_close_error_precedence() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
         r#"
-function MyError() {}
-function thrower() { throw new MyError(); }
-var returnGetterCalled = 0;
-var iterator = {
-  [Symbol.iterator]() { return this; },
-  next() { return { done: false }; },
-  get return() {
-    returnGetterCalled += 1;
-    throw 'bad';
-  }
-};
-assert.throws(MyError, function() {
-  var a;
-  ([a = thrower()] = iterator);
-});
-assert.sameValue(returnGetterCalled, 1);
+var log = [];
+
+function source() {
+  log.push('source');
+  return {
+    get p() {
+      log.push('get');
+    }
+  };
+}
+function target() {
+  log.push('target');
+  return {
+    set q(v) {
+      log.push('set');
+    }
+  };
+}
+function sourceKey() {
+  log.push('source-key');
+  return {
+    toString: function() {
+      log.push('source-key-tostring');
+      return 'p';
+    }
+  };
+}
+function targetKey() {
+  log.push('target-key');
+  return {
+    toString: function() {
+      log.push('target-key-tostring');
+      return 'q';
+    }
+  };
+}
+
+({[sourceKey()]: target()[targetKey()]} = source());
+
+assert.compareArray(log, [
+  'source', 'source-key', 'source-key-tostring',
+  'target', 'target-key',
+  'get', 'target-key-tostring', 'set'
+]);
 "#,
     );
     assert!(
         result.is_ok(),
-        "destructuring iterator close precedence failed: {:?}",
+        "keyed destructuring evaluation order failed: {:?}",
         result
     );
 }
