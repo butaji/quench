@@ -376,7 +376,7 @@ impl fmt::Debug for Object {
     }
 }
 
-// ─── Ordinary VTable implementations ─────────────────────────────────
+// ─── Ordinary VTable implementations (TComp: operate on Object.props) ─────
 
 fn ordinary_get_prototype_of(obj: &Object) -> Option<Rc<RefCell<Object>>> {
     obj.prototype.clone()
@@ -399,22 +399,172 @@ fn ordinary_prevent_extensions(obj: &mut Object) -> bool {
     true
 }
 
+/// Convert a string key to a `Key` and look up in `props`.
+fn props_get_own(obj: &Object, key: &str) -> Option<Desc> {
+    let k = as_key(key);
+    obj.props.get(&k).cloned().or_else(|| {
+        // Fallback: old maps (during migration)
+        let flags = obj.descriptors.get(key).cloned().unwrap_or_default();
+        if let Some(val) = obj.properties.get(key) {
+            return Some(Desc {
+                value: Some(val.clone()),
+                writable: Some(flags.writable),
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                ..Default::default()
+            });
+        }
+        if let Some(g) = obj.getters.get(key) {
+            return Some(Desc {
+                get: g.func.clone(),
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                ..Default::default()
+            });
+        }
+        if let Some(s) = obj.setters.get(key) {
+            return Some(Desc {
+                set: s.func.clone(),
+                enumerable: Some(flags.enumerable),
+                configurable: Some(flags.configurable),
+                ..Default::default()
+            });
+        }
+        // Array elements
+        as_array_index(key).and_then(|i| {
+            if i < obj.elements.len() {
+                Some(Desc {
+                    value: Some(obj.elements[i].clone()),
+                    writable: Some(true),
+                    enumerable: Some(true),
+                    configurable: Some(true),
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        })
+    })
+}
+
 fn ordinary_get_own_property(obj: &Object, key: &str) -> Option<PropertyDescriptor> {
-    obj.get_own_property(key)
+    // Try old API first (has getter/setter storage with AST bodies)
+    let old = obj.get_own_property(key);
+    if old.is_some() {
+        return old;
+    }
+    // Fall back to props
+    let desc = props_get_own(obj, key)?;
+    Some(PropertyDescriptor {
+        value: desc.value,
+        writable: desc.writable,
+        get: desc.get,
+        set: desc.set,
+        enumerable: desc.enumerable,
+        configurable: desc.configurable,
+        ..Default::default()
+    })
 }
 
 fn ordinary_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescriptor) -> bool {
-    obj.define_own_property(key, desc)
+    // Check extensible
+    if !obj.extensible && !obj.properties.contains_key(key)
+        && !obj.getters.contains_key(key) && !obj.setters.contains_key(key)
+    {
+        return false;
+    }
+    let k = as_key(key);
+    if desc.value.is_some() || desc.writable.is_some() {
+        // Data descriptor
+        let val = desc.value.clone().unwrap_or(Value::Undefined);
+        obj.props.insert(k, Desc {
+            value: Some(val.clone()),
+            writable: desc.writable,
+            enumerable: desc.enumerable.or(Some(false)),
+            configurable: desc.configurable.or(Some(false)),
+            ..Default::default()
+        });
+        // Also write to old maps for backward compat
+        obj.properties.insert(key.to_string(), val);
+        let flags = PropertyFlags {
+            value: desc.value.clone(),
+            writable: desc.writable.unwrap_or(false),
+            enumerable: desc.enumerable.unwrap_or(false),
+            configurable: desc.configurable.unwrap_or(false),
+        };
+        obj.descriptors.insert(key.to_string(), flags);
+        obj.getters.shift_remove(key);
+        obj.setters.shift_remove(key);
+        true
+    } else if desc.get.is_some() || desc.set.is_some()
+        || desc.get_body.is_some() || desc.set_body.is_some()
+    {
+        // Accessor descriptor
+        let d = Desc {
+            get: desc.get.clone(),
+            set: desc.set.clone(),
+            enumerable: desc.enumerable,
+            configurable: desc.configurable,
+            ..Default::default()
+        };
+        obj.props.insert(k, d);
+        // Write to old maps too
+        let flags = PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: desc.enumerable.unwrap_or(true),
+            configurable: desc.configurable.unwrap_or(true),
+        };
+        obj.descriptors.insert(key.to_string(), flags);
+        if let Some(ref g) = desc.get { obj.set_getter_func(key, g.clone()); }
+        if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure) {
+            obj.getters.insert(key.to_string(), GetterStorage {
+                body: Rc::clone(body), closure: Rc::clone(closure), func: None,
+            }); }
+        if let Some(ref s) = desc.set { obj.set_setter_func(key, s.clone()); }
+        if let (Some(ref body), Some(ref closure)) = (&desc.set_body, &desc.set_closure) {
+            obj.setters.insert(key.to_string(), SetterStorage {
+                param: desc.set_param.clone().unwrap_or_default(),
+                body: Rc::clone(body), closure: Rc::clone(closure), func: None,
+            }); }
+        obj.properties.shift_remove(key);
+        true
+    } else {
+        // Generic descriptor — update flags only
+        if let Some(entry) = obj.props.get_mut(&k) {
+            if let Some(e) = desc.enumerable { entry.enumerable = Some(e); }
+            if let Some(c) = desc.configurable { entry.configurable = Some(c); }
+        }
+        if let Some(f) = obj.descriptors.get_mut(key) {
+            if let Some(e) = desc.enumerable { f.enumerable = e; }
+            if let Some(c) = desc.configurable { f.configurable = c; }
+        }
+        true
+    }
 }
 
 fn ordinary_has_property(obj: &Object, key: &str) -> bool {
-    obj.properties.contains_key(key)
+    let k = as_key(key);
+    obj.props.contains_key(&k)
+        || obj.properties.contains_key(key)
         || obj.getters.contains_key(key)
         || obj.setters.contains_key(key)
         || as_array_index(key).map_or(false, |i| i < obj.elements.len())
 }
 
 fn ordinary_get(obj: &Object, key: &str, _receiver: &Value) -> Value {
+    // Check own props first
+    let k = as_key(key);
+    if let Some(desc) = obj.props.get(&k) {
+        // Accessor: return getter function so caller can invoke
+        if let Some(ref get_func) = desc.get {
+            return get_func.clone();
+        }
+        if let Some(ref val) = desc.value {
+            return val.clone();
+        }
+    }
+    // Fall back to old get (handles prototype chain)
     obj.get(key).unwrap_or(Value::Undefined)
 }
 
@@ -422,11 +572,32 @@ fn ordinary_set(obj: &mut Object, key: &str, value: Value, _receiver: &Value) ->
     if !obj.extensible {
         return false;
     }
+    let k = as_key(key);
+    // Check for accessor in props
+    if let Some(desc) = obj.props.get(&k) {
+        if desc.set.is_some() || desc.get.is_some() {
+            // Accessor — caller handles invocation; return false to signal
+            return false;
+        }
+        if desc.writable == Some(false) {
+            return false;
+        }
+    }
+    // Write to both props and old maps
+    obj.props.insert(k.clone(), Desc {
+        value: Some(value.clone()),
+        writable: Some(true),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..Default::default()
+    });
     obj.set(key, value);
     true
 }
 
 fn ordinary_delete(obj: &mut Object, key: &str) -> bool {
+    let k = as_key(key);
+    obj.props.shift_remove(&k);
     obj.properties.shift_remove(key);
     obj.descriptors.shift_remove(key);
     obj.getters.shift_remove(key);
@@ -441,7 +612,40 @@ fn ordinary_delete(obj: &mut Object, key: &str) -> bool {
 }
 
 fn ordinary_own_property_keys(obj: &Object) -> Vec<String> {
-    obj.own_keys()
+    // From props: indices sorted, then strings in insertion order
+    let mut keys: Vec<String> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    for (k, _) in &obj.props {
+        match k {
+            Key::Idx(i) => indices.push(*i),
+            Key::Str(s) => keys.push(s.clone()),
+            Key::Sym(_) => { /* handled separately */ }
+        }
+    }
+    indices.sort_unstable();
+    let idx_keys: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
+    // Array element indices from old elements vec
+    let old_indices: Vec<String> = (0..obj.elements.len())
+        .filter(|i| !obj.holes.contains(i))
+        .map(|i| i.to_string())
+        .filter(|s| !idx_keys.contains(s))
+        .collect();
+    let mut result: Vec<String> = Vec::new();
+    result.extend(idx_keys);
+    result.extend(old_indices);
+    // String keys from both sources
+    let mut seen: std::collections::HashSet<String> = result.iter().cloned().collect();
+    for k in &keys {
+        if seen.insert(k.clone()) {
+            result.push(k.clone());
+        }
+    }
+    for k in obj.properties.keys() {
+        if seen.insert(k.clone()) {
+            result.push(k.clone());
+        }
+    }
+    result
 }
 
 /// VTable for ordinary (non-exotic) objects.
