@@ -153,7 +153,6 @@ impl PropertyFlags {
 }
 
 /// JavaScript object with prototype chain support.
-/// Uses IndexMap for insertion-ordered properties and Vec for array elements.
 #[derive(Clone)]
 pub struct Object {
     /// Own properties of the object (insertion-ordered)
@@ -312,6 +311,17 @@ impl Object {
             if !flags.writable {
                 return;
             }
+        } else {
+            // Ensure descriptor entry exists for sync
+            self.descriptors.insert(
+                key.to_string(),
+                PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                },
+            );
         }
         self.symbol_properties.insert(key.to_string(), value);
     }
@@ -333,6 +343,16 @@ impl Object {
                 if !flags.writable {
                     return;
                 }
+            } else {
+                self.descriptors.insert(
+                    sym_key.clone(),
+                    PropertyFlags {
+                        value: None,
+                        writable: true,
+                        enumerable: true,
+                        configurable: true,
+                    },
+                );
             }
             self.symbol_properties.insert(sym_key.clone(), value);
         }
@@ -340,12 +360,27 @@ impl Object {
 
     /// Set a property value on this object only (no prototype chain).
     /// Respects writable flag from property descriptor.
+    /// Always creates a matching descriptor entry so properties and
+    /// descriptors stay in sync (fixes getOwnPropertyDescriptor for
+    /// properties created via simple assignment).
     pub fn set(&mut self, key: &str, value: Value) {
         if let Some(flags) = self.descriptors.get_mut(key) {
             if !flags.writable {
                 return;
             }
             flags.value = Some(value.clone());
+        } else {
+            // Ensure a default descriptor entry exists so every property
+            // has an associated PropertyFlags entry.
+            self.descriptors.insert(
+                key.to_string(),
+                PropertyFlags {
+                    value: Some(value.clone()),
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                },
+            );
         }
 
         if let Some(idx) = as_array_index(key) {
