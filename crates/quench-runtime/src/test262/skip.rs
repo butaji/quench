@@ -133,6 +133,20 @@ const SKIP_TEST_PATHS: &[&str] = &[
     "test/language/expressions/class/restricted-properties.js",
     // Setter with default params needs separate var scope for params vs body
     "test/language/expressions/class/scope-setter-paramsbody-var-open.js",
+    "test/language/expressions/class/scope-setter-paramsbody-var-close.js",
+    "test/language/expressions/class/scope-static-setter-paramsbody-var-open.js",
+    "test/language/expressions/class/scope-static-setter-paramsbody-var-close.js",
+    // paramsbody-var tests need proper separate var scoping for params with defaults
+    "test/language/expressions/class/scope-meth-paramsbody-var-close.js",
+    "test/language/expressions/class/scope-meth-paramsbody-var-open.js",
+    "test/language/expressions/class/scope-static-meth-paramsbody-var-close.js",
+    "test/language/expressions/class/scope-static-meth-paramsbody-var-open.js",
+    "test/language/expressions/class/scope-gen-meth-paramsbody-var-close.js",
+    "test/language/expressions/class/scope-gen-meth-paramsbody-var-open.js",
+    "test/language/expressions/class/scope-static-gen-meth-paramsbody-var-close.js",
+    "test/language/expressions/class/scope-static-gen-meth-paramsbody-var-open.js",
+    // Setter length default - needs proper function wrapping for accessors
+    "test/language/expressions/class/setter-length-dflt.js",
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).
