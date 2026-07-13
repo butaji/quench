@@ -351,6 +351,23 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_arrow_object_parameter_default_binding() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var af = ({x = 1}) => x;
+assert.sameValue(af({}), 1);
+assert.sameValue(af({x: 2}), 2);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "object parameter default failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_arrow_parameter_closure_cannot_see_body_var() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

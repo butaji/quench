@@ -141,6 +141,7 @@ pub(crate) fn call_js_function_impl(
             ))));
             found_rest = true;
             if let Some(pattern) = &param.pattern {
+                declare_pattern_bindings(pattern, &call_env_rc);
                 let target = binding_pattern_expression(pattern.clone());
                 crate::eval::object::assign_to(&target, &rest_value, &call_env_rc)?;
             } else {
@@ -160,7 +161,13 @@ pub(crate) fn call_js_function_impl(
                 }
                 None => Value::Undefined,
             };
-            call_env_rc.borrow_mut().define(param.name.clone(), value);
+            if let Some(pattern) = &param.pattern {
+                declare_pattern_bindings(pattern, &call_env_rc);
+                let target = binding_pattern_expression(pattern.clone());
+                crate::eval::object::assign_to(&target, &value, &call_env_rc)?;
+            } else {
+                call_env_rc.borrow_mut().define(param.name.clone(), value);
+            }
         }
     }
 
@@ -200,6 +207,23 @@ fn binding_pattern_expression(pattern: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
         BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+    }
+}
+
+fn declare_pattern_bindings(pattern: &BindingElement, env: &Rc<RefCell<Environment>>) {
+    match pattern {
+        BindingElement::Identifier(name) => env.borrow_mut().define(name.clone(), Value::Undefined),
+        BindingElement::ArrayPattern(elements) => {
+            for element in elements {
+                declare_pattern_bindings(element, env);
+            }
+        }
+        BindingElement::ObjectPattern(properties) => {
+            for (_, binding) in properties {
+                declare_pattern_bindings(binding, env);
+            }
+        }
+        BindingElement::Default(binding, _) => declare_pattern_bindings(binding, env),
     }
 }
 
