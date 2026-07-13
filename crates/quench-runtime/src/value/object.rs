@@ -301,20 +301,21 @@ impl PropertyDescriptor {
 }
 
 /// 11 internal methods + 2 function extras — the spec's object interface.
+/// Methods take `Key` (not `&str`) for array-index-canonicalized dispatch.
 pub struct VTable {
     pub get_prototype_of: fn(&Object) -> Option<Rc<RefCell<Object>>>,
     pub set_prototype_of: fn(&mut Object, Option<Rc<RefCell<Object>>>) -> bool,
     pub is_extensible: fn(&Object) -> bool,
     pub prevent_extensions: fn(&mut Object) -> bool,
-    pub get_own_property: fn(&Object, &str) -> Option<PropertyDescriptor>,
-    pub define_own_property: fn(&mut Object, &str, &PropertyDescriptor) -> bool,
-    pub has_property: fn(&Object, &str) -> bool,
-    pub get: fn(&Object, &str, &Value) -> Value,
-    pub set: fn(&mut Object, &str, Value, &Value) -> bool,
-    pub delete: fn(&mut Object, &str) -> bool,
-    pub own_property_keys: fn(&Object) -> Vec<String>,
-    pub call: Option<fn(&mut Object, Vec<Value>, &Value) -> Result<Value, crate::value::JsError>>,
-    pub construct: Option<fn(&mut Object, Vec<Value>, &Value) -> Result<Value, crate::value::JsError>>,
+    pub get_own_property: fn(&Object, &Key) -> Option<Desc>,
+    pub define_own_property: fn(&mut Object, &Key, &Desc) -> bool,
+    pub has_property: fn(&Object, &Key) -> bool,
+    pub get: fn(&Object, &Key, Value) -> Value,
+    pub set: fn(&mut Object, &Key, Value, Value) -> bool,
+    pub delete: fn(&mut Object, &Key) -> bool,
+    pub own_property_keys: fn(&Object) -> Vec<Key>,
+    pub call: Option<fn(&Object, Value, Vec<Value>) -> Result<Value, crate::value::JsError>>,
+    pub construct: Option<fn(&Object, Vec<Value>, Value) -> Result<Value, crate::value::JsError>>,
 }
 
 /// Runtime internal slots storage — replaces scattered fields like
@@ -376,7 +377,7 @@ impl fmt::Debug for Object {
     }
 }
 
-// ─── Ordinary VTable implementations (TComp: operate on Object.props) ─────
+// ─── Ordinary VTable implementations (TComp: operate on Object.props, Key) ─
 
 fn ordinary_get_prototype_of(obj: &Object) -> Option<Rc<RefCell<Object>>> {
     obj.prototype.clone()
@@ -399,252 +400,187 @@ fn ordinary_prevent_extensions(obj: &mut Object) -> bool {
     true
 }
 
-/// Convert a string key to a `Key` and look up in `props`.
-fn props_get_own(obj: &Object, key: &str) -> Option<Desc> {
-    let k = as_key(key);
-    obj.props.get(&k).cloned().or_else(|| {
-        // Fallback: old maps (during migration)
-        let flags = obj.descriptors.get(key).cloned().unwrap_or_default();
-        if let Some(val) = obj.properties.get(key) {
-            return Some(Desc {
-                value: Some(val.clone()),
-                writable: Some(flags.writable),
-                enumerable: Some(flags.enumerable),
-                configurable: Some(flags.configurable),
-                ..Default::default()
-            });
-        }
-        if let Some(g) = obj.getters.get(key) {
-            return Some(Desc {
-                get: g.func.clone(),
-                enumerable: Some(flags.enumerable),
-                configurable: Some(flags.configurable),
-                ..Default::default()
-            });
-        }
-        if let Some(s) = obj.setters.get(key) {
-            return Some(Desc {
-                set: s.func.clone(),
-                enumerable: Some(flags.enumerable),
-                configurable: Some(flags.configurable),
-                ..Default::default()
-            });
-        }
-        // Array elements
-        as_array_index(key).and_then(|i| {
-            if i < obj.elements.len() {
-                Some(Desc {
-                    value: Some(obj.elements[i].clone()),
-                    writable: Some(true),
-                    enumerable: Some(true),
-                    configurable: Some(true),
-                    ..Default::default()
-                })
-            } else {
-                None
-            }
-        })
-    })
-}
-
-fn ordinary_get_own_property(obj: &Object, key: &str) -> Option<PropertyDescriptor> {
-    // Try old API first (has getter/setter storage with AST bodies)
-    let old = obj.get_own_property(key);
-    if old.is_some() {
-        return old;
+fn ordinary_get_own_property(obj: &Object, key: &Key) -> Option<Desc> {
+    // Primary: check props
+    if let Some(desc) = obj.props.get(key) {
+        return Some(desc.clone());
     }
-    // Fall back to props
-    let desc = props_get_own(obj, key)?;
-    Some(PropertyDescriptor {
-        value: desc.value,
-        writable: desc.writable,
-        get: desc.get,
-        set: desc.set,
-        enumerable: desc.enumerable,
-        configurable: desc.configurable,
-        ..Default::default()
-    })
-}
-
-fn ordinary_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescriptor) -> bool {
-    // Check extensible
-    if !obj.extensible && !obj.properties.contains_key(key)
-        && !obj.getters.contains_key(key) && !obj.setters.contains_key(key)
-    {
-        return false;
-    }
-    let k = as_key(key);
-    if desc.value.is_some() || desc.writable.is_some() {
-        // Data descriptor
-        let val = desc.value.clone().unwrap_or(Value::Undefined);
-        obj.props.insert(k, Desc {
+    // Fallback: old maps (during migration)
+    let key_str = match key {
+        Key::Str(s) => s.as_str(),
+        Key::Idx(i) => return None, // array indices not in old maps as strings
+        Key::Sym(s) => return None, // symbol keys not in old maps as strings
+    };
+    let flags = obj.descriptors.get(key_str).cloned().unwrap_or_default();
+    if let Some(val) = obj.properties.get(key_str) {
+        return Some(Desc {
             value: Some(val.clone()),
-            writable: desc.writable,
-            enumerable: desc.enumerable.or(Some(false)),
-            configurable: desc.configurable.or(Some(false)),
+            writable: Some(flags.writable),
+            enumerable: Some(flags.enumerable),
+            configurable: Some(flags.configurable),
             ..Default::default()
         });
-        // Also write to old maps for backward compat
-        obj.properties.insert(key.to_string(), val);
-        let flags = PropertyFlags {
-            value: desc.value.clone(),
-            writable: desc.writable.unwrap_or(false),
-            enumerable: desc.enumerable.unwrap_or(false),
-            configurable: desc.configurable.unwrap_or(false),
-        };
-        obj.descriptors.insert(key.to_string(), flags);
-        obj.getters.shift_remove(key);
-        obj.setters.shift_remove(key);
-        true
-    } else if desc.get.is_some() || desc.set.is_some()
-        || desc.get_body.is_some() || desc.set_body.is_some()
-    {
-        // Accessor descriptor
-        let d = Desc {
-            get: desc.get.clone(),
-            set: desc.set.clone(),
-            enumerable: desc.enumerable,
-            configurable: desc.configurable,
+    }
+    if let Some(g) = obj.getters.get(key_str) {
+        return Some(Desc {
+            get: g.func.clone(),
+            enumerable: Some(flags.enumerable),
+            configurable: Some(flags.configurable),
             ..Default::default()
-        };
-        obj.props.insert(k, d);
-        // Write to old maps too
-        let flags = PropertyFlags {
-            value: None,
-            writable: false,
-            enumerable: desc.enumerable.unwrap_or(true),
-            configurable: desc.configurable.unwrap_or(true),
-        };
-        obj.descriptors.insert(key.to_string(), flags);
-        if let Some(ref g) = desc.get { obj.set_getter_func(key, g.clone()); }
-        if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure) {
-            obj.getters.insert(key.to_string(), GetterStorage {
-                body: Rc::clone(body), closure: Rc::clone(closure), func: None,
-            }); }
-        if let Some(ref s) = desc.set { obj.set_setter_func(key, s.clone()); }
-        if let (Some(ref body), Some(ref closure)) = (&desc.set_body, &desc.set_closure) {
-            obj.setters.insert(key.to_string(), SetterStorage {
-                param: desc.set_param.clone().unwrap_or_default(),
-                body: Rc::clone(body), closure: Rc::clone(closure), func: None,
-            }); }
-        obj.properties.shift_remove(key);
+        });
+    }
+    if let Some(s) = obj.setters.get(key_str) {
+        return Some(Desc {
+            set: s.func.clone(),
+            enumerable: Some(flags.enumerable),
+            configurable: Some(flags.configurable),
+            ..Default::default()
+        });
+    }
+    None
+}
+
+fn ordinary_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> bool {
+    let key_str = match key {
+        Key::Str(s) => Some(s.as_str()),
+        _ => None,
+    };
+    // Check extensible
+    if !obj.extensible && !obj.props.contains_key(key) {
+        return false;
+    }
+    if desc.is_data() {
+        let val = desc.value.clone().unwrap_or(Value::Undefined);
+        obj.props.insert(key.clone(), desc.clone());
+        // Backward compat with old maps
+        if let Some(ks) = key_str {
+            obj.properties.insert(ks.to_string(), val);
+            let flags = PropertyFlags {
+                value: desc.value.clone(),
+                writable: desc.writable.unwrap_or(false),
+                enumerable: desc.enumerable.unwrap_or(false),
+                configurable: desc.configurable.unwrap_or(false),
+            };
+            obj.descriptors.insert(ks.to_string(), flags);
+            obj.getters.shift_remove(ks);
+            obj.setters.shift_remove(ks);
+        }
+        true
+    } else if desc.is_accessor() {
+        obj.props.insert(key.clone(), desc.clone());
+        if let Some(ks) = key_str {
+            let flags = PropertyFlags {
+                value: None, writable: false,
+                enumerable: desc.enumerable.unwrap_or(true),
+                configurable: desc.configurable.unwrap_or(true),
+            };
+            obj.descriptors.insert(ks.to_string(), flags);
+            if let Some(ref g) = desc.get { obj.set_getter_func(ks, g.clone()); }
+            if let Some(ref s) = desc.set { obj.set_setter_func(ks, s.clone()); }
+            obj.properties.shift_remove(ks);
+        }
         true
     } else {
-        // Generic descriptor — update flags only
-        if let Some(entry) = obj.props.get_mut(&k) {
+        // Generic — update flags only
+        if let Some(entry) = obj.props.get_mut(key) {
             if let Some(e) = desc.enumerable { entry.enumerable = Some(e); }
             if let Some(c) = desc.configurable { entry.configurable = Some(c); }
         }
-        if let Some(f) = obj.descriptors.get_mut(key) {
-            if let Some(e) = desc.enumerable { f.enumerable = e; }
-            if let Some(c) = desc.configurable { f.configurable = c; }
-        }
         true
     }
 }
 
-fn ordinary_has_property(obj: &Object, key: &str) -> bool {
-    let k = as_key(key);
-    obj.props.contains_key(&k)
-        || obj.properties.contains_key(key)
-        || obj.getters.contains_key(key)
-        || obj.setters.contains_key(key)
-        || as_array_index(key).map_or(false, |i| i < obj.elements.len())
+fn ordinary_has_property(obj: &Object, key: &Key) -> bool {
+    obj.props.contains_key(key)
+        || match key {
+            Key::Str(s) => obj.properties.contains_key(s.as_str())
+                || obj.getters.contains_key(s.as_str())
+                || obj.setters.contains_key(s.as_str()),
+            _ => false,
+        }
 }
 
-fn ordinary_get(obj: &Object, key: &str, _receiver: &Value) -> Value {
-    // Check own props first
-    let k = as_key(key);
-    if let Some(desc) = obj.props.get(&k) {
-        // Accessor: return getter function so caller can invoke
-        if let Some(ref get_func) = desc.get {
-            return get_func.clone();
-        }
+fn ordinary_get(obj: &Object, key: &Key, _receiver: Value) -> Value {
+    if let Some(desc) = obj.props.get(key) {
         if let Some(ref val) = desc.value {
             return val.clone();
         }
+        if let Some(ref get_func) = desc.get {
+            return get_func.clone();
+        }
     }
-    // Fall back to old get (handles prototype chain)
-    obj.get(key).unwrap_or(Value::Undefined)
+    // Fall back to old get via string key
+    let key_str = match key {
+        Key::Str(s) => s.as_str(),
+        Key::Idx(i) => return obj.get(&i.to_string()).unwrap_or(Value::Undefined),
+        Key::Sym(s) => return if let Some(ref d) = s.desc { obj.get(d).unwrap_or(Value::Undefined) } else { Value::Undefined },
+    };
+    obj.get(key_str).unwrap_or(Value::Undefined)
 }
 
-fn ordinary_set(obj: &mut Object, key: &str, value: Value, _receiver: &Value) -> bool {
+fn ordinary_set(obj: &mut Object, key: &Key, value: Value, _receiver: Value) -> bool {
     if !obj.extensible {
         return false;
     }
-    let k = as_key(key);
-    // Check for accessor in props
-    if let Some(desc) = obj.props.get(&k) {
+    if let Some(desc) = obj.props.get(key) {
         if desc.set.is_some() || desc.get.is_some() {
-            // Accessor — caller handles invocation; return false to signal
-            return false;
+            return false; // accessor — caller handles
         }
         if desc.writable == Some(false) {
             return false;
         }
     }
-    // Write to both props and old maps
-    obj.props.insert(k.clone(), Desc {
+    obj.props.insert(key.clone(), Desc {
         value: Some(value.clone()),
         writable: Some(true),
         enumerable: Some(true),
         configurable: Some(true),
         ..Default::default()
     });
-    obj.set(key, value);
+    // Backward compat with old maps
+    let key_str = match key {
+        Key::Str(s) => s.as_str(),
+        Key::Idx(i) => {
+            let s = i.to_string();
+            obj.set(&s, value);
+            return true;
+        }
+        Key::Sym(_) => return true,
+    };
+    obj.set(key_str, value);
     true
 }
 
-fn ordinary_delete(obj: &mut Object, key: &str) -> bool {
-    let k = as_key(key);
-    obj.props.shift_remove(&k);
-    obj.properties.shift_remove(key);
-    obj.descriptors.shift_remove(key);
-    obj.getters.shift_remove(key);
-    obj.setters.shift_remove(key);
-    if let Some(idx) = as_array_index(key) {
-        if idx < obj.elements.len() {
-            obj.elements[idx] = Value::Undefined;
-            obj.holes.insert(idx);
+fn ordinary_delete(obj: &mut Object, key: &Key) -> bool {
+    obj.props.shift_remove(key);
+    if let Key::Str(s) = key {
+        obj.properties.shift_remove(s.as_str());
+        obj.descriptors.shift_remove(s.as_str());
+        obj.getters.shift_remove(s.as_str());
+        obj.setters.shift_remove(s.as_str());
+    } else if let Key::Idx(i) = key {
+        let s = i.to_string();
+        obj.properties.shift_remove(&s);
+        if (*i as usize) < obj.elements.len() {
+            obj.elements[*i as usize] = Value::Undefined;
+            obj.holes.insert(*i as usize);
         }
     }
     true
 }
 
-fn ordinary_own_property_keys(obj: &Object) -> Vec<String> {
-    // From props: indices sorted, then strings in insertion order
-    let mut keys: Vec<String> = Vec::new();
+fn ordinary_own_property_keys(obj: &Object) -> Vec<Key> {
+    let mut keys: Vec<Key> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     for (k, _) in &obj.props {
         match k {
             Key::Idx(i) => indices.push(*i),
-            Key::Str(s) => keys.push(s.clone()),
-            Key::Sym(_) => { /* handled separately */ }
+            other => keys.push(other.clone()),
         }
     }
     indices.sort_unstable();
-    let idx_keys: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
-    // Array element indices from old elements vec
-    let old_indices: Vec<String> = (0..obj.elements.len())
-        .filter(|i| !obj.holes.contains(i))
-        .map(|i| i.to_string())
-        .filter(|s| !idx_keys.contains(s))
-        .collect();
-    let mut result: Vec<String> = Vec::new();
-    result.extend(idx_keys);
-    result.extend(old_indices);
-    // String keys from both sources
-    let mut seen: std::collections::HashSet<String> = result.iter().cloned().collect();
-    for k in &keys {
-        if seen.insert(k.clone()) {
-            result.push(k.clone());
-        }
-    }
-    for k in obj.properties.keys() {
-        if seen.insert(k.clone()) {
-            result.push(k.clone());
-        }
-    }
+    let mut result: Vec<Key> = indices.into_iter().map(Key::Idx).collect();
+    result.extend(keys);
     result
 }
 
@@ -668,29 +604,28 @@ pub static ORDINARY_VTABLE: VTable = VTable {
 // ─── Array VTable (ES 9.4.2) ─────────────────────────────────────────
 
 /// Array exotic [[DefineOwnProperty]] (9.4.2.1).
-fn array_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescriptor) -> bool {
-    if key == "length" {
+fn array_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> bool {
+    if key == &as_key("length") {
         return array_set_length(obj, desc);
     }
     // Array index: if index >= length, auto-extend
-    if let Key::Idx(index) = as_key(key) {
-        let current_length = array_length_value(obj);
-        if index >= current_length as u32 && index < 4294967295 {
+    if let Key::Idx(index) = key {
+        let current_length = array_length_value(obj) as u32;
+        if *index >= current_length && *index < 4294967295 {
+            let new_len_val = Value::Number((*index + 1) as f64);
             obj.props.insert(as_key("length"), Desc {
-                value: Some(Value::Number((index + 1) as f64)),
+                value: Some(new_len_val),
                 writable: Some(true),
                 enumerable: Some(false),
                 configurable: Some(false),
                 ..Default::default()
             });
-            // Also update old maps for backward compat
-            obj.properties.insert("length".to_string(), Value::Number((index + 1) as f64));
-            // Grow elements vec
-            let needed = (index + 1) as usize;
+            obj.properties.insert("length".to_string(), Value::Number((*index + 1) as f64));
+            let needed = (*index + 1) as usize;
             if obj.elements.len() < needed {
                 obj.elements.resize(needed, Value::Undefined);
             }
-            obj.elements[index as usize] = desc.value.clone().unwrap_or(Value::Undefined);
+            obj.elements[*index as usize] = desc.value.clone().unwrap_or(Value::Undefined);
         }
     }
     ordinary_define_own_property(obj, key, desc)
@@ -698,13 +633,11 @@ fn array_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescrip
 
 /// Get the numeric length from an array object.
 fn array_length_value(obj: &Object) -> f64 {
-    // Check props first (TComp path)
     if let Some(desc) = obj.props.get(&as_key("length")) {
         if let Some(Value::Number(n)) = desc.value {
             return n;
         }
     }
-    // Fall back to old properties map
     obj.properties.get("length").and_then(|v| match v {
         Value::Number(n) => Some(*n),
         _ => None,
@@ -712,29 +645,23 @@ fn array_length_value(obj: &Object) -> f64 {
 }
 
 /// ArraySetLength (9.4.2.4).
-fn array_set_length(obj: &mut Object, desc: &PropertyDescriptor) -> bool {
+fn array_set_length(obj: &mut Object, desc: &Desc) -> bool {
     let new_len = match &desc.value {
         Some(Value::Number(n)) => *n as u32,
         Some(_) => {
-            let (_, err) = crate::value::error::create_js_error_with_type(
-                "Invalid array length", "RangeError");
-            crate::value::set_thrown_value(Value::Undefined);
             return false;
         }
-        None => return true, // No value = no-op
+        None => return true,
     };
     let old_len = array_length_value(obj) as u32;
     if new_len < old_len {
-        // Truncate: remove elements beyond new length
         for i in new_len..old_len {
-            let k = Key::Idx(i);
-            obj.props.shift_remove(&k);
+            obj.props.shift_remove(&Key::Idx(i));
         }
         if new_len as usize <= obj.elements.len() {
             obj.elements.truncate(new_len as usize);
         }
     }
-    // Update length
     let len_val = Value::Number(new_len as f64);
     obj.props.insert(as_key("length"), Desc {
         value: Some(len_val.clone()),
