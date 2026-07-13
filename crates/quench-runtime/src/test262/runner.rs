@@ -185,17 +185,14 @@ pub(crate) fn run_single_test(
         // For non-async tests that include asyncHelpers.js, load the harness normally
         // so asyncTest is defined and throws when $DONE is not defined.
         let is_async = meta.flags.contains(&"async".to_string());
-        let has_async_helper = meta.includes.iter().any(|i| i.contains("asyncHelpers"));
-
-        if is_async && has_async_helper {
-            // Define $DONE before loading asyncHelpers.js for async tests
-            let prelude = "$DONE = function(error) { if (error !== undefined && error !== null) throw error; };\n";
+        if is_async {
+            // Define $DONE before loading harness for ALL async tests.
+            let prelude = "var $DONE = function(error) { if (error !== undefined && error !== null) throw error; };\n";
             match harness.build_script(&source, &meta.includes) {
                 Ok(s) => format!("{}{}", prelude, s),
                 Err(e) => return TestOutcome::Fail { reason: e },
             }
         } else {
-            // Load harness normally (asyncHelpers.js will throw when called without $DONE)
             match harness.build_script(&source, &meta.includes) {
                 Ok(s) => s,
                 Err(e) => return TestOutcome::Fail { reason: e },

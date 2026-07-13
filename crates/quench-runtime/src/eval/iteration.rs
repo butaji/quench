@@ -17,7 +17,7 @@ pub fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
     match value {
         Value::Object(o) => get_object_iterator(o),
         Value::String(s) => get_string_iterator(s),
-        _ => Err(JsError("Value is not iterable".to_string())),
+        _ => Err(JsError("TypeError: Value is not iterable".to_string())),
     }
 }
 
