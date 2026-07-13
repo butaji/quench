@@ -202,7 +202,7 @@ pub fn eval_expression(
             children,
         } => eval_jsx_element(tag, props, children, env),
         Expression::JsxFragment { children } => eval_jsx_fragment(children, env),
-        Expression::Class(class) => eval_class_expr(class, env),
+        Expression::Class(class) => eval_class_expr(class, env, None),
         Expression::Spread(_) => Err(JsError(
             "Spread must be used inside an array literal context".to_string(),
         )),

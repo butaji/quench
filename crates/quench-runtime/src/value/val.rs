@@ -138,6 +138,13 @@ impl ClassValue {
     pub fn get_static_field(&self, name: &str) -> Option<Value> {
         self.static_properties_cell.borrow().get(name).cloned()
     }
+
+    /// Set the inferred class name. Used so static field initializers can
+    /// observe the eventual class name through `this.name` before the
+    /// surrounding assignment has completed.
+    pub fn set_name(&mut self, name: &str) {
+        self.name = Some(name.to_string());
+    }
 }
 
 /// Fill member vectors from AST class body.

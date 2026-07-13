@@ -98,7 +98,11 @@ fn eval_super_call(
     // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
     let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
     while let Some(e) = current {
-        if e.borrow().scopes.iter().any(|s| s.is_this_initialized()) {
+        if e.borrow()
+            .scopes
+            .iter()
+            .any(|s| s.borrow().is_this_initialized())
+        {
             return Err(JsError(
                 "ReferenceError: super() called after `this` was already initialized".to_string(),
             ));
@@ -108,7 +112,10 @@ fn eval_super_call(
 
     // Mark `this` as initialized on the current scope now that super()
     // succeeded, per ES §13.2.6.1 SuperCall step 7.
-    env.borrow_mut().current_scope_mut().mark_this_initialized();
+    env.borrow_mut()
+        .current_scope()
+        .borrow_mut()
+        .mark_this_initialized();
     result
 }
 
@@ -246,7 +253,7 @@ pub fn eval_new(
 
     // NativeFunction without an explicit prototype is not a constructor
     if let Value::NativeFunction(ref nf) = actual_constructor {
-        let has_prototype = nf.get_property("prototype").is_some();
+        let has_prototype = nf.prototype.borrow().is_some();
         if !has_prototype {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
