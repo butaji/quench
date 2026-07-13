@@ -75,7 +75,8 @@ fn instantiate_simple(
         Ok(this_val)
     } else {
         let first_is_super = check_first_is_super_call(&body);
-        if first_is_super {
+        let body_calls_super = first_is_super || body_calls_super_call(&body);
+        if body_calls_super {
             predeclare_let_const(&body, &mut call_env.borrow_mut());
             let result = eval_function_body(&body, &call_env, false)?;
             finish_constructor(result, &this_val)
@@ -277,6 +278,71 @@ fn check_first_is_super_call(body: &[Statement]) -> bool {
         }
     }
     false
+}
+
+/// Check if the constructor body contains a super() call anywhere (not just as
+/// the first statement). Per ES §14.5.14 step 14, derived constructors must
+/// call super() — anywhere in the body counts, not just as the first stmt.
+/// If the body already calls super(), we MUST NOT auto-call it from the
+/// runtime or A() would be invoked twice.
+fn body_calls_super_call(body: &[Statement]) -> bool {
+    body.iter().any(stmt_contains_super_call)
+}
+
+fn stmt_contains_super_call(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Expression(expr) => expr_contains_super_call(expr),
+        Statement::Block(stmts) => stmts.iter().any(stmt_contains_super_call),
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_super_call(condition)
+                || stmt_contains_super_call(consequent)
+                || alternate
+                    .as_ref()
+                    .map(|a| stmt_contains_super_call(a))
+                    .unwrap_or(false)
+        }
+        Statement::While { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. } => stmt_contains_super_call(body),
+        Statement::TryCatch { body, handler, .. } => {
+            stmt_contains_super_call(body) || stmt_contains_super_call(handler)
+        }
+        Statement::Return(Some(expr)) => expr_contains_super_call(expr),
+        _ => false,
+    }
+}
+
+fn expr_contains_super_call(expr: &Expression) -> bool {
+    match expr {
+        Expression::Identifier(id) => id == "super",
+        Expression::Call { callee, .. } => expr_contains_super_call(callee),
+        Expression::Member { object, .. } => expr_contains_super_call(object),
+        Expression::ArrowFunction { body, .. } => match body.as_ref() {
+            crate::ast::ArrowBody::Expression(e) => expr_contains_super_call(e),
+            crate::ast::ArrowBody::Block(stmts) => stmts.iter().any(stmt_contains_super_call),
+        },
+        Expression::Assignment { left, right, .. } => {
+            expr_contains_super_call(left) || expr_contains_super_call(right)
+        }
+        Expression::Binary { left, right, .. } => {
+            expr_contains_super_call(left) || expr_contains_super_call(right)
+        }
+        Expression::Unary { argument, .. } => expr_contains_super_call(argument),
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_super_call(condition)
+                || expr_contains_super_call(consequent)
+                || expr_contains_super_call(alternate)
+        }
+        _ => false,
+    }
 }
 
 /// Create a simple arguments object
