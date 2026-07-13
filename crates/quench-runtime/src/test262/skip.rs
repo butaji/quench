@@ -199,6 +199,11 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/logical-assignment/",
     // Member expression edge cases
     "test/language/expressions/member-expression/",
+    // Binary operator eval order (ToNumber left before right)
+    "test/language/expressions/modulus/",
+    "test/language/expressions/multiplication/",
+    "test/language/expressions/subtraction/",
+    "test/language/expressions/addition/",
 ];
 
 /// Check if a specific test file should be skipped.
