@@ -334,6 +334,23 @@ if (probe() !== 'inside') throw new Error('probe() wrong: ' + probe());
 }
 
 #[test]
+fn test_deep_equal_circular_no_stack_overflow() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var a = { x: 1 };
+var b = { x: 1 };
+a.a = a;
+a.b = b;
+b.a = b;
+b.b = a;
+assert.deepEqual(a, b);
+"#,
+    );
+    assert!(result.is_ok(), "circular deepEqual failed: {:?}", result);
+}
+
+#[test]
 #[ignore = "run with --ignored to activate staged runner"]
 fn test262_staged() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
