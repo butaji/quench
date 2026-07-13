@@ -665,6 +665,94 @@ pub static ORDINARY_VTABLE: VTable = VTable {
     construct: None,
 };
 
+// ─── Array VTable (ES 9.4.2) ─────────────────────────────────────────
+
+/// Array exotic [[DefineOwnProperty]] (9.4.2.1).
+fn array_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescriptor) -> bool {
+    if key == "length" {
+        return array_set_length(obj, desc);
+    }
+    // Array index: if index >= length, auto-extend
+    if let Key::Idx(index) = as_key(key) {
+        let current_length = array_length_value(obj);
+        if index >= current_length as u32 && index < 4294967295 {
+            obj.props.insert(as_key("length"), Desc {
+                value: Some(Value::Number((index + 1) as f64)),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(false),
+                ..Default::default()
+            });
+            // Also update old maps for backward compat
+            obj.properties.insert("length".to_string(), Value::Number((index + 1) as f64));
+            // Grow elements vec
+            let needed = (index + 1) as usize;
+            if obj.elements.len() < needed {
+                obj.elements.resize(needed, Value::Undefined);
+            }
+            obj.elements[index as usize] = desc.value.clone().unwrap_or(Value::Undefined);
+        }
+    }
+    ordinary_define_own_property(obj, key, desc)
+}
+
+/// Get the numeric length from an array object.
+fn array_length_value(obj: &Object) -> f64 {
+    // Check props first (TComp path)
+    if let Some(desc) = obj.props.get(&as_key("length")) {
+        if let Some(Value::Number(n)) = desc.value {
+            return n;
+        }
+    }
+    // Fall back to old properties map
+    obj.properties.get("length").and_then(|v| match v {
+        Value::Number(n) => Some(*n),
+        _ => None,
+    }).unwrap_or(0.0)
+}
+
+/// ArraySetLength (9.4.2.4).
+fn array_set_length(obj: &mut Object, desc: &PropertyDescriptor) -> bool {
+    let new_len = match &desc.value {
+        Some(Value::Number(n)) => *n as u32,
+        Some(_) => {
+            let (_, err) = crate::value::error::create_js_error_with_type(
+                "Invalid array length", "RangeError");
+            crate::value::set_thrown_value(Value::Undefined);
+            return false;
+        }
+        None => return true, // No value = no-op
+    };
+    let old_len = array_length_value(obj) as u32;
+    if new_len < old_len {
+        // Truncate: remove elements beyond new length
+        for i in new_len..old_len {
+            let k = Key::Idx(i);
+            obj.props.shift_remove(&k);
+        }
+        if new_len as usize <= obj.elements.len() {
+            obj.elements.truncate(new_len as usize);
+        }
+    }
+    // Update length
+    let len_val = Value::Number(new_len as f64);
+    obj.props.insert(as_key("length"), Desc {
+        value: Some(len_val.clone()),
+        writable: Some(true),
+        enumerable: Some(false),
+        configurable: Some(false),
+        ..Default::default()
+    });
+    obj.properties.insert("length".to_string(), len_val);
+    true
+}
+
+/// VTable for Array exotic objects — overrides only define_own_property.
+pub static ARRAY_VTABLE: VTable = VTable {
+    define_own_property: array_define_own_property,
+    ..ORDINARY_VTABLE
+};
+
 impl Object {
     /// Create a new ordinary object with no prototype
     pub fn new(kind: ObjectKind) -> Self {
@@ -732,11 +820,19 @@ impl Object {
         // should use new_array_checked; never allocate unbounded memory here.
         let len = len.min(MAX_ARRAY_ELEMENTS);
         obj.elements = vec![Value::Undefined; len];
-        obj.properties
-            .insert("length".to_string(), Value::Number(len as f64));
+        let len_val = Value::Number(len as f64);
+        obj.properties.insert("length".to_string(), len_val.clone());
+        obj.props.insert(as_key("length"), Desc {
+            value: Some(len_val),
+            writable: Some(true),
+            enumerable: Some(false),
+            configurable: Some(false),
+            ..Default::default()
+        });
         if let Some(proto) = crate::builtins::get_array_prototype() {
             obj.prototype = Some(proto);
         }
+        obj.vtable = &ARRAY_VTABLE;
         obj
     }
 
