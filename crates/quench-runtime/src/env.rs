@@ -32,6 +32,7 @@ pub struct Scope {
     /// super()/this binding should throw ReferenceError. We track it on
     /// the scope that holds the constructor's `this`.
     this_initialized: bool,
+    object_binding: Option<Rc<RefCell<crate::value::Object>>>,
 }
 
 impl std::fmt::Debug for Scope {
@@ -60,6 +61,7 @@ impl Clone for Scope {
             var_kinds: self.var_kinds.clone(),
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
+            object_binding: self.object_binding.as_ref().map(Rc::clone),
         }
     }
 }
@@ -72,7 +74,36 @@ impl Scope {
             var_kinds: HashMap::new(),
             this_value: None,
             this_initialized: false,
+            object_binding: None,
         }
+    }
+
+    pub fn object_binding_has(&self, name: &str) -> Option<bool> {
+        if !self.bindings.contains_key(name) {
+            return None;
+        }
+        Some(self.object_binding.as_ref()?.borrow().has(name))
+    }
+
+    pub fn is_object_binding(&self) -> bool {
+        self.object_binding.is_some()
+    }
+
+    pub fn set_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
+        self.object_binding = Some(object);
+    }
+
+    pub fn set_object_property(&mut self, name: &str, value: Value, strict: bool) -> Option<bool> {
+        let object = self.object_binding.as_ref()?;
+        if !self.bindings.contains_key(name) {
+            return None;
+        }
+        if !object.borrow().has(name) {
+            return Some(!strict);
+        }
+        object.borrow_mut().set(name, value.clone());
+        self.bindings.insert(name.to_string(), Rc::new(value));
+        Some(true)
     }
 
     /// Check if a variable is in TDZ state
@@ -420,6 +451,11 @@ impl Environment {
     pub fn set(&mut self, name: &str, value: Value) -> bool {
         for scope_rc in self.scopes.iter().rev() {
             let mut scope = scope_rc.borrow_mut();
+            if let Some(success) =
+                scope.set_object_property(name, value.clone(), crate::interpreter::is_strict_mode())
+            {
+                return success;
+            }
             if scope.get_kind(name) == Some(VarKind::Var) && scope.is_declared_only(name) {
                 scope.initialize_declared(name, value.clone());
                 return true;
