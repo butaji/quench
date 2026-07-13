@@ -117,7 +117,7 @@ pub fn to_bool(v: &Value) -> bool {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Class(_) => true,
-        Value::Symbol(_) => false,
+        Value::Symbol(_) => true,
     }
 }
 
