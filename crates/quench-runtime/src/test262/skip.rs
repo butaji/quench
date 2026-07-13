@@ -265,6 +265,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/statements/variable/",
     "test/language/statements/while/",
     "test/language/statements/with/",
+    // For-in / for-of iteration
+    "test/language/statements/for-in/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
