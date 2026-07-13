@@ -16,6 +16,9 @@ phf = { version = "0.14", features = ["macros"] }
 # Ordered map for object property insertion-order enumeration
 indexmap = "2"
 
+# Fast hashing for internal slots (FxHashMap)
+rustc-hash = "2"
+
 # JSON serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

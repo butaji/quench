@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use regress::Regex;
+use rustc_hash::FxBuildHasher;
 
 use crate::ast::Statement;
 use crate::env::Environment;
@@ -90,6 +91,49 @@ impl Default for PromiseObjectData {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Exotic-specific typed state — replaces `ObjectKind` + scattered fields.
+/// Every Object has exactly one `ObjData` variant.
+#[derive(Debug, Clone)]
+pub enum ObjData {
+    Ordinary,
+    /// Array exotic (9.4.2): length stored in `props["length"]`
+    Array,
+    /// String exotic (9.4.3): [[StringData]]
+    String(Rc<str>),
+    /// Function object (9.2, 9.3, 9.4.1)
+    Func,
+    /// Proxy exotic (9.5)
+    Proxy {
+        target: Rc<RefCell<Object>>,
+        handler: Rc<RefCell<Object>>,
+    },
+    /// Arguments exotic (9.4.4): sloppy-mode mapped arguments
+    Args {
+        mapped: std::collections::HashMap<u32, String>,
+    },
+    /// Integer-Indexed exotic (9.4.5): TypedArray
+    Idx {
+        buffer: Rc<RefCell<Object>>,
+        offset: u64,
+        length: u64,
+        name: TypedArrayName,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TypedArrayName {
+    Int8, Uint8, Uint8Clamped, Int16, Uint16,
+    Int32, Uint32, Float32, Float64, BigInt64, BigUint64,
+}
+
+/// [[ThisMode]] for function objects (ECMA-262 9.2.1)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ThisMode {
+    Lexical, // arrow functions
+    Strict,  // class methods, strict functions
+    Global,  // sloppy functions
 }
 
 /// TComp: ECMA-262 6.2.5 PropertyDescriptor — minimal, exact.
@@ -275,7 +319,7 @@ pub struct VTable {
 
 /// Runtime internal slots storage — replaces scattered fields like
 /// promise_data, internal_regex, exotic_kind, etc.
-pub type Slots = std::collections::HashMap<&'static str, Value>;
+pub type Slots = rustc_hash::FxHashMap<&'static str, Value>;
 
 /// JavaScript object with prototype chain support.
 #[derive(Clone)]
@@ -311,8 +355,12 @@ pub struct Object {
     /// Whether new properties can be added (false after Object.preventExtensions).
     /// Object.freeze also sets this to false.
     pub extensible: bool,
+    /// TComp: unified property map — replaces properties/elements/getters/setters/descriptors
+    pub props: IndexMap<Key, Desc, FxBuildHasher>,
     /// TComp: internal slots for ArrayLength, PromiseData, ProxyTarget, etc.
     pub slots: Slots,
+    /// TComp: exotic-specific state
+    pub data: ObjData,
     /// TComp: vtable for exotic behavior dispatch (ES 9.1, 9.4, 9.5, 10.x)
     pub vtable: &'static VTable,
 }
@@ -416,6 +464,11 @@ pub static ORDINARY_VTABLE: VTable = VTable {
 impl Object {
     /// Create a new ordinary object with no prototype
     pub fn new(kind: ObjectKind) -> Self {
+        // Determine ObjData from ObjectKind
+        let data = match kind {
+            ObjectKind::Array => ObjData::Array,
+            _ => ObjData::Ordinary,
+        };
         Object {
             properties: IndexMap::new(),
             elements: Vec::new(),
@@ -432,13 +485,19 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
-            slots: std::collections::HashMap::new(),
+            slots: rustc_hash::FxHashMap::default(),
+            props: IndexMap::with_hasher(FxBuildHasher),
+            data,
             vtable: &ORDINARY_VTABLE,
         }
     }
 
     /// Create a new object with a specific prototype
     pub fn with_prototype(kind: ObjectKind, prototype: Rc<RefCell<Object>>) -> Self {
+        let data = match kind {
+            ObjectKind::Array => ObjData::Array,
+            _ => ObjData::Ordinary,
+        };
         Object {
             properties: IndexMap::new(),
             elements: Vec::new(),
@@ -455,7 +514,9 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
-            slots: std::collections::HashMap::new(),
+            slots: rustc_hash::FxHashMap::default(),
+            props: IndexMap::with_hasher(FxBuildHasher),
+            data,
             vtable: &ORDINARY_VTABLE,
         }
     }
