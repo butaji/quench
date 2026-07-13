@@ -157,7 +157,8 @@ pub fn eval_statement(
                 let obj_borrowed = obj_rc.borrow();
                 for (k, v) in obj_borrowed.properties.iter() {
                     env.borrow_mut()
-                        .current_scope_mut()
+                        .current_scope()
+                        .borrow_mut()
                         .define(k.clone(), v.clone());
                 }
             }
@@ -203,7 +204,7 @@ fn eval_var_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let already_declared = env.borrow().has(name);
+    let already_declared = env.borrow().current_scope().borrow().has(name);
     if !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
