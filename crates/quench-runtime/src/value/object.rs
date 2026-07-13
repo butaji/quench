@@ -516,8 +516,10 @@ impl Object {
     /// Searches own properties only, does not follow prototype chain.
     pub fn get_property(&self, key: &Value) -> Option<Value> {
         if let Value::Symbol(sym) = key {
-            // Symbol-keyed properties are stored in symbol_properties using raw symbol string
-            return self.symbol_properties.get(sym).cloned();
+            return self
+                .symbol_properties
+                .get(sym.desc.as_deref().unwrap_or(""))
+                .cloned();
         }
         None
     }
@@ -547,8 +549,9 @@ impl Object {
     /// Check if object has a Symbol-keyed property.
     pub fn has_symbol(&self, key: &Value) -> bool {
         if let Value::Symbol(sym) = key {
-            // Direct lookup - symbol stored as full "key:id" format
-            return self.symbol_properties.contains_key(sym);
+            return self
+                .symbol_properties
+                .contains_key(sym.desc.as_deref().unwrap_or(""));
         }
         false
     }
@@ -556,14 +559,14 @@ impl Object {
     /// Set a Symbol-keyed property using the full Value::Symbol.
     pub fn set_symbol_value(&mut self, value: Value) {
         if let Value::Symbol(sym_key) = &value {
-            // Check if property is non-writable via descriptors
-            if let Some(flags) = self.descriptors.get(sym_key) {
+            let key = sym_key.desc.clone().unwrap_or_default();
+            if let Some(flags) = self.descriptors.get(&key) {
                 if !flags.writable {
                     return;
                 }
             } else {
                 self.descriptors.insert(
-                    sym_key.clone(),
+                    key.clone(),
                     PropertyFlags {
                         value: None,
                         writable: true,
@@ -572,7 +575,7 @@ impl Object {
                     },
                 );
             }
-            self.symbol_properties.insert(sym_key.clone(), value);
+            self.symbol_properties.insert(key, value);
         }
     }
 

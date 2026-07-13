@@ -249,7 +249,7 @@ fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 /// exact key.
 fn iterator_prop_key() -> Option<String> {
     match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
-        Some(Value::Symbol(payload)) => Some(payload),
+        Some(Value::Symbol(payload)) => Some(payload.desc.clone().unwrap_or_default()),
         _ => None,
     }
 }

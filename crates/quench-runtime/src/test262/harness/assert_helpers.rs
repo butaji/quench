@@ -276,7 +276,7 @@ pub fn debug_string(v: &Value) -> String {
         Value::Function(_) => "[Function]".to_string(),
         Value::NativeFunction(_) => "[NativeFunction]".to_string(),
         Value::NativeConstructor(_) => "[NativeConstructor]".to_string(),
-        Value::Symbol(s) => format!("Symbol({})", s),
+        Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         Value::Class(_) => "[Class]".to_string(),
     }
 }
