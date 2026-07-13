@@ -114,10 +114,6 @@ fn lower_object_prop(
     prop: &ast::ObjectProperty,
 ) -> Result<(PropertyKey, PropertyValue), LowerError> {
     let key = lower_prop_name_key_oxc(&prop.key)?;
-    eprintln!(
-        "DEBUG: lower_object_prop kind={:?}, discriminant={}, value: {:?}",
-        prop.kind, prop.kind as u32, prop.value
-    );
 
     // Check if it's a getter or setter
     if prop.kind == ast::PropertyKind::Get {
@@ -186,12 +182,8 @@ fn lower_object_prop(
     // and plain `Identifier` (oxc-0.47 sloppy-mode bug) keys.
     let key_name: Option<String> = match &prop.key {
         ast::PropertyKey::StaticIdentifier(name) => Some(name.name.to_string()),
-        _ => {
-            eprintln!("DEBUG: non-static key: {:?}", prop.key);
-            None
-        }
+        _ => None,
     };
-    eprintln!("DEBUG: key_name = {:?}", key_name);
     if let (Some(name), ast::Expression::FunctionExpression(func)) =
         (key_name.as_deref(), &prop.value)
     {
