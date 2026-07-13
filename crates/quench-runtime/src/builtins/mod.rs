@@ -18,6 +18,7 @@ pub mod reflect;
 pub mod regex; // regex module includes string_methods submodule
 pub mod string;
 pub mod symbol;
+pub mod typed_array;
 pub mod uri;
 
 // Re-export the public items from submodules
@@ -136,8 +137,9 @@ pub fn register_builtins(ctx: &mut Context) {
     regex::register_string_regex_methods(ctx);
     // Minimal Reflect (ownKeys) — needed by the test262 harness
     reflect::register_reflect(ctx);
-    // Minimal ArrayBuffer — needed by the test262 harness (detachArrayBuffer.js)
+    // ArrayBuffer and typed-array constructors are needed by harness utilities.
     array_buffer::register_array_buffer(ctx);
+    typed_array::register_typed_arrays(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
 }

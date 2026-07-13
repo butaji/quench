@@ -188,15 +188,8 @@ fn inject_test262_error(ctx: &mut Context) {
     ctx.set_global("Test262ErrorThrower".to_string(), thrower);
 }
 
-/// Harness files whose eval failure is tolerated (warned about, not fatal):
-/// resizableArrayBufferUtils.js references Uint8Array at load time, which
-/// quench does not implement yet. Every other harness file MUST load cleanly.
-const TOLERATED_EVAL_FAILURES: &[&str] = &["resizableArrayBufferUtils.js"];
-
 /// Load and evaluate a JS harness file (strips frontmatter).
-/// Returns Err when the file cannot be read or fails to evaluate (except
-/// TOLERATED_EVAL_FAILURES, which only warn) — callers should treat this as
-/// fatal rather than running with a partial harness.
+/// Returns Err when the file cannot be read or fails to evaluate.
 /// Harness files always run in sloppy mode (legacy octal literals are allowed).
 fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     let path = harness_dir().join(filename);
@@ -230,17 +223,6 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     let result = ctx.eval(&code);
     crate::interpreter::set_strict_mode(was_strict);
     if let Err(e) = result {
-        if TOLERATED_EVAL_FAILURES.contains(&filename) {
-            // Clear the stale thrown value so the next harness file (and the
-            // test source) start with a clean slate. Without this, a tolerated
-            // failure leaks ReferenceError-thrown-value into the test eval.
-            crate::value::take_thrown_value();
-            eprintln!(
-                "WARNING: harness file {} failed to evaluate (tolerated): {:?}",
-                filename, e
-            );
-            return Ok(());
-        }
         return Err(format!(
             "harness file {} failed to evaluate: {:?}",
             filename, e
@@ -634,6 +616,14 @@ pub fn inject_harness(ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizable_array_buffer_utils_loads_without_tolerance() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        eval_harness_file(&mut ctx, "resizableArrayBufferUtils.js")
+            .expect("resizable array buffer harness should load");
+    }
 
     /// The harness loader must clear any stale thrown_value before evaluating
     /// the test source. Without this, a tolerated harness failure (e.g.
