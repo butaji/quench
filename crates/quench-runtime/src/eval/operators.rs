@@ -46,27 +46,49 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
     // Per ES §7.1.1 ToPrimitive and the + operator spec: if EITHER operand is
-    // an Object, both sides are reduced via ToPrimitive with no preferred type.
+    // an Object, both sides are reduced via ToPrimitive. When one side is a
+    // Date, the hint is "string" (Date -> toString is what users expect; this
+    // also matches ES2015 §21.4.3.2 Date.prototype[@@toPrimitive] behavior).
     // If EITHER primitive side is a string, do string concat; otherwise number.
     let left_is_obj = matches!(
         left,
-        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)
-            | Value::NativeConstructor(_) | Value::Class(_)
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
     );
     let right_is_obj = matches!(
         right,
-        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)
-            | Value::NativeConstructor(_) | Value::Class(_)
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
     );
+    let is_date = |v: &Value| {
+        matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date)
+    };
     if left_is_obj || right_is_obj {
-        let lp = to_primitive(left, None)?;
-        let rp = to_primitive(right, None)?;
+        // Date triggers string hint per ES §7.1.1 + Date.prototype[@@toPrimitive]
+        // semantics; default hint still lets @@toPrimitive choose the order.
+        let hint = if is_date(left) || is_date(right) {
+            Some("string")
+        } else {
+            None
+        };
+        let lp = to_primitive(left, hint)?;
+        let rp = to_primitive(right, hint)?;
         // Both are now primitives.
         if matches!(&lp, Value::String(_)) || matches!(&rp, Value::String(_)) {
             if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
                 return symbol_conversion_error("string");
             }
-            Ok(Value::String(format!("{}{}", to_js_string(&lp), to_js_string(&rp))))
+            Ok(Value::String(format!(
+                "{}{}",
+                to_js_string(&lp),
+                to_js_string(&rp)
+            )))
         } else {
             if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
                 return symbol_conversion_error("number");
@@ -339,7 +361,10 @@ mod tests {
         let (fresh, _) = create_js_error_with_type("boom", "Error");
         set_thrown_value(fresh);
         let result = eval_add(&left, &right);
-        assert!(result.is_err(), "eval_add must return Err when thrown_value is set");
+        assert!(
+            result.is_err(),
+            "eval_add must return Err when thrown_value is set"
+        );
         // Critical: thrown_value is still present so try/catch can bind it.
         assert!(
             get_thrown_value().is_some(),

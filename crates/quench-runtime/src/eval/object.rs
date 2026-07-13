@@ -509,7 +509,10 @@ mod tests {
     fn sloppy_assign_undeclared_no_throw() {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval("undeclared = 5;");
-        assert!(res.is_ok(), "sloppy assignment to undeclared should not throw");
+        assert!(
+            res.is_ok(),
+            "sloppy assignment to undeclared should not throw"
+        );
     }
 
     #[test]

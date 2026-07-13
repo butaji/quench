@@ -5,7 +5,7 @@
 use super::expr::lower_expr;
 use super::helpers::LowerError;
 use crate::ast::{Expression, PropertyKey};
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Lower optional chaining expression
 pub fn lower_opt_chain(chain: &ast::ChainExpression) -> Result<Expression, LowerError> {
@@ -18,7 +18,7 @@ fn lower_chain_element(element: &ast::ChainElement) -> Result<Expression, LowerE
             // In OXC, ChainElement::CallExpression contains a CallExpression
             // The callee is a regular Expression (can be a MemberExpression from previous opt chain)
             let callee_expr = lower_expr(&call.callee)?;
-            
+
             // Lower arguments
             let args: Vec<Expression> = call
                 .arguments
@@ -33,7 +33,7 @@ fn lower_chain_element(element: &ast::ChainElement) -> Result<Expression, LowerE
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            
+
             Ok(Expression::Call {
                 callee: Box::new(callee_expr),
                 arguments: args,
@@ -67,8 +67,6 @@ fn lower_chain_element(element: &ast::ChainElement) -> Result<Expression, LowerE
             })
         }
         // TypeScript non-null assertion in optional chain
-        ast::ChainElement::TSNonNullExpression(e) => {
-            lower_expr(&e.expression)
-        }
+        ast::ChainElement::TSNonNullExpression(e) => lower_expr(&e.expression),
     }
 }

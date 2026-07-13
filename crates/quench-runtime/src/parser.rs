@@ -210,7 +210,11 @@ mod tests {
     fn test_parse_legacy_octal_sloppy() {
         // Legacy octal literals (e.g. 01, 07) are allowed in sloppy mode
         let result = parse_script("a = 01;");
-        assert!(result.is_ok(), "OXC should parse legacy octal in sloppy mode: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "OXC should parse legacy octal in sloppy mode: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -230,7 +234,10 @@ mod tests {
             println!("  expression.value: {:?}", d.expression.value);
         }
         println!("body.len() = {}", ret.program.body.len());
-        assert!(ret.program.directives.len() > 0, "Expected directives but got none");
+        assert!(
+            ret.program.directives.len() > 0,
+            "Expected directives but got none"
+        );
     }
 
     #[test]

@@ -153,7 +153,11 @@ assert.throws(TypeError, function() {
 });
 "#,
         );
-        assert!(result2.is_ok(), "Math inside callback failed: {:?}", result2);
+        assert!(
+            result2.is_ok(),
+            "Math inside callback failed: {:?}",
+            result2
+        );
     }
 
     #[test]
@@ -330,7 +334,11 @@ assert.deepEqual(1, 1);
 assert.deepEqual(true, true);
 "#,
         );
-        assert!(result.is_ok(), "assert.deepEqual basic calls failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "assert.deepEqual basic calls failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -342,7 +350,11 @@ var s1 = Symbol();
 assert.deepEqual(s1, s1);
 "#,
         );
-        assert!(result.is_ok(), "assert.deepEqual with Symbol failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "assert.deepEqual with Symbol failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -363,7 +375,11 @@ assert.deepEqual(s1, s1);
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(result.is_ok(), "deepEqual-primitives via loader failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "deepEqual-primitives via loader failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -372,7 +388,11 @@ assert.deepEqual(s1, s1);
         let mut host = QuenchHost::new();
         let result = host.run_script("typeof assert.deepEqual;");
         // Should be "function" (native stub) not "undefined"
-        assert!(result.is_ok(), "typeof assert.deepEqual failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "typeof assert.deepEqual failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -385,11 +405,18 @@ assert.deepEqual(s1, s1);
         let test262_dir = repo_root.join("tests/test262");
 
         let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
-        assert!(harness.load("deepEqual.js").is_some(), "deepEqual.js should load");
+        assert!(
+            harness.load("deepEqual.js").is_some(),
+            "deepEqual.js should load"
+        );
 
         let mut host = QuenchHost::new();
         let result = host.run_script("assert.deepEqual;");
-        assert!(result.is_ok(), "assert.deepEqual should exist: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "assert.deepEqual should exist: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -499,7 +526,9 @@ assert.throws(Test262Error, function() { assert.deepEqual(s1, "Symbol()"); });
 
         // Test each include individually
         for inc in &meta.includes {
-            let script = harness.build_script("assert.deepEqual;", &[inc.clone()]).unwrap();
+            let script = harness
+                .build_script("assert.deepEqual;", &[inc.clone()])
+                .unwrap();
             let mut host = QuenchHost::new();
             let r = host.run_script(&script);
             assert!(r.is_ok(), "include {} failed: {:?}", inc, r);
@@ -537,7 +566,9 @@ assert.deepEqual(Object(1), 1);
 assert.deepEqual(Object(true), true);
 assert.deepEqual(Object(s1), s1);
 "#;
-        let script1 = harness.build_script(g1, &["deepEqual.js".to_string()]).unwrap();
+        let script1 = harness
+            .build_script(g1, &["deepEqual.js".to_string()])
+            .unwrap();
         let mut host = QuenchHost::new();
         let r1 = host.run_script(&script1);
         assert!(r1.is_ok(), "Group 1 failed: {:?}", r1);
@@ -551,7 +582,9 @@ assert.throws(Test262Error, function () { assert.deepEqual("", 0); });
 assert.throws(Test262Error, function () { assert.deepEqual("1", 1); });
 assert.throws(Test262Error, function () { assert.deepEqual("1", "2"); });
 "#;
-        let script2 = harness.build_script(g2, &["deepEqual.js".to_string()]).unwrap();
+        let script2 = harness
+            .build_script(g2, &["deepEqual.js".to_string()])
+            .unwrap();
         let mut host = QuenchHost::new();
         let r2 = host.run_script(&script2);
         assert!(r2.is_ok(), "Group 2 failed: {:?}", r2);
@@ -565,21 +598,27 @@ assert.throws(Test262Error, function () { assert.deepEqual(true, false); });
 assert.throws(Test262Error, function () { assert.deepEqual(s1, "Symbol()"); });
 assert.throws(Test262Error, function () { assert.deepEqual(s1, s2); });
 "#;
-        let script3 = harness.build_script(g3, &["deepEqual.js".to_string()]).unwrap();
+        let script3 = harness
+            .build_script(g3, &["deepEqual.js".to_string()])
+            .unwrap();
         let mut host = QuenchHost::new();
         let r3 = host.run_script(&script3);
         assert!(r3.is_ok(), "Group 3 failed: {:?}", r3);
 
         // Groups 1+2 combined
         let combined = format!("{}{}", g1.trim(), &g2[1..]);
-        let script_comb = harness.build_script(&combined, &["deepEqual.js".to_string()]).unwrap();
+        let script_comb = harness
+            .build_script(&combined, &["deepEqual.js".to_string()])
+            .unwrap();
         let mut host = QuenchHost::new();
         let r_comb = host.run_script(&script_comb);
         assert!(r_comb.is_ok(), "Groups 1+2 failed: {:?}", r_comb);
 
         // Groups 1+3 combined
         let combined13 = format!("{}{}", g1.trim(), &g3[1..]);
-        let script13 = harness.build_script(&combined13, &["deepEqual.js".to_string()]).unwrap();
+        let script13 = harness
+            .build_script(&combined13, &["deepEqual.js".to_string()])
+            .unwrap();
         let mut host = QuenchHost::new();
         let r13 = host.run_script(&script13);
         assert!(r13.is_ok(), "Groups 1+3 failed: {:?}", r13);
@@ -598,28 +637,72 @@ assert.throws(Test262Error, function () { assert.deepEqual(s1, s2); });
 
         let cases: &[(&str, &str)] = &[
             ("null==null", r#"assert.deepEqual(null, null);"#),
-            ("undefined==undefined", r#"assert.deepEqual(undefined, undefined);"#),
+            (
+                "undefined==undefined",
+                r#"assert.deepEqual(undefined, undefined);"#,
+            ),
             (r#""a"=="a""#, r#"assert.deepEqual("a", "a");"#),
             ("1==1", r#"assert.deepEqual(1, 1);"#),
             ("true==true", r#"assert.deepEqual(true, true);"#),
             ("s1==s1", r#"var s1=Symbol();assert.deepEqual(s1,s1);"#),
-            (r#"Object("a")=="a""#, r#"var s1=Symbol();assert.deepEqual(Object("a"),"a");"#),
-            ("Object(1)==1", r#"var s1=Symbol();assert.deepEqual(Object(1),1);"#),
-            ("Object(true)==true", r#"var s1=Symbol();assert.deepEqual(Object(true),true);"#),
-            ("Object(s1)==s1", r#"var s1=Symbol();assert.deepEqual(Object(s1),s1);"#),
-            ("null!=0 throws", r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(null,0);});"#),
-            ("undefined!=0 throws", r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(undefined,0);});"#),
-            (r#"""!=0 throws"#, r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("",0);});"#),
-            (r#""1"!=1 throws"#, r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("1",1);});"#),
-            (r#""1"!="2" throws"#, r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("1","2");});"#),
-            ("true!=1 throws", r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(true,1);});"#),
-            ("true!=false throws", r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(true,false);});"#),
-            (r#"s1!="Symbol()" throws"#, r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(s1,"Symbol()");});"#),
-            ("s1!=s2 throws", r#"var s1=Symbol();var s2=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(s1,s2);});"#),
+            (
+                r#"Object("a")=="a""#,
+                r#"var s1=Symbol();assert.deepEqual(Object("a"),"a");"#,
+            ),
+            (
+                "Object(1)==1",
+                r#"var s1=Symbol();assert.deepEqual(Object(1),1);"#,
+            ),
+            (
+                "Object(true)==true",
+                r#"var s1=Symbol();assert.deepEqual(Object(true),true);"#,
+            ),
+            (
+                "Object(s1)==s1",
+                r#"var s1=Symbol();assert.deepEqual(Object(s1),s1);"#,
+            ),
+            (
+                "null!=0 throws",
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(null,0);});"#,
+            ),
+            (
+                "undefined!=0 throws",
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(undefined,0);});"#,
+            ),
+            (
+                r#"""!=0 throws"#,
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("",0);});"#,
+            ),
+            (
+                r#""1"!=1 throws"#,
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("1",1);});"#,
+            ),
+            (
+                r#""1"!="2" throws"#,
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual("1","2");});"#,
+            ),
+            (
+                "true!=1 throws",
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(true,1);});"#,
+            ),
+            (
+                "true!=false throws",
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(true,false);});"#,
+            ),
+            (
+                r#"s1!="Symbol()" throws"#,
+                r#"var s1=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(s1,"Symbol()");});"#,
+            ),
+            (
+                "s1!=s2 throws",
+                r#"var s1=Symbol();var s2=Symbol();assert.throws(Test262Error,function(){assert.deepEqual(s1,s2);});"#,
+            ),
         ];
 
         for (name, code) in cases {
-            let script = harness.build_script(code, &["deepEqual.js".to_string()]).unwrap();
+            let script = harness
+                .build_script(code, &["deepEqual.js".to_string()])
+                .unwrap();
             let mut host = QuenchHost::new();
             let result = host.run_script(&script);
             let status = if result.is_ok() { "PASS" } else { "FAIL" };
@@ -1148,7 +1231,11 @@ assert.throws(TypeError, function() {
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
         println!("new Math result: {:?}", result);
-        assert!(result.is_ok(), "new Math through pipeline failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "new Math through pipeline failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1166,7 +1253,11 @@ assert.throws(TypeError, function() {
         let mut host = QuenchHost::new();
         let result = host.run_script("(function() { return Math.abs(-5); })()");
         println!("Math inside plain function: {:?}", result);
-        assert!(result.is_ok(), "Math in plain function failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Math in plain function failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1241,13 +1332,15 @@ assert.throws(TypeError, function() {
         let mut host = QuenchHost::new();
 
         // Test: Check if Math is found inside the callback by returning its type
-        let r0 = host.run_script(r#"
+        let r0 = host.run_script(
+            r#"
             (function() {
                 return typeof Math;
             })()
-        "#);
+        "#,
+        );
         println!("typeof Math in callback: {:?}", r0);
-        
+
         // Test 1: Math.abs() should work (found and callable)
         // assert.throws expects a throw but Math.abs(5) returns 5 → "no exception"
         let r1 = host.run_script("assert.throws(TypeError, function() { Math.abs(5); });");
@@ -1321,6 +1414,109 @@ assert.throws(TypeError, function() {
             println!("After full pipeline, new Math = {:?}", r);
             assert!(r.is_err(), "new Math should throw TypeError");
         }
+    }
+
+    #[test]
+    fn repro_coerce_symbol_to_prim_err() {
+        // Reproducer for addition/get-symbol-to-prim-err.js
+        // The thrower object's @@toPrimitive getter throws. When the
+        // addition evaluates `thrower + counter`, the throw must propagate
+        // BEFORE counter's @@toPrimitive getter is invoked.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var thrower = {};
+var counter = {};
+var callCount = 0;
+
+Object.defineProperty(thrower, Symbol.toPrimitive, {
+  get: function() {
+    throw new Test262Error();
+  }
+});
+Object.defineProperty(counter, Symbol.toPrimitive, {
+  get: function() {
+    callCount += 1;
+  }
+});
+
+var threw = false;
+try {
+  thrower + counter;
+} catch(e) {
+  threw = e.constructor === Test262Error;
+}
+if (!threw) throw new Error("addition should throw");
+if (callCount !== 0) throw new Error("counter's getter was called: " + callCount);
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "coerce-symbol-to-prim-err repro failed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn repro_coerce_symbol_to_prim_err_full() {
+        // Same as the test262 file, with the full assert.throws wrapper.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var thrower = {};
+var counter = {};
+var log;
+
+Object.defineProperty(thrower, Symbol.toPrimitive, {
+  get: function() {
+    log += 'accessThrower';
+    return function() { throw new Test262Error(); };
+  }
+});
+Object.defineProperty(counter, Symbol.toPrimitive, {
+  get: function() {
+    log += 'accessCounter';
+    return function() { log += 'callCounter'; };
+  }
+});
+
+log = '';
+
+assert.throws(Test262Error, function() {
+  thrower + counter;
+}, 'error thrown by left-hand side');
+assert.sameValue(log, 'accessThrower');
+"#,
+        );
+        assert!(result.is_ok(), "coerce-symbol-to-prim-err full failed: {:?}", result);
+    }
+
+    #[test]
+    fn repro_coerce_symbol_to_prim_err_via_loader() {
+        // Run the actual test262 file via HarnessLoader (mimics the staged runner).
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::metadata::Test262Metadata;
+        use std::path::PathBuf;
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let test262_dir = repo_root.join("tests/test262");
+        let test_path = repo_root.join(
+            "tests/test262/test/language/expressions/addition/coerce-symbol-to-prim-err.js",
+        );
+
+        let source = std::fs::read_to_string(&test_path).unwrap();
+        let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+        let meta = Test262Metadata::parse(&source).unwrap();
+        let script = harness.build_script(&source, &meta.includes).unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(
+            result.is_ok(),
+            "coerce-symbol-to-prim-err via loader failed: {:?}",
+            result
+        );
     }
 
     #[test]

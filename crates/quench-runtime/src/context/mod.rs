@@ -68,8 +68,7 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
         CURRENT_CONTEXT.with(|cell| {
             *cell.borrow_mut() = prev_ctx;
         });
-        let (err_val, js_err) =
-            crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
@@ -207,12 +206,11 @@ impl Context {
             enumerable: false,
             configurable: false,
         };
-        let mut define_value_prop =
-            |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
-                let mut flags = value_flags.clone();
-                flags.value = Some(val.clone());
-                global_obj.borrow_mut().define(key, val, flags);
-            };
+        let mut define_value_prop = |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
+            let mut flags = value_flags.clone();
+            flags.value = Some(val.clone());
+            global_obj.borrow_mut().define(key, val, flags);
+        };
         define_value_prop("undefined", Value::Undefined, &global_obj);
         define_value_prop("Infinity", Value::Number(f64::INFINITY), &global_obj);
         define_value_prop("NaN", Value::Number(f64::NAN), &global_obj);

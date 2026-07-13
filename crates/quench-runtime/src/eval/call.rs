@@ -85,10 +85,7 @@ fn eval_super_call(
             call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
         }
         _ => {
-            let (_, js_err) = create_js_error_with_type(
-                "super is not a constructor",
-                "TypeError",
-            );
+            let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
             Err(js_err)
         }
     }
@@ -191,10 +188,8 @@ pub fn eval_new(
     // Arrow functions are not constructors
     if let Value::Function(ref f) = constructor_val {
         if f.is_arrow {
-            let (_, js_err) = create_js_error_with_type(
-                "function is not a constructor",
-                "TypeError",
-            );
+            let (_, js_err) =
+                create_js_error_with_type("function is not a constructor", "TypeError");
             return Err(js_err);
         }
     }
@@ -212,10 +207,8 @@ pub fn eval_new(
             if let Some(constructor) = obj.get("constructor") {
                 constructor.clone()
             } else {
-                let (_, js_err) = create_js_error_with_type(
-                    "object is not a constructor",
-                    "TypeError",
-                );
+                let (_, js_err) =
+                    create_js_error_with_type("object is not a constructor", "TypeError");
                 return Err(js_err);
             }
         }

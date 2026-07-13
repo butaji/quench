@@ -16,7 +16,7 @@ use crate::lower::control_flow::{
 };
 use crate::lower::expr::lower_expr;
 use crate::lower::helpers::LowerError;
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Lower an OXC Program to our runtime Program
 pub fn lower_program(program: &ast::Program) -> Result<crate::ast::Program, LowerError> {
@@ -76,7 +76,9 @@ pub fn lower_script(script: &ast::Program) -> Result<crate::ast::Program, LowerE
 /// Lower a statement, propagating an error for truly unsupported statements
 fn lower_stmt_checked(stmt: &ast::Statement) -> Result<Option<Statement>, LowerError> {
     match stmt {
-        ast::Statement::WithStatement(_) => Err(LowerError::new("`with` statements are not supported")),
+        ast::Statement::WithStatement(_) => {
+            Err(LowerError::new("`with` statements are not supported"))
+        }
         _ => Ok(lower_stmt(stmt)),
     }
 }
@@ -135,7 +137,7 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
 fn lower_import_decl(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
     let specifiers = import.specifiers.as_ref()?;
-    
+
     let default = specifiers.iter().find_map(|spec| {
         if let ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(default_spec) = spec {
             Some(default_spec.local.name.as_str().to_string())
@@ -207,7 +209,9 @@ fn lower_export_named(export: &ast::ExportNamedDeclaration) -> Option<Statement>
     if stmts.is_empty() {
         None
     } else if stmts.len() == 1 {
-        Some(Statement::Export(Box::new(stmts.into_iter().next().unwrap())))
+        Some(Statement::Export(Box::new(
+            stmts.into_iter().next().unwrap(),
+        )))
     } else {
         Some(Statement::Export(Box::new(Statement::Block(stmts))))
     }
@@ -218,27 +222,48 @@ fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<S
 
     match &export.declaration {
         ast::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
-            let name = func.id.as_ref().map(|i| i.name.as_str().to_string()).unwrap_or_else(|| "default".to_string());
-            let params: Vec<Param> = func.params.items.iter().map(|p| {
-                let (name, default) = match &p.pattern.kind {
-                    ast::BindingPatternKind::BindingIdentifier(ident) => (ident.name.as_str().to_string(), None),
-                    ast::BindingPatternKind::AssignmentPattern(ap) => {
-                        let name = match &ap.left.kind {
-                            ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
-                            _ => "arg".to_string(),
-                        };
-                        let default = lower_expr(&ap.right).ok().map(Box::new);
-                        (name, default)
-                    }
-                    _ => ("arg".to_string(), None),
-                };
-                Param { name, default }
-            }).collect();
-            let body = func.body.as_ref().map(|b| b.statements.iter().filter_map(lower_stmt).collect()).unwrap_or_default();
+            let name = func
+                .id
+                .as_ref()
+                .map(|i| i.name.as_str().to_string())
+                .unwrap_or_else(|| "default".to_string());
+            let params: Vec<Param> = func
+                .params
+                .items
+                .iter()
+                .map(|p| {
+                    let (name, default) = match &p.pattern.kind {
+                        ast::BindingPatternKind::BindingIdentifier(ident) => {
+                            (ident.name.as_str().to_string(), None)
+                        }
+                        ast::BindingPatternKind::AssignmentPattern(ap) => {
+                            let name = match &ap.left.kind {
+                                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                                    ident.name.as_str().to_string()
+                                }
+                                _ => "arg".to_string(),
+                            };
+                            let default = lower_expr(&ap.right).ok().map(Box::new);
+                            (name, default)
+                        }
+                        _ => ("arg".to_string(), None),
+                    };
+                    Param { name, default }
+                })
+                .collect();
+            let body = func
+                .body
+                .as_ref()
+                .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
+                .unwrap_or_default();
             Some(Statement::FunctionDeclaration { name, params, body })
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            let name = class.id.as_ref().map(|i| i.name.as_str().to_string()).unwrap_or_else(|| "default".to_string());
+            let name = class
+                .id
+                .as_ref()
+                .map(|i| i.name.as_str().to_string())
+                .unwrap_or_else(|| "default".to_string());
             let class = lower_class(class)?;
             Some(Statement::ClassDeclaration { name, class })
         }
