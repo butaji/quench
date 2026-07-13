@@ -513,15 +513,24 @@ pub(crate) fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value
 }
 
 pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
-    for scope in env.borrow().scopes.iter().rev() {
-        if let Some(this_val) = scope.get_this() {
-            // Sloppy mode: undefined/null this → globalThis (ESMA-262 12.2.1.1)
-            if !is_strict_mode() && (this_val == Value::Undefined || this_val == Value::Null) {
-                let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
-                return global_this;
+    // Walk the scope chain (this env's scopes, then parent envs) looking for
+    // the nearest `this` binding. Arrow functions rely on this to capture
+    // `this` from their lexical enclosing scope.
+    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
+    while let Some(e) = current {
+        for scope in e.borrow().scopes.iter().rev() {
+            if let Some(this_val) = scope.get_this() {
+                // Sloppy mode: undefined/null this → globalThis (ESMA-262 12.2.1.1)
+                if !is_strict_mode()
+                    && (this_val == Value::Undefined || this_val == Value::Null)
+                {
+                    let global_this = e.borrow().get("globalThis").unwrap_or(Value::Undefined);
+                    return global_this;
+                }
+                return this_val;
             }
-            return this_val;
         }
+        current = e.borrow().get_parent();
     }
     if !is_strict_mode() {
         let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
