@@ -407,6 +407,16 @@ mod tests {
     #[test]
     fn eval_add_short_circuits_when_left_toprim_getter_throws() {
         let mut ctx = crate::Context::new().unwrap();
+        // Debug: check getter storage
+        let debug = ctx.eval(
+            "var thrower = {}; \
+             var sym = Symbol.toPrimitive; \
+             Object.defineProperty(thrower, sym, { get: function() { return 42; } }); \
+             var desc = Object.getOwnPropertyDescriptor(thrower, sym); \
+             desc !== undefined ? (typeof desc.get) : 'no_desc';"
+        );
+        eprintln!("debug: {:?}", debug);
+
         let result = ctx.eval(
             "var callCount = 0; \
              var thrower = {}; \
@@ -415,8 +425,9 @@ mod tests {
              Object.defineProperty(counter, Symbol.toPrimitive, { get: function() { callCount += 1; } }); \
              var thrown; \
              try { thrower + counter; } catch (e) { thrown = e; } \
-             ({ callCount: callCount, msg: thrown.message });",
+             ({ callCount: callCount, msg: thrown ? thrown.message : 'undefined' });",
         );
+        eprintln!("result: {:?}", result);
         let value = result.unwrap();
         let crate::value::Value::Object(obj) = value else {
             panic!("expected object result");
