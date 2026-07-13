@@ -404,18 +404,10 @@ fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsError>
         } else if let Value::Function(f) = &this_val {
             // ValueFunction stores properties in a HashMap
             if let Some(key_str) = get_property_key(key_val) {
-                // Check built-in properties: name, length, prototype
-                if key_str == "name" || key_str == "length" {
-                    return Ok(Value::Boolean(true));
-                }
-                // Check prototype (cached)
-                if key_str == "prototype" && f.has_prototype() {
-                    return Ok(Value::Boolean(true));
-                }
-                // Check user-defined properties
                 if f.get_property(&key_str).is_some() {
                     return Ok(Value::Boolean(true));
                 }
+                return Ok(Value::Boolean(false));
             }
         } else if let Value::NativeFunction(nf) = &this_val {
             if let Some(key_str) = get_property_key(key_val) {

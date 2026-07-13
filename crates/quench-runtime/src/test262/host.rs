@@ -84,6 +84,115 @@ mod tests {
     }
 
     #[test]
+    fn repro_length_dflt() {
+        let mut host = QuenchHost::new();
+        let src = r#"
+var f1 = (x = 42) => {};
+var desc = Object.getOwnPropertyDescriptor(f1, 'length');
+if (!desc) throw new Test262Error('desc undefined');
+if (desc.value !== 0) throw new Test262Error('value: ' + desc.value);
+if (desc.writable !== false) throw new Test262Error('writable: ' + desc.writable);
+if (desc.enumerable !== false) throw new Test262Error('enumerable: ' + desc.enumerable);
+if (desc.configurable !== true) throw new Test262Error('configurable: ' + desc.configurable);
+"#;
+        let r = host.run_script(src);
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
+    fn repro_length_dflt_verifyproperty() {
+        let mut host = QuenchHost::new();
+        // Simulate verifyProperty's isConfigurable check via delete then check.
+        let src = r#"
+var f1 = (x = 42) => {};
+var origDesc = Object.getOwnPropertyDescriptor(f1, 'length');
+delete f1.length;
+var stillHas = Object.prototype.hasOwnProperty.call(f1, 'length');
+if (origDesc.configurable !== true) throw new Test262Error('origConfigurable=' + origDesc.configurable);
+if (stillHas) throw new Test262Error('still has length after delete');
+if (f1.length !== 0) throw new Test262Error('length should be 0 even after delete');
+"#;
+        let r = host.run_script(src);
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
+    fn repro_length_dflt_via_harness() {
+        let mut host = QuenchHost::new();
+        let harness_src = r#"
+var verifyProperty = function(obj, name, desc) {
+  var originalDesc = Object.getOwnPropertyDescriptor(obj, name);
+  if (!Object.prototype.hasOwnProperty.call(obj, name)) {
+    throw new Error('should be own');
+  }
+  try { delete obj[name]; } catch (e) {}
+  var stillHas = Object.prototype.hasOwnProperty.call(obj, name);
+  var failures = [];
+  if (desc.configurable !== undefined && desc.configurable !== stillHas) {
+    failures.push('configurable: expected ' + desc.configurable + ', actual ' + stillHas);
+  }
+  if (failures.length) throw new Error(failures.join('; '));
+  return true;
+};
+var f1 = (x = 42) => {};
+verifyProperty(f1, 'length', { configurable: true });
+"#;
+        let r = host.run_script(harness_src);
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
+    fn repro_length_dflt_actual_test_source() {
+        let mut host = QuenchHost::new();
+        let test_source = r#"
+var f1 = (x = 42) => {};
+
+verifyProperty(f1, "length", {
+  value: 0,
+  writable: false,
+  enumerable: false,
+  configurable: true,
+});
+
+var f2 = (x = 42, y) => {};
+
+verifyProperty(f2, "length", {
+  value: 0,
+  writable: false,
+  enumerable: false,
+  configurable: true,
+});
+"#;
+        let r = host.run_script(test_source);
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
+    fn debug_arrow_length_own() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             Object.prototype.hasOwnProperty.call(f1, 'length');"
+        );
+        eprintln!("hasOwn length: {:?}", r);
+    }
+
+    #[test]
+    fn debug_arrow_length_delete() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var d = delete f1.length; \
+             var stillHas = Object.prototype.hasOwnProperty.call(f1, 'length'); \
+             [d, stillHas, f1.length];"
+        ).unwrap();
+        if let crate::value::Value::Object(o) = r {
+            let e = o.borrow().elements.clone();
+            eprintln!("delete results: d={:?}, stillHas={:?}, len={:?}", e[0], e[1], e[2]);
+        }
+    }
+
+    #[test]
     fn tmp_strict_fn_eval() {
         let mut host = QuenchHost::new();
         let r = host.run_script(
