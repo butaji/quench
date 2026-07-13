@@ -14,6 +14,44 @@ use crate::value::function::ValueFunction;
 use crate::value::kind::{ExoticKind, ObjectKind};
 use crate::value::Value;
 
+/// Runtime property key — canonicalizes array indices to `Idx(u32)`.
+/// Also used as the key type for `Object.props` (currently separate maps,
+/// gradually migrating to a single `IndexMap<Key, Desc>` per TComp model).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Key {
+    /// Non-index string key
+    Str(String),
+    /// Canonical array index (0 ..= 4294967294)
+    Idx(u32),
+    /// Symbol key (stored as raw payload string)
+    Sym(String),
+}
+
+impl From<&str> for Key {
+    fn from(s: &str) -> Self {
+        as_key(s)
+    }
+}
+
+/// Convert a string property key to a `Key`, canonicalizing array indices.
+pub fn as_key(s: &str) -> Key {
+    // Fast path: single digit
+    if s.len() == 1 && s.as_bytes()[0].is_ascii_digit() {
+        return Key::Idx((s.as_bytes()[0] - b'0') as u32);
+    }
+    if let Ok(n) = s.parse::<u32>() {
+        if n <= 4294967294 {
+            return Key::Idx(n);
+        }
+    }
+    Key::Str(s.to_string())
+}
+
+/// Returns `true` if `s` is a canonical array index string ("0" through "4294967294").
+pub fn is_array_index(s: &str) -> bool {
+    matches!(as_key(s), Key::Idx(_))
+}
+
 /// Maximum number of dense array elements. Indices at or above this are
 /// stored as plain properties instead of growing the elements Vec, so a
 /// single `o["1000000000"] = 1` cannot allocate a billion-element Vec.
@@ -52,6 +90,40 @@ impl Default for PromiseObjectData {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// TComp: ECMA-262 6.2.5 PropertyDescriptor — minimal, exact.
+/// All fields are `Option` so `IsDataDescriptor` / `IsAccessorDescriptor`
+/// can distinguish "not present" from `false`.
+#[derive(Debug, Clone, Default)]
+pub struct Desc {
+    pub value: Option<Value>,
+    pub writable: Option<bool>,
+    pub get: Option<Value>,
+    pub set: Option<Value>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+}
+
+impl Desc {
+    pub fn is_data(&self) -> bool { self.value.is_some() || self.writable.is_some() }
+    pub fn is_accessor(&self) -> bool { self.get.is_some() || self.set.is_some() }
+    pub fn is_generic(&self) -> bool { !self.is_data() && !self.is_accessor() }
+}
+
+/// Store pointer type for getter/setter AST bodies (needed during eval
+/// before the function value is resolved). Kept separate from `Desc`.
+#[derive(Debug, Clone)]
+pub struct GetterBody {
+    pub body: Rc<Vec<Statement>>,
+    pub closure: Rc<RefCell<Environment>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetterBody {
+    pub param: String,
+    pub body: Rc<Vec<Statement>>,
+    pub closure: Rc<RefCell<Environment>>,
 }
 
 impl PromiseObjectData {

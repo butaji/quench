@@ -23,7 +23,7 @@ pub use error::{
 };
 pub use function::{NativeConstructor, NativeFunction, ValueFunction};
 pub use kind::ObjectKind;
-pub use object::{Getter, GetterStorage, Object, PropertyDescriptor, PropertyFlags, Setter, SetterStorage};
+pub use object::{Desc, GetterBody, Getter, GetterStorage, Key, Object, PropertyDescriptor, PropertyFlags, Setter, SetterBody, SetterStorage};
 pub use val::{ClassValue, Value};
 
 // =============================================================================
