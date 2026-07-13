@@ -11,7 +11,7 @@ license = "MIT"
 oxc = "0.47"
 
 # Compile-time static maps
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.14", features = ["macros"] }
 
 # Ordered map for object property insertion-order enumeration
 indexmap = "2"
