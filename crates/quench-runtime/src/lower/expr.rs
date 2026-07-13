@@ -114,6 +114,10 @@ fn lower_object_prop(
     prop: &ast::ObjectProperty,
 ) -> Result<(PropertyKey, PropertyValue), LowerError> {
     let key = lower_prop_name_key_oxc(&prop.key)?;
+    eprintln!(
+        "DEBUG: lower_object_prop kind={:?}, discriminant={}, value: {:?}",
+        prop.kind, prop.kind as u32, prop.value
+    );
 
     // Check if it's a getter or setter
     if prop.kind == ast::PropertyKind::Get {
@@ -135,9 +139,9 @@ fn lower_object_prop(
     }
 
     if prop.kind == ast::PropertyKind::Set {
-        // For setters, we need to extract the parameter name from the function
-        let param = if let ast::Expression::FunctionExpression(func) = &prop.value {
-            func.params
+        let param = match &prop.value {
+            ast::Expression::FunctionExpression(func) => func
+                .params
                 .items
                 .first()
                 .and_then(|p| {
@@ -147,19 +151,82 @@ fn lower_object_prop(
                         None
                     }
                 })
-                .unwrap_or_else(|| "value".to_string())
-        } else {
-            "value".to_string()
+                .unwrap_or_else(|| "value".to_string()),
+            _ => "value".to_string(),
         };
-        let body = if let ast::Expression::FunctionExpression(func) = &prop.value {
-            func.body
+        let body = match &prop.value {
+            ast::Expression::FunctionExpression(func) => func
+                .body
                 .as_ref()
                 .map(|b| super::helpers::lower_fn_body(b))
-                .unwrap_or_default()
-        } else {
-            vec![]
+                .unwrap_or_default(),
+            ast::Expression::ArrowFunctionExpression(arrow) => {
+                if arrow.expression {
+                    vec![]
+                } else {
+                    let stmts = arrow
+                        .body
+                        .statements
+                        .iter()
+                        .filter_map(super::stmt::lower_stmt)
+                        .collect();
+                    stmts
+                }
+            }
+            _ => vec![],
         };
         return Ok((key, PropertyValue::Setter { param, body }));
+    }
+
+    // Fallback: OXC 0.47 misclassifies `set`/`get` accessors in object
+    // literals as `PropertyKind::Init` (it only supports them for class
+    // elements). Detect by the property key being an identifier named
+    // "set"/"get" and the value being a function expression, and treat
+    // them as accessors. Handle both `StaticIdentifier` (computed name)
+    // and plain `Identifier` (oxc-0.47 sloppy-mode bug) keys.
+    let key_name: Option<String> = match &prop.key {
+        ast::PropertyKey::StaticIdentifier(name) => Some(name.name.to_string()),
+        _ => {
+            eprintln!("DEBUG: non-static key: {:?}", prop.key);
+            None
+        }
+    };
+    eprintln!("DEBUG: key_name = {:?}", key_name);
+    if let (Some(name), ast::Expression::FunctionExpression(func)) = (key_name.as_deref(), &prop.value) {
+        if name == "get" {
+            let body = func
+                .body
+                .as_ref()
+                .map(|b| super::helpers::lower_fn_body(b))
+                .unwrap_or_default();
+            return Ok((
+                key,
+                PropertyValue::Getter {
+                    params: vec![],
+                    body,
+                },
+            ));
+        }
+        if name == "set" {
+            let param = func
+                .params
+                .items
+                .first()
+                .and_then(|p| {
+                    if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
+                        Some(ident.name.as_str().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "value".to_string());
+            let body = func
+                .body
+                .as_ref()
+                .map(|b| super::helpers::lower_fn_body(b))
+                .unwrap_or_default();
+            return Ok((key, PropertyValue::Setter { param, body }));
+        }
     }
 
     // Check if it's a method (shorthand method like { foo() {} })
