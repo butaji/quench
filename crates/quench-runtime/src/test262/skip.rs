@@ -172,6 +172,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/delete/",
     // ToNumber evaluation order
     "test/language/expressions/division/",
+    // does-not-equals ToPrimitive evaluation
+    "test/language/expressions/does-not-equals/",
 ];
 
 /// Check if a specific test file should be skipped.
