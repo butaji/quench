@@ -167,6 +167,10 @@ impl Scope {
     }
 
     pub fn set(&mut self, name: String, value: Value) -> bool {
+        // Per ES §13.15.2: assigning to a const binding throws TypeError
+        if matches!(self.var_kinds.get(&name), Some(VarKind::Const)) {
+            return false; // Caller will throw TypeError
+        }
         match self.bindings.entry(name) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 e.insert(Rc::new(value));
