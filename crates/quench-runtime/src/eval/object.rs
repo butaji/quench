@@ -107,6 +107,33 @@ fn assign_to_identifier(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    // Per ES §12.14.4 step 1.e.iii: SetFunctionName on assignment when
+    // right side is an anonymous function/class expression/arrow.
+    let value = match value {
+        Value::Function(ref f) if f.name.is_none() => {
+            let mut cloned = f.clone();
+            cloned.name = Some(name.to_string());
+            cloned.set_property("name", Value::String(name.to_string()));
+            Value::Function(cloned)
+        }
+        Value::Class(ref c) => {
+            // Check if class already has a `name` property (via static method).
+            let has_name = c.name.is_some()
+                || c.static_methods.iter().any(|(k, _, _)| match k {
+                    crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => s == "name",
+                    _ => false,
+                });
+            if !has_name {
+                let mut cloned = c.clone();
+                cloned.name = Some(name.to_string());
+                Value::Class(cloned)
+            } else {
+                value.clone()
+            }
+        }
+        _ => value.clone(),
+    };
+
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
@@ -132,7 +159,7 @@ fn assign_to_identifier(
                 }
             }
         }
-        env.borrow_mut().set(name, value.clone());
+        env.borrow_mut().set(name, value);
     } else {
         // Strict mode: assignment to unresolvable reference must throw ReferenceError.
         if crate::interpreter::is_strict_mode() {
@@ -144,9 +171,9 @@ fn assign_to_identifier(
         }
         // Sloppy mode: create a globalThis property so `delete x` returns true.
         if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
-            global_obj.borrow_mut().set(name, value.clone());
+            global_obj.borrow_mut().set(name, value);
         } else {
-            env.borrow_mut().define(name.to_string(), value.clone());
+            env.borrow_mut().define(name.to_string(), value);
         }
     }
     Ok(())

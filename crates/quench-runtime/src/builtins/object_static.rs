@@ -319,6 +319,8 @@ pub fn object_get_own_property_descriptor(args: Vec<Value>) -> Result<Value, JsE
         return get_native_function_property_descriptor(&prop);
     } else if let Value::NativeConstructor(nc) = obj {
         return get_native_constructor_property_descriptor(nc, &prop);
+    } else if let Value::Class(c) = obj {
+        return get_class_property_descriptor(c, &prop);
     }
     Ok(Value::Undefined)
 }
@@ -448,6 +450,23 @@ fn make_descriptor_value(flags: PropertyFlags, value: Value) -> Value {
         Value::Boolean(flags.configurable),
     );
     Value::Object(Rc::new(RefCell::new(desc)))
+}
+
+/// Get property descriptor from a Class value.
+fn get_class_property_descriptor(
+    c: &crate::value::ClassValue,
+    prop: &str,
+) -> Result<Value, JsError> {
+    match prop {
+        "name" => make_property_descriptor_string(
+            &c.name.clone().unwrap_or_default(),
+            false,
+            false,
+            true,
+        ),
+        "prototype" => Ok(Value::Undefined), // handled by eval_class_member
+        _ => Ok(Value::Undefined),
+    }
 }
 
 /// Create a string property descriptor object
