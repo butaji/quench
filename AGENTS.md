@@ -102,3 +102,6 @@ Pipeline: source → `parser` → `lower/` → `interpreter::eval` → `eval/`.
   from native code that runs during eval.
 - New builtins are wired in `builtins/mod.rs::register_builtins` — mind the
   documented ordering constraints (Symbol before Map/Set, Number before Date).
+- Dependency choices (why a crate is in `Cargo.toml`, what it replaces) live
+  in `crates/quench-runtime/DEPENDENCIES.md`. Update that file in the same
+  diff when adding or removing a direct dependency.
