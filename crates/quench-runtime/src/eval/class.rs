@@ -153,7 +153,11 @@ fn build_constructor_env(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Environment, JsError> {
     let mut call_env = Environment::with_parent(Rc::clone(env));
-    call_env.current_scope_mut().set_this(this_val.clone());
+    // Bind `this` WITHOUT marking it as initialized. The this-initialized
+    // flag is set after super() succeeds, so that a second super() inside
+    // the same constructor (or inside an arrow) throws ReferenceError per
+    // ES §8.1.1.3.1.
+    call_env.current_scope_mut().set_this_value(this_val.clone());
 
     if let Some(ref sc) = class.super_class {
         let sv = eval_expression(sc, env, false)?;

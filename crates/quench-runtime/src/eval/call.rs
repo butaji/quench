@@ -70,8 +70,7 @@ fn eval_super_call(
     // the relevant scope is in the lexical parent chain.
     let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
     while let Some(e) = current {
-        let initialized = e.borrow().scopes.iter().any(|s| s.is_this_initialized());
-        if initialized {
+        if e.borrow().scopes.iter().any(|s| s.is_this_initialized()) {
             return Err(JsError(
                 "ReferenceError: super() called after `this` was already initialized"
                     .to_string(),
@@ -85,7 +84,7 @@ fn eval_super_call(
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     let this_val = get_this_binding(env);
 
-    match super_val {
+    let result = match super_val {
         Value::Class(super_class) => {
             crate::eval::class::call_super_constructor(super_class, args, this_val, env)
         }
@@ -101,9 +100,13 @@ fn eval_super_call(
         }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
-            Err(js_err)
+            return Err(js_err);
         }
-    }
+    };
+    // Mark `this` as initialized on the current scope now that super()
+    // succeeded, per ES §13.2.6.1 SuperCall step 7.
+    env.borrow_mut().current_scope_mut().mark_this_initialized();
+    result
 }
 
 /// Evaluate a member access expression (obj.prop or obj[expr])

@@ -526,7 +526,10 @@ fn check_use_strict_directive(statements: &[crate::ast::Statement]) -> bool {
 }
 
 pub(crate) fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value) {
-    env.borrow_mut().current_scope_mut().set_this(this_value);
+    // Use set_this_value (no initialized flag) for the script-level this
+    // binding set by eval_program. The this_initialized flag is reserved
+    // for tracking constructor `this` per ES §8.1.1.3.1.
+    env.borrow_mut().current_scope_mut().set_this_value(this_value);
 }
 
 pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
