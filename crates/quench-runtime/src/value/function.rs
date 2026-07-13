@@ -79,11 +79,18 @@ pub struct ValueFunction {
     /// Cached prototype object
     proto_cell: ProtoCellRef,
     /// Additional properties (e.g., sameValue, notSameValue on assert)
-    properties: std::cell::RefCell<std::collections::HashMap<String, Value>>,
+    /// Wrapped in Rc<RefCell> so clones share mutations (see Clone impl).
+    properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
 }
 
 impl Clone for ValueFunction {
     fn clone(&self) -> Self {
+        // Share the same Rc<RefCell<HashMap>> with the original so deletes /
+        // mutations are visible to subsequent accesses. Without this, every
+        // env lookup returned a clone with a fresh HashMap and patterns like
+        // `delete f.length; assert(!hasOwnProperty(f, "length"))` would
+        // never see the deletion (the original kept its entry, the clone
+        // was modified independently).
         ValueFunction {
             name: self.name.clone(),
             params: self.params.clone(),
@@ -93,7 +100,7 @@ impl Clone for ValueFunction {
             is_arrow: self.is_arrow,
             strict: self.strict,
             proto_cell: self.proto_cell.clone(),
-            properties: std::cell::RefCell::new(self.properties.borrow().clone()),
+            properties: std::rc::Rc::clone(&self.properties),
         }
     }
 }
@@ -130,7 +137,7 @@ impl ValueFunction {
             is_arrow: false,
             strict: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
-            properties: std::cell::RefCell::new(props),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
     }
 
@@ -155,7 +162,7 @@ impl ValueFunction {
             is_arrow: true,
             strict: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
-            properties: std::cell::RefCell::new(props),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
     }
 

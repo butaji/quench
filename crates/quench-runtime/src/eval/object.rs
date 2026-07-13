@@ -291,6 +291,21 @@ fn assign_to_member(
                 crate::value::set_thrown_value(err);
                 return Err(js_err);
             }
+            // Per ES §10.2.9 [[Set]]: strict mode rejects writes to non-writable
+            // own properties with TypeError; sloppy mode silently ignores.
+            if f.get_property(&prop_name).is_some()
+                && matches!(prop_name.as_str(), "length" | "name")
+            {
+                if crate::interpreter::is_strict_mode() {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Cannot assign to read only property",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
+                // Sloppy: silently ignore.
+                return Ok(());
+            }
             f.set_property(&prop_name, value.clone());
             Ok(())
         }
@@ -686,6 +701,117 @@ mod tests {
             crate::value::Value::Function(_) => {}
             other => panic!("got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn arrow_length_remove_property() {
+        let mut ctx = Context::new().unwrap();
+        // Single eval so f1 persists across delete + hasOwnProperty.
+        let r = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var del = delete f1.length; \
+             var has = Object.prototype.hasOwnProperty.call(f1, 'length'); \
+             [del, has];"
+        ).unwrap();
+        let arr = if let crate::value::Value::Object(o) = r {
+            o.borrow().elements.clone()
+        } else {
+            panic!("not array");
+        };
+        assert_eq!(arr[0], crate::value::Value::Boolean(true), "delete");
+        assert_eq!(arr[1], crate::value::Value::Boolean(false), "should not be own after delete");
+    }
+
+    #[test]
+    fn remove_property_directly() {
+        // Test remove_property via the JS dispatch path, evaluating both
+        // "delete" and "Object.prototype.hasOwnProperty.call" via the engine.
+        let mut ctx = Context::new().unwrap();
+        let r = ctx.eval(
+            "var f1 = function() {}; \
+             f1.length = 5; \
+             var before = Object.prototype.hasOwnProperty.call(f1, 'length'); \
+             var del = delete f1.length; \
+             var after = Object.prototype.hasOwnProperty.call(f1, 'length'); \
+             [before, del, after];"
+        ).unwrap();
+        let arr = if let crate::value::Value::Object(o) = r {
+            o.borrow().elements.clone()
+        } else {
+            panic!("not array");
+        };
+        eprintln!("results: before={:?} del={:?} after={:?}", arr[0], arr[1], arr[2]);
+        assert_eq!(arr[0], crate::value::Value::Boolean(true), "before");
+        assert_eq!(arr[1], crate::value::Value::Boolean(true), "del");
+        assert_eq!(arr[2], crate::value::Value::Boolean(false), "after");
+    }
+
+    #[test]
+    fn arrow_length_descriptor_configurable() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var desc = Object.getOwnPropertyDescriptor(f1, 'length'); \
+             [desc.value, desc.writable, desc.enumerable, desc.configurable, f1.length];"
+        );
+        let arr = match v.unwrap() {
+            crate::value::Value::Object(o) => o,
+            other => panic!("expected array: {:?}", other),
+        };
+        let e = arr.borrow().elements.clone();
+        assert_eq!(e[0], crate::value::Value::Number(0.0), "value");
+        assert_eq!(e[1], crate::value::Value::Boolean(false), "writable");
+        assert_eq!(e[2], crate::value::Value::Boolean(false), "enumerable");
+        assert_eq!(e[3], crate::value::Value::Boolean(true), "configurable");
+        assert_eq!(e[4], crate::value::Value::Number(0.0), "f1.length");
+    }
+
+    #[test]
+    fn arrow_length_descriptor_full_verifyproperty() {
+        // Mimic the test262 verifyProperty flow exactly.
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var originalDesc = Object.getOwnPropertyDescriptor(f1, 'length'); \
+             if (!Object.prototype.hasOwnProperty.call(f1, 'length')) throw new Error('not own'); \
+             try { f1.length = 'unlikelyValue'; } catch (e) {} \
+             var still0 = f1.length; \
+             var lenDesc = Object.getOwnPropertyDescriptor(f1, 'length'); \
+             [originalDesc.value, originalDesc.writable, originalDesc.configurable, still0, lenDesc.value, lenDesc.writable];"
+        );
+        let arr = match v.unwrap() {
+            crate::value::Value::Object(o) => o,
+            other => panic!("expected array: {:?}", other),
+        };
+        let e = arr.borrow().elements.clone();
+        assert_eq!(e[0], crate::value::Value::Number(0.0), "orig value");
+        assert_eq!(e[1], crate::value::Value::Boolean(false), "orig writable");
+        assert_eq!(e[2], crate::value::Value::Boolean(true), "orig configurable");
+        assert_eq!(e[3], crate::value::Value::Number(0.0), "still 0");
+        assert_eq!(e[4], crate::value::Value::Number(0.0), "post value");
+        assert_eq!(e[5], crate::value::Value::Boolean(false), "post writable");
+    }
+
+    #[test]
+    fn arrow_length_no_writable_check() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var desc = Object.getOwnPropertyDescriptor(f1, 'length'); \
+             try { f1.length = 99; } catch (e) {} \
+             var writable = Object.getOwnPropertyDescriptor(f1, 'length').writable; \
+             var afterLen = f1.length; \
+             [writable, afterLen];"
+        );
+        let arr = match v.unwrap() {
+            crate::value::Value::Object(o) => o,
+            other => panic!("expected array: {:?}", other),
+        };
+        let e = arr.borrow().elements.clone();
+        // writable should be false (so assignment is silently ignored in sloppy mode)
+        assert_eq!(e[0], crate::value::Value::Boolean(false), "writable should be false");
+        // After attempted write, length should still be 0 (since writable=false)
+        assert_eq!(e[1], crate::value::Value::Number(0.0), "length should not change");
     }
 
     #[test]
