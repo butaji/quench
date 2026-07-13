@@ -434,20 +434,22 @@ assert.sameValue(a.a, 1);
 }
 
 #[test]
-fn test_member_destructuring_throws_setter_error() {
+fn test_member_destructuring_getter_return() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
         r#"
 function MyError() {}
-var target = {
-  set a(v) { throw new MyError(); }
-};
+var returnGetterCalled = 0;
+var target = { set a(v) { throw new MyError(); } };
 var iterator = {
   [Symbol.iterator]() { return this; },
   next() { return { done: false }; },
-  return: 0
+  get return() {
+    returnGetterCalled += 1;
+    throw 'bad';
+  }
 };
-var seen = 'unset';
+var seen;
 try {
   ([target.a] = iterator);
   seen = 'no throw';
@@ -455,15 +457,11 @@ try {
   seen = e && e.constructor && e.constructor.name;
 }
 assert.sameValue(seen, 'MyError');
+assert.sameValue(returnGetterCalled, 1);
 "#,
     );
-    assert!(
-        result.is_ok(),
-        "member destructuring setter error failed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "getter return failed: {:?}", result);
 }
-
 #[test]
 fn test_strict_with_assignment_to_deleted_binding_throws() {
     let mut host = QuenchHost::new();
