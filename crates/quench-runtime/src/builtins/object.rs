@@ -500,7 +500,7 @@ fn get_property_key(arg: &Value) -> Option<String> {
         // For symbols, return the raw symbol string (e.g., "Symbol():123")
         // Note: to_js_string wraps this as "Symbol(...)" for display purposes,
         // but the raw string is what's stored in properties
-        Value::Symbol(s) => Some(s.clone()),
+        Value::Symbol(s) => Some(s.desc.clone().unwrap_or_default()),
         _ => None,
     }
 }

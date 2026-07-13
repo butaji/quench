@@ -42,7 +42,7 @@ pub fn to_js_string(v: &Value) -> String {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Class(_) => "[Function]".to_string(),
-        Value::Symbol(s) => format!("Symbol({})", crate::builtins::symbol::symbol_description(s)),
+        Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         _ => "undefined".to_string(),
     }
 }
@@ -233,9 +233,7 @@ fn strict_eq_same_type(a: &Value, b: &Value) -> bool {
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
         (Value::Number(ai), Value::Number(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
-        // Symbol payloads embed a unique id (`desc\0id`), so string
-        // comparison is identity comparison.
-        (Value::Symbol(ai), Value::Symbol(bi)) => ai == bi,
+        (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
         (Value::Function(_), Value::Function(_))
         | (Value::NativeFunction(_), Value::NativeFunction(_))
@@ -291,7 +289,7 @@ fn same_value_same_type(a: &Value, b: &Value) -> bool {
         (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
-        (Value::Symbol(ai), Value::Symbol(bi)) => ai == bi,
+        (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
         _ => false,
     }
@@ -671,7 +669,10 @@ fn try_to_primitive_symbol(
     };
     // Use ordinary member access so an accessor is invoked (and any abrupt
     // completion propagates) rather than returning the getter function itself.
-    let to_prim_method = crate::eval::member::eval_object_member(obj, &symbol_key)?;
+    let to_prim_method = crate::eval::member::eval_object_member(
+        obj,
+        symbol_key.desc.as_deref().unwrap_or(""),
+    )?;
     if matches!(to_prim_method, Value::Undefined) {
         return Ok(None);
     }
