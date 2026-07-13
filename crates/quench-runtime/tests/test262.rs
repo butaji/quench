@@ -351,6 +351,27 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_assignment_updates_descriptor_value_snapshot() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var object = {};
+Object.defineProperty(object, 'value', { value: 456, writable: true });
+var before = Object.getOwnPropertyDescriptor(object, 'value');
+object.value = 123;
+var after = Object.getOwnPropertyDescriptor(object, 'value');
+assert.sameValue(before.value, 456);
+assert.sameValue(after.value, 123);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "descriptor value update failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_assignment_replaces_function_property_identity() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
