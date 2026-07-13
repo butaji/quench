@@ -231,18 +231,7 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
 fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
     let name = lower_prop_name_stmt(&method.key)?;
     let is_static = method.r#static;
-    let ps: Vec<String> = method
-        .value
-        .params
-        .items
-        .iter()
-        .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
-                Some(ident.name.as_str().to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let ps: Vec<Param> = lower_formal_params(&method.value.params);
     let body = method
         .value
         .body
@@ -252,7 +241,7 @@ fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
     match method.kind {
         ast::MethodDefinitionKind::Get => Some(ClassMember::Getter { name, body }),
         ast::MethodDefinitionKind::Set => {
-            let param = ps.first().cloned().unwrap_or_default();
+            let param = ps.first().map(|p| p.name.clone()).unwrap_or_default();
             Some(ClassMember::Setter { name, param, body })
         }
         _ => {

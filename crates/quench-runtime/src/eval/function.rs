@@ -122,6 +122,15 @@ pub(crate) fn call_js_function_impl(
     }
     let call_env_rc = Rc::new(RefCell::new(call_env));
 
+    // Create arguments object BEFORE parameter binding so default parameter
+    // expressions can reference `arguments` (per ES §9.2.12 step 21).
+    if !f.is_arrow {
+        let args_obj = create_arguments_object(&f, args.clone(), in_strict);
+        call_env_rc
+            .borrow_mut()
+            .define("arguments".to_string(), args_obj);
+    }
+
     // Handle parameters, stopping at rest parameter
     let mut found_rest = false;
 
@@ -174,13 +183,6 @@ pub(crate) fn call_js_function_impl(
     call_env_rc.borrow_mut().push_scope();
     predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
     predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
-    // Create arguments object only for non-arrow functions.
-    if !f.is_arrow {
-        let args_obj = create_arguments_object(&f, args, in_strict);
-        call_env_rc
-            .borrow_mut()
-            .define("arguments".to_string(), args_obj);
-    }
 
     // Set strict mode for function body evaluation
     let prev_strict = crate::interpreter::is_strict_mode();

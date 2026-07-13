@@ -396,10 +396,10 @@ pub enum ClassMember {
         params: Vec<String>,
         body: Vec<Statement>,
     },
-    /// Regular method
+    /// Regular method (params include default values)
     Method {
         name: PropertyKey,
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Vec<Statement>,
     },
     /// Getter
@@ -413,10 +413,10 @@ pub enum ClassMember {
         param: String,
         body: Vec<Statement>,
     },
-    /// Static method
+    /// Static method (params include default values)
     StaticMethod {
         name: PropertyKey,
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Vec<Statement>,
     },
     /// Instance field: x = expr

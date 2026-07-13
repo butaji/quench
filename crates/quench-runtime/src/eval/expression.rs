@@ -335,7 +335,16 @@ fn eval_delete(
                         Ok(Value::Boolean(false))
                     }
                 }
-                _ => Ok(Value::Boolean(false)),
+                Value::Class(c) => {
+                    // Class name and prototype are configurable per spec
+                    if prop_key == "name" || prop_key == "prototype" {
+                        c.deleted_properties.borrow_mut().insert(prop_key.clone());
+                        Ok(Value::Boolean(true))
+                    } else {
+                        Ok(Value::Boolean(false))
+                    }
+                }
+                _ => Ok(Value::Boolean(false)), // primitives etc.
             }
         }
         Expression::Identifier(name) => {
