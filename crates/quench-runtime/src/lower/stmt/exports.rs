@@ -145,6 +145,7 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                     Some(Param {
                         name,
                         default,
+                        pattern: None,
                         rest: false,
                     })
                 })

@@ -252,6 +252,7 @@ fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<S
                     Param {
                         name,
                         default,
+                        pattern: None,
                         rest: false,
                     }
                 })

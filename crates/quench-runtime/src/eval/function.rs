@@ -1,6 +1,6 @@
 //! Function calls
 
-use crate::ast::{ArrowBody, Expression, Statement};
+use crate::ast::{ArrowBody, BindingElement, Expression, Statement};
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::statement::eval_function_body;
@@ -124,7 +124,6 @@ pub(crate) fn call_js_function_impl(
 
     // Handle parameters, stopping at rest parameter
     let mut found_rest = false;
-    let mut rest_args: Vec<Value> = Vec::new();
 
     for (i, param) in params.iter().enumerate() {
         if found_rest {
@@ -137,13 +136,18 @@ pub(crate) fn call_js_function_impl(
         }
 
         if param.rest {
-            // Collect all remaining arguments into an array
-            rest_args = args[i..].to_vec();
+            let rest_value = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
+                args[i..].to_vec(),
+            ))));
             found_rest = true;
-            call_env_rc.borrow_mut().define(
-                param.name.clone(),
-                Value::Object(Rc::new(RefCell::new(Object::new_array_from(rest_args)))),
-            );
+            if let Some(pattern) = &param.pattern {
+                let target = binding_pattern_expression(pattern.clone());
+                crate::eval::object::assign_to(&target, &rest_value, &call_env_rc)?;
+            } else {
+                call_env_rc
+                    .borrow_mut()
+                    .define(param.name.clone(), rest_value);
+            }
         } else {
             let arg = args.get(i).cloned();
             let value = match arg {
@@ -187,6 +191,15 @@ pub(crate) fn call_js_function_impl(
     crate::interpreter::set_strict_mode(prev_strict);
 
     result
+}
+
+fn binding_pattern_expression(pattern: BindingElement) -> Expression {
+    match pattern {
+        BindingElement::Identifier(name) => Expression::Identifier(name),
+        BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
+        BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
+        BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+    }
 }
 
 /// Check if a function body starts with "use strict"; directive
