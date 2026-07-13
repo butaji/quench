@@ -1,24 +1,24 @@
 //! Expression lowering - convert OXC expressions to runtime AST expressions
 
-use super::helpers::{assign_op_to_bin, lower_bin_op, lower_logical_op, lower_unary_op};
 use super::helpers::LowerError;
+use super::helpers::{assign_op_to_bin, lower_bin_op, lower_logical_op, lower_unary_op};
 use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
-use super::literals::{
-    lower_tagged_template, lower_template_literal,
-};
+use super::literals::{lower_tagged_template, lower_template_literal};
 use super::opt_chain::lower_opt_chain;
+use crate::ast::Statement;
 use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, Param, PropertyKey, PropertyValue, UpdateOp,
 };
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 use oxc::syntax::operator::{AssignmentOperator, LogicalOperator, UpdateOperator};
-use crate::ast::Statement;
 
 /// Lower an OXC Expression to our Expression
 #[allow(clippy::complexity)]
 pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
     match expr {
-        ast::Expression::Identifier(ident) => Ok(Expression::Identifier(ident.name.as_str().to_string())),
+        ast::Expression::Identifier(ident) => {
+            Ok(Expression::Identifier(ident.name.as_str().to_string()))
+        }
         ast::Expression::ThisExpression(_) => Ok(Expression::Identifier("this".to_string())),
         ast::Expression::ArrayExpression(arr) => lower_array_expr(arr),
         ast::Expression::ObjectExpression(obj) => lower_object_expr(obj),
@@ -75,7 +75,10 @@ fn lower_array_expr(arr: &ast::ArrayExpression) -> Result<Expression, LowerError
                     Ok(Expression::Spread(Box::new(lower_expr(&spread.argument)?)))
                 }
                 // Use as_expression() to convert the boxed variant to Expression
-                elem => lower_expr(elem.as_expression().ok_or(LowerError::new("Invalid array element"))?),
+                elem => lower_expr(
+                    elem.as_expression()
+                        .ok_or(LowerError::new("Invalid array element"))?,
+                ),
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -97,9 +100,11 @@ fn lower_object_expr(obj: &ast::ObjectExpression) -> Result<Expression, LowerErr
     Ok(Expression::Object(props))
 }
 
-fn lower_object_prop(prop: &ast::ObjectProperty) -> Result<(PropertyKey, PropertyValue), LowerError> {
+fn lower_object_prop(
+    prop: &ast::ObjectProperty,
+) -> Result<(PropertyKey, PropertyValue), LowerError> {
     let key = lower_prop_name_key_oxc(&prop.key)?;
-    
+
     // Check if it's a getter or setter
     if prop.kind == ast::PropertyKind::Get {
         let body = if let ast::Expression::FunctionExpression(func) = &prop.value {
@@ -110,19 +115,29 @@ fn lower_object_prop(prop: &ast::ObjectProperty) -> Result<(PropertyKey, Propert
         } else {
             vec![]
         };
-        return Ok((key, PropertyValue::Getter { params: vec![], body }));
+        return Ok((
+            key,
+            PropertyValue::Getter {
+                params: vec![],
+                body,
+            },
+        ));
     }
-    
+
     if prop.kind == ast::PropertyKind::Set {
         // For setters, we need to extract the parameter name from the function
         let param = if let ast::Expression::FunctionExpression(func) = &prop.value {
-            func.params.items.first().and_then(|p| {
-                if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
-                    Some(ident.name.as_str().to_string())
-                } else {
-                    None
-                }
-            }).unwrap_or_else(|| "value".to_string())
+            func.params
+                .items
+                .first()
+                .and_then(|p| {
+                    if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
+                        Some(ident.name.as_str().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "value".to_string())
         } else {
             "value".to_string()
         };
@@ -136,18 +151,21 @@ fn lower_object_prop(prop: &ast::ObjectProperty) -> Result<(PropertyKey, Propert
         };
         return Ok((key, PropertyValue::Setter { param, body }));
     }
-    
+
     // Check if it's a method (shorthand method like { foo() {} })
     if prop.method {
         return lower_method_prop_from_value(&prop.key, &prop.value);
     }
-    
+
     // Regular property
     let value = lower_expr(&prop.value)?;
     Ok((key, PropertyValue::Value(value)))
 }
 
-fn lower_method_prop_from_value(key: &ast::PropertyKey, value: &ast::Expression) -> Result<(PropertyKey, PropertyValue), LowerError> {
+fn lower_method_prop_from_value(
+    key: &ast::PropertyKey,
+    value: &ast::Expression,
+) -> Result<(PropertyKey, PropertyValue), LowerError> {
     let key = lower_prop_name_key_oxc(key)?;
     if let ast::Expression::FunctionExpression(func) = value {
         let params: Vec<Param> = func.params.items.iter().map(lower_formal_param).collect();
@@ -188,7 +206,12 @@ fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, 
     // OXC stores expression bodies as a single Expression statement (not Return)
     let body = if arrow.expression {
         // Expression body
-        let stmts = arrow.body.statements.iter().filter_map(super::stmt::lower_stmt).collect::<Vec<_>>();
+        let stmts = arrow
+            .body
+            .statements
+            .iter()
+            .filter_map(super::stmt::lower_stmt)
+            .collect::<Vec<_>>();
         if stmts.len() == 1 {
             match &stmts[0] {
                 // OXC stores expression body as Statement::Expression, not Return
@@ -221,7 +244,9 @@ fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
         ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
         ast::BindingPatternKind::AssignmentPattern(assign) => {
             let name = match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
+                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    ident.name.as_str().to_string()
+                }
                 _ => "arg".to_string(),
             };
             let default = lower_expr(&assign.right).ok().map(Box::new);
@@ -291,7 +316,9 @@ fn lower_update_expr(update: &ast::UpdateExpression) -> Result<Expression, Lower
 fn is_logical_compound_op(op: &AssignmentOperator) -> bool {
     matches!(
         op,
-        AssignmentOperator::LogicalAnd | AssignmentOperator::LogicalOr | AssignmentOperator::LogicalNullish
+        AssignmentOperator::LogicalAnd
+            | AssignmentOperator::LogicalOr
+            | AssignmentOperator::LogicalNullish
     )
 }
 
@@ -320,7 +347,9 @@ fn lower_assign_expr(assign: &ast::AssignmentExpression) -> Result<Expression, L
     }
 }
 
-fn lower_static_member_expr(member: &ast::StaticMemberExpression) -> Result<Expression, LowerError> {
+fn lower_static_member_expr(
+    member: &ast::StaticMemberExpression,
+) -> Result<Expression, LowerError> {
     let obj = lower_expr(&member.object)?;
     let property = PropertyKey::Ident(member.property.name.as_str().to_string());
     Ok(Expression::Member {
@@ -330,7 +359,9 @@ fn lower_static_member_expr(member: &ast::StaticMemberExpression) -> Result<Expr
     })
 }
 
-fn lower_computed_member_expr(member: &ast::ComputedMemberExpression) -> Result<Expression, LowerError> {
+fn lower_computed_member_expr(
+    member: &ast::ComputedMemberExpression,
+) -> Result<Expression, LowerError> {
     let obj = lower_expr(&member.object)?;
     let property = PropertyKey::Computed(Box::new(lower_expr(&member.expression)?));
     Ok(Expression::Member {
@@ -340,7 +371,9 @@ fn lower_computed_member_expr(member: &ast::ComputedMemberExpression) -> Result<
     })
 }
 
-fn lower_private_field_expr(member: &ast::PrivateFieldExpression) -> Result<Expression, LowerError> {
+fn lower_private_field_expr(
+    member: &ast::PrivateFieldExpression,
+) -> Result<Expression, LowerError> {
     let obj = lower_expr(&member.object)?;
     let property = PropertyKey::Ident(member.field.name.as_str().to_string());
     Ok(Expression::Member {
@@ -364,7 +397,10 @@ fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError>
                 Expression::Spread(Box::new(lower_expr(&spread.argument)?))
             }
             // Use as_expression() to convert boxed variant to Expression
-            arg => lower_expr(arg.as_expression().ok_or(LowerError::new("Invalid argument"))?)?,
+            arg => lower_expr(
+                arg.as_expression()
+                    .ok_or(LowerError::new("Invalid argument"))?,
+            )?,
         };
         args.push(expr);
     }
@@ -383,7 +419,10 @@ fn lower_new_expr(new_expr: &ast::NewExpression) -> Result<Expression, LowerErro
                 Expression::Spread(Box::new(lower_expr(&spread.argument)?))
             }
             // Use as_expression() to convert boxed variant to Expression
-            arg => lower_expr(arg.as_expression().ok_or(LowerError::new("Invalid argument"))?)?,
+            arg => lower_expr(
+                arg.as_expression()
+                    .ok_or(LowerError::new("Invalid argument"))?,
+            )?,
         };
         args.push(expr);
     }
@@ -413,7 +452,9 @@ fn lower_cond_expr(cond: &ast::ConditionalExpression) -> Result<Expression, Lowe
     })
 }
 
-pub(crate) fn lower_member_prop(prop: &ast::IdentifierName) -> Result<(PropertyKey, bool), LowerError> {
+pub(crate) fn lower_member_prop(
+    prop: &ast::IdentifierName,
+) -> Result<(PropertyKey, bool), LowerError> {
     Ok((PropertyKey::Ident(prop.name.as_str().to_string()), false))
 }
 
@@ -458,7 +499,9 @@ fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Expression,
     }
 }
 
-fn lower_simple_assignment_target(target: &ast::SimpleAssignmentTarget) -> Result<Expression, LowerError> {
+fn lower_simple_assignment_target(
+    target: &ast::SimpleAssignmentTarget,
+) -> Result<Expression, LowerError> {
     // Same as lower_assignment_target but for SimpleAssignmentTarget
     match target {
         ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) => {
@@ -512,7 +555,12 @@ fn lower_class_expr(class_expr: &ast::Class) -> Result<Expression, LowerError> {
 pub fn lower_class(class: &ast::Class) -> Result<Class, LowerError> {
     let name: Option<String> = None;
     let super_class = class.super_class.as_ref().and_then(|e| lower_expr(e).ok());
-    let body = class.body.body.iter().map(lower_class_member).collect::<Result<Vec<_>, _>>()?;
+    let body = class
+        .body
+        .body
+        .iter()
+        .map(lower_class_member)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Class {
         name,
         super_class: super_class.map(Box::new),
@@ -533,7 +581,9 @@ fn lower_class_member(member: &ast::ClassElement) -> Result<ClassMember, LowerEr
         }
         ast::ClassElement::PropertyDefinition(prop) => lower_class_prop(prop),
         ast::ClassElement::StaticBlock(_) => Err(LowerError::new("Static blocks not supported")),
-        ast::ClassElement::AccessorProperty(_) => Err(LowerError::new("Accessor properties not supported")),
+        ast::ClassElement::AccessorProperty(_) => {
+            Err(LowerError::new("Accessor properties not supported"))
+        }
         _ => Err(LowerError::new("Unsupported class member")),
     }
 }
@@ -545,7 +595,9 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
         .items
         .iter()
         .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                Some(ident.name.as_str().to_string())
+            }
             _ => None,
         })
         .collect();
@@ -553,7 +605,12 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
         .value
         .body
         .as_ref()
-        .map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect())
+        .map(|b| {
+            b.statements
+                .iter()
+                .filter_map(super::stmt::lower_stmt)
+                .collect()
+        })
         .unwrap_or_default();
     Ok(ClassMember::Constructor { params: ps, body })
 }
@@ -568,7 +625,9 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
         .items
         .iter()
         .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                Some(ident.name.as_str().to_string())
+            }
             _ => None,
         })
         .collect();
@@ -576,7 +635,12 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
         .value
         .body
         .as_ref()
-        .map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect())
+        .map(|b| {
+            b.statements
+                .iter()
+                .filter_map(super::stmt::lower_stmt)
+                .collect()
+        })
         .unwrap_or_default();
     match method.kind {
         ast::MethodDefinitionKind::Get => Ok(ClassMember::Getter { name, body }),
@@ -618,7 +682,9 @@ fn lower_class_prop(prop: &ast::PropertyDefinition) -> Result<ClassMember, Lower
 /// Lower a property key to PropertyKey
 fn lower_prop_name_key_oxc(key: &ast::PropertyKey) -> Result<PropertyKey, LowerError> {
     match key {
-        ast::PropertyKey::StaticIdentifier(i) => Ok(PropertyKey::Ident(i.name.as_str().to_string())),
+        ast::PropertyKey::StaticIdentifier(i) => {
+            Ok(PropertyKey::Ident(i.name.as_str().to_string()))
+        }
         ast::PropertyKey::PrivateIdentifier(i) => Ok(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Ok(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Ok(PropertyKey::Number(n.value)),
@@ -631,8 +697,17 @@ fn lower_prop_name_key_oxc(key: &ast::PropertyKey) -> Result<PropertyKey, LowerE
             // Template literal in property key position - get static part if no expressions
             if t.expressions.is_empty() {
                 // No expressions, we can use the quasi content as a static string
-                let static_part = t.quasis.first()
-                    .map(|q| q.value.cooked.as_ref().map(|c| c.as_str()).unwrap_or(q.value.raw.as_str()).to_string())
+                let static_part = t
+                    .quasis
+                    .first()
+                    .map(|q| {
+                        q.value
+                            .cooked
+                            .as_ref()
+                            .map(|c| c.as_str())
+                            .unwrap_or(q.value.raw.as_str())
+                            .to_string()
+                    })
                     .unwrap_or_default();
                 Ok(PropertyKey::String(static_part))
             } else {
@@ -642,7 +717,7 @@ fn lower_prop_name_key_oxc(key: &ast::PropertyKey) -> Result<PropertyKey, LowerE
             }
         }
         _ => {
-            // For other expression variants (computed property names), 
+            // For other expression variants (computed property names),
             // use to_expression() and lower as a computed key
             let expr = key.to_expression();
             Ok(PropertyKey::Computed(Box::new(lower_expr(expr)?)))

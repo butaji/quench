@@ -1,9 +1,9 @@
 //! Pattern lowering - destructuring and binding patterns
 
-use super::helpers::LowerError;
 use super::expr::lower_expr;
+use super::helpers::LowerError;
 use crate::ast::{BindingElement, Expression, PropertyKey, Statement, VarKind};
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Convert a BindingElement to an Expression for use in for-in/for-of loop headers
 pub fn binding_to_expr(binding: BindingElement) -> Expression {
@@ -17,7 +17,9 @@ pub fn binding_to_expr(binding: BindingElement) -> Expression {
 /// Lower a binding pattern (for destructuring) to BindingElement
 pub fn lower_binding_elem(pat: &ast::BindingPattern) -> Result<BindingElement, LowerError> {
     match &pat.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => Ok(BindingElement::Identifier(ident.name.as_str().to_string())),
+        ast::BindingPatternKind::BindingIdentifier(ident) => {
+            Ok(BindingElement::Identifier(ident.name.as_str().to_string()))
+        }
         ast::BindingPatternKind::ArrayPattern(arr) => lower_array_pattern(arr),
         ast::BindingPatternKind::ObjectPattern(obj) => lower_object_pattern(obj),
         ast::BindingPatternKind::AssignmentPattern(assign) => lower_binding_elem(&assign.left),
@@ -30,12 +32,12 @@ fn lower_array_pattern(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerE
         .iter()
         .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
         .collect();
-    
+
     // Handle trailing rest element
     if let Some(rest) = &arr.rest {
         elements.push(lower_binding_elem(&rest.argument)?);
     }
-    
+
     Ok(BindingElement::ArrayPattern(elements))
 }
 
@@ -44,16 +46,20 @@ pub fn lower_elem_pat(elem: &ast::BindingPattern) -> Option<BindingElement> {
 }
 
 fn lower_object_pattern(obj: &ast::ObjectPattern) -> Result<BindingElement, LowerError> {
-    let mut props: Vec<(PropertyKey, BindingElement)> =
-        obj.properties.iter().filter_map(lower_object_pat_prop).collect();
-    
+    let mut props: Vec<(PropertyKey, BindingElement)> = obj
+        .properties
+        .iter()
+        .filter_map(lower_object_pat_prop)
+        .collect();
+
     // Handle rest element
     if let Some(rest) = &obj.rest {
-        let rest_elem = lower_binding_elem(&rest.argument).map_err(|_| LowerError::new("Invalid rest binding"))?;
+        let rest_elem = lower_binding_elem(&rest.argument)
+            .map_err(|_| LowerError::new("Invalid rest binding"))?;
         let rest_key = PropertyKey::Ident("...".to_string());
         props.push((rest_key, rest_elem));
     }
-    
+
     Ok(BindingElement::ObjectPattern(props))
 }
 
@@ -64,7 +70,9 @@ pub fn lower_object_pat_prop(prop: &ast::BindingProperty) -> Option<(PropertyKey
 }
 
 /// Lower an AssignmentTargetProperty (used in object assignment targets like `for ({a} in x)`)
-pub fn lower_assignment_target_prop(prop: &ast::AssignmentTargetProperty) -> Option<(PropertyKey, BindingElement)> {
+pub fn lower_assignment_target_prop(
+    prop: &ast::AssignmentTargetProperty,
+) -> Option<(PropertyKey, BindingElement)> {
     match prop {
         ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(id) => {
             let key = PropertyKey::Ident(id.binding.name.as_str().to_string());
@@ -80,7 +88,9 @@ pub fn lower_assignment_target_prop(prop: &ast::AssignmentTargetProperty) -> Opt
 }
 
 /// Convert an AssignmentTarget to a BindingElement for use in for-in/for-of
-pub fn lower_assignment_target_to_binding(target: &ast::AssignmentTarget) -> Option<BindingElement> {
+pub fn lower_assignment_target_to_binding(
+    target: &ast::AssignmentTarget,
+) -> Option<BindingElement> {
     match target {
         // Simple identifier: `a` in `for (a in x)` → Identifier
         ast::AssignmentTarget::AssignmentTargetIdentifier(ident) => {
@@ -125,7 +135,9 @@ fn expr_to_binding_elem(expr: &ast::Expression) -> Option<BindingElement> {
 }
 
 /// Lower an ObjectAssignmentTarget to BindingElement
-pub fn lower_object_assignment_target(obj: &ast::ObjectAssignmentTarget) -> Result<BindingElement, LowerError> {
+pub fn lower_object_assignment_target(
+    obj: &ast::ObjectAssignmentTarget,
+) -> Result<BindingElement, LowerError> {
     let props: Vec<(PropertyKey, BindingElement)> = obj
         .properties
         .iter()
@@ -135,7 +147,9 @@ pub fn lower_object_assignment_target(obj: &ast::ObjectAssignmentTarget) -> Resu
 }
 
 /// Lower an ArrayAssignmentTarget to BindingElement
-pub fn lower_array_assignment_target(arr: &ast::ArrayAssignmentTarget) -> Result<BindingElement, LowerError> {
+pub fn lower_array_assignment_target(
+    arr: &ast::ArrayAssignmentTarget,
+) -> Result<BindingElement, LowerError> {
     let mut elements: Vec<BindingElement> = Vec::new();
     for elem in &arr.elements {
         let elem_binding = match elem {
@@ -167,7 +181,9 @@ pub fn lower_array_assignment_target(arr: &ast::ArrayAssignmentTarget) -> Result
 }
 
 /// Lower AssignmentTargetMaybeDefault (handles default values in array destructuring)
-fn lower_assignment_target_maybe_default(target: &ast::AssignmentTargetMaybeDefault) -> Option<BindingElement> {
+fn lower_assignment_target_maybe_default(
+    target: &ast::AssignmentTargetMaybeDefault,
+) -> Option<BindingElement> {
     match target {
         // `[a = default]` — just extract the binding, ignore default for now
         ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(d) => {
@@ -187,7 +203,9 @@ fn lower_assignment_target_maybe_default(target: &ast::AssignmentTargetMaybeDefa
 /// Lower an OXC PropertyKey to our PropertyKey
 fn lower_property_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
-        ast::PropertyKey::StaticIdentifier(i) => Some(PropertyKey::Ident(i.name.as_str().to_string())),
+        ast::PropertyKey::StaticIdentifier(i) => {
+            Some(PropertyKey::Ident(i.name.as_str().to_string()))
+        }
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
@@ -200,7 +218,9 @@ fn lower_property_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
 
 fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
-        ast::PropertyKey::StaticIdentifier(i) => Some(PropertyKey::Ident(i.name.as_str().to_string())),
+        ast::PropertyKey::StaticIdentifier(i) => {
+            Some(PropertyKey::Ident(i.name.as_str().to_string()))
+        }
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
@@ -233,7 +253,11 @@ fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
 }
 
 /// Expand a nested binding pattern into variable declarations
-pub fn expand_nested_pattern(kind: VarKind, pat: &ast::BindingPattern, source_var: &str) -> Vec<Statement> {
+pub fn expand_nested_pattern(
+    kind: VarKind,
+    pat: &ast::BindingPattern,
+    source_var: &str,
+) -> Vec<Statement> {
     let source = Expression::Identifier(source_var.to_string());
     match &pat.kind {
         ast::BindingPatternKind::BindingIdentifier(ident) => {
@@ -243,8 +267,12 @@ pub fn expand_nested_pattern(kind: VarKind, pat: &ast::BindingPattern, source_va
                 init: Some(source),
             }]
         }
-        ast::BindingPatternKind::ArrayPattern(arr) => expand_nested_array_pattern(kind, arr, source_var),
-        ast::BindingPatternKind::ObjectPattern(obj) => expand_nested_object_pattern(kind, obj, source_var),
+        ast::BindingPatternKind::ArrayPattern(arr) => {
+            expand_nested_array_pattern(kind, arr, source_var)
+        }
+        ast::BindingPatternKind::ObjectPattern(obj) => {
+            expand_nested_object_pattern(kind, obj, source_var)
+        }
         ast::BindingPatternKind::AssignmentPattern(assign) => {
             expand_nested_pattern(kind, &assign.left, source_var)
         }
@@ -319,7 +347,7 @@ pub fn expand_nested_object_pattern(
         if key_str.is_empty() {
             continue;
         }
-        
+
         let var_name = match &prop.value.kind {
             ast::BindingPatternKind::BindingIdentifier(id) => id.name.as_str().to_string(),
             _ => format!("{}_prop_{}", source_var, key_str),
@@ -335,7 +363,7 @@ pub fn expand_nested_object_pattern(
             &mut stmts,
         );
     }
-    
+
     // Handle rest element
     if let Some(rest) = &obj.rest {
         let rest_temp_name = format!("{}_rest", source_var);
@@ -346,7 +374,7 @@ pub fn expand_nested_object_pattern(
         });
         stmts.extend(expand_nested_pattern(kind, &rest.argument, &rest_temp_name));
     }
-    
+
     stmts
 }
 
@@ -360,14 +388,18 @@ fn add_object_kv_stmts(
     stmts: &mut Vec<Statement>,
 ) {
     match &kv_value_ref.kind {
-        ast::BindingPatternKind::BindingIdentifier(_) => push_simple_decl(kind, var_name, member, stmts),
+        ast::BindingPatternKind::BindingIdentifier(_) => {
+            push_simple_decl(kind, var_name, member, stmts)
+        }
         ast::BindingPatternKind::ObjectPattern(nested_obj) => {
             handle_nested_object(kind, member, source_var, key_str, nested_obj, stmts);
         }
         ast::BindingPatternKind::ArrayPattern(nested_arr) => {
             handle_nested_array(kind, member, source_var, key_str, nested_arr, stmts);
         }
-        ast::BindingPatternKind::AssignmentPattern(_) => push_simple_decl(kind, var_name, member, stmts),
+        ast::BindingPatternKind::AssignmentPattern(_) => {
+            push_simple_decl(kind, var_name, member, stmts)
+        }
     }
 }
 

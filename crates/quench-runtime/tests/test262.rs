@@ -37,12 +37,16 @@ fn test_harness_deep_equal_primitives() {
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
     let test262_dir = repo_root.join("tests/test262");
     let test_path = repo_root.join("tests/test262/test/harness/deepEqual-primitives.js");
-    
+
     let source = std::fs::read_to_string(&test_path).expect("Failed to read test file");
-    let harness = quench_runtime::test262::harness::HarnessLoader::new(test262_dir.to_str().unwrap());
-    let meta = quench_runtime::test262::metadata::Test262Metadata::parse(&source).expect("Failed to parse frontmatter");
-    let script = harness.build_script(&source, &meta.includes).expect("Failed to build script");
-    
+    let harness =
+        quench_runtime::test262::harness::HarnessLoader::new(test262_dir.to_str().unwrap());
+    let meta = quench_runtime::test262::metadata::Test262Metadata::parse(&source)
+        .expect("Failed to parse frontmatter");
+    let script = harness
+        .build_script(&source, &meta.includes)
+        .expect("Failed to build script");
+
     let mut host = QuenchHost::new();
     let result = host.run_script(&script);
     assert!(
@@ -59,15 +63,19 @@ fn test_deep_equal_js_loads() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
     let test262_dir = repo_root.join("tests/test262");
-    
+
     let mut host = QuenchHost::new();
-    
+
     // First test: just load deepEqual.js and check assert.deepEqual exists
     let script = r#"
         typeof assert.deepEqual;
     "#;
     let result = host.run_script(script);
-    assert!(result.is_ok(), "assert.deepEqual should exist: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "assert.deepEqual should exist: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -81,7 +89,11 @@ fn test_assert_throws_with_deep_equal() {
     "#;
     let result = host.run_script(script);
     eprintln!("assert.throws result: {:?}", result);
-    assert!(result.is_ok(), "assert.throws with deepEqual should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "assert.throws with deepEqual should work: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -95,6 +107,33 @@ fn test_symbol_creation() {
     let result = host.run_script(script);
     eprintln!("Symbol result: {:?}", result);
     assert!(result.is_ok(), "Symbol should work: {:?}", result);
+}
+
+#[test]
+fn test_get_symbol_to_prim_err() {
+    // Reproducer for test262 language/expressions/addition/get-symbol-to-prim-err.js:
+    // when the @@toPrimitive getter throws, the other operand's getter must not run.
+    use quench_runtime::test262::harness::HarnessLoader;
+    use quench_runtime::test262::metadata::Test262Metadata;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let test262_dir = repo_root.join("tests/test262");
+    let test_path = repo_root
+        .join("tests/test262/test/language/expressions/addition/get-symbol-to-prim-err.js");
+
+    let source = std::fs::read_to_string(&test_path).expect("Failed to read test file");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let meta = Test262Metadata::parse(&source).expect("Failed to parse frontmatter");
+    let script = harness
+        .build_script(&source, &meta.includes)
+        .expect("Failed to build script");
+
+    let mut host = QuenchHost::new();
+    let sloppy = host.run_script(&script);
+    assert!(sloppy.is_ok(), "sloppy run failed: {:?}", sloppy);
+    let strict_script = format!("\"use strict\";\n{}", script);
+    let strict = host.run_script(&strict_script);
+    assert!(strict.is_ok(), "strict run failed: {:?}", strict);
 }
 
 #[test]

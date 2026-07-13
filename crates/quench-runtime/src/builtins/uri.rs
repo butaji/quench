@@ -18,10 +18,7 @@ fn is_uri_unreserved(c: char) -> bool {
 /// Characters reserved by RFC 3986 that encodeURI leaves alone (the
 /// "reserved" set minus characters that encodeURIComponent also escapes).
 fn is_uri_reserved(c: char) -> bool {
-    matches!(
-        c,
-        ';' | ',' | '/' | ':' | '&' | '=' | '+' | '$' | '?'
-    )
+    matches!(c, ';' | ',' | '/' | ':' | '&' | '=' | '+' | '$' | '?')
 }
 
 /// Decode a single percent-escape `%XX` to a byte (0..=255). Returns None
@@ -82,10 +79,7 @@ fn encode_uri(s: &str, keep_reserved: bool) -> String {
 
 /// Throw a URIError and return a JsError.
 fn uri_error(msg: impl Into<String>) -> crate::JsError {
-    let (err, js_err) = crate::value::error::create_js_error_with_type(
-        &msg.into(),
-        "URIError",
-    );
+    let (err, js_err) = crate::value::error::create_js_error_with_type(&msg.into(), "URIError");
     crate::value::set_thrown_value(err);
     js_err
 }
@@ -312,26 +306,23 @@ mod tests {
 
     #[test]
     fn encode_uri_basic() {
-        assert_eq!(eval_str("encodeURI('http://x.test/a b')"), "http://x.test/a%20b");
+        assert_eq!(
+            eval_str("encodeURI('http://x.test/a b')"),
+            "http://x.test/a%20b"
+        );
         // Reserved chars pass through in encodeURI
         assert_eq!(eval_str("encodeURI('a;b/c?d=e')"), "a;b/c?d=e");
     }
 
     #[test]
     fn encode_uri_component_escapes_reserved() {
-        assert_eq!(
-            eval_str("encodeURIComponent('a;b/c')"),
-            "a%3Bb%2Fc"
-        );
-        assert_eq!(eval_str("encodeURIComponent(' ')", ), "%20");
+        assert_eq!(eval_str("encodeURIComponent('a;b/c')"), "a%3Bb%2Fc");
+        assert_eq!(eval_str("encodeURIComponent(' ')",), "%20");
     }
 
     #[test]
     fn decode_uri_component_roundtrip() {
-        assert_eq!(
-            eval_str("decodeURIComponent('a%3Bb%2Fc')"),
-            "a;b/c"
-        );
+        assert_eq!(eval_str("decodeURIComponent('a%3Bb%2Fc')"), "a;b/c");
         assert_eq!(eval_str("decodeURIComponent('%20')"), " ");
     }
 

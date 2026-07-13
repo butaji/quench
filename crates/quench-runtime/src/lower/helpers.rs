@@ -45,7 +45,6 @@ pub fn lower_fn_body(body: &ast::FunctionBody) -> Vec<crate::ast::Statement> {
     stmts
 }
 
-
 /// Convert Wtf8Atom to String using Display trait
 pub fn wtf8_atom_to_string(atom: &str) -> String {
     atom.to_string()
@@ -77,7 +76,10 @@ pub fn lower_bin_op(op: &BinaryOperator) -> Result<BinaryOp, LowerError> {
         BinaryOperator::BitwiseOR => Ok(BinaryOp::BitOr),
         BinaryOperator::In => Ok(BinaryOp::In),
         BinaryOperator::Instanceof => Ok(BinaryOp::Instanceof),
-        _ => Err(LowerError::new(format!("Unsupported binary operator: {:?}", op))),
+        _ => Err(LowerError::new(format!(
+            "Unsupported binary operator: {:?}",
+            op
+        ))),
     }
 }
 
@@ -91,7 +93,10 @@ pub fn lower_unary_op(op: &UnaryOperator) -> Result<UnaryOp, LowerError> {
         UnaryOperator::Typeof => Ok(UnaryOp::Typeof),
         UnaryOperator::Void => Ok(UnaryOp::Void),
         UnaryOperator::Delete => Ok(UnaryOp::Delete),
-        _ => Err(LowerError::new(format!("Unsupported unary operator: {:?}", op))),
+        _ => Err(LowerError::new(format!(
+            "Unsupported unary operator: {:?}",
+            op
+        ))),
     }
 }
 
@@ -108,7 +113,9 @@ pub fn lower_logical_op(op: &LogicalOperator) -> Result<BinaryOp, LowerError> {
 #[allow(clippy::complexity)]
 pub fn assign_op_to_bin(op: &AssignmentOperator) -> Result<CompoundOp, LowerError> {
     match op {
-        AssignmentOperator::Assign => Err(LowerError::new("Simple assignment has no compound form")),
+        AssignmentOperator::Assign => {
+            Err(LowerError::new("Simple assignment has no compound form"))
+        }
         AssignmentOperator::Addition => Ok(CompoundOp::Add),
         AssignmentOperator::Subtraction => Ok(CompoundOp::Sub),
         AssignmentOperator::Multiplication => Ok(CompoundOp::Mul),
@@ -129,5 +136,3 @@ pub fn assign_op_to_bin(op: &AssignmentOperator) -> Result<CompoundOp, LowerErro
         ))),
     }
 }
-
-

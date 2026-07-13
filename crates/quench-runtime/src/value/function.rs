@@ -260,9 +260,7 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            properties: std::rc::Rc::new(std::cell::RefCell::new(
-                std::collections::HashMap::new(),
-            )),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -274,9 +272,7 @@ impl NativeFunction {
         NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: std::rc::Rc::new(std::cell::RefCell::new(Some(prototype))),
-            properties: std::rc::Rc::new(std::cell::RefCell::new(
-                std::collections::HashMap::new(),
-            )),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 

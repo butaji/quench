@@ -3,12 +3,15 @@
 //! Handles lowering of if, while, for, try-catch, switch statements.
 
 use super::expr::lower_expr;
-use super::pattern::{lower_elem_pat, lower_object_pat_prop, lower_assignment_target_to_binding, lower_object_assignment_target, lower_array_assignment_target, binding_to_expr};
+use super::pattern::{
+    binding_to_expr, lower_array_assignment_target, lower_assignment_target_to_binding,
+    lower_elem_pat, lower_object_assignment_target, lower_object_pat_prop,
+};
 use super::stmt::lower_stmt;
 use crate::ast::{
     BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, UnaryOp, VarKind,
 };
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Lower an if statement
 pub fn lower_if_stmt(if_stmt: &ast::IfStatement) -> Option<Statement> {
@@ -109,10 +112,15 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
         .filter_map(lower_stmt)
         .collect::<Vec<_>>();
     let catch_param = try_stmt.handler.as_ref().and_then(|catch| {
-        catch.param.as_ref().and_then(|pat| match &pat.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
-            _ => None,
-        })
+        catch
+            .param
+            .as_ref()
+            .and_then(|pat| match &pat.pattern.kind {
+                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    Some(ident.name.as_str().to_string())
+                }
+                _ => None,
+            })
     });
     let handler = if let Some(catch) = &try_stmt.handler {
         Box::new(Statement::Block(
@@ -207,7 +215,9 @@ pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
                 }
             };
             let name = match &first.id.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
+                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    ident.name.as_str().to_string()
+                }
                 _ => return None,
             };
             let init = first.init.as_ref().and_then(|e| lower_expr(e).ok());
@@ -248,9 +258,9 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
         ast::ForStatementLeft::ArrayAssignmentTarget(arr) => {
             lower_array_assignment_target(arr).ok().map(binding_to_expr)
         }
-        ast::ForStatementLeft::ObjectAssignmentTarget(obj) => {
-            lower_object_assignment_target(obj).ok().map(binding_to_expr)
-        }
+        ast::ForStatementLeft::ObjectAssignmentTarget(obj) => lower_object_assignment_target(obj)
+            .ok()
+            .map(binding_to_expr),
         // TS type assertions on for-statement left side
         ast::ForStatementLeft::TSAsExpression(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::TSSatisfiesExpression(e) => lower_expr(&e.expression).ok(),
@@ -269,13 +279,21 @@ fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
         .elements
         .iter()
         .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .chain(arr.rest.as_ref().map(|r| lower_elem_pat(&r.argument)).flatten())
+        .chain(
+            arr.rest
+                .as_ref()
+                .map(|r| lower_elem_pat(&r.argument))
+                .flatten(),
+        )
         .collect();
     Some(Expression::ArrayPattern(elements))
 }
 
 fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
-    let props: Vec<(PropertyKey, BindingElement)> =
-        obj.properties.iter().filter_map(lower_object_pat_prop).collect();
+    let props: Vec<(PropertyKey, BindingElement)> = obj
+        .properties
+        .iter()
+        .filter_map(lower_object_pat_prop)
+        .collect();
     Some(Expression::ObjectPattern(props))
 }

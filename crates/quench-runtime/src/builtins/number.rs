@@ -88,9 +88,11 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
             let n = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
-                crate::builtins::object::set_boxed_value(&mut this_obj.borrow_mut(), Value::Number(n));
-                this_obj.borrow_mut().exotic_kind =
-                    Some(crate::value::kind::ExoticKind::Number);
+                crate::builtins::object::set_boxed_value(
+                    &mut this_obj.borrow_mut(),
+                    Value::Number(n),
+                );
+                this_obj.borrow_mut().exotic_kind = Some(crate::value::kind::ExoticKind::Number);
                 if this_obj.borrow().prototype.is_none() {
                     this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_for_closure));
                 }
@@ -118,11 +120,19 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
 
     // Number constants
-    number_obj.borrow_mut().define("MAX_VALUE", Value::Number(f64::MAX), constant_flags(f64::MAX));
+    number_obj.borrow_mut().define(
+        "MAX_VALUE",
+        Value::Number(f64::MAX),
+        constant_flags(f64::MAX),
+    );
+    number_obj.borrow_mut().define(
+        "MIN_VALUE",
+        Value::Number(f64::MIN_POSITIVE),
+        constant_flags(f64::MIN_POSITIVE),
+    );
     number_obj
         .borrow_mut()
-        .define("MIN_VALUE", Value::Number(f64::MIN_POSITIVE), constant_flags(f64::MIN_POSITIVE));
-    number_obj.borrow_mut().define("NaN", Value::Number(f64::NAN), constant_flags(f64::NAN));
+        .define("NaN", Value::Number(f64::NAN), constant_flags(f64::NAN));
     number_obj.borrow_mut().define(
         "NEGATIVE_INFINITY",
         Value::Number(f64::NEG_INFINITY),
@@ -133,9 +143,11 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         Value::Number(f64::INFINITY),
         constant_flags(f64::INFINITY),
     );
-    number_obj
-        .borrow_mut()
-        .define("EPSILON", Value::Number(f64::EPSILON), constant_flags(f64::EPSILON));
+    number_obj.borrow_mut().define(
+        "EPSILON",
+        Value::Number(f64::EPSILON),
+        constant_flags(f64::EPSILON),
+    );
     number_obj.borrow_mut().define(
         "MAX_SAFE_INTEGER",
         Value::Number(9007199254740991.0),
@@ -169,7 +181,9 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         "isNaN",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec: returns true only if arg is already Number type AND is NaN
-            Ok(Value::Boolean(matches!(args.first(), Some(Value::Number(n)) if n.is_nan())))
+            Ok(Value::Boolean(
+                matches!(args.first(), Some(Value::Number(n)) if n.is_nan()),
+            ))
         }))),
         static_flags.clone(),
     );
@@ -205,7 +219,10 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
             if !(2..=36).contains(&radix) {
                 return Ok(Value::Number(f64::NAN));
             }
-            Ok(Value::Number(crate::builtins::date::spec_parse_int(&s, radix as u32)))
+            Ok(Value::Number(crate::builtins::date::spec_parse_int(
+                &s,
+                radix as u32,
+            )))
         }))),
         static_flags.clone(),
     );
@@ -238,7 +255,10 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     number_ctor.set_static_method("MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
 
     // Number.prototype.constructor = Number
-    proto.borrow_mut().set("constructor", Value::NativeConstructor(Rc::new(number_ctor.clone())));
+    proto.borrow_mut().set(
+        "constructor",
+        Value::NativeConstructor(Rc::new(number_ctor.clone())),
+    );
 
     // Set constructor on number_obj
     let number_fn = Value::NativeConstructor(Rc::new(number_ctor.clone()));
@@ -254,7 +274,10 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
 
     // Set Number as the constructor function
-    ctx.set_global("Number".to_string(), Value::NativeConstructor(Rc::new(number_ctor)));
+    ctx.set_global(
+        "Number".to_string(),
+        Value::NativeConstructor(Rc::new(number_ctor)),
+    );
 }
 
 #[cfg(test)]
@@ -403,7 +426,10 @@ mod tests {
 
     #[test]
     fn test_number_constants_correct_values() {
-        assert_eq!(constant_flags(f64::MAX).value, Some(Value::Number(f64::MAX)));
+        assert_eq!(
+            constant_flags(f64::MAX).value,
+            Some(Value::Number(f64::MAX))
+        );
         assert_eq!(
             constant_flags(f64::MIN_POSITIVE).value,
             Some(Value::Number(f64::MIN_POSITIVE))
