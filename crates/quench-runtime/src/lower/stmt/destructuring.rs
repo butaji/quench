@@ -1,7 +1,7 @@
 //! Destructuring pattern lowering functions
 
 use crate::ast::{Expression, PropertyKey, Statement, VarKind};
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 use crate::lower::helpers::wtf8_atom_to_string;
 use crate::lower::pattern::{expand_nested_array_pattern, expand_nested_pattern};
@@ -137,7 +137,7 @@ fn lower_object_props(
             ast::PropertyKey::NumericLiteral(n) => n.value.to_string(),
             _ => continue,
         };
-        
+
         if prop.shorthand {
             // Shorthand: { x } or { x = default }
             let var_name = key_str.clone();
@@ -146,7 +146,7 @@ fn lower_object_props(
                 property: PropertyKey::String(key_str.clone()),
                 computed: false,
             };
-            
+
             // Check for default value in the value (AssignmentPattern)
             if let ast::BindingPatternKind::AssignmentPattern(assign) = &prop.value.kind {
                 if let Ok(default_expr) = crate::lower::expr::lower_expr(&assign.right) {
@@ -183,7 +183,7 @@ fn lower_object_props(
             add_obj_destructure_stmts(kind, kv_value_ref, var_name, member, key_str, stmts);
         }
     }
-    
+
     // Handle rest element
     if let Some(rest) = &obj.rest {
         let rest_temp_name = format!("__obj_rest_{}", temp_var_name);

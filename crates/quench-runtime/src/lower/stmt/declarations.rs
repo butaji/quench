@@ -1,7 +1,7 @@
 //! Declaration lowering functions
 
 use crate::ast::{Class, ClassMember, Expression, Param, PropertyKey, Statement, VarKind};
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 use super::lower_stmt;
 use crate::lower::expr::lower_expr;
@@ -89,7 +89,9 @@ fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
         ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
         ast::BindingPatternKind::AssignmentPattern(assign) => {
             let name = match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
+                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    ident.name.as_str().to_string()
+                }
                 _ => "arg".to_string(),
             };
             let default = lower_expr(&assign.right).ok().map(Box::new);
@@ -100,7 +102,10 @@ fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
 }
 
 pub fn lower_class_decl(class_decl: &ast::Class) -> Option<Statement> {
-    let name = class_decl.id.as_ref().map(|i| i.name.as_str().to_string())?;
+    let name = class_decl
+        .id
+        .as_ref()
+        .map(|i| i.name.as_str().to_string())?;
     let class = lower_class(class_decl)?;
     Some(Statement::ClassDeclaration { name, class })
 }
@@ -144,7 +149,9 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
         .items
         .iter()
         .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                Some(ident.name.as_str().to_string())
+            }
             _ => None,
         })
         .collect();
@@ -167,7 +174,9 @@ fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
         .items
         .iter()
         .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                Some(ident.name.as_str().to_string())
+            }
             _ => None,
         })
         .collect();
@@ -216,7 +225,9 @@ fn lower_class_prop_stmt(prop: &ast::PropertyDefinition) -> Option<ClassMember> 
 
 pub fn lower_prop_name_stmt(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
-        ast::PropertyKey::StaticIdentifier(i) => Some(PropertyKey::Ident(i.name.as_str().to_string())),
+        ast::PropertyKey::StaticIdentifier(i) => {
+            Some(PropertyKey::Ident(i.name.as_str().to_string()))
+        }
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),

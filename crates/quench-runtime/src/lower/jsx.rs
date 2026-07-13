@@ -5,12 +5,14 @@
 use super::expr::lower_expr;
 use super::helpers::LowerError;
 use crate::ast::{Expression, JsxAttrValue, JsxChild, JsxProp, JsxTagName};
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Lower a JSX member expression (e.g., Foo.Bar.Baz)
 pub fn lower_jsx_member(member: &ast::JSXMemberExpression) -> Result<Expression, LowerError> {
     let obj = match &member.object {
-        ast::JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.as_str().to_string(),
+        ast::JSXMemberExpressionObject::IdentifierReference(ident) => {
+            ident.name.as_str().to_string()
+        }
         ast::JSXMemberExpressionObject::MemberExpression(nested) => {
             let nested_result = lower_jsx_member(nested)?;
             match nested_result {
@@ -69,12 +71,18 @@ pub fn lower_jsx_fragment(frag: &ast::JSXFragment) -> Result<Expression, LowerEr
 /// Lower a JSX element name to JsxTagName
 pub fn lower_jsx_element_name(name: &ast::JSXElementName) -> Result<JsxTagName, LowerError> {
     match name {
-        ast::JSXElementName::IdentifierReference(ident) => Ok(JsxTagName::Ident(ident.name.as_str().to_string())),
-        ast::JSXElementName::Identifier(ident) => Ok(JsxTagName::Ident(ident.name.as_str().to_string())),
+        ast::JSXElementName::IdentifierReference(ident) => {
+            Ok(JsxTagName::Ident(ident.name.as_str().to_string()))
+        }
+        ast::JSXElementName::Identifier(ident) => {
+            Ok(JsxTagName::Ident(ident.name.as_str().to_string()))
+        }
         ast::JSXElementName::ThisExpression(_) => Ok(JsxTagName::Ident("this".to_string())),
         ast::JSXElementName::MemberExpression(member) => {
             let obj = match &member.object {
-                ast::JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.as_str().to_string(),
+                ast::JSXMemberExpressionObject::IdentifierReference(ident) => {
+                    ident.name.as_str().to_string()
+                }
                 ast::JSXMemberExpressionObject::MemberExpression(nested) => {
                     let nested_result = lower_jsx_member(nested)?;
                     match nested_result {
@@ -139,7 +147,11 @@ pub fn lower_jsx_attributes(attrs: &[ast::JSXAttributeItem]) -> Result<Vec<JsxPr
 fn lower_jsx_attr_name(name: &ast::JSXAttributeName) -> Result<String, LowerError> {
     match name {
         ast::JSXAttributeName::Identifier(ident) => Ok(ident.name.as_str().to_string()),
-        ast::JSXAttributeName::NamespacedName(ns) => Ok(format!("{}:{}", ns.namespace.name.as_str(), ns.property.name.as_str())),
+        ast::JSXAttributeName::NamespacedName(ns) => Ok(format!(
+            "{}:{}",
+            ns.namespace.name.as_str(),
+            ns.property.name.as_str()
+        )),
     }
 }
 

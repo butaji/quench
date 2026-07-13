@@ -3,7 +3,10 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::interpreter::{collect_var_names_recursive, predeclare_var, predeclare_let_const, set_control_flow, take_control_flow, ControlFlow};
+use crate::interpreter::{
+    collect_var_names_recursive, predeclare_let_const, predeclare_var, set_control_flow,
+    take_control_flow, ControlFlow,
+};
 use crate::value::{
     set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
 };

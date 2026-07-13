@@ -83,7 +83,10 @@ mod tests {
     #[test]
     fn detects_eval_arguments_binding() {
         assert_eq!(find("var eval = 1;").as_deref(), Some("eval"));
-        assert_eq!(find("function arguments() {}").as_deref(), Some("arguments"));
+        assert_eq!(
+            find("function arguments() {}").as_deref(),
+            Some("arguments")
+        );
     }
 
     #[test]

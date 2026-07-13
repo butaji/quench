@@ -54,10 +54,8 @@ pub fn eval_identifier(
     match env.borrow().get(name) {
         Some(v) => Ok(v),
         None => {
-            let (_, js_err) = create_js_error_with_type(
-                &format!("{} is not defined", name),
-                "ReferenceError",
-            );
+            let (_, js_err) =
+                create_js_error_with_type(&format!("{} is not defined", name), "ReferenceError");
             Err(js_err)
         }
     }

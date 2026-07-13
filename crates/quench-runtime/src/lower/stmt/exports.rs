@@ -5,7 +5,7 @@
 
 use crate::ast::{Expression, PropertyKey, Statement};
 use crate::lower::expr::lower_expr;
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 use super::declarations::lower_class;
 use super::lower_stmt;
@@ -34,7 +34,7 @@ pub fn lower_module_decl(decl: &ast::Statement) -> Option<Statement> {
 pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
     let specifiers = import.specifiers.as_ref()?;
-    
+
     let default = specifiers.iter().find_map(|spec| {
         if let ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(default_spec) = spec {
             Some(default_spec.local.name.as_str().to_string())
@@ -122,21 +122,34 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .as_ref()
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_else(|| "default".to_string());
-            let params: Vec<Param> = func_expr.params.items.iter().filter_map(|p| {
-                let (name, default) = match &p.pattern.kind {
-                    ast::BindingPatternKind::BindingIdentifier(ident) => (ident.name.as_str().to_string(), None),
-                    ast::BindingPatternKind::AssignmentPattern(ap) => {
-                        let name = match &ap.left.kind {
-                            ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
-                            _ => "arg".to_string(),
-                        };
-                        (name, lower_expr(&ap.right).ok().map(Box::new))
-                    }
-                    _ => ("arg".to_string(), None),
-                };
-                Some(Param { name, default })
-            }).collect();
-            let body = func_expr.body.as_ref().map(|b| b.statements.iter().filter_map(lower_stmt).collect()).unwrap_or_default();
+            let params: Vec<Param> = func_expr
+                .params
+                .items
+                .iter()
+                .filter_map(|p| {
+                    let (name, default) = match &p.pattern.kind {
+                        ast::BindingPatternKind::BindingIdentifier(ident) => {
+                            (ident.name.as_str().to_string(), None)
+                        }
+                        ast::BindingPatternKind::AssignmentPattern(ap) => {
+                            let name = match &ap.left.kind {
+                                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                                    ident.name.as_str().to_string()
+                                }
+                                _ => "arg".to_string(),
+                            };
+                            (name, lower_expr(&ap.right).ok().map(Box::new))
+                        }
+                        _ => ("arg".to_string(), None),
+                    };
+                    Some(Param { name, default })
+                })
+                .collect();
+            let body = func_expr
+                .body
+                .as_ref()
+                .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
+                .unwrap_or_default();
             Some(Statement::FunctionDeclaration { name, params, body })
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class_expr) => {
@@ -149,9 +162,9 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
             Some(Statement::ClassDeclaration { name, class })
         }
         // Expression export: export default <expression>
-        ast::ExportDefaultDeclarationKind::Identifier(id) => {
-            Some(Statement::Expression(Box::new(Expression::Identifier(id.name.as_str().to_string()))))
-        }
+        ast::ExportDefaultDeclarationKind::Identifier(id) => Some(Statement::Expression(Box::new(
+            Expression::Identifier(id.name.as_str().to_string()),
+        ))),
         _ => None,
     }
 }
@@ -194,7 +207,10 @@ pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Stateme
 }
 
 /// Lower `export { x } from 'module'` to import and re-export
-fn lower_export_from(named: &ast::ExportNamedDeclaration, src: &ast::StringLiteral) -> Option<Statement> {
+fn lower_export_from(
+    named: &ast::ExportNamedDeclaration,
+    src: &ast::StringLiteral,
+) -> Option<Statement> {
     let source = src.value.to_string();
     let (imports, stmts) = collect_export_from_specs(&named.specifiers);
     let import_stmt = Statement::Import {

@@ -3,9 +3,9 @@
 //! Handles lowering of literals and template literals.
 
 use super::expr::lower_expr;
-use super::helpers::{LowerError, wtf8_atom_to_string};
+use super::helpers::{wtf8_atom_to_string, LowerError};
 use crate::ast::Expression;
-use oxc::ast::ast as ast;
+use oxc::ast::ast;
 
 /// Lower a template literal expression
 pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, LowerError> {
@@ -58,7 +58,9 @@ fn lower_template_expr(expr: &ast::Expression) -> Result<Expression, LowerError>
 ///
 /// The strings array does not carry a `.raw` property; tags that need raw
 /// strings are out of scope until a harness/test requires them.
-pub fn lower_tagged_template(tagged: &ast::TaggedTemplateExpression) -> Result<Expression, LowerError> {
+pub fn lower_tagged_template(
+    tagged: &ast::TaggedTemplateExpression,
+) -> Result<Expression, LowerError> {
     let callee = lower_expr(&tagged.tag)?;
     let mut arguments = Vec::with_capacity(tagged.quasi.expressions.len() + 1);
     let strings: Vec<Expression> = tagged

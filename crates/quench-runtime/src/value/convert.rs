@@ -428,9 +428,9 @@ pub fn to_primitive(value: &Value, hint: Option<&str>) -> Result<Value, JsError>
     match value {
         Value::Object(obj) => to_primitive_object(obj, hint),
         Value::Function(f) => to_primitive_function(&std::rc::Rc::new(f.clone()), hint),
-        Value::NativeFunction(_)
-        | Value::NativeConstructor(_)
-        | Value::Class(_) => Ok(Value::String("[Function]".to_string())),
+        Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => {
+            Ok(Value::String("[Function]".to_string()))
+        }
         _ => Ok(Value::Undefined),
     }
 }
@@ -469,10 +469,13 @@ fn to_primitive_function(
                 first_was_object = true;
                 first_primitive = Some(v);
             }
-            Err(_) => return Err(crate::value::error::create_js_error_with_type(
-                "valueOf/toString threw",
-                "Error",
-            ).1),
+            Err(_) => {
+                return Err(crate::value::error::create_js_error_with_type(
+                    "valueOf/toString threw",
+                    "Error",
+                )
+                .1)
+            }
         }
     }
     if let Some(m) = second_method.clone() {
@@ -491,15 +494,18 @@ fn to_primitive_function(
                     return Err(crate::value::JsError("TypeError".to_string()));
                 }
             }
-            Err(_) => return Err(crate::value::error::create_js_error_with_type(
-                "valueOf/toString threw",
-                "Error",
-            ).1),
+            Err(_) => {
+                return Err(crate::value::error::create_js_error_with_type(
+                    "valueOf/toString threw",
+                    "Error",
+                )
+                .1)
+            }
         }
     }
     let _ = first_primitive; // suppress unused warning
-    // Fallback: match to_js_string's representation for Value::Function so that
-    // `f + ""` and `f.toString() + ""` agree.
+                             // Fallback: match to_js_string's representation for Value::Function so that
+                             // `f + ""` and `f.toString() + ""` agree.
     Ok(Value::String("[Function]".to_string()))
 }
 
@@ -559,11 +565,11 @@ fn to_primitive_object(
         return Err(crate::value::JsError("TypeError".to_string()));
     }
 
-    Ok(Value::String(to_js_string(&Value::Object(std::rc::Rc::new(
-        std::cell::RefCell::new(crate::value::object::Object::new(
+    Ok(Value::String(to_js_string(&Value::Object(
+        std::rc::Rc::new(std::cell::RefCell::new(crate::value::object::Object::new(
             crate::value::kind::ObjectKind::Ordinary,
-        )),
-    )))))
+        ))),
+    ))))
 }
 
 fn resolve_hint(hint: Option<&str>) -> PrimitiveHint {
@@ -578,7 +584,8 @@ fn try_to_primitive_symbol(
     obj: &Rc<RefCell<crate::value::object::Object>>,
     hint: PrimitiveHint,
 ) -> Result<Option<Value>, JsError> {
-    let Some(to_prim_symbol) = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive") else {
+    let Some(to_prim_symbol) = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive")
+    else {
         return Ok(None);
     };
     let Value::Symbol(symbol_key) = to_prim_symbol else {
@@ -598,8 +605,7 @@ fn try_to_primitive_symbol(
     let arg = Value::String(hint_str.to_string());
     let this_val = Value::Object(Rc::clone(obj));
     // Per ES spec §7.1.1, @@toPrimitive throwing propagates the throw.
-    let result =
-        crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val)?;
+    let result = crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val)?;
     if !matches!(result, Value::Object(_)) {
         return Ok(Some(result));
     }
@@ -615,7 +621,9 @@ fn try_method(
     method_name: &str,
 ) -> Result<Option<Value>, JsError> {
     let method = obj.borrow().get(method_name);
-    let Some(method) = method else { return Ok(None) };
+    let Some(method) = method else {
+        return Ok(None);
+    };
     let this_val = Value::Object(Rc::clone(obj));
     match &method {
         Value::NativeFunction(nf) => {
