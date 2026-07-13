@@ -10,13 +10,7 @@ const SKIP_FEATURES: &[&str] = &[
     "generators",
     "for-await-of",
     "top-level-await",
-    // Class - partial: public fields work, private NOT implemented
-    "class-fields-private",
-    "class-static-fields-private",
-    "private-fields",
-    "private-methods",
-    "class-methods-private",
-    "class-static-methods-private",
+    // Class - partial: public fields work, private handled by source-skip (#)
     // Built-in globals
     "BigInt",
     "Proxy",
@@ -111,6 +105,9 @@ pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
 pub fn should_skip_source(source: &str) -> Option<String> {
     if source.contains("async function") || source.contains("async(") || source.contains("await ") {
         return Some("async-syntax".to_string());
+    }
+    if source.contains('#') {
+        return Some("private-syntax".to_string());
     }
     None
 }
