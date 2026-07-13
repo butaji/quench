@@ -256,18 +256,33 @@ fn bit_op<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
 where
     F: FnOnce(i64, i64) -> i64,
 {
-    Ok(Value::Number(
-        f(to_number(left) as i64, to_number(right) as i64) as f64,
-    ))
+    // Per ES §7.1.3 ToNumber + §7.2.1 ToInt32: evaluate left first,
+    // then right. Avoid calling to_number on both in sequence because
+    // to_number swallows thrown values.
+    let l = to_number(left);
+    if let Some(thrown) = get_thrown_value() {
+        return Err(JsError(to_js_string(&thrown)));
+    }
+    let r = to_number(right);
+    if let Some(thrown) = get_thrown_value() {
+        return Err(JsError(to_js_string(&thrown)));
+    }
+    Ok(Value::Number(f(l as i64, r as i64) as f64))
 }
 
 fn shift_op<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
 where
     F: FnOnce(i64, i64) -> i64,
 {
-    Ok(Value::Number(
-        f(to_number(left) as i64, to_number(right) as i64) as f64,
-    ))
+    let l = to_number(left);
+    if let Some(thrown) = get_thrown_value() {
+        return Err(JsError(to_js_string(&thrown)));
+    }
+    let r = to_number(right);
+    if let Some(thrown) = get_thrown_value() {
+        return Err(JsError(to_js_string(&thrown)));
+    }
+    Ok(Value::Number(f(l as i64, r as i64) as f64))
 }
 
 fn shift_op_u<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
