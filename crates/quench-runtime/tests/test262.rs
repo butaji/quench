@@ -409,6 +409,62 @@ assert.compareArray(log, [
 }
 
 #[test]
+fn test_simple_member_destructuring() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var target = { set a(v) {} };
+var a;
+var seen = 'unset';
+try {
+  ([a] = [{a: 1}]);
+  seen = 'no throw';
+} catch (e) {
+  seen = 'threw';
+}
+assert.sameValue(seen, 'no throw');
+assert.sameValue(a.a, 1);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "simple member destructuring failed: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_member_destructuring_throws_setter_error() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function MyError() {}
+var target = {
+  set a(v) { throw new MyError(); }
+};
+var iterator = {
+  [Symbol.iterator]() { return this; },
+  next() { return { done: false }; },
+  return: 0
+};
+var seen = 'unset';
+try {
+  ([target.a] = iterator);
+  seen = 'no throw';
+} catch (e) {
+  seen = e && e.constructor && e.constructor.name;
+}
+assert.sameValue(seen, 'MyError');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "member destructuring setter error failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_strict_with_assignment_to_deleted_binding_throws() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
