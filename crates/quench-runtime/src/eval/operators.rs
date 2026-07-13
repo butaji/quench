@@ -46,8 +46,7 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
     // Per ES §7.1.1 ToPrimitive and the + operator spec: if EITHER operand is
-    // an Object, both sides are reduced via ToPrimitive. When one side is a
-    // Date, the hint is "string" (Date -> toString is what users expect).
+    // an Object, both sides are reduced via ToPrimitive with no preferred type.
     // If EITHER primitive side is a string, do string concat; otherwise number.
     let left_is_obj = matches!(
         left,
@@ -59,25 +58,34 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)
             | Value::NativeConstructor(_) | Value::Class(_)
     );
-    let is_date = |v: &Value| matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date);
     if left_is_obj || right_is_obj {
-        // Determine hint: Date triggers string hint per ES §7.1.1.
-        let hint = if is_date(left) || is_date(right) { "string" } else { "number" };
-        let lp = to_primitive(left, Some(hint))?;
-        let rp = to_primitive(right, Some(hint))?;
+        let lp = to_primitive(left, None)?;
+        let rp = to_primitive(right, None)?;
         // Both are now primitives.
         if matches!(&lp, Value::String(_)) || matches!(&rp, Value::String(_)) {
+            if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
+                return symbol_conversion_error("string");
+            }
             Ok(Value::String(format!("{}{}", to_js_string(&lp), to_js_string(&rp))))
         } else {
+            if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
+                return symbol_conversion_error("number");
+            }
             let l = to_number(&lp);
             let r = to_number(&rp);
             Ok(Value::Number(l + r))
         }
     } else if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
+        if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
+            return symbol_conversion_error("string");
+        }
         let l = to_js_string(left);
         let r = to_js_string(right);
         Ok(Value::String(format!("{}{}", l, r)))
     } else {
+        if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
+            return symbol_conversion_error("number");
+        }
         // to_number may trigger ToPrimitive(valueOf/toString). If a throw was
         // raised, surface it WITHOUT consuming — eval_try_catch's take will
         // pick it up next. Do not consume here.
@@ -88,6 +96,14 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         }
         Ok(Value::Number(l + r))
     }
+}
+
+fn symbol_conversion_error(target: &str) -> Result<Value, JsError> {
+    let (_, js_err) = create_js_error_with_type(
+        &format!("Cannot convert a Symbol value to a {}", target),
+        "TypeError",
+    );
+    Err(js_err)
 }
 
 /// Per ES spec §7.2.13 IsLessThan: if both operands are Strings, compare
@@ -330,5 +346,38 @@ mod tests {
             "eval_add must not consume the thrown_value"
         );
         let _ = take_thrown_value();
+    }
+
+    /// Per spec §7.1.1: when @@toPrimitive getter throws, evaluation of
+    /// the throwing side must abort BEFORE the other side's @@toPrimitive
+    /// is consulted. Companion to test262
+    /// `language/expressions/addition/get-symbol-to-prim-err.js`.
+    #[test]
+    fn eval_add_short_circuits_when_left_toprim_getter_throws() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx.eval(
+            "var callCount = 0; \
+             var thrower = {}; \
+             var counter = {}; \
+             Object.defineProperty(thrower, Symbol.toPrimitive, { get: function() { throw new Error('x'); } }); \
+             Object.defineProperty(counter, Symbol.toPrimitive, { get: function() { callCount += 1; } }); \
+             var thrown; \
+             try { thrower + counter; } catch (e) { thrown = e; } \
+             ({ callCount: callCount, msg: thrown.message });",
+        );
+        let value = result.unwrap();
+        let crate::value::Value::Object(obj) = value else {
+            panic!("expected object result");
+        };
+        let obj = obj.borrow();
+        assert_eq!(
+            obj.get("callCount"),
+            Some(crate::value::Value::Number(0.0)),
+            "counter's @@toPrimitive must not run when thrower's getter throws"
+        );
+        assert_eq!(
+            obj.get("msg"),
+            Some(crate::value::Value::String("x".to_string()))
+        );
     }
 }
