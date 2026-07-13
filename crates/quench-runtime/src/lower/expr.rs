@@ -192,7 +192,9 @@ fn lower_object_prop(
         }
     };
     eprintln!("DEBUG: key_name = {:?}", key_name);
-    if let (Some(name), ast::Expression::FunctionExpression(func)) = (key_name.as_deref(), &prop.value) {
+    if let (Some(name), ast::Expression::FunctionExpression(func)) =
+        (key_name.as_deref(), &prop.value)
+    {
         if name == "get" {
             let body = func
                 .body
