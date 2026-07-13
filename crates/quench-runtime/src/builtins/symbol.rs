@@ -41,7 +41,7 @@ fn next_symbol_desc() -> u64 {
 /// Create a new unique symbol value with the given description.
 pub fn new_symbol(desc: &str) -> Value {
     Value::Symbol(Rc::new(ValSymbol {
-        desc: Some(desc.to_string()),
+        desc: Some(Rc::from(desc)),
         global: false,
     }))
 }
@@ -88,7 +88,7 @@ fn symbol_for_impl(key: &str) -> Value {
         }
         // Symbol.for stores with global: true and uses the key as description
         let new_symbol = Value::Symbol(Rc::new(ValSymbol {
-            desc: Some(key.to_string()),
+            desc: Some(Rc::from(key)),
             global: true,
         }));
         reg.insert(key.to_string(), new_symbol.clone());
@@ -186,7 +186,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let description = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
-            Some(s) => Ok(Value::String(s.desc.clone().unwrap_or_default())),
+            Some(s) => Ok(Value::String(s.desc.clone().map(|d| d.to_string()).unwrap_or_default())),
             None => Err(crate::JsError::new(
                 "TypeError: Symbol.prototype.description requires a Symbol receiver",
             )),
