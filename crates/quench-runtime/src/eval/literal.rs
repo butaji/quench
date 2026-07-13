@@ -25,6 +25,15 @@ pub fn eval_identifier(
     if name == "super" {
         return eval_super(env);
     }
+    if name == "new.target" {
+        // Per ES §13.2.6 GetNewTarget: in arrow functions, resolve via
+        // lexical scope (the calling function's new.target). Outside a
+        // constructor, new.target is undefined.
+        if let Some(t) = crate::interpreter::get_new_target() {
+            return Ok(t);
+        }
+        return Ok(Value::Undefined);
+    }
     // Arrow functions don't have their own 'arguments' binding
     if in_arrow_function && name == "arguments" {
         // Check if arguments exists in enclosing scope (arrow can access enclosing arguments)

@@ -25,7 +25,15 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::FunctionExpression(func) => lower_fn_expr(func),
         ast::Expression::ArrowFunctionExpression(arrow) => lower_arrow_expr(arrow),
         ast::Expression::YieldExpression(yield_expr) => lower_yield_expr(yield_expr),
-        ast::Expression::MetaProperty(_) => Ok(Expression::Undefined),
+        ast::Expression::MetaProperty(meta) => {
+            // `new.target` — runtime resolves via GetNewTarget.
+            if meta.meta.name == "new" && meta.property.name == "target" {
+                Ok(Expression::Identifier("new.target".to_string()))
+            } else {
+                // `import.meta` and other meta properties — not supported.
+                Ok(Expression::Undefined)
+            }
+        }
         ast::Expression::AwaitExpression(await_expr) => lower_expr(&await_expr.argument),
         ast::Expression::ParenthesizedExpression(paren) => lower_expr(&paren.expression),
         ast::Expression::BinaryExpression(bin) => lower_bin_expr(bin),

@@ -75,6 +75,23 @@ thread_local! {
     static STRICT_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
+thread_local! {
+    /// Per ES §13.2.6 GetNewTarget: when a constructor is invoked via `new`,
+    /// this holds the constructor that was invoked. `new.target` references
+    /// in non-arrow functions resolve to this; arrow functions inherit the
+    /// value via lexical scope (i.e. the value stored in the surrounding
+    /// scope's `new.target` binding).
+    static NEW_TARGET: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn set_new_target(target: Option<Value>) {
+    NEW_TARGET.with(|cell| *cell.borrow_mut() = target);
+}
+
+pub(crate) fn get_new_target() -> Option<Value> {
+    NEW_TARGET.with(|cell| cell.borrow().clone())
+}
+
 /// Check if we're currently in strict mode
 pub(crate) fn is_strict_mode() -> bool {
     STRICT_MODE.with(|cell| cell.get())
