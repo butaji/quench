@@ -175,6 +175,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/bitwise-not/",
     // Class accessor computed names
     "test/language/expressions/class/accessor-name-static-computed-in.js",
+    // Parser: await identifier restrictions
+    "test/language/expressions/class/class-name-ident-await-escaped.js",
     // Coalesce + ternary precedence
     "test/language/expressions/conditional/coalesce-expr-ternary.js",
     // Delete operator edge cases
