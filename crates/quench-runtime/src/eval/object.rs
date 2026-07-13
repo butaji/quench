@@ -358,6 +358,15 @@ fn assign_to_member(
             Ok(())
         }
         Value::NativeFunction(ref nf) => {
+            if crate::interpreter::is_strict_mode()
+                && matches!(prop_name.as_str(), "length" | "name")
+            {
+                let (_, error) = crate::value::error::create_js_error_with_type(
+                    "Cannot assign to read only property",
+                    "TypeError",
+                );
+                return Err(error);
+            }
             nf.set_property(&prop_name, value.clone());
             Ok(())
         }
@@ -387,6 +396,9 @@ fn assign_to_member(
 }
 
 fn is_readonly_constructor_property(constructor: &str, property: &str) -> bool {
+    if matches!(property, "length" | "name") {
+        return true;
+    }
     constructor == "Number"
         && matches!(
             property,
