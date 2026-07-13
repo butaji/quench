@@ -94,6 +94,7 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
             };
 
             if check_error_instance(&thrown, &expected_ctr) {
+                crate::value::take_thrown_value();
                 Ok(Value::Undefined)
             } else {
                 let expected_name = get_error_name(&expected_ctr);

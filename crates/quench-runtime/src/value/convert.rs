@@ -415,6 +415,7 @@ fn object_to_primitive_for_compare(obj: &Rc<std::cell::RefCell<crate::value::Obj
 /// Hint for ToPrimitive conversion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrimitiveHint {
+    Default,
     Number,
     String,
 }
@@ -446,7 +447,7 @@ fn to_primitive_function(
     let hint = resolve_hint(hint);
 
     let (first, second) = match hint {
-        PrimitiveHint::Number => ("valueOf", "toString"),
+        PrimitiveHint::Default | PrimitiveHint::Number => ("valueOf", "toString"),
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
@@ -531,7 +532,7 @@ fn to_primitive_object(
 
     // Try valueOf then toString (or vice versa for string hint)
     let (first, second) = match hint {
-        PrimitiveHint::Number => ("valueOf", "toString"),
+        PrimitiveHint::Default | PrimitiveHint::Number => ("valueOf", "toString"),
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
@@ -568,7 +569,8 @@ fn to_primitive_object(
 fn resolve_hint(hint: Option<&str>) -> PrimitiveHint {
     match hint {
         Some("string") => PrimitiveHint::String,
-        _ => PrimitiveHint::Number,
+        Some("number") => PrimitiveHint::Number,
+        _ => PrimitiveHint::Default,
     }
 }
 
@@ -579,15 +581,17 @@ fn try_to_primitive_symbol(
     let Some(to_prim_symbol) = crate::builtins::symbol::get_well_known_symbol_no_ctx("toPrimitive") else {
         return Ok(None);
     };
-    // Pass the existing object through instead of cloning it: cloning would
-    // break receiver identity (and cost a full object copy per call).
-    let Some(to_prim_method) = crate::builtins::symbol::get_symbol_property(
-        &Value::Object(Rc::clone(obj)),
-        &to_prim_symbol,
-    ) else {
+    let Value::Symbol(symbol_key) = to_prim_symbol else {
         return Ok(None);
     };
+    // Use ordinary member access so an accessor is invoked (and any abrupt
+    // completion propagates) rather than returning the getter function itself.
+    let to_prim_method = crate::eval::member::eval_object_member(obj, &symbol_key)?;
+    if matches!(to_prim_method, Value::Undefined) {
+        return Ok(None);
+    }
     let hint_str = match hint {
+        PrimitiveHint::Default => "default",
         PrimitiveHint::Number => "number",
         PrimitiveHint::String => "string",
     };
@@ -597,10 +601,13 @@ fn try_to_primitive_symbol(
     let result =
         crate::eval::call_value_with_this(to_prim_method.clone(), vec![arg], this_val)?;
     if !matches!(result, Value::Object(_)) {
-        Ok(Some(result))
-    } else {
-        Ok(None)
+        return Ok(Some(result));
     }
+    let (_, js_err) = crate::value::error::create_js_error_with_type(
+        "Cannot convert object to primitive value",
+        "TypeError",
+    );
+    Err(js_err)
 }
 
 fn try_method(
