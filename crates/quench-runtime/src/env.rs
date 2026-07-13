@@ -27,6 +27,10 @@ pub struct Scope {
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
     this_value: Option<Value>,
+    /// Number of closures created while this scope was the innermost scope.
+    /// `pop_scope` skips popping if this is > 0, so closures that captured
+    /// bindings from this block keep seeing them after the block exits.
+    closures_created: u32,
 }
 
 impl std::fmt::Debug for Scope {
@@ -54,6 +58,7 @@ impl Clone for Scope {
             declarations: self.declarations.clone(),
             var_kinds: self.var_kinds.clone(),
             this_value: self.this_value.clone(),
+            closures_created: self.closures_created,
         }
     }
 }
@@ -65,6 +70,7 @@ impl Scope {
             declarations: HashMap::new(),
             var_kinds: HashMap::new(),
             this_value: None,
+            closures_created: 0,
         }
     }
 
@@ -279,6 +285,8 @@ impl Environment {
     /// Set a property on a variable stored by name (for function properties).
     /// Modifies the Value in place via RefCell to preserve Rc identity.
     /// Returns true if the property was set successfully.
+    /// For arrow functions, attempting to set `caller` or `arguments` is a
+    /// silent no-op (the actual TypeError is thrown by the assignment path).
     pub fn set_property(&mut self, name: &str, prop: &str, value: Value) -> bool {
         // Try current scopes first - use get_mut for in-place modification
         for scope in self.scopes.iter_mut().rev() {
@@ -288,6 +296,12 @@ impl Environment {
                 let rc = entry.get();
                 match rc.as_ref() {
                     Value::Function(ref f) => {
+                        if f.is_arrow && (prop == "caller" || prop == "arguments") {
+                            // The caller / assignment path will throw TypeError;
+                            // return false so it falls through to assign_to_member
+                            // where the proper TypeError is raised.
+                            return false;
+                        }
                         f.set_property(prop, value.clone());
                         return true;
                     }
@@ -425,10 +439,32 @@ impl Environment {
         self.scopes.push(Scope::new());
     }
 
-    /// Pop the current scope from the stack
+    /// Record that a closure was created in the current (innermost) scope.
+    /// Used by `pop_scope` to decide whether it's safe to actually pop the
+    /// scope: if a closure captured this scope's bindings, popping would
+    /// silently change the closure's view of those bindings.
+    pub fn mark_closure_created(&mut self) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.closures_created += 1;
+        }
+    }
+
+    /// Pop the current scope from the stack. The pop is skipped if any
+    /// closure was created while this scope was the innermost scope — those
+    /// closures hold a reference to the environment and would lose access
+    /// to bindings that the block shadowed. The "leaked" scope stays in the
+    /// Vec but is harmless for lookups because it's no longer reachable as
+    /// the innermost scope.
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
-            self.scopes.pop();
+            let skip = self
+                .scopes
+                .last()
+                .map(|s| s.closures_created > 0)
+                .unwrap_or(false);
+            if !skip {
+                self.scopes.pop();
+            }
         }
     }
 

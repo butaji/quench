@@ -1,6 +1,6 @@
 //! Native function and constructor member access evaluation
 
-use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -26,12 +26,16 @@ pub fn eval_native_function_member(
 }
 
 fn eval_native_prototype(nf: &Rc<NativeFunction>) -> Result<Value, JsError> {
+    // Per ECMA-262, built-in functions that are not constructors
+    // (parseInt, isNaN, isFinite, parseFloat, Function.prototype.{call,apply,bind},
+    // and similar) MUST have `fn.prototype === undefined`. Only functions that
+    // were constructed with an explicit prototype (NativeFunction::new_with_prototype)
+    // expose one; otherwise return Undefined instead of lazy-creating an empty
+    // prototype object.
     if let Some(proto) = nf.prototype.borrow().as_ref() {
         Ok(Value::Object(Rc::clone(proto)))
     } else {
-        let mut proto = Object::new(ObjectKind::Ordinary);
-        proto.set("constructor", Value::NativeFunction(Rc::clone(nf)));
-        Ok(Value::Object(Rc::new(RefCell::new(proto))))
+        Ok(Value::Undefined)
     }
 }
 

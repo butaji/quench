@@ -283,6 +283,14 @@ fn assign_to_member(
             Ok(())
         }
         Value::Function(ref f) => {
+            if f.is_arrow && (prop_name == "caller" || prop_name == "arguments") {
+                let msg = format!(
+                    "'caller' and 'arguments' are restricted properties and cannot be set on arrow functions"
+                );
+                let (err, js_err) = crate::value::create_js_error_with_type(&msg, "TypeError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
+            }
             f.set_property(&prop_name, value.clone());
             Ok(())
         }
@@ -541,6 +549,51 @@ mod tests {
             crate::value::Value::String(s) => assert_eq!(s, "boom"),
             other => panic!("expected string 'boom', got {:?}", other),
         }
+    }
+
+    #[test]
+    fn array_elision_length_is_one() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("var a = [,]; a.length").unwrap();
+        assert_eq!(v, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn arrow_fn_caller_throws_typeerror() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("var arrowFn = () => {}; arrowFn.caller");
+        assert!(res.is_err(), "arrowFn.caller must throw");
+    }
+
+    #[test]
+    fn arrow_fn_caller_throws_in_harness() {
+        // Mimics the test262 harness pattern where assert.throws wraps the access.
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval(
+            "var arrowFn = () => {}; \
+             var caught = false; \
+             try { var x = arrowFn.caller; } catch (e) { caught = (e instanceof TypeError); } \
+             caught;"
+        );
+        let v = res.unwrap();
+        assert_eq!(v, crate::value::Value::Boolean(true), "must catch TypeError");
+    }
+
+    #[test]
+    fn arrow_fn_caller_full_test262() {
+        // Load the actual test262 harness and run the failing test logic.
+        use crate::test262::harness::try_inject_harness;
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).unwrap();
+        let res = ctx.eval(
+            "var arrowFn = () => {}; \
+             var got1 = false; try { var x = arrowFn.caller; } catch (e) { got1 = (e instanceof TypeError); } \
+             var got2 = false; try { arrowFn.caller = {}; } catch (e) { got2 = (e instanceof TypeError); } \
+             var got3 = false; try { var y = arrowFn.arguments; } catch (e) { got3 = (e instanceof TypeError); } \
+             var got4 = false; try { arrowFn.arguments = {}; } catch (e) { got4 = (e instanceof TypeError); } \
+             got1 && got2 && got3 && got4;"
+        );
+        assert_eq!(res.unwrap(), crate::value::Value::Boolean(true));
     }
 
     #[test]

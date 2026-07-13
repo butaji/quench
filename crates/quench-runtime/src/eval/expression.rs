@@ -39,12 +39,14 @@ pub fn eval_expression(
         Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
         Expression::Array(elements) => eval_array_literal(elements, env, in_arrow_function),
         Expression::FunctionExpression { name, params, body } => {
+            env.borrow_mut().mark_closure_created();
             let mut func =
                 ValueFunction::new(name.clone(), params.clone(), body.clone(), Rc::clone(env));
             func.strict = crate::interpreter::is_strict_mode();
             Ok(Value::Function(func))
         }
         Expression::ArrowFunction { params, body } => {
+            env.borrow_mut().mark_closure_created();
             let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), Rc::clone(env));
             func.strict = crate::interpreter::is_strict_mode();
             Ok(Value::Function(func))
