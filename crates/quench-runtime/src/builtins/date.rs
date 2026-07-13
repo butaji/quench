@@ -121,6 +121,15 @@ pub(crate) fn spec_parse_float(string: &str) -> f64 {
     let mut chars = s.chars().peekable();
     let sign = parse_float_sign(&mut chars);
 
+    // Per ECMA-262 StrNumericLiteral, parseFloat accepts the literal "Infinity"
+// (case-sensitive — only the exact capital-I spelling) after the optional
+// sign. parseFloat("Infinity") === Infinity, parseFloat("-Infinity") ===
+// -Infinity, but parseFloat("infinity") === NaN.
+    let rest: String = chars.clone().collect();
+    if rest == "Infinity" {
+        return f64::INFINITY * sign;
+    }
+
     // Handle hex floats
     if let Some(val) = try_parse_hex_float(&mut chars) {
         return val * sign;
@@ -196,6 +205,7 @@ fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Opti
 fn parse_decimal_significand(chars: &mut std::iter::Peekable<std::str::Chars>) -> (f64, bool) {
     let mut significand = 0.0;
     let mut has_digit = false;
+    let mut frac_digits: Vec<u32> = Vec::new();
 
     while let Some(&c) = chars.peek() {
         if c.is_ascii_digit() {
@@ -210,17 +220,25 @@ fn parse_decimal_significand(chars: &mut std::iter::Peekable<std::str::Chars>) -
     // Handle decimal point
     if chars.peek() == Some(&'.') {
         chars.next();
-        let mut scale = 0.1;
         while let Some(&c) = chars.peek() {
             if c.is_ascii_digit() {
-                significand += (c.to_digit(10).unwrap() as f64) * scale;
-                scale *= 0.1;
+                frac_digits.push(c.to_digit(10).unwrap());
                 has_digit = true;
                 chars.next();
             } else {
                 break;
             }
         }
+    }
+    // Apply the fractional digits once (not per-digit) so the value
+    // matches the literal — e.g. ".01" → 1 / 100 = 0.01. Doing this
+    // per-digit via `scale *= 0.1` accumulates floating-point error and
+    // can mis-round for inputs like ".01e+2" (gives 10 instead of 1).
+    if !frac_digits.is_empty() {
+        for &d in &frac_digits {
+            significand = significand * 10.0 + (d as f64);
+        }
+        significand /= 10f64.powi(frac_digits.len() as i32);
     }
     (significand, has_digit)
 }
@@ -701,5 +719,37 @@ mod tests {
         let overflow = ctx.eval("new Date(2024, 13, 1).getTime()").unwrap();
         let expected = ctx.eval("new Date(2025, 1, 1).getTime()").unwrap();
         assert_eq!(overflow, expected);
+    }
+
+    fn eval_num(src: &str) -> f64 {
+        let mut ctx = Context::new().unwrap();
+        match ctx.eval(src).unwrap() {
+            Value::Number(n) => n,
+            other => panic!("expected Number from {:?}, got {:?}", src, other),
+        }
+    }
+
+    #[test]
+    fn test_parse_float_accepts_infinity_literal() {
+        // Per ECMA-262 StrNumericLiteral, parseFloat accepts the literal
+        // "Infinity" (case-sensitive — only the exact capital-I spelling)
+        // after the optional sign.
+        assert!(eval_num("parseFloat(Infinity)").is_infinite());
+        assert!(eval_num("parseFloat(Infinity) > 0.0"));
+        assert!(eval_num("parseFloat(-Infinity) < 0.0"));
+        assert!(eval_num("parseFloat('Infinity')").is_infinite());
+        assert!(eval_num("parseFloat('-Infinity')").is_infinite() && eval_num("parseFloat('-Infinity') < 0.0"));
+        // Case-sensitive: "infinity" must be NaN.
+        assert!(eval_num("parseFloat('infinity')").is_nan());
+    }
+
+    #[test]
+    fn test_parse_float_decimal_then_exponent() {
+        // ".01e+2" must round-trip to the same value as the literal .01e+2.
+        // The per-digit scale*=0.1 accumulator loses precision and gives 10.
+        assert_eq!(eval_num("parseFloat('.01e+2')"), 1.0);
+        assert_eq!(eval_num("parseFloat('.5e1')"), 5.0);
+        assert_eq!(eval_num("parseFloat('3.14')"), 3.14);
+        assert_eq!(eval_num("parseFloat('.01')"), 0.01);
     }
 }
