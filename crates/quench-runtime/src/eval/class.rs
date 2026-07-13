@@ -56,13 +56,14 @@ fn instantiate_simple(
     instance.prototype = Some(Rc::clone(&proto_rc));
     let instance_rc = Rc::new(RefCell::new(instance));
 
-    proto_rc
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+    // Per ES spec §10.1.3, instance.constructor === the class
+    instance_rc
         .borrow_mut()
-        .set("constructor", Value::Object(Rc::clone(&instance_rc)));
+        .set("constructor", Value::Class(class.clone()));
 
     let _params = class.constructor_params.clone();
     let body = class.constructor_body.clone();
-    let this_val = Value::Object(Rc::clone(&instance_rc));
 
     let call_env = build_constructor_env(class, &args, &this_val, env)?;
     let call_env = Rc::new(RefCell::new(call_env));
@@ -105,12 +106,13 @@ fn instantiate_with_fields(
     instance.prototype = Some(Rc::clone(&proto_rc));
     let instance_rc = Rc::new(RefCell::new(instance));
 
-    proto_rc
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+    // Per ES spec §10.1.3, instance.constructor === the class
+    instance_rc
         .borrow_mut()
-        .set("constructor", Value::Object(Rc::clone(&instance_rc)));
+        .set("constructor", Value::Class(class.clone()));
 
     let body = class.constructor_body.clone();
-    let this_val = Value::Object(Rc::clone(&instance_rc));
 
     let call_env = build_constructor_env(class, &args, &this_val, env)?;
     let call_env = Rc::new(RefCell::new(call_env));
@@ -223,7 +225,10 @@ fn call_super_or_default(
 
 /// Instantiate a class from its AST representation (legacy signature)
 pub fn instantiate_class_from_ast(class: ClassValue, args: Vec<Value>) -> Result<Value, JsError> {
-    instantiate_class_from_ast_with_env(class, args, &Rc::new(RefCell::new(Environment::new())))
+    // Use the current context's global environment so that global variable modifications
+    // in the constructor persist after instantiation.
+    let env = crate::context::get_current_env().unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+    instantiate_class_from_ast_with_env(class, args, &env)
 }
 
 /// Call a super constructor with the given arguments and 'this' binding

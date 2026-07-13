@@ -170,8 +170,19 @@ fn assign_to_identifier(
             return Err(js_err);
         }
         // Sloppy mode: create a globalThis property so `delete x` returns true.
-        if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
-            global_obj.borrow_mut().set(name, value);
+        // Use a block to scope the borrow.
+        let use_global_this = {
+            if let Some(Value::Object(_)) = env.borrow().get("globalThis") {
+                true
+            } else {
+                false
+            }
+        };
+        if use_global_this {
+            // Now get globalThis again and set the property
+            if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
+                global_obj.borrow_mut().set(name, value);
+            }
         } else {
             env.borrow_mut().define(name.to_string(), value);
         }
@@ -438,6 +449,11 @@ fn get_member_function(
                     func.strict = true;
                     return Ok(Value::Function(func));
                 }
+            }
+            // Look up the superclass chain for inherited static members
+            if let Some(ref super_expr) = class.super_class {
+                let super_val = crate::eval::expression::eval_expression(super_expr, env, false)?;
+                return crate::eval::member::eval_member_access(&super_val, prop_name, env);
             }
             let proto = crate::eval::class::get_or_create_class_prototype(class, env)?;
             crate::eval::member::eval_object_member(&proto, prop_name)
@@ -901,6 +917,24 @@ mod tests {
              new B() instanceof B;"
         );
         assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_extends_promise_builtin() {
+        let mut ctx = Context::new().unwrap();
+        // Test that Promise is accessible
+        let t = ctx.eval("typeof Promise");
+        eprintln!("typeof Promise = {:?}", t);
+        
+        // Test class extends Promise
+        let v = ctx.eval(
+            "class SubPromise extends Promise { \
+               constructor(a) { super(a); } \
+             } \
+             new SubPromise(function(resolve) { resolve(42); });"
+        );
+        eprintln!("class extends Promise = {:?}", v);
+        assert!(v.is_ok(), "class extends Promise should work: {:?}", v);
     }
 
     #[test]

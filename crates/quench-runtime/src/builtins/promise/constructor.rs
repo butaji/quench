@@ -75,12 +75,10 @@ pub fn create_promise_constructor(
 
                 let executor_result =
                     call_value_with_this(executor, vec![resolve_val, reject_val], Value::Undefined);
-                // If executor throws, reject the promise with the thrown value
-                if let Err(e) = executor_result {
-                    let error_val = crate::value::get_thrown_value()
-                        .unwrap_or_else(|| Value::String(e.to_string()));
-                    reject_rc.borrow()(error_val);
-                }
+                // Let executor errors propagate naturally.
+                // For `new Promise(fn)`, if fn throws synchronously, the error propagates out.
+                // For `NewPromiseCapability` (Promise.race/all/etc), executor errors are
+                // handled by the caller (invoke_promise_constructor checks resolve/reject slots).
             }
 
             Ok(Value::Object(promise_rc))
@@ -117,7 +115,8 @@ pub fn create_promise_constructor(
     constructor.set_static_method(
         "race",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-            promise_race_impl(args, Rc::clone(&proto_for_static_clone4))
+            let this_val = crate::interpreter::get_native_this().unwrap_or(Value::Undefined);
+            promise_race_impl(args, this_val, Rc::clone(&proto_for_static_clone4))
         }))),
     );
 

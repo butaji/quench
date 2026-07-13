@@ -4,12 +4,141 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::eval::call_value_with_this;
+use crate::eval::iteration::get_iterator;
 use crate::value::object::PromiseObjectData;
+use crate::value::error::create_js_error_with_type;
 use crate::value::{NativeFunction, Object, ObjectKind, Value};
 use crate::JsError;
 
 // Re-export enqueue_promise_reactions for use in static methods
 pub(crate) use super::enqueue_promise_reactions;
+
+/// Validate that `constructor` works as a Promise constructor by calling it
+/// with resolve/reject callbacks. Returns the created promise or an error.
+/// Implements NewPromiseCapability per spec.
+fn invoke_promise_constructor(
+    constructor: &Value,
+    proto: &Rc<RefCell<Object>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    // Mutable slots for resolve/reject functions (None = not yet called)
+    let resolve_slot: Rc<RefCell<Option<Value>>> = Rc::new(RefCell::new(None));
+    let reject_slot: Rc<RefCell<Option<Value>>> = Rc::new(RefCell::new(None));
+
+    let resolve_slot_f = Rc::clone(&resolve_slot);
+    let reject_slot_f = Rc::clone(&reject_slot);
+
+    // Per spec: GetCapabilitiesExecutor is passed to the constructor, which then
+    // calls it. The executor will call these with the resolve/reject values.
+    // Per 25.4.1.5.1: throw TypeError if [[Resolve]]/[[Reject]] is not undefined.
+    let resolve_slot_f = Rc::clone(&resolve_slot);
+    let resolve_already_set: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let reject_slot_f = Rc::clone(&reject_slot);
+    let reject_already_set: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+    // Create executor function that receives (resolve, reject) callbacks from the constructor
+    // and forwards calls to our resolve/reject slots
+    let resolve_already_set_f = Rc::clone(&resolve_already_set);
+    let reject_already_set_f = Rc::clone(&reject_already_set);
+
+    let resolve_fn = Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
+        // This is called by the executor: executor(resolve_value, reject_value)
+        // where resolve_value is what to pass to our resolve, and reject_value is what to pass to our reject
+        let resolve_arg = args.first().cloned().unwrap_or(Value::Undefined);
+        let reject_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+        // Call our resolve slot with resolve_arg
+        if !matches!(&resolve_arg, Value::Undefined) {
+            if *resolve_already_set_f.borrow() {
+                return Err(JsError("TypeError: GetCapabilitiesExecutor resolve already called".to_string()));
+            }
+            *resolve_already_set_f.borrow_mut() = true;
+        }
+        *resolve_slot_f.borrow_mut() = Some(resolve_arg);
+
+        // Call our reject slot with reject_arg
+        if !matches!(&reject_arg, Value::Undefined) {
+            if *reject_already_set_f.borrow() {
+                return Err(JsError("TypeError: GetCapabilitiesExecutor reject already called".to_string()));
+            }
+            *reject_already_set_f.borrow_mut() = true;
+        }
+        *reject_slot_f.borrow_mut() = Some(reject_arg);
+
+        Ok(Value::Undefined)
+    })));
+
+    let reject_fn = Value::NativeFunction(Rc::new(NativeFunction::new(move |_args: Vec<Value>| {
+        // This function is never actually called - the executor above handles both resolve and reject
+        Ok(Value::Undefined)
+    })));
+
+    // Call constructor as a new instance
+    let result = call_value_with_this(
+        constructor.clone(),
+        vec![resolve_fn, reject_fn],
+        Value::Undefined,
+    );
+
+    // If the constructor threw (e.g., because resolve was called twice with non-undefined),
+    // propagate that error and ensure thrown value is set.
+    if let Err(e) = &result {
+        // Extract error type from message (e.g., "TypeError: ..." -> "TypeError")
+        let err_msg = e.0.as_str();
+        let err_type = if err_msg.starts_with("TypeError:") {
+            "TypeError"
+        } else {
+            "Error"
+        };
+        let msg = err_msg
+            .strip_prefix("TypeError: ")
+            .or_else(|| err_msg.strip_prefix("Error: "))
+            .unwrap_or(err_msg);
+        let (err_val, _) = create_js_error_with_type(msg, err_type);
+        crate::value::set_thrown_value(err_val);
+        return Err(e.clone());
+    }
+
+    let result = result.unwrap();
+
+    // Per spec steps 8-9: Check if resolve/reject are callable
+    // If executor never called them, they are undefined (not callable)
+    let resolve_val = resolve_slot.borrow();
+    let reject_val = reject_slot.borrow();
+    
+    let resolve_callable = matches!(&*resolve_val, Some(v) 
+        if matches!(v, Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)));
+    let reject_callable = matches!(&*reject_val, Some(v) 
+        if matches!(v, Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)));
+    
+    if !resolve_callable {
+        let (err_val, _) = create_js_error_with_type("GetCapabilitiesExecutor resolve is not callable", "TypeError");
+        crate::value::set_thrown_value(err_val);
+        return Err(JsError("TypeError: GetCapabilitiesExecutor resolve is not callable".to_string()));
+    }
+    
+    if !reject_callable {
+        let (err_val, _) = create_js_error_with_type("GetCapabilitiesExecutor reject is not callable", "TypeError");
+        crate::value::set_thrown_value(err_val);
+        return Err(JsError("TypeError: GetCapabilitiesExecutor reject is not callable".to_string()));
+    }
+
+    // Result must be an object (Promise). If it's not (e.g., implicit undefined return),
+    // create a new promise object.
+    match result {
+        Value::Object(o) => Ok(o),
+        _ => {
+            // Create a new promise object
+            let promise_obj = Object::new(ObjectKind::Promise);
+            let promise_rc = Rc::new(RefCell::new(promise_obj));
+            {
+                let mut obj = promise_rc.borrow_mut();
+                obj.prototype = Some(Rc::clone(proto));
+                obj.promise_data = Some(PromiseObjectData::new());
+            }
+            Ok(promise_rc)
+        }
+    }
+}
 
 /// Implements Promise.resolve
 pub fn promise_resolve_impl_static(
@@ -290,27 +419,26 @@ fn attach_then_handlers(p: &Rc<RefCell<Object>>, resolve_fn: Value, reject_fn: V
 }
 
 /// Implements Promise.race
-pub fn promise_race_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+pub fn promise_race_impl(args: Vec<Value>, this_val: Value, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+    // Validate this is callable (constructor) per spec
+    let is_callable = matches!(
+        this_val,
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_)
+    );
+    if !is_callable {
+        return Err(JsError("TypeError: Promise.race called on non-constructor".to_string()));
+    }
+
+    // Per spec: invoke NewPromiseCapability(this) which validates the constructor.
+    // This will throw if this is not a valid Promise constructor.
+    let promise_rc = invoke_promise_constructor(&this_val, &proto)?;
+
     let input = args.first().cloned().unwrap_or(Value::Undefined);
 
-    let values: Vec<Value> = if let Value::Object(ref obj) = input {
-        obj.borrow().elements.clone()
-    } else {
-        vec![]
-    };
+    // Use iterator protocol - throws TypeError for non-iterables
+    let values: Vec<Value> = get_iterator(&input)?;
 
-    let promise_obj = Object::new(ObjectKind::Promise);
-    let promise_rc = Rc::new(RefCell::new(promise_obj));
-    let promise_data = PromiseObjectData::new();
     let settled = Rc::new(RefCell::new(false));
-
-    // promise_data must be assigned BEFORE processing inputs so that
-    // settle_promise can settle synchronously-resolved inputs.
-    {
-        let mut obj = promise_rc.borrow_mut();
-        obj.prototype = Some(proto);
-        obj.promise_data = Some(promise_data);
-    }
 
     for value in values {
         process_promise_race_value(value, &promise_rc, &settled);
@@ -343,7 +471,18 @@ fn process_promise_race_value(
                 }
                 _ => {
                     if let Some(ref then_method) = obj.get("then") {
-                        attach_race_handlers(then_method, resolve_fn, reject_fn);
+                        if attach_race_handlers(then_method, resolve_fn, reject_fn).is_err() {
+                            // If then is not callable, reject with TypeError
+                            let mut s = settled.borrow_mut();
+                            if !*s {
+                                *s = true;
+                                drop(s);
+                                let mut pr = promise_rc.borrow_mut();
+                                if let Some(ref mut d) = pr.promise_data {
+                                    d.reject(Value::String("TypeError: value.then is not a function".to_string()));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -406,7 +545,7 @@ where
     }
 }
 
-fn attach_race_handlers(then_method: &Value, resolve_fn: Value, reject_fn: Value) {
+fn attach_race_handlers(then_method: &Value, resolve_fn: Value, reject_fn: Value) -> Result<Value, JsError> {
     let pf = Rc::new(RefCell::new(resolve_fn.clone()));
     let pr = Rc::new(RefCell::new(reject_fn.clone()));
 
@@ -428,9 +567,9 @@ fn attach_race_handlers(then_method: &Value, resolve_fn: Value, reject_fn: Value
             }
             Ok(Value::Undefined)
         })));
-    let _ = call_value_with_this(
+    call_value_with_this(
         then_method.clone(),
         vec![on_fulfilled, on_rejected],
         Value::Undefined,
-    );
+    )
 }

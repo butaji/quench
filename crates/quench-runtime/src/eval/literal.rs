@@ -61,6 +61,12 @@ pub fn eval_identifier(
     match env.borrow().get(name) {
         Some(v) => Ok(v),
         None => {
+            // Fallback: try to get from Context's globals directly.
+            // This handles cases where the environment chain doesn't have access
+            // to globalThis (e.g., super constructor calls with isolated environments).
+            if let Some(global_val) = crate::context::get_global_from_context(name) {
+                return Ok(global_val);
+            }
             let (_, js_err) =
                 create_js_error_with_type(&format!("{} is not defined", name), "ReferenceError");
             Err(js_err)

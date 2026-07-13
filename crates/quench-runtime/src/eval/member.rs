@@ -16,6 +16,7 @@ pub use string_member::eval_string_member;
 
 use crate::ast::Param;
 use crate::env::Environment;
+use crate::eval::expression::eval_expression;
 use crate::value::{create_js_error, JsError, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -76,6 +77,12 @@ pub fn eval_class_member(
                     func.strict = true;
                     return Ok(Value::Function(func));
                 }
+            }
+            // Look up the superclass chain for inherited static members
+            if let Some(ref super_expr) = class.super_class {
+                let super_val = crate::eval::expression::eval_expression(super_expr, env, false)?;
+                // Recursively look up on the superclass
+                return eval_member_access(&super_val, prop_name, env);
             }
             Ok(Value::Undefined)
         }
