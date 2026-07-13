@@ -351,6 +351,28 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_arrow_parameter_closure_cannot_see_body_var() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var x = 'outside';
+var probeParams, probeBody;
+((_ = probeParams = function() { return x; }) => {
+  var x = 'inside';
+  probeBody = function() { return x; };
+})();
+assert.sameValue(probeParams(), 'outside');
+assert.sameValue(probeBody(), 'inside');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "parameter/body scope split failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_arrow_body_var_does_not_leak_global() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
