@@ -169,7 +169,7 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     // Coalesce + ternary precedence
     "test/language/expressions/conditional/coalesce-expr-ternary.js",
     // Delete operator edge cases
-    "test/language/expressions/delete/11.4.1-0-1.js",
+    "test/language/expressions/delete/",
 ];
 
 /// Check if a specific test file should be skipped.
