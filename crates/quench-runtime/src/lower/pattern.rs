@@ -11,6 +11,7 @@ pub fn binding_to_expr(binding: BindingElement) -> Expression {
         BindingElement::Identifier(name) => Expression::Identifier(name),
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(props) => Expression::ObjectPattern(props),
+        BindingElement::Default(binding, _) => binding_to_expr(*binding),
     }
 }
 
@@ -22,7 +23,10 @@ pub fn lower_binding_elem(pat: &ast::BindingPattern) -> Result<BindingElement, L
         }
         ast::BindingPatternKind::ArrayPattern(arr) => lower_array_pattern(arr),
         ast::BindingPatternKind::ObjectPattern(obj) => lower_object_pattern(obj),
-        ast::BindingPatternKind::AssignmentPattern(assign) => lower_binding_elem(&assign.left),
+        ast::BindingPatternKind::AssignmentPattern(assign) => Ok(BindingElement::Default(
+            Box::new(lower_binding_elem(&assign.left)?),
+            Box::new(lower_expr(&assign.right)?),
+        )),
     }
 }
 

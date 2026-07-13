@@ -107,6 +107,7 @@ pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
             Param {
                 name,
                 default,
+                pattern: None,
                 rest: false,
             }
         }
@@ -119,11 +120,18 @@ pub fn lower_formal_params(params: &ast::FormalParameters) -> Vec<Param> {
     let mut result: Vec<Param> = params.items.iter().map(lower_param_decl).collect();
     // Handle rest parameter: stored separately in FormalParameters.rest
     if let Some(rest) = &params.rest {
-        let name = match &rest.argument.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
-            _ => "arg".to_string(),
+        let mut param = match crate::lower::pattern::lower_binding_elem(&rest.argument) {
+            Ok(crate::ast::BindingElement::Identifier(name)) => Param::rest(&name),
+            Ok(pattern) => Param {
+                name: "arg".to_string(),
+                default: None,
+                pattern: Some(pattern),
+                rest: true,
+            },
+            Err(_) => Param::rest("arg"),
         };
-        result.push(Param::rest(&name));
+        param.rest = true;
+        result.push(param);
     }
     result
 }
