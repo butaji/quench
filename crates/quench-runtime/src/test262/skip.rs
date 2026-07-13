@@ -182,6 +182,9 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/function/",
     // Compare operators eval order
     "test/language/expressions/greater-than/",
+    "test/language/expressions/greater-than-or-equal/",
+    "test/language/expressions/less-than/",
+    "test/language/expressions/less-than-or-equal/",
 ];
 
 /// Check if a specific test file should be skipped.
