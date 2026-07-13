@@ -529,7 +529,9 @@ pub(crate) fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value
     // Use set_this_value (no initialized flag) for the script-level this
     // binding set by eval_program. The this_initialized flag is reserved
     // for tracking constructor `this` per ES §8.1.1.3.1.
-    env.borrow_mut().current_scope_mut().set_this_value(this_value);
+    env.borrow_mut()
+        .current_scope_mut()
+        .set_this_value(this_value);
 }
 
 pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
@@ -541,9 +543,7 @@ pub(crate) fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
         for scope in e.borrow().scopes.iter().rev() {
             if let Some(this_val) = scope.get_this() {
                 // Sloppy mode: undefined/null this → globalThis (ESMA-262 12.2.1.1)
-                if !is_strict_mode()
-                    && (this_val == Value::Undefined || this_val == Value::Null)
-                {
+                if !is_strict_mode() && (this_val == Value::Undefined || this_val == Value::Null) {
                     let global_this = e.borrow().get("globalThis").unwrap_or(Value::Undefined);
                     return global_this;
                 }

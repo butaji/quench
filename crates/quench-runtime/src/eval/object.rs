@@ -120,7 +120,9 @@ fn assign_to_identifier(
             // Check if class already has a `name` property (via static method).
             let has_name = c.name.is_some()
                 || c.static_methods.iter().any(|(k, _, _)| match k {
-                    crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => s == "name",
+                    crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => {
+                        s == "name"
+                    }
                     _ => false,
                 });
             if !has_name {
@@ -574,16 +576,23 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var o = {a: 1}").unwrap();
         // Test: for-in with var declared in the for statement
-        ctx.eval("var keys = []; for (var k in o) { keys.push(k); }").unwrap();
+        ctx.eval("var keys = []; for (var k in o) { keys.push(k); }")
+            .unwrap();
         let len = ctx.eval("keys.length").unwrap();
         assert_eq!(len, Value::Number(1.0), "for-in should iterate once");
         let first = ctx.eval("keys[0]").unwrap();
         assert_eq!(first, Value::String("a".to_string()), "key should be 'a'");
         // Test with Object.defineProperty enumerable property
-        ctx.eval("var o2 = {}; Object.defineProperty(o2, 'b', {enumerable: true, value: 2});").unwrap();
-        ctx.eval("var keys2 = []; for (var k in o2) { keys2.push(k); }").unwrap();
+        ctx.eval("var o2 = {}; Object.defineProperty(o2, 'b', {enumerable: true, value: 2});")
+            .unwrap();
+        ctx.eval("var keys2 = []; for (var k in o2) { keys2.push(k); }")
+            .unwrap();
         let len2 = ctx.eval("keys2.length").unwrap();
-        assert_eq!(len2, Value::Number(1.0), "for-in should see enumerable property");
+        assert_eq!(
+            len2,
+            Value::Number(1.0),
+            "for-in should see enumerable property"
+        );
         let first2 = ctx.eval("keys2[0]").unwrap();
         assert_eq!(first2, Value::String("b".to_string()), "key should be 'b'");
     }
@@ -655,10 +664,14 @@ mod tests {
             "var arrowFn = () => {}; \
              var caught = false; \
              try { var x = arrowFn.caller; } catch (e) { caught = (e instanceof TypeError); } \
-             caught;"
+             caught;",
         );
         let v = res.unwrap();
-        assert_eq!(v, crate::value::Value::Boolean(true), "must catch TypeError");
+        assert_eq!(
+            v,
+            crate::value::Value::Boolean(true),
+            "must catch TypeError"
+        );
     }
 
     #[test]
@@ -667,7 +680,7 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval(
             "function foo(){ return eval(\"()=>this\"); } \
-             foo()();"
+             foo()();",
         );
         let v = res.unwrap();
         // Must be an Object (globalThis), not Undefined.
@@ -704,7 +717,9 @@ mod tests {
     fn fn_returning_this_inside_obj() {
         // Try arrow inside a method context.
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval("var o = { f: function() { return (() => this); } }; o.f()();").unwrap();
+        let v = ctx
+            .eval("var o = { f: function() { return (() => this); } }; o.f()();")
+            .unwrap();
         match v {
             crate::value::Value::Object(o) => {
                 let _ = o;
@@ -716,7 +731,9 @@ mod tests {
     #[test]
     fn arrow_fn_length_own_property() {
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval("var f = (x, y = 1) => {}; f.hasOwnProperty('length')").unwrap();
+        let v = ctx
+            .eval("var f = (x, y = 1) => {}; f.hasOwnProperty('length')")
+            .unwrap();
         assert_eq!(v, crate::value::Value::Boolean(true));
         let len = ctx.eval("f.length").unwrap();
         assert_eq!(len, crate::value::Value::Number(1.0));
@@ -733,7 +750,7 @@ mod tests {
              var len = f1.length; \
              var deleted = delete f1.length; \
              var stillHas = f1.hasOwnProperty('length'); \
-             [ok, len, deleted, stillHas];"
+             [ok, len, deleted, stillHas];",
         );
         let arr = match v.unwrap() {
             crate::value::Value::Object(o) => o,
@@ -747,14 +764,18 @@ mod tests {
     #[test]
     fn delete_arrow_length_returns_true() {
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval("var f1 = (x = 42) => {}; delete f1.length;").unwrap();
+        let v = ctx
+            .eval("var f1 = (x = 42) => {}; delete f1.length;")
+            .unwrap();
         assert_eq!(v, crate::value::Value::Boolean(true));
     }
 
     #[test]
     fn delete_function_length_returns_true() {
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval("function f1(x = 42) {}; delete f1.length;").unwrap();
+        let v = ctx
+            .eval("function f1(x = 42) {}; delete f1.length;")
+            .unwrap();
         assert_eq!(v, crate::value::Value::Boolean(true));
     }
 
@@ -774,19 +795,25 @@ mod tests {
     fn arrow_length_remove_property() {
         let mut ctx = Context::new().unwrap();
         // Single eval so f1 persists across delete + hasOwnProperty.
-        let r = ctx.eval(
-            "var f1 = (x = 42) => {}; \
+        let r = ctx
+            .eval(
+                "var f1 = (x = 42) => {}; \
              var del = delete f1.length; \
              var has = Object.prototype.hasOwnProperty.call(f1, 'length'); \
-             [del, has];"
-        ).unwrap();
+             [del, has];",
+            )
+            .unwrap();
         let arr = if let crate::value::Value::Object(o) = r {
             o.borrow().elements.clone()
         } else {
             panic!("not array");
         };
         assert_eq!(arr[0], crate::value::Value::Boolean(true), "delete");
-        assert_eq!(arr[1], crate::value::Value::Boolean(false), "should not be own after delete");
+        assert_eq!(
+            arr[1],
+            crate::value::Value::Boolean(false),
+            "should not be own after delete"
+        );
     }
 
     #[test]
@@ -794,20 +821,25 @@ mod tests {
         // Test remove_property via the JS dispatch path, evaluating both
         // "delete" and "Object.prototype.hasOwnProperty.call" via the engine.
         let mut ctx = Context::new().unwrap();
-        let r = ctx.eval(
-            "var f1 = function() {}; \
+        let r = ctx
+            .eval(
+                "var f1 = function() {}; \
              f1.length = 5; \
              var before = Object.prototype.hasOwnProperty.call(f1, 'length'); \
              var del = delete f1.length; \
              var after = Object.prototype.hasOwnProperty.call(f1, 'length'); \
-             [before, del, after];"
-        ).unwrap();
+             [before, del, after];",
+            )
+            .unwrap();
         let arr = if let crate::value::Value::Object(o) = r {
             o.borrow().elements.clone()
         } else {
             panic!("not array");
         };
-        eprintln!("results: before={:?} del={:?} after={:?}", arr[0], arr[1], arr[2]);
+        eprintln!(
+            "results: before={:?} del={:?} after={:?}",
+            arr[0], arr[1], arr[2]
+        );
         assert_eq!(arr[0], crate::value::Value::Boolean(true), "before");
         assert_eq!(arr[1], crate::value::Value::Boolean(true), "del");
         assert_eq!(arr[2], crate::value::Value::Boolean(false), "after");
@@ -819,7 +851,7 @@ mod tests {
         let v = ctx.eval(
             "var f1 = (x = 42) => {}; \
              var desc = Object.getOwnPropertyDescriptor(f1, 'length'); \
-             [desc.value, desc.writable, desc.enumerable, desc.configurable, f1.length];"
+             [desc.value, desc.writable, desc.enumerable, desc.configurable, f1.length];",
         );
         let arr = match v.unwrap() {
             crate::value::Value::Object(o) => o,
@@ -853,7 +885,11 @@ mod tests {
         let e = arr.borrow().elements.clone();
         assert_eq!(e[0], crate::value::Value::Number(0.0), "orig value");
         assert_eq!(e[1], crate::value::Value::Boolean(false), "orig writable");
-        assert_eq!(e[2], crate::value::Value::Boolean(true), "orig configurable");
+        assert_eq!(
+            e[2],
+            crate::value::Value::Boolean(true),
+            "orig configurable"
+        );
         assert_eq!(e[3], crate::value::Value::Number(0.0), "still 0");
         assert_eq!(e[4], crate::value::Value::Number(0.0), "post value");
         assert_eq!(e[5], crate::value::Value::Boolean(false), "post writable");
@@ -865,7 +901,7 @@ mod tests {
         let v = ctx.eval(
             "function F() { this.t = new.target === F; } \
              var f = new F(); \
-             f.t;"
+             f.t;",
         );
         assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
     }
@@ -876,7 +912,7 @@ mod tests {
         let v = ctx.eval(
             "function F() { this.af = () => new.target; } \
              var f = new F(); \
-             f.af() === F;"
+             f.af() === F;",
         );
         assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
     }
@@ -884,15 +920,19 @@ mod tests {
     #[test]
     fn debug_new_target_arrow_2() {
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval(
-            "function F() { this.af = () => new.target; } \
+        let v = ctx
+            .eval(
+                "function F() { this.af = () => new.target; } \
              var f = new F(); \
              var t = f.af(); \
-             [t === F, typeof t];"
-        ).unwrap();
+             [t === F, typeof t];",
+            )
+            .unwrap();
         let arr = if let crate::value::Value::Object(o) = v {
             o.borrow().elements.clone()
-        } else { panic!("not array") };
+        } else {
+            panic!("not array")
+        };
         eprintln!("results: eq={:?} type={:?}", arr[0], arr[1]);
     }
 
@@ -905,7 +945,7 @@ mod tests {
              } \
              var f = new F(); \
              var result = f.af() === F; \
-             result;"
+             result;",
         );
         eprintln!("new.target in arrow: {:?}", v);
     }
@@ -919,7 +959,7 @@ mod tests {
              try { f1.length = 99; } catch (e) {} \
              var writable = Object.getOwnPropertyDescriptor(f1, 'length').writable; \
              var afterLen = f1.length; \
-             [writable, afterLen];"
+             [writable, afterLen];",
         );
         let arr = match v.unwrap() {
             crate::value::Value::Object(o) => o,
@@ -927,9 +967,17 @@ mod tests {
         };
         let e = arr.borrow().elements.clone();
         // writable should be false (so assignment is silently ignored in sloppy mode)
-        assert_eq!(e[0], crate::value::Value::Boolean(false), "writable should be false");
+        assert_eq!(
+            e[0],
+            crate::value::Value::Boolean(false),
+            "writable should be false"
+        );
         // After attempted write, length should still be 0 (since writable=false)
-        assert_eq!(e[1], crate::value::Value::Number(0.0), "length should not change");
+        assert_eq!(
+            e[1],
+            crate::value::Value::Number(0.0),
+            "length should not change"
+        );
     }
 
     #[test]
@@ -938,7 +986,7 @@ mod tests {
         let v = ctx.eval(
             "class A { constructor() {} } \
              class B extends A { constructor() { super(); } } \
-             new B() instanceof B;"
+             new B() instanceof B;",
         );
         assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
     }
@@ -949,13 +997,13 @@ mod tests {
         // Test that Promise is accessible
         let t = ctx.eval("typeof Promise");
         eprintln!("typeof Promise = {:?}", t);
-        
+
         // Test class extends Promise
         let v = ctx.eval(
             "class SubPromise extends Promise { \
                constructor(a) { super(a); } \
              } \
-             new SubPromise(function(resolve) { resolve(42); });"
+             new SubPromise(function(resolve) { resolve(42); });",
         );
         eprintln!("class extends Promise = {:?}", v);
         assert!(v.is_ok(), "class extends Promise should work: {:?}", v);
@@ -966,8 +1014,9 @@ mod tests {
         // Per ES §8.1.1.3.1: super() in arrow after constructor super()
         // must throw ReferenceError.
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval(
-            "var count = 0; \
+        let v = ctx
+            .eval(
+                "var count = 0; \
              class A { constructor() { count++; } } \
              class B extends A { \
                constructor() { super(); this.af = _ => super(); } \
@@ -975,8 +1024,9 @@ mod tests {
              var b = new B(); \
              var err; \
              try { b.af(); } catch (e) { err = e && e.name; } \
-             [count, err];"
-        ).unwrap();
+             [count, err];",
+            )
+            .unwrap();
         if let crate::value::Value::Object(o) = v {
             let e = o.borrow().elements.clone();
             eprintln!("count={:?}, err={:?}", e[0], e[1]);
@@ -993,7 +1043,7 @@ mod tests {
              class A { constructor() { count++; } } \
              class B extends A { constructor() { (_ => super())(); } } \
              new B(); \
-             count;"
+             count;",
         );
         eprintln!("count: {:?}", v);
     }

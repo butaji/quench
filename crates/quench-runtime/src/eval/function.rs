@@ -120,19 +120,21 @@ pub(crate) fn call_js_function_impl(
             .define("new.target".to_string(), target);
     }
     let call_env_rc = Rc::new(RefCell::new(call_env));
-    
+
     // Handle parameters, stopping at rest parameter
     let mut found_rest = false;
     let mut rest_args: Vec<Value> = Vec::new();
-    
+
     for (i, param) in params.iter().enumerate() {
         if found_rest {
             // After rest parameter, remaining params are ignored (rest collects all remaining args)
             // Just define them as undefined
-            call_env_rc.borrow_mut().define(param.name.clone(), Value::Undefined);
+            call_env_rc
+                .borrow_mut()
+                .define(param.name.clone(), Value::Undefined);
             continue;
         }
-        
+
         if param.rest {
             // Collect all remaining arguments into an array
             rest_args = args[i..].to_vec();

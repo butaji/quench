@@ -100,8 +100,7 @@ fn eval_super_call(
     while let Some(e) = current {
         if e.borrow().scopes.iter().any(|s| s.is_this_initialized()) {
             return Err(JsError(
-                "ReferenceError: super() called after `this` was already initialized"
-                    .to_string(),
+                "ReferenceError: super() called after `this` was already initialized".to_string(),
             ));
         }
         current = e.borrow().get_parent();
@@ -299,8 +298,7 @@ pub fn eval_new(
                 | Value::NativeFunction(_)
                 | Value::NativeConstructor(_)
                 | Value::Class(_)
-        )
-    {
+        ) {
         Ok(result)
     } else {
         Ok(Value::Object(new_obj_rc))

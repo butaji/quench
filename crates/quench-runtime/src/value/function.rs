@@ -392,7 +392,8 @@ pub struct NativeConstructor {
     static_methods: std::collections::HashMap<String, Value>,
     /// Accessor properties (getters/setters) defined via Object.defineProperty
     /// Wrapped in RefCell so we can mutate even when shared via Rc
-    accessors: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
+    accessors:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
     /// The name of the constructor (for Error.name matching)
     name: String,
 }
@@ -434,7 +435,9 @@ impl NativeConstructor {
 
     /// Define an accessor property on this constructor (for Object.defineProperty)
     pub fn define_accessor(&self, name: &str, getter: Option<Value>, setter: Option<Value>) {
-        self.accessors.borrow_mut().insert(name.to_string(), ConstructorAccessor { getter, setter });
+        self.accessors
+            .borrow_mut()
+            .insert(name.to_string(), ConstructorAccessor { getter, setter });
     }
 
     /// Get an accessor property from this constructor
