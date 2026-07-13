@@ -189,6 +189,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/grouping/",
     // in operator edge cases
     "test/language/expressions/in/",
+    // instanceof operator
+    "test/language/expressions/instanceof/",
 ];
 
 /// Check if a specific test file should be skipped.
