@@ -351,6 +351,23 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_assignment_replaces_function_property_identity() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var original = Array.prototype.reduce;
+Array.prototype.reduce = function() {};
+assert.notSameValue(original, Array.prototype.reduce);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "function property replacement failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_strict_assignment_to_function_length_throws() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
