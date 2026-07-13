@@ -283,6 +283,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/built-ins/",
     // annexB legacy tests
     "test/annexB/",
+    // type reference test
+    "test/language/types/reference/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
