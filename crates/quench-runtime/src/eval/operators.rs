@@ -45,8 +45,35 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
 }
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
-    // Per ES §7.1.1 ToPrimitive: if valueOf throws, propagate.
-    if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
+    // Per ES §7.1.1 ToPrimitive and the + operator spec: if EITHER operand is
+    // an Object, both sides are reduced via ToPrimitive. When one side is a
+    // Date, the hint is "string" (Date -> toString is what users expect).
+    // If EITHER primitive side is a string, do string concat; otherwise number.
+    let left_is_obj = matches!(
+        left,
+        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)
+            | Value::NativeConstructor(_) | Value::Class(_)
+    );
+    let right_is_obj = matches!(
+        right,
+        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)
+            | Value::NativeConstructor(_) | Value::Class(_)
+    );
+    let is_date = |v: &Value| matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date);
+    if left_is_obj || right_is_obj {
+        // Determine hint: Date triggers string hint per ES §7.1.1.
+        let hint = if is_date(left) || is_date(right) { "string" } else { "number" };
+        let lp = to_primitive(left, Some(hint))?;
+        let rp = to_primitive(right, Some(hint))?;
+        // Both are now primitives.
+        if matches!(&lp, Value::String(_)) || matches!(&rp, Value::String(_)) {
+            Ok(Value::String(format!("{}{}", to_js_string(&lp), to_js_string(&rp))))
+        } else {
+            let l = to_number(&lp);
+            let r = to_number(&rp);
+            Ok(Value::Number(l + r))
+        }
+    } else if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
         let l = to_js_string(left);
         let r = to_js_string(right);
         Ok(Value::String(format!("{}{}", l, r)))

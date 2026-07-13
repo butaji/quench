@@ -225,6 +225,10 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     crate::interpreter::set_strict_mode(was_strict);
     if let Err(e) = result {
         if TOLERATED_EVAL_FAILURES.contains(&filename) {
+            // Clear the stale thrown value so the next harness file (and the
+            // test source) start with a clean slate. Without this, a tolerated
+            // failure leaks ReferenceError-thrown-value into the test eval.
+            crate::value::take_thrown_value();
             eprintln!(
                 "WARNING: harness file {} failed to evaluate (tolerated): {:?}",
                 filename, e
