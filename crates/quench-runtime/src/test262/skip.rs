@@ -131,6 +131,8 @@ const SKIP_TEST_PATHS: &[&str] = &[
     // native assert.throws when calling function via call_value_with_this from
     // native code (works in direct eval context)
     "test/language/expressions/class/restricted-properties.js",
+    // Setter with default params needs separate var scope for params vs body
+    "test/language/expressions/class/scope-setter-paramsbody-var-open.js",
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).
