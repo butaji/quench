@@ -374,6 +374,13 @@ fn detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
 /// non-tolerated harness file) is returned as Err so callers can abort the
 /// run instead of continuing with a partial harness.
 pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
+    // Defensive: clear any stale thrown_value inherited from a previous
+    // harness load or test run. The thread-local THROWN_VALUE persists across
+    // Context boundaries, so a leftover ReferenceError from a tolerated
+    // harness failure (or an uncaught throw from a prior test) would otherwise
+    // be observed by the very first harness file we eval here.
+    crate::value::take_thrown_value();
+
     // STEP 1: Inject Test262Error FIRST (before any JS harness files).
     // assert.js and sta.js both use Test262Error.
     inject_test262_error(ctx);
@@ -590,6 +597,11 @@ assert._toString = function (value) {
 
     // $262 host API
     host262::inject(ctx);
+
+    // Final defensive cleanup: clear any thrown_value that the harness files
+    // (or the helper shim above) may have left set. The first test262 line
+    // sees this state, so we want it clean.
+    crate::value::take_thrown_value();
     Ok(())
 }
 
@@ -598,5 +610,63 @@ assert._toString = function (value) {
 pub fn inject_harness(ctx: &mut Context) {
     if let Err(e) = try_inject_harness(ctx) {
         panic!("test262 harness load failure: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The harness loader must clear any stale thrown_value before evaluating
+    /// the test source. Without this, a tolerated harness failure (e.g.
+    /// resizableArrayBufferUtils.js referencing Uint8Array) would leave a
+    /// ReferenceError-thrown-value in the thread-local, and the very first
+    /// harness file of the NEXT test would observe it as a thrown state.
+    /// Regression: see test262 checkpoint notes around stage 7 leaks.
+    #[test]
+    fn harness_loader_clears_stale_thrown_value_before_harness_eval() {
+        // Plant a stale thrown_value as if a previous test left it behind.
+        let (stale, _) = crate::value::error::create_js_error_with_type(
+            "ReferenceError: stale",
+            "ReferenceError",
+        );
+        crate::value::set_thrown_value(stale);
+
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        // Must not propagate the stale thrown_value; harness load succeeds.
+        try_inject_harness(&mut ctx).expect("harness load should succeed");
+
+        // After harness load, thrown_value must be cleared so test source
+        // starts with a clean slate.
+        assert!(
+            crate::value::take_thrown_value().is_none(),
+            "harness loader must clear thrown_value at end"
+        );
+    }
+
+    /// After try_inject_harness runs, calling it again on a fresh context
+    /// must not be affected by any thrown_value left over from a previous
+    /// successful harness load.
+    #[test]
+    fn harness_loader_clears_thrown_value_left_by_internal_eval() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        try_inject_harness(&mut ctx).expect("first harness load ok");
+
+        // Plant a thrown_value as if a subsequent test's body had thrown and
+        // the harness catch had cleared it — except in this scenario, the
+        // catch didn't fully consume. The next harness load should clear it.
+        let (stale, _) =
+            crate::value::error::create_js_error_with_type("from prior test", "Error");
+        crate::value::set_thrown_value(stale);
+
+        let mut ctx2 = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx2);
+        try_inject_harness(&mut ctx2).expect("second harness load ok");
+        assert!(
+            crate::value::take_thrown_value().is_none(),
+            "harness loader must clear stale thrown_value at start of next load"
+        );
     }
 }
