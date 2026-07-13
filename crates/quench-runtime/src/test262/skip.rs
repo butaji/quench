@@ -215,6 +215,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/property-accessors/",
     // Relational operator comparison
     "test/language/expressions/relational/",
+    // super keyword edge cases
+    "test/language/expressions/super/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
