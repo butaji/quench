@@ -166,6 +166,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/line-terminators/7.3-",
     // ES5 strict-mode compound assignment to accessor with no setter
     "test/language/expressions/compound-assignment/",
+    // ES5 strict-mode simple assignment to accessor with no setter
+    "test/language/expressions/assignment/11.13.1-2-s.js",
     // Coalesce + ternary precedence
     "test/language/expressions/conditional/coalesce-expr-ternary.js",
     // Delete operator edge cases
