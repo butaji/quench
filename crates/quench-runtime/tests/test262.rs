@@ -351,6 +351,28 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_with_assignment_retains_deleted_property_reference() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function test() {
+  var x = 0;
+  var scope = {x: 1};
+  with (scope) { x = (delete scope.x, 2); }
+  assert.sameValue(scope.x, 2);
+  assert.sameValue(x, 0);
+}
+test();
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "with PutValue reference failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_assignment_initializes_hoisted_var() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
