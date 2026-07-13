@@ -310,8 +310,22 @@ pub fn get_symbol_property(val: &Value, symbol: &Value) -> Option<Value> {
 
 fn get_symbol_property_from_object(obj: &Object, symbol: &Value) -> Option<Value> {
     if let Some(sym_key) = extract_symbol_key_name(symbol) {
+        let wrapped = format!("Symbol({})", sym_key);
         if let Some(v) = props_has_symbol_key(&obj.properties, &sym_key) {
             return Some(v);
+        }
+        // Check getter accessor stored via Object.defineProperty with a
+        // Symbol key — these are kept in the getters map under the symbol's
+        // raw payload key.
+        if let Some(g) = obj.get_getter(&wrapped) {
+            if let Some(f) = g.func.clone() {
+                return Some(f);
+            }
+        }
+        if let Some(g) = obj.get_getter(&sym_key) {
+            if let Some(f) = g.func.clone() {
+                return Some(f);
+            }
         }
     }
     if let Some(ref proto) = obj.prototype {
