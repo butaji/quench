@@ -899,6 +899,21 @@ mod tests {
     }
 
     #[test]
+    fn super_in_iife_arrow_calls_super_once() {
+        // Per ES: arrow inside B constructor calls super() which runs A.
+        // A should be called exactly once (count=1).
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "var count = 0; \
+             class A { constructor() { count++; } } \
+             class B extends A { constructor() { (_ => super())(); } } \
+             new B(); \
+             count;"
+        );
+        eprintln!("count: {:?}", v);
+    }
+
+    #[test]
     fn arrow_fn_caller_full_test262() {
         // Load the actual test262 harness and run the failing test logic.
         use crate::test262::harness::try_inject_harness;
