@@ -137,7 +137,7 @@ pub(crate) fn call_js_function_impl(
 
         if param.rest {
             let rest_value = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
-                args[i..].to_vec(),
+                args.get(i..).unwrap_or_default().to_vec(),
             ))));
             found_rest = true;
             if let Some(pattern) = &param.pattern {
