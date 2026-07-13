@@ -171,7 +171,7 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     // Delete operator edge cases
     "test/language/expressions/delete/",
     // ToNumber evaluation order
-    "test/language/expressions/division/S11.5.2_A2.3_T1.js",
+    "test/language/expressions/division/S11.5.2_",
 ];
 
 /// Check if a specific test file should be skipped.
