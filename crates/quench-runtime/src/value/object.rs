@@ -241,6 +241,8 @@ pub struct Object {
     pub extensible: bool,
     /// TComp: internal slots for ArrayLength, PromiseData, ProxyTarget, etc.
     pub slots: Slots,
+    /// TComp: vtable for exotic behavior dispatch (ES 9.1, 9.4, 9.5, 10.x)
+    pub vtable: &'static VTable,
 }
 
 impl fmt::Debug for Object {
@@ -253,6 +255,91 @@ impl fmt::Debug for Object {
             .finish()
     }
 }
+
+// ─── Ordinary VTable implementations ─────────────────────────────────
+
+fn ordinary_get_prototype_of(obj: &Object) -> Option<Rc<RefCell<Object>>> {
+    obj.prototype.clone()
+}
+
+fn ordinary_set_prototype_of(obj: &mut Object, proto: Option<Rc<RefCell<Object>>>) -> bool {
+    if !obj.extensible && obj.prototype.is_some() {
+        return false;
+    }
+    obj.prototype = proto;
+    true
+}
+
+fn ordinary_is_extensible(obj: &Object) -> bool {
+    obj.extensible
+}
+
+fn ordinary_prevent_extensions(obj: &mut Object) -> bool {
+    obj.extensible = false;
+    true
+}
+
+fn ordinary_get_own_property(obj: &Object, key: &str) -> Option<PropertyDescriptor> {
+    obj.get_own_property(key)
+}
+
+fn ordinary_define_own_property(obj: &mut Object, key: &str, desc: &PropertyDescriptor) -> bool {
+    obj.define_own_property(key, desc)
+}
+
+fn ordinary_has_property(obj: &Object, key: &str) -> bool {
+    obj.properties.contains_key(key)
+        || obj.getters.contains_key(key)
+        || obj.setters.contains_key(key)
+        || as_array_index(key).map_or(false, |i| i < obj.elements.len())
+}
+
+fn ordinary_get(obj: &Object, key: &str, _receiver: &Value) -> Value {
+    obj.get(key).unwrap_or(Value::Undefined)
+}
+
+fn ordinary_set(obj: &mut Object, key: &str, value: Value, _receiver: &Value) -> bool {
+    if !obj.extensible {
+        return false;
+    }
+    obj.set(key, value);
+    true
+}
+
+fn ordinary_delete(obj: &mut Object, key: &str) -> bool {
+    obj.properties.shift_remove(key);
+    obj.descriptors.shift_remove(key);
+    obj.getters.shift_remove(key);
+    obj.setters.shift_remove(key);
+    if let Some(idx) = as_array_index(key) {
+        if idx < obj.elements.len() {
+            obj.elements[idx] = Value::Undefined;
+            obj.holes.insert(idx);
+        }
+    }
+    true
+}
+
+fn ordinary_own_property_keys(obj: &Object) -> Vec<String> {
+    obj.own_keys()
+}
+
+/// VTable for ordinary (non-exotic) objects.
+pub static ORDINARY_VTABLE: VTable = VTable {
+    get_prototype_of: ordinary_get_prototype_of,
+    set_prototype_of: ordinary_set_prototype_of,
+    is_extensible: ordinary_is_extensible,
+    prevent_extensions: ordinary_prevent_extensions,
+    get_own_property: ordinary_get_own_property,
+    define_own_property: ordinary_define_own_property,
+    has_property: ordinary_has_property,
+    get: ordinary_get,
+    set: ordinary_set,
+    delete: ordinary_delete,
+    own_property_keys: ordinary_own_property_keys,
+    call: None,
+    construct: None,
+};
 
 impl Object {
     /// Create a new ordinary object with no prototype
@@ -274,6 +361,7 @@ impl Object {
             holes: HashSet::new(),
             extensible: true,
             slots: std::collections::HashMap::new(),
+            vtable: &ORDINARY_VTABLE,
         }
     }
 
@@ -296,6 +384,7 @@ impl Object {
             holes: HashSet::new(),
             extensible: true,
             slots: std::collections::HashMap::new(),
+            vtable: &ORDINARY_VTABLE,
         }
     }
 
