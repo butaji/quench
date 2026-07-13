@@ -70,15 +70,16 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
         .body
         .as_ref()
         .map(|b| {
-            let mut stmts: Vec<Statement> = b
-                .statements
-                .iter()
-                .filter_map(lower_stmt)
-                .collect();
+            let mut stmts: Vec<Statement> = b.statements.iter().filter_map(lower_stmt).collect();
             // Add directives (e.g. "use strict") before statements so
             // eval-time check_use_strict can find them.
             for d in &b.directives {
-                stmts.insert(0, Statement::Expression(Box::new(Expression::String(d.expression.value.to_string()))));
+                stmts.insert(
+                    0,
+                    Statement::Expression(Box::new(Expression::String(
+                        d.expression.value.to_string(),
+                    ))),
+                );
             }
             stmts
         })
@@ -103,7 +104,11 @@ pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
                 _ => "arg".to_string(),
             };
             let default = lower_expr(&assign.right).ok().map(Box::new);
-            Param { name, default, rest: false }
+            Param {
+                name,
+                default,
+                rest: false,
+            }
         }
         _ => Param::new("arg"),
     }
@@ -115,9 +120,7 @@ pub fn lower_formal_params(params: &ast::FormalParameters) -> Vec<Param> {
     // Handle rest parameter: stored separately in FormalParameters.rest
     if let Some(rest) = &params.rest {
         let name = match &rest.argument.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
-                ident.name.as_str().to_string()
-            }
+            ast::BindingPatternKind::BindingIdentifier(ident) => ident.name.as_str().to_string(),
             _ => "arg".to_string(),
         };
         result.push(Param::rest(&name));

@@ -147,7 +147,7 @@ verifyProperty(f2, "length", {
         let mut ctx = Context::new().unwrap();
         let r = ctx.eval(
             "var f1 = (x = 42) => {}; \
-             Object.prototype.hasOwnProperty.call(f1, 'length');"
+             Object.prototype.hasOwnProperty.call(f1, 'length');",
         );
         eprintln!("hasOwn length: {:?}", r);
     }
@@ -155,15 +155,20 @@ verifyProperty(f2, "length", {
     #[test]
     fn debug_arrow_length_delete() {
         let mut ctx = Context::new().unwrap();
-        let r = ctx.eval(
-            "var f1 = (x = 42) => {}; \
+        let r = ctx
+            .eval(
+                "var f1 = (x = 42) => {}; \
              var d = delete f1.length; \
              var stillHas = Object.prototype.hasOwnProperty.call(f1, 'length'); \
-             [d, stillHas, f1.length];"
-        ).unwrap();
+             [d, stillHas, f1.length];",
+            )
+            .unwrap();
         if let crate::value::Value::Object(o) = r {
             let e = o.borrow().elements.clone();
-            eprintln!("delete results: d={:?}, stillHas={:?}, len={:?}", e[0], e[1], e[2]);
+            eprintln!(
+                "delete results: d={:?}, stillHas={:?}, len={:?}",
+                e[0], e[1], e[2]
+            );
         }
     }
 
@@ -181,7 +186,10 @@ verifyProperty(f2, "length", {
         let test_src = include_str!(
             "../../../../tests/test262/test/language/expressions/arrow-function/length-dflt.js"
         );
-        let test_body = test_src.split_once("---*/").map(|(_, b)| b).unwrap_or(test_src);
+        let test_body = test_src
+            .split_once("---*/")
+            .map(|(_, b)| b)
+            .unwrap_or(test_src);
         let combined = format!("{}\n{}", harness_body, test_body);
         let r = host.run_script(&combined);
         assert!(r.is_ok(), "got: {:?}", r);
@@ -201,7 +209,10 @@ verifyProperty(f2, "length", {
         let test_src = include_str!(
             "../../../../tests/test262/test/language/expressions/arrow-function/length-dflt.js"
         );
-        let test_body = test_src.split_once("---*/").map(|(_, b)| b).unwrap_or(test_src);
+        let test_body = test_src
+            .split_once("---*/")
+            .map(|(_, b)| b)
+            .unwrap_or(test_src);
         // Save a reference to each f and check which one we're called on.
         let wrap = r#"
 "use strict";
@@ -1623,7 +1634,11 @@ assert.throws(Test262Error, function() {
 assert.sameValue(log, 'accessThrower');
 "#,
         );
-        assert!(result.is_ok(), "coerce-symbol-to-prim-err full failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "coerce-symbol-to-prim-err full failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1636,9 +1651,8 @@ assert.sameValue(log, 'accessThrower');
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
         let test262_dir = repo_root.join("tests/test262");
-        let test_path = repo_root.join(
-            "tests/test262/test/language/expressions/addition/coerce-symbol-to-prim-err.js",
-        );
+        let test_path = repo_root
+            .join("tests/test262/test/language/expressions/addition/coerce-symbol-to-prim-err.js");
 
         let source = std::fs::read_to_string(&test_path).unwrap();
         let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
@@ -1706,11 +1720,7 @@ if (x !== 'outside') throw new Error('outer x wrong: ' + x);
 if (probe() !== 'inside') throw new Error('probe() wrong: ' + probe());
 "#,
         );
-        assert!(
-            result.is_ok(),
-            "block let shadowing failed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "block let shadowing failed: {:?}", result);
     }
 
     #[test]
@@ -1733,11 +1743,7 @@ try {
 }
 "#,
         );
-        assert!(
-            result.is_ok(),
-            "block-scope leak test failed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "block-scope leak test failed: {:?}", result);
     }
 
     #[test]
@@ -1752,11 +1758,13 @@ try {
     fn debug_class_extends_promise() {
         let mut ctx = crate::Context::new().unwrap();
         // Create Custom class extending Promise
-        let result = ctx.eval(r#"
+        let result = ctx.eval(
+            r#"
 class Custom extends Promise {}
 Custom.resolve = function(...args) { return args; };
 Custom.resolve;
-"#);
+"#,
+        );
         eprintln!("Custom.resolve = {:?}", result);
         assert!(result.is_ok(), "Custom.resolve failed: {:?}", result);
     }
@@ -1764,11 +1772,13 @@ Custom.resolve;
     #[test]
     fn debug_promise_race_call() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(r#"
+        let result = ctx.eval(
+            r#"
 class Custom extends Promise {}
 Custom.resolve = function(...args) { return args; };
 Promise.race.call(Custom, [1, 2, 3]);
-"#);
+"#,
+        );
         match &result {
             Ok(v) => println!("Promise.race.call result = {:?}", v),
             Err(e) => eprintln!("Promise.race.call ERROR = {:?}", e),
@@ -1782,33 +1792,45 @@ Promise.race.call(Custom, [1, 2, 3]);
         // Step 1: Create class
         ctx.eval("class Custom extends Promise {}").unwrap();
         // Step 2: Set resolve
-        ctx.eval("Custom.resolve = function(...args) { return args; };").unwrap();
+        ctx.eval("Custom.resolve = function(...args) { return args; };")
+            .unwrap();
         // Step 3: Get resolve
         let resolve = ctx.eval("Custom.resolve");
         eprintln!("Custom.resolve = {:?}", resolve);
-        assert!(resolve.is_ok(), "Custom.resolve lookup failed: {:?}", resolve);
+        assert!(
+            resolve.is_ok(),
+            "Custom.resolve lookup failed: {:?}",
+            resolve
+        );
     }
 
     #[test]
     fn debug_quenchhost_promise_race() {
         let mut host = QuenchHost::new();
-        let result = host.run_script(r#"
+        let result = host.run_script(
+            r#"
 class Custom extends Promise {}
 Custom.resolve = function(...args) { return args; };
 Promise.race.call(Custom, [1, 2, 3]);
-"#);
+"#,
+        );
         match &result {
             Ok(_) => println!("SUCCESS"),
             Err(e) => eprintln!("ERROR: {}", e),
         }
-        assert!(result.is_ok(), "QuenchHost Promise.race failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "QuenchHost Promise.race failed: {:?}",
+            result
+        );
     }
 
     #[test]
     fn debug_quenchhost_promise_race_exact_test() {
         // Exact test from test262: Promise/race/invoke-resolve-on-promises-every-iteration-of-custom.js
         let mut host = QuenchHost::new();
-        let result = host.run_script(r#"
+        let result = host.run_script(
+            r#"
 class Custom extends Promise {}
 let values = [1, 1, 1];
 let cresolveCallCount = 0;
@@ -1824,7 +1846,8 @@ Promise.resolve = function(...args) {
   return boundPromiseResolve(...args);
 };
 Promise.race.call(Custom, values);
-"#);
+"#,
+        );
         match &result {
             Ok(_) => println!("SUCCESS"),
             Err(e) => eprintln!("ERROR: {}", e),
@@ -1866,7 +1889,8 @@ Promise.race.call(Custom, values);
     fn debug_deep_equal_override() {
         // Test that assert.deepEqual can be overridden in JS
         let mut host = QuenchHost::new();
-        let result = host.run_script(r#"
+        let result = host.run_script(
+            r#"
             // Check what assert.deepEqual is
             console.log("typeof assert.deepEqual:", typeof assert.deepEqual);
             
@@ -1881,7 +1905,8 @@ Promise.race.call(Custom, values);
             } catch(e) {
                 console.log("Correctly threw:", e.message || e);
             }
-        "#);
+        "#,
+        );
         match &result {
             Ok(_) => println!("SUCCESS"),
             Err(e) => eprintln!("ERROR: {}", e),
@@ -1897,7 +1922,7 @@ Promise.race.call(Custom, values);
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
         let harness_dir = repo_root.join("tests/test262/harness");
-        
+
         // Load deepEqual.js
         let deep_equal_js = std::fs::read_to_string(harness_dir.join("deepEqual.js"))
             .expect("Failed to read deepEqual.js");
@@ -1912,7 +1937,7 @@ Promise.race.call(Custom, values);
         } else {
             deep_equal_js.clone()
         };
-        
+
         let test_code = r#"
             assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
             console.log("Basic deepEqual passed");
@@ -1924,7 +1949,7 @@ Promise.race.call(Custom, values);
                 console.log("Correctly threw:", e.message || e);
             }
         "#;
-        
+
         let result = host.run_script(&format!("{}\n{}", js_code, test_code));
         match &result {
             Ok(_) => println!("SUCCESS with JS deepEqual"),
@@ -1940,7 +1965,7 @@ Promise.race.call(Custom, values);
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
         let harness_dir = repo_root.join("tests/test262/harness");
-        
+
         fn load_js(path: &std::path::Path) -> String {
             let content = std::fs::read_to_string(path).expect("Failed to read file");
             if let Some(s) = content.find("/*---") {
@@ -1954,16 +1979,19 @@ Promise.race.call(Custom, values);
                 content
             }
         }
-        
+
         let property_helper = load_js(&harness_dir.join("propertyHelper.js"));
         let deep_equal = load_js(&harness_dir.join("deepEqual.js"));
-        
+
         let test_code = r#"
             assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
             console.log("Basic deepEqual passed");
         "#;
-        
-        let result = host.run_script(&format!("{}\n{}\n{}", property_helper, deep_equal, test_code));
+
+        let result = host.run_script(&format!(
+            "{}\n{}\n{}",
+            property_helper, deep_equal, test_code
+        ));
         match &result {
             Ok(_) => println!("SUCCESS with propertyHelper"),
             Err(e) => eprintln!("ERROR with propertyHelper: {}", e),
@@ -1975,21 +2003,23 @@ Promise.race.call(Custom, values);
     fn debug_deep_equal_full_harness() {
         use crate::test262::harness::HarnessLoader;
         use crate::test262::metadata::Test262Metadata;
-        
+
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
         let test262_dir = repo_root.join("tests/test262");
         let test_path = repo_root.join("tests/test262/test/harness/deepEqual-deep.js");
-        
+
         let source = std::fs::read_to_string(&test_path).expect("Failed to read test");
         let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
         let meta = Test262Metadata::parse(&source).expect("Failed to parse meta");
-        
-        let harness_code = harness.build_script("", &meta.includes)
+
+        let harness_code = harness
+            .build_script("", &meta.includes)
             .expect("Failed to build harness");
-        
+
         // Test the exact failing case with detailed debug
-        let debug = format!(r#"
+        let debug = format!(
+            r#"
             {}
             // Direct JS _compare call
             var result = assert.deepEqual._compare([true], [false]);
@@ -1998,19 +2028,22 @@ Promise.race.call(Custom, values);
             // Try direct comparison
             var cmp = assert.deepEqual._compare({{ a: {{ x: 1 }}, b: [true] }}, {{ a: {{ x: 1 }}, b: [false] }});
             console.log("_compare complex = " + cmp);
-        "#, harness_code);
-        
+        "#,
+            harness_code
+        );
+
         let mut host = QuenchHost::new();
         let r = host.run_script(&debug);
         eprintln!("Debug: {:?}", r);
-        
+
         // Run actual test
-        let script = harness.build_script(&source, &meta.includes)
+        let script = harness
+            .build_script(&source, &meta.includes)
             .expect("Failed to build script");
         let mut host2 = QuenchHost::new();
         let r2 = host2.run_script(&script);
         eprintln!("Full test: {:?}", r2);
-        
+
         assert!(r2.is_ok(), "Test failed: {:?}", r2);
     }
 
@@ -2018,9 +2051,10 @@ Promise.race.call(Custom, values);
     fn debug_assert_throws_test262Error() {
         // Test assert.throws with Test262Error
         let mut host = QuenchHost::new();
-        
+
         // Run the test with deepEqual that should throw
-        let result = host.run_script(r#"
+        let result = host.run_script(
+            r#"
             // First test: direct deepEqual call
             try {
                 assert.deepEqual({}, { a: { x: 1 }, b: [true] });
@@ -2056,8 +2090,9 @@ Promise.race.call(Custom, values);
             } catch(e) {
                 console.log("Test 4 - direct assert threw:", e.name, e.message || e);
             }
-        "#);
-        
+        "#,
+        );
+
         match &result {
             Ok(_) => println!("SUCCESS"),
             Err(e) => eprintln!("ERROR: {}", e),

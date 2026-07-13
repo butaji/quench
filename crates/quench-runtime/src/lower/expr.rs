@@ -2,10 +2,10 @@
 
 use super::helpers::LowerError;
 use super::helpers::{assign_op_to_bin, lower_bin_op, lower_logical_op, lower_unary_op};
-use super::stmt::lower_formal_params;
 use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
 use super::literals::{lower_tagged_template, lower_template_literal};
 use super::opt_chain::lower_opt_chain;
+use super::stmt::lower_formal_params;
 use crate::ast::Statement;
 use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, Param, PropertyKey, PropertyValue, UpdateOp,

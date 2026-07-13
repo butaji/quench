@@ -1,6 +1,8 @@
 //! Function member access evaluation
 
-use crate::value::{create_js_error_with_type, set_thrown_value, JsError, NativeFunction, Value, ValueFunction};
+use crate::value::{
+    create_js_error_with_type, set_thrown_value, JsError, NativeFunction, Value, ValueFunction,
+};
 use std::rc::Rc;
 
 /// Evaluate member access on a JS function

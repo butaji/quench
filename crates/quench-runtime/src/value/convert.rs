@@ -391,13 +391,22 @@ fn parse_number_string(s: &str) -> Option<f64> {
     if trimmed.is_empty() {
         return Some(0.0);
     }
-    if let Some(rest) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
         return u64::from_str_radix(rest, 16).ok().map(|n| n as f64);
     }
-    if let Some(rest) = trimmed.strip_prefix("0b").or_else(|| trimmed.strip_prefix("0B")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("0b")
+        .or_else(|| trimmed.strip_prefix("0B"))
+    {
         return u64::from_str_radix(rest, 2).ok().map(|n| n as f64);
     }
-    if let Some(rest) = trimmed.strip_prefix("0o").or_else(|| trimmed.strip_prefix("0O")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+    {
         return u64::from_str_radix(rest, 8).ok().map(|n| n as f64);
     }
     trimmed.parse::<f64>().ok()

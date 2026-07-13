@@ -122,9 +122,9 @@ pub(crate) fn spec_parse_float(string: &str) -> f64 {
     let sign = parse_float_sign(&mut chars);
 
     // Per ECMA-262 StrNumericLiteral, parseFloat accepts the literal "Infinity"
-// (case-sensitive — only the exact capital-I spelling) after the optional
-// sign. parseFloat("Infinity") === Infinity, parseFloat("-Infinity") ===
-// -Infinity, but parseFloat("infinity") === NaN.
+    // (case-sensitive — only the exact capital-I spelling) after the optional
+    // sign. parseFloat("Infinity") === Infinity, parseFloat("-Infinity") ===
+    // -Infinity, but parseFloat("infinity") === NaN.
     let rest: String = chars.clone().collect();
     if rest == "Infinity" {
         return f64::INFINITY * sign;

@@ -419,7 +419,8 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
             let (err_val, js_err) =
                 crate::value::error::create_js_error_with_type(&message, "Test262Error");
             if let Value::Object(o) = &err_val {
-                o.borrow_mut().set("name", Value::String("Test262Error".to_string()));
+                o.borrow_mut()
+                    .set("name", Value::String("Test262Error".to_string()));
             }
             crate::value::set_thrown_value(err_val);
             return Err(js_err);
@@ -674,8 +675,7 @@ mod tests {
         // Plant a thrown_value as if a subsequent test's body had thrown and
         // the harness catch had cleared it — except in this scenario, the
         // catch didn't fully consume. The next harness load should clear it.
-        let (stale, _) =
-            crate::value::error::create_js_error_with_type("from prior test", "Error");
+        let (stale, _) = crate::value::error::create_js_error_with_type("from prior test", "Error");
         crate::value::set_thrown_value(stale);
 
         let mut ctx2 = Context::new().unwrap();

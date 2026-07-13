@@ -107,7 +107,11 @@ fn test_deep_equal_objects_with_different_arrays() {
     "#;
     let result = host.run_script(script);
     eprintln!("deepEqual objects-with-arrays result: {:?}", result);
-    assert!(result.is_ok(), "deepEqual should throw for objects with different arrays: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "deepEqual should throw for objects with different arrays: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -119,7 +123,11 @@ fn test_deep_equal_passes_for_equal_nested_objects() {
     "#;
     let result = host.run_script(script);
     eprintln!("deepEqual equal objects result: {:?}", result);
-    assert!(result.is_ok(), "deepEqual should pass for equal objects: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "deepEqual should pass for equal objects: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -133,7 +141,11 @@ fn test_deep_equal_throws_for_missing_property() {
     "#;
     let result = host.run_script(script);
     eprintln!("deepEqual missing property result: {:?}", result);
-    assert!(result.is_ok(), "deepEqual should throw for missing property: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "deepEqual should throw for missing property: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -147,7 +159,11 @@ fn test_deep_equal_boxed_primitives() {
     "#;
     let result = host.run_script(script);
     eprintln!("boxed primitives result: {:?}", result);
-    assert!(result.is_ok(), "boxed primitives should equal their primitive values: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "boxed primitives should equal their primitive values: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -163,7 +179,11 @@ fn test_property_is_enumerable() {
     "#;
     let result = host.run_script(script);
     eprintln!("propertyIsEnumerable result: {:?}", result);
-    assert!(result.is_ok(), "propertyIsEnumerable should work correctly: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "propertyIsEnumerable should work correctly: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -181,7 +201,11 @@ fn test_for_in_with_defined_property() {
     "#;
     let result = host.run_script(script);
     eprintln!("for-in result: {:?}", result);
-    assert!(result.is_ok(), "for-in should enumerate defined enumerable property: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "for-in should enumerate defined enumerable property: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -199,7 +223,11 @@ fn test_own_keys_with_defined_property() {
     "#;
     let result = host.run_script(script);
     eprintln!("own keys result: {:?}", result);
-    assert!(result.is_ok(), "own keys should include enumerable property: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "own keys should include enumerable property: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -302,11 +330,7 @@ if (x !== 'outside') throw new Error('outer x wrong: ' + x);
 if (probe() !== 'inside') throw new Error('probe() wrong: ' + probe());
 "#,
     );
-    assert!(
-        result.is_ok(),
-        "block let shadowing failed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "block let shadowing failed: {:?}", result);
 }
 
 #[test]

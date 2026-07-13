@@ -51,7 +51,10 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
         .unwrap_or_default();
 
     let result = match &fn_value {
-        Value::NativeFunction(_) | Value::Function(_) | Value::Object(_) | Value::Class(_)
+        Value::NativeFunction(_)
+        | Value::Function(_)
+        | Value::Object(_)
+        | Value::Class(_)
         | Value::NativeConstructor(_) => {
             crate::eval::call_value_with_this(fn_value.clone(), vec![], Value::Undefined)
         }

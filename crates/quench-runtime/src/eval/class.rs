@@ -160,7 +160,9 @@ fn build_constructor_env(
     // flag is set after super() succeeds, so that a second super() inside
     // the same constructor (or inside an arrow) throws ReferenceError per
     // ES §8.1.1.3.1.
-    call_env.current_scope_mut().set_this_value(this_val.clone());
+    call_env
+        .current_scope_mut()
+        .set_this_value(this_val.clone());
 
     if let Some(ref sc) = class.super_class {
         let sv = eval_expression(sc, env, false)?;
@@ -227,7 +229,8 @@ fn call_super_or_default(
 pub fn instantiate_class_from_ast(class: ClassValue, args: Vec<Value>) -> Result<Value, JsError> {
     // Use the current context's global environment so that global variable modifications
     // in the constructor persist after instantiation.
-    let env = crate::context::get_current_env().unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+    let env = crate::context::get_current_env()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
     instantiate_class_from_ast_with_env(class, args, &env)
 }
 

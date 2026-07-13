@@ -99,7 +99,10 @@ pub fn assert_deep_equal(args: Vec<Value>) -> Result<Value, JsError> {
             crate::value::error::create_js_error_with_type(&msg, "Test262Error");
         // Set name property explicitly
         if let crate::value::Value::Object(o) = &err_val {
-            o.borrow_mut().set("name", crate::value::Value::String("Test262Error".to_string()));
+            o.borrow_mut().set(
+                "name",
+                crate::value::Value::String("Test262Error".to_string()),
+            );
         }
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
@@ -193,17 +196,22 @@ fn deep_equal_objects(a: &Value, b: &Value) -> bool {
 
 /// Check if an object looks like an array: has "length" and all keys are numeric
 fn is_array_like(obj: &crate::value::Object) -> bool {
-    let length_ok = obj.get("length").map(|v| {
-        if let Value::Number(n) = v {
-            n.is_finite() && n >= 0.0
-        } else {
-            false
-        }
-    }).unwrap_or(false);
+    let length_ok = obj
+        .get("length")
+        .map(|v| {
+            if let Value::Number(n) = v {
+                n.is_finite() && n >= 0.0
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
     if !length_ok {
         return false;
     }
-    obj.own_keys().iter().all(|k| k.parse::<usize>().is_ok() || k == "length")
+    obj.own_keys()
+        .iter()
+        .all(|k| k.parse::<usize>().is_ok() || k == "length")
 }
 
 /// makeNativeError - factory for native error objects

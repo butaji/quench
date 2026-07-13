@@ -461,12 +461,9 @@ fn get_class_property_descriptor(
     prop: &str,
 ) -> Result<Value, JsError> {
     match prop {
-        "name" => make_property_descriptor_string(
-            &c.name.clone().unwrap_or_default(),
-            false,
-            false,
-            true,
-        ),
+        "name" => {
+            make_property_descriptor_string(&c.name.clone().unwrap_or_default(), false, false, true)
+        }
         "prototype" => Ok(Value::Undefined), // handled by eval_class_member
         _ => Ok(Value::Undefined),
     }
@@ -580,7 +577,9 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             // Fallback if Function.prototype not yet registered.
             let mut proto = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
             proto.set("constructor", Value::String("Function".to_string()));
-            Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(proto))))
+            Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                proto,
+            ))))
         }
         Value::NativeFunction(nf) => Ok(nf
             .prototype

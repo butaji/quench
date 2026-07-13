@@ -66,9 +66,7 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
             | Value::NativeConstructor(_)
             | Value::Class(_)
     );
-    let is_date = |v: &Value| {
-        matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date)
-    };
+    let is_date = |v: &Value| matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date);
     if left_is_obj || right_is_obj {
         // Date triggers string hint per ES §7.1.1 + Date.prototype[@@toPrimitive]
         // semantics; default hint still lets @@toPrimitive choose the order.

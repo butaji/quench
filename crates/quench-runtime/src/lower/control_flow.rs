@@ -86,13 +86,12 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
 
     // When the left side is a VariableDeclaration, also emit the var/let/const
     // declaration so the binding is created in the environment.
-    let var_decl_stmt = if let ast::ForStatementLeft::VariableDeclaration(ref decl) =
-        &for_in_stmt.left
-    {
-        crate::lower::stmt::lower_var_decl(decl)
-    } else {
-        None
-    };
+    let var_decl_stmt =
+        if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_in_stmt.left {
+            crate::lower::stmt::lower_var_decl(decl)
+        } else {
+            None
+        };
 
     let variable = lower_for_lhs(&for_in_stmt.left)?;
     let for_in_expr = Statement::Expression(Box::new(Expression::ForIn {
@@ -116,13 +115,12 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
 
     // When the left side is a VariableDeclaration, also emit the var/let/const
     // declaration so the binding is created in the environment.
-    let var_decl_stmt = if let ast::ForStatementLeft::VariableDeclaration(ref decl) =
-        &for_of_stmt.left
-    {
-        crate::lower::stmt::lower_var_decl(decl)
-    } else {
-        None
-    };
+    let var_decl_stmt =
+        if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_of_stmt.left {
+            crate::lower::stmt::lower_var_decl(decl)
+        } else {
+            None
+        };
 
     let variable = lower_for_lhs(&for_of_stmt.left)?;
     let for_of_expr = Statement::Expression(Box::new(Expression::ForOf {
