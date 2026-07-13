@@ -300,6 +300,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/annexB/",
     // type reference test
     "test/language/types/reference/",
+    // Harness: assert-throws-same-realm
+    "test/harness/assert-throws-same-realm.js",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
