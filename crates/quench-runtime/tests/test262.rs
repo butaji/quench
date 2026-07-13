@@ -351,6 +351,24 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_create_realm_uses_its_primitive_prototypes() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var other = $262.createRealm().global;
+other.Number.prototype.test262 = 'number prototype';
+other.value = 1;
+assert.sameValue(other.eval('value.test262'), 'number prototype');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "cross-realm primitive lookup failed: {:?}",
+        result
+    );
+}
+
+#[test]
 #[ignore = "run with --ignored to activate staged runner"]
 fn test262_staged() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

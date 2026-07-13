@@ -41,13 +41,74 @@ fn realm_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     realm_ctx.eval(&code)
 }
 
-/// $262.createRealm - creates a new realm/context
+/// $262.createRealm - creates a realm-like global facade.
 fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
+    let global = create_realm_global()?;
     let mut realm = Object::new(ObjectKind::Ordinary);
+    realm.set("global", global);
     realm.set("evalScript", make_native(realm_eval_script));
     realm.set("gc", make_native(host_262_gc));
     realm.set("detachArrayBuffer", make_native(host_262_detach_buffer));
     Ok(Value::Object(Rc::new(std::cell::RefCell::new(realm))))
+}
+
+fn create_realm_global() -> Result<Value, JsError> {
+    let mut ctx = Context::new()?;
+    mirror_realm_bindings(&mut ctx);
+    let Value::Object(global) = ctx.get_global("globalThis").unwrap_or(Value::Undefined) else {
+        return Err(JsError("createRealm: globalThis missing".to_string()));
+    };
+    let eval_global = Rc::clone(&global);
+    global.borrow_mut().set(
+        "eval",
+        make_native(move |args| eval_realm_global(&eval_global, args)),
+    );
+    Ok(Value::Object(global))
+}
+
+fn mirror_realm_bindings(ctx: &mut Context) {
+    let names = ["Number", "String", "Boolean", "Symbol"];
+    let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
+        return;
+    };
+    for name in names {
+        if let Some(value) = ctx.get_global(name) {
+            global.borrow_mut().set(name, value);
+        }
+    }
+}
+
+fn eval_realm_global(
+    global: &Rc<std::cell::RefCell<Object>>,
+    args: Vec<Value>,
+) -> Result<Value, JsError> {
+    let code = args
+        .first()
+        .map(crate::value::to_js_string)
+        .unwrap_or_default();
+    let mut ctx = Context::new()?;
+    copy_global_properties(global, &mut ctx);
+    let result = ctx.eval(&code)?;
+    sync_global_properties(&ctx, global);
+    Ok(result)
+}
+
+fn copy_global_properties(global: &Rc<std::cell::RefCell<Object>>, ctx: &mut Context) {
+    for key in global.borrow().own_keys() {
+        if let Some(value) = global.borrow().get(&key) {
+            ctx.set_global(key, value);
+        }
+    }
+}
+
+fn sync_global_properties(ctx: &Context, global: &Rc<std::cell::RefCell<Object>>) {
+    if let Some(Value::Object(evaluated)) = ctx.get_global("globalThis") {
+        for key in evaluated.borrow().own_keys() {
+            if let Some(value) = evaluated.borrow().get(&key) {
+                global.borrow_mut().set(&key, value);
+            }
+        }
+    }
 }
 
 /// $262.evalScript - evaluates code in the current context
