@@ -424,6 +424,31 @@ fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsError>
                     return Ok(Value::Boolean(true));
                 }
             }
+        } else if let Value::Class(c) = &this_val {
+            if let Some(key_str) = get_property_key(key_val) {
+                // Has own property "name" if explicit named class,
+                // OR if there's a static method called "name" evaluated.
+                if key_str == "name" {
+                    if c.name.is_some() {
+                        return Ok(Value::Boolean(true));
+                    }
+                    // Check if any static method is named "name"
+                    for (k, _, _) in &c.static_methods {
+                        let k_str = match k {
+                            crate::ast::PropertyKey::Ident(s) => s,
+                            crate::ast::PropertyKey::String(s) => s,
+                            _ => continue,
+                        };
+                        if k_str == "name" {
+                            return Ok(Value::Boolean(true));
+                        }
+                    }
+                    return Ok(Value::Boolean(false));
+                }
+                if key_str == "prototype" {
+                    return Ok(Value::Boolean(true)); // classes always have prototype
+                }
+            }
         }
     }
     Ok(Value::Boolean(false))
