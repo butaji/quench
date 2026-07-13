@@ -182,24 +182,27 @@ pub fn promise_then_impl(args: Vec<Value>) -> Result<Value, JsError> {
         obj.promise_data = Some(PromiseObjectData::new());
     }
 
-    if let Some(Value::Object(ref obj_rc)) = current_promise_this {
-        let state = obj_rc
-            .borrow()
-            .promise_data
-            .as_ref()
-            .map(|d| d.state.clone());
+    // Clone the Rc from the Value to avoid holding a borrow of the Value
+    // while calling queue_callback_on_promise (which borrows the Object)
+    if let Some(Value::Object(obj_rc)) = current_promise_this {
+        // Check state inside a scoped block to release the RefCell borrow
+        // before calling queue_callback_on_promise
+        let state = {
+            let obj = obj_rc.borrow();
+            obj.promise_data.as_ref().map(|d| d.state.clone())
+        };
         match state {
             Some(crate::value::object::PromiseState::Fulfilled)
             | Some(crate::value::object::PromiseState::Rejected) => {
                 let callback =
                     create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
-                queue_callback_on_promise(obj_rc, callback);
-                enqueue_promise_reactions(obj_rc);
+                queue_callback_on_promise(&obj_rc, callback);
+                enqueue_promise_reactions(&obj_rc);
             }
             Some(crate::value::object::PromiseState::Pending) => {
                 let callback =
                     create_callback_promise(on_fulfilled, on_rejected, Rc::clone(&new_promise_rc));
-                queue_callback_on_promise(obj_rc, callback);
+                queue_callback_on_promise(&obj_rc, callback);
             }
             None => {}
         }
