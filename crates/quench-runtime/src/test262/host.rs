@@ -84,6 +84,23 @@ mod tests {
     }
 
     #[test]
+    fn tmp_strict_fn_eval() {
+        let mut host = QuenchHost::new();
+        let r = host.run_script(
+            r#"
+var s = "none";
+(function() {
+  'use strict';
+  try { undefinedGlobalXYZ = 1; s = "sloppy"; }
+  catch (e) { s = "strict:" + (e instanceof ReferenceError); }
+})();
+if (s !== "strict:true") throw new Error("strict not active: " + s);
+"#,
+        );
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
     fn test_new_math_error_type() {
         let mut host = QuenchHost::new();
         let result = host.run_script("new Math");

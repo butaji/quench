@@ -115,6 +115,23 @@ fn assign_to_identifier(
                 ));
             }
         }
+        // Strict mode: if this binding is a global property on globalThis and
+        // its descriptor marks it non-writable, throw TypeError. Covers
+        // NaN/Infinity/undefined (Annex 16.1 / ES5 §15.1.1) and any future
+        // read-only globals.
+        if crate::interpreter::is_strict_mode() {
+            if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
+                if let Some(flags) = global_obj.borrow().get_descriptor(name) {
+                    if !flags.writable {
+                        let (_, js_err) = crate::value::error::create_js_error_with_type(
+                            "Cannot assign to read only property",
+                            "TypeError",
+                        );
+                        return Err(js_err);
+                    }
+                }
+            }
+        }
         env.borrow_mut().set(name, value.clone());
     } else {
         // Strict mode: assignment to unresolvable reference must throw ReferenceError.
@@ -496,6 +513,15 @@ mod tests {
     }
 
     #[test]
+    fn valueof_throw_propagates_in_addition() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval(
+            "var caught; try { 1 + {valueOf: function() {throw \"err\"}}; } catch (e) { caught = e; } caught;"
+        );
+        assert_eq!(res.unwrap(), crate::value::Value::String("err".to_string()));
+    }
+
+    #[test]
     fn sloppy_assign_to_undeclared_creates_global() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("undeclared_var = 42;").unwrap();
@@ -610,5 +636,51 @@ mod tests {
         // Run in same eval to avoid any state issue
         let v = ctx.eval("var s = Symbol(); s.test262;").unwrap();
         assert_eq!(v, crate::value::Value::String("sym-proto".to_string()));
+    }
+
+    #[test]
+    fn strict_assign_to_NaN_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("\"use strict\"; NaN = 12;");
+        assert!(res.is_err(), "strict assignment to NaN should throw");
+        let msg = res.unwrap_err().0;
+        assert!(
+            msg.contains("TypeError"),
+            "expected TypeError, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn strict_assign_to_undefined_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("\"use strict\"; undefined = 12;");
+        assert!(res.is_err(), "strict assignment to undefined should throw");
+        let msg = res.unwrap_err().0;
+        assert!(
+            msg.contains("TypeError"),
+            "expected TypeError, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn strict_assign_to_Infinity_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("\"use strict\"; Infinity = 12;");
+        assert!(res.is_err(), "strict assignment to Infinity should throw");
+        let msg = res.unwrap_err().0;
+        assert!(
+            msg.contains("TypeError"),
+            "expected TypeError, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn sloppy_assign_to_NaN_no_throw() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval("NaN = 12;");
+        assert!(res.is_ok(), "sloppy assignment to NaN should not throw");
     }
 }

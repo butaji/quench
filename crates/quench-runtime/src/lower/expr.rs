@@ -103,7 +103,10 @@ fn lower_object_prop(prop: &ast::ObjectProperty) -> Result<(PropertyKey, Propert
     // Check if it's a getter or setter
     if prop.kind == ast::PropertyKind::Get {
         let body = if let ast::Expression::FunctionExpression(func) = &prop.value {
-            func.body.as_ref().map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect()).unwrap_or_default()
+            func.body
+                .as_ref()
+                .map(|b| super::helpers::lower_fn_body(b))
+                .unwrap_or_default()
         } else {
             vec![]
         };
@@ -124,7 +127,10 @@ fn lower_object_prop(prop: &ast::ObjectProperty) -> Result<(PropertyKey, Propert
             "value".to_string()
         };
         let body = if let ast::Expression::FunctionExpression(func) = &prop.value {
-            func.body.as_ref().map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect()).unwrap_or_default()
+            func.body
+                .as_ref()
+                .map(|b| super::helpers::lower_fn_body(b))
+                .unwrap_or_default()
         } else {
             vec![]
         };
@@ -145,7 +151,11 @@ fn lower_method_prop_from_value(key: &ast::PropertyKey, value: &ast::Expression)
     let key = lower_prop_name_key_oxc(key)?;
     if let ast::Expression::FunctionExpression(func) = value {
         let params: Vec<Param> = func.params.items.iter().map(lower_formal_param).collect();
-        let body = func.body.as_ref().map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect()).unwrap_or_default();
+        let body = func
+            .body
+            .as_ref()
+            .map(|b| super::helpers::lower_fn_body(b))
+            .unwrap_or_default();
         Ok((
             key,
             PropertyValue::Value(Expression::FunctionExpression {
@@ -163,8 +173,10 @@ fn lower_method_prop_from_value(key: &ast::PropertyKey, value: &ast::Expression)
 fn lower_fn_expr(func: &ast::Function) -> Result<Expression, LowerError> {
     let name = func.id.as_ref().map(|i| i.name.as_str().to_string());
     let params: Vec<Param> = func.params.items.iter().map(lower_formal_param).collect();
-    let body = func.body.as_ref()
-        .map(|b| b.statements.iter().filter_map(super::stmt::lower_stmt).collect())
+    let body = func
+        .body
+        .as_ref()
+        .map(|b| super::helpers::lower_fn_body(b))
         .unwrap_or_default();
     Ok(Expression::FunctionExpression { name, params, body })
 }
@@ -190,9 +202,7 @@ fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, 
         }
     } else {
         // Block body
-        ArrowBody::Block(std::rc::Rc::new(
-            arrow.body.statements.iter().filter_map(super::stmt::lower_stmt).collect(),
-        ))
+        ArrowBody::Block(std::rc::Rc::new(super::helpers::lower_fn_body(&arrow.body)))
     };
     Ok(Expression::ArrowFunction {
         params,

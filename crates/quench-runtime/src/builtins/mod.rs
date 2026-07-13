@@ -18,6 +18,7 @@ pub mod reflect;
 pub mod regex; // regex module includes string_methods submodule
 pub mod string;
 pub mod symbol;
+pub mod uri;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -137,6 +138,8 @@ pub fn register_builtins(ctx: &mut Context) {
     reflect::register_reflect(ctx);
     // Minimal ArrayBuffer — needed by the test262 harness (detachArrayBuffer.js)
     array_buffer::register_array_buffer(ctx);
+    // Global URI / parseInt / parseFloat / isNaN / isFinite functions
+    uri::register_uri(ctx);
 }
 
 use crate::value::{Object, ObjectKind, Value};
