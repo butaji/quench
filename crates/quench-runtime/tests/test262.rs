@@ -351,6 +351,27 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_arrow_rest_destructuring_default_closes_over_eval_var() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var x = 'outside';
+var probeParam, probeBody;
+((...[_ = (eval('var x = "inside";'), probeParam = function() { return x; })]) => {
+  probeBody = function() { return x; };
+})();
+assert.sameValue(probeParam(), 'inside');
+assert.sameValue(probeBody(), 'inside');
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "rest destructuring closure failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_eval_var_conflicts_with_arrow_body_let() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

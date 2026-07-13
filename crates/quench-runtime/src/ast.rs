@@ -319,6 +319,7 @@ pub enum BindingElement {
     Identifier(String),
     ArrayPattern(Vec<BindingElement>),
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
+    Default(Box<BindingElement>, Box<Expression>),
 }
 
 /// Function parameter - either a simple name, name with default, or rest parameter
@@ -326,6 +327,8 @@ pub enum BindingElement {
 pub struct Param {
     pub name: String,
     pub default: Option<Box<Expression>>,
+    /// Destructuring pattern for non-identifier parameters.
+    pub pattern: Option<BindingElement>,
     /// Whether this is a rest parameter (...name)
     pub rest: bool,
 }
@@ -336,6 +339,7 @@ impl Param {
         Param {
             name: name.to_string(),
             default: None,
+            pattern: None,
             rest: false,
         }
     }
@@ -345,6 +349,7 @@ impl Param {
         Param {
             name: name.to_string(),
             default: Some(Box::new(default)),
+            pattern: None,
             rest: false,
         }
     }
@@ -354,6 +359,7 @@ impl Param {
         Param {
             name: name.to_string(),
             default: None,
+            pattern: None,
             rest: true,
         }
     }

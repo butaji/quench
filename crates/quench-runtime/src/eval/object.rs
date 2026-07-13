@@ -99,6 +99,14 @@ fn assign_binding_elem(
         BindingElement::Identifier(name) => assign_to_identifier(name, value, env),
         BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
         BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
+        BindingElement::Default(binding, default) => {
+            let value = if matches!(value, Value::Undefined) {
+                eval_expression(default, env, false)?
+            } else {
+                value.clone()
+            };
+            assign_binding_elem(binding, &value, env)
+        }
     }
 }
 
@@ -512,7 +520,8 @@ pub fn call_getter(
     let body = getter_storage.body.clone();
     let mut call_env = Environment::with_parent(closure);
     call_env
-        .current_scope_mut()
+        .current_scope()
+        .borrow_mut()
         .set_this(Value::Object(Rc::clone(obj)));
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
@@ -541,7 +550,8 @@ pub fn call_setter(
     let param = setter_storage.param.clone();
     let mut call_env = Environment::with_parent(Rc::clone(&closure));
     call_env
-        .current_scope_mut()
+        .current_scope()
+        .borrow_mut()
         .set_this(Value::Object(Rc::clone(obj)));
     call_env.define(param, value);
     let call_env = Rc::new(RefCell::new(call_env));
@@ -741,24 +751,40 @@ mod tests {
 
     #[test]
     fn arrow_fn_length_full_test262() {
-        use crate::test262::harness::try_inject_harness;
+        // Per Node.js / ES spec: arrow function length is an own property,
+        // configurable=true, so delete returns true and removes the property.
         let mut ctx = Context::new().unwrap();
-        try_inject_harness(&mut ctx).unwrap();
-        let v = ctx.eval(
-            "var f1 = (x = 42) => {}; \
-             var ok = f1.hasOwnProperty('length'); \
-             var len = f1.length; \
-             var deleted = delete f1.length; \
-             var stillHas = f1.hasOwnProperty('length'); \
-             [ok, len, deleted, stillHas];",
-        );
-        let arr = match v.unwrap() {
+        let v = ctx
+            .eval(
+                "var f1 = (x = 42) => {}; \
+                 var ok = f1.hasOwnProperty('length'); \
+                 var len = f1.length; \
+                 var deleted = delete f1.length; \
+                 var stillHas = f1.hasOwnProperty('length'); \
+                 [ok, len, deleted, stillHas];",
+            )
+            .unwrap();
+        let arr = match v {
             crate::value::Value::Object(o) => o,
             other => panic!("expected array: {:?}", other),
         };
-        let elements = arr.borrow().elements.clone();
-        eprintln!("results: {:?}", elements);
-        panic!("see results");
+        let e = arr.borrow().elements.clone();
+        assert_eq!(
+            e[0],
+            crate::value::Value::Boolean(true),
+            "length is own property"
+        );
+        assert_eq!(e[1], crate::value::Value::Number(0.0), "arrow length is 0");
+        assert_eq!(
+            e[2],
+            crate::value::Value::Boolean(true),
+            "delete returns true (configurable)"
+        );
+        assert_eq!(
+            e[3],
+            crate::value::Value::Boolean(false),
+            "length gone after delete"
+        );
     }
 
     #[test]
