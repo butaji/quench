@@ -321,11 +321,13 @@ pub enum BindingElement {
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
 }
 
-/// Function parameter - either a simple name or a name with a default value
+/// Function parameter - either a simple name, name with default, or rest parameter
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub default: Option<Box<Expression>>,
+    /// Whether this is a rest parameter (...name)
+    pub rest: bool,
 }
 
 impl Param {
@@ -334,6 +336,7 @@ impl Param {
         Param {
             name: name.to_string(),
             default: None,
+            rest: false,
         }
     }
 
@@ -342,6 +345,16 @@ impl Param {
         Param {
             name: name.to_string(),
             default: Some(Box::new(default)),
+            rest: false,
+        }
+    }
+
+    /// Create a rest parameter (...name)
+    pub fn rest(name: &str) -> Self {
+        Param {
+            name: name.to_string(),
+            default: None,
+            rest: true,
         }
     }
 }

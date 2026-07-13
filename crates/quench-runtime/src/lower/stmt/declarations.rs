@@ -65,12 +65,7 @@ pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> 
 
 pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
     let name = func_decl.id.as_ref().map(|i| i.name.as_str().to_string())?;
-    let params: Vec<Param> = func_decl
-        .params
-        .items
-        .iter()
-        .map(lower_param_decl)
-        .collect();
+    let params = lower_formal_params(&func_decl.params);
     let body = func_decl
         .body
         .as_ref()
@@ -91,12 +86,13 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
     Some(Statement::FunctionDeclaration { name, params, body })
 }
 
+/// Lower a single FormalParameter to Param
 pub fn lower_param_decl(param: &ast::FormalParameter) -> Param {
     lower_binding_pattern(&param.pattern)
 }
 
-/// Lower a binding pattern to Param
-fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
+/// Lower a BindingPattern to Param (used for both params and destructuring)
+pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
     match &binding.kind {
         ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
         ast::BindingPatternKind::AssignmentPattern(assign) => {
@@ -107,10 +103,26 @@ fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
                 _ => "arg".to_string(),
             };
             let default = lower_expr(&assign.right).ok().map(Box::new);
-            Param { name, default }
+            Param { name, default, rest: false }
         }
         _ => Param::new("arg"),
     }
+}
+
+/// Lower FormalParameters (items + rest) to Vec<Param>
+pub fn lower_formal_params(params: &ast::FormalParameters) -> Vec<Param> {
+    let mut result: Vec<Param> = params.items.iter().map(lower_param_decl).collect();
+    // Handle rest parameter: stored separately in FormalParameters.rest
+    if let Some(rest) = &params.rest {
+        let name = match &rest.argument.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                ident.name.as_str().to_string()
+            }
+            _ => "arg".to_string(),
+        };
+        result.push(Param::rest(&name));
+    }
+    result
 }
 
 pub fn lower_class_decl(class_decl: &ast::Class) -> Option<Statement> {

@@ -142,7 +142,7 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                         }
                         _ => ("arg".to_string(), None),
                     };
-                    Some(Param { name, default })
+                    Some(Param { name, default, rest: false })
                 })
                 .collect();
             let body = func_expr

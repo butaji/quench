@@ -97,6 +97,112 @@ fn test_assert_throws_with_deep_equal() {
 }
 
 #[test]
+fn test_deep_equal_objects_with_different_arrays() {
+    // This replicates the failing case from deepEqual-deep.js
+    let mut host = QuenchHost::new();
+    let script = r#"
+        assert.throws(Test262Error, function() {
+            assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [false] });
+        });
+    "#;
+    let result = host.run_script(script);
+    eprintln!("deepEqual objects-with-arrays result: {:?}", result);
+    assert!(result.is_ok(), "deepEqual should throw for objects with different arrays: {:?}", result);
+}
+
+#[test]
+fn test_deep_equal_passes_for_equal_nested_objects() {
+    // This should pass (equal objects)
+    let mut host = QuenchHost::new();
+    let script = r#"
+        assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
+    "#;
+    let result = host.run_script(script);
+    eprintln!("deepEqual equal objects result: {:?}", result);
+    assert!(result.is_ok(), "deepEqual should pass for equal objects: {:?}", result);
+}
+
+#[test]
+fn test_deep_equal_throws_for_missing_property() {
+    // This should throw (different properties)
+    let mut host = QuenchHost::new();
+    let script = r#"
+        assert.throws(Test262Error, function() {
+            assert.deepEqual({}, { a: { x: 1 }, b: [true] });
+        });
+    "#;
+    let result = host.run_script(script);
+    eprintln!("deepEqual missing property result: {:?}", result);
+    assert!(result.is_ok(), "deepEqual should throw for missing property: {:?}", result);
+}
+
+#[test]
+fn test_deep_equal_boxed_primitives() {
+    // Object("a") should equal "a" per ES spec (boxed primitives)
+    let mut host = QuenchHost::new();
+    let script = r#"
+        assert.deepEqual(Object("a"), "a");
+        assert.deepEqual(Object(1), 1);
+        assert.deepEqual(Object(true), true);
+    "#;
+    let result = host.run_script(script);
+    eprintln!("boxed primitives result: {:?}", result);
+    assert!(result.is_ok(), "boxed primitives should equal their primitive values: {:?}", result);
+}
+
+#[test]
+fn test_property_is_enumerable() {
+    // Test that Object.defineProperty with enumerable:true creates enumerable property
+    let mut host = QuenchHost::new();
+    let script = r#"
+        var obj = {};
+        Object.defineProperty(obj, 'a', { enumerable: true });
+        var desc = Object.getOwnPropertyDescriptor(obj, 'a');
+        assert.sameValue(desc.enumerable, true, "descriptor enumerable should be true");
+        assert.sameValue(obj.propertyIsEnumerable('a'), true, "propertyIsEnumerable should return true");
+    "#;
+    let result = host.run_script(script);
+    eprintln!("propertyIsEnumerable result: {:?}", result);
+    assert!(result.is_ok(), "propertyIsEnumerable should work correctly: {:?}", result);
+}
+
+#[test]
+fn test_for_in_with_defined_property() {
+    // Test that for...in enumerates properties defined with Object.defineProperty
+    let mut host = QuenchHost::new();
+    let script = r#"
+        var obj = {};
+        Object.defineProperty(obj, 'a', { enumerable: true });
+        var found = false;
+        for (var key in obj) {
+            if (key === 'a') found = true;
+        }
+        assert.sameValue(found, true, "for-in should find enumerable property 'a'");
+    "#;
+    let result = host.run_script(script);
+    eprintln!("for-in result: {:?}", result);
+    assert!(result.is_ok(), "for-in should enumerate defined enumerable property: {:?}", result);
+}
+
+#[test]
+fn test_own_keys_with_defined_property() {
+    // Test own keys after Object.defineProperty
+    let mut host = QuenchHost::new();
+    let script = r#"
+        var obj = {};
+        Object.defineProperty(obj, 'a', { enumerable: true });
+        var desc = Object.getOwnPropertyDescriptor(obj, 'a');
+        assert.sameValue(desc.enumerable, true);
+        var keys = Object.keys(obj);
+        assert.sameValue(keys.length, 1);
+        assert.sameValue(keys[0], 'a');
+    "#;
+    let result = host.run_script(script);
+    eprintln!("own keys result: {:?}", result);
+    assert!(result.is_ok(), "own keys should include enumerable property: {:?}", result);
+}
+
+#[test]
 fn test_symbol_creation() {
     // Test Symbol creation
     let mut host = QuenchHost::new();

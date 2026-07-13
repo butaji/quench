@@ -355,6 +355,11 @@ fn assign_to_member(
             nc.set_property(&prop_name, value.clone());
             Ok(())
         }
+        Value::Class(ref class) => {
+            // Assignment to a class property sets a static field
+            class.set_static_field(&prop_name, value.clone());
+            Ok(())
+        }
         _ => Err(JsError(format!(
             "Cannot assign to property of non-object, got {:?}",
             obj_val
@@ -547,7 +552,7 @@ pub fn call_setter(
 
 #[cfg(test)]
 mod tests {
-    use crate::Context;
+    use crate::{Context, Value};
 
     #[test]
     fn strict_for_in_var_iterates() {
@@ -562,6 +567,25 @@ mod tests {
              if (count !== 2) throw new Error(\"count=\" + count);",
         )
         .expect("strict for-in should iterate");
+    }
+
+    #[test]
+    fn for_in_enumerates_defined_property() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var o = {a: 1}").unwrap();
+        // Test: for-in with var declared in the for statement
+        ctx.eval("var keys = []; for (var k in o) { keys.push(k); }").unwrap();
+        let len = ctx.eval("keys.length").unwrap();
+        assert_eq!(len, Value::Number(1.0), "for-in should iterate once");
+        let first = ctx.eval("keys[0]").unwrap();
+        assert_eq!(first, Value::String("a".to_string()), "key should be 'a'");
+        // Test with Object.defineProperty enumerable property
+        ctx.eval("var o2 = {}; Object.defineProperty(o2, 'b', {enumerable: true, value: 2});").unwrap();
+        ctx.eval("var keys2 = []; for (var k in o2) { keys2.push(k); }").unwrap();
+        let len2 = ctx.eval("keys2.length").unwrap();
+        assert_eq!(len2, Value::Number(1.0), "for-in should see enumerable property");
+        let first2 = ctx.eval("keys2[0]").unwrap();
+        assert_eq!(first2, Value::String("b".to_string()), "key should be 'b'");
     }
 
     #[test]

@@ -292,6 +292,9 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // invocation and getOwnPropertyDescriptor see the same values.
         if let Value::Object(o) = &obj {
             o.borrow_mut().define_accessor(&prop, getter, setter, flags);
+        } else if let Value::NativeConstructor(nc) = &obj {
+            // Object.defineProperty on a native constructor (e.g., Promise)
+            nc.define_accessor(&prop, getter, setter);
         }
         return Ok(obj);
     }

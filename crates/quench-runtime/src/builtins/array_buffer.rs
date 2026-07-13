@@ -18,7 +18,7 @@ pub fn register_array_buffer(ctx: &mut Context) {
     }
 
     let proto_clone = Rc::clone(&proto_rc);
-    let ab_fn = Value::NativeFunction(Rc::new(NativeFunction::new_with_prototype(
+    let ab_fn_rc = Rc::new(NativeFunction::new_with_prototype(
         move |args| {
             let len = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -39,13 +39,10 @@ pub fn register_array_buffer(ctx: &mut Context) {
             }
         },
         Rc::clone(&proto_rc),
-    )));
+    ));
+    // Set prototype property so eval_new can find it
+    ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    let ab_fn = Value::NativeFunction(ab_fn_rc);
 
-    let ab_obj = Object::new(ObjectKind::Ordinary);
-    let ab_obj_rc = Rc::new(RefCell::new(ab_obj));
-    ab_obj_rc
-        .borrow_mut()
-        .set("prototype", Value::Object(proto_rc));
-    ab_obj_rc.borrow_mut().set("constructor", ab_fn);
-    ctx.set_global("ArrayBuffer".to_string(), Value::Object(ab_obj_rc));
+    ctx.set_global("ArrayBuffer".to_string(), ab_fn);
 }

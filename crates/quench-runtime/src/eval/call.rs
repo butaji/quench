@@ -245,6 +245,16 @@ pub fn eval_new(
         other => other.clone(),
     };
 
+    // NativeFunction without an explicit prototype is not a constructor
+    if let Value::NativeFunction(ref nf) = actual_constructor {
+        let has_prototype = nf.get_property("prototype").is_some();
+        if !has_prototype {
+            let (_, js_err) =
+                create_js_error_with_type("function is not a constructor", "TypeError");
+            return Err(js_err);
+        }
+    }
+
     let prototype = get_constructor_prototype(&constructor_val)?;
     let new_obj = if let Some(proto) = prototype {
         Object::with_prototype(ObjectKind::Ordinary, proto)

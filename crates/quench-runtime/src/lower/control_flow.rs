@@ -81,26 +81,61 @@ pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
 
 /// Lower a for-in statement
 pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement> {
-    let left = lower_for_lhs(&for_in_stmt.left)?;
     let iterable = lower_expr(&for_in_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_in_stmt.body).unwrap_or(Statement::Empty));
-    Some(Statement::Expression(Box::new(Expression::ForIn {
-        variable: Box::new(left),
+
+    // When the left side is a VariableDeclaration, also emit the var/let/const
+    // declaration so the binding is created in the environment.
+    let var_decl_stmt = if let ast::ForStatementLeft::VariableDeclaration(ref decl) =
+        &for_in_stmt.left
+    {
+        crate::lower::stmt::lower_var_decl(decl)
+    } else {
+        None
+    };
+
+    let variable = lower_for_lhs(&for_in_stmt.left)?;
+    let for_in_expr = Statement::Expression(Box::new(Expression::ForIn {
+        variable: Box::new(variable),
         object: Box::new(iterable),
         body,
-    })))
+    }));
+
+    // If there's a var/let/const declaration, wrap in a block so it runs first
+    if let Some(var_stmt) = var_decl_stmt {
+        Some(Statement::Block(vec![var_stmt, for_in_expr]))
+    } else {
+        Some(for_in_expr)
+    }
 }
 
 /// Lower a for-of statement
 pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement> {
-    let left = lower_for_lhs(&for_of_stmt.left)?;
     let iterable = lower_expr(&for_of_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_of_stmt.body).unwrap_or(Statement::Empty));
-    Some(Statement::Expression(Box::new(Expression::ForOf {
-        variable: Box::new(left),
+
+    // When the left side is a VariableDeclaration, also emit the var/let/const
+    // declaration so the binding is created in the environment.
+    let var_decl_stmt = if let ast::ForStatementLeft::VariableDeclaration(ref decl) =
+        &for_of_stmt.left
+    {
+        crate::lower::stmt::lower_var_decl(decl)
+    } else {
+        None
+    };
+
+    let variable = lower_for_lhs(&for_of_stmt.left)?;
+    let for_of_expr = Statement::Expression(Box::new(Expression::ForOf {
+        variable: Box::new(variable),
         iterable: Box::new(iterable),
         body,
-    })))
+    }));
+
+    if let Some(var_stmt) = var_decl_stmt {
+        Some(Statement::Block(vec![var_stmt, for_of_expr]))
+    } else {
+        Some(for_of_expr)
+    }
 }
 
 /// Lower a try-catch statement

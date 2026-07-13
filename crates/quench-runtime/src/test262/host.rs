@@ -1739,4 +1739,329 @@ try {
             result
         );
     }
+
+    #[test]
+    fn debug_promise_resolve_getter() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx.eval("Promise.resolve");
+        eprintln!("Promise.resolve = {:?}", result);
+        assert!(result.is_ok(), "Promise.resolve failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_class_extends_promise() {
+        let mut ctx = crate::Context::new().unwrap();
+        // Create Custom class extending Promise
+        let result = ctx.eval(r#"
+class Custom extends Promise {}
+Custom.resolve = function(...args) { return args; };
+Custom.resolve;
+"#);
+        eprintln!("Custom.resolve = {:?}", result);
+        assert!(result.is_ok(), "Custom.resolve failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_promise_race_call() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx.eval(r#"
+class Custom extends Promise {}
+Custom.resolve = function(...args) { return args; };
+Promise.race.call(Custom, [1, 2, 3]);
+"#);
+        match &result {
+            Ok(v) => println!("Promise.race.call result = {:?}", v),
+            Err(e) => eprintln!("Promise.race.call ERROR = {:?}", e),
+        }
+        assert!(result.is_ok(), "Promise.race.call failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_class_resolve_lookup() {
+        let mut ctx = crate::Context::new().unwrap();
+        // Step 1: Create class
+        ctx.eval("class Custom extends Promise {}").unwrap();
+        // Step 2: Set resolve
+        ctx.eval("Custom.resolve = function(...args) { return args; };").unwrap();
+        // Step 3: Get resolve
+        let resolve = ctx.eval("Custom.resolve");
+        eprintln!("Custom.resolve = {:?}", resolve);
+        assert!(resolve.is_ok(), "Custom.resolve lookup failed: {:?}", resolve);
+    }
+
+    #[test]
+    fn debug_quenchhost_promise_race() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script(r#"
+class Custom extends Promise {}
+Custom.resolve = function(...args) { return args; };
+Promise.race.call(Custom, [1, 2, 3]);
+"#);
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "QuenchHost Promise.race failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_quenchhost_promise_race_exact_test() {
+        // Exact test from test262: Promise/race/invoke-resolve-on-promises-every-iteration-of-custom.js
+        let mut host = QuenchHost::new();
+        let result = host.run_script(r#"
+class Custom extends Promise {}
+let values = [1, 1, 1];
+let cresolveCallCount = 0;
+let presolveCallCount = 0;
+let boundCustomResolve = Custom.resolve.bind(Custom);
+let boundPromiseResolve = Promise.resolve.bind(Promise);
+Custom.resolve = function(...args) {
+  cresolveCallCount += 1;
+  return boundCustomResolve(...args);
+};
+Promise.resolve = function(...args) {
+  presolveCallCount += 1;
+  return boundPromiseResolve(...args);
+};
+Promise.race.call(Custom, values);
+"#);
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Exact test failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_quenchhost_promise_race_with_includes() {
+        // Simulate what test262 runner does: include harness files first
+        let mut host = QuenchHost::new();
+        // Simulate the harness includes that the test262 runner loads
+        let includes = r#"
+class Custom extends Promise {}
+let values = [1, 1, 1];
+let cresolveCallCount = 0;
+let presolveCallCount = 0;
+let boundCustomResolve = Custom.resolve.bind(Custom);
+let boundPromiseResolve = Promise.resolve.bind(Promise);
+Custom.resolve = function(...args) {
+  cresolveCallCount += 1;
+  return boundCustomResolve(...args);
+};
+Promise.resolve = function(...args) {
+  presolveCallCount += 1;
+  return boundPromiseResolve(...args);
+};
+Promise.race.call(Custom, values);
+"#;
+        let result = host.run_script(includes);
+        match &result {
+            Ok(_) => println!("SUCCESS with includes"),
+            Err(e) => eprintln!("ERROR with includes: {}", e),
+        }
+        assert!(result.is_ok(), "Test with includes failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_deep_equal_override() {
+        // Test that assert.deepEqual can be overridden in JS
+        let mut host = QuenchHost::new();
+        let result = host.run_script(r#"
+            // Check what assert.deepEqual is
+            console.log("typeof assert.deepEqual:", typeof assert.deepEqual);
+            
+            // Try the original test
+            assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
+            console.log("Basic deepEqual passed");
+            
+            // Try something that should fail
+            try {
+                assert.deepEqual({}, { a: { x: 1 }, b: [true] });
+                console.log("ERROR: Should have thrown");
+            } catch(e) {
+                console.log("Correctly threw:", e.message || e);
+            }
+        "#);
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_deep_equal_js_override() {
+        // Test loading deepEqual.js and then running the test
+        let mut host = QuenchHost::new();
+        // Load the harness includes
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let harness_dir = repo_root.join("tests/test262/harness");
+        
+        // Load deepEqual.js
+        let deep_equal_js = std::fs::read_to_string(harness_dir.join("deepEqual.js"))
+            .expect("Failed to read deepEqual.js");
+        // Strip frontmatter
+        let js_code = if let Some(s) = deep_equal_js.find("/*---") {
+            if let Some(e) = deep_equal_js[s..].find("---*/") {
+                let end = s + e + 5;
+                format!("{}{}", &deep_equal_js[..s], &deep_equal_js[end..])
+            } else {
+                deep_equal_js.clone()
+            }
+        } else {
+            deep_equal_js.clone()
+        };
+        
+        let test_code = r#"
+            assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
+            console.log("Basic deepEqual passed");
+            
+            try {
+                assert.deepEqual({}, { a: { x: 1 }, b: [true] });
+                console.log("ERROR: Should have thrown");
+            } catch(e) {
+                console.log("Correctly threw:", e.message || e);
+            }
+        "#;
+        
+        let result = host.run_script(&format!("{}\n{}", js_code, test_code));
+        match &result {
+            Ok(_) => println!("SUCCESS with JS deepEqual"),
+            Err(e) => eprintln!("ERROR with JS deepEqual: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_deep_equal_js_with_property_helper() {
+        // Test loading propertyHelper.js AND deepEqual.js like the runner does
+        let mut host = QuenchHost::new();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let harness_dir = repo_root.join("tests/test262/harness");
+        
+        fn load_js(path: &std::path::Path) -> String {
+            let content = std::fs::read_to_string(path).expect("Failed to read file");
+            if let Some(s) = content.find("/*---") {
+                if let Some(e) = content[s..].find("---*/") {
+                    let end = s + e + 5;
+                    format!("{}{}", &content[..s], &content[end..])
+                } else {
+                    content
+                }
+            } else {
+                content
+            }
+        }
+        
+        let property_helper = load_js(&harness_dir.join("propertyHelper.js"));
+        let deep_equal = load_js(&harness_dir.join("deepEqual.js"));
+        
+        let test_code = r#"
+            assert.deepEqual({ a: { x: 1 }, b: [true] }, { a: { x: 1 }, b: [true] });
+            console.log("Basic deepEqual passed");
+        "#;
+        
+        let result = host.run_script(&format!("{}\n{}\n{}", property_helper, deep_equal, test_code));
+        match &result {
+            Ok(_) => println!("SUCCESS with propertyHelper"),
+            Err(e) => eprintln!("ERROR with propertyHelper: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_deep_equal_full_harness() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::metadata::Test262Metadata;
+        
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let test262_dir = repo_root.join("tests/test262");
+        let test_path = repo_root.join("tests/test262/test/harness/deepEqual-deep.js");
+        
+        let source = std::fs::read_to_string(&test_path).expect("Failed to read test");
+        let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+        let meta = Test262Metadata::parse(&source).expect("Failed to parse meta");
+        
+        let harness_code = harness.build_script("", &meta.includes)
+            .expect("Failed to build harness");
+        
+        // Test the exact failing case with detailed debug
+        let debug = format!(r#"
+            {}
+            // Direct JS _compare call
+            var result = assert.deepEqual._compare([true], [false]);
+            console.log("_compare([true], [false]) = " + result);
+            
+            // Try direct comparison
+            var cmp = assert.deepEqual._compare({{ a: {{ x: 1 }}, b: [true] }}, {{ a: {{ x: 1 }}, b: [false] }});
+            console.log("_compare complex = " + cmp);
+        "#, harness_code);
+        
+        let mut host = QuenchHost::new();
+        let r = host.run_script(&debug);
+        eprintln!("Debug: {:?}", r);
+        
+        // Run actual test
+        let script = harness.build_script(&source, &meta.includes)
+            .expect("Failed to build script");
+        let mut host2 = QuenchHost::new();
+        let r2 = host2.run_script(&script);
+        eprintln!("Full test: {:?}", r2);
+        
+        assert!(r2.is_ok(), "Test failed: {:?}", r2);
+    }
+
+    #[test]
+    fn debug_assert_throws_test262Error() {
+        // Test assert.throws with Test262Error
+        let mut host = QuenchHost::new();
+        
+        // Run the test with deepEqual that should throw
+        let result = host.run_script(r#"
+            // First test: direct deepEqual call
+            try {
+                assert.deepEqual({}, { a: { x: 1 }, b: [true] });
+                console.log("ERROR: deepEqual should have thrown");
+            } catch(e) {
+                console.log("Test 1 - deepEqual threw:", e.name, e.message || e);
+            }
+            
+            // Second test: with assert.throws
+            try {
+                assert.throws(Test262Error, function() {
+                    assert.deepEqual({}, { a: { x: 1 }, b: [true] });
+                });
+                console.log("Test 2 - assert.throws passed");
+            } catch(e) {
+                console.log("Test 2 - assert.throws FAILED:", e.message || e);
+            }
+            
+            // Third test: simple assert(false) inside throws
+            try {
+                assert.throws(Test262Error, function() {
+                    assert(false, "simple assert");
+                });
+                console.log("Test 3 - simple assert.throws passed");
+            } catch(e) {
+                console.log("Test 3 - simple assert.throws FAILED:", e.message || e);
+            }
+            
+            // Fourth test: direct assert(false) call
+            try {
+                assert(false, "direct assert");
+                console.log("Test 4 - direct assert should have thrown");
+            } catch(e) {
+                console.log("Test 4 - direct assert threw:", e.name, e.message || e);
+            }
+        "#);
+        
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
 }

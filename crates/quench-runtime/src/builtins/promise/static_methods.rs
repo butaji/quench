@@ -3,10 +3,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::context::get_current_env;
 use crate::eval::call_value_with_this;
 use crate::eval::iteration::get_iterator;
-use crate::value::object::PromiseObjectData;
+use crate::eval::member::eval_member_access;
 use crate::value::error::create_js_error_with_type;
+use crate::value::object::PromiseObjectData;
 use crate::value::{NativeFunction, Object, ObjectKind, Value};
 use crate::JsError;
 
@@ -429,67 +431,85 @@ pub fn promise_race_impl(args: Vec<Value>, this_val: Value, proto: Rc<RefCell<Ob
         return Err(JsError("TypeError: Promise.race called on non-constructor".to_string()));
     }
 
-    // Per spec: invoke NewPromiseCapability(this) which validates the constructor.
-    // This will throw if this is not a valid Promise constructor.
+    // Per spec: Let promiseResolve be ? Get(constructor, "resolve").
+    // Call this FIRST to trigger any getter (Object.defineProperty).
+    let env = get_current_env().ok_or_else(|| JsError::from("No context for Get"))?;
+    let promise_resolve = eval_member_access(&this_val, "resolve", &env)?;
+    
+    // Per spec: If IsCallable(promiseResolve) is false, throw a TypeError exception.
+    let is_callable = matches!(
+        promise_resolve,
+        Value::Function(_) | Value::NativeFunction(_) | Value::Class(_)
+    );
+    if !is_callable {
+        let (err_val, _) = create_js_error_with_type("Promise.resolve is not a function", "TypeError");
+        crate::value::set_thrown_value(err_val);
+        return Err(JsError("TypeError: Promise.resolve is not a function".to_string()));
+    }
+
+    // Per spec: Let resultCapability be ? NewPromiseCapability(constructor).
     let promise_rc = invoke_promise_constructor(&this_val, &proto)?;
+
+    // Create the race result promise's resolve/reject callbacks
+    let settled = Rc::new(RefCell::new(false));
+    let settled_f = Rc::clone(&settled);
+    let promise_rc_f = Rc::clone(&promise_rc);
+    let race_resolve = Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
+        let result = args.first().cloned().unwrap_or(Value::Undefined);
+        let mut s = settled_f.borrow_mut();
+        if !*s {
+            *s = true;
+            drop(s);
+            let mut pr = promise_rc_f.borrow_mut();
+            if let Some(ref mut d) = pr.promise_data {
+                d.fulfill(result);
+            }
+        }
+        Ok(Value::Undefined)
+    })));
+    let settled_r = Rc::clone(&settled);
+    let promise_rc_r = Rc::clone(&promise_rc);
+    let race_reject = Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
+        let reason = args.first().cloned().unwrap_or(Value::Undefined);
+        let mut s = settled_r.borrow_mut();
+        if !*s {
+            *s = true;
+            drop(s);
+            let mut pr = promise_rc_r.borrow_mut();
+            if let Some(ref mut d) = pr.promise_data {
+                d.reject(reason);
+            }
+        }
+        Ok(Value::Undefined)
+    })));
 
     let input = args.first().cloned().unwrap_or(Value::Undefined);
 
     // Use iterator protocol - throws TypeError for non-iterables
     let values: Vec<Value> = get_iterator(&input)?;
 
-    let settled = Rc::new(RefCell::new(false));
-
     for value in values {
-        process_promise_race_value(value, &promise_rc, &settled);
-
-        if *settled.borrow() {
-            break;
+        // Per spec: Let nextPromise be ? Call(promiseResolve, constructor, « nextValue »).
+        let next_promise = call_value_with_this(
+            promise_resolve.clone(),
+            vec![value],
+            this_val.clone(),
+        )?;
+        
+        // Per spec: Perform ? Invoke(nextPromise, "then", « resultCapability.[[Resolve]], resultCapability.[[Reject]] »).
+        // Always hook up the handlers, even if the promise is already settled.
+        if let Value::Object(ref p) = next_promise {
+            if let Some(ref then_method) = p.borrow().get("then") {
+                let _ = call_value_with_this(
+                    then_method.clone(),
+                    vec![race_resolve.clone(), race_reject.clone()],
+                    Value::Undefined,
+                );
+            }
         }
     }
 
     Ok(Value::Object(promise_rc))
-}
-
-#[allow(clippy::complexity)]
-fn process_promise_race_value(
-    value: Value,
-    promise_rc: &Rc<RefCell<Object>>,
-    settled: &Rc<RefCell<bool>>,
-) {
-    let (resolve_fn, reject_fn) = make_race_callbacks(promise_rc, settled);
-
-    if let Value::Object(ref p) = value {
-        let obj = p.borrow();
-        if let Some(ref data) = obj.promise_data {
-            match data.state {
-                crate::value::object::PromiseState::Fulfilled => {
-                    settle_promise(settled, promise_rc, |d| d.fulfill(data.result.clone()));
-                }
-                crate::value::object::PromiseState::Rejected => {
-                    settle_promise(settled, promise_rc, |d| d.reject(data.result.clone()));
-                }
-                _ => {
-                    if let Some(ref then_method) = obj.get("then") {
-                        if attach_race_handlers(then_method, resolve_fn, reject_fn).is_err() {
-                            // If then is not callable, reject with TypeError
-                            let mut s = settled.borrow_mut();
-                            if !*s {
-                                *s = true;
-                                drop(s);
-                                let mut pr = promise_rc.borrow_mut();
-                                if let Some(ref mut d) = pr.promise_data {
-                                    d.reject(Value::String("TypeError: value.then is not a function".to_string()));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        settle_promise(settled, promise_rc, |d| d.fulfill(value));
-    }
 }
 
 fn make_race_callbacks(

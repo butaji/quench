@@ -2,6 +2,7 @@
 
 use super::helpers::LowerError;
 use super::helpers::{assign_op_to_bin, lower_bin_op, lower_logical_op, lower_unary_op};
+use super::stmt::lower_formal_params;
 use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
 use super::literals::{lower_tagged_template, lower_template_literal};
 use super::opt_chain::lower_opt_chain;
@@ -177,7 +178,7 @@ fn lower_method_prop_from_value(
 ) -> Result<(PropertyKey, PropertyValue), LowerError> {
     let key = lower_prop_name_key_oxc(key)?;
     if let ast::Expression::FunctionExpression(func) = value {
-        let params: Vec<Param> = func.params.items.iter().map(lower_formal_param).collect();
+        let params = lower_formal_params(&func.params);
         let body = func
             .body
             .as_ref()
@@ -199,7 +200,7 @@ fn lower_method_prop_from_value(
 
 fn lower_fn_expr(func: &ast::Function) -> Result<Expression, LowerError> {
     let name = func.id.as_ref().map(|i| i.name.as_str().to_string());
-    let params: Vec<Param> = func.params.items.iter().map(lower_formal_param).collect();
+    let params = lower_formal_params(&func.params);
     let body = func
         .body
         .as_ref()
@@ -209,7 +210,7 @@ fn lower_fn_expr(func: &ast::Function) -> Result<Expression, LowerError> {
 }
 
 fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, LowerError> {
-    let params: Vec<Param> = arrow.params.items.iter().map(lower_formal_param).collect();
+    let params = lower_formal_params(&arrow.params);
     // In OXC, arrow.body is always a FunctionBody
     // If arrow.expression is true, it's an expression body (implicit return)
     // OXC stores expression bodies as a single Expression statement (not Return)
@@ -240,29 +241,6 @@ fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, 
         params,
         body: Box::new(body),
     })
-}
-
-/// Lower a formal parameter, extracting default values
-fn lower_formal_param(param: &ast::FormalParameter) -> Param {
-    lower_binding_pattern(&param.pattern)
-}
-
-/// Lower a binding pattern to Param
-fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
-    match &binding.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
-        ast::BindingPatternKind::AssignmentPattern(assign) => {
-            let name = match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
-                    ident.name.as_str().to_string()
-                }
-                _ => "arg".to_string(),
-            };
-            let default = lower_expr(&assign.right).ok().map(Box::new);
-            Param { name, default }
-        }
-        _ => Param::new("arg"),
-    }
 }
 
 fn lower_yield_expr(yield_expr: &ast::YieldExpression) -> Result<Expression, LowerError> {
