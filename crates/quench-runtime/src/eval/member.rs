@@ -65,6 +65,15 @@ pub fn eval_class_member(
             }
         }
         _ => {
+            // Per ES §16.1, class constructors throw TypeError when accessing
+            // `caller` or `arguments` (they are always strict).
+            if prop_name == "caller" || prop_name == "arguments" {
+                let (_, js_err) = crate::value::create_js_error_with_type(
+                    "'caller' and 'arguments' are restricted on class constructors",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
             // Check static fields first
             if let Some(val) = class.get_static_field(prop_name) {
                 return Ok(val);
