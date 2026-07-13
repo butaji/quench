@@ -277,7 +277,47 @@ fn assign_binding_elem(
             assign_binding_elem(binding, &value, env)
         }
         BindingElement::AssignmentTarget(target) => {
-            crate::eval::object::assign_to(target, value, env)
+            // For a destructuring target like `target()[targetKey()]` we need
+            // the ES spec ordering: read the source value first, then convert
+            // the property key to a string and put the value. This differs
+            // from the normal `target()[key] = rhs` order, which converts
+            // the key before reading. The destructuring path here is:
+            //   1. lhs object expression  → "target"
+            //   2. rhs source (already in `value`)
+            //   3. lhs property expression  → "target-key" (key object)
+            //   4. key → string              → "target-key-tostring"
+            //   5. set the property         → "set"
+            // The inner `targetKey()` Reference object is used directly, so
+            // toString fires during the PutValue, not at Reference creation.
+            if let Expression::Member {
+                object,
+                property,
+                computed: true,
+            } = target
+            {
+                let lref_obj = eval_expression(object, env, false)?;
+                let key_value = match property {
+                    PropertyKey::Computed(expr) => eval_expression(expr, env, false)?,
+                    PropertyKey::Ident(name) => Value::String(name.clone()),
+                    PropertyKey::String(s) => Value::String(s.clone()),
+                    PropertyKey::Number(n) => Value::Number(*n),
+                };
+                let key_string = crate::value::to_js_string(&key_value);
+                if let Value::Object(o) = lref_obj {
+                    if let Some(setter) = o.borrow().get_setter(&key_string) {
+                        let _ = call_setter(&o, &setter, value.clone(), env)?;
+                    } else {
+                        o.borrow_mut().set(&key_string, value.clone());
+                    }
+                } else {
+                    return Err(JsError(
+                        "Cannot assign to property of non-object".to_string(),
+                    ));
+                }
+                Ok(())
+            } else {
+                crate::eval::object::assign_to(target, value, env)
+            }
         }
     }
 }
