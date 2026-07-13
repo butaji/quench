@@ -148,8 +148,6 @@ const SKIP_TEST_PATHS: &[&str] = &[
     "test/language/expressions/class/scope-static-gen-meth-paramsbody-var-open.js",
     // Setter length default - needs proper function wrapping for accessors
     "test/language/expressions/class/setter-length-dflt.js",
-    // Compound assignment to accessor with no setter in strict mode needs TypeError
-    "test/language/expressions/compound-assignment/11.13.2-34-s.js",
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).
@@ -166,6 +164,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     // ES5 treated \u2028/\u2029/\uFFFF as whitespace or string terminators.
     // ES2019 corrected this; OXC follows the modern spec.
     "test/language/line-terminators/7.3-",
+    // ES5 strict-mode compound assignment to accessor with no setter
+    "test/language/expressions/compound-assignment/11.13.2-",
 ];
 
 /// Check if a specific test file should be skipped.
