@@ -49,6 +49,10 @@ pub fn eval_expression(
             env.borrow_mut().mark_closure_created();
             let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), Rc::clone(env));
             func.strict = crate::interpreter::is_strict_mode();
+            // Per ES §14.2.1 step 5: arrow functions have name "" unless
+            // assigned (e.g. `var x = () => {}`). The "" is stored as the
+            // own property `name` so verifyProperty can read it.
+            func.set_property("name", Value::String(String::new()));
             Ok(Value::Function(func))
         }
         Expression::Binary { op, left, right } => {
