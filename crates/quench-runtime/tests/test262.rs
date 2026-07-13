@@ -351,6 +351,21 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_arrow_body_var_does_not_leak_global() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var probe;
+((_ = null) => { var x = 'inside'; probe = function() { return x; }; })();
+var x = 'outside';
+assert.sameValue(probe(), 'inside');
+assert.sameValue(x, 'outside');
+"#,
+    );
+    assert!(result.is_ok(), "arrow body var scope failed: {:?}", result);
+}
+
+#[test]
 fn test_rest_parameter_after_missing_argument_is_empty() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
