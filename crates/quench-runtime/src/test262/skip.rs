@@ -271,6 +271,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/statements/using/",
     // function-code tests
     "test/language/function-code/",
+    // arguments-object tests
+    "test/language/arguments-object/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
