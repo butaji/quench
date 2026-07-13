@@ -100,7 +100,12 @@ pub(crate) fn call_js_function_impl(
     };
 
     let mut call_env = Environment::with_parent(Rc::clone(&closure));
-    call_env.current_scope_mut().set_this(this_val);
+    // Per ES §10.2.1, arrow functions capture `this` from their lexical
+    // (closure) scope. Setting this on the new scope would override that
+    // capture with the caller-supplied this. Skip for arrows.
+    if !f.is_arrow {
+        call_env.current_scope_mut().set_this(this_val);
+    }
     let call_env_rc = Rc::new(RefCell::new(call_env));
     for (i, param) in params.iter().enumerate() {
         let arg = args.get(i).cloned();

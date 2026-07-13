@@ -580,6 +580,59 @@ mod tests {
     }
 
     #[test]
+    fn arrow_in_eval_returns_this() {
+        // test262 expects foo()() to equal the global `this` (an Object).
+        let mut ctx = Context::new().unwrap();
+        let res = ctx.eval(
+            "function foo(){ return eval(\"()=>this\"); } \
+             foo()();"
+        );
+        let v = res.unwrap();
+        // Must be an Object (globalThis), not Undefined.
+        match v {
+            crate::value::Value::Object(_) => {}
+            crate::value::Value::Undefined => panic!("got undefined"),
+            other => panic!("got unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn direct_arrow_returns_this() {
+        // Simpler: just an arrow at top level should return globalThis.
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("(()=>this)();").unwrap();
+        match v {
+            crate::value::Value::Object(_) => {}
+            other => panic!("got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn top_level_this_is_global() {
+        // Sanity: at top level, `this` should be globalThis (Object).
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("this;").unwrap();
+        match v {
+            crate::value::Value::Object(_) => {}
+            other => panic!("got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_returning_this_inside_obj() {
+        // Try arrow inside a method context.
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("var o = { f: function() { return (() => this); } }; o.f()();").unwrap();
+        match v {
+            crate::value::Value::Object(o) => {
+                // We don't check identity, just that it's some object.
+                let _ = o;
+            }
+            other => panic!("got: {:?}", other),
+        }
+    }
+
+    #[test]
     fn arrow_fn_caller_full_test262() {
         // Load the actual test262 harness and run the failing test logic.
         use crate::test262::harness::try_inject_harness;
