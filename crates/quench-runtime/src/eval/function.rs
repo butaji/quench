@@ -106,15 +106,17 @@ pub(crate) fn call_js_function_impl(
     if !f.is_arrow {
         call_env.current_scope_mut().set_this(this_val);
     }
-    // Per ES §13.2.6 GetNewTarget: always bind `new.target` in the
-    // function's environment so arrow functions defined inside can
-    // capture it via lexical scope. For ordinary calls, this is the
-    // (typically undefined) thread-local value set by a `new` expression.
-    let target = crate::interpreter::get_new_target().unwrap_or(Value::Undefined);
-    call_env
-        .current_scope_mut()
-        .define("new.target".to_string(), target);
-    eprintln!("DEBUG bound new.target: env={}, has_target={}, name={}", f.name.as_ref().unwrap_or(&String::new()), target != Value::Undefined, f.name.as_ref().unwrap_or(&String::new()));
+    // Per ES §13.2.6 GetNewTarget: bind `new.target` in the function's
+    // environment for ordinary (non-arrow) functions so they can reference
+    // it directly. Arrow functions inherit `new.target` via lexical scope
+    // (the enclosing function's env binding), so we deliberately do NOT
+    // bind it in arrow call_envs — that would shadow the captured value.
+    if !f.is_arrow {
+        let target = crate::interpreter::get_new_target().unwrap_or(Value::Undefined);
+        call_env
+            .current_scope_mut()
+            .define("new.target".to_string(), target);
+    }
     let call_env_rc = Rc::new(RefCell::new(call_env));
     for (i, param) in params.iter().enumerate() {
         let arg = args.get(i).cloned();
