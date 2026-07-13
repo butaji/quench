@@ -80,8 +80,27 @@ pub(crate) fn call_js_function_impl(
 ) -> Result<Value, JsError> {
     let closure = Rc::clone(&f.closure);
     let params = f.params.clone();
+
+    // Strictness is captured where the function was DEFINED (f.strict), never
+    // inherited from the call site: a sloppy function called from strict code
+    // still gets the global object as `this` (ES spec 10.2.1.2).
+    // Arrow functions keep the historical always-strict behavior here.
+    let function_is_strict = f.is_arrow || f.strict;
+    // Check if function body starts with "use strict"; directive
+    let body_is_strict = check_use_strict(&f.body);
+    let in_strict = function_is_strict || body_is_strict;
+
+    // Per ES spec 10.2.1.2: in sloppy mode, a primitive `this` is boxed
+    // (ToObject) so the function sees a wrapper object. In strict mode (and
+    // arrow functions), the value passes through unchanged.
+    let this_val = if in_strict {
+        this_val
+    } else {
+        box_sloppy_this(this_val)
+    };
+
     let mut call_env = Environment::with_parent(Rc::clone(&closure));
-    call_env.current_scope_mut().set_this(this_val.clone());
+    call_env.current_scope_mut().set_this(this_val);
     let call_env_rc = Rc::new(RefCell::new(call_env));
     for (i, param) in params.iter().enumerate() {
         let arg = args.get(i).cloned();
@@ -97,15 +116,6 @@ pub(crate) fn call_js_function_impl(
         };
         call_env_rc.borrow_mut().define(param.name.clone(), value);
     }
-
-    // Strictness is captured where the function was DEFINED (f.strict), never
-    // inherited from the call site: a sloppy function called from strict code
-    // still gets the global object as `this` (ES spec 10.2.1.2).
-    // Arrow functions keep the historical always-strict behavior here.
-    let function_is_strict = f.is_arrow || f.strict;
-    // Check if function body starts with "use strict"; directive
-    let body_is_strict = check_use_strict(&f.body);
-    let in_strict = function_is_strict || body_is_strict;
 
     // Create arguments object for non-arrow functions
     if !f.is_arrow {
@@ -141,6 +151,18 @@ fn check_use_strict(body: &[Statement]) -> bool {
         }
     }
     false
+}
+
+/// Box a primitive `this` value per ES spec 10.2.1.2 (sloppy mode only).
+/// Object values pass through unchanged; null/undefined pass through too —
+/// the globalThis coercion happens later in `get_this_binding`.
+fn box_sloppy_this(this_val: Value) -> Value {
+    match &this_val {
+        Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
+            crate::value::convert::to_object(&this_val)
+        }
+        _ => this_val,
+    }
 }
 
 /// Create the JavaScript arguments object for a function call
@@ -290,5 +312,37 @@ fn call_object_as_constructor(
             );
             Err(js_err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+
+    #[test]
+    fn sloppy_call_boxes_primitive_this() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx
+            .eval("function bar() { return typeof this; } bar.call(1);")
+            .unwrap();
+        assert_eq!(res, crate::value::Value::String("object".to_string()));
+    }
+
+    #[test]
+    fn strict_body_keeps_primitive_this() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx
+            .eval("function foo() { 'use strict'; return typeof this; } foo.call(1);")
+            .unwrap();
+        assert_eq!(res, crate::value::Value::String("number".to_string()));
+    }
+
+    #[test]
+    fn sloppy_call_object_this_passes_through() {
+        let mut ctx = Context::new().unwrap();
+        let res = ctx
+            .eval("var o = { name: 'x' }; function bar() { return typeof this; } bar.call(o);")
+            .unwrap();
+        assert_eq!(res, crate::value::Value::String("object".to_string()));
     }
 }

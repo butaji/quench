@@ -26,10 +26,25 @@ impl LowerError {
     }
 }
 
-/// Convert Atom to String using Display trait
-pub fn atom_to_string(atom: &ast::Atom) -> String {
-    atom.to_string()
+/// Lower an OXC function body, preserving its directive prologue.
+///
+/// OXC stores directives (e.g. `"use strict"`) in `body.directives`, separate
+/// from `body.statements`. We prepend them as string expression statements so
+/// the interpreter's strict-mode detection (check_use_strict) can find them.
+pub fn lower_fn_body(body: &ast::FunctionBody) -> Vec<crate::ast::Statement> {
+    let mut stmts: Vec<crate::ast::Statement> = body
+        .directives
+        .iter()
+        .map(|d| {
+            crate::ast::Statement::Expression(Box::new(crate::ast::Expression::String(
+                d.expression.value.to_string(),
+            )))
+        })
+        .collect();
+    stmts.extend(body.statements.iter().filter_map(super::stmt::lower_stmt));
+    stmts
 }
+
 
 /// Convert Wtf8Atom to String using Display trait
 pub fn wtf8_atom_to_string(atom: &str) -> String {

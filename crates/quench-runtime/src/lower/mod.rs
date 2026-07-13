@@ -12,7 +12,7 @@ pub mod pattern;
 pub mod stmt;
 
 pub use expr::lower_expr;
-pub use helpers::{atom_to_string, wtf8_atom_to_string, LowerError};
+pub use helpers::{wtf8_atom_to_string as atom_to_string, wtf8_atom_to_string, LowerError};
 pub use stmt::{lower_module, lower_program, lower_script, lower_stmt};
 
 #[cfg(test)]
