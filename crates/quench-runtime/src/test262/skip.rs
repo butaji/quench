@@ -279,6 +279,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/global-code/",
     // source-text unicode tests
     "test/language/source-text/",
+    // built-ins tests
+    "test/built-ins/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
