@@ -351,6 +351,27 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_direct_eval_var_initializes_local_binding() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function test() {
+  var x = 0;
+  var inner = (function() { x = (eval('var x = 2;'), 1); return x; })();
+  assert.sameValue(inner, 2);
+  assert.sameValue(x, 1);
+}
+test();
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "direct eval var initialization failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_assignment_uses_reference_captured_before_rhs_eval() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
