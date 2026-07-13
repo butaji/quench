@@ -496,3 +496,23 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
         _ => Ok(None),
     }
 }
+
+#[cfg(test)]
+mod static_field_tests {
+    use crate::Context;
+
+    #[test]
+    fn class_anonymous_has_static_field() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("var C = class { static f = 42; }; C.f");
+        assert_eq!(v.unwrap(), crate::value::Value::Number(42.0));
+    }
+
+    #[test]
+    fn class_static_field_this_name() {
+        let mut ctx = Context::new().unwrap();
+        // Check what `this.name` returns inside a static field of an anonymous class.
+        let v = ctx.eval("var C = class { static f = this.name; }; C.f");
+        eprintln!("this.name = {:?}", v);
+    }
+}
