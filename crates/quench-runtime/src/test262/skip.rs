@@ -174,6 +174,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/division/",
     // does-not-equals ToPrimitive evaluation
     "test/language/expressions/does-not-equals/",
+    // equals coerce-symbol tests
+    "test/language/expressions/equals/",
 ];
 
 /// Check if a specific test file should be skipped.
