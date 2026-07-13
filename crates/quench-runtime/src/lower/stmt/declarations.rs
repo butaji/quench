@@ -97,21 +97,28 @@ pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
     match &binding.kind {
         ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
         ast::BindingPatternKind::AssignmentPattern(assign) => {
-            let name = match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
-                    ident.name.as_str().to_string()
-                }
-                _ => "arg".to_string(),
-            };
             let default = lower_expr(&assign.right).ok().map(Box::new);
-            Param {
-                name,
-                default,
-                pattern: None,
-                rest: false,
+            match &assign.left.kind {
+                ast::BindingPatternKind::BindingIdentifier(ident) => Param {
+                    name: ident.name.as_str().to_string(),
+                    default,
+                    pattern: None,
+                    rest: false,
+                },
+                _ => Param {
+                    name: "arg".to_string(),
+                    default: None,
+                    pattern: crate::lower::pattern::lower_binding_elem(binding).ok(),
+                    rest: false,
+                },
             }
         }
-        _ => Param::new("arg"),
+        _ => Param {
+            name: "arg".to_string(),
+            default: None,
+            pattern: crate::lower::pattern::lower_binding_elem(binding).ok(),
+            rest: false,
+        },
     }
 }
 
