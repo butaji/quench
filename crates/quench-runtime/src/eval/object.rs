@@ -625,9 +625,65 @@ mod tests {
         let v = ctx.eval("var o = { f: function() { return (() => this); } }; o.f()();").unwrap();
         match v {
             crate::value::Value::Object(o) => {
-                // We don't check identity, just that it's some object.
                 let _ = o;
             }
+            other => panic!("got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn arrow_fn_length_own_property() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("var f = (x, y = 1) => {}; f.hasOwnProperty('length')").unwrap();
+        assert_eq!(v, crate::value::Value::Boolean(true));
+        let len = ctx.eval("f.length").unwrap();
+        assert_eq!(len, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn arrow_fn_length_full_test262() {
+        use crate::test262::harness::try_inject_harness;
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).unwrap();
+        let v = ctx.eval(
+            "var f1 = (x = 42) => {}; \
+             var ok = f1.hasOwnProperty('length'); \
+             var len = f1.length; \
+             var deleted = delete f1.length; \
+             var stillHas = f1.hasOwnProperty('length'); \
+             [ok, len, deleted, stillHas];"
+        );
+        let arr = match v.unwrap() {
+            crate::value::Value::Object(o) => o,
+            other => panic!("expected array: {:?}", other),
+        };
+        let elements = arr.borrow().elements.clone();
+        eprintln!("results: {:?}", elements);
+        panic!("see results");
+    }
+
+    #[test]
+    fn delete_arrow_length_returns_true() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("var f1 = (x = 42) => {}; delete f1.length;").unwrap();
+        assert_eq!(v, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_function_length_returns_true() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("function f1(x = 42) {}; delete f1.length;").unwrap();
+        assert_eq!(v, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn arrow_is_function_value() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval("typeof (()=>1)").unwrap();
+        assert_eq!(v, crate::value::Value::String("function".to_string()));
+        let f = ctx.eval("var f1 = (x = 42) => {}; f1").unwrap();
+        match f {
+            crate::value::Value::Function(_) => {}
             other => panic!("got: {:?}", other),
         }
     }

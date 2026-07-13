@@ -112,6 +112,15 @@ impl ValueFunction {
         body: Vec<Statement>,
         closure: Rc<RefCell<Environment>>,
     ) -> Self {
+        // Per ES §9.2.4 FunctionInitialize: install `length` and (when named)
+        // `name` as own properties so Object.getOwnPropertyDescriptor sees them.
+        // `length` counts parameters without default values.
+        let length = params.iter().filter(|p| p.default.is_none()).count() as f64;
+        let mut props = std::collections::HashMap::new();
+        props.insert("length".to_string(), Value::Number(length));
+        if let Some(ref n) = name {
+            props.insert("name".to_string(), Value::String(n.clone()));
+        }
         ValueFunction {
             name,
             params,
@@ -121,7 +130,7 @@ impl ValueFunction {
             is_arrow: false,
             strict: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
-            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
+            properties: std::cell::RefCell::new(props),
         }
     }
 
@@ -223,6 +232,13 @@ impl ValueFunction {
         self.with_mut(|props| {
             props.insert(key.to_string(), value);
         });
+    }
+
+    /// Remove a property. Returns true if it was present (and was removable).
+    /// Per ES spec, ordinary functions allow configurable length/name removal.
+    pub fn remove_property(&self, key: &str) -> bool {
+        let mut map = self.properties.borrow_mut();
+        map.remove(key).is_some()
     }
 
     /// Access properties with mutable borrow, works around outer borrow issues.

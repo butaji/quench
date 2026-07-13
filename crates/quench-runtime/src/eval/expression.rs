@@ -279,6 +279,17 @@ fn eval_delete(
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
                     Ok(Value::Boolean(deleted))
                 }
+                Value::Function(f) => {
+                    // Per ES spec, ordinary functions have configurable length/name.
+                    if matches!(prop_key.as_str(), "length" | "name") {
+                        // Actually remove from the function's own properties
+                        // so hasOwnProperty reflects the deletion.
+                        let removed = f.remove_property(&prop_key);
+                        Ok(Value::Boolean(removed))
+                    } else {
+                        Ok(Value::Boolean(false))
+                    }
+                }
                 _ => Ok(Value::Boolean(false)),
             }
         }

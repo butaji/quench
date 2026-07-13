@@ -376,16 +376,28 @@ fn get_function_property_descriptor(
     prop: &str,
 ) -> Result<Value, JsError> {
     if prop == "name" {
-        return make_property_descriptor_string(
-            &f.name.clone().unwrap_or_default(),
-            true,
-            false,
-            false,
-        );
+        let value = f
+            .get_property("name")
+            .map(|v| match v {
+                Value::String(s) => s,
+                _ => String::new(),
+            })
+            .unwrap_or_else(|| f.name.clone().unwrap_or_default());
+        // Per ES §9.2.4 FunctionInitialize, `name` is configurable: true.
+        return make_property_descriptor_string(&value, false, false, true);
     }
     if prop == "length" {
-        let len = f.params.iter().filter(|p| p.default.is_none()).count() as f64;
-        return make_property_descriptor_number(len, false, false, false);
+        let len = f
+            .get_property("length")
+            .and_then(|v| match v {
+                Value::Number(n) => Some(n),
+                _ => None,
+            })
+            .unwrap_or_else(|| f.params.iter().filter(|p| p.default.is_none()).count() as f64);
+        // Per ES §9.2.4 FunctionInitialize, the `length` property is
+        // { [[Value]]: len, [[Writable]]: false, [[Enumerable]]: false,
+        // [[Configurable]]: true }.
+        return make_property_descriptor_number(len, false, false, true);
     }
     Ok(Value::Undefined)
 }
