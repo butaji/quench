@@ -141,6 +141,11 @@ impl ValueFunction {
         body: Box<ArrowBody>,
         closure: Rc<RefCell<Environment>>,
     ) -> Self {
+        // Per ES §9.2.4 FunctionInitialize: arrow functions are also functions
+        // and must have a configurable `length` and (when named) `name`.
+        let length = params.iter().filter(|p| p.default.is_none()).count() as f64;
+        let mut props = std::collections::HashMap::new();
+        props.insert("length".to_string(), Value::Number(length));
         ValueFunction {
             name: None,
             params,
@@ -150,7 +155,7 @@ impl ValueFunction {
             is_arrow: true,
             strict: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
-            properties: std::cell::RefCell::new(std::collections::HashMap::new()),
+            properties: std::cell::RefCell::new(props),
         }
     }
 
