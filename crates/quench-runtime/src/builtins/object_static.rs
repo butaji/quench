@@ -30,7 +30,7 @@ fn is_internal_key(key: &str) -> bool {
 /// symbol-keyed properties match computed member access (obj[sym]).
 fn to_property_key(v: &Value) -> String {
     match v {
-        Value::Symbol(s) => s.desc.clone().unwrap_or_default(),
+        Value::Symbol(s) => s.desc.clone().map(|d| d.to_string()).unwrap_or_default(),
         _ => to_js_string(v),
     }
 }
