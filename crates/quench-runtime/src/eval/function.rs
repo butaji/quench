@@ -120,19 +120,41 @@ pub(crate) fn call_js_function_impl(
             .define("new.target".to_string(), target);
     }
     let call_env_rc = Rc::new(RefCell::new(call_env));
+    
+    // Handle parameters, stopping at rest parameter
+    let mut found_rest = false;
+    let mut rest_args: Vec<Value> = Vec::new();
+    
     for (i, param) in params.iter().enumerate() {
-        let arg = args.get(i).cloned();
-        let value = match arg {
-            Some(Value::Undefined) if param.default.is_some() => {
-                eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
-            }
-            Some(v) => v,
-            None if param.default.is_some() => {
-                eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
-            }
-            None => Value::Undefined,
-        };
-        call_env_rc.borrow_mut().define(param.name.clone(), value);
+        if found_rest {
+            // After rest parameter, remaining params are ignored (rest collects all remaining args)
+            // Just define them as undefined
+            call_env_rc.borrow_mut().define(param.name.clone(), Value::Undefined);
+            continue;
+        }
+        
+        if param.rest {
+            // Collect all remaining arguments into an array
+            rest_args = args[i..].to_vec();
+            found_rest = true;
+            call_env_rc.borrow_mut().define(
+                param.name.clone(),
+                Value::Object(Rc::new(RefCell::new(Object::new_array_from(rest_args)))),
+            );
+        } else {
+            let arg = args.get(i).cloned();
+            let value = match arg {
+                Some(Value::Undefined) if param.default.is_some() => {
+                    eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
+                }
+                Some(v) => v,
+                None if param.default.is_some() => {
+                    eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
+                }
+                None => Value::Undefined,
+            };
+            call_env_rc.borrow_mut().define(param.name.clone(), value);
+        }
     }
 
     // Create arguments object for non-arrow functions

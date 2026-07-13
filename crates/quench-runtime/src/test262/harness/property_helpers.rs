@@ -94,7 +94,13 @@ pub fn assert_deep_equal(args: Vec<Value>) -> Result<Value, JsError> {
             crate::test262::harness::assert_helpers::debug_string(&expected),
             message
         );
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+        // Create a proper Test262Error with name property for assert.throws compatibility
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+        // Set name property explicitly
+        if let crate::value::Value::Object(o) = &err_val {
+            o.borrow_mut().set("name", crate::value::Value::String("Test262Error".to_string()));
+        }
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
@@ -105,21 +111,39 @@ fn deep_equal_internal(a: &Value, b: &Value) -> bool {
     if same_value(a, b) {
         return true;
     }
-    if let Value::Number(na) = a {
-        if let Value::Number(nb) = b {
+    // Unwrap boxed primitives
+    let a = unwrap_boxed(a);
+    let b = unwrap_boxed(b);
+    // After unwrapping, same_value might now match
+    if same_value(&a, &b) {
+        return true;
+    }
+    if let Value::Number(na) = &a {
+        if let Value::Number(nb) = &b {
             return na.is_nan() && nb.is_nan();
         }
     }
-    match (a, b) {
+    match (&a, &b) {
         (Value::Number(_), Value::Number(_)) => false,
-        (Value::String(_), Value::String(_)) => crate::value::strict_eq(a, b),
-        (Value::Boolean(_), Value::Boolean(_)) => crate::value::strict_eq(a, b),
+        (Value::String(_), Value::String(_)) => crate::value::strict_eq(&a, &b),
+        (Value::Boolean(_), Value::Boolean(_)) => crate::value::strict_eq(&a, &b),
         (Value::Undefined, Value::Undefined) => true,
         (Value::Null, Value::Null) => true,
         (Value::Symbol(_), Value::Symbol(_)) => false,
-        (Value::Object(_), Value::Object(_)) => deep_equal_objects(a, b),
+        (Value::Object(_), Value::Object(_)) => deep_equal_objects(&a, &b),
         _ => false,
     }
+}
+
+/// Unwrap boxed primitives (Object("a"), new Number(1), etc.) via _value
+fn unwrap_boxed(v: &Value) -> Value {
+    if let Value::Object(obj) = v {
+        let obj = obj.borrow();
+        if let Some(prim) = obj.get("_value") {
+            return prim.clone();
+        }
+    }
+    v.clone()
 }
 
 fn deep_equal_objects(a: &Value, b: &Value) -> bool {
@@ -127,15 +151,22 @@ fn deep_equal_objects(a: &Value, b: &Value) -> bool {
         (Value::Object(ao), Value::Object(bo)) => (ao.borrow(), bo.borrow()),
         _ => return false,
     };
-    let a_len = a_obj.get("length");
-    let b_len = b_obj.get("length");
-    if let (Some(Value::Number(al)), Some(Value::Number(bl))) = (a_len, b_len) {
-        let al_usize = al as usize;
-        let bl_usize = bl as usize;
-        if al_usize != bl_usize {
+    // Array comparison: if both have "length" and all own keys are numeric or "length"
+    let a_is_array_like = is_array_like(&a_obj);
+    let b_is_array_like = is_array_like(&b_obj);
+    if a_is_array_like && b_is_array_like {
+        let al = match a_obj.get("length") {
+            Some(Value::Number(n)) => n as usize,
+            _ => return false,
+        };
+        let bl = match b_obj.get("length") {
+            Some(Value::Number(n)) => n as usize,
+            _ => return false,
+        };
+        if al != bl {
             return false;
         }
-        for i in 0..al_usize {
+        for i in 0..al {
             let a_elem = a_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
             let b_elem = b_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
             if !deep_equal_internal(&a_elem, &b_elem) {
@@ -144,7 +175,13 @@ fn deep_equal_objects(a: &Value, b: &Value) -> bool {
         }
         return true;
     }
-    for key in a_obj.own_keys() {
+    // Regular object comparison: must have the same keys in both directions
+    let a_keys: std::collections::HashSet<_> = a_obj.own_keys().into_iter().collect();
+    let b_keys: std::collections::HashSet<_> = b_obj.own_keys().into_iter().collect();
+    if a_keys.len() != b_keys.len() {
+        return false;
+    }
+    for key in a_keys {
         let a_val = a_obj.get(&key).unwrap_or(Value::Undefined);
         let b_val = b_obj.get(&key).unwrap_or(Value::Undefined);
         if !deep_equal_internal(&a_val, &b_val) {
@@ -152,6 +189,21 @@ fn deep_equal_objects(a: &Value, b: &Value) -> bool {
         }
     }
     true
+}
+
+/// Check if an object looks like an array: has "length" and all keys are numeric
+fn is_array_like(obj: &crate::value::Object) -> bool {
+    let length_ok = obj.get("length").map(|v| {
+        if let Value::Number(n) = v {
+            n.is_finite() && n >= 0.0
+        } else {
+            false
+        }
+    }).unwrap_or(false);
+    if !length_ok {
+        return false;
+    }
+    obj.own_keys().iter().all(|k| k.parse::<usize>().is_ok() || k == "length")
 }
 
 /// makeNativeError - factory for native error objects
