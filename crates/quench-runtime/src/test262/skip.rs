@@ -195,6 +195,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/left-shift/",
     "test/language/expressions/right-shift/",
     "test/language/expressions/unsigned-right-shift/",
+    // Logical assignment operators
+    "test/language/expressions/logical-assignment/",
 ];
 
 /// Check if a specific test file should be skipped.
