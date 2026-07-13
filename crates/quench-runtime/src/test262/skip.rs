@@ -54,6 +54,7 @@ const SKIP_FEATURES: &[&str] = &[
     "Intl.NumberFormat",
     "Intl.Segmenter",
     // Other
+    "tail-call-optimization",
     "regexp-match-indices",
     "regexp-named-groups",
     "regexp-sticky",
