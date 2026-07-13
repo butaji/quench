@@ -64,6 +64,22 @@ fn eval_super_call(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    // Per ES §8.1.1.3.1 BindThisValue: if any enclosing scope already has
+    // an initialized `this` (e.g. super() was called in the enclosing
+    // constructor), super() must throw ReferenceError. For arrow functions
+    // the relevant scope is in the lexical parent chain.
+    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
+    while let Some(e) = current {
+        for scope in e.borrow().scopes.iter() {
+            if scope.is_this_initialized() {
+                return Err(JsError(
+                    "ReferenceError: super() called after `this` was already initialized"
+                        .to_string(),
+                ));
+            }
+        }
+        current = e.borrow().get_parent();
+    }
     let super_val = get_super_value(env).ok_or_else(|| {
         JsError("ReferenceError: super is only valid in class methods".to_string())
     })?;

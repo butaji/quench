@@ -27,6 +27,11 @@ pub struct Scope {
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
     this_value: Option<Value>,
+    /// Whether `this` has been initialized for this scope. Per ES §8.1.1.3.1
+    /// BindThisValue and §12.3.5.1 SuperCall: once initialized, a second
+    /// super()/this binding should throw ReferenceError. We track it on
+    /// the scope that holds the constructor's `this`.
+    this_initialized: bool,
     /// Number of closures created while this scope was the innermost scope.
     /// `pop_scope` skips popping if this is > 0, so closures that captured
     /// bindings from this block keep seeing them after the block exits.
@@ -58,6 +63,7 @@ impl Clone for Scope {
             declarations: self.declarations.clone(),
             var_kinds: self.var_kinds.clone(),
             this_value: self.this_value.clone(),
+            this_initialized: self.this_initialized,
             closures_created: self.closures_created,
         }
     }
@@ -70,6 +76,7 @@ impl Scope {
             declarations: HashMap::new(),
             var_kinds: HashMap::new(),
             this_value: None,
+            this_initialized: false,
             closures_created: 0,
         }
     }
@@ -161,6 +168,13 @@ impl Scope {
     /// Set the "this" binding for this scope
     pub fn set_this(&mut self, value: Value) {
         self.this_value = Some(value);
+        self.this_initialized = true;
+    }
+
+    /// Check whether `this` has been initialized in this scope. Used to
+    /// reject duplicate `super()` / this re-binding attempts per ES §12.3.5.1.
+    pub fn is_this_initialized(&self) -> bool {
+        self.this_initialized
     }
 }
 
