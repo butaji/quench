@@ -1,5 +1,9 @@
 //! Native property helper functions (verifyProperty, deepEqual, etc.)
 
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
+
 use crate::value::same_value;
 use crate::{JsError, Value};
 
@@ -79,6 +83,11 @@ pub fn verify_not_configurable(_args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Undefined)
 }
 
+type ObjectPair = (
+    *const RefCell<crate::value::Object>,
+    *const RefCell<crate::value::Object>,
+);
+
 /// assert.deepEqual - structural equality check
 pub fn assert_deep_equal(args: Vec<Value>) -> Result<Value, JsError> {
     let actual = args.first().cloned().unwrap_or(Value::Undefined);
@@ -87,7 +96,8 @@ pub fn assert_deep_equal(args: Vec<Value>) -> Result<Value, JsError> {
         .get(2)
         .map(crate::value::to_js_string)
         .unwrap_or_default();
-    if !deep_equal_internal(&actual, &expected) {
+    let mut seen = HashSet::new();
+    if !deep_equal(&actual, &expected, &mut seen) {
         let msg = format!(
             "Expected {} to be structurally equal to {}. {}",
             crate::test262::harness::assert_helpers::debug_string(&actual),
@@ -110,14 +120,12 @@ pub fn assert_deep_equal(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Undefined)
 }
 
-fn deep_equal_internal(a: &Value, b: &Value) -> bool {
+fn deep_equal(a: &Value, b: &Value, seen: &mut HashSet<ObjectPair>) -> bool {
     if same_value(a, b) {
         return true;
     }
-    // Unwrap boxed primitives
     let a = unwrap_boxed(a);
     let b = unwrap_boxed(b);
-    // After unwrapping, same_value might now match
     if same_value(&a, &b) {
         return true;
     }
@@ -126,14 +134,18 @@ fn deep_equal_internal(a: &Value, b: &Value) -> bool {
             return na.is_nan() && nb.is_nan();
         }
     }
-    match (&a, &b) {
+    dispatch_value_pair(&a, &b, seen)
+}
+
+fn dispatch_value_pair(a: &Value, b: &Value, seen: &mut HashSet<ObjectPair>) -> bool {
+    match (a, b) {
         (Value::Number(_), Value::Number(_)) => false,
-        (Value::String(_), Value::String(_)) => crate::value::strict_eq(&a, &b),
-        (Value::Boolean(_), Value::Boolean(_)) => crate::value::strict_eq(&a, &b),
+        (Value::String(_), Value::String(_)) => crate::value::strict_eq(a, b),
+        (Value::Boolean(_), Value::Boolean(_)) => crate::value::strict_eq(a, b),
         (Value::Undefined, Value::Undefined) => true,
         (Value::Null, Value::Null) => true,
         (Value::Symbol(_), Value::Symbol(_)) => false,
-        (Value::Object(_), Value::Object(_)) => deep_equal_objects(&a, &b),
+        (Value::Object(ao), Value::Object(bo)) => deep_equal_objects(ao, bo, seen),
         _ => false,
     }
 }
@@ -149,36 +161,71 @@ fn unwrap_boxed(v: &Value) -> Value {
     v.clone()
 }
 
-fn deep_equal_objects(a: &Value, b: &Value) -> bool {
-    let (a_obj, b_obj) = match (a, b) {
-        (Value::Object(ao), Value::Object(bo)) => (ao.borrow(), bo.borrow()),
-        _ => return false,
-    };
-    // Array comparison: if both have "length" and all own keys are numeric or "length"
+fn object_pair(
+    a: &Rc<RefCell<crate::value::Object>>,
+    b: &Rc<RefCell<crate::value::Object>>,
+) -> ObjectPair {
+    (Rc::as_ptr(a), Rc::as_ptr(b))
+}
+
+fn check_or_record_pair(
+    ao: &Rc<RefCell<crate::value::Object>>,
+    bo: &Rc<RefCell<crate::value::Object>>,
+    seen: &mut HashSet<ObjectPair>,
+) -> bool {
+    !seen.insert(object_pair(ao, bo))
+}
+
+fn deep_equal_objects(
+    ao: &Rc<RefCell<crate::value::Object>>,
+    bo: &Rc<RefCell<crate::value::Object>>,
+    seen: &mut HashSet<ObjectPair>,
+) -> bool {
+    if check_or_record_pair(ao, bo, seen) {
+        return true;
+    }
+    let (a_obj, b_obj) = (ao.borrow(), bo.borrow());
     let a_is_array_like = is_array_like(&a_obj);
     let b_is_array_like = is_array_like(&b_obj);
     if a_is_array_like && b_is_array_like {
-        let al = match a_obj.get("length") {
-            Some(Value::Number(n)) => n as usize,
-            _ => return false,
-        };
-        let bl = match b_obj.get("length") {
-            Some(Value::Number(n)) => n as usize,
-            _ => return false,
-        };
-        if al != bl {
+        return deep_equal_array_like(ao, bo, seen);
+    }
+    deep_equal_plain_objects(ao, bo, seen)
+}
+
+fn deep_equal_array_like(
+    ao: &Rc<RefCell<crate::value::Object>>,
+    bo: &Rc<RefCell<crate::value::Object>>,
+    seen: &mut HashSet<ObjectPair>,
+) -> bool {
+    let (a_obj, b_obj) = (ao.borrow(), bo.borrow());
+    let al = match a_obj.get("length") {
+        Some(Value::Number(n)) => n as usize,
+        _ => return false,
+    };
+    let bl = match b_obj.get("length") {
+        Some(Value::Number(n)) => n as usize,
+        _ => return false,
+    };
+    if al != bl {
+        return false;
+    }
+    for i in 0..al {
+        let a_elem = a_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
+        let b_elem = b_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
+        if !deep_equal(&a_elem, &b_elem, seen) {
             return false;
         }
-        for i in 0..al {
-            let a_elem = a_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
-            let b_elem = b_obj.get(&i.to_string()).unwrap_or(Value::Undefined);
-            if !deep_equal_internal(&a_elem, &b_elem) {
-                return false;
-            }
-        }
-        return true;
     }
-    // Regular object comparison: must have the same keys in both directions
+    true
+}
+
+fn deep_equal_plain_objects(
+    ao: &Rc<RefCell<crate::value::Object>>,
+    bo: &Rc<RefCell<crate::value::Object>>,
+    seen: &mut HashSet<ObjectPair>,
+) -> bool {
+    let (a_obj, b_obj) = (ao.borrow(), bo.borrow());
     let a_keys: std::collections::HashSet<_> = a_obj.own_keys().into_iter().collect();
     let b_keys: std::collections::HashSet<_> = b_obj.own_keys().into_iter().collect();
     if a_keys.len() != b_keys.len() {
@@ -187,7 +234,7 @@ fn deep_equal_objects(a: &Value, b: &Value) -> bool {
     for key in a_keys {
         let a_val = a_obj.get(&key).unwrap_or(Value::Undefined);
         let b_val = b_obj.get(&key).unwrap_or(Value::Undefined);
-        if !deep_equal_internal(&a_val, &b_val) {
+        if !deep_equal(&a_val, &b_val, seen) {
             return false;
         }
     }
