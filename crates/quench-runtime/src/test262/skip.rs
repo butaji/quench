@@ -275,6 +275,8 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/arguments-object/",
     // directive-prologue tests
     "test/language/directive-prologue/",
+    // global-code tests
+    "test/language/global-code/",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
