@@ -297,6 +297,15 @@ impl Environment {
         captured
     }
 
+    pub fn binding_scope(&self, name: &str) -> Option<Rc<RefCell<Scope>>> {
+        for scope in self.scopes.iter().rev() {
+            if scope.borrow().has(name) {
+                return Some(Rc::clone(scope));
+            }
+        }
+        self.parent.as_ref()?.borrow().binding_scope(name)
+    }
+
     /// Get a variable by name (lexical lookup)
     /// Returns a cloned Value for simplicity.
     /// Walks the scope chain in this environment and then the parent
