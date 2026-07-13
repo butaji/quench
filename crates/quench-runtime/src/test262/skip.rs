@@ -19,17 +19,8 @@ const SKIP_FEATURES: &[&str] = &[
     "WeakSet",
     "WeakRef",
     "TypedArray",
-    // Symbol well-known
-    "Symbol.iterator",
-    "Symbol.asyncIterator",
-    "Symbol.match",
-    "Symbol.matchAll",
-    "Symbol.replace",
-    "Symbol.search",
-    "Symbol.species",
-    "Symbol.split",
-    "Symbol.toStringTag",
-    "Symbol.unscopables",
+    // Symbol well-known (iterator and toStringTag are registered)
+    // Symbol.match etc. kept for RegExp-dependent symbols not yet registered
     // Modules
     "import.meta",
     "dynamic-import",
