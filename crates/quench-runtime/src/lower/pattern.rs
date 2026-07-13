@@ -196,9 +196,16 @@ fn lower_assignment_target_maybe_default(
     match target {
         // `[a = default]`
         ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(d) => {
-            let binding = lower_assignment_target_to_binding(&d.binding)?;
-            let init = lower_expr(&d.init).ok()?;
-            Some(BindingElement::Default(Box::new(binding), Box::new(init)))
+            let binding = lower_assignment_target_to_binding(&d.binding);
+            match binding {
+                Some(binding) => {
+                    let init = lower_expr(&d.init).ok()?;
+                    Some(BindingElement::Default(Box::new(binding), Box::new(init)))
+                }
+                None => lower_assignment_target(&d.binding)
+                    .ok()
+                    .map(BindingElement::AssignmentTarget),
+            }
         }
         // Regular assignment target
         _ => {

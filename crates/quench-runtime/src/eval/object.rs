@@ -48,29 +48,9 @@ fn assign_array_destructuring(
     if arr_rc.borrow().kind == ObjectKind::Array {
         return assign_array_with_iterator(bindings, arr_rc, env);
     }
-    if let Some(iter) = obtain_iterator(arr_rc) {
-        let result = assign_array_with_iterator(bindings, &iter, env);
-        return result;
-    }
-    let mut index = 0usize;
-    for binding in bindings {
-        let elem_value = {
-            let obj_ref = arr_rc.borrow();
-            let key = if let Some(prop) = obj_ref
-                .properties
-                .keys()
-                .find(|k| k.parse::<usize>().ok() == Some(index))
-            {
-                prop.clone()
-            } else {
-                index.to_string()
-            };
-            obj_ref.get(&key).unwrap_or(Value::Undefined)
-        };
-        index += 1;
-        assign_binding_elem(binding, &elem_value, env)?;
-    }
-    Ok(())
+    let iter = obtain_iterator(arr_rc);
+    let iterator = iter.as_ref().unwrap_or(arr_rc);
+    assign_array_with_iterator(bindings, iterator, env)
 }
 
 fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Option<Rc<RefCell<Object>>> {
@@ -169,6 +149,27 @@ fn take_iterator_value(
 }
 
 fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
+    // Per ES §7.4.11 step 3: GetMethod(iterator, "return"). If the result
+    // is undefined, return. If it is not callable, throw a TypeError.
+    let binding = iterator.borrow();
+    let return_value = binding.get("return");
+    let callable = match return_value {
+        Some(Value::Object(_)) => true,
+        Some(Value::Function(_)) => true,
+        Some(Value::NativeFunction(_)) => true,
+        Some(Value::NativeConstructor(_)) => true,
+        Some(Value::Undefined) | None => return None,
+        _ => false,
+    };
+    drop(binding);
+    if !callable {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "iterator.return is not a function",
+            "TypeError",
+        );
+        return Some(js_err);
+    }
+    let return_value = return_value.unwrap();
     let (body, closure) = {
         let binding = iterator.borrow();
         let getter = binding.get_getter("return");
@@ -179,7 +180,14 @@ fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     };
     let (body, closure) = match (body, closure) {
         (Some(body), Some(closure)) => (body, closure),
-        _ => return None,
+        (_, _) => {
+            // Plain data-property return: invoke the function value directly.
+            let _ = crate::eval::function::call_value(return_value, vec![]);
+            if let Some(thrown) = crate::value::take_thrown_value() {
+                return Some(JsError(crate::value::to_js_string(&thrown)));
+            }
+            return None;
+        }
     };
     let params: Vec<crate::ast::Param> = Vec::new();
     let _ = crate::eval::function::call_value(
@@ -277,32 +285,20 @@ fn assign_binding_elem(
             assign_binding_elem(binding, &value, env)
         }
         BindingElement::AssignmentTarget(target) => {
-            // For a destructuring target like `target()[targetKey()]` we need
-            // the ES spec ordering: read the source value first, then convert
-            // the property key to a string and put the value. This differs
-            // from the normal `target()[key] = rhs` order, which converts
-            // the key before reading. The destructuring path here is:
-            //   1. lhs object expression  → "target"
-            //   2. rhs source (already in `value`)
-            //   3. lhs property expression  → "target-key" (key object)
-            //   4. key → string              → "target-key-tostring"
-            //   5. set the property         → "set"
-            // The inner `targetKey()` Reference object is used directly, so
-            // toString fires during the PutValue, not at Reference creation.
             if let Expression::Member {
-                object,
-                property,
-                computed: true,
+                object, property, ..
             } = target
             {
                 let lref_obj = eval_expression(object, env, false)?;
-                let key_value = match property {
-                    PropertyKey::Computed(expr) => eval_expression(expr, env, false)?,
-                    PropertyKey::Ident(name) => Value::String(name.clone()),
-                    PropertyKey::String(s) => Value::String(s.clone()),
-                    PropertyKey::Number(n) => Value::Number(*n),
+                let key_string = match property {
+                    PropertyKey::Computed(expr) => {
+                        let key_value = eval_expression(expr, env, false)?;
+                        crate::value::to_js_string(&key_value)
+                    }
+                    PropertyKey::Ident(name) => name.clone(),
+                    PropertyKey::String(s) => s.clone(),
+                    PropertyKey::Number(n) => n.to_string(),
                 };
-                let key_string = crate::value::to_js_string(&key_value);
                 if let Value::Object(o) = lref_obj {
                     if let Some(setter) = o.borrow().get_setter(&key_string) {
                         let _ = call_setter(&o, &setter, value.clone(), env)?;
