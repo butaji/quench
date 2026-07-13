@@ -74,6 +74,7 @@ fn lower_array_expr(arr: &ast::ArrayExpression) -> Result<Expression, LowerError
                 ast::ArrayExpressionElement::SpreadElement(spread) => {
                     Ok(Expression::Spread(Box::new(lower_expr(&spread.argument)?)))
                 }
+                ast::ArrayExpressionElement::Elision(_) => Ok(Expression::Elision),
                 // Use as_expression() to convert the boxed variant to Expression
                 elem => lower_expr(
                     elem.as_expression()

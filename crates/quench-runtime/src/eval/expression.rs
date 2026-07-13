@@ -176,6 +176,9 @@ pub fn eval_expression(
         Expression::Spread(_) => Err(JsError(
             "Spread must be used inside an array literal context".to_string(),
         )),
+        Expression::Elision => Err(JsError(
+            "Array elision must be used inside an array literal context".to_string(),
+        )),
     }
 }
 

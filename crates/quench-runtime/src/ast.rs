@@ -167,6 +167,8 @@ pub enum Expression {
     /// Object with getter/setter support
     Object(Vec<(PropertyKey, PropertyValue)>),
     Array(Vec<Expression>),
+    /// Array elision (hole) from `[ , ]` syntax; contributes to length but not to properties.
+    Elision,
     /// Spread element: ...expr (used in array literals)
     Spread(Box<Expression>),
     FunctionExpression {
