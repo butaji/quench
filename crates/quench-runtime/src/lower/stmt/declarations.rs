@@ -74,7 +74,19 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
     let body = func_decl
         .body
         .as_ref()
-        .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
+        .map(|b| {
+            let mut stmts: Vec<Statement> = b
+                .statements
+                .iter()
+                .filter_map(lower_stmt)
+                .collect();
+            // Add directives (e.g. "use strict") before statements so
+            // eval-time check_use_strict can find them.
+            for d in &b.directives {
+                stmts.insert(0, Statement::Expression(Box::new(Expression::String(d.expression.value.to_string()))));
+            }
+            stmts
+        })
         .unwrap_or_default();
     Some(Statement::FunctionDeclaration { name, params, body })
 }

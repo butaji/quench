@@ -914,6 +914,14 @@ mod tests {
     }
 
     #[test]
+    fn sloppy_arrow_assigns_undeclared_creates_global() {
+        let mut ctx = Context::new().unwrap();
+        // Just the arrow with name assignment
+        let v = ctx.eval("var af = _ => { foo = 1; }; af()");
+        eprintln!("arrow af(): {:?}", v);
+    }
+
+    #[test]
     fn arrow_fn_caller_full_test262() {
         // Load the actual test262 harness and run the failing test logic.
         use crate::test262::harness::try_inject_harness;

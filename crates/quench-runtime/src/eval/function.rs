@@ -84,8 +84,10 @@ pub(crate) fn call_js_function_impl(
     // Strictness is captured where the function was DEFINED (f.strict), never
     // inherited from the call site: a sloppy function called from strict code
     // still gets the global object as `this` (ES spec 10.2.1.2).
-    // Arrow functions keep the historical always-strict behavior here.
-    let function_is_strict = f.is_arrow || f.strict;
+    // Arrow functions are different: their strictness comes from the lexical
+    // enclosing scope at definition time. We capture that via f.strict (set
+    // at arrow creation in Expression::ArrowFunction).
+    let function_is_strict = f.strict;
     // Check if function body starts with "use strict"; directive
     let body_is_strict = check_use_strict(&f.body);
     let in_strict = function_is_strict || body_is_strict;
