@@ -351,6 +351,22 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_strict_assignment_to_number_max_value_throws() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+"use strict";
+assert.throws(TypeError, function() { Number.MAX_VALUE = 42; });
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "readonly Number constant assignment failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_arrow_object_parameter_default_binding() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
