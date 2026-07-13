@@ -94,6 +94,7 @@ fn assign_array_with_iterator(
             }
         };
         if let Err(error) = assign_binding_elem(binding, &elem_value, env) {
+            eprintln!("DEBUG: assign_binding_elem err, calling return");
             let original = crate::value::take_thrown_value();
             let close_throw = call_iterator_return(iterator);
             if original.is_some() {
@@ -149,6 +150,7 @@ fn take_iterator_value(
 }
 
 fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
+    eprintln!("DEBUG: call_iterator_return");
     // Per ES §7.4.11 step 3: GetMethod(iterator, "return"). If the result
     // is undefined, return. If it is not callable, throw a TypeError.
     let binding = iterator.borrow();
@@ -289,7 +291,9 @@ fn assign_binding_elem(
                 object, property, ..
             } = target
             {
+                eprintln!("DEBUG: entering AssignmentTarget, target={:?}", target);
                 let lref_obj = eval_expression(object, env, false)?;
+                eprintln!("DEBUG: lref_obj={:?}", lref_obj);
                 let key_string = match property {
                     PropertyKey::Computed(expr) => {
                         let key_value = eval_expression(expr, env, false)?;
@@ -301,7 +305,12 @@ fn assign_binding_elem(
                 };
                 if let Value::Object(o) = lref_obj {
                     if let Some(setter) = o.borrow().get_setter(&key_string) {
-                        let _ = call_setter(&o, &setter, value.clone(), env)?;
+                        eprintln!("DEBUG: calling setter for {}", key_string);
+                        let result = call_setter(&o, &setter, value.clone(), env);
+                        eprintln!("DEBUG: setter result = {:?}", result.is_ok());
+                        if result.is_err() {
+                            return Err(result.unwrap_err());
+                        }
                     } else {
                         o.borrow_mut().set(&key_string, value.clone());
                     }
@@ -789,7 +798,13 @@ pub fn call_getter(
     if body.is_empty() {
         Ok(Value::Undefined)
     } else {
-        eval_function_body(&body, &call_env, false)
+        eprintln!(
+            "DEBUG: eval_function_body for setter, body.len={}",
+            body.len()
+        );
+        let result = eval_function_body(&body, &call_env, false);
+        eprintln!("DEBUG: eval result = {:?}", result.is_ok());
+        result
     }
 }
 
