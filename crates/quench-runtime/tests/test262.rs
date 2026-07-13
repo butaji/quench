@@ -351,6 +351,22 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_strict_assignment_to_function_length_throws() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+"use strict";
+assert.throws(TypeError, function() { Function.length = 42; });
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "readonly Function.length assignment failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_strict_assignment_to_number_max_value_throws() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
