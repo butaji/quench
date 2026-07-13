@@ -364,13 +364,25 @@ fn bool_to_num(b: bool) -> f64 {
 fn object_vs_primitive_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Object(_), Value::Number(_) | Value::String(_)) => {
-            loose_eq(&to_primitive_for_compare(a), b)
+            match to_primitive_for_compare_strict(a) {
+                Ok(prim) => loose_eq(&prim, b),
+                Err(_) => return false, // throw propagates via thrown_value; comparison returns false here
+            }
         }
         (Value::Number(_) | Value::String(_), Value::Object(_)) => {
-            loose_eq(a, &to_primitive_for_compare(b))
+            match to_primitive_for_compare_strict(b) {
+                Ok(prim) => loose_eq(a, &prim),
+                Err(_) => return false,
+            }
         }
-        (Value::Object(_), _) => loose_eq(&to_primitive_for_compare(a), b),
-        (_, Value::Object(_)) => loose_eq(a, &to_primitive_for_compare(b)),
+        (Value::Object(_), _) => match to_primitive_for_compare_strict(a) {
+            Ok(prim) => loose_eq(&prim, b),
+            Err(_) => return false,
+        },
+        (_, Value::Object(_)) => match to_primitive_for_compare_strict(b) {
+            Ok(prim) => loose_eq(a, &prim),
+            Err(_) => return false,
+        },
         _ => false,
     }
 }
@@ -406,6 +418,22 @@ fn to_primitive_for_compare(v: &Value) -> Value {
     }
 }
 
+/// ToPrimitive for object comparison — returns Result so we can propagate
+/// the TypeError when both valueOf and toString return non-primitive values.
+fn to_primitive_for_compare_strict(v: &Value) -> Result<Value, JsError> {
+    if let Some(prim) = primitive_for_compare(v) {
+        return Ok(prim);
+    }
+    match v {
+        Value::Object(_) => to_primitive(v, Some("number")),
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => Ok(Value::String("[object Function]".to_string())),
+        _ => Ok(Value::Undefined),
+    }
+}
+
 fn primitive_for_compare(v: &Value) -> Option<Value> {
     match v {
         Value::Undefined => Some(Value::Undefined),
@@ -420,25 +448,32 @@ fn primitive_for_compare(v: &Value) -> Option<Value> {
 
 fn object_to_primitive_for_compare(obj: &Rc<std::cell::RefCell<crate::value::Object>>) -> Value {
     let obj_borrowed = obj.borrow();
-    if let Some(Value::NativeFunction(nf)) = obj_borrowed
-        .get("valueOf")
-        .filter(|m| matches!(m, Value::NativeFunction(_)))
-    {
+    // Try valueOf first — handle NativeFunction OR Function (JS-defined).
+    let value_of = obj_borrowed.get("valueOf");
+    let method = value_of.and_then(|m| match m {
+        Value::NativeFunction(_) | Value::Function(_) => Some(m.clone()),
+        _ => None,
+    });
+    drop(obj_borrowed);
+    if let Some(method) = method {
         let this_val = Value::Object(Rc::clone(obj));
-        if let Ok(result) = nf.call(this_val, vec![]) {
+        if let Ok(result) = crate::eval::function::call_value_with_this(method, vec![], this_val) {
             if !matches!(result, Value::Object(_)) {
                 return result;
             }
         }
     }
-    drop(obj_borrowed);
+    // Then toString.
     let obj_borrowed = obj.borrow();
-    if let Some(Value::NativeFunction(nf)) = obj_borrowed
-        .get("toString")
-        .filter(|m| matches!(m, Value::NativeFunction(_)))
-    {
+    let to_string = obj_borrowed.get("toString");
+    let method = to_string.and_then(|m| match m {
+        Value::NativeFunction(_) | Value::Function(_) => Some(m.clone()),
+        _ => None,
+    });
+    drop(obj_borrowed);
+    if let Some(method) = method {
         let this_val = Value::Object(Rc::clone(obj));
-        if let Ok(result) = nf.call(this_val, vec![]) {
+        if let Ok(result) = crate::eval::function::call_value_with_this(method, vec![], this_val) {
             if !matches!(result, Value::Object(_)) {
                 return result;
             }
