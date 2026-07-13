@@ -351,6 +351,27 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_assignment_uses_reference_captured_before_rhs_eval() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function test() {
+  var x = 0;
+  var inner = (function() { x = (eval('var x;'), 1); return x; })();
+  assert.sameValue(inner, undefined);
+  assert.sameValue(x, 1);
+}
+test();
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "assignment reference order failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_with_assignment_retains_deleted_property_reference() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
