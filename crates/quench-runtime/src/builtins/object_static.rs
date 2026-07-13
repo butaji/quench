@@ -547,10 +547,18 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             let proto = o.borrow().prototype.clone();
             Ok(proto.map(Value::Object).unwrap_or(Value::Null))
         }
-        Value::Function(f) => {
-            // ValueFunction uses get_prototype() method
-            let proto = f.get_prototype();
-            Ok(Value::Object(proto))
+        Value::Function(_) => {
+            // Per ES §9.2.1 [[GetPrototypeOf]]: the internal [[Prototype]]
+            // of a function is %FunctionPrototype% (Function.prototype),
+            // NOT the function's own `.prototype` property (which is the
+            // prototype for instances created via `new`).
+            if let Some(fp) = crate::builtins::function::get_function_prototype() {
+                return Ok(Value::Object(fp));
+            }
+            // Fallback if Function.prototype not yet registered.
+            let mut proto = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+            proto.set("constructor", Value::String("Function".to_string()));
+            Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(proto))))
         }
         Value::NativeFunction(nf) => Ok(nf
             .prototype
