@@ -410,7 +410,12 @@ impl Environment {
     /// If not found in current environment, tries to set in parent.
     pub fn set(&mut self, name: &str, value: Value) -> bool {
         for scope_rc in self.scopes.iter().rev() {
-            if scope_rc.borrow_mut().set(name.to_string(), value.clone()) {
+            let mut scope = scope_rc.borrow_mut();
+            if scope.get_kind(name) == Some(VarKind::Var) && scope.is_declared_only(name) {
+                scope.initialize_declared(name, value.clone());
+                return true;
+            }
+            if scope.set(name.to_string(), value.clone()) {
                 return true;
             }
         }
