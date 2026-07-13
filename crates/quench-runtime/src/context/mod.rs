@@ -65,15 +65,23 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     // Attempt to parse first so a syntax error becomes a catchable SyntaxError
     // (ES §19.2.1.1 step 6). Parse errors carry no thrown value, and a stale
     // thrown value from earlier code must not be mistaken for the eval result.
-    if let Err(e) = ctx.parse(&source) {
-        CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = prev_ctx;
-        });
-        let (err_val, js_err) = crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
-        crate::value::set_thrown_value(err_val);
-        return Err(js_err);
-    }
-    let result = ctx.eval(&source);
+    let program = match ctx.parse(&source) {
+        Ok(program) => program,
+        Err(e) => {
+            CURRENT_CONTEXT.with(|cell| {
+                *cell.borrow_mut() = prev_ctx;
+            });
+            let (err_val, js_err) =
+                crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
+            crate::value::set_thrown_value(err_val);
+            return Err(js_err);
+        }
+    };
+    let result = if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
+        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source))
+    } else {
+        ctx.eval(&source)
+    };
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = prev_ctx;
     });
