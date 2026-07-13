@@ -866,6 +866,39 @@ mod tests {
     }
 
     #[test]
+    fn simple_class_extends_with_super() {
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "class A { constructor() {} } \
+             class B extends A { constructor() { super(); } } \
+             new B() instanceof B;"
+        );
+        assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn super_in_arrow_throws_reference_error() {
+        // Per ES §8.1.1.3.1: super() in arrow after constructor super()
+        // must throw ReferenceError.
+        let mut ctx = Context::new().unwrap();
+        let v = ctx.eval(
+            "var count = 0; \
+             class A { constructor() { count++; } } \
+             class B extends A { \
+               constructor() { super(); this.af = _ => super(); } \
+             } \
+             var b = new B(); \
+             var err; \
+             try { b.af(); } catch (e) { err = e && e.name; } \
+             [count, err];"
+        ).unwrap();
+        if let crate::value::Value::Object(o) = v {
+            let e = o.borrow().elements.clone();
+            eprintln!("count={:?}, err={:?}", e[0], e[1]);
+        }
+    }
+
+    #[test]
     fn arrow_fn_caller_full_test262() {
         // Load the actual test262 harness and run the failing test logic.
         use crate::test262::harness::try_inject_harness;

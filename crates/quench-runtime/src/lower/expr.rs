@@ -359,6 +359,15 @@ fn lower_assign_expr(assign: &ast::AssignmentExpression) -> Result<Expression, L
 fn lower_static_member_expr(
     member: &ast::StaticMemberExpression,
 ) -> Result<Expression, LowerError> {
+    // `super.x` — runtime dispatches to SuperMember.
+    if matches!(member.object, ast::Expression::Super(_)) {
+        let property = PropertyKey::Ident(member.property.name.as_str().to_string());
+        return Ok(Expression::Member {
+            object: Box::new(Expression::Identifier("super".to_string())),
+            property,
+            computed: false,
+        });
+    }
     let obj = lower_expr(&member.object)?;
     let property = PropertyKey::Ident(member.property.name.as_str().to_string());
     Ok(Expression::Member {
@@ -397,6 +406,8 @@ fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError>
         ast::Expression::ImportExpression(_) => {
             return Err(LowerError::new("import() not supported"));
         }
+        // `super(args)` — runtime dispatches to SuperCall.
+        ast::Expression::Super(_) => Expression::Identifier("super".to_string()),
         _ => lower_expr(&call.callee)?,
     };
     let mut args = Vec::new();
