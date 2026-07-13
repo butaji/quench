@@ -1550,4 +1550,58 @@ result;
         println!("What error did new Math throw? {:?}", result);
         assert!(result.is_ok(), "tracing test failed: {:?}", result);
     }
+
+    #[test]
+    fn block_let_shadows_outer_let_for_closure() {
+        // Reproducer for test262 statements/block/scope-lex-close.js:
+        // a `let` inside a block must create a new lexical binding that
+        // shadows an outer `let` of the same name, even when a closure
+        // captures the inner binding. The inner `x` must remain 'inside'
+        // even though the outer `let x = 'outside'` is evaluated later.
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var probe;
+{
+  let x = 'inside';
+  probe = function() { return x; };
+}
+let x = 'outside';
+if (x !== 'outside') throw new Error('outer x wrong: ' + x);
+if (probe() !== 'inside') throw new Error('probe() wrong: ' + probe());
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "block let shadowing failed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn block_let_does_not_leak_after_block() {
+        // A `let` declared inside a block must NOT be visible after the
+        // block exits (block-scoped, not function-scoped).
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+{
+  let blockScoped = 'inside';
+}
+try {
+  blockScoped;
+  throw new Error('blockScoped leaked out of block');
+} catch (e) {
+  if (!(e instanceof ReferenceError)) {
+    throw new Error('expected ReferenceError, got: ' + e);
+  }
+}
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "block-scope leak test failed: {:?}",
+            result
+        );
+    }
 }

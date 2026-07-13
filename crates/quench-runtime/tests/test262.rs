@@ -178,6 +178,32 @@ if (!result) throw new Error("y should be undefined before declaration");
 }
 
 #[test]
+fn test_block_let_shadows_outer_let() {
+    // Reproducer for test262 statements/block/scope-lex-close.js: a `let`
+    // inside a block creates a new lexical binding that shadows an outer
+    // `let` of the same name; a closure inside the block must see the
+    // inner value, while code outside the block sees the outer value.
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var probe;
+{
+  let x = 'inside';
+  probe = function() { return x; };
+}
+let x = 'outside';
+if (x !== 'outside') throw new Error('outer x wrong: ' + x);
+if (probe() !== 'inside') throw new Error('probe() wrong: ' + probe());
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "block let shadowing failed: {:?}",
+        result
+    );
+}
+
+#[test]
 #[ignore = "run with --ignored to activate staged runner"]
 fn test262_staged() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

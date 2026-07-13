@@ -735,10 +735,11 @@ mod tests {
         // "Infinity" (case-sensitive — only the exact capital-I spelling)
         // after the optional sign.
         assert!(eval_num("parseFloat(Infinity)").is_infinite());
-        assert!(eval_num("parseFloat(Infinity) > 0.0"));
-        assert!(eval_num("parseFloat(-Infinity) < 0.0"));
+        assert!(eval_num("parseFloat(Infinity)") > 0.0);
+        assert!(eval_num("parseFloat(-Infinity)") < 0.0);
         assert!(eval_num("parseFloat('Infinity')").is_infinite());
-        assert!(eval_num("parseFloat('-Infinity')").is_infinite() && eval_num("parseFloat('-Infinity') < 0.0"));
+        assert!(eval_num("parseFloat('-Infinity')").is_infinite());
+        assert!(eval_num("parseFloat('-Infinity')") < 0.0);
         // Case-sensitive: "infinity" must be NaN.
         assert!(eval_num("parseFloat('infinity')").is_nan());
     }
