@@ -117,31 +117,6 @@ if (f1.length !== 0) throw new Test262Error('length should be 0 even after delet
     }
 
     #[test]
-    fn repro_length_dflt_via_harness() {
-        let mut host = QuenchHost::new();
-        let harness_src = r#"
-var verifyProperty = function(obj, name, desc) {
-  var originalDesc = Object.getOwnPropertyDescriptor(obj, name);
-  if (!Object.prototype.hasOwnProperty.call(obj, name)) {
-    throw new Error('should be own');
-  }
-  try { delete obj[name]; } catch (e) {}
-  var stillHas = Object.prototype.hasOwnProperty.call(obj, name);
-  var failures = [];
-  if (desc.configurable !== undefined && desc.configurable !== stillHas) {
-    failures.push('configurable: expected ' + desc.configurable + ', actual ' + stillHas);
-  }
-  if (failures.length) throw new Error(failures.join('; '));
-  return true;
-};
-var f1 = (x = 42) => {};
-verifyProperty(f1, 'length', { configurable: true });
-"#;
-        let r = host.run_script(harness_src);
-        assert!(r.is_ok(), "got: {:?}", r);
-    }
-
-    #[test]
     fn repro_length_dflt_actual_test_source() {
         let mut host = QuenchHost::new();
         let test_source = r#"
@@ -190,6 +165,61 @@ verifyProperty(f2, "length", {
             let e = o.borrow().elements.clone();
             eprintln!("delete results: d={:?}, stillHas={:?}, len={:?}", e[0], e[1], e[2]);
         }
+    }
+
+    #[test]
+    fn repro_length_dflt_full_test_with_harness() {
+        let mut host = QuenchHost::new();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let harness_path = repo_root.join("tests/test262/harness/propertyHelper.js");
+        let harness_src = std::fs::read_to_string(&harness_path).expect("harness");
+        let harness_body = harness_src
+            .split_once("---*/")
+            .map(|(_, b)| b)
+            .unwrap_or(&harness_src);
+        let test_src = include_str!(
+            "../../../../tests/test262/test/language/expressions/arrow-function/length-dflt.js"
+        );
+        let test_body = test_src.split_once("---*/").map(|(_, b)| b).unwrap_or(test_src);
+        let combined = format!("{}\n{}", harness_body, test_body);
+        let r = host.run_script(&combined);
+        assert!(r.is_ok(), "got: {:?}", r);
+    }
+
+    #[test]
+    fn debug_length_desc_via_harness() {
+        let mut host = QuenchHost::new();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let harness_path = repo_root.join("tests/test262/harness/propertyHelper.js");
+        let harness_src = std::fs::read_to_string(&harness_path).expect("harness");
+        let harness_body = harness_src
+            .split_once("---*/")
+            .map(|(_, b)| b)
+            .unwrap_or(&harness_src);
+        let test_src = include_str!(
+            "../../../../tests/test262/test/language/expressions/arrow-function/length-dflt.js"
+        );
+        let test_body = test_src.split_once("---*/").map(|(_, b)| b).unwrap_or(test_src);
+        let wrap = r#"
+"use strict";
+var origVerify = verifyProperty;
+var verifyProperty = function(obj, name, desc) {
+  console.log('-- call:', name, 'desc.value=' + desc.value);
+  var originalDesc = Object.getOwnPropertyDescriptor(obj, name);
+  console.log('   orig:', originalDesc && (originalDesc.value + ' writable=' + originalDesc.writable));
+  console.log('   obj[name]:', obj[name]);
+  var oldLen = f1.length;
+  console.log('   f1.length:', oldLen);
+  return origVerify.apply(this, arguments);
+};
+var f1 = (x = 42) => {};
+verifyProperty(f1, "length", { value: 0, writable: false, enumerable: false, configurable: true });
+"#;
+        let combined = format!("{}\n{}\n{}", harness_body, wrap, test_body);
+        let r = host.run_script(&combined);
+        eprintln!("result: {:?}", r);
     }
 
     #[test]
