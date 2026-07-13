@@ -18,8 +18,8 @@ pub use convert::{
     to_uint32, PrimitiveHint,
 };
 pub use error::{
-    create_js_error, get_thrown_value, register_error_constructor, set_thrown_value,
-    take_thrown_value, JsError,
+    create_js_error, create_js_error_with_type, get_thrown_value, register_error_constructor,
+    set_thrown_value, take_thrown_value, JsError,
 };
 pub use function::{NativeConstructor, NativeFunction, ValueFunction};
 pub use kind::ObjectKind;
