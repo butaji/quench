@@ -154,6 +154,24 @@ fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     // Per ES §7.4.11 step 3: GetMethod(iterator, "return"). If the result
     // is undefined, return. If it is not callable, throw a TypeError.
     let binding = iterator.borrow();
+    // Check for a getter first (OXC 0.47 stores getters in a separate map).
+    if let Some(getter) = binding.get_getter("return") {
+        let params: Vec<crate::ast::Param> = Vec::new();
+        let body: Vec<crate::ast::Statement> = (*getter.body).clone();
+        let closure = getter.closure.clone();
+        let _ = crate::eval::function::call_value(
+            crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
+                params,
+                Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
+                closure,
+            )),
+            vec![],
+        );
+        if let Some(thrown) = crate::value::take_thrown_value() {
+            return Some(JsError(crate::value::to_js_string(&thrown)));
+        }
+        return None;
+    }
     let return_value = binding.get("return");
     let callable = match return_value {
         Some(Value::Object(_)) => true,
