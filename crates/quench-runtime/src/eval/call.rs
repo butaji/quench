@@ -196,9 +196,17 @@ pub fn eval_new(
 
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
 
+    // Per ES §13.2.6 GetNewTarget: while this constructor runs, `new.target`
+    // resolves to the constructor being invoked. Capture the constructor value
+    // here and restore on every exit path.
+    let prev_new_target = crate::interpreter::get_new_target();
+    crate::interpreter::set_new_target(Some(constructor_val.clone()));
+
     // Handle class instantiation
     if let Value::Class(class) = &constructor_val {
-        return instantiate_class_from_ast_with_env(class.clone(), args, env);
+        let r = instantiate_class_from_ast_with_env(class.clone(), args, env);
+        crate::interpreter::set_new_target(prev_new_target);
+        return r;
     }
 
     let actual_constructor = match &constructor_val {
@@ -251,7 +259,7 @@ pub fn eval_new(
 
     // Per spec, a constructor result is used only if it is an object (functions
     // and native functions are objects too).
-    if use_constructor_result
+    let final_result = if use_constructor_result
         && matches!(
             result,
             Value::Object(_)
@@ -264,7 +272,11 @@ pub fn eval_new(
         Ok(result)
     } else {
         Ok(Value::Object(new_obj_rc))
-    }
+    };
+
+    // Restore outer new.target before returning.
+    crate::interpreter::set_new_target(prev_new_target);
+    final_result
 }
 
 /// Extract a property name from a PropertyKey, evaluating computed keys
