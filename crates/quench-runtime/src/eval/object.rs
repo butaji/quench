@@ -285,13 +285,8 @@ fn assign_to_member(
                     return Ok(());
                 }
             }
-            // Try to set function property in place if the property exists and is a function
-            if o.borrow_mut()
-                .set_function_property(&prop_name, &prop_name, value.clone())
-            {
-                // Already modified the function in place via set_function_property
-                return Ok(());
-            }
+            // Assignment replaces the data property's value while preserving its
+            // descriptor flags. It must not mutate a function value in place.
             // Reject property sets on frozen objects
             if crate::builtins::object_static::is_frozen_object(&o) {
                 return Ok(());
