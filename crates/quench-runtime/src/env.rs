@@ -171,6 +171,18 @@ impl Scope {
         self.this_initialized = true;
     }
 
+    /// Bind `this` without marking it as initialized. Used by build_constructor_env
+    /// before super() runs — the flag is set later by mark_this_initialized().
+    pub fn set_this_value(&mut self, value: Value) {
+        self.this_value = Some(value);
+    }
+
+    /// Mark `this` as initialized. Called after super() succeeds in a derived
+    /// class constructor, so a subsequent super() throws ReferenceError.
+    pub fn mark_this_initialized(&mut self) {
+        self.this_initialized = true;
+    }
+
     /// Check whether `this` has been initialized in this scope. Used to
     /// reject duplicate `super()` / this re-binding attempts per ES §12.3.5.1.
     pub fn is_this_initialized(&self) -> bool {
