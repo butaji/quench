@@ -121,7 +121,6 @@ pub(crate) fn call_js_function_impl(
             .define("new.target".to_string(), target);
     }
     let call_env_rc = Rc::new(RefCell::new(call_env));
-    call_env_rc.borrow_mut().push_scope();
 
     // Handle parameters, stopping at rest parameter
     let mut found_rest = false;
@@ -165,6 +164,7 @@ pub(crate) fn call_js_function_impl(
         }
     }
 
+    call_env_rc.borrow_mut().push_scope();
     predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
     predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
     // Create arguments object only for non-arrow functions.
