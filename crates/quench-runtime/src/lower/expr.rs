@@ -679,18 +679,7 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
 fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerError> {
     let name = lower_prop_name_key_oxc(&method.key)?;
     let is_static = method.r#static;
-    let ps: Vec<String> = method
-        .value
-        .params
-        .items
-        .iter()
-        .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
-                Some(ident.name.as_str().to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let ps: Vec<Param> = lower_formal_params(&method.value.params);
     let body = method
         .value
         .body
@@ -705,7 +694,7 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
     match method.kind {
         ast::MethodDefinitionKind::Get => Ok(ClassMember::Getter { name, body }),
         ast::MethodDefinitionKind::Set => {
-            let param = ps.first().cloned().unwrap_or_default();
+            let param = ps.first().map(|p| p.name.clone()).unwrap_or_default();
             Ok(ClassMember::Setter { name, param, body })
         }
         _ => {

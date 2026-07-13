@@ -460,6 +460,10 @@ fn get_class_property_descriptor(
     c: &crate::value::ClassValue,
     prop: &str,
 ) -> Result<Value, JsError> {
+    // If this configurable property was deleted, return undefined
+    if c.deleted_properties.borrow().contains(prop) {
+        return Ok(Value::Undefined);
+    }
     match prop {
         "name" => {
             make_property_descriptor_string(&c.name.clone().unwrap_or_default(), false, false, true)

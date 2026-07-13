@@ -15,6 +15,8 @@ const SKIP_FEATURES: &[&str] = &[
     "class-static-fields-private",
     "private-fields",
     "private-methods",
+    "class-methods-private",
+    "class-static-methods-private",
     // Built-in globals
     "BigInt",
     "Proxy",

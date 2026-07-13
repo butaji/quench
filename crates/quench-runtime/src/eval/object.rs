@@ -734,10 +734,9 @@ fn get_member_function(
             }
             for (name, params, body) in &class.static_methods {
                 if name_matches_prop(name, prop_name) {
-                    let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
-                        params_vec,
+                        params.clone(),
                         body.clone(),
                         Rc::clone(env),
                     );

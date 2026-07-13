@@ -151,31 +151,46 @@ fn instantiate_with_fields(
     let call_env = Rc::new(RefCell::new(call_env));
 
     let has_super = class.super_class.is_some();
-    let first_is_super = !body.is_empty() && check_first_is_super_call(&body);
+    let body_calls_super = !body.is_empty() && body_calls_super_call(&body);
 
-    // Phase 1: evaluate constructor body (includes super() call handling)
-    if body.is_empty() {
-        if has_super {
+    // Helper: evaluate all instance fields and set on `this`
+    let init_fields = || -> Result<(), JsError> {
+        for (name, value_expr) in &class.instance_fields {
+            let field_val = eval_expression(value_expr, &call_env, false)?;
+            let key_str = prop_key_to_string(name, &call_env, false)?;
+            instance_rc.borrow_mut().set(&key_str, field_val);
+        }
+        Ok(())
+    };
+
+    if has_super {
+        if body_calls_super {
+            // Body has its own super() call — set pending_fields so
+            // eval_super_call initializes fields after super() returns.
+            call_env.borrow_mut().set_pending_fields(class.instance_fields.clone());
+            predeclare_let_const(&body, &mut call_env.borrow_mut());
+            eval_function_body(&body, &call_env, false)?;
+        } else if body.is_empty() {
+            // Empty derived constructor — auto-call super, then init fields
             let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
             call_super_or_default(&sv, args, &this_val, env)?;
-        }
-    } else if first_is_super {
-        predeclare_let_const(&body, &mut call_env.borrow_mut());
-        eval_function_body(&body, &call_env, false)?;
-    } else {
-        if has_super {
+            init_fields()?;
+        } else {
+            // Derived, non-empty body without super() — auto-call super,
+            // init fields, then evaluate body
             let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
             call_super_or_default(&sv, args.clone(), &this_val, env)?;
+            init_fields()?;
+            predeclare_let_const(&body, &mut call_env.borrow_mut());
+            eval_function_body(&body, &call_env, false)?;
         }
-        predeclare_let_const(&body, &mut call_env.borrow_mut());
-        eval_function_body(&body, &call_env, false)?;
-    }
-
-    // Phase 2: initialize instance fields on 'this'
-    for (name, value_expr) in &class.instance_fields {
-        let field_val = eval_expression(value_expr, &call_env, false)?;
-        let key_str = prop_key_to_string(name, &call_env, false)?;
-        instance_rc.borrow_mut().set(&key_str, field_val);
+    } else {
+        // Non-derived class — fields init before constructor body
+        init_fields()?;
+        if !body.is_empty() {
+            predeclare_let_const(&body, &mut call_env.borrow_mut());
+            eval_function_body(&body, &call_env, false)?;
+        }
     }
 
     Ok(this_val)
@@ -241,6 +256,12 @@ fn call_super_or_default(
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
                 crate::eval::function::call_value_with_this(
                     Value::Function(constructor.clone()),
+                    args,
+                    this_val.clone(),
+                )?;
+            } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
+                crate::eval::function::call_value_with_this(
+                    Value::NativeConstructor(nc.clone()),
                     args,
                     this_val.clone(),
                 )?;
@@ -422,6 +443,23 @@ pub fn get_or_create_class_prototype(
     Ok(proto_rc)
 }
 
+/// Per ES §7.2.4 IsConstructor: check if a value is a constructor
+fn is_constructor_value(val: &Value) -> bool {
+    match val {
+        Value::Class(_) => true,
+        Value::NativeConstructor(_) => true,
+        Value::NativeFunction(nf) => nf.prototype.borrow().is_some(),
+        Value::Function(f) => !f.is_arrow,
+        Value::Object(o) => {
+            // Object-wrapped constructors (like Array) have a prototype property
+            // and a callable constructor property.
+            o.borrow().get("prototype").is_some()
+                && o.borrow().get("constructor").is_some()
+        }
+        _ => false,
+    }
+}
+
 /// Get prototype from a class value (used for extends)
 #[allow(dead_code)]
 fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> {
@@ -452,6 +490,13 @@ fn create_class_prototype_helper_with_env(
 ) -> Result<Rc<RefCell<Object>>, JsError> {
     let parent_proto = if let Some(ref super_class) = class.super_class {
         let super_class_val = crate::eval::expression::eval_expression(super_class, env, false)?;
+        // Per ES §14.6.13 ClassDefinitionEvaluation step 7: if superclass is
+        // not null and IsConstructor(superclass) is false, throw TypeError.
+        if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
+            return Err(JsError(
+                "TypeError: superclass must be a constructor".to_string(),
+            ));
+        }
         get_prototype_from_class_val(&super_class_val)
     } else {
         builtins::get_object_prototype()
@@ -477,11 +522,10 @@ fn create_class_prototype_helper_with_env(
     // remain reachable from inside its members.
     let member_closure = crate::eval::expression::capture_env_for_closure(&closure);
     for (name, params, body) in &class.methods {
-        let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
         let key_str = prop_key_to_string(name, &closure, false)?;
         let mut func = ValueFunction::new(
             Some(key_str.clone()),
-            params_vec,
+            params.clone(),
             body.clone(),
             Rc::clone(&member_closure),
         );

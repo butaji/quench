@@ -14,7 +14,6 @@ pub use native_member::{eval_native_constructor_member, eval_native_function_mem
 pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
-use crate::ast::Param;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::value::{create_js_error, JsError, Object, Value};
@@ -57,7 +56,14 @@ pub fn eval_class_member(
             let proto = get_class_prototype_cached(class, env)?;
             Ok(Value::Object(proto))
         }
-        "name" => Ok(Value::String(class.name.clone().unwrap_or_default())),
+        "name" => {
+            // "name" is configurable; if deleted, return undefined
+            if class.deleted_properties.borrow().contains("name") {
+                Ok(Value::Undefined)
+            } else {
+                Ok(Value::String(class.name.clone().unwrap_or_default()))
+            }
+        }
         _ => {
             // Check static fields first
             if let Some(val) = class.get_static_field(prop_name) {
@@ -66,10 +72,9 @@ pub fn eval_class_member(
             // Check static methods
             for (name, params, body) in &class.static_methods {
                 if prop_key_matches(name, prop_name) {
-                    let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
-                        params_vec,
+                        params.clone(),
                         body.clone(),
                         Rc::clone(env),
                     );

@@ -70,6 +70,13 @@ fn eval_super_call(
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     let this_val = get_this_binding(env);
 
+    // Capture the inner Object for field init (after this_val is consumed
+    // by the super constructor call below).
+    let this_obj = match &this_val {
+        Value::Object(o) => Some(Rc::clone(o)),
+        _ => None,
+    };
+
     // Per ES §13.2.6.1 SuperCall: invoke the super constructor FIRST (this
     // may run user code that increments counters etc.), THEN check whether
     // `this` was already initialized. The check throws ReferenceError after
@@ -116,6 +123,24 @@ fn eval_super_call(
         .current_scope()
         .borrow_mut()
         .mark_this_initialized();
+
+    // After super() succeeds, run pending field initializers (for derived
+    // classes with instance fields) before returning to the constructor body.
+    // Per ES §13.2.6.1 SuperCall, fields are initialized right after super()
+    // returns and before the rest of the constructor body.
+    // NOTE: separate let-bind from if-let to avoid temporary scope extension
+    // keeping the RefMut borrow alive into the body.
+    let pending = env.borrow_mut().take_pending_fields();
+    if let Some(fields) = pending {
+        if let Some(ref obj_rc) = this_obj {
+            for (prop_key, expr) in fields {
+                let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
+                let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
+                obj_rc.borrow_mut().set(&key_str, val);
+            }
+        }
+    }
+
     result
 }
 
