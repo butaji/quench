@@ -64,26 +64,16 @@ fn eval_super_call(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    // Per ES §8.1.1.3.1 BindThisValue: if any enclosing scope already has
-    // an initialized `this` (e.g. super() was called in the enclosing
-    // constructor), super() must throw ReferenceError. For arrow functions
-    // the relevant scope is in the lexical parent chain.
-    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
-    while let Some(e) = current {
-        if e.borrow().scopes.iter().any(|s| s.is_this_initialized()) {
-            return Err(JsError(
-                "ReferenceError: super() called after `this` was already initialized"
-                    .to_string(),
-            ));
-        }
-        current = e.borrow().get_parent();
-    }
     let super_val = get_super_value(env).ok_or_else(|| {
         JsError("ReferenceError: super is only valid in class methods".to_string())
     })?;
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     let this_val = get_this_binding(env);
 
+    // Per ES §13.2.6.1 SuperCall: invoke the super constructor FIRST (this
+    // may run user code that increments counters etc.), THEN check whether
+    // `this` was already initialized. The check throws ReferenceError after
+    // super() side-effects have already happened.
     let result = match super_val {
         Value::Class(super_class) => {
             crate::eval::class::call_super_constructor(super_class, args, this_val, env)
@@ -103,6 +93,20 @@ fn eval_super_call(
             return Err(js_err);
         }
     };
+
+    // After super() ran, check the lexical this-binding status. Per ES
+    // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
+    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
+    while let Some(e) = current {
+        if e.borrow().scopes.iter().any(|s| s.is_this_initialized()) {
+            return Err(JsError(
+                "ReferenceError: super() called after `this` was already initialized"
+                    .to_string(),
+            ));
+        }
+        current = e.borrow().get_parent();
+    }
+
     // Mark `this` as initialized on the current scope now that super()
     // succeeded, per ES §13.2.6.1 SuperCall step 7.
     env.borrow_mut().current_scope_mut().mark_this_initialized();
