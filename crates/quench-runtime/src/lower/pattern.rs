@@ -157,11 +157,14 @@ pub fn lower_array_assignment_target(
     let mut elements: Vec<BindingElement> = Vec::new();
     for elem in &arr.elements {
         let elem_binding = match elem {
-            // `[a = default] in x` — extract binding, ignore default
             Some(ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(d)) => {
-                lower_assignment_target_to_binding(&d.binding)
+                let binding = match lower_assignment_target_to_binding(&d.binding) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let init = lower_expr(&d.init)?;
+                Some(BindingElement::Default(Box::new(binding), Box::new(init)))
             }
-            // Regular element
             Some(elem) => {
                 if let Some(target) = elem.as_assignment_target() {
                     lower_assignment_target_to_binding(target)

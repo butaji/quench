@@ -351,6 +351,36 @@ assert.deepEqual(a, b);
 }
 
 #[test]
+fn test_destructuring_iterator_close_error_precedence() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+function MyError() {}
+function thrower() { throw new MyError(); }
+var returnGetterCalled = 0;
+var iterator = {
+  [Symbol.iterator]() { return this; },
+  next() { return { done: false }; },
+  get return() {
+    returnGetterCalled += 1;
+    throw 'bad';
+  }
+};
+assert.throws(MyError, function() {
+  var a;
+  ([a = thrower()] = iterator);
+});
+assert.sameValue(returnGetterCalled, 1);
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "destructuring iterator close precedence failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_strict_with_assignment_to_deleted_binding_throws() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
