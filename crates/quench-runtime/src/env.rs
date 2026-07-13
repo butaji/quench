@@ -192,6 +192,12 @@ impl std::fmt::Debug for Environment {
     }
 }
 
+/// Helper: is the named own property writable on a ValueFunction?
+/// Per ES §9.2.4 FunctionInitialize, `length` and `name` are non-writable.
+fn is_writable_function_prop(key: &str) -> bool {
+    !matches!(key, "length" | "name")
+}
+
 impl Environment {
     /// Create a new top-level environment
     pub fn new() -> Self {
@@ -287,6 +293,9 @@ impl Environment {
     /// Returns true if the property was set successfully.
     /// For arrow functions, attempting to set `caller` or `arguments` is a
     /// silent no-op (the actual TypeError is thrown by the assignment path).
+    /// For non-writable own properties (e.g. `length` on a function), the set
+    /// is silently ignored in sloppy mode; the strict path falls through to
+    /// assign_to_member which throws TypeError.
     pub fn set_property(&mut self, name: &str, prop: &str, value: Value) -> bool {
         // Try current scopes first - use get_mut for in-place modification
         for scope in self.scopes.iter_mut().rev() {
@@ -297,10 +306,22 @@ impl Environment {
                 match rc.as_ref() {
                     Value::Function(ref f) => {
                         if f.is_arrow && (prop == "caller" || prop == "arguments") {
-                            // The caller / assignment path will throw TypeError;
-                            // return false so it falls through to assign_to_member
-                            // where the proper TypeError is raised.
                             return false;
+                        }
+                        // Per ES §10.2.9, [[Set]] on a non-writable own
+                        // property returns silently in sloppy mode. In
+                        // strict mode the assignment path raises TypeError.
+                        if !crate::interpreter::is_strict_mode()
+                            && f.get_property(prop).is_some()
+                            && !is_writable_function_prop(prop)
+                        {
+                            return true; // silently ignored, no-op
+                        }
+                        if crate::interpreter::is_strict_mode()
+                            && f.get_property(prop).is_some()
+                            && !is_writable_function_prop(prop)
+                        {
+                            return false; // let assign_to_member throw
                         }
                         f.set_property(prop, value.clone());
                         return true;
