@@ -522,6 +522,44 @@ mod tests {
     }
 
     #[test]
+    fn symbol_to_primitive_throw_propagates() {
+        let mut ctx = Context::new().unwrap();
+        // Test that a custom @@toPrimitive that throws is honored.
+        let res = ctx.eval(
+            "var caught; \
+             var t = {}; \
+             Object.defineProperty(t, Symbol.toPrimitive, { get: function() { return function() { throw \"boom\"; }; } }); \
+             try { t + 1; } catch (e) { caught = e; } \
+             caught;"
+        );
+        // The thrown value should be "boom"
+        let v = res.unwrap();
+        match v {
+            crate::value::Value::String(s) => assert_eq!(s, "boom"),
+            other => panic!("expected string 'boom', got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn symbol_to_primitive_object_result_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "var value = {}; \
+             value[Symbol.toPrimitive] = function() { return {}; }; \
+             value + 1;",
+        );
+        assert!(result.is_err());
+        let thrown = crate::value::take_thrown_value().unwrap();
+        let crate::value::Value::Object(error) = thrown else {
+            panic!("expected TypeError object");
+        };
+        assert_eq!(
+            error.borrow().get("name"),
+            Some(crate::value::Value::String("TypeError".to_string()))
+        );
+    }
+
+    #[test]
     fn sloppy_assign_to_undeclared_creates_global() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("undeclared_var = 42;").unwrap();
