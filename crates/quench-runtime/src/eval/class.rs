@@ -34,8 +34,8 @@ pub fn eval_class_expr(
     // Eagerly create the prototype for this class
     let _ = get_or_create_class_prototype(&new_value, env)?;
 
-    // Initialize static fields on the class object. The initializer's
-    // `this` is the class itself per ES §13.2.1.5 step 6.
+    // Per ES §14.6.13 and §9.2.10, static fields with computed name
+    // "prototype" or "constructor" must throw a TypeError.
     let class_value = Value::Class(new_value.clone());
     for (name, value_expr) in &new_value.static_fields {
         let child_env: Rc<RefCell<Environment>> =
@@ -46,7 +46,13 @@ pub fn eval_class_expr(
             .borrow_mut()
             .set_this(class_value.clone());
         let field_value = eval_expression(value_expr, &child_env, false)?;
-        let key_str = prop_key_to_string(name, env, false)?;
+        let key_str = prop_key_to_string(name, &child_env, true)?;
+        if key_str == "prototype" || key_str == "constructor" {
+            return Err(JsError(format!(
+                "TypeError: static class field may not be named '{}'",
+                key_str
+            )));
+        }
         new_value.set_static_field(&key_str, field_value);
     }
 
