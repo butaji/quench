@@ -353,6 +353,13 @@ fn create_class_prototype_helper_with_env(
     };
 
     let closure = Rc::clone(env);
+    // Bind super_class in the method closure so `super.x` resolves inside
+    // methods and any arrow function defined within them.
+    if let Some(ref super_class_expr) = class.super_class {
+        let super_class_val =
+            crate::eval::expression::eval_expression(super_class_expr, env, false)?;
+        closure.borrow_mut().set_super_class(super_class_val);
+    }
     for (name, params, body) in &class.methods {
         let params_vec: Vec<Param> = params.iter().map(|p| Param::new(p)).collect();
         let key_str = prop_key_to_string(name, &closure, false)?;
