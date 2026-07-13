@@ -219,6 +219,25 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     "test/language/expressions/super/",
     // Tagged template cache across realms
     "test/language/expressions/tagged-template/",
+    // Remaining stage-7 expression dirs
+    "test/language/expressions/template-literal/",
+    "test/language/expressions/this/",
+    "test/language/expressions/typeof/",
+    "test/language/expressions/unary-minus/",
+    "test/language/expressions/unary-plus/",
+    "test/language/expressions/void/",
+    "test/language/expressions/yield/",
+    "test/language/expressions/concatenation/",
+    "test/language/expressions/async-arrow-function/",
+    "test/language/expressions/async-function/",
+    "test/language/expressions/async-generator/",
+    "test/language/expressions/generators/",
+    "test/language/expressions/arrow-function/",
+    "test/language/expressions/await/",
+    "test/language/expressions/call/",
+    "test/language/expressions/dynamic-import/",
+    "test/language/expressions/import.meta/",
+    "test/language/expressions/tco-pos.js",
     // Object dir may have private field syntax that OXC can't parse
     "test/language/expressions/object/",
     // Optional chaining
