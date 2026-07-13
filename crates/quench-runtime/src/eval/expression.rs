@@ -131,7 +131,18 @@ pub fn eval_expression(
                 {
                     return Ok(right_val);
                 }
-                scope.borrow_mut().set(name.clone(), right_val.clone());
+                if !scope.borrow_mut().set(name.clone(), right_val.clone()) {
+                    // If set returned false, check if it's a const violation
+                    if scope.borrow().get_kind(name) == Some(VarKind::Const) {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            &format!("Assignment to constant variable '{}'", name),
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
+                    // Otherwise, try assign_to (e.g., global scope fallback)
+                    crate::eval::object::assign_to(left, &right_val, env)?;
+                }
                 return Ok(right_val);
             }
             crate::eval::object::assign_to(left, &right_val, env)?;

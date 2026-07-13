@@ -3,7 +3,7 @@
 //! This module handles class instantiation, prototype creation,
 //! and class expression evaluation.
 
-use crate::ast::{Class, Expression, Param, Statement};
+use crate::ast::{Class, Expression, Param, Statement, VarKind};
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
@@ -31,8 +31,34 @@ pub fn eval_class_expr(
         new_value.set_name(name);
     }
 
-    // Eagerly create the prototype for this class
-    let _ = get_or_create_class_prototype(&new_value, env)?;
+    let class_name = class.name.as_deref().or(inferred_name);
+
+    // Per ES §14.6.13 step 18: for a named class expression, create a new
+    // lexical scope with the class name bound as immutable const so methods
+    // and heritage can reference the class, and reassignment throws TypeError.
+    let class_scope = if let Some(name) = class_name {
+        let scope_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+        // First declare as const (creates TDZ + tracks var_kind)
+        scope_env
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .declare_var(name.to_string(), VarKind::Const);
+        // Then initialize with the class value
+        let class_val = Value::Class(new_value.clone());
+        scope_env
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .initialize_declared(name, class_val);
+        scope_env
+    } else {
+        Rc::clone(env)
+    };
+
+    // Eagerly create the prototype for this class (uses class_scope so
+    // methods capture the class name binding).
+    let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
 
     // Per ES §14.6.13 and §9.2.10, static fields with computed name
     // "prototype" or "constructor" must throw a TypeError.
