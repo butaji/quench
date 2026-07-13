@@ -20,8 +20,8 @@ use crate::value::{Symbol, Value};
 /// gradually migrating to a single `IndexMap<Key, Desc>` per TComp model).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Key {
-    /// Non-index string key
-    Str(String),
+    /// Non-index string key (TComp: Rc<str> for cheap cloning)
+    Str(Rc<str>),
     /// Canonical array index (0 ..= 4294967294)
     Idx(u32),
     /// Symbol key (per spec 6.1.7.1, Sym(Rc<Symbol>))
@@ -45,7 +45,7 @@ pub fn as_key(s: &str) -> Key {
             return Key::Idx(n);
         }
     }
-    Key::Str(s.to_string())
+    Key::Str(Rc::from(s))
 }
 
 /// Returns `true` if `s` is a canonical array index string ("0" through "4294967294").
@@ -407,7 +407,7 @@ fn ordinary_get_own_property(obj: &Object, key: &Key) -> Option<Desc> {
     }
     // Fallback: old maps (during migration)
     let key_str = match key {
-        Key::Str(s) => s.as_str(),
+        Key::Str(s) => s.as_ref(),
         Key::Idx(i) => return None, // array indices not in old maps as strings
         Key::Sym(s) => return None, // symbol keys not in old maps as strings
     };
@@ -442,7 +442,7 @@ fn ordinary_get_own_property(obj: &Object, key: &Key) -> Option<Desc> {
 
 fn ordinary_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> bool {
     let key_str = match key {
-        Key::Str(s) => Some(s.as_str()),
+        Key::Str(s) => Some(s.as_ref()),
         _ => None,
     };
     // Check extensible
@@ -493,9 +493,9 @@ fn ordinary_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> boo
 fn ordinary_has_property(obj: &Object, key: &Key) -> bool {
     obj.props.contains_key(key)
         || match key {
-            Key::Str(s) => obj.properties.contains_key(s.as_str())
-                || obj.getters.contains_key(s.as_str())
-                || obj.setters.contains_key(s.as_str()),
+            Key::Str(s) => obj.properties.contains_key(s.as_ref())
+                || obj.getters.contains_key(s.as_ref())
+                || obj.setters.contains_key(s.as_ref()),
             _ => false,
         }
 }
@@ -511,7 +511,7 @@ fn ordinary_get(obj: &Object, key: &Key, _receiver: Value) -> Value {
     }
     // Fall back to old get via string key
     let key_str = match key {
-        Key::Str(s) => s.as_str(),
+        Key::Str(s) => s.as_ref(),
         Key::Idx(i) => return obj.get(&i.to_string()).unwrap_or(Value::Undefined),
         Key::Sym(s) => return if let Some(ref d) = s.desc { obj.get(d).unwrap_or(Value::Undefined) } else { Value::Undefined },
     };
@@ -539,7 +539,7 @@ fn ordinary_set(obj: &mut Object, key: &Key, value: Value, _receiver: Value) -> 
     });
     // Backward compat with old maps
     let key_str = match key {
-        Key::Str(s) => s.as_str(),
+        Key::Str(s) => s.as_ref(),
         Key::Idx(i) => {
             let s = i.to_string();
             obj.set(&s, value);
@@ -554,10 +554,10 @@ fn ordinary_set(obj: &mut Object, key: &Key, value: Value, _receiver: Value) -> 
 fn ordinary_delete(obj: &mut Object, key: &Key) -> bool {
     obj.props.shift_remove(key);
     if let Key::Str(s) = key {
-        obj.properties.shift_remove(s.as_str());
-        obj.descriptors.shift_remove(s.as_str());
-        obj.getters.shift_remove(s.as_str());
-        obj.setters.shift_remove(s.as_str());
+        obj.properties.shift_remove(s.as_ref());
+        obj.descriptors.shift_remove(s.as_ref());
+        obj.getters.shift_remove(s.as_ref());
+        obj.setters.shift_remove(s.as_ref());
     } else if let Key::Idx(i) = key {
         let s = i.to_string();
         obj.properties.shift_remove(&s);
@@ -847,7 +847,7 @@ impl Object {
     /// Set a Symbol-keyed property using the full Value::Symbol.
     pub fn set_symbol_value(&mut self, value: Value) {
         if let Value::Symbol(sym_key) = &value {
-            let key = sym_key.desc.clone().unwrap_or_default();
+            let key = sym_key.desc.clone().map(|d| d.to_string()).unwrap_or_default();
             if let Some(flags) = self.descriptors.get(&key) {
                 if !flags.writable {
                     return;
