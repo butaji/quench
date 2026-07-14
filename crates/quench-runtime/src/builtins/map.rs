@@ -3,6 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::eval::call_value_with_this;
+use crate::eval::member::eval_object_member;
 use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
@@ -260,12 +262,19 @@ fn iterator_prop_key() -> Option<String> {
     }
 }
 
-/// Populate a Map's entries from a constructor argument: an array of [k, v]
-/// pairs or another Map (mirrors `new Map(iterable)`).
-fn map_populate(entries: &Rc<RefCell<Object>>, src: &Value) {
+/// Populate a Map from an iterable source. Per spec, `new Map(iterable)`:
+/// 1. Get adder = Map.prototype.set (this may throw via getter)
+/// 2. For each entry [k, v] in iterable, call adder(k, v)
+fn map_populate(map: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
+    // Per spec, we must GET the adder BEFORE iterating
+    // This is step 8b: "Let adder be Get(map, "set")"
+    let adder = eval_object_member(map, "set")?;
+
     let pairs: Vec<Value> = match src {
         Value::Object(o) => match map_entries(src) {
+            // src is another Map - copy its entries
             Some(src_entries) => src_entries.borrow().elements.clone(),
+            // src is an array-like object - use its elements as pairs
             None => o.borrow().elements.clone(),
         },
         _ => Vec::new(),
@@ -274,37 +283,35 @@ fn map_populate(entries: &Rc<RefCell<Object>>, src: &Value) {
         if let Value::Object(p) = pair {
             let elems = p.borrow().elements.clone();
             if elems.len() >= 2 {
-                let (k, v) = (elems[0].clone(), elems[1].clone());
-                if let Some(existing) = map_find_pair(entries, &k) {
-                    existing.borrow_mut().elements[1] = v;
-                } else {
-                    let pair_obj = Object::new_array_from(vec![k, v]);
-                    let idx = entries.borrow().elements.len().to_string();
-                    entries
-                        .borrow_mut()
-                        .set(&idx, Value::Object(Rc::new(RefCell::new(pair_obj))));
-                }
+                let k = elems[0].clone();
+                let v = elems[1].clone();
+                call_value_with_this(adder.clone(), vec![k, v], Value::Object(Rc::clone(map)))?;
             }
         }
     }
+    Ok(())
 }
 
-/// Populate a Set's values from a constructor argument: an array or another
-/// Set (mirrors `new Set(iterable)`).
-fn set_populate(values: &Rc<RefCell<Object>>, src: &Value) {
+/// Populate a Set from an iterable source. Per spec, `new Set(iterable)`:
+/// 1. Get adder = Set.prototype.add (this may throw via getter)
+/// 2. For each value in iterable, call adder(value)
+fn set_populate(set: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
+    // Per spec, we must GET the adder BEFORE iterating
+    let adder = eval_object_member(set, "add")?;
+
     let items: Vec<Value> = match src {
         Value::Object(o) => match set_values(src) {
+            // src is another Set - copy its values
             Some(src_values) => src_values.borrow().elements.clone(),
+            // src is an array-like object - use its elements
             None => o.borrow().elements.clone(),
         },
         _ => Vec::new(),
     };
     for item in items {
-        if !set_has_value(values, &item) {
-            let idx = values.borrow().elements.len().to_string();
-            values.borrow_mut().set(&idx, item);
-        }
+        call_value_with_this(adder.clone(), vec![item], Value::Object(Rc::clone(set)))?;
     }
+    Ok(())
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {
@@ -339,11 +346,7 @@ pub fn register_map_and_set(ctx: &mut Context) {
         }
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
-                let entries_val = map.borrow().get("_entries");
-                if let Some(Value::Object(entries)) = entries_val {
-                    map_populate(&entries, src);
-                    map_update_size(&Value::Object(Rc::clone(&map)), &entries);
-                }
+                map_populate(&map, src)?;
             }
         }
         Ok(Value::Object(map))
@@ -351,6 +354,24 @@ pub fn register_map_and_set(ctx: &mut Context) {
     if let Value::NativeFunction(nf) = &map_constructor {
         nf.set_property("prototype", Value::Object(map_proto));
         nf.set_property("name", Value::String("Map".to_string()));
+        // Set up Symbol.species getter - returns this (the constructor) by default
+        if let Some(species_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("species") {
+            let map_ctor = map_constructor.clone();
+            let species_getter = NativeFunction::new(move |_args| {
+                // Return this (the Map constructor)
+                let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+                // If called as a getter, 'this' should be Map constructor
+                // If called with explicit this, use it; otherwise use map_ctor
+                if matches!(this_val, Value::Undefined) {
+                    Ok(map_ctor.clone())
+                } else {
+                    Ok(this_val)
+                }
+            });
+            // Store the getter - the key is the symbol's string representation
+            let species_key = format!("{}", species_sym);
+            nf.set_property(&species_key, Value::NativeFunction(Rc::new(species_getter)));
+        }
     }
     ctx.set_global("Map".to_string(), map_constructor);
 
@@ -382,11 +403,7 @@ pub fn register_map_and_set(ctx: &mut Context) {
         }
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
-                let values_val = set.borrow().get("_values");
-                if let Some(Value::Object(values)) = values_val {
-                    set_populate(&values, src);
-                    map_update_size(&Value::Object(Rc::clone(&set)), &values);
-                }
+                set_populate(&set, src)?;
             }
         }
         Ok(Value::Object(set))
@@ -454,5 +471,262 @@ mod tests {
             .unwrap();
         assert_eq!(ctx.eval("s.size").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("s.has(NaN)").unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_map_set_getter_override() {
+        // Test that overriding Map.prototype.set with a getter throws
+        // when new Map([[...]]) tries to call it (ES spec §24.1.1)
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                throw new Error("getter was called");
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        // new Map() with empty arg should NOT throw
+        ctx.eval("new Map();").unwrap();
+        // new Map with non-empty iterable SHOULD throw
+        let result = ctx.eval("new Map([[1, 2]]);");
+        assert!(
+            result.is_err(),
+            "new Map([[1, 2]]) should throw when Map.prototype.set getter throws"
+        );
+    }
+
+    #[test]
+    fn test_set_add_getter_override() {
+        // Test that overriding Set.prototype.add with a getter throws
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Set.prototype, 'add', {
+              get: function() {
+                throw new Error("getter was called");
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        // new Set() with empty arg should NOT throw
+        ctx.eval("new Set();").unwrap();
+        // new Set with non-empty iterable SHOULD throw
+        let result = ctx.eval("new Set([1]);");
+        assert!(
+            result.is_err(),
+            "new Set([1]) should throw when Set.prototype.add getter throws"
+        );
+    }
+
+    #[test]
+    fn test_map_direct_getter() {
+        // Direct test: get Map.prototype.set - should it be a getter?
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                return 42;
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        let result = ctx.eval("Map.prototype.set");
+        // If getter works, this should be 42
+        assert_eq!(result.unwrap(), Value::Number(42.0), "Map.prototype.set getter should return 42");
+    }
+
+    #[test]
+    fn test_map_getter_called_when_populating() {
+        // Test that the getter IS called when populating from iterable
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            var getterCalled = false;
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                getterCalled = true;
+                // Return a function that throws to simulate getter throwing
+                throw new Error("getter was called");
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        // new Map() should NOT call the getter (empty iterable)
+        ctx.eval("new Map();").unwrap();
+        let getterCalled = ctx.eval("getterCalled").unwrap();
+        assert_eq!(getterCalled, Value::Boolean(false), "getter should not be called for empty Map()");
+        
+        // new Map([[1, 2]]) SHOULD call the getter
+        let result = ctx.eval("new Map([[1, 2]]);");
+        assert!(result.is_err(), "new Map([[1, 2]]) should throw when getter throws");
+        
+        // Verify getter WAS called
+        let getterCalled = ctx.eval("getterCalled").unwrap();
+        assert_eq!(getterCalled, Value::Boolean(true), "getter should be called for non-empty Map()");
+    }
+
+    #[test]
+    fn test_map_call_getter_directly() {
+        // Test that calling the getter directly works
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                return function(k, v) { return k + v; };
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        // Call the getter and use the returned function
+        let result = ctx.eval("var m = new Map(); var s = Map.prototype.set; s.call(m, 1, 2);");
+        assert!(result.is_ok(), "calling getter should work: {:?}", result);
+        assert_eq!(ctx.eval("var m = new Map(); Map.prototype.set.call(m, 1, 2);").unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn test_map_getter_vs_own_property() {
+        // Test: does the Map have its own 'set' property that shadows the getter?
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                throw new Error("prototype getter called");
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        // Check if Map has own 'set' property
+        let hasOwn = ctx.eval("Object.prototype.hasOwnProperty.call(Map.prototype, 'set');").unwrap();
+        assert_eq!(hasOwn, Value::Boolean(true), "Map.prototype should have own 'set' property");
+        
+        // Now test with a map instance
+        let result = ctx.eval("var m = new Map(); m.set(1, 2);");
+        assert!(result.is_err(), "calling m.set should throw (getter on prototype): {:?}", result);
+    }
+
+    #[test]
+    fn test_map_iterable_parsing() {
+        // Test that new Map with iterable populates correctly
+        let mut ctx = Context::new().unwrap();
+        
+        // Test with a normal iterable (no override)
+        ctx.eval("var m = new Map([[1, 2], [3, 4]]);").unwrap();
+        assert_eq!(ctx.eval("m.get(1)").unwrap(), Value::Number(2.0));
+        assert_eq!(ctx.eval("m.get(3)").unwrap(), Value::Number(4.0));
+        assert_eq!(ctx.eval("m.size").unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_map_with_override() {
+        // Test the exact test262 scenario: override Map.prototype.set, then new Map(iterable)
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            var mapSet = Map.prototype.set;
+            var counter = 0;
+            var iterable = [["foo", 1], ["bar", 2]];
+            
+            Map.prototype.set = function(k, v) {
+              counter++;
+              mapSet.call(this, k, v);
+            };
+            
+            var map = new Map(iterable);
+            "#,
+        )
+        .unwrap();
+        
+        // Verify counter is 2 (called twice)
+        let counter = ctx.eval("counter").unwrap();
+        assert_eq!(counter, Value::Number(2.0), "Map.prototype.set should be called twice");
+        
+        // Verify map has the values
+        assert_eq!(ctx.eval("map.get('foo')").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("map.get('bar')").unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_map_override_is_found() {
+        // Check if overridden Map.prototype.set is found
+        let mut ctx = Context::new().unwrap();
+        
+        // Override Map.prototype.set
+        ctx.eval("Map.prototype.set = function() { return 42; };").unwrap();
+        
+        // Check if a map instance sees the override
+        ctx.eval("var m = new Map();").unwrap();
+        let result = ctx.eval("m.set(1, 2);").unwrap();
+        assert_eq!(result, Value::Number(42.0), "m.set should return 42 from override");
+    }
+
+    #[test]
+    fn test_map_empty_iterable_no_getter() {
+        // Test that new Map([]) does NOT call the getter (empty array)
+        // This is the test262 test scenario
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                throw new Error("getter called");
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        
+        // Empty iterable should NOT throw
+        let result = ctx.eval("new Map([]);");
+        assert!(result.is_ok(), "new Map([]) should not throw: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_test262_scenario() {
+        // Exactly replicate the test262 test scenario
+        let mut ctx = Context::new().unwrap();
+        
+        // Step 1: Define getter
+        ctx.eval(
+            r#"
+            Object.defineProperty(Map.prototype, 'set', {
+              get: function() {
+                throw new Test262Error();
+              }
+            });
+            "#,
+        )
+        .unwrap();
+        
+        // Step 2: new Map() should NOT throw
+        ctx.eval("new Map();").unwrap();
+        
+        // Step 3: new Map([]) SHOULD throw
+        let result = ctx.eval("new Map([]);");
+        assert!(result.is_err(), "new Map([]) should throw when getter throws: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_is_constructor() {
+        // Test that Map is recognized as a constructor
+        let mut ctx = Context::new().unwrap();
+        // Note: isConstructor is only available in test262 harness
+        // Just test that new Map() works
+        let result = ctx.eval("new Map()");
+        assert!(result.is_ok(), "new Map() should work: {:?}", result);
+        
+        // Test that Map() without new also works (implicit call)
+        let result = ctx.eval("Map()");
+        assert!(result.is_ok(), "Map() should work: {:?}", result);
     }
 }

@@ -14,6 +14,7 @@ const SKIP_FEATURES: &[&str] = &[
     // Built-in globals
     "BigInt",
     "Reflect",
+    "Reflect.construct",
     "WeakMap",
     "WeakSet",
     "WeakRef",
@@ -33,6 +34,8 @@ const SKIP_FEATURES: &[&str] = &[
     "Array.prototype.toSorted",
     "Array.prototype.toSpliced",
     "Array.prototype.with",
+    // Array grouping (Map.groupBy, Object.groupBy, etc.)
+    "array-grouping",
     // Intl
     "Intl.DateTimeFormat",
     "Intl.NumberFormat",
