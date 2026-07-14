@@ -677,6 +677,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "indexmap",
+ "num-bigint",
  "oxc",
  "phf 0.14.0",
  "regress",

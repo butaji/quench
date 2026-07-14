@@ -324,6 +324,7 @@ fn eval_typeof(val: &Value) -> Result<Value, JsError> {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Class(_) => "function",
+        Value::BigInt(_) => "bigint",
         Value::Object(_) => "object",
         Value::Symbol(_) => "symbol",
     };
@@ -413,7 +414,7 @@ mod tests {
              var sym = Symbol.toPrimitive; \
              Object.defineProperty(thrower, sym, { get: function() { return 42; } }); \
              var desc = Object.getOwnPropertyDescriptor(thrower, sym); \
-             desc !== undefined ? (typeof desc.get) : 'no_desc';"
+             desc !== undefined ? (typeof desc.get) : 'no_desc';",
         );
         eprintln!("debug: {:?}", debug);
 

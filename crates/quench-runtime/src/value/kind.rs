@@ -11,6 +11,8 @@ pub enum ObjectKind {
     ArrowFunction, // Arrow function (lexical this)
     Map,           // Map collection
     Set,           // Set collection
+    WeakMap,       // WeakMap collection
+    WeakSet,       // WeakSet collection
     Date,          // Date object
     Global,        // Global object (fallback lookup)
     Promise,       // Promise object
@@ -29,6 +31,7 @@ fn object_kind_name(kind: &ObjectKind) -> &'static str {
     match kind {
         ObjectKind::Ordinary | ObjectKind::Array | ObjectKind::Function => simple_kind_name(kind),
         ObjectKind::ArrowFunction | ObjectKind::Map | ObjectKind::Set => medium_kind_name(kind),
+        ObjectKind::WeakMap | ObjectKind::WeakSet => weak_kind_name(kind),
         ObjectKind::Date
         | ObjectKind::Global
         | ObjectKind::Promise
@@ -55,6 +58,14 @@ fn medium_kind_name(kind: &ObjectKind) -> &'static str {
     }
 }
 
+fn weak_kind_name(kind: &ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::WeakMap => "weakmap",
+        ObjectKind::WeakSet => "weakset",
+        _ => unreachable!(),
+    }
+}
+
 fn complex_kind_name(kind: &ObjectKind) -> &'static str {
     match kind {
         ObjectKind::Date => "date",
@@ -72,4 +83,5 @@ pub enum ExoticKind {
     String,
     Number,
     Boolean,
+    BigInt,
 }

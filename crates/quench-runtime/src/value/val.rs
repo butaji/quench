@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+use num_bigint::BigInt;
+
 use crate::ast::{Class, ClassMember, Param, PropertyKey};
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
@@ -45,6 +47,8 @@ pub enum Value {
     Symbol(Rc<Symbol>),
     /// ES6 class - callable constructor with prototype chain
     Class(ClassValue),
+    /// BigInt arbitrary-precision integer
+    BigInt(Rc<BigInt>),
 }
 
 /// Global counter for unique class identity (used for === comparison)
@@ -85,7 +89,8 @@ pub struct ClassValue {
     /// Static field values (name -> value), initialized during class expression evaluation
     pub(crate) static_properties_cell: std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>,
     /// Deleted property names (configurable properties like "name" that were deleted)
-    pub(crate) deleted_properties: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
+    pub(crate) deleted_properties:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
 }
 
 impl ClassValue {
@@ -127,7 +132,9 @@ impl ClassValue {
             super_class: class.super_class.clone(),
             prototype_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_properties_cell: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
-            deleted_properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
+            deleted_properties: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashSet::new(),
+            )),
         }
     }
 
@@ -199,6 +206,17 @@ fn fill_members_from_ast(
 }
 
 impl Value {
+    /// Check if this value is callable (a function).
+    pub fn is_callable(&self) -> bool {
+        matches!(
+            self,
+            Value::Function(_)
+                | Value::NativeFunction(_)
+                | Value::NativeConstructor(_)
+                | Value::Class(_)
+        )
+    }
+
     /// Get a method by name from this value (for objects).
     /// Returns None if not an object or method doesn't exist.
     pub fn get_method(&self, name: &str) -> Option<Value> {

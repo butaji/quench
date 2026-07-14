@@ -124,8 +124,17 @@ pub enum ObjData {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TypedArrayName {
-    Int8, Uint8, Uint8Clamped, Int16, Uint16,
-    Int32, Uint32, Float32, Float64, BigInt64, BigUint64,
+    Int8,
+    Uint8,
+    Uint8Clamped,
+    Int16,
+    Uint16,
+    Int32,
+    Uint32,
+    Float32,
+    Float64,
+    BigInt64,
+    BigUint64,
 }
 
 /// [[ThisMode]] for function objects (ECMA-262 9.2.1)
@@ -150,9 +159,15 @@ pub struct Desc {
 }
 
 impl Desc {
-    pub fn is_data(&self) -> bool { self.value.is_some() || self.writable.is_some() }
-    pub fn is_accessor(&self) -> bool { self.get.is_some() || self.set.is_some() }
-    pub fn is_generic(&self) -> bool { !self.is_data() && !self.is_accessor() }
+    pub fn is_data(&self) -> bool {
+        self.value.is_some() || self.writable.is_some()
+    }
+    pub fn is_accessor(&self) -> bool {
+        self.get.is_some() || self.set.is_some()
+    }
+    pub fn is_generic(&self) -> bool {
+        !self.is_data() && !self.is_accessor()
+    }
 }
 
 /// Store pointer type for getter/setter AST bodies (needed during eval
@@ -295,8 +310,10 @@ impl PropertyDescriptor {
 
     /// IsAccessorDescriptor (ES 6.2.6): has [[Get]] or [[Set]]
     pub fn is_accessor(&self) -> bool {
-        self.get.is_some() || self.set.is_some()
-            || self.get_body.is_some() || self.set_body.is_some()
+        self.get.is_some()
+            || self.set.is_some()
+            || self.get_body.is_some()
+            || self.set_body.is_some()
     }
 }
 
@@ -470,21 +487,30 @@ fn ordinary_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> boo
         obj.props.insert(key.clone(), desc.clone());
         if let Some(ks) = key_str {
             let flags = PropertyFlags {
-                value: None, writable: false,
+                value: None,
+                writable: false,
                 enumerable: desc.enumerable.unwrap_or(true),
                 configurable: desc.configurable.unwrap_or(true),
             };
             obj.descriptors.insert(ks.to_string(), flags);
-            if let Some(ref g) = desc.get { obj.set_getter_func(ks, g.clone()); }
-            if let Some(ref s) = desc.set { obj.set_setter_func(ks, s.clone()); }
+            if let Some(ref g) = desc.get {
+                obj.set_getter_func(ks, g.clone());
+            }
+            if let Some(ref s) = desc.set {
+                obj.set_setter_func(ks, s.clone());
+            }
             obj.properties.shift_remove(ks);
         }
         true
     } else {
         // Generic — update flags only
         if let Some(entry) = obj.props.get_mut(key) {
-            if let Some(e) = desc.enumerable { entry.enumerable = Some(e); }
-            if let Some(c) = desc.configurable { entry.configurable = Some(c); }
+            if let Some(e) = desc.enumerable {
+                entry.enumerable = Some(e);
+            }
+            if let Some(c) = desc.configurable {
+                entry.configurable = Some(c);
+            }
         }
         true
     }
@@ -493,9 +519,11 @@ fn ordinary_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> boo
 fn ordinary_has_property(obj: &Object, key: &Key) -> bool {
     obj.props.contains_key(key)
         || match key {
-            Key::Str(s) => obj.properties.contains_key(s.as_ref())
-                || obj.getters.contains_key(s.as_ref())
-                || obj.setters.contains_key(s.as_ref()),
+            Key::Str(s) => {
+                obj.properties.contains_key(s.as_ref())
+                    || obj.getters.contains_key(s.as_ref())
+                    || obj.setters.contains_key(s.as_ref())
+            }
             _ => false,
         }
 }
@@ -513,7 +541,13 @@ fn ordinary_get(obj: &Object, key: &Key, _receiver: Value) -> Value {
     let key_str = match key {
         Key::Str(s) => s.as_ref(),
         Key::Idx(i) => return obj.get(&i.to_string()).unwrap_or(Value::Undefined),
-        Key::Sym(s) => return if let Some(ref d) = s.desc { obj.get(d).unwrap_or(Value::Undefined) } else { Value::Undefined },
+        Key::Sym(s) => {
+            return if let Some(ref d) = s.desc {
+                obj.get(d).unwrap_or(Value::Undefined)
+            } else {
+                Value::Undefined
+            }
+        }
     };
     obj.get(key_str).unwrap_or(Value::Undefined)
 }
@@ -530,13 +564,16 @@ fn ordinary_set(obj: &mut Object, key: &Key, value: Value, _receiver: Value) -> 
             return false;
         }
     }
-    obj.props.insert(key.clone(), Desc {
-        value: Some(value.clone()),
-        writable: Some(true),
-        enumerable: Some(true),
-        configurable: Some(true),
-        ..Default::default()
-    });
+    obj.props.insert(
+        key.clone(),
+        Desc {
+            value: Some(value.clone()),
+            writable: Some(true),
+            enumerable: Some(true),
+            configurable: Some(true),
+            ..Default::default()
+        },
+    );
     // Backward compat with old maps
     let key_str = match key {
         Key::Str(s) => s.as_ref(),
@@ -613,14 +650,18 @@ fn array_define_own_property(obj: &mut Object, key: &Key, desc: &Desc) -> bool {
         let current_length = array_length_value(obj) as u32;
         if *index >= current_length && *index < 4294967295 {
             let new_len_val = Value::Number((*index + 1) as f64);
-            obj.props.insert(as_key("length"), Desc {
-                value: Some(new_len_val),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(false),
-                ..Default::default()
-            });
-            obj.properties.insert("length".to_string(), Value::Number((*index + 1) as f64));
+            obj.props.insert(
+                as_key("length"),
+                Desc {
+                    value: Some(new_len_val),
+                    writable: Some(true),
+                    enumerable: Some(false),
+                    configurable: Some(false),
+                    ..Default::default()
+                },
+            );
+            obj.properties
+                .insert("length".to_string(), Value::Number((*index + 1) as f64));
             let needed = (*index + 1) as usize;
             if obj.elements.len() < needed {
                 obj.elements.resize(needed, Value::Undefined);
@@ -638,10 +679,13 @@ fn array_length_value(obj: &Object) -> f64 {
             return n;
         }
     }
-    obj.properties.get("length").and_then(|v| match v {
-        Value::Number(n) => Some(*n),
-        _ => None,
-    }).unwrap_or(0.0)
+    obj.properties
+        .get("length")
+        .and_then(|v| match v {
+            Value::Number(n) => Some(*n),
+            _ => None,
+        })
+        .unwrap_or(0.0)
 }
 
 /// ArraySetLength (9.4.2.4).
@@ -663,13 +707,16 @@ fn array_set_length(obj: &mut Object, desc: &Desc) -> bool {
         }
     }
     let len_val = Value::Number(new_len as f64);
-    obj.props.insert(as_key("length"), Desc {
-        value: Some(len_val.clone()),
-        writable: Some(true),
-        enumerable: Some(false),
-        configurable: Some(false),
-        ..Default::default()
-    });
+    obj.props.insert(
+        as_key("length"),
+        Desc {
+            value: Some(len_val.clone()),
+            writable: Some(true),
+            enumerable: Some(false),
+            configurable: Some(false),
+            ..Default::default()
+        },
+    );
     obj.properties.insert("length".to_string(), len_val);
     true
 }
@@ -749,13 +796,16 @@ impl Object {
         obj.elements = vec![Value::Undefined; len];
         let len_val = Value::Number(len as f64);
         obj.properties.insert("length".to_string(), len_val.clone());
-        obj.props.insert(as_key("length"), Desc {
-            value: Some(len_val),
-            writable: Some(true),
-            enumerable: Some(false),
-            configurable: Some(false),
-            ..Default::default()
-        });
+        obj.props.insert(
+            as_key("length"),
+            Desc {
+                value: Some(len_val),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(false),
+                ..Default::default()
+            },
+        );
         if let Some(proto) = crate::builtins::get_array_prototype() {
             obj.prototype = Some(proto);
         }
@@ -847,7 +897,11 @@ impl Object {
     /// Set a Symbol-keyed property using the full Value::Symbol.
     pub fn set_symbol_value(&mut self, value: Value) {
         if let Value::Symbol(sym_key) = &value {
-            let key = sym_key.desc.clone().map(|d| d.to_string()).unwrap_or_default();
+            let key = sym_key
+                .desc
+                .clone()
+                .map(|d| d.to_string())
+                .unwrap_or_default();
             if let Some(flags) = self.descriptors.get(&key) {
                 if !flags.writable {
                     return;
@@ -1049,23 +1103,31 @@ impl Object {
             // Update getter
             if let Some(ref get_val) = desc.get {
                 self.set_getter_func(key, get_val.clone());
-            } else if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure) {
-                self.getters.insert(key.to_string(), GetterStorage {
-                    body: Rc::clone(body),
-                    closure: Rc::clone(closure),
-                    func: None,
-                });
+            } else if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure)
+            {
+                self.getters.insert(
+                    key.to_string(),
+                    GetterStorage {
+                        body: Rc::clone(body),
+                        closure: Rc::clone(closure),
+                        func: None,
+                    },
+                );
             }
             // Update setter
             if let Some(ref set_val) = desc.set {
                 self.set_setter_func(key, set_val.clone());
-            } else if let (Some(ref body), Some(ref closure)) = (&desc.set_body, &desc.set_closure) {
-                self.setters.insert(key.to_string(), SetterStorage {
-                    param: desc.set_param.clone().unwrap_or_default(),
-                    body: Rc::clone(body),
-                    closure: Rc::clone(closure),
-                    func: None,
-                });
+            } else if let (Some(ref body), Some(ref closure)) = (&desc.set_body, &desc.set_closure)
+            {
+                self.setters.insert(
+                    key.to_string(),
+                    SetterStorage {
+                        param: desc.set_param.clone().unwrap_or_default(),
+                        body: Rc::clone(body),
+                        closure: Rc::clone(closure),
+                        func: None,
+                    },
+                );
             }
             // Remove any existing data property
             self.properties.shift_remove(key);
@@ -1073,8 +1135,12 @@ impl Object {
         } else {
             // Generic descriptor (only enumerable/configurable): update flags
             if let Some(ref mut flags) = self.descriptors.get_mut(key) {
-                if let Some(e) = desc.enumerable { flags.enumerable = e; }
-                if let Some(c) = desc.configurable { flags.configurable = c; }
+                if let Some(e) = desc.enumerable {
+                    flags.enumerable = e;
+                }
+                if let Some(c) = desc.configurable {
+                    flags.configurable = c;
+                }
             }
             true
         }

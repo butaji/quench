@@ -27,7 +27,7 @@ pub fn eval_member_access(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     match obj_val {
-        Value::Object(o) => eval_object_member(o, prop_name),
+        Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => eval_string_member(s, prop_name, env),
         Value::Function(f) => eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => eval_native_function_member(nf, prop_name),

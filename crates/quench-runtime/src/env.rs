@@ -82,7 +82,9 @@ impl Scope {
         if !self.bindings.contains_key(name) {
             return None;
         }
-        Some(self.object_binding.as_ref()?.borrow().has(name))
+        let result = self.object_binding.as_ref()?.borrow().has(name);
+        eprintln!("DEBUG object_binding_has: name={}, has={}", name, result);
+        Some(result)
     }
 
     pub fn is_object_binding(&self) -> bool {
@@ -100,6 +102,12 @@ impl Scope {
         }
         if !object.borrow().has(name) {
             return Some(!strict);
+        }
+        // Check writability: non-writable → strict throws, sloppy returns Ok.
+        if let Some(flags) = object.borrow().get_descriptor(name) {
+            if !flags.writable {
+                return None; // signals caller to fall through to assign_to_identifier
+            }
         }
         object.borrow_mut().set(name, value.clone());
         self.bindings.insert(name.to_string(), Rc::new(value));
@@ -166,13 +174,24 @@ impl Scope {
         self.bindings.get(name).map(Rc::clone)
     }
 
-    pub fn set(&mut self, name: String, value: Value) -> bool {
+    pub fn set(&mut self, name: String, value: Value, strict: bool) -> bool {
         // Per ES §13.15.2: assigning to a const binding throws TypeError
         if matches!(self.var_kinds.get(&name), Some(VarKind::Const)) {
             return false; // Caller will throw TypeError
         }
-        match self.bindings.entry(name) {
+        match self.bindings.entry(name.clone()) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
+                // Strict mode: assignment to non-writable global property (NaN/Infinity/
+                // undefined) must throw TypeError. Check via object_binding descriptor.
+                if strict {
+                    if let Some(ref obj) = self.object_binding {
+                        if let Some(flags) = obj.borrow().get_descriptor(&name) {
+                            if !flags.writable {
+                                return false; // Caller will throw TypeError
+                            }
+                        }
+                    }
+                }
                 e.insert(Rc::new(value));
                 true
             }
@@ -483,7 +502,11 @@ impl Environment {
                 scope.initialize_declared(name, value.clone());
                 return true;
             }
-            if scope.set(name.to_string(), value.clone()) {
+            if scope.set(
+                name.to_string(),
+                value.clone(),
+                crate::interpreter::is_strict_mode(),
+            ) {
                 return true;
             }
         }
@@ -534,7 +557,11 @@ impl Environment {
         for scope_rc in self.scopes.iter().rev() {
             let mut scope = scope_rc.borrow_mut();
             if scope.bindings.contains_key(name) {
-                scope.set(name.to_string(), value);
+                scope.set(
+                    name.to_string(),
+                    value,
+                    crate::interpreter::is_strict_mode(),
+                );
                 return;
             }
         }
