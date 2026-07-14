@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, JsError, NativeFunction, Object, ObjectKind, Value};
+use crate::value::{to_js_string, JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
 // ============================================================================
@@ -323,14 +323,25 @@ pub fn register_json(ctx: &mut Context) {
     let json_obj = Object::new(crate::value::ObjectKind::Ordinary);
     let json = Rc::new(RefCell::new(json_obj));
 
-    json.borrow_mut().set(
+    // Per ES spec, JSON.stringify and JSON.parse are:
+    // { [[Writable]]: true, [[Enumerable]]: false, [[Configurable]]: true }
+    let flags = PropertyFlags {
+        value: None,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+    };
+
+    json.borrow_mut().define(
         "stringify",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| json_stringify(&args)))),
+        flags.clone(),
     );
 
-    json.borrow_mut().set(
+    json.borrow_mut().define(
         "parse",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| json_parse(&args)))),
+        flags,
     );
 
     ctx.set_global("JSON".to_string(), Value::Object(json));
@@ -390,5 +401,25 @@ mod tests {
             "multibyte indent should not panic: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_json_parse_property_descriptor() {
+        let mut ctx = create_test_context();
+        // Check descriptor flags for JSON.parse
+        let writable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').writable").unwrap();
+        let enumerable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').enumerable").unwrap();
+        let configurable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').configurable").unwrap();
+        assert_eq!(writable, crate::value::Value::Boolean(true), "parse should be writable");
+        assert_eq!(enumerable, crate::value::Value::Boolean(false), "parse should be non-enumerable");
+        assert_eq!(configurable, crate::value::Value::Boolean(true), "parse should be configurable");
+        
+        // Check descriptor flags for JSON.stringify
+        let writable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').writable").unwrap();
+        let enumerable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').enumerable").unwrap();
+        let configurable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').configurable").unwrap();
+        assert_eq!(writable, crate::value::Value::Boolean(true), "stringify should be writable");
+        assert_eq!(enumerable, crate::value::Value::Boolean(false), "stringify should be non-enumerable");
+        assert_eq!(configurable, crate::value::Value::Boolean(true), "stringify should be configurable");
     }
 }

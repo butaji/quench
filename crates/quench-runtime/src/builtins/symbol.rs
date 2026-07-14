@@ -220,6 +220,11 @@ fn register_well_known_symbols(symbol_fn: &Rc<NativeFunction>) {
         "toPrimitive",
         "hasInstance",
         "isConcatSpreadable",
+        "species",
+        "match",
+        "replace",
+        "search",
+        "split",
     ] {
         let symbol = new_symbol(&format!("Symbol.{}", name));
         store_well_known_symbol(name, symbol.clone());

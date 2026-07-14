@@ -135,7 +135,7 @@ fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutc
 }
 
 /// Run a single test and return its outcome.
-pub(crate) fn run_single_test(
+pub fn run_single_test(
     host: &mut dyn Test262Host,
     harness: &HarnessLoader,
     test_path: &Path,
