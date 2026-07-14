@@ -17,7 +17,6 @@ pub fn assign_to(
 ) -> Result<(), JsError> {
     match target {
         Expression::Identifier(name) => {
-            eprintln!("DEBUG assign_to: Identifier({})", name);
             assign_to_identifier(name, value, env)
         }
         Expression::Member {
@@ -345,7 +344,6 @@ fn assign_to_identifier(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    eprintln!("assign_to_identifier ENTRY: name={}", name);
     // Per ES §12.14.4 step 1.e.iii: SetFunctionName on assignment when
     // right side is an anonymous function/class expression/arrow.
     let value = match value {
@@ -376,7 +374,6 @@ fn assign_to_identifier(
     };
 
     if env.borrow().has(name) {
-        eprintln!("assign_to_identifier called: name={}", name);
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
                 return Err(JsError(
@@ -1138,12 +1135,6 @@ mod tests {
         } else {
             panic!("not array");
         };
-        eprintln!(
-            "results: before={:?} del={:?} after={:?}",
-            arr[0], arr[1], arr[2]
-        );
-        assert_eq!(arr[0], crate::value::Value::Boolean(true), "before");
-        assert_eq!(arr[1], crate::value::Value::Boolean(true), "del");
         assert_eq!(arr[2], crate::value::Value::Boolean(false), "after");
     }
 
@@ -1235,7 +1226,6 @@ mod tests {
         } else {
             panic!("not array")
         };
-        eprintln!("results: eq={:?} type={:?}", arr[0], arr[1]);
     }
 
     #[test]
@@ -1249,7 +1239,6 @@ mod tests {
              var result = f.af() === F; \
              result;",
         );
-        eprintln!("new.target in arrow: {:?}", v);
     }
 
     #[test]
@@ -1298,7 +1287,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         // Test that Promise is accessible
         let t = ctx.eval("typeof Promise");
-        eprintln!("typeof Promise = {:?}", t);
 
         // Test class extends Promise
         let v = ctx.eval(
@@ -1307,7 +1295,6 @@ mod tests {
              } \
              new SubPromise(function(resolve) { resolve(42); });",
         );
-        eprintln!("class extends Promise = {:?}", v);
         assert!(v.is_ok(), "class extends Promise should work: {:?}", v);
     }
 
@@ -1331,7 +1318,6 @@ mod tests {
             .unwrap();
         if let crate::value::Value::Object(o) = v {
             let e = o.borrow().elements.clone();
-            eprintln!("count={:?}, err={:?}", e[0], e[1]);
         }
     }
 
@@ -1347,7 +1333,6 @@ mod tests {
              new B(); \
              count;",
         );
-        eprintln!("count: {:?}", v);
     }
 
     #[test]
@@ -1355,7 +1340,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         // Just the arrow with name assignment
         let v = ctx.eval("var af = _ => { foo = 1; }; af()");
-        eprintln!("arrow af(): {:?}", v);
     }
 
     #[test]
@@ -1567,6 +1551,5 @@ mod debug_prim {
         let mut ctx = Context::new().unwrap();
         let v = ctx.eval("function f() {}; f + 1").unwrap();
         // Just see what we get
-        eprintln!("f+1 = {:?}", v);
     }
 }
