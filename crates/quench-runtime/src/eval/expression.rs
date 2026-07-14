@@ -82,7 +82,6 @@ pub fn eval_expression(
             eval_unary_expr(*op, argument, env, in_arrow_function)
         }
         Expression::Assignment { left, right } => {
-            eprintln!("DEBUG Assignment: left={:?}", left);
             let identifier_scope = match left.as_ref() {
                 Expression::Identifier(name) => env.borrow().binding_scope(name),
                 _ => None,
