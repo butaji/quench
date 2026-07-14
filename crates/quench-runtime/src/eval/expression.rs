@@ -82,6 +82,7 @@ pub fn eval_expression(
             eval_unary_expr(*op, argument, env, in_arrow_function)
         }
         Expression::Assignment { left, right } => {
+            eprintln!("DEBUG Assignment: left={:?}", left);
             let identifier_scope = match left.as_ref() {
                 Expression::Identifier(name) => env.borrow().binding_scope(name),
                 _ => None,
@@ -131,7 +132,11 @@ pub fn eval_expression(
                 {
                     return Ok(right_val);
                 }
-                if !scope.borrow_mut().set(name.clone(), right_val.clone()) {
+                if !scope.borrow_mut().set(
+                    name.clone(),
+                    right_val.clone(),
+                    crate::interpreter::is_strict_mode(),
+                ) {
                     // If set returned false, check if it's a const violation
                     if scope.borrow().get_kind(name) == Some(VarKind::Const) {
                         let (_, error) = crate::value::error::create_js_error_with_type(

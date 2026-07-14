@@ -22,32 +22,36 @@ pub fn get_string_prototype() -> Option<Rc<RefCell<Object>>> {
 
 /// Register String.fromCharCode and String.fromCodePoint methods
 fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
+    let from_char_code = NativeFunction::new(|args| {
+        let chars: String = args
+            .iter()
+            .map(|v| {
+                let code = to_number(v) as u16;
+                std::char::from_u32(code as u32).unwrap_or('\u{FFFD}')
+            })
+            .collect();
+        Ok(Value::String(chars))
+    });
+    from_char_code.set_property("name", Value::String("fromCharCode".to_string()));
     string_obj.borrow_mut().set(
         "fromCharCode",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let chars: String = args
-                .iter()
-                .map(|v| {
-                    let code = to_number(v) as u16;
-                    std::char::from_u32(code as u32).unwrap_or('\u{FFFD}')
-                })
-                .collect();
-            Ok(Value::String(chars))
-        }))),
+        Value::NativeFunction(Rc::new(from_char_code)),
     );
 
+    let from_code_point = NativeFunction::new(|args| {
+        let chars: String = args
+            .iter()
+            .map(|v| {
+                let code = to_number(v) as u32;
+                std::char::from_u32(code).unwrap_or('\u{FFFD}')
+            })
+            .collect();
+        Ok(Value::String(chars))
+    });
+    from_code_point.set_property("name", Value::String("fromCodePoint".to_string()));
     string_obj.borrow_mut().set(
         "fromCodePoint",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let chars: String = args
-                .iter()
-                .map(|v| {
-                    let code = to_number(v) as u32;
-                    std::char::from_u32(code).unwrap_or('\u{FFFD}')
-                })
-                .collect();
-            Ok(Value::String(chars))
-        }))),
+        Value::NativeFunction(Rc::new(from_code_point)),
     );
 }
 

@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::value::{
-    NativeFunction, Object, ObjectKind, Symbol as ValSymbol, Value,
-};
+use crate::value::{NativeFunction, Object, ObjectKind, Symbol as ValSymbol, Value};
 use crate::Context;
 
 /// Symbol counter for unique IDs - using atomic for thread-safety
@@ -166,7 +164,10 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let to_string = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
-            Some(s) => Ok(Value::String(format!("Symbol({})", s.desc.as_deref().unwrap_or("")))),
+            Some(s) => Ok(Value::String(format!(
+                "Symbol({})",
+                s.desc.as_deref().unwrap_or("")
+            ))),
             None => Err(crate::JsError::new(
                 "TypeError: Symbol.prototype.toString requires a Symbol receiver",
             )),
@@ -186,7 +187,9 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let description = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
-            Some(s) => Ok(Value::String(s.desc.clone().map(|d| d.to_string()).unwrap_or_default())),
+            Some(s) => Ok(Value::String(
+                s.desc.clone().map(|d| d.to_string()).unwrap_or_default(),
+            )),
             None => Err(crate::JsError::new(
                 "TypeError: Symbol.prototype.description requires a Symbol receiver",
             )),

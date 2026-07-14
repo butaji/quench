@@ -2290,4 +2290,22 @@ Promise.race.call(Custom, values);
         }
         assert!(result.is_ok(), "Test failed: {:?}", result);
     }
+
+    #[test]
+    fn debug_this_globalthis() {
+        // Test what `this` and `globalThis` are at script level
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+            console.log("typeof this:", typeof this);
+            console.log("typeof globalThis:", typeof globalThis);
+            console.log("this === globalThis:", this === globalThis);
+        "#,
+        );
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
 }

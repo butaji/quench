@@ -163,6 +163,11 @@ fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
                 set_boxed_value(&mut obj, args[0].clone());
                 obj
             }
+            Value::BigInt(_) => {
+                let mut obj = boxed_object("BigInt");
+                set_boxed_value(&mut obj, args[0].clone());
+                obj
+            }
             Value::Object(_)
             | Value::Function(_)
             | Value::NativeFunction(_)
@@ -298,6 +303,7 @@ fn get_exotic_kind_tag(exotic: &Option<crate::value::kind::ExoticKind>) -> Optio
             crate::value::kind::ExoticKind::String => Some("String".to_string()),
             crate::value::kind::ExoticKind::Number => Some("Number".to_string()),
             crate::value::kind::ExoticKind::Boolean => Some("Boolean".to_string()),
+            crate::value::kind::ExoticKind::BigInt => Some("BigInt".to_string()),
         }
     } else {
         None

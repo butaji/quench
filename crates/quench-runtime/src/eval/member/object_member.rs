@@ -1,13 +1,20 @@
 //! Object member access evaluation
 
+use crate::context::CURRENT_CONTEXT;
 use crate::env::Environment;
 use crate::eval::object::call_getter;
 use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Evaluate member access on an object
-pub fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
+/// Evaluate member access on an object. If `env` is provided, global object
+/// lookups fall back to the environment's globalThis binding for properties
+/// stored as built-in globals (e.g. `isFinite`, `parseInt`, etc.).
+pub fn eval_object_member(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
     if crate::builtins::function::is_function_prototype(o)
         && (prop_name == "arguments" || prop_name == "caller")
     {
@@ -58,6 +65,26 @@ pub fn eval_object_member(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Va
                 return Ok(Value::Object(Rc::clone(proto_obj)));
             }
             return Ok(Value::Undefined);
+        }
+        // For global object: built-in globals (isFinite, parseInt, etc.) are stored
+        // in the environment's bindings. Fall back to globalThis bindings if the
+        // property wasn't found on the object itself or its prototype chain.
+        if obj.kind == ObjectKind::Global {
+            // Try the provided env first, then fall back to CURRENT_CONTEXT thread-local.
+            let fallback_env = env.or_else(|| {
+                CURRENT_CONTEXT.with(|cell| cell.borrow().map(|ptr| unsafe { &*ptr }.env()))
+            });
+            if let Some(e) = fallback_env {
+                if let Some(val) = e.borrow().get("globalThis") {
+                    // globalThis is an Object value; look up property on it.
+                    if let Value::Object(global_rc) = &val {
+                        let global = global_rc.borrow();
+                        if let Some(found) = global.properties.get(prop_name) {
+                            return Ok(found.clone());
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(Value::Undefined)

@@ -16,7 +16,10 @@ pub fn assign_to(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match target {
-        Expression::Identifier(name) => assign_to_identifier(name, value, env),
+        Expression::Identifier(name) => {
+            eprintln!("DEBUG assign_to: Identifier({})", name);
+            assign_to_identifier(name, value, env)
+        }
         Expression::Member {
             object,
             property,
@@ -342,6 +345,7 @@ fn assign_to_identifier(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    eprintln!("assign_to_identifier ENTRY: name={}", name);
     // Per ES §12.14.4 step 1.e.iii: SetFunctionName on assignment when
     // right side is an anonymous function/class expression/arrow.
     let value = match value {
@@ -372,6 +376,7 @@ fn assign_to_identifier(
     };
 
     if env.borrow().has(name) {
+        eprintln!("assign_to_identifier called: name={}", name);
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
                 return Err(JsError(
@@ -669,7 +674,9 @@ fn extract_property_name(
             PropertyKey::Computed(e) => {
                 let val = eval_expression(e, env, in_arrow_function)?;
                 match &val {
-                    Value::Symbol(s) => Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
+                    Value::Symbol(s) => {
+                        Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default())
+                    }
                     _ => Ok(crate::value::to_js_string(&val)),
                 }
             }
@@ -718,7 +725,7 @@ fn get_member_function(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     match obj_val {
-        Value::Object(o) => crate::eval::member::eval_object_member(o, prop_name),
+        Value::Object(o) => crate::eval::member::eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => get_string_method(s, prop_name, env),
         Value::Number(_) => get_number_method(obj_val, prop_name, env),
         Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
@@ -751,7 +758,7 @@ fn get_member_function(
                 return crate::eval::member::eval_member_access(&super_val, prop_name, env);
             }
             let proto = crate::eval::class::get_or_create_class_prototype(class, env)?;
-            crate::eval::member::eval_object_member(&proto, prop_name)
+            crate::eval::member::eval_object_member(&proto, prop_name, Some(env))
         }
         _ => Ok(Value::Undefined),
     }

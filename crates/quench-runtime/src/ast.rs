@@ -1,6 +1,9 @@
 //! AST types for the JavaScript interpreter
 
 use std::fmt;
+use std::rc::Rc;
+
+use num_bigint::BigInt;
 
 /// Source position for error reporting
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -13,7 +13,6 @@ const SKIP_FEATURES: &[&str] = &[
     // Class - partial: public fields work, private handled by source-skip (#)
     // Built-in globals
     "BigInt",
-    "Proxy",
     "Reflect",
     "WeakMap",
     "WeakSet",
@@ -138,6 +137,8 @@ const SKIP_TEST_PATHS: &[&str] = &[
 ];
 
 /// Path prefixes to skip (for groups of tests with same limitation).
+/// MINIMAL LIST: only skips for genuine OXC parser differences or specific bugs.
+/// Broad directory blocks have been removed — tests run freely, failures are fixed directly.
 const SKIP_PATH_PREFIXES: &[&str] = &[
     // OXC parser doesn't reject regex with line terminators (e.g., /\<newline>/)
     // These tests expect SyntaxError at parse time but OXC allows it.
@@ -151,148 +152,6 @@ const SKIP_PATH_PREFIXES: &[&str] = &[
     // ES5 treated \u2028/\u2029/\uFFFF as whitespace or string terminators.
     // ES2019 corrected this; OXC follows the modern spec.
     "test/language/line-terminators/7.3-",
-    // ES5 strict-mode compound assignment to accessor with no setter
-    "test/language/expressions/compound-assignment/",
-    // ES5 strict-mode simple assignment to accessor with no setter
-    "test/language/expressions/assignment/",
-    // Bitwise-and evaluation order
-    "test/language/expressions/bitwise-and/",
-    "test/language/expressions/bitwise-or/",
-    "test/language/expressions/bitwise-xor/",
-    "test/language/expressions/bitwise-not/",
-    // Class accessor computed names
-    "test/language/expressions/class/accessor-name-static-computed-in.js",
-    // Parser: await identifier restrictions
-    "test/language/expressions/class/class-name-ident-await-escaped.js",
-    // Class constructor this TDZ during initializers
-    "test/language/expressions/class/constructor-this-tdz-during-initializers.js",
-    // Coalesce + ternary precedence
-    "test/language/expressions/conditional/coalesce-expr-ternary.js",
-    // Delete operator edge cases
-    "test/language/expressions/delete/",
-    // ToNumber evaluation order
-    "test/language/expressions/division/",
-    // does-not-equals ToPrimitive evaluation
-    "test/language/expressions/does-not-equals/",
-    // equals coerce-symbol tests
-    "test/language/expressions/equals/",
-    // Exponentiation operator
-    "test/language/expressions/exponentiation/",
-    // Function name own property
-    "test/language/expressions/function/",
-    // ES5 strict-mode compound assignment to accessor with no setter
-    "test/language/expressions/compound-assignment/",
-    // Compare operators eval order
-    "test/language/expressions/greater-than/",
-    "test/language/expressions/greater-than-or-equal/",
-    "test/language/expressions/less-than/",
-    "test/language/expressions/less-than-or-equal/",
-    // Grouping operator + delete
-    "test/language/expressions/grouping/",
-    // in operator edge cases
-    "test/language/expressions/in/",
-    // instanceof operator
-    "test/language/expressions/instanceof/",
-    // Bitwise operator 32-bit semantics
-    "test/language/expressions/left-shift/",
-    "test/language/expressions/right-shift/",
-    "test/language/expressions/unsigned-right-shift/",
-    // Logical assignment operators
-    "test/language/expressions/logical-assignment/",
-    // Member expression edge cases
-    "test/language/expressions/member-expression/",
-    // Binary operator eval order (ToNumber left before right)
-    "test/language/expressions/modulus/",
-    "test/language/expressions/multiplication/",
-    "test/language/expressions/subtraction/",
-    "test/language/expressions/addition/",
-    // new operator edge cases
-    "test/language/expressions/new/",
-    // new.target and postfix/prefix dirs
-    "test/language/expressions/new.target/",
-    "test/language/expressions/postfix-decrement/",
-    "test/language/expressions/postfix-increment/",
-    "test/language/expressions/prefix-decrement/",
-    "test/language/expressions/prefix-increment/",
-    "test/language/expressions/property-accessors/",
-    // Relational operator comparison
-    "test/language/expressions/relational/",
-    // super keyword edge cases
-    "test/language/expressions/super/",
-    // Tagged template cache across realms
-    "test/language/expressions/tagged-template/",
-    // Remaining stage-7 expression dirs
-    "test/language/expressions/template-literal/",
-    "test/language/expressions/this/",
-    "test/language/expressions/typeof/",
-    "test/language/expressions/unary-minus/",
-    "test/language/expressions/unary-plus/",
-    "test/language/expressions/void/",
-    "test/language/expressions/yield/",
-    "test/language/expressions/concatenation/",
-    "test/language/expressions/async-arrow-function/",
-    "test/language/expressions/async-function/",
-    "test/language/expressions/async-generator/",
-    "test/language/expressions/generators/",
-    "test/language/expressions/arrow-function/",
-    "test/language/expressions/await/",
-    "test/language/expressions/call/",
-    "test/language/expressions/dynamic-import/",
-    "test/language/expressions/import.meta/",
-    "test/language/expressions/tco-pos.js",
-    // Statement-level scope tests
-    "test/language/statements/block/",
-    "test/language/statements/break/",
-    "test/language/statements/class/",
-    "test/language/statements/const/",
-    "test/language/statements/continue/",
-    "test/language/statements/debugger/",
-    "test/language/statements/declaration/",
-    "test/language/statements/do-while/",
-    "test/language/statements/empty/",
-    "test/language/statements/expression/",
-    "test/language/statements/for-await-of/",
-    "test/language/statements/for-of/",
-    "test/language/statements/for/",
-    "test/language/statements/function/",
-    "test/language/statements/function*/",
-    "test/language/statements/if/",
-    "test/language/statements/import/",
-    "test/language/statements/labeled/",
-    "test/language/statements/let/",
-    "test/language/statements/return/",
-    "test/language/statements/switch/",
-    "test/language/statements/throw/",
-    "test/language/statements/try/",
-    "test/language/statements/variable/",
-    "test/language/statements/while/",
-    "test/language/statements/with/",
-    // For-in / for-of iteration
-    "test/language/statements/for-in/",
-    // using keyword (explicit resource management)
-    "test/language/statements/using/",
-    // function-code tests
-    "test/language/function-code/",
-    // arguments-object tests
-    "test/language/arguments-object/",
-    // directive-prologue tests
-    "test/language/directive-prologue/",
-    // global-code tests
-    "test/language/global-code/",
-    // source-text unicode tests
-    "test/language/source-text/",
-    // built-ins tests
-    "test/built-ins/",
-    // annexB legacy tests
-    "test/annexB/",
-    // type reference test
-    "test/language/types/reference/",
-    // Harness tests (pre-existing compat gaps)
-    "test/harness/",
-    // Object dir may have private field syntax that OXC can't parse
-    "test/language/expressions/object/",
-    // Optional chaining
-    "test/language/expressions/optional-chaining/",
 ];
 
 /// Check if a specific test file should be skipped.

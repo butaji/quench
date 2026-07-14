@@ -318,8 +318,8 @@ pub fn object_get_own_property_descriptor(args: Vec<Value>) -> Result<Value, JsE
         return get_object_property_descriptor(o, &prop);
     } else if let Value::Function(ref f) = obj {
         return get_function_property_descriptor(f, &prop);
-    } else if let Value::NativeFunction(_) = obj {
-        return get_native_function_property_descriptor(&prop);
+    } else if let Value::NativeFunction(ref nf) = obj {
+        return get_native_function_property_descriptor(nf.as_ref(), &prop);
     } else if let Value::NativeConstructor(nc) = obj {
         return get_native_constructor_property_descriptor(nc, &prop);
     } else if let Value::Class(c) = obj {
@@ -408,8 +408,15 @@ fn get_function_property_descriptor(
 }
 
 /// Get property descriptor from a NativeFunction value.
-fn get_native_function_property_descriptor(prop: &str) -> Result<Value, JsError> {
+fn get_native_function_property_descriptor(
+    nf: &crate::value::NativeFunction,
+    prop: &str,
+) -> Result<Value, JsError> {
     if prop == "name" {
+        // Check for custom name property first
+        if let Some(Value::String(name)) = nf.get_property("name") {
+            return make_property_descriptor_string(&name, false, false, true);
+        }
         return make_property_descriptor_string("anonymous", false, false, false);
     }
     Ok(Value::Undefined)

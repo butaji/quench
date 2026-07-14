@@ -50,16 +50,12 @@ fn register_proxy(ctx: &mut Context) {
     // the target. A handler object may override any of those traps. This
     // is sufficient for test262 tests that use a plain handler `{}` to
     // check private-field access boundaries.
-    let proxy_ctor = Value::NativeFunction(Rc::new(
-        crate::value::NativeFunction::new_with_prototype(
+    let proxy_ctor =
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new_with_prototype(
             |args: Vec<Value>| -> Result<Value, crate::value::JsError> {
                 let target = match args.first() {
                     Some(v) => v.clone(),
-                    _ => {
-                        return Err(crate::value::JsError::new(
-                            "Proxy: target argument missing",
-                        ))
-                    }
+                    _ => return Err(crate::value::JsError::new("Proxy: target argument missing")),
                 };
                 let handler = match args.get(1) {
                     Some(v) => v.clone(),
@@ -71,7 +67,10 @@ fn register_proxy(ctx: &mut Context) {
                 };
                 if !matches!(
                     target,
-                    Value::Object(_) | Value::Class(_) | Value::Function(_) | Value::NativeFunction(_)
+                    Value::Object(_)
+                        | Value::Class(_)
+                        | Value::Function(_)
+                        | Value::NativeFunction(_)
                 ) {
                     return Err(crate::value::JsError::new(
                         "TypeError: Proxy target must be an object",
@@ -92,8 +91,7 @@ fn register_proxy(ctx: &mut Context) {
             std::rc::Rc::new(std::cell::RefCell::new(Object::new(
                 crate::value::ObjectKind::Ordinary,
             ))),
-        ),
-    ));
+        )));
     // Set the constructor's name and expose it as a global.
     if let Value::NativeFunction(ref nf) = proxy_ctor {
         nf.set_property("name", Value::String("Proxy".to_string()));

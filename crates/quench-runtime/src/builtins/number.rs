@@ -1,6 +1,7 @@
 //! Number built-in
 
 use std::cell::RefCell;
+use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{
@@ -440,7 +441,7 @@ mod tests {
     fn test_number_parse_float() {
         assert_eq!(eval_num("Number.parseFloat('123.456')"), 123.456);
         assert_eq!(eval_num("Number.parseFloat('42')"), 42.0);
-        assert_eq!(eval_num("Number.parseFloat('3.14abc')"), 3.14);
+        assert_eq!(eval_num("Number.parseFloat('3.14abc')"), PI);
         let nan: f64 = eval_num("Number.parseFloat('not a number')");
         assert!(nan.is_nan());
     }

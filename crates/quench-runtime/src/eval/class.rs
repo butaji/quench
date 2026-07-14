@@ -13,9 +13,9 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction
 use std::cell::RefCell;
 use std::rc::Rc;
 
-    fn class_static_field_this_name() {
-        let _ = 42;
-    }
+fn class_static_field_this_name() {
+    let _ = 42;
+}
 
 /// Evaluate a class expression. The `inferred_name` parameter provides the
 /// inferred class name per ES §14.6.13 step 18 when the class is anonymous
@@ -193,7 +193,9 @@ fn instantiate_with_fields(
         if body_calls_super {
             // Body has its own super() call — set pending_fields so
             // eval_super_call initializes fields after super() returns.
-            call_env.borrow_mut().set_pending_fields(class.instance_fields.clone());
+            call_env
+                .borrow_mut()
+                .set_pending_fields(class.instance_fields.clone());
             predeclare_let_const(&body, &mut call_env.borrow_mut());
             eval_function_body(&body, &call_env, false)?;
         } else if body.is_empty() {
@@ -479,8 +481,7 @@ fn is_constructor_value(val: &Value) -> bool {
         Value::Object(o) => {
             // Object-wrapped constructors (like Array) have a prototype property
             // and a callable constructor property.
-            o.borrow().get("prototype").is_some()
-                && o.borrow().get("constructor").is_some()
+            o.borrow().get("prototype").is_some() && o.borrow().get("constructor").is_some()
         }
         _ => false,
     }
@@ -664,25 +665,22 @@ mod static_field_tests {
 
     #[test]
     fn class_caller_throws_assert_like() {
-        use crate::value::{Value, NativeFunction};
+        use crate::value::{NativeFunction, Value};
         use std::rc::Rc;
         let mut ctx = Context::new().unwrap();
         // Register a native assert-like function
-        let assert_like = Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |args: Vec<Value>| {
+        let assert_like =
+            Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
                 let fn_value = args.get(0).cloned().unwrap_or(Value::Undefined);
                 match fn_value {
-                    Value::Function(f) => {
-                        crate::eval::call_value_with_this(
-                            Value::Function(f),
-                            vec![],
-                            Value::Undefined,
-                        )
-                    }
+                    Value::Function(f) => crate::eval::call_value_with_this(
+                        Value::Function(f),
+                        vec![],
+                        Value::Undefined,
+                    ),
                     _ => Err(crate::value::JsError("not a function".to_string())),
                 }
-            }
-        )));
+            })));
         ctx.set_global("testCall".to_string(), assert_like);
         // The function returns Ok(Value::Undefined) if no error — good
         // The function returns Err(JsError) if error — which is what we want in our test

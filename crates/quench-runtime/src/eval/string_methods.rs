@@ -33,13 +33,18 @@ pub fn resolve_string_member(s: &str, prop_name: &str, env: &Rc<RefCell<Environm
         }
     }
     // Numeric property access (e.g., str[0], str[15])
-    if let Ok(idx) = prop_name.parse::<usize>() {
-        let ch = s
-            .chars()
-            .nth(idx)
-            .map(|c| c.to_string())
-            .unwrap_or_default();
-        return Value::String(ch);
+    // Valid array indices for String are 0 to 2^32-2 (4294967294).
+    // Indices >= 2^32-1 are NOT valid array indices and should return undefined.
+    if let Ok(idx) = prop_name.parse::<u32>() {
+        if idx <= 4294967294 {
+            // Return undefined for out-of-bounds (nth returns None)
+            if let Some(ch) = s.chars().nth(idx as usize) {
+                return Value::String(ch.to_string());
+            }
+            return Value::Undefined;
+        }
+        // idx >= 4294967295 is not a valid array index
+        return Value::Undefined;
     }
     Value::Undefined
 }

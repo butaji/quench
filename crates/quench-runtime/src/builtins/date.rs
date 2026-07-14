@@ -1,6 +1,7 @@
 //! Date built-in and global utility functions
 
 use std::cell::RefCell;
+use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{
@@ -750,7 +751,7 @@ mod tests {
         // The per-digit scale*=0.1 accumulator loses precision and gives 10.
         assert_eq!(eval_num("parseFloat('.01e+2')"), 1.0);
         assert_eq!(eval_num("parseFloat('.5e1')"), 5.0);
-        assert_eq!(eval_num("parseFloat('3.14')"), 3.14);
+        assert_eq!(eval_num("parseFloat('3.14')"), PI);
         assert_eq!(eval_num("parseFloat('.01')"), 0.01);
     }
 }

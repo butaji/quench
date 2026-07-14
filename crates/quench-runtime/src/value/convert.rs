@@ -54,6 +54,7 @@ pub fn simple_string_value(v: &Value) -> Option<String> {
         Value::Boolean(b) => Some(b.to_string()),
         Value::Number(n) => Some(number_to_string(*n)),
         Value::String(s) => Some(s.clone()),
+        Value::BigInt(bi) => Some(format!("{}n", bi)),
         _ => None,
     }
 }
@@ -116,8 +117,10 @@ pub fn to_bool(v: &Value) -> bool {
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => true,
+        | Value::Class(_)
+        | Value::BigInt(_) => true,
         Value::Symbol(_) => true,
+        Value::BigInt(_) => true,
     }
 }
 
@@ -672,6 +675,7 @@ fn try_to_primitive_symbol(
     let to_prim_method = crate::eval::member::eval_object_member(
         obj,
         symbol_key.desc.as_deref().unwrap_or(""),
+        None,
     )?;
     if matches!(to_prim_method, Value::Undefined) {
         return Ok(None);
@@ -760,6 +764,13 @@ pub fn to_object(value: &Value) -> Value {
         | Value::Class(_) => value.clone(),
         Value::Symbol(_s) => {
             let obj = crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            Value::Object(Rc::new(RefCell::new(obj)))
+        }
+        Value::BigInt(_) => {
+            let mut obj =
+                crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            obj.exotic_kind = Some(crate::value::kind::ExoticKind::BigInt);
+            obj.properties.insert("_value".to_string(), value.clone());
             Value::Object(Rc::new(RefCell::new(obj)))
         }
     }
