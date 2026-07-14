@@ -133,7 +133,9 @@ fn make_array_with_new(
         }
     } else if args.len() > 1 {
         obj_rc.borrow_mut().elements = args.to_vec();
-        obj_rc.borrow_mut().set("length", Value::Number(args.len() as f64));
+        obj_rc
+            .borrow_mut()
+            .set("length", Value::Number(args.len() as f64));
     }
     Ok(Value::Object(obj_rc))
 }

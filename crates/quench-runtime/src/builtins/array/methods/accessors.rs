@@ -117,7 +117,12 @@ fn get_object_symbol_property(val: &Value, symbol: &Value) -> Option<Value> {
             if key.starts_with("Symbol(") {
                 if let Value::Symbol(sym_desc) = symbol {
                     // Check if this is the isConcatSpreadable symbol
-                    if sym_desc.desc.as_deref().unwrap_or("").contains("isConcatSpreadable") {
+                    if sym_desc
+                        .desc
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("isConcatSpreadable")
+                    {
                         return Some(v.clone());
                     }
                 }

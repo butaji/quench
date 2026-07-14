@@ -35,6 +35,9 @@ regress = "0.11"
 # Error handling
 anyhow = "1"
 
+# BigInt support
+num-bigint = "0.4"
+
 # Conformance testing
 walkdir = "2"
 chrono = "0.4"

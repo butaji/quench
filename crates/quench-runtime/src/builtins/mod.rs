@@ -20,12 +20,14 @@ pub mod string;
 pub mod symbol;
 pub mod typed_array;
 pub mod uri;
+pub mod weak;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
 pub use function::{get_function_prototype, get_restricted_prop_error, is_function_prototype};
 pub use object::get_object_prototype;
 pub use promise::execute_pending_microtasks;
+pub use typed_array::get_typed_array_prototype;
 
 // Re-export get_native_this for use by submodules
 pub(crate) use crate::interpreter::get_native_this;
@@ -80,9 +82,13 @@ impl serde::Serialize for JsValueProxy<'_> {
             Value::Function(_) => serializer.serialize_str("[Function]"),
             Value::NativeFunction(_) => serializer.serialize_str("[Function]"),
             Value::NativeConstructor(_) => serializer.serialize_str("[Function]"),
-            Value::Symbol(s) => serializer.serialize_str(&format!("Symbol({})", s.desc.as_deref().unwrap_or(""))),
+            Value::Symbol(s) => {
+                serializer.serialize_str(&format!("Symbol({})", s.desc.as_deref().unwrap_or("")))
+            }
             #[allow(unused_variables)]
             Value::Class(_) => serializer.serialize_str("[Function]"),
+            Value::BigInt(_) => serializer.serialize_str("[BigInt]"),
+            Value::BigInt(bi) => serializer.serialize_str(&format!("{}n", bi)),
         }
     }
 }
@@ -120,6 +126,8 @@ pub fn register_builtins(ctx: &mut Context) {
     // the Symbol.iterator method.
     symbol::register_symbol(ctx);
     map::register_map_and_set(ctx);
+    // WeakMap and WeakSet
+    weak::register_weak_collections(ctx);
     // String must be registered for string support
     string::register_string(ctx);
     // Number must be registered before Date (for timestamp conversion)

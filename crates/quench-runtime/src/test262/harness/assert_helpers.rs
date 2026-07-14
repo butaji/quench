@@ -278,5 +278,7 @@ pub fn debug_string(v: &Value) -> String {
         Value::NativeConstructor(_) => "[NativeConstructor]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         Value::Class(_) => "[Class]".to_string(),
+        Value::BigInt(_) => "[BigInt]".to_string(),
+        Value::BigInt(bi) => format!("{}n", bi),
     }
 }

@@ -210,8 +210,6 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let replacement = args.get(1).cloned();
 
     if let (Some(pattern), Some(replacement)) = (pattern, replacement) {
-        let replacer = to_js_string(&replacement);
-
         let regex = match &pattern {
             Value::Object(ref obj) => obj.borrow().internal_regex.clone(),
             _ => {
@@ -231,8 +229,10 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 _ => false,
             };
             if is_global {
-                return Ok(Value::String(replace_all_matches(
-                    &string, &regex, &replacer,
+                return Ok(Value::String(replace_all_with_value(
+                    &string,
+                    &regex,
+                    &replacement,
                 )));
             }
             // Find first match
@@ -244,7 +244,15 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 let after = &string[end..];
 
                 let captures = match_captures(&m, &string);
-                let replaced = apply_substitution(&replacer, matched, before, after, &captures);
+                let replaced = replace_using_value(
+                    matched,
+                    &before,
+                    &after,
+                    &captures,
+                    start as f64,
+                    &string,
+                    &replacement,
+                )?;
                 let result = format!("{}{}{}", before, replaced, after);
                 return Ok(Value::String(result));
             }
@@ -252,6 +260,84 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     Ok(Value::String(string))
+}
+
+/// Perform replacement using a Value (either string or function)
+fn replace_using_value(
+    matched: &str,
+    before: &str,
+    after: &str,
+    captures: &[&str],
+    position: f64,
+    string: &str,
+    replacement: &Value,
+) -> Result<String, JsError> {
+    // If replacement is a function, call it
+    if matches!(
+        replacement,
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)
+    ) {
+        let args: Vec<Value> = std::iter::once(Value::String(matched.to_string()))
+            .chain(captures.iter().map(|s| Value::String(s.to_string())))
+            .chain([Value::Number(position), Value::String(string.to_string())])
+            .collect();
+
+        let result =
+            crate::eval::call_value_with_this(replacement.clone(), args, Value::Undefined)?;
+        Ok(to_js_string(&result))
+    } else {
+        // String replacement with $-substitution
+        let replacer = to_js_string(replacement);
+        Ok(apply_substitution(
+            &replacer, matched, before, after, captures,
+        ))
+    }
+}
+
+/// Replace all matches using a Value (either string or function)
+fn replace_all_with_value(string: &str, regex: &Regex, replacement: &Value) -> String {
+    if matches!(
+        replacement,
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)
+    ) {
+        let mut result = String::new();
+        let mut last_end = 0;
+
+        for m in regex.find_iter(string) {
+            let start = m.start();
+            let end = m.end();
+            let matched = &string[start..end];
+            let before = &string[..start];
+            let after = &string[end..];
+            let captures = match_captures(&m, string);
+
+            // For now, call the function without proper 'this' handling
+            // (this should use the global object or undefined in strict mode)
+            let args: Vec<Value> = std::iter::once(Value::String(matched.to_string()))
+                .chain(captures.iter().map(|s| Value::String(s.to_string())))
+                .chain([
+                    Value::Number(start as f64),
+                    Value::String(string.to_string()),
+                ])
+                .collect();
+
+            let func_result =
+                crate::eval::call_value_with_this(replacement.clone(), args, Value::Undefined);
+            let replaced = match func_result {
+                Ok(val) => to_js_string(&val),
+                Err(_) => matched.to_string(), // On error, keep original
+            };
+
+            result.push_str(&string[last_end..start]);
+            result.push_str(&replaced);
+            last_end = end;
+        }
+        result.push_str(&string[last_end..]);
+        result
+    } else {
+        let replacer = to_js_string(replacement);
+        replace_all_matches(string, regex, &replacer)
+    }
 }
 
 pub(crate) fn string_replace_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -269,8 +355,6 @@ pub(crate) fn string_replace_all_impl(args: Vec<Value>) -> Result<Value, JsError
 }
 
 fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Result<Value, JsError> {
-    let replacer = to_js_string(replacement);
-
     // Check if pattern is a RegExp with global flag
     if let Value::Object(ref obj) = pattern {
         if obj.borrow().internal_regex.is_some() {
@@ -292,6 +376,8 @@ fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Resu
 
     // Handle empty string pattern FIRST - before regex creation
     if pattern_str.is_empty() {
+        // For empty pattern, replacement must be a string (per spec)
+        let replacer = to_js_string(replacement);
         return Ok(Value::String(replace_all_empty(string, &replacer)));
     }
 
@@ -301,7 +387,7 @@ fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Resu
     };
 
     if let Some(regex) = regex {
-        let result = replace_all_matches(string, &regex, &replacer);
+        let result = replace_all_with_value(string, &regex, replacement);
         return Ok(Value::String(result));
     }
     Ok(Value::String(string.to_string()))

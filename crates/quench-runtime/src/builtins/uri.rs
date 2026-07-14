@@ -6,6 +6,7 @@
 //! are simpler than Date parsing, but the implementation already covers
 //! the spec cases).
 
+use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{to_js_string, to_number, Value};
@@ -324,7 +325,7 @@ mod tests {
 
     #[test]
     fn parse_float_basic() {
-        assert_eq!(eval_num("parseFloat('3.14')"), 3.14);
+        assert_eq!(eval_num("parseFloat('3.14')"), PI);
         assert_eq!(eval_num("parseFloat('  -7.5abc')"), -7.5);
         assert!(eval_num("parseFloat('not a number')").is_nan());
     }

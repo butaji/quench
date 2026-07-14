@@ -263,6 +263,16 @@ impl Context {
         self.set_global("undefined".to_string(), Value::Undefined);
         self.set_global("Infinity".to_string(), Value::Number(f64::INFINITY));
         self.set_global("NaN".to_string(), Value::Number(f64::NAN));
+
+        // Link the global scope to globalThis so that EnvScope::set can
+        // check property descriptors (e.g. non-writable Infinity/NaN/undefined)
+        // in strict mode and throw TypeError on assignment.
+        self.env
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .set_object_binding(Rc::clone(&global_obj));
+
         Ok(())
     }
 
@@ -391,8 +401,27 @@ impl Context {
     }
 
     /// Set a global value in the root environment.
+    /// Also sets the value on the globalThis object so that globalThis.Array,
+    /// globalThis.Object, etc. work correctly (SameValue semantics require
+    /// globalThis === this at script level).
     pub fn set_global(&mut self, name: String, value: Value) {
+        // Get globalThis before taking mutable borrow of env
+        let global_obj = self.get_global("globalThis").and_then(|v| {
+            if let Value::Object(obj) = v {
+                Some(obj)
+            } else {
+                None
+            }
+        });
+        let name_for_global = name.clone();
+        let value_for_global = value.clone();
         self.env.borrow_mut().define(name, value);
+        // Also set on globalThis so globalThis.Array, globalThis.Object etc. work
+        if let Some(global_obj) = global_obj {
+            global_obj
+                .borrow_mut()
+                .set(&name_for_global, value_for_global);
+        }
     }
 
     /// Get a global value from the root environment.
