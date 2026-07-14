@@ -18,9 +18,9 @@ pub mod reflect;
 pub mod regex; // regex module includes string_methods submodule
 pub mod string;
 pub mod symbol;
+pub mod weak;
 pub mod typed_array;
 pub mod uri;
-pub mod weak;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -117,6 +117,7 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
+    eprintln!("DEBUG: register_builtins called");
     console::register_console(ctx);
     json::register_json(ctx);
     math::register_math(ctx);

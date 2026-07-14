@@ -468,17 +468,6 @@ fn assign_to_member(
                     .insert(parent_prop_name, Value::Function(func));
                 return Ok(());
             }
-
-            // Handle NativeFunction properties (e.g. assert.deepEqual._compare where assert is an Object)
-            if let Some(Value::NativeFunction(nf)) = func_opt {
-                nf.set_property(&prop_name, value.clone());
-                // Put the modified native function back
-                parent_o
-                    .borrow_mut()
-                    .properties
-                    .insert(parent_prop_name, Value::NativeFunction(nf));
-                return Ok(());
-            }
         }
 
         // Same for native-function parents (e.g. assert.deepEqual._compare = ...):

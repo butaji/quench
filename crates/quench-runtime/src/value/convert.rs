@@ -135,6 +135,18 @@ pub fn to_number(v: &Value) -> f64 {
     }
 }
 
+/// Convert a Value to a number without error handling (assumes already validated).
+/// Use only when the value is known to be a valid number source.
+pub fn to_number_unchecked(v: &Value) -> f64 {
+    match v {
+        Value::Number(n) => *n,
+        Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
+        Value::String(s) => string_to_number(s),
+        Value::Null => 0.0,
+        _ => f64::NAN,
+    }
+}
+
 fn simple_number_value(v: &Value) -> Option<f64> {
     match v {
         Value::Undefined => Some(f64::NAN),

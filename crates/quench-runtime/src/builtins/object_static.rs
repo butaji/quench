@@ -412,12 +412,23 @@ fn get_native_function_property_descriptor(
     nf: &crate::value::NativeFunction,
     prop: &str,
 ) -> Result<Value, JsError> {
+    // Check for custom properties first
+    if let Some(value) = nf.get_property(prop) {
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(value),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+            Value::Undefined,
+        ));
+    }
     if prop == "name" {
-        // Check for custom name property first
-        if let Some(Value::String(name)) = nf.get_property("name") {
-            return make_property_descriptor_string(&name, false, false, true);
-        }
         return make_property_descriptor_string("anonymous", false, false, false);
+    }
+    if prop == "length" {
+        return make_property_descriptor_number(0.0, false, false, true);
     }
     Ok(Value::Undefined)
 }
@@ -427,6 +438,19 @@ fn get_native_constructor_property_descriptor(
     nc: &crate::value::NativeConstructor,
     prop: &str,
 ) -> Result<Value, JsError> {
+    // Check for custom static methods first
+    if let Some(value) = nc.get_static_method(prop) {
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(value),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+            Value::Undefined,
+        ));
+    }
+
     let is_function_constructor = crate::builtins::function::get_function_prototype()
         .map(|fp| std::rc::Rc::ptr_eq(&fp, &nc.prototype))
         .unwrap_or(false);

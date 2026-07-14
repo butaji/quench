@@ -516,6 +516,8 @@ pub(crate) fn has_legacy_octal(source: &str) -> bool {
                     && !prev_is_xbo
                     && !prev_is_utf8_cont
                     && next != b'n'
+                    && next != b'e'
+                    && next != b'E'
                     && matches!(next, b'1'..=b'7')
                 {
                     return true;
