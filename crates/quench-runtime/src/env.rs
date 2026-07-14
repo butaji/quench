@@ -83,7 +83,6 @@ impl Scope {
             return None;
         }
         let result = self.object_binding.as_ref()?.borrow().has(name);
-        eprintln!("DEBUG object_binding_has: name={}, has={}", name, result);
         Some(result)
     }
 
