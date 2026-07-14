@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::{
-    to_js_string, to_number, JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
+    to_js_string, to_number_unchecked, JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
     ValueFunction,
 };
 use crate::Context;
@@ -84,7 +84,7 @@ fn extract_args_from_array_like(array_like: Option<&Value>) -> Result<Vec<Value>
         Some(Value::Object(o)) => {
             let obj = o.borrow();
             let len_val = obj.get("length");
-            let len = len_val.as_ref().map(|v| to_number(v) as usize).unwrap_or(0);
+            let len = len_val.as_ref().map(|v| to_number_unchecked(v) as usize).unwrap_or(0);
             let mut args = Vec::with_capacity(len);
             for i in 0..len {
                 if let Some(arg) = obj.get(&i.to_string()) {
