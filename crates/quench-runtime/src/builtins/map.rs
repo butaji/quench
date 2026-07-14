@@ -268,7 +268,7 @@ fn iterator_prop_key() -> Option<String> {
 fn map_populate(map: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
     // Per spec, we must GET the adder BEFORE iterating
     // This is step 8b: "Let adder be Get(map, "set")"
-    let adder = eval_object_member(map, "set")?;
+    let adder = eval_object_member(map, "set", None)?;
 
     let pairs: Vec<Value> = match src {
         Value::Object(o) => match map_entries(src) {
@@ -297,7 +297,7 @@ fn map_populate(map: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
 /// 2. For each value in iterable, call adder(value)
 fn set_populate(set: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
     // Per spec, we must GET the adder BEFORE iterating
-    let adder = eval_object_member(set, "add")?;
+    let adder = eval_object_member(set, "add", None)?;
 
     let items: Vec<Value> = match src {
         Value::Object(o) => match set_values(src) {
