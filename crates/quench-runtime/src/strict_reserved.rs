@@ -7,7 +7,7 @@
 //! strict mode. We walk the parsed AST for binding positions and report the
 //! first offending name so the caller can raise a SyntaxError.
 
-use oxc::ast::ast::Program;
+use oxc::ast::ast::{AssignmentTargetPattern, Program};
 use oxc::ast::visit::Visit;
 
 /// Future reserved words that may not be used as a binding identifier in
@@ -41,6 +41,22 @@ impl<'a> Visit<'a> for ReservedBindingVisitor {
         if self.offender.is_none() && is_strict_reserved_binding(it.name.as_str()) {
             self.offender = Some(it.name.to_string());
         }
+        // BindingIdentifier has no child nodes; default impl does nothing.
+    }
+
+    fn visit_identifier_reference(&mut self, it: &oxc::ast::ast::IdentifierReference) {
+        // IdentifierReference appears in assignment targets (e.g., `arguments = 10`).
+        // We check it here since OXC's walk doesn't visit BindingIdentifier for these.
+        if self.offender.is_none() && is_strict_reserved_binding(it.name.as_str()) {
+            self.offender = Some(it.name.to_string());
+        }
+        // IdentifierReference is a leaf node; no need to walk children.
+    }
+
+    fn visit_assignment_target_pattern(&mut self, _it: &AssignmentTargetPattern<'a>) {
+        // Default traversal calls visit_assignment_target_maybe_default,
+        // which chains to visit_identifier_reference — our override catches
+        // reserved names in destructuring patterns automatically.
     }
 }
 
@@ -94,5 +110,19 @@ mod tests {
         assert_eq!(find("var notReserved = 1;"), None);
         // Reserved words used only as references (not bindings) are allowed here.
         assert_eq!(find("foo.public;"), None);
+    }
+
+    #[test]
+    fn detects_eval_arguments_assignment() {
+        // ES §12.7.2: assigning to eval/arguments in strict mode is a SyntaxError.
+        // The program has "use strict", so this should be detected.
+        assert_eq!(
+            find(r#""use strict"; arguments = 10;"#).as_deref(),
+            Some("arguments")
+        );
+        assert_eq!(
+            find(r#""use strict"; eval = 10;"#).as_deref(),
+            Some("eval")
+        );
     }
 }
