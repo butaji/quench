@@ -117,7 +117,6 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
-    eprintln!("DEBUG: register_builtins called");
     console::register_console(ctx);
     json::register_json(ctx);
     math::register_math(ctx);
