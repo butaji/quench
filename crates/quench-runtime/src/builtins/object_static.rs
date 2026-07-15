@@ -4,7 +4,7 @@
 //! Object.create, Object.defineProperty, Object.getOwnPropertyDescriptor,
 //! Object.freeze, Object.isFrozen, Object.hasOwn, Object.is, Object.fromEntries
 
-use crate::value::{to_bool, to_js_string, JsError, PropertyFlags, Value};
+use crate::value::{to_bool, to_js_string, JsError, PropertyFlags, Value, ValueFunction};
 use crate::{Object, ObjectKind};
 
 use std::cell::RefCell;
@@ -283,8 +283,48 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         if let Some(configurable) = desc_borrowed.properties.get("configurable") {
             flags.configurable = to_bool(configurable);
         }
-        getter = desc_borrowed.properties.get("get").cloned();
-        setter = desc_borrowed.properties.get("set").cloned();
+        // Check regular properties for 'get' and 'set' (from Object.defineProperty style)
+        // e.g., { get: function() {} } stores 'get' as a regular property
+        if getter.is_none() {
+            if let Some(Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) =
+                desc_borrowed.properties.get("get")
+            {
+                getter = desc_borrowed.properties.get("get").cloned();
+            }
+        }
+        if setter.is_none() {
+            if let Some(Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) =
+                desc_borrowed.properties.get("set")
+            {
+                setter = desc_borrowed.properties.get("set").cloned();
+            }
+        }
+        // Fallback: check getters/setters maps for accessor properties
+        // defined via object literal shorthand syntax ({ get foo() {} })
+        // Also handles { get: function() {} } which OXC treats as getter shorthand
+        if getter.is_none() {
+            if let Some(g) = desc_borrowed.get_getter("get") {
+                // Prefer func if available (from Object.defineProperty style)
+                if let Some(f) = &g.func {
+                    getter = Some(f.clone());
+                } else if !g.body.is_empty() {
+                    // Create a ValueFunction from body/closure (from getter shorthand)
+                    let closure = Rc::new(RefCell::new((&*g.closure).borrow().clone()));
+                    let func = Value::Function(ValueFunction::new(
+                        None,
+                        vec![],
+                        (*g.body).clone(),
+                        closure,
+                    ));
+                    getter = Some(func);
+                }
+            }
+        }
+        if setter.is_none() {
+            if let Some(s) = desc_borrowed.get_setter("set") {
+                setter = s.func.clone();
+            }
+        }
     }
 
     if getter.is_some() || setter.is_some() {
@@ -412,7 +452,14 @@ fn get_native_function_property_descriptor(
     nf: &crate::value::NativeFunction,
     prop: &str,
 ) -> Result<Value, JsError> {
-    // Check for custom properties first
+    // Check for special properties before custom properties
+    if prop == "name" {
+        return make_property_descriptor_string("anonymous", false, false, false);
+    }
+    if prop == "length" {
+        return make_property_descriptor_number(0.0, false, false, true);
+    }
+    // Check for custom properties
     if let Some(value) = nf.get_property(prop) {
         return Ok(make_descriptor_value(
             PropertyFlags {
@@ -423,12 +470,6 @@ fn get_native_function_property_descriptor(
             },
             Value::Undefined,
         ));
-    }
-    if prop == "name" {
-        return make_property_descriptor_string("anonymous", false, false, false);
-    }
-    if prop == "length" {
-        return make_property_descriptor_number(0.0, false, false, true);
     }
     Ok(Value::Undefined)
 }

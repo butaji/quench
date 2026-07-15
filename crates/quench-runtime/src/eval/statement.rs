@@ -373,9 +373,10 @@ fn eval_try_catch(
         Ok(v) => Ok(v),
         Err(_e) => {
             // Take the thrown value and bind it to the catch param.
-            let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
+            let thrown_value = take_thrown_value();
+            let thrown_value = thrown_value.unwrap_or(Value::Undefined);
             if let Some(name) = param {
-                env.borrow_mut().define(name.to_string(), thrown_value);
+                env.borrow_mut().define(name.to_string(), thrown_value.clone());
             }
             eval_statement(handler, env, false, in_arrow_function)
         }

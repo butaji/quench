@@ -231,6 +231,8 @@ pub struct GetterStorage {
     /// `Object.defineProperty` (takes precedence over body/closure and
     /// preserves function identity for descriptors).
     pub func: Option<Value>,
+    /// Whether this getter was defined in strict mode code.
+    pub strict: bool,
 }
 
 /// Setter storage in object
@@ -242,6 +244,8 @@ pub struct SetterStorage {
     pub closure: std::rc::Rc<std::cell::RefCell<Environment>>,
     /// Function value when installed via `Object.defineProperty`.
     pub func: Option<Value>,
+    /// Whether this setter was defined in strict mode code.
+    pub strict: bool,
 }
 
 /// Setter function representation
@@ -1111,6 +1115,7 @@ impl Object {
                         body: Rc::clone(body),
                         closure: Rc::clone(closure),
                         func: None,
+                        strict: crate::interpreter::is_strict_mode(),
                     },
                 );
             }
@@ -1126,6 +1131,7 @@ impl Object {
                         body: Rc::clone(body),
                         closure: Rc::clone(closure),
                         func: None,
+                        strict: crate::interpreter::is_strict_mode(),
                     },
                 );
             }
@@ -1159,6 +1165,7 @@ impl Object {
                 body,
                 closure,
                 func: None,
+                strict: crate::interpreter::is_strict_mode(),
             },
         );
     }
@@ -1171,6 +1178,7 @@ impl Object {
                 body: std::rc::Rc::new(Vec::new()),
                 closure: std::rc::Rc::new(std::cell::RefCell::new(Environment::new())),
                 func: Some(func),
+                strict: crate::interpreter::is_strict_mode(),
             },
         );
     }
@@ -1190,6 +1198,7 @@ impl Object {
                 body,
                 closure,
                 func: None,
+                strict: crate::interpreter::is_strict_mode(),
             },
         );
     }
@@ -1203,6 +1212,7 @@ impl Object {
                 body: std::rc::Rc::new(Vec::new()),
                 closure: std::rc::Rc::new(std::cell::RefCell::new(Environment::new())),
                 func: Some(func),
+                strict: crate::interpreter::is_strict_mode(),
             },
         );
     }

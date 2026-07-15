@@ -161,6 +161,10 @@ fn setup_symbol_key_for_method(symbol_fn: &Rc<NativeFunction>) {
 /// Set up Symbol.prototype with basic methods (toString, valueOf, description)
 fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
     let mut proto = Object::new(ObjectKind::Ordinary);
+    // Symbol.prototype must inherit from Object.prototype.
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        proto.prototype = Some(object_proto);
+    }
     let to_string = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
