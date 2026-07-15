@@ -4,6 +4,35 @@
 //! null, undefined, identifiers, object/array literals, RegExp literals,
 //! and function/arrow function expressions.
 
+/// Check if `name` resolves to the global `eval` function (direct eval).
+/// Returns true only if the identifier `name` resolves to the actual built-in
+/// `eval` function — not a local alias like `var my_eval = eval`.
+/// For "eval": walks the environment chain and resolves the identifier to get
+/// its value. Returns true only if the value is a native function named "eval".
+/// For other names: returns false (never direct eval).
+pub fn is_global_eval(name: &str, env: &Rc<RefCell<Environment>>) -> bool {
+    if name != "eval" {
+        return false;
+    }
+    // Walk environment chain to find the binding and resolve it
+    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
+    while let Some(e) = current {
+        if let Some(val) = e.borrow().get(name) {
+            // Found the binding. Check if the VALUE is the global eval function.
+            // The global eval is a NativeFunction named "eval". Local aliases
+            // (var my_eval = eval) have the same value but are indirect eval.
+            if let Value::NativeFunction(nf) = val {
+                // The global eval function has name "eval". Local aliases
+                // (var my_eval = eval) have the same value but are indirect eval.
+                return nf.name == "eval";
+            }
+            return false;
+        }
+        current = e.borrow().get_parent();
+    }
+    false
+}
+
 use crate::ast::*;
 use crate::builtins;
 use crate::env::Environment;

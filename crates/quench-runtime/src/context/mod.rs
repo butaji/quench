@@ -78,9 +78,25 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
         }
     };
     let result = if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
-        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source))
+        // Nested eval: environment already set up by outer eval, just run the code
+        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
     } else {
-        ctx.eval(&source)
+        // Non-nested eval (direct or indirect):
+        // - Direct eval (`eval(...)`): this = undefined in strict mode, globalThis in sloppy
+        // - Indirect eval (`var f = eval; f(...)`): always globalThis (runs in global scope)
+        let is_direct = crate::interpreter::is_direct_eval();
+        let this_value = if is_direct && strict_inherited {
+            // Direct eval in strict mode: this = undefined
+            Value::Undefined
+        } else {
+            // Indirect eval, or direct eval in sloppy mode: this = globalThis
+            ctx.env
+                .borrow()
+                .get("globalThis")
+                .unwrap_or(Value::Undefined)
+        };
+        crate::interpreter::set_this_binding(&mut ctx.env, this_value);
+        crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = prev_ctx;
@@ -278,7 +294,7 @@ impl Context {
 
     /// Register the eval function as a global
     fn register_eval_function(&mut self) -> Result<(), JsError> {
-        let eval_fn = NativeFunction::new(|args: Vec<Value>| {
+        let eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
             // Get context from thread-local at call time (not at registration time)
             // This avoids UB from storing a raw pointer that becomes invalid after
             // Context::new() returns.
@@ -311,7 +327,8 @@ impl Context {
 
         let result = (|| {
             let program = self.parse(source)?;
-            interpreter::eval_program(&program, &mut self.env, Some(source))
+            // Script code: set `this = globalThis` per ScriptDeclarationInstantiation
+            interpreter::eval_program(&program, &mut self.env, Some(source), true)
         })();
 
         // Microtask checkpoint: drain promise reactions queued during script
@@ -345,7 +362,9 @@ impl Context {
 
         let result = (|| {
             let program = parser::parse_es_module(source)?;
-            interpreter::eval_program(&program, &mut self.env, Some(source))
+            // Module code: `this` is undefined (ThisMode::module per ES spec)
+            interpreter::set_this_binding(&mut self.env, Value::Undefined);
+            interpreter::eval_program(&program, &mut self.env, Some(source), false)
         })();
 
         // Microtask checkpoint (see Context::eval)
@@ -384,7 +403,8 @@ impl Context {
         });
         let result = (|| {
             let program = self.parse_typescript(source)?;
-            interpreter::eval_program(&program, &mut self.env, Some(source))
+            // Script code: set `this = globalThis`
+            interpreter::eval_program(&program, &mut self.env, Some(source), true)
         })();
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();

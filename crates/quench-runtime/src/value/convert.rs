@@ -135,6 +135,14 @@ pub fn to_number(v: &Value) -> f64 {
     }
 }
 
+/// Convert a Value to a number, propagating errors (for cases like isFinite that need to throw)
+pub fn try_to_number(v: &Value) -> Result<f64, JsError> {
+    if let Some(n) = simple_number_value(v) {
+        return Ok(n);
+    }
+    to_number_complex(v)
+}
+
 /// Convert a Value to a number without error handling (assumes already validated).
 /// Use only when the value is known to be a valid number source.
 pub fn to_number_unchecked(v: &Value) -> f64 {
@@ -165,6 +173,15 @@ fn to_number_complex(v: &Value) -> Result<f64, JsError> {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Class(_) => Ok(to_number(&to_primitive(v, Some("number"))?)),
+        Value::Symbol(_) => {
+            // Per ES spec, ToNumber(Symbol) throws TypeError
+            let (err_val, err) = crate::value::error::create_js_error_with_type(
+                "Cannot convert a Symbol to a number",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            Err(err)
+        }
         _ => Ok(f64::NAN),
     }
 }
@@ -704,10 +721,11 @@ fn try_to_primitive_symbol(
     if !matches!(result, Value::Object(_)) {
         return Ok(Some(result));
     }
-    let (_, js_err) = crate::value::error::create_js_error_with_type(
+    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
         "Cannot convert object to primitive value",
         "TypeError",
     );
+    crate::value::set_thrown_value(err_val);
     Err(js_err)
 }
 

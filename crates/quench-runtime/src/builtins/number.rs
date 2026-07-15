@@ -28,6 +28,14 @@ pub fn register_number(ctx: &mut Context) {
     let number_proto_rc = Rc::new(RefCell::new(number_proto));
 
     setup_number_prototype(&number_proto_rc);
+
+    // Number.prototype must inherit from Object.prototype so that inherited
+    // properties (e.g. Object.prototype.x via Object.defineProperty) are found
+    // in the prototype chain of boxed Number objects.
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        number_proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
     setup_number_static(&number_proto_rc, ctx);
 }
 
