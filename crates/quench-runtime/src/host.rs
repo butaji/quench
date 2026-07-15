@@ -25,10 +25,18 @@ pub fn register_native<F>(ctx: &mut Context, name: &str, f: F)
 where
     F: Fn(Vec<Value>) -> Result<Value, crate::value::JsError> + 'static,
 {
-    ctx.set_global(
-        name.to_string(),
-        Value::NativeFunction(Rc::new(NativeFunction::new(f))),
+    let nf = NativeFunction::new(f);
+    nf.define_property(
+        "name",
+        Value::String(name.to_string()),
+        crate::value::PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
     );
+    ctx.set_global(name.to_string(), Value::NativeFunction(Rc::new(nf)));
 }
 
 /// Internal - used by Context::init_builtins

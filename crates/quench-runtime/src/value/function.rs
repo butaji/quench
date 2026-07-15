@@ -9,6 +9,7 @@ use crate::env::Environment;
 use crate::value::error::JsError;
 use crate::value::kind::ObjectKind;
 use crate::value::object::Object;
+use crate::value::PropertyFlags;
 use crate::value::Value;
 
 /// Type alias for function prototype storage
@@ -286,10 +287,15 @@ pub struct NativeFunction {
     pub prototype: std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Object>>>>>,
     /// Additional properties (for JS compatibility) - shared via Rc so clones share properties
     properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
+    /// Property flags for NativeFunction properties (e.g., name is non-writable)
+    property_flags:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, PropertyFlags>>>,
+    /// Function name (for direct eval detection: only "eval" is direct eval)
+    pub name: String,
 }
 
 impl NativeFunction {
-    /// Create a new native function from a closure
+    /// Create a new native function from a closure (name defaults to "")
     pub fn new<F>(f: F) -> Self
     where
         F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
@@ -298,6 +304,26 @@ impl NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: std::rc::Rc::new(std::cell::RefCell::new(None)),
             properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            property_flags: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
+            name: String::new(),
+        }
+    }
+
+    /// Create a new native function with a name (used for the built-in eval function)
+    pub fn new_named<F>(name: &str, f: F) -> Self
+    where
+        F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
+    {
+        NativeFunction {
+            func: std::rc::Rc::new(Box::new(f)),
+            prototype: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            property_flags: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
+            name: name.to_string(),
         }
     }
 
@@ -310,12 +336,21 @@ impl NativeFunction {
             func: std::rc::Rc::new(Box::new(f)),
             prototype: std::rc::Rc::new(std::cell::RefCell::new(Some(prototype))),
             properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            property_flags: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
+            name: String::new(),
         }
     }
 
     /// Get a property from this native function
     pub fn get_property(&self, key: &str) -> Option<Value> {
         self.properties.borrow().get(key).cloned()
+    }
+
+    /// Get property flags for a property on this native function
+    pub fn get_property_flags(&self, key: &str) -> Option<PropertyFlags> {
+        self.property_flags.borrow().get(key).cloned()
     }
 
     /// Call the native function with arguments and a this binding
@@ -326,8 +361,20 @@ impl NativeFunction {
         result
     }
 
-    /// Set a property on this native function (e.g., prototype)
-    pub fn set_property(&self, key: &str, value: Value) {
+    /// Set a property on this native function (e.g., prototype).
+    /// Returns Ok(()) on success, or Err(JsError) if the property is non-writable.
+    pub fn set_property(&self, key: &str, value: Value) -> Result<(), JsError> {
+        // Check if property is non-writable
+        if let Some(flags) = self.property_flags.borrow().get(key) {
+            if !flags.writable {
+                let (_, err) = crate::value::error::create_js_error_with_type(
+                    &format!("Cannot assign to read only property '{}'", key),
+                    "TypeError",
+                );
+                return Err(err);
+            }
+        }
+
         if key == "prototype" {
             if let Value::Object(o) = &value {
                 // Set constructor on the prototype
@@ -350,6 +397,24 @@ impl NativeFunction {
             // Store other properties
             self.properties.borrow_mut().insert(key.to_string(), value);
         }
+        Ok(())
+    }
+
+    /// Define a property with explicit flags on this native function.
+    /// Used for built-in properties like "name" which have specific descriptors.
+    pub fn define_property(&self, key: &str, value: Value, flags: PropertyFlags) {
+        self.properties.borrow_mut().insert(key.to_string(), value);
+        self.property_flags
+            .borrow_mut()
+            .insert(key.to_string(), flags);
+    }
+
+    /// Remove a property from this native function.
+    /// Returns true if the property was present.
+    pub fn remove_property(&self, key: &str) -> bool {
+        let removed = self.properties.borrow_mut().remove(key).is_some();
+        self.property_flags.borrow_mut().remove(key);
+        removed
     }
 }
 
@@ -366,6 +431,9 @@ impl Clone for NativeFunction {
             prototype: std::rc::Rc::clone(&self.prototype),
             // Share the properties HashMap via Rc so clones see the same properties
             properties: std::rc::Rc::clone(&self.properties),
+            // Share the property_flags HashMap via Rc so clones see the same flags
+            property_flags: std::rc::Rc::clone(&self.property_flags),
+            name: self.name.clone(),
         }
     }
 }

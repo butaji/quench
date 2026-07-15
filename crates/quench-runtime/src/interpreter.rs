@@ -67,6 +67,21 @@ pub(crate) fn get_current_eval_env() -> Option<Rc<RefCell<Environment>>> {
     CURRENT_EVAL_ENV.with(|cell| cell.borrow().clone())
 }
 
+/// Thread-local flag: true when the current eval call is a direct eval
+/// (identifier-only `eval(...)` resolving to the global eval function).
+/// False for indirect eval (`var f = eval; f(...)`) or method calls (`obj.eval(...)`).
+thread_local! {
+    static DIRECT_EVAL: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn set_direct_eval(is_direct: bool) {
+    DIRECT_EVAL.with(|cell| cell.set(is_direct));
+}
+
+pub(crate) fn is_direct_eval() -> bool {
+    DIRECT_EVAL.with(|cell| cell.get())
+}
+
 thread_local! {
     static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
@@ -212,11 +227,14 @@ pub fn reset_depth() {
     CURRENT_DEPTH.with(|cell| cell.set(0));
 }
 
-/// Evaluate a complete program with hoisting
+/// Evaluate a complete program with hoisting.
+/// `set_this`: if true, set `this` binding to `globalThis` (for script/top-level code).
+///              if false, do NOT set `this` (eval code sets it via eval_impl).
 pub fn eval_program(
     program: &Program,
     env: &mut Rc<RefCell<Environment>>,
     source: Option<&str>,
+    set_this: bool,
 ) -> Result<Value, JsError> {
     match program {
         Program::Script(statements) => {
@@ -230,14 +248,21 @@ pub fn eval_program(
 
             // Legacy octal check is handled in eval_impl before the eval string is
             // parsed, so we inherit the correct strict mode from the outer context.
-            // (eval_program is only called via ctx.eval, never for top-level scripts.)
+            // The `set_this` parameter controls whether to set `this` (script code) or
+            // skip (eval code where eval_impl sets `this`).
 
             hoist_functions(statements, env);
             hoist_classes(statements, env);
             predeclare_var(statements, &mut env.borrow_mut());
             predeclare_let_const(statements, &mut env.borrow_mut());
-            let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
-            set_this_binding(env, global_this);
+            // Per ES spec ScriptDeclarationInstantiation: script code always has
+            // ThisMode::global, so `this` is always the global object — even in strict
+            // mode scripts. The `set_this` flag distinguishes script code (set_this=true)
+            // from eval code (set_this=false, where eval_impl sets `this`).
+            if set_this {
+                let this_value = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
+                set_this_binding(env, this_value);
+            }
             let mut last_value = Value::Undefined;
             for stmt in statements {
                 last_value = crate::eval::eval_statement(stmt, env, false, false)?;

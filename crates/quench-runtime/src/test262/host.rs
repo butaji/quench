@@ -2308,4 +2308,53 @@ Promise.race.call(Custom, values);
         }
         assert!(result.is_ok(), "Test failed: {:?}", result);
     }
+
+    #[test]
+    fn debug_onlystrict_eval_this() {
+        // Reproducer for test262 10.4.3-1-17-s.js (onlyStrict)
+        // The runner prepends "use strict"; to the script
+        let mut host = QuenchHost::new();
+        // Simulate what the runner does for onlyStrict: prepend "use strict";
+        let result = host.run_script(
+            r#""use strict";
+var global = this;
+function testcase() {
+    var typeofThis = eval("typeof this");
+    console.log("typeof eval('this'):", typeofThis);
+    console.log("global:", typeof global);
+    console.log("global === undefined:", global === undefined);
+    console.log("eval('this'):", eval("this"));
+    // This should NOT throw: eval("this") is undefined, global is global object
+    assert.notSameValue(eval("this"), global, 'eval("this")');
+}
+testcase();
+"#,
+        );
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
+
+    #[test]
+    fn debug_indirect_eval_this() {
+        // Reproducer for test262 10.4.3-1-19-s.js (onlyStrict, indirect eval)
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#""use strict";
+var global = this;
+var my_eval = eval;
+console.log("global:", typeof global, global === undefined);
+console.log("my_eval('this'):", my_eval("this"), typeof my_eval("this"));
+console.log("global === my_eval('this'):", global === my_eval("this"));
+assert.sameValue(my_eval("this"), global, 'my_eval("this")');
+"#,
+        );
+        match &result {
+            Ok(_) => println!("SUCCESS"),
+            Err(e) => eprintln!("ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Test failed: {:?}", result);
+    }
 }

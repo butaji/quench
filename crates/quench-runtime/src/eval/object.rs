@@ -683,10 +683,15 @@ fn extract_property_name(
 }
 
 /// Evaluate a callee expression and extract the function and "this" binding.
+/// Evaluate a callee expression and determine the `this` value for the call.
+/// Returns (function, this_value, is_direct_eval).
+/// - For method calls (obj.method): function and this=obj_val.
+/// - For identifier calls (eval(...)): function and this=undefined.
+///   is_direct_eval is true only for `eval(...)` resolving to the global eval.
 pub fn eval_callee_with_this(
     callee: &Expression,
     env: &Rc<RefCell<Environment>>,
-) -> Result<(Value, Value), JsError> {
+) -> Result<(Value, Value, bool), JsError> {
     match callee {
         Expression::Member {
             object,
@@ -696,11 +701,19 @@ pub fn eval_callee_with_this(
             let obj_val = eval_expression(object, env, false)?;
             let prop_name = extract_property_name(property, *computed, env, false)?;
             let func = get_member_function(&obj_val, &prop_name, env)?;
-            Ok((func, obj_val))
+            // Method call: indirect eval (e.g., obj.eval(...))
+            Ok((func, obj_val, false))
         }
         _ => {
             let func = eval_expression(callee, env, false)?;
-            Ok((func, Value::Undefined))
+            // Identifier call: check if it's the global eval (direct eval).
+            let is_direct = if let Expression::Identifier(name) = callee {
+                crate::eval::literal::is_global_eval(name, env)
+            } else {
+                // Arrow or other expression → indirect eval
+                false
+            };
+            Ok((func, Value::Undefined, is_direct))
         }
     }
 }
@@ -760,47 +773,114 @@ fn name_matches_prop(key: &crate::ast::PropertyKey, name: &str) -> bool {
 }
 
 fn get_number_method(
-    _obj_val: &Value,
+    obj_val: &Value,
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    if let Some(Value::Object(ref num_obj)) = env.borrow().get("Number") {
-        let num_obj = num_obj.borrow();
-        if let Some(Value::Object(ref proto)) = num_obj.get("prototype") {
-            let proto_obj = proto.borrow();
-            if let Some(val) = proto_obj.get(prop_name) {
-                return Ok(val);
-            }
-        }
+    if !matches!(obj_val, Value::Number(_) | Value::Boolean(_) | Value::Symbol(_)) {
+        return Ok(Value::Undefined);
     }
-    Ok(Value::Undefined)
+    let ctor_name = match obj_val {
+        Value::Number(_) => "Number",
+        Value::Boolean(_) => "Boolean",
+        Value::Symbol(_) => "Symbol",
+        _ => return Ok(Value::Undefined),
+    };
+    let ctor_val = match env.borrow().get(ctor_name) {
+        Some(v) => v,
+        None => return Ok(Value::Undefined),
+    };
+    let proto = match &ctor_val {
+        Value::Object(o) => o.borrow().get("prototype"),
+        Value::NativeFunction(nf) => nf
+            .prototype
+            .borrow()
+            .as_ref()
+            .map(|p| Value::Object(Rc::clone(p))),
+        Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
+        _ => None,
+    };
+    let proto_rc = match proto {
+        Some(Value::Object(o)) => o,
+        _ => return Ok(Value::Undefined),
+    };
+    let mut boxed = Object::new(ObjectKind::Ordinary);
+    boxed.prototype = Some(Rc::clone(&proto_rc));
+    match obj_val {
+        Value::Number(n) => {
+            boxed.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+            boxed.set("_value", Value::Number(*n));
+        }
+        Value::Boolean(b) => {
+            boxed.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+            boxed.set("_value", Value::Boolean(*b));
+        }
+        Value::Symbol(_) => {
+            // No exotic kind for Symbol
+        }
+        _ => {}
+    }
+    let boxed_rc = Rc::new(RefCell::new(boxed));
+    crate::eval::member::eval_object_member(&boxed_rc, prop_name, Some(env))
 }
 
-/// Call a getter function with the object as "this"
+/// Get the `this` value for a getter call.
+/// Per ES §10.4.3: for boxed primitives, extract the primitive value so the
+/// getter receives the actual primitive in strict mode. In sloppy mode,
+/// call_value_impl handles boxing automatically.
+fn getter_this_value(obj: &Rc<RefCell<Object>>) -> Value {
+    let obj_borrow = obj.borrow();
+    if let Some(exotic) = &obj_borrow.exotic_kind {
+        match exotic {
+            crate::value::kind::ExoticKind::Number => {
+                if let Some(Value::Number(n)) = obj_borrow.properties.get("_value") {
+                    return Value::Number(*n);
+                }
+            }
+            crate::value::kind::ExoticKind::Boolean => {
+                if let Some(Value::Boolean(b)) = obj_borrow.properties.get("_value") {
+                    return Value::Boolean(*b);
+                }
+            }
+            _ => {}
+        }
+    }
+    Value::Object(Rc::clone(obj))
+}
+
 pub fn call_getter(
     obj: &Rc<RefCell<Object>>,
     getter_storage: &GetterStorage,
     _env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    let this_val = getter_this_value(obj);
     if let Some(func) = &getter_storage.func {
-        return crate::eval::function::call_value_with_this(
+        // Per ES §10.4.3: when a getter is invoked by [[Get]], the getter
+        // function executes in strict mode if the call site is strict,
+        // so `this` stays primitive in strict mode and gets boxed in sloppy.
+        let call_site_strict = crate::interpreter::is_strict_mode();
+        return crate::eval::function::call_value_impl(
             func.clone(),
             Vec::new(),
-            Value::Object(Rc::clone(obj)),
+            this_val,
+            call_site_strict,
         );
     }
     let closure = Rc::clone(&getter_storage.closure);
     let body = getter_storage.body.clone();
     let mut call_env = Environment::with_parent(closure);
-    call_env
-        .current_scope()
-        .borrow_mut()
-        .set_this(Value::Object(Rc::clone(obj)));
+    call_env.current_scope().borrow_mut().set_this(this_val);
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
         Ok(Value::Undefined)
     } else {
-        eval_function_body(&body, &call_env, false)
+        // Getters defined in strict mode code must execute as strict (ES §10.4.3).
+        // Temporarily activate strict mode while evaluating the getter body.
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(getter_storage.strict);
+        let result = eval_function_body(&body, &call_env, false);
+        crate::interpreter::set_strict_mode(prev_strict);
+        result
     }
 }
 
@@ -811,27 +891,33 @@ pub fn call_setter(
     value: Value,
     _env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    let this_val = getter_this_value(obj);
     if let Some(func) = &setter_storage.func {
-        return crate::eval::function::call_value_with_this(
+        // Per ES §10.4.3: setter executes in strict mode of the call site.
+        let call_site_strict = crate::interpreter::is_strict_mode();
+        return crate::eval::function::call_value_impl(
             func.clone(),
             vec![value],
-            Value::Object(Rc::clone(obj)),
+            this_val,
+            call_site_strict,
         );
     }
     let closure = Rc::clone(&setter_storage.closure);
     let body = setter_storage.body.clone();
     let param = setter_storage.param.clone();
     let mut call_env = Environment::with_parent(Rc::clone(&closure));
-    call_env
-        .current_scope()
-        .borrow_mut()
-        .set_this(Value::Object(Rc::clone(obj)));
+    call_env.current_scope().borrow_mut().set_this(this_val);
     call_env.define(param, value);
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
         Ok(Value::Undefined)
     } else {
-        eval_function_body(&body, &call_env, false)
+        // Setters defined in strict mode code must execute as strict.
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(setter_storage.strict);
+        let result = eval_function_body(&body, &call_env, false);
+        crate::interpreter::set_strict_mode(prev_strict);
+        result
     }
 }
 
@@ -1540,16 +1626,5 @@ mod tests {
         let res = ctx.eval("NaN = 12;");
         assert!(res.is_ok(), "sloppy assignment to NaN should not throw");
     }
-}
 
-#[cfg(test)]
-mod debug_prim {
-    use crate::Context;
-
-    #[test]
-    fn debug_prim_function() {
-        let mut ctx = Context::new().unwrap();
-        let v = ctx.eval("function f() {}; f + 1").unwrap();
-        // Just see what we get
-    }
 }

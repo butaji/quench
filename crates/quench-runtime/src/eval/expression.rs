@@ -359,6 +359,21 @@ fn eval_delete(
                         Ok(Value::Boolean(false))
                     }
                 }
+                Value::NativeFunction(nf) => {
+                    // Per ES spec, built-in functions have configurable name/length properties.
+                    // Actually remove the property so subsequent checks work correctly.
+                    let configurable = prop_key == "name" || prop_key == "length";
+                    if configurable {
+                        nf.as_ref().remove_property(&prop_key);
+                    }
+                    Ok(Value::Boolean(configurable))
+                }
+                Value::NativeConstructor(nc) => {
+                    // Per ES spec, built-in constructors have configurable name property.
+                    // NativeConstructor doesn't have a remove_property method, so we
+                    // just return true for configurable properties (name, prototype).
+                    Ok(Value::Boolean(prop_key == "name" || prop_key == "prototype"))
+                }
                 _ => Ok(Value::Boolean(false)), // primitives etc.
             }
         }

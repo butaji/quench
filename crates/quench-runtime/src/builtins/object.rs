@@ -417,9 +417,15 @@ fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsError>
             }
         } else if let Value::NativeFunction(nf) = &this_val {
             if let Some(key_str) = get_property_key(key_val) {
-                // Check built-in properties
+                // Check built-in properties (only if they exist in the properties HashMap,
+                // which means they haven't been deleted)
                 if key_str == "name" || key_str == "length" {
-                    return Ok(Value::Boolean(true));
+                    // If the property was explicitly set via define_property or set_property,
+                    // check if it still exists (may have been deleted)
+                    if nf.get_property(&key_str).is_some() {
+                        return Ok(Value::Boolean(true));
+                    }
+                    return Ok(Value::Boolean(false));
                 }
                 // Check prototype
                 if key_str == "prototype" && nf.prototype.borrow().is_some() {

@@ -8,6 +8,7 @@
 //! first offending name so the caller can raise a SyntaxError.
 
 use oxc::ast::ast::{AssignmentTargetPattern, Program};
+use oxc::ast::visit::walk::walk_assignment_expression;
 use oxc::ast::visit::Visit;
 
 /// Future reserved words that may not be used as a binding identifier in
@@ -45,18 +46,32 @@ impl<'a> Visit<'a> for ReservedBindingVisitor {
     }
 
     fn visit_identifier_reference(&mut self, it: &oxc::ast::ast::IdentifierReference) {
-        // IdentifierReference appears in assignment targets (e.g., `arguments = 10`).
-        // We check it here since OXC's walk doesn't visit BindingIdentifier for these.
-        if self.offender.is_none() && is_strict_reserved_binding(it.name.as_str()) {
+        // IdentifierReference covers BOTH binding positions (e.g., function params,
+        // var declarations) AND plain references (e.g., `eval(...)` as a call expression).
+        // ES §12.7.2 only forbids `eval`/`arguments` as BINDING identifiers and
+        // ASSIGNMENT targets — NOT as plain function-name references.
+        // `visit_binding_identifier` already handles binding cases.
+        // `visit_assignment_target_pattern` handles assignment cases.
+        // So for IdentifierReference we only check future-reserved words here.
+        if self.offender.is_none() && STRICT_RESERVED.contains(&it.name.as_str()) {
             self.offender = Some(it.name.to_string());
         }
         // IdentifierReference is a leaf node; no need to walk children.
     }
 
-    fn visit_assignment_target_pattern(&mut self, _it: &AssignmentTargetPattern<'a>) {
-        // Default traversal calls visit_assignment_target_maybe_default,
-        // which chains to visit_identifier_reference — our override catches
-        // reserved names in destructuring patterns automatically.
+    fn visit_assignment_expression(&mut self, it: &oxc::ast::ast::AssignmentExpression<'a>) {
+        // Check for `eval = ...` / `arguments = ...` in strict mode (ES §12.7.2).
+        // Only simple identifier targets are forbidden; member expressions are fine.
+        if self.offender.is_none() {
+            if let oxc::ast::ast::AssignmentTarget::AssignmentTargetIdentifier(id) = &it.left {
+                let name = id.name.as_str();
+                if name == "eval" || name == "arguments" {
+                    self.offender = Some(name.to_string());
+                }
+            }
+        }
+        // Default traversal (walks left and right children)
+        walk_assignment_expression(self, it);
     }
 }
 

@@ -16,7 +16,8 @@ pub use string_member::eval_string_member;
 
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::value::{create_js_error, JsError, Object, Value};
+use crate::value::kind::ExoticKind;
+use crate::value::{create_js_error, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -139,34 +140,70 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
 
 /// Evaluate member access on a number (or boolean / symbol) primitive via ToObject coercion.
 fn eval_number_member(
-    _obj_val: &Value,
+    obj_val: &Value,
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    // Try Number, Boolean, Symbol as constructor names.
-    let ctor_name = match _obj_val {
+    // Box the primitive to create a temporary object per ES §7.2.3 (ToObject).
+    let boxed = box_primitive(obj_val, env)?;
+    // Delegate to eval_object_member which properly invokes getters with `this` set
+    // to the boxed object.
+    eval_object_member(&boxed, prop_name, Some(env))
+}
+
+/// Box a primitive value (Number, Boolean, Symbol) into a temporary object whose
+/// prototype chain is set to the corresponding builtin prototype.
+fn box_primitive(
+    obj_val: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    match obj_val {
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {}
+        _ => {
+            return Err(JsError("box_primitive: not a primitive".to_string()));
+        }
+    }
+    let ctor_name = match obj_val {
         Value::Number(_) => "Number",
         Value::Boolean(_) => "Boolean",
         Value::Symbol(_) => "Symbol",
-        _ => return Ok(Value::Undefined),
+        _ => return Err(JsError("box_primitive: unreachable".to_string())),
     };
-    if let Some(ctor_val) = env.borrow().get(ctor_name) {
-        let proto = match &ctor_val {
-            Value::Object(o) => o.borrow().get("prototype"),
-            Value::NativeFunction(nf) => nf
-                .prototype
-                .borrow()
-                .as_ref()
-                .map(|p| Value::Object(Rc::clone(p))),
-            Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
-            _ => None,
-        };
-        if let Some(Value::Object(proto_obj)) = proto {
-            let proto_obj = proto_obj.borrow();
-            if let Some(val) = proto_obj.get(prop_name) {
-                return Ok(val);
-            }
-        }
+    let ctor_val = env
+        .borrow()
+        .get(ctor_name)
+        .ok_or_else(|| JsError(format!("{} not found", ctor_name)))?;
+    let proto = match &ctor_val {
+        Value::Object(o) => o.borrow().get("prototype"),
+        Value::NativeFunction(nf) => nf
+            .prototype
+            .borrow()
+            .as_ref()
+            .map(|p| Value::Object(Rc::clone(p))),
+        Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
+        _ => None,
+    };
+    let proto_rc = match proto {
+        Some(Value::Object(o)) => Some(o),
+        _ => None,
+    };
+    let mut boxed = Object::new(ObjectKind::Ordinary);
+    if let Some(proto_obj) = proto_rc {
+        boxed.prototype = Some(Rc::clone(&proto_obj));
     }
-    Ok(Value::Undefined)
+    match obj_val {
+        Value::Number(n) => {
+            boxed.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+            boxed.set("_value", Value::Number(*n));
+        }
+        Value::Boolean(b) => {
+            boxed.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+            boxed.set("_value", Value::Boolean(*b));
+        }
+        Value::Symbol(_) => {
+            // No exotic kind for Symbol
+        }
+        _ => {}
+    }
+    Ok(Rc::new(RefCell::new(boxed)))
 }

@@ -9,7 +9,7 @@
 use std::f64::consts::PI;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, Value};
+use crate::value::{to_js_string, to_number, try_to_number, Value};
 use crate::Context;
 
 /// RFC 3986 "unreserved" characters plus a few reserved characters that
@@ -248,7 +248,7 @@ pub fn register_uri(ctx: &mut Context) {
     // isFinite(value) — coerces to Number, returns false for NaN / ±Infinity.
     ctx.register_native("isFinite", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let n = to_number(&v);
+        let n = try_to_number(&v)?;
         Ok(Value::Boolean(n.is_finite()))
     });
 
@@ -347,6 +347,21 @@ mod tests {
         assert!(!eval_bool("isFinite(Infinity)"));
         assert!(!eval_bool("isFinite(-Infinity)"));
         assert!(!eval_bool("isFinite('foo')"));
+    }
+
+    #[test]
+    fn is_finite_name_property() {
+        // isFinite.name should be "isFinite"
+        assert_eq!(eval_str("isFinite.name"), "isFinite");
+        // isFinite.name should be non-writable and configurable
+        assert!(eval_bool("!Object.getOwnPropertyDescriptor(isFinite, 'name').writable"));
+        assert!(eval_bool("Object.getOwnPropertyDescriptor(isFinite, 'name').configurable"));
+        // Check all descriptor properties
+        assert!(eval_bool("Object.getOwnPropertyDescriptor(isFinite, 'name').value === 'isFinite'"));
+        assert!(eval_bool("!Object.getOwnPropertyDescriptor(isFinite, 'name').enumerable"));
+        // Also try to verify that the descriptor matches what's expected
+        let desc = eval_str("JSON.stringify(Object.getOwnPropertyDescriptor(isFinite, 'name'))");
+        eprintln!("isFinite.name descriptor: {}", desc);
     }
 
     #[test]

@@ -248,10 +248,181 @@ fn native_fn(f: impl Fn(Vec<Value>) -> Result<Value, JsError> + 'static) -> Valu
     Value::NativeFunction(Rc::new(NativeFunction::new(f)))
 }
 
-/// Extract items from an iterable source (array or object with numeric indices)
-fn extract_iterable(src: &Value) -> Vec<Value> {
+/// Extract items from an iterable source using proper iterator protocol.
+/// Throws TypeError if the source is not iterable (doesn't have Symbol.iterator).
+/// Calls IteratorClose if the callback returns an error.
+fn for_each_on_iterable<F>(src: &Value, mut callback: F) -> Result<(), JsError>
+where
+    F: FnMut(Value) -> Result<(), JsError>,
+{
     match src {
         Value::Object(o) => {
+            // Get Symbol.iterator method
+            let iterator_key = match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
+                Some(Value::Symbol(payload)) => payload
+                    .desc
+                    .clone()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+
+            let iter_method = if !iterator_key.is_empty() {
+                o.borrow().get(&iterator_key)
+            } else {
+                None
+            };
+
+            // If no Symbol.iterator, check for array-like behavior (fallback for test compat)
+            let iter_method = match iter_method {
+                Some(m) if matches!(m, Value::Function(_) | Value::NativeFunction(_)) => m,
+                _ => {
+                    // Not iterable - throw TypeError
+                    let (err_val, err) = crate::value::error::create_js_error_with_type(
+                        "TypeError: {} is not iterable",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(err);
+                }
+            };
+
+            // Call iterator to get iterator object
+            let iter_result =
+                crate::eval::call_value_with_this(iter_method, vec![], Value::Undefined)?;
+            let iterator = if let Value::Object(iter_obj) = iter_result {
+                iter_obj
+            } else {
+                let (err_val, err) = crate::value::error::create_js_error_with_type(
+                    "TypeError: iterator must return an object",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(err_val);
+                return Err(err);
+            };
+
+            // Loop: call next() until done
+            loop {
+                // Check if iterator has a 'return' method for cleanup
+                let iter_borrow = iterator.borrow();
+
+                // Check own properties only first (avoid prototype chain getters that might throw)
+                let return_method: Option<Value> = iter_borrow.properties.get("return").cloned().filter(|v| {
+                    matches!(v, Value::Function(_) | Value::NativeFunction(_))
+                });
+                let next_method: Option<Value> = iter_borrow.properties.get("next").cloned().filter(|v| {
+                    matches!(v, Value::Function(_) | Value::NativeFunction(_))
+                });
+                drop(iter_borrow);
+
+                let next_method = match next_method {
+                    Some(m) => m,
+                    None => {
+                        let (err_val, err) = crate::value::error::create_js_error_with_type(
+                            "TypeError: iterator.next is not a function",
+                            "TypeError",
+                        );
+                        crate::value::set_thrown_value(err_val);
+                        return Err(err);
+                    }
+                };
+
+                // Call next()
+                let next_result =
+                    crate::eval::call_value_with_this(next_method, vec![], Value::Object(Rc::clone(&iterator)))?;
+
+                // Get done and value from result
+                let done = if let Value::Object(result_obj) = &next_result {
+                    result_obj
+                        .borrow()
+                        .get("done")
+                        .map(|v| crate::value::to_bool(&v))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if done {
+                    return Ok(());
+                }
+
+                // Get value and call callback - must handle getter errors properly
+                // Per ES spec, getting 'value' from iterator result should propagate errors
+                let value = match &next_result {
+                    Value::Object(result_obj) => {
+                        let result_obj_ref = Rc::clone(result_obj);
+                        // Check for getter and call it if present
+                        let has_getter = result_obj_ref.borrow().has_getter("value");
+                        if has_getter {
+                            // Use get_property_with_getter to properly handle getter
+                            match get_property_with_getter(&result_obj_ref, "value") {
+                                Ok(Some(v)) => v,
+                                Ok(None) => Value::Undefined,
+                                Err(e) => {
+                                    // IteratorClose before propagating error
+                                    if let Some(return_fn) = return_method {
+                                        crate::value::take_thrown_value();
+                                        let _ = crate::eval::call_value_with_this(
+                                            return_fn.clone(),
+                                            vec![],
+                                            Value::Object(Rc::clone(&iterator)),
+                                        );
+                                    }
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            result_obj_ref.borrow().get("value").unwrap_or(Value::Undefined)
+                        }
+                    }
+                    _ => Value::Undefined,
+                };
+                if let Err(e) = callback(value) {
+                    // IteratorClose: call return method if available
+                    if let Some(return_fn) = return_method {
+                        // Clear any stale thrown value before calling return
+                        crate::value::take_thrown_value();
+                        let _ = crate::eval::call_value_with_this(
+                            return_fn.clone(),
+                            vec![],
+                            Value::Object(Rc::clone(&iterator)),
+                        );
+                        // Clear any new thrown value from return
+                        crate::value::take_thrown_value();
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Simple version that just extracts items (for WeakMap which needs array access)
+fn extract_iterable(src: &Value) -> Result<Vec<Value>, JsError> {
+    match src {
+        Value::Object(o) => {
+            // Check for Symbol.iterator to determine if iterable
+            let iterator_key = match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
+                Some(Value::Symbol(payload)) => payload
+                    .desc
+                    .clone()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            let has_iterator = !iterator_key.is_empty() && o.borrow().get(&iterator_key).is_some();
+
+            if !has_iterator {
+                // Not iterable - throw TypeError
+                let (err_val, err) = crate::value::error::create_js_error_with_type(
+                    "TypeError: {} is not iterable",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(err_val);
+                return Err(err);
+            }
+
             // Check for numeric indices (array-like)
             let len = o
                 .borrow()
@@ -266,18 +437,18 @@ fn extract_iterable(src: &Value) -> Vec<Value> {
                 .unwrap_or(0);
 
             if len > 0 {
-                (0..len)
+                Ok((0..len)
                     .filter_map(|i| {
                         let key = i.to_string();
                         o.borrow().get(&key)
                     })
-                    .collect()
+                    .collect())
             } else {
                 // Fall back to elements array
-                o.borrow().elements.clone()
+                Ok(o.borrow().elements.clone())
             }
         }
-        _ => Vec::new(),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -299,17 +470,12 @@ fn get_property_with_getter(
         let obj_ref = obj_rc.borrow();
         // Check for getter first
         if let Some(getter_storage) = obj_ref.get_getter(prop_name) {
-            // Call the getter
+            // Call the getter; errors (including thrown exceptions) propagate naturally.
             let result = crate::eval::object::call_getter(
                 obj,
                 &getter_storage.clone(),
                 &Rc::new(RefCell::new(Environment::new())),
             );
-            // Check if the getter threw an exception
-            if let Some(thrown) = crate::value::get_thrown_value() {
-                let _ = crate::value::take_thrown_value();
-                return Err(JsError::new(format!("Error: {}", thrown)));
-            }
             return result.map(Some);
         }
         // Check own properties
@@ -358,17 +524,19 @@ pub fn register_weak_collections(ctx: &mut Context) {
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 // Get the add method from the prototype (properly handling getters)
-                let adder = get_property_with_getter(&ws, "add")?;
+                let adder_result = get_property_with_getter(&ws, "add");
 
-                // Check if getting the add method threw an exception
+                // Check if getting the add method threw an exception (before checking the result)
                 if let Some(thrown) = crate::value::get_thrown_value() {
-                    let _ = crate::value::take_thrown_value();
-                    return Err(JsError::new(format!("Error: {}", thrown)));
+                    let thrown_val = crate::value::take_thrown_value().unwrap_or(thrown);
+                    // Preserve the original thrown value as-is, using its string representation
+                    // The thrown_val is already a proper JS error object (e.g., Test262Error)
+                    return Err(JsError::new(thrown_val.to_string()));
                 }
 
-                let adder = match adder {
-                    Some(a) if is_callable(&a) => a,
-                    _ => {
+                let adder = match adder_result {
+                    Ok(Some(a)) if is_callable(&a) => a,
+                    Ok(_) => {
                         let (err_val, err) = crate::value::error::create_js_error_with_type(
                             "TypeError: WeakSet.prototype.add is not callable",
                             "TypeError",
@@ -376,22 +544,25 @@ pub fn register_weak_collections(ctx: &mut Context) {
                         crate::value::set_thrown_value(err_val);
                         return Err(err);
                     }
+                    Err(js_err) => {
+                        // get_property_with_getter returned error; thrown value was already checked above
+                        return Err(js_err);
+                    }
                 };
 
-                // Extract items from the iterable
-                let items = extract_iterable(src);
-                for item in items {
-                    if matches!(item, Value::Object(_)) {
-                        // Call the add method using call_value_with_this
-                        if let Err(e) = crate::eval::call_value_with_this(
-                            adder.clone(),
-                            vec![item],
-                            Value::Object(Rc::clone(&ws)),
-                        ) {
-                            return Err(e);
-                        }
-                    }
-                }
+                // Process iterable using proper iterator protocol with IteratorClose support
+                let adder_clone = adder.clone();
+                let ws_clone = Rc::clone(&ws);
+                for_each_on_iterable(src, move |item| {
+                    // Call the add method for ALL items (add will throw for non-Objects)
+                    // This matches ES spec behavior where add validates the value
+                    crate::eval::call_value_with_this(
+                        adder_clone.clone(),
+                        vec![item],
+                        Value::Object(Rc::clone(&ws_clone)),
+                    )?;
+                    Ok(())
+                })?;
             }
         }
 
@@ -434,7 +605,7 @@ pub fn register_weak_collections(ctx: &mut Context) {
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 let entries_key = weakmap_entries_key(&wm);
-                let items = extract_iterable(src);
+                let items = extract_iterable(src)?;
                 let mut pairs: Vec<(Value, Value)> = Vec::new();
 
                 for item in items {

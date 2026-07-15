@@ -29,9 +29,17 @@ pub fn eval_call(
             return eval_super_call(arguments, env, in_arrow_function);
         }
     }
-    let (func, this_val) = crate::eval::object::eval_callee_with_this(callee, env)?;
+    let (func, this_val, is_direct_eval) =
+        crate::eval::object::eval_callee_with_this(callee, env)?;
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
-    call_value_with_this(func, args, this_val)
+    // Save the previous DIRECT_EVAL flag, then set for this call.
+    // This ensures nested eval calls don't clobber the outer eval's flag.
+    let prev_direct = crate::interpreter::is_direct_eval();
+    crate::interpreter::set_direct_eval(is_direct_eval);
+    let result = call_value_with_this(func, args, this_val);
+    // Restore the previous flag (important for nested eval)
+    crate::interpreter::set_direct_eval(prev_direct);
+    result
 }
 
 /// Evaluate call arguments, expanding spread expressions

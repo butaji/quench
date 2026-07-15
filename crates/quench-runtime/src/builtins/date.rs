@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{
-    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
+    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
 };
 use crate::Context;
 
@@ -322,7 +322,7 @@ fn register_parse_functions(ctx: &mut Context) {
         Ok(Value::Boolean(n.is_nan()))
     });
     ctx.register_native("isFinite", |args| {
-        let n = args.first().map(to_number).unwrap_or(f64::NAN);
+        let n = args.first().map(try_to_number).unwrap_or(Ok(f64::NAN))?;
         Ok(Value::Boolean(n.is_finite()))
     });
 }

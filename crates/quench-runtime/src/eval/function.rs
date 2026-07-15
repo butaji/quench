@@ -17,6 +17,17 @@ pub fn call_value_with_this(
     args: Vec<Value>,
     this_val: Value,
 ) -> Result<Value, JsError> {
+    call_value_impl(func, args, this_val, false)
+}
+
+/// Like `call_value_with_this` but with a `force_strict` flag that forces
+/// Value::Function calls to run in strict mode (ES §10.4.3: getter/setter call site).
+pub(crate) fn call_value_impl(
+    func: Value,
+    args: Vec<Value>,
+    this_val: Value,
+    force_strict: bool,
+) -> Result<Value, JsError> {
     match check_depth() {
         Ok(_) => {}
         Err(e) => {
@@ -26,7 +37,13 @@ pub fn call_value_with_this(
     }
 
     let result = match func {
-        Value::Function(f) => call_js_function_impl(f, args, this_val),
+        Value::Function(f) => {
+            if force_strict {
+                call_js_function_impl_with_strict(f, args, this_val, true)
+            } else {
+                call_js_function_impl(f, args, this_val)
+            }
+        }
         Value::NativeFunction(nf) => call_native_function(nf, args, this_val),
         Value::NativeConstructor(nc) => call_native_constructor(nc, args, this_val),
         Value::Object(o) => call_object_as_constructor(o, args, this_val),
@@ -78,6 +95,18 @@ pub(crate) fn call_js_function_impl(
     args: Vec<Value>,
     this_val: Value,
 ) -> Result<Value, JsError> {
+    call_js_function_impl_with_strict(f, args, this_val, false)
+}
+
+/// Like `call_js_function_impl` but with a `force_strict` flag that overrides
+/// the function's own strictness. Used by `call_getter` (ES §10.4.3) where
+/// getter functions must execute in the strict mode of the call site.
+pub(crate) fn call_js_function_impl_with_strict(
+    f: ValueFunction,
+    args: Vec<Value>,
+    this_val: Value,
+    force_strict: bool,
+) -> Result<Value, JsError> {
     let closure = Rc::clone(&f.closure);
     let params = f.params.clone();
 
@@ -90,7 +119,7 @@ pub(crate) fn call_js_function_impl(
     let function_is_strict = f.strict;
     // Check if function body starts with "use strict"; directive
     let body_is_strict = check_use_strict(&f.body);
-    let in_strict = function_is_strict || body_is_strict;
+    let in_strict = function_is_strict || body_is_strict || force_strict;
 
     // Per ES spec 10.2.1.2: in sloppy mode, a primitive `this` is boxed
     // (ToObject) so the function sees a wrapper object. In strict mode (and
