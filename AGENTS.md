@@ -29,6 +29,28 @@ ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ign
 `tasks/index.json`. `test/intl402` (ECMA-402) and `test/staging` are
 out of scope.
 
+## Linter — enforced, no exceptions
+
+`.cargo/config.toml` sets `-D warnings` (warnings fail the build).
+`.clippy.toml` sets the hard limits:
+
+- **500 lines per file** (`too-many-lines-threshold`). Split the file
+  before merging if it crosses 500.
+- **40 lines per function** (`too-many-lines-threshold` on functions).
+  Extract a helper before merging if a function crosses 40.
+- **cognitive complexity ≤ 10** (`cognitive-complexity-threshold`).
+  Simplify or extract before merging if it crosses 10.
+- **≤ 3 boolean params** (`max-fn-params-bools`). Refactor to a flags
+  struct or two functions.
+- **zero clippy warnings**. `cargo clippy -p quench-runtime --all-targets`
+  must print nothing. `-A warnings` anywhere in the repo is a bug.
+
+A diff that lands a file > 500 lines, a function > 40 lines, a function
+with complexity > 10, or any clippy warning is rejected at review — no
+`#[allow(...)]` exceptions, no deferral to "next refactor". The
+refactor-plan splits (e.g. R12 for `eval/object.rs`) exist to bring
+existing offenders under these limits.
+
 ## Workflow — unit tests, not guesswork (enforced, no exceptions)
 
 **You do not debug. You do not guess. You write a failing unit test

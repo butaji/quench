@@ -1,9 +1,6 @@
 [build]
-# Strict clippy settings for quench-runtime workspace
-# All *.rs files: max 500 lines/file, 40 lines/function, complexity 10
-rustflags = [
-    "-A", "warnings",
-]
+# Enforce clippy rules from .clippy.toml — never allow warnings.
+rustflags = ["-D", "warnings"]
 
 [profile.dev]
 opt-level = 0

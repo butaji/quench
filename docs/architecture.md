@@ -107,3 +107,12 @@ Same `AGENTS.md` cycle for both languages: failing `#[test]` first (in
 Rust, wrapping the JS via `Context::eval` if needed), watch it fail,
 minimal fix in Rust core *or* `builtins/*.js` *or* `eval/ops.rs`,
 verify, leave the test in.
+
+## File / function limits — enforced
+
+`.clippy.toml` + `.cargo/config.toml` (`-D warnings`) gate every build.
+No file > 500 lines, no function > 40 lines, no function complexity >
+10, no `#[allow(...)]`, no deferrals. Split `eval/object.rs` (1847
+→ `eval/assign.rs`/`eval/destructuring.rs`/`eval/accessor.rs` per R12)
+or any other offender before adding to it. JS files have no enforced
+limit but should stay under 500 too — split per builtin category.
