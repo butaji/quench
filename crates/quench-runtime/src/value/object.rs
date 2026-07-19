@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use regress::Regex;
 use rustc_hash::FxBuildHasher;
 
-use crate::ast::Statement;
+use crate::ast::{Param, Statement};
 use crate::env::Environment;
 use crate::value::function::ValueFunction;
 use crate::value::kind::{ExoticKind, ObjectKind};
@@ -323,6 +323,7 @@ impl PropertyDescriptor {
 
 /// 11 internal methods + 2 function extras — the spec's object interface.
 /// Methods take `Key` (not `&str`) for array-index-canonicalized dispatch.
+#[allow(clippy::type_complexity)]
 pub struct VTable {
     pub get_prototype_of: fn(&Object) -> Option<Rc<RefCell<Object>>>,
     pub set_prototype_of: fn(&mut Object, Option<Rc<RefCell<Object>>>) -> bool,
@@ -429,8 +430,8 @@ fn ordinary_get_own_property(obj: &Object, key: &Key) -> Option<Desc> {
     // Fallback: old maps (during migration)
     let key_str = match key {
         Key::Str(s) => s.as_ref(),
-        Key::Idx(i) => return None, // array indices not in old maps as strings
-        Key::Sym(s) => return None, // symbol keys not in old maps as strings
+        Key::Idx(_i) => return None, // array indices not in old maps as strings
+        Key::Sym(_s) => return None, // symbol keys not in old maps as strings
     };
     let flags = obj.descriptors.get(key_str).cloned().unwrap_or_default();
     if let Some(val) = obj.properties.get(key_str) {
@@ -842,6 +843,13 @@ impl Object {
     }
 
     /// Get own property only (no prototype chain)
+    /// Get own property by string key, bypassing the proxy get trap.
+    /// Used internally when we already know the object is a proxy and need
+    /// to read its internal slots (handler/target) without triggering traps.
+    pub fn get_own_value(&self, key: &str) -> Option<Value> {
+        self.properties.get(key).cloned()
+    }
+
     fn get_own(&self, key: &str) -> Option<Value> {
         if let Some(v) = self.properties.get(key) {
             return Some(v.clone());
@@ -979,7 +987,7 @@ impl Object {
                     return true;
                 }
                 Value::NativeFunction(ref nf) => {
-                    nf.set_property(prop, value);
+                    let _ = nf.set_property(prop, value);
                     return true;
                 }
                 _ => return false,
@@ -1205,6 +1213,7 @@ impl Object {
 
     /// Install a setter from a function value (Object.defineProperty path)
     pub fn set_setter_func(&mut self, key: &str, func: Value) {
+        let _ = matches!(func, Value::Function(_));
         self.setters.insert(
             key.to_string(),
             SetterStorage {
@@ -1253,6 +1262,29 @@ impl Object {
     /// Get the setter storage for a property
     pub fn get_setter(&self, key: &str) -> Option<&SetterStorage> {
         self.setters.get(key)
+    }
+
+    /// Get the setter function value (from Object.defineProperty style or {set} shorthand).
+    /// If func is None but body is set (from setter shorthand { set x(v){} }), reconstruct
+    /// a ValueFunction from body/closure.
+    pub fn get_setter_func(&self, key: &str) -> Option<Value> {
+        self.setters.get(key).and_then(|s| {
+            if let Some(ref f) = s.func {
+                return Some(f.clone());
+            }
+            // Reconstruct from body/closure (setter shorthand)
+            if !s.body.is_empty() {
+                let closure = Rc::new(RefCell::new((*s.closure).borrow().clone()));
+                let func = Value::Function(ValueFunction::new(
+                    None,
+                    vec![Param::new(&s.param)],
+                    (*s.body).clone(),
+                    closure,
+                ));
+                return Some(func);
+            }
+            None
+        })
     }
 
     /// Get all property keys (own properties only, including getters/setters).

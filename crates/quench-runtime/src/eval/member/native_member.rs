@@ -1,7 +1,6 @@
 //! Native function and constructor member access evaluation
 
-use crate::value::{JsError, NativeConstructor, NativeFunction, Object, Value};
-use std::cell::RefCell;
+use crate::value::{JsError, NativeConstructor, NativeFunction, Value};
 use std::rc::Rc;
 
 /// Evaluate member access on a native function

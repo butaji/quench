@@ -286,15 +286,17 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // Check regular properties for 'get' and 'set' (from Object.defineProperty style)
         // e.g., { get: function() {} } stores 'get' as a regular property
         if getter.is_none() {
-            if let Some(Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) =
-                desc_borrowed.properties.get("get")
+            if let Some(
+                Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_),
+            ) = desc_borrowed.properties.get("get")
             {
                 getter = desc_borrowed.properties.get("get").cloned();
             }
         }
         if setter.is_none() {
-            if let Some(Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)) =
-                desc_borrowed.properties.get("set")
+            if let Some(
+                Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_),
+            ) = desc_borrowed.properties.get("set")
             {
                 setter = desc_borrowed.properties.get("set").cloned();
             }
@@ -309,7 +311,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     getter = Some(f.clone());
                 } else if !g.body.is_empty() {
                     // Create a ValueFunction from body/closure (from getter shorthand)
-                    let closure = Rc::new(RefCell::new((&*g.closure).borrow().clone()));
+                    let closure = Rc::new(RefCell::new((*g.closure).borrow().clone()));
                     let func = Value::Function(ValueFunction::new(
                         None,
                         vec![],
@@ -322,7 +324,20 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
         if setter.is_none() {
             if let Some(s) = desc_borrowed.get_setter("set") {
-                setter = s.func.clone();
+                // Prefer func if available (from Object.defineProperty style)
+                if let Some(f) = &s.func {
+                    setter = Some(f.clone());
+                } else if !s.body.is_empty() {
+                    // Create a ValueFunction from body/closure (from setter shorthand)
+                    let closure = Rc::new(RefCell::new((*s.closure).borrow().clone()));
+                    let func = Value::Function(ValueFunction::new(
+                        None,
+                        vec![crate::ast::Param::new(&s.param)],
+                        (*s.body).clone(),
+                        closure,
+                    ));
+                    setter = Some(func);
+                }
             }
         }
     }
@@ -380,14 +395,39 @@ fn get_object_property_descriptor(o: &Rc<RefCell<Object>>, prop: &str) -> Result
             enumerable: true,
             configurable: true,
         });
-        let get_val = obj
-            .get_getter(prop)
-            .and_then(|g| g.func.clone())
-            .unwrap_or(Value::Undefined);
-        let set_val = obj
-            .get_setter(prop)
-            .and_then(|s| s.func.clone())
-            .unwrap_or(Value::Undefined);
+        // Reconstruct getter function from func, body, or return undefined
+        let get_val = if let Some(g) = obj.get_getter(prop) {
+            if let Some(f) = &g.func {
+                f.clone()
+            } else if !g.body.is_empty() {
+                // Literal getter: reconstruct ValueFunction from body/closure
+                let closure = Rc::new(RefCell::new((*g.closure).borrow().clone()));
+                Value::Function(ValueFunction::new(None, vec![], (*g.body).clone(), closure))
+            } else {
+                Value::Undefined
+            }
+        } else {
+            Value::Undefined
+        };
+        // Reconstruct setter function from func, body, or return undefined
+        let set_val = if let Some(s) = obj.get_setter(prop) {
+            if let Some(f) = &s.func {
+                f.clone()
+            } else if !s.body.is_empty() {
+                // Literal setter: reconstruct ValueFunction from body/closure/param
+                let closure = Rc::new(RefCell::new((*s.closure).borrow().clone()));
+                Value::Function(ValueFunction::new(
+                    None,
+                    vec![crate::ast::Param::new(&s.param)],
+                    (*s.body).clone(),
+                    closure,
+                ))
+            } else {
+                Value::Undefined
+            }
+        } else {
+            Value::Undefined
+        };
         let mut desc = Object::new(ObjectKind::Ordinary);
         desc.set("get", get_val);
         desc.set("set", set_val);
@@ -665,6 +705,52 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             .unwrap_or(Value::Null)),
         Value::NativeConstructor(nc) => Ok(Value::Object(nc.prototype.clone())),
         _ => Err(JsError::from("Object.getPrototypeOf called on non-object")),
+    }
+}
+
+/// Object.setPrototypeOf(obj, proto) - sets the prototype of an object
+pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let proto_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+    // null is allowed as a prototype (creates a null prototype object)
+    let proto = match &proto_arg {
+        Value::Object(o) => Some(Rc::clone(o)),
+        Value::Null => None,
+        _ => {
+            return Err(JsError::from(
+                "TypeError: Object.setPrototypeOf called on non-object or with non-object/null prototype",
+            ))
+        }
+    };
+
+    match &obj {
+        Value::Object(o) => {
+            o.borrow_mut().prototype = proto;
+            Ok(Value::Object(Rc::clone(o)))
+        }
+        Value::Function(_) => {
+            // Functions use %FunctionPrototype% as their internal prototype
+            // but the .prototype property is user-settable
+            Err(JsError::from(
+                "TypeError: Object.setPrototypeOf called on a function (prototype is non-configurable)",
+            ))
+        }
+        Value::NativeFunction(_nf) => {
+            // Native functions have a fixed prototype chain
+            Err(JsError::from(
+                "TypeError: Object.setPrototypeOf called on native function",
+            ))
+        }
+        Value::NativeConstructor(_nc) => {
+            // Native constructors have a fixed prototype chain
+            Err(JsError::from(
+                "TypeError: Object.setPrototypeOf called on native constructor",
+            ))
+        }
+        _ => Err(JsError::from(
+            "TypeError: Object.setPrototypeOf called on non-object",
+        )),
     }
 }
 

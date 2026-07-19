@@ -120,7 +120,6 @@ pub fn to_bool(v: &Value) -> bool {
         | Value::Class(_)
         | Value::BigInt(_) => true,
         Value::Symbol(_) => true,
-        Value::BigInt(_) => true,
     }
 }
 
@@ -129,10 +128,7 @@ pub fn to_number(v: &Value) -> f64 {
     if let Some(n) = simple_number_value(v) {
         return n;
     }
-    match to_number_complex(v) {
-        Ok(n) => n,
-        Err(_) => f64::NAN,
-    }
+    to_number_complex(v).unwrap_or(f64::NAN)
 }
 
 /// Convert a Value to a number, propagating errors (for cases like isFinite that need to throw)
@@ -148,7 +144,13 @@ pub fn try_to_number(v: &Value) -> Result<f64, JsError> {
 pub fn to_number_unchecked(v: &Value) -> f64 {
     match v {
         Value::Number(n) => *n,
-        Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
+        Value::Boolean(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         Value::String(s) => string_to_number(s),
         Value::Null => 0.0,
         _ => f64::NAN,
@@ -395,22 +397,22 @@ fn object_vs_primitive_eq(a: &Value, b: &Value) -> bool {
         (Value::Object(_), Value::Number(_) | Value::String(_)) => {
             match to_primitive_for_compare_strict(a) {
                 Ok(prim) => loose_eq(&prim, b),
-                Err(_) => return false, // throw propagates via thrown_value; comparison returns false here
+                Err(_) => false, // throw propagates via thrown_value; comparison returns false here
             }
         }
         (Value::Number(_) | Value::String(_), Value::Object(_)) => {
             match to_primitive_for_compare_strict(b) {
                 Ok(prim) => loose_eq(a, &prim),
-                Err(_) => return false,
+                Err(_) => false,
             }
         }
         (Value::Object(_), _) => match to_primitive_for_compare_strict(a) {
             Ok(prim) => loose_eq(&prim, b),
-            Err(_) => return false,
+            Err(_) => false,
         },
         (_, Value::Object(_)) => match to_primitive_for_compare_strict(b) {
             Ok(prim) => loose_eq(a, &prim),
-            Err(_) => return false,
+            Err(_) => false,
         },
         _ => false,
     }
@@ -442,6 +444,7 @@ fn parse_number_string(s: &str) -> Option<f64> {
     trimmed.parse::<f64>().ok()
 }
 
+#[allow(dead_code)]
 fn to_primitive_for_compare(v: &Value) -> Value {
     if let Some(prim) = primitive_for_compare(v) {
         return prim;
@@ -484,6 +487,7 @@ fn primitive_for_compare(v: &Value) -> Option<Value> {
     }
 }
 
+#[allow(dead_code)]
 fn object_to_primitive_for_compare(obj: &Rc<std::cell::RefCell<crate::value::Object>>) -> Value {
     let obj_borrowed = obj.borrow();
     // Try valueOf first — handle NativeFunction OR Function (JS-defined).
@@ -639,9 +643,8 @@ fn to_primitive_object(
     // - Ok(Some(v)) when @@toPrimitive produced a primitive
     // - Ok(None) when no @@toPrimitive exists or it returned an object
     // - Err(_) when @@toPrimitive threw
-    match try_to_primitive_symbol(obj, hint)? {
-        Some(v) => return Ok(v),
-        None => {}
+    if let Some(v) = try_to_primitive_symbol(obj, hint)? {
+        return Ok(v);
     }
 
     // Try valueOf then toString (or vice versa for string hint)

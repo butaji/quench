@@ -2,8 +2,8 @@
 
 use crate::ast::*;
 use crate::value::{
-    create_js_error_with_type, get_thrown_value, loose_eq, set_thrown_value, strict_eq,
-    take_thrown_value, to_bool, to_js_string, to_number, to_primitive, to_uint32, JsError, Value,
+    create_js_error_with_type, get_thrown_value, loose_eq, strict_eq, to_bool, to_js_string,
+    to_number, to_primitive, to_uint32, JsError, Value,
 };
 
 /// Evaluate a binary operator
@@ -365,7 +365,7 @@ fn get_prototype_from_class_val(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{create_js_error_with_type, set_thrown_value};
+    use crate::value::{create_js_error_with_type, set_thrown_value, take_thrown_value};
 
     /// When `valueOf` throws, `eval_add` must surface the error AND leave the
     /// thrown value intact for the surrounding try/catch to retrieve.
@@ -416,7 +416,7 @@ mod tests {
              var desc = Object.getOwnPropertyDescriptor(thrower, sym); \
              desc !== undefined ? (typeof desc.get) : 'no_desc';",
         );
-        eprintln!("debug: {:?}", debug);
+        let _ = debug;
 
         let result = ctx.eval(
             "var callCount = 0; \
@@ -428,7 +428,6 @@ mod tests {
              try { thrower + counter; } catch (e) { thrown = e; } \
              ({ callCount: callCount, msg: thrown ? thrown.message : 'undefined' });",
         );
-        eprintln!("result: {:?}", result);
         let value = result.unwrap();
         let crate::value::Value::Object(obj) = value else {
             panic!("expected object result");

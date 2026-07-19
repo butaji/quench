@@ -62,7 +62,7 @@ fn test_deep_equal_js_loads() {
     use std::path::PathBuf;
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let test262_dir = repo_root.join("tests/test262");
+    let _test262_dir = repo_root.join("tests/test262");
 
     let mut host = QuenchHost::new();
 
@@ -778,6 +778,33 @@ assert.throws(SyntaxError, a);
 }
 
 #[test]
+fn test_assert_throws_custom_typeerror() {
+    // Replicates test/harness/assert-throws-custom-typeerror.js
+    // When a local TypeError shadows the global, assert.throws(GlobalTypeError, fn)
+    // should still match throws of local TypeError if they share the same prototype chain.
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+var intrinsicTypeError = TypeError;
+var threw = false;
+
+(function() {
+  function TypeError() {}
+
+  assert.throws(TypeError, function() {
+    throw new TypeError();
+  }, 'Throws an instance of the matching custom TypeError');
+})();
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "assert.throws with shadowed TypeError failed: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_arrow_lexically_captures_super_property() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
@@ -822,10 +849,9 @@ fn test262_staged() {
     let test262_dir = std::env::var("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo_root.join("tests/test262"));
-    let checkpoint_path = manifest_dir.join(".test262_checkpoint");
 
     let mut host = QuenchHost::new();
-    let runner = Test262Runner::new(test262_dir, checkpoint_path);
+    let runner = Test262Runner::new(test262_dir);
     let summary = runner.run(&mut host);
     assert!(
         summary.failed == 0,

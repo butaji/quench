@@ -126,7 +126,7 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .params
                 .items
                 .iter()
-                .filter_map(|p| {
+                .map(|p| {
                     let (name, default) = match &p.pattern.kind {
                         ast::BindingPatternKind::BindingIdentifier(ident) => {
                             (ident.name.as_str().to_string(), None)
@@ -142,12 +142,12 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                         }
                         _ => ("arg".to_string(), None),
                     };
-                    Some(Param {
+                    Param {
                         name,
                         default,
                         pattern: None,
                         rest: false,
-                    })
+                    }
                 })
                 .collect();
             let body = func_expr
@@ -163,7 +163,7 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .as_ref()
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_else(|| "default".to_string());
-            let class = lower_class(&class_expr)?;
+            let class = lower_class(class_expr)?;
             Some(Statement::ClassDeclaration { name, class })
         }
         // Expression export: export default <expression>
@@ -212,6 +212,7 @@ pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Stateme
 }
 
 /// Lower `export { x } from 'module'` to import and re-export
+#[allow(dead_code)]
 fn lower_export_from(
     named: &ast::ExportNamedDeclaration,
     src: &ast::StringLiteral,
@@ -229,7 +230,7 @@ fn lower_export_from(
     Some(Statement::Block(all_stmts))
 }
 
-fn collect_export_from_specs(
+pub(crate) fn collect_export_from_specs(
     specs: &[ast::ExportSpecifier],
 ) -> (Vec<(String, String)>, Vec<Statement>) {
     let mut imports = Vec::new();
@@ -245,7 +246,7 @@ fn collect_export_from_specs(
     (imports, stmts)
 }
 
-fn make_export_assignment(prop: &str, value: &str) -> Statement {
+pub(crate) fn make_export_assignment(prop: &str, value: &str) -> Statement {
     Statement::Expression(Box::new(Expression::Assignment {
         left: Box::new(Expression::Member {
             object: Box::new(Expression::Identifier("exports".to_string())),
@@ -257,4 +258,3 @@ fn make_export_assignment(prop: &str, value: &str) -> Statement {
 }
 
 // Re-export declaration lowering functions
-pub use crate::lower::stmt::declarations::lower_decl;

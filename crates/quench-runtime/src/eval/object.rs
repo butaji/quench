@@ -5,9 +5,61 @@ use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::statement::eval_function_body;
 use crate::eval::string_methods::get_string_method;
+use crate::value::kind::ExoticKind;
 use crate::value::{GetterStorage, JsError, Object, ObjectKind, SetterStorage, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Box a primitive value for property assignment (ES §10.2.9 [[Set]]).
+/// Creates a temporary object with the primitive's prototype chain.
+fn box_primitive_for_set(
+    obj_val: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    let ctor_name = match obj_val {
+        Value::Number(_) => "Number",
+        Value::Boolean(_) => "Boolean",
+        Value::Symbol(_) => "Symbol",
+        _ => {
+            return Err(JsError(
+                "box_primitive_for_set: not a primitive".to_string(),
+            ))
+        }
+    };
+    let ctor_val = env
+        .borrow()
+        .get(ctor_name)
+        .ok_or_else(|| JsError(format!("{} not found", ctor_name)))?;
+    let proto = match &ctor_val {
+        Value::Object(o) => o.borrow().get("prototype"),
+        Value::NativeFunction(nf) => nf
+            .prototype
+            .borrow()
+            .as_ref()
+            .map(|p| Value::Object(Rc::clone(p))),
+        Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
+        _ => None,
+    };
+    let proto_rc = match proto {
+        Some(Value::Object(o)) => o,
+        _ => return Err(JsError(format!("{} prototype not found", ctor_name))),
+    };
+    let mut boxed = Object::new(ObjectKind::Ordinary);
+    boxed.prototype = Some(Rc::clone(&proto_rc));
+    match obj_val {
+        Value::Number(n) => {
+            boxed.exotic_kind = Some(ExoticKind::Number);
+            boxed.set("_value", Value::Number(*n));
+        }
+        Value::Boolean(b) => {
+            boxed.exotic_kind = Some(ExoticKind::Boolean);
+            boxed.set("_value", Value::Boolean(*b));
+        }
+        Value::Symbol(_) => {}
+        _ => {}
+    }
+    Ok(Rc::new(RefCell::new(boxed)))
+}
 
 /// Assign a value to a target (variable, member, or destructuring pattern)
 pub fn assign_to(
@@ -16,9 +68,7 @@ pub fn assign_to(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match target {
-        Expression::Identifier(name) => {
-            assign_to_identifier(name, value, env)
-        }
+        Expression::Identifier(name) => assign_to_identifier(name, value, env),
         Expression::Member {
             object,
             property,
@@ -35,16 +85,16 @@ fn assign_array_destructuring(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    if let Value::String(s) = value {
+        let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+        let len = chars.len();
+        let mut arr = Object::new(ObjectKind::Array);
+        arr.elements = chars;
+        arr.properties
+            .insert("length".to_string(), Value::Number(len as f64));
+        return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
+    }
     let Value::Object(arr_rc) = value else {
-        if let Value::String(s) = value {
-            let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-            let len = chars.len();
-            let mut arr = Object::new(ObjectKind::Array);
-            arr.elements = chars;
-            arr.properties
-                .insert("length".to_string(), Value::Number(len as f64));
-            return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
-        }
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
@@ -69,7 +119,7 @@ fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Option<Rc<RefCell<Object>>> {
         Some(value @ Value::Object(_)) => value,
         _ => return None,
     };
-    let result = match crate::eval::function::call_value(iter_value, vec![]) {
+    let result = match crate::eval::function::call_value(iter_value.clone(), vec![]) {
         Ok(value) => value,
         Err(_) => return None,
     };
@@ -133,8 +183,8 @@ fn take_iterator_value(
         Some(Value::Object(obj)) => obj,
         _ => return Ok(Value::Undefined),
     };
-    let result = crate::eval::function::call_value(Value::Object(next_obj), vec![])?;
-    if let Some(_) = crate::value::take_thrown_value() {
+    let result = crate::eval::function::call_value(Value::Object(Rc::clone(&next_obj)), vec![])?;
+    if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
@@ -319,10 +369,7 @@ fn assign_binding_elem(
                 };
                 if let Value::Object(o) = lref_obj {
                     if let Some(setter) = o.borrow().get_setter(&key_string) {
-                        let result = call_setter(&o, &setter, value.clone(), env);
-                        if result.is_err() {
-                            return Err(result.unwrap_err());
-                        }
+                        call_setter(&o, setter, value.clone(), env)?;
                     } else {
                         o.borrow_mut().set(&key_string, value.clone());
                     }
@@ -410,13 +457,7 @@ fn assign_to_identifier(
         }
         // Sloppy mode: create a globalThis property so `delete x` returns true.
         // Use a block to scope the borrow.
-        let use_global_this = {
-            if let Some(Value::Object(_)) = env.borrow().get("globalThis") {
-                true
-            } else {
-                false
-            }
-        };
+        let use_global_this = matches!(env.borrow().get("globalThis"), Some(Value::Object(_)));
         if use_global_this {
             // Now get globalThis again and set the property
             if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
@@ -473,13 +514,13 @@ fn assign_to_member(
         if let Value::NativeFunction(ref nf) = parent_val {
             if let Some(Value::Function(func)) = nf.get_property(&parent_prop_name) {
                 func.set_property(&prop_name, value.clone());
-                nf.set_property(&parent_prop_name, Value::Function(func));
+                let _ = nf.set_property(&parent_prop_name, Value::Function(func));
                 return Ok(());
             }
             // Handle NativeFunction properties (e.g. assert.deepEqual._compare where assert and deepEqual are both NativeFunction)
             if let Some(Value::NativeFunction(inner_nf)) = nf.get_property(&parent_prop_name) {
-                inner_nf.set_property(&prop_name, value.clone());
-                nf.set_property(&parent_prop_name, Value::NativeFunction(inner_nf));
+                let _ = inner_nf.set_property(&prop_name, value.clone());
+                let _ = nf.set_property(&parent_prop_name, Value::NativeFunction(inner_nf));
                 return Ok(());
             }
         }
@@ -488,6 +529,70 @@ fn assign_to_member(
     let obj_val = eval_expression(object, env, false)?;
 
     match obj_val {
+        // Box primitives per ES §10.2.9 [[Set]] (ToObject coercion)
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {
+            let boxed = box_primitive_for_set(&obj_val, env)?;
+            // Per ES §10.2.9 [[Set]]: before walking the prototype chain, check if
+            // the receiver (boxed object) itself has an own setter.
+            let receiver_has_own_setter = boxed.borrow().get_setter(&prop_name).is_some();
+            if !receiver_has_own_setter {
+                // Check if the prototype's prototype is a proxy (e.g. Object.setPrototypeOf
+                // was used to set Number.prototype's prototype to a proxy). The proxy slots
+                // are on the prototype-of-prototype (proto.prototype), not on proto itself.
+                // Chain: boxed → proto (= spy) → proto.prototype (= Number.prototype = proxy)
+                if let Some(ref proto_rc) = boxed.borrow().prototype {
+                    if let Some(ref proto_of_proto_rc) = proto_rc.borrow().prototype {
+                        let proto_of_proto = proto_of_proto_rc.borrow();
+                        let handler_val = proto_of_proto.properties.get("__quench_proxy_handler");
+                        let target_val = proto_of_proto.properties.get("__quench_proxy_target");
+                        if let (Some(Value::Object(h)), Some(Value::Object(t))) =
+                            (handler_val.cloned(), target_val.cloned())
+                        {
+                            let this_val = Value::Object(Rc::clone(&boxed));
+                            let success = call_proxy_set_trap(
+                                &Value::Object(Rc::clone(&t)),
+                                &h,
+                                &this_val,
+                                &prop_name,
+                                value.clone(),
+                            )?;
+                            if success {
+                                return Ok(());
+                            }
+                            if crate::interpreter::is_strict_mode() {
+                                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                                    "Cannot set property (proxy set trap returned false)",
+                                    "TypeError",
+                                );
+                                return Err(js_err);
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            // Fallback: check for inherited proxy in the prototype chain
+            if let Some((_proxy_rc, handler, target)) =
+                find_proxy_in_prototype_chain(&boxed, &prop_name)
+            {
+                let this_val = Value::Object(Rc::clone(&boxed));
+                let success =
+                    call_proxy_set_trap(&target, &handler, &this_val, &prop_name, value.clone())?;
+                if success {
+                    return Ok(());
+                }
+                if crate::interpreter::is_strict_mode() {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Cannot set property (proxy set trap returned false)",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
+                return Ok(());
+            }
+            boxed.borrow_mut().set(&prop_name, value.clone());
+            Ok(())
+        }
         Value::Object(o) => {
             let has_setter = {
                 let obj_ref = o.borrow();
@@ -502,6 +607,29 @@ fn assign_to_member(
                     call_setter(&o, &setter_storage, value.clone(), env)?;
                     return Ok(());
                 }
+            }
+            // Before falling through to inherited setters or the own-property path,
+            // check if any proxy exists in the prototype chain and invoke its set trap.
+            // Per ES §10.2.9 [[Set]]: when [[Set]] walks up the prototype chain and
+            // encounters a proxy, it calls the proxy's set trap (not the proxy's
+            // inherited setter). The trap receives (target, P, V) and returns
+            // true/false to indicate whether the assignment succeeded.
+            if let Some((_proxy, handler, target)) = find_proxy_in_prototype_chain(&o, &prop_name) {
+                let this_val = Value::Object(Rc::clone(&o));
+                let success =
+                    call_proxy_set_trap(&target, &handler, &this_val, &prop_name, value.clone())?;
+                if success {
+                    return Ok(());
+                }
+                // trap returned false: in strict mode throw TypeError
+                if crate::interpreter::is_strict_mode() {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Cannot set property (proxy set trap returned false)",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
+                return Ok(());
             }
             // Assignment replaces the data property's value while preserving its
             // descriptor flags. It must not mutate a function value in place.
@@ -556,9 +684,7 @@ fn assign_to_member(
         }
         Value::Function(ref f) => {
             if f.is_arrow && (prop_name == "caller" || prop_name == "arguments") {
-                let msg = format!(
-                    "'caller' and 'arguments' are restricted properties and cannot be set on arrow functions"
-                );
+                let msg = "'caller' and 'arguments' are restricted properties and cannot be set on arrow functions".to_string();
                 let (err, js_err) = crate::value::create_js_error_with_type(&msg, "TypeError");
                 crate::value::set_thrown_value(err);
                 return Err(js_err);
@@ -591,7 +717,7 @@ fn assign_to_member(
                 );
                 return Err(error);
             }
-            nf.set_property(&prop_name, value.clone());
+            let _ = nf.set_property(&prop_name, value.clone());
             Ok(())
         }
         Value::NativeConstructor(ref nc) => {
@@ -777,7 +903,10 @@ fn get_number_method(
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    if !matches!(obj_val, Value::Number(_) | Value::Boolean(_) | Value::Symbol(_)) {
+    if !matches!(
+        obj_val,
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_)
+    ) {
         return Ok(Value::Undefined);
     }
     let ctor_name = match obj_val {
@@ -868,7 +997,7 @@ pub fn call_getter(
     }
     let closure = Rc::clone(&getter_storage.closure);
     let body = getter_storage.body.clone();
-    let mut call_env = Environment::with_parent(closure);
+    let call_env = Environment::with_parent(closure);
     call_env.current_scope().borrow_mut().set_this(this_val);
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
@@ -881,6 +1010,94 @@ pub fn call_getter(
         let result = eval_function_body(&body, &call_env, false);
         crate::interpreter::set_strict_mode(prev_strict);
         result
+    }
+}
+
+/// If a proxy exists in the prototype chain of `obj` (starting from `obj`'s prototype's
+/// prototype — the same level the [[Set]] algorithm checks for proxy slots), return its
+/// (proxy, handler, target) tuple. Otherwise return None.
+/// This is used by [[Set]] to invoke the proxy's set trap before falling through
+/// to inherited setters deeper in the prototype chain.
+#[allow(clippy::type_complexity)]
+fn find_proxy_in_prototype_chain(
+    obj: &Rc<RefCell<Object>>,
+    _prop_name: &str,
+) -> Option<(Rc<RefCell<Object>>, Rc<RefCell<Object>>, Value)> {
+    // Start from proto.prototype (same as the inline proxy check above), so the first
+    // object examined is the one that could have been set as a prototype via
+    // Object.setPrototypeOf(proxied_builtin.prototype, proxy).
+    let mut current = obj
+        .borrow()
+        .prototype
+        .as_ref()
+        .and_then(|p| p.borrow().prototype.clone());
+    loop {
+        let proto_rc = current?;
+        let proto = proto_rc.borrow();
+        // Check if this object is a proxy (has __quench_proxy_handler)
+        if let Some(Value::Object(handler)) = proto.properties.get("__quench_proxy_handler") {
+            if let Some(target) = proto.properties.get("__quench_proxy_target") {
+                return Some((proto_rc.clone(), handler.clone(), target.clone()));
+            }
+        }
+        current = proto.prototype.clone();
+    }
+}
+
+/// Invoke the set trap on a proxy handler, per ES §10.2.1.2.7.
+/// `target` is the proxy's target, `handler` is the proxy's handler,
+/// `this_val` is the receiver (the proxy itself), `prop_name` and `value`
+/// are the property name and value being assigned.
+fn call_proxy_set_trap(
+    target: &Value,
+    handler: &Rc<RefCell<Object>>,
+    this_val: &Value,
+    prop_name: &str,
+    value: Value,
+) -> Result<bool, JsError> {
+    // Use get_own_value to bypass the proxy get trap, since handler may itself
+    // be a proxy whose get trap would intercept a normal property lookup.
+    // Also check the setters map (for {set foo(){}} syntax).
+    let trap_opt: Option<Value> = handler
+        .borrow()
+        .get_own_value("set")
+        .or_else(|| handler.borrow().get_setter_func("set"));
+    let Some(trap) = trap_opt else {
+        // No set trap: use the default forwarding behavior (return true).
+        return Ok(true);
+    };
+    // The set trap must be callable; primitives and symbols are not
+    let trap = match trap {
+        Value::Object(f) => Value::Object(f),
+        Value::Function(f) => Value::Function(f),
+        Value::NativeFunction(nf) => Value::NativeFunction(nf),
+        Value::NativeConstructor(nc) => Value::NativeConstructor(nc),
+        Value::Undefined => {
+            // No set trap: use the default forwarding behavior (return true).
+            return Ok(true);
+        }
+        _ => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "set trap is not callable",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            return Err(js_err);
+        }
+    };
+
+    let trap_result = crate::eval::function::call_value_with_this(
+        trap,
+        vec![target.clone(), Value::String(prop_name.to_string()), value],
+        this_val.clone(),
+    );
+
+    match trap_result {
+        Ok(result) => {
+            let success = crate::value::to_bool(&result);
+            Ok(success)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -1307,7 +1524,7 @@ mod tests {
              [t === F, typeof t];",
             )
             .unwrap();
-        let arr = if let crate::value::Value::Object(o) = v {
+        let _arr = if let crate::value::Value::Object(o) = v {
             o.borrow().elements.clone()
         } else {
             panic!("not array")
@@ -1317,7 +1534,7 @@ mod tests {
     #[test]
     fn debug_new_target_arrow() {
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval(
+        let _v = ctx.eval(
             "function F() { \
                this.af = () => new.target; \
              } \
@@ -1372,7 +1589,7 @@ mod tests {
     fn class_extends_promise_builtin() {
         let mut ctx = Context::new().unwrap();
         // Test that Promise is accessible
-        let t = ctx.eval("typeof Promise");
+        let _t = ctx.eval("typeof Promise");
 
         // Test class extends Promise
         let v = ctx.eval(
@@ -1402,8 +1619,9 @@ mod tests {
              [count, err];",
             )
             .unwrap();
-        if let crate::value::Value::Object(o) = v {
-            let e = o.borrow().elements.clone();
+        if let crate::value::Value::Object(_o) = v {
+            // extract elements to verify state
+            let _e = _o.borrow().elements.clone();
         }
     }
 
@@ -1412,7 +1630,7 @@ mod tests {
         // Per ES: arrow inside B constructor calls super() which runs A.
         // A should be called exactly once (count=1).
         let mut ctx = Context::new().unwrap();
-        let v = ctx.eval(
+        let _v = ctx.eval(
             "var count = 0; \
              class A { constructor() { count++; } } \
              class B extends A { constructor() { (_ => super())(); } } \
@@ -1425,7 +1643,7 @@ mod tests {
     fn sloppy_arrow_assigns_undeclared_creates_global() {
         let mut ctx = Context::new().unwrap();
         // Just the arrow with name assignment
-        let v = ctx.eval("var af = _ => { foo = 1; }; af()");
+        let _v = ctx.eval("var af = _ => { foo = 1; }; af()");
     }
 
     #[test]
@@ -1582,7 +1800,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_assign_to_NaN_throws_type_error() {
+    fn strict_assign_to_nan_throws_type_error() {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval("\"use strict\"; NaN = 12;");
         assert!(res.is_err(), "strict assignment to NaN should throw");
@@ -1608,7 +1826,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_assign_to_Infinity_throws_type_error() {
+    fn strict_assign_to_infinity_throws_type_error() {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval("\"use strict\"; Infinity = 12;");
         assert!(res.is_err(), "strict assignment to Infinity should throw");
@@ -1621,10 +1839,9 @@ mod tests {
     }
 
     #[test]
-    fn sloppy_assign_to_NaN_no_throw() {
+    fn sloppy_assign_to_nan_no_throw() {
         let mut ctx = Context::new().unwrap();
         let res = ctx.eval("NaN = 12;");
         assert!(res.is_ok(), "sloppy assignment to NaN should not throw");
     }
-
 }

@@ -5,7 +5,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
+use crate::value::{
+    to_js_string, JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value,
+};
 use crate::Context;
 
 // ============================================================================
@@ -127,8 +129,8 @@ fn serialize_object_formatted(
     }
 
     if use_indent {
-        let inner = pairs.join(&format!(",\n{}", &next_indent));
-        format!("{{\n{}{}\n{}}}", &next_indent, inner, &cur_indent)
+        let inner = pairs.join(&format!(",\n{}", next_indent));
+        format!("{{\n{}{}\n{}}}", next_indent, inner, cur_indent)
     } else {
         format!("{{{}}}", pairs.join(","))
     }
@@ -156,8 +158,8 @@ fn serialize_array(
     }
 
     if use_indent {
-        let inner = items.join(&format!(",\n{}", &next_indent));
-        format!("[\n{}{}\n{}]", &next_indent, inner, &cur_indent)
+        let inner = items.join(&format!(",\n{}", next_indent));
+        format!("[\n{}{}\n{}]", next_indent, inner, cur_indent)
     } else {
         format!("[{}]", items.join(","))
     }
@@ -407,19 +409,55 @@ mod tests {
     fn test_json_parse_property_descriptor() {
         let mut ctx = create_test_context();
         // Check descriptor flags for JSON.parse
-        let writable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').writable").unwrap();
-        let enumerable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').enumerable").unwrap();
-        let configurable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'parse').configurable").unwrap();
-        assert_eq!(writable, crate::value::Value::Boolean(true), "parse should be writable");
-        assert_eq!(enumerable, crate::value::Value::Boolean(false), "parse should be non-enumerable");
-        assert_eq!(configurable, crate::value::Value::Boolean(true), "parse should be configurable");
-        
+        let writable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'parse').writable")
+            .unwrap();
+        let enumerable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'parse').enumerable")
+            .unwrap();
+        let configurable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'parse').configurable")
+            .unwrap();
+        assert_eq!(
+            writable,
+            crate::value::Value::Boolean(true),
+            "parse should be writable"
+        );
+        assert_eq!(
+            enumerable,
+            crate::value::Value::Boolean(false),
+            "parse should be non-enumerable"
+        );
+        assert_eq!(
+            configurable,
+            crate::value::Value::Boolean(true),
+            "parse should be configurable"
+        );
+
         // Check descriptor flags for JSON.stringify
-        let writable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').writable").unwrap();
-        let enumerable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').enumerable").unwrap();
-        let configurable = ctx.eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').configurable").unwrap();
-        assert_eq!(writable, crate::value::Value::Boolean(true), "stringify should be writable");
-        assert_eq!(enumerable, crate::value::Value::Boolean(false), "stringify should be non-enumerable");
-        assert_eq!(configurable, crate::value::Value::Boolean(true), "stringify should be configurable");
+        let writable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').writable")
+            .unwrap();
+        let enumerable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').enumerable")
+            .unwrap();
+        let configurable = ctx
+            .eval("Object.getOwnPropertyDescriptor(JSON, 'stringify').configurable")
+            .unwrap();
+        assert_eq!(
+            writable,
+            crate::value::Value::Boolean(true),
+            "stringify should be writable"
+        );
+        assert_eq!(
+            enumerable,
+            crate::value::Value::Boolean(false),
+            "stringify should be non-enumerable"
+        );
+        assert_eq!(
+            configurable,
+            crate::value::Value::Boolean(true),
+            "stringify should be configurable"
+        );
     }
 }

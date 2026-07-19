@@ -5,7 +5,6 @@ use oxc::ast::ast;
 
 use super::lower_stmt;
 use crate::lower::expr::lower_expr;
-use crate::lower::helpers::wtf8_atom_to_string;
 
 /// Lower a declaration (function, var, const, let, class)
 pub fn lower_decl(decl: &ast::Declaration) -> Option<Statement> {

@@ -4,8 +4,8 @@
 
 use super::expr::lower_expr;
 use super::pattern::{
-    binding_to_expr, lower_array_assignment_target, lower_assignment_target_to_binding,
-    lower_elem_pat, lower_object_assignment_target, lower_object_pat_prop,
+    binding_to_expr, lower_array_assignment_target, lower_elem_pat, lower_object_assignment_target,
+    lower_object_pat_prop,
 };
 use super::stmt::lower_stmt;
 use crate::ast::{
@@ -312,12 +312,7 @@ fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
         .elements
         .iter()
         .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .chain(
-            arr.rest
-                .as_ref()
-                .map(|r| lower_elem_pat(&r.argument))
-                .flatten(),
-        )
+        .chain(arr.rest.as_ref().and_then(|r| lower_elem_pat(&r.argument)))
         .collect();
     Some(Expression::ArrayPattern(elements))
 }

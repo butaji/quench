@@ -410,14 +410,14 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
         Ok(Value::Undefined)
     }));
     // Set native properties FIRST (will be overwritten by JS harness if needed)
-    assert_fn.set_property("sameValue", make_native(assert_helpers::assert_same_value));
-    assert_fn.set_property("throws", make_native(assert_helpers::assert_throws));
-    assert_fn.set_property(
+    let _ = assert_fn.set_property("sameValue", make_native(assert_helpers::assert_same_value));
+    let _ = assert_fn.set_property("throws", make_native(assert_helpers::assert_throws));
+    let _ = assert_fn.set_property(
         "compareArray",
         make_native(assert_helpers::assert_compare_array),
     );
-    assert_fn.set_property("notUnreachable", make_native(assert_not_unreachable));
-    assert_fn.set_property(
+    let _ = assert_fn.set_property("notUnreachable", make_native(assert_not_unreachable));
+    let _ = assert_fn.set_property(
         "notSameValue",
         make_native(|args: Vec<Value>| {
             let actual = args.first().cloned().unwrap_or(Value::Undefined);
@@ -445,10 +445,10 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     let deep_equal_fn = make_native(property_helpers::assert_deep_equal);
     if let Value::NativeFunction(ref nf) = deep_equal_fn {
         // These are stubs that the JS code will override
-        nf.set_property("format", Value::Undefined);
-        nf.set_property("_compare", Value::Undefined);
+        let _ = nf.set_property("format", Value::Undefined);
+        let _ = nf.set_property("_compare", Value::Undefined);
     }
-    assert_fn.set_property("deepEqual", deep_equal_fn);
+    let _ = assert_fn.set_property("deepEqual", deep_equal_fn);
     ctx.set_global(
         "assert".to_string(),
         Value::NativeFunction(std::rc::Rc::clone(&assert_fn)),
@@ -675,5 +675,32 @@ mod tests {
             crate::value::take_thrown_value().is_none(),
             "harness loader must clear stale thrown_value at start of next load"
         );
+    }
+
+    #[test]
+    fn object_define_property_setter_works() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        // Test Object.defineProperty with accessor descriptor
+        ctx.eval(
+            r#"
+            var obj = {};
+            var _8_7_2_7_bValue = 1;
+            Object.defineProperty(obj, "b", {
+                get: function () { return _8_7_2_7_bValue; },
+                set: function (value) { _8_7_2_7_bValue = value; }
+            });
+            var desc = Object.getOwnPropertyDescriptor(obj, "b");
+            print("desc.get: " + typeof desc.get);
+            print("desc.set: " + typeof desc.set);
+            print("desc.get is function: " + (typeof desc.get === 'function'));
+            print("before assign, b = " + obj.b);
+            obj.b = 11;
+            print("after assign, b = " + obj.b);
+        "#,
+        )
+        .expect("eval should succeed");
     }
 }

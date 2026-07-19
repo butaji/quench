@@ -41,7 +41,7 @@ pub fn register_array_buffer(ctx: &mut Context) {
         Rc::clone(&proto_rc),
     ));
     // Set prototype property so eval_new can find it
-    ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    let _ = ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     let ab_fn = Value::NativeFunction(ab_fn_rc);
 
     ctx.set_global("ArrayBuffer".to_string(), ab_fn);

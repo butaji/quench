@@ -1,6 +1,6 @@
 //! Lower helpers - shared utilities for OXC AST lowering
 
-use crate::ast::{BinaryOp, CompoundOp, PropertyKey, UnaryOp};
+use crate::ast::{BinaryOp, CompoundOp, UnaryOp};
 use oxc::ast::ast;
 use oxc::syntax::operator::{AssignmentOperator, BinaryOperator, LogicalOperator, UnaryOperator};
 
@@ -76,10 +76,6 @@ pub fn lower_bin_op(op: &BinaryOperator) -> Result<BinaryOp, LowerError> {
         BinaryOperator::BitwiseOR => Ok(BinaryOp::BitOr),
         BinaryOperator::In => Ok(BinaryOp::In),
         BinaryOperator::Instanceof => Ok(BinaryOp::Instanceof),
-        _ => Err(LowerError::new(format!(
-            "Unsupported binary operator: {:?}",
-            op
-        ))),
     }
 }
 
@@ -93,10 +89,6 @@ pub fn lower_unary_op(op: &UnaryOperator) -> Result<UnaryOp, LowerError> {
         UnaryOperator::Typeof => Ok(UnaryOp::Typeof),
         UnaryOperator::Void => Ok(UnaryOp::Void),
         UnaryOperator::Delete => Ok(UnaryOp::Delete),
-        _ => Err(LowerError::new(format!(
-            "Unsupported unary operator: {:?}",
-            op
-        ))),
     }
 }
 

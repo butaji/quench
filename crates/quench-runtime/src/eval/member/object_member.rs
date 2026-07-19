@@ -75,13 +75,10 @@ pub fn eval_object_member(
                 CURRENT_CONTEXT.with(|cell| cell.borrow().map(|ptr| unsafe { &*ptr }.env()))
             });
             if let Some(e) = fallback_env {
-                if let Some(val) = e.borrow().get("globalThis") {
-                    // globalThis is an Object value; look up property on it.
-                    if let Value::Object(global_rc) = &val {
-                        let global = global_rc.borrow();
-                        if let Some(found) = global.properties.get(prop_name) {
-                            return Ok(found.clone());
-                        }
+                if let Some(Value::Object(global_rc)) = e.borrow().get("globalThis").as_ref() {
+                    let global = global_rc.borrow();
+                    if let Some(found) = global.properties.get(prop_name) {
+                        return Ok(found.clone());
                     }
                 }
             }

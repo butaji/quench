@@ -3,7 +3,7 @@
 //! Handles lowering of literals and template literals.
 
 use super::expr::lower_expr;
-use super::helpers::{wtf8_atom_to_string, LowerError};
+use super::helpers::LowerError;
 use crate::ast::Expression;
 use oxc::ast::ast;
 
@@ -14,7 +14,7 @@ pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, 
     if tpl.expressions.is_empty() {
         let mut result = String::new();
         for elem in &tpl.quasis {
-            result.push_str(&elem.value.raw.to_string());
+            result.push_str(elem.value.raw.as_ref());
         }
         return Ok(Expression::String(result));
     }
