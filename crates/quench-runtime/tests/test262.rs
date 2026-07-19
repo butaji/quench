@@ -922,15 +922,27 @@ fn profile_regex_eval() {
     println!("Estimated 65536 iterations: {:?}", per_iter * 65536);
 }
 
-/// Verify instanceof SyntaxError works for SyntaxError objects
+/// Bug reproduction: native eval() from JS doesn't throw for /\n/ 
+/// while ctx.eval directly does. This is the blocker for test S7.8.5_A1.3_T2.js.
 #[test]
-fn test_instanceof_syntax_error() {
+fn native_eval_should_throw_for_newline_regex() {
     let mut ctx = quench_runtime::Context::new().unwrap();
     quench_runtime::builtins::register_builtins(&mut ctx);
-    // Known pre-existing issue: instanceof SyntaxError doesn't work
-    // for SyntaxError objects created by create_js_error_with_type.
-    // The instanceof operator uses pointer comparison which fails when
-    // the error is created in a different context scope.
-    let r1 = ctx.eval("/\n/");
-    assert!(r1.is_err(), "direct eval of /\\n/ should throw");
+    // OXC rejects /\n/ at parse time
+    assert!(quench_runtime::parser::parse_script("/\n/").is_err());
+    // Direct ctx.eval throws
+    assert!(ctx.eval("/\n/").is_err());
+    // BUT the native eval function from JS does NOT throw
+    // even though it should produce the same parse error:
+    let native_eval_result = ctx.eval(r#"eval("/\u000A/")"#);
+    assert!(native_eval_result.is_err(),
+        "FIXME: native eval should throw SyntaxError for /\\u000A/ but got Ok");
+    // Also check instanceof works:
+    let ctor = ctx.get_global("SyntaxError").unwrap();
+    let err = quench_runtime::eval::call_value_with_this(
+        ctor, vec![quench_runtime::value::Value::String("test".into())],
+        quench_runtime::value::Value::Undefined).unwrap();
+    ctx.set_global("__diag_err".to_string(), err);
+    let inst = ctx.eval("__diag_err instanceof SyntaxError").unwrap();
+    assert_eq!(inst, quench_runtime::value::Value::Boolean(true));
 }
