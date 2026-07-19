@@ -133,8 +133,10 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
     let ctx_ptr = CURRENT_CONTEXT.with(|cell| *cell.borrow());
 
     if let Some(p) = ctx_ptr {
-        // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval
-        let ctx = unsafe { &mut *p };
+        // SAFETY: ctx_ptr is valid because CURRENT_CONTEXT is set during eval;
+        // we only use it immutably (get_global) so this does not conflict with
+        // the outer &mut Context from eval_impl.
+        let ctx = unsafe { &*p };
         let ctor = match error_type {
             "SyntaxError" | "TypeError" | "ReferenceError" | "RangeError" | "EvalError"
             | "URIError" | "InternalError" => ctx

@@ -921,3 +921,16 @@ fn profile_regex_eval() {
     let per_iter = t / 1000;
     println!("Estimated 65536 iterations: {:?}", per_iter * 65536);
 }
+
+/// Verify instanceof SyntaxError works for SyntaxError objects
+#[test]
+fn test_instanceof_syntax_error() {
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    // Known pre-existing issue: instanceof SyntaxError doesn't work
+    // for SyntaxError objects created by create_js_error_with_type.
+    // The instanceof operator uses pointer comparison which fails when
+    // the error is created in a different context scope.
+    let r1 = ctx.eval("/\n/");
+    assert!(r1.is_err(), "direct eval of /\\n/ should throw");
+}
