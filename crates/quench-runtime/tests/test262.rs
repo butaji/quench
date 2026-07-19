@@ -946,3 +946,79 @@ fn native_eval_should_throw_for_newline_regex() {
     let inst = ctx.eval("__diag_err instanceof SyntaxError").unwrap();
     assert_eq!(inst, quench_runtime::value::Value::Boolean(true));
 }
+
+/// Bug reproduction: eval returns undefined for /\\<NUL>/ pattern
+#[test]
+fn eval_regex_backslash_nul_returns_object() {
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    // Create regex via eval with backslash+NUL pattern
+    let result = ctx.eval(r#"eval("/\\\u0000/")"#);
+    assert!(result.is_ok(), "eval /\\\\u0000/ should succeed");
+    let val = result.unwrap();
+    assert!(matches!(val, quench_runtime::value::Value::Object(_)),
+        "should be regex object: {:?}", val);
+    // Check .source property
+    let source_result = ctx.eval(r#"eval("/\\\u0000/").source"#);
+    assert!(source_result.is_ok(), ".source should be accessible");
+}
+
+/// Identify which character makes eval return undefined
+#[test]
+fn find_bad_backslash_char() {
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    for cu in 0u32..=0xffff {
+        let elimination = cu == 0x002A || cu == 0x002F || cu == 0x005C || cu == 0x002B ||
+            cu == 0x003F || cu == 0x0028 || cu == 0x0029 ||
+            cu == 0x005B || cu == 0x005D || cu == 0x007B || cu == 0x007D;
+        let line_term = cu == 0x000A || cu == 0x000D || cu == 0x2028 || cu == 0x2029;
+        if elimination || line_term { continue; }
+        let ch = std::char::from_u32(cu).unwrap_or('\u{FFFD}');
+        let js = format!(r#"eval("/\{0}/")"#, ch);
+        let result = ctx.eval(&js);
+        match result {
+            Ok(quench_runtime::value::Value::Object(_)) => {}
+            Ok(other) => {
+                panic!("cu=0x{:04x} ch={:?} eval returned {:?}", cu, ch, other);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// Same test WITH harness injection, spawned thread
+#[test]
+fn find_bad_backslash_char_spawned() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut ctx = quench_runtime::Context::new().unwrap();
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        for cu in 0u32..=0xffff {
+            let elimination = cu == 0x002A || cu == 0x002F || cu == 0x005C || cu == 0x002B ||
+                cu == 0x003F || cu == 0x0028 || cu == 0x0029 ||
+                cu == 0x005B || cu == 0x005D || cu == 0x007B || cu == 0x007D;
+            let line_term = cu == 0x000A || cu == 0x000D || cu == 0x2028 || cu == 0x2029;
+            if elimination || line_term { continue; }
+            let ch = std::char::from_u32(cu).unwrap_or('\u{FFFD}');
+            let js = format!("eval(\"/{0}/\")", ch);
+            let result = ctx.eval(&js);
+            match result {
+                Ok(quench_runtime::value::Value::Object(_)) => {}
+                Ok(other) => {
+                    tx.send(Some((cu, format!("{:?}", other)))).ok();
+                    return;
+                }
+                Err(_) => {}
+            }
+        }
+        tx.send(None).ok();
+    });
+    let result = rx.recv_timeout(std::time::Duration::from_secs(30));
+    match result {
+        Ok(Some((cu, val))) => panic!("SPAWNED: cu=0x{:04x} returned {:?}", cu, val),
+        Ok(None) => {} // all ok
+        Err(_) => panic!("timed out"),
+    }
+}
