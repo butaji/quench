@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::{
-    to_js_string, to_number_unchecked, JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
-    ValueFunction,
+    to_js_string, to_number_unchecked, JsError, NativeConstructor, NativeFunction, Object,
+    ObjectKind, Value, ValueFunction,
 };
 use crate::Context;
 
@@ -84,7 +84,10 @@ fn extract_args_from_array_like(array_like: Option<&Value>) -> Result<Vec<Value>
         Some(Value::Object(o)) => {
             let obj = o.borrow();
             let len_val = obj.get("length");
-            let len = len_val.as_ref().map(|v| to_number_unchecked(v) as usize).unwrap_or(0);
+            let len = len_val
+                .as_ref()
+                .map(|v| to_number_unchecked(v) as usize)
+                .unwrap_or(0);
             let mut args = Vec::with_capacity(len);
             for i in 0..len {
                 if let Some(arg) = obj.get(&i.to_string()) {
@@ -132,8 +135,8 @@ fn proto_bind(args: Vec<Value>) -> Result<Value, JsError> {
         crate::interpreter::take_this_value();
         result
     });
-    bound_func.set_property("length", Value::Number(bound_len as f64));
-    bound_func.set_property("name", Value::String(format!("bound {}", target_name)));
+    let _ = bound_func.set_property("length", Value::Number(bound_len as f64));
+    let _ = bound_func.set_property("name", Value::String(format!("bound {}", target_name)));
 
     Ok(Value::NativeFunction(Rc::new(bound_func)))
 }

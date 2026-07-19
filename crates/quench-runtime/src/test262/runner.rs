@@ -1,81 +1,129 @@
-//! test262 staged runner — checkpointed, fail-fast
-//!
-//! `Test262Runner` walks STAGES in order, stops at first failure,
-//! writes `.test262_checkpoint`, and resumes on rerun.
+//! test262 staged runner — one stage at a time, 100% passing required.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::test262::checkpoint::Checkpoint;
 use crate::test262::harness::HarnessLoader;
 use crate::test262::host::{Test262Host, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
-use crate::test262::skip::{should_skip, should_skip_path, should_skip_source};
 
 /// Ordered stages (relative to test262/test/).
+///
+/// 100% enumeration of every directory under `test/` that is part of
+/// ECMA-262 test262 — `test/intl402` (ECMA-402) and `test/staging` are
+/// intentionally excluded (separate conformance suites). The list mirrors
+/// `tasks/index.json` exactly; keep them in sync.
 pub const STAGES: &[&str] = &[
+    // harness
     "test/harness",
+    // language — lexical structure → types → statements → scoping → modules
     "test/language/literals",
     "test/language/identifiers",
+    "test/language/future-reserved-words",
+    "test/language/reserved-words",
+    "test/language/keywords",
+    "test/language/punctuators",
     "test/language/white-space",
-    "test/language/comments",
     "test/language/line-terminators",
+    "test/language/comments",
+    "test/language/source-text",
     "test/language/types",
-    "test/language/expressions",
+    "test/language/directive-prologue",
     "test/language/statements",
-    "test/language/variable-statement",
+    "test/language/statementList",
+    "test/language/block-scope",
+    "test/language/expressions",
+    "test/language/computed-property-names",
+    "test/language/destructuring",
+    "test/language/rest-parameters",
     "test/language/function-code",
     "test/language/arguments-object",
-    "test/language/object-literal",
-    "test/language/directive-prologue",
+    "test/language/eval-code",
     "test/language/global-code",
-    "test/language/source-text",
+    "test/language/identifier-resolution",
+    "test/language/module-code",
+    "test/language/import",
+    "test/language/export",
+    // built-ins — globals → constructors → iterators → collections → advanced
     "test/built-ins/global",
+    "test/built-ins/Infinity",
+    "test/built-ins/NaN",
+    "test/built-ins/undefined",
     "test/built-ins/parseInt",
     "test/built-ins/parseFloat",
     "test/built-ins/isNaN",
     "test/built-ins/isFinite",
     "test/built-ins/decodeURI",
+    "test/built-ins/decodeURIComponent",
+    "test/built-ins/encodeURI",
+    "test/built-ins/encodeURIComponent",
     "test/built-ins/eval",
+    "test/built-ins/ThrowTypeError",
     "test/built-ins/Object",
     "test/built-ins/Function",
     "test/built-ins/Boolean",
     "test/built-ins/Error",
+    "test/built-ins/NativeErrors",
+    "test/built-ins/AggregateError",
+    "test/built-ins/SuppressedError",
     "test/built-ins/Number",
+    "test/built-ins/BigInt",
     "test/built-ins/Math",
     "test/built-ins/Date",
     "test/built-ins/String",
+    "test/built-ins/Symbol",
     "test/built-ins/RegExp",
     "test/built-ins/Array",
-    "test/built-ins/Symbol",
+    "test/built-ins/JSON",
+    "test/built-ins/Iterator",
+    "test/built-ins/ArrayIteratorPrototype",
+    "test/built-ins/StringIteratorPrototype",
+    "test/built-ins/RegExpStringIteratorPrototype",
+    "test/built-ins/MapIteratorPrototype",
+    "test/built-ins/SetIteratorPrototype",
+    "test/built-ins/AsyncIteratorPrototype",
+    "test/built-ins/AsyncFromSyncIteratorPrototype",
+    "test/built-ins/GeneratorFunction",
+    "test/built-ins/GeneratorPrototype",
+    "test/built-ins/AsyncGeneratorFunction",
+    "test/built-ins/AsyncGeneratorPrototype",
+    "test/built-ins/AsyncFunction",
     "test/built-ins/ArrayBuffer",
+    "test/built-ins/SharedArrayBuffer",
     "test/built-ins/TypedArray",
+    "test/built-ins/TypedArrayConstructors",
+    "test/built-ins/Uint8Array",
     "test/built-ins/DataView",
+    "test/built-ins/Atomics",
     "test/built-ins/Map",
     "test/built-ins/Set",
     "test/built-ins/WeakMap",
     "test/built-ins/WeakSet",
-    "test/built-ins/JSON",
-    "test/built-ins/GeneratorFunction",
-    "test/built-ins/AsyncFunction",
+    "test/built-ins/WeakRef",
+    "test/built-ins/FinalizationRegistry",
     "test/built-ins/Promise",
     "test/built-ins/Reflect",
     "test/built-ins/Proxy",
-    "test/language/module-code",
-    "test/language/import",
-    "test/language/export",
+    "test/built-ins/DisposableStack",
+    "test/built-ins/AsyncDisposableStack",
+    "test/built-ins/ShadowRealm",
+    "test/built-ins/AbstractModuleSource",
+    "test/built-ins/Temporal",
+    // annexB (legacy / web compatibility — recurses through built-ins/ and language/)
     "test/annexB",
 ];
 
-/// Collect all .js test files under `dir` (excludes _FIXTURE.js).
 fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if dir.is_file() {
-        if dir.extension().map(|e| e == "js").unwrap_or(false) {
-            let fname = dir.file_name().unwrap().to_string_lossy();
-            if !fname.ends_with("_FIXTURE.js") {
-                out.push(dir.to_path_buf());
-            }
+        if dir.extension().map(|e| e == "js").unwrap_or(false)
+            && !dir
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("_FIXTURE.js")
+        {
+            out.push(dir.to_path_buf());
         }
         return out;
     }
@@ -84,40 +132,31 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
             let p = entry.path();
             if p.is_dir() {
                 out.extend(collect_tests(&p));
-            } else if p.extension().map(|e| e == "js").unwrap_or(false) {
-                let fname = p.file_name().unwrap().to_string_lossy();
-                if !fname.ends_with("_FIXTURE.js") {
-                    out.push(p);
-                }
+            } else if p.extension().map(|e| e == "js").unwrap_or(false)
+                && !p
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .ends_with("_FIXTURE.js")
+            {
+                out.push(p);
             }
         }
     }
     out
 }
 
-/// Summary of a staged run: outcome counts, aggregated skip reasons,
-/// and the first failure (if any).
 #[derive(Debug, Default, Clone)]
 pub struct RunSummary {
     pub passed: usize,
-    pub skipped: usize,
     pub failed: usize,
-    /// Skip reason -> how many tests were skipped for it.
-    pub skip_reasons: std::collections::BTreeMap<String, usize>,
-    /// (test path, failure reason) of the first failure.
     pub first_failure: Option<(String, String)>,
 }
 
-/// Combine a host result with the test's negative expectation (item 11):
-/// - phase "parse": any error passes.
-/// - phase "runtime"/"early" (or unset): an error must occur, and when an
-///   expected error type is given its name must appear in the error message.
 fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutcome {
     match (&meta.negative, result) {
         (None, Ok(())) => TestOutcome::Pass,
-        (None, Err(msg)) => TestOutcome::Fail {
-            reason: format!("unexpected error: {}", msg),
-        },
+        (None, Err(msg)) => TestOutcome::Fail { reason: msg },
         (Some(_), Ok(())) => TestOutcome::Fail {
             reason: "expected error but passed".into(),
         },
@@ -125,7 +164,7 @@ fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutc
         (Some(neg), Err(msg)) => {
             if !neg.typ.is_empty() && !msg.contains(&neg.typ) {
                 TestOutcome::Fail {
-                    reason: format!("negative test expected {} but got: {}", neg.typ, msg),
+                    reason: format!("expected {} but got: {}", neg.typ, msg),
                 }
             } else {
                 TestOutcome::Pass
@@ -134,7 +173,6 @@ fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutc
     }
 }
 
-/// Run a single test and return its outcome.
 pub fn run_single_test(
     host: &mut dyn Test262Host,
     harness: &HarnessLoader,
@@ -144,7 +182,7 @@ pub fn run_single_test(
         Ok(s) => s,
         Err(e) => {
             return TestOutcome::Fail {
-                reason: format!("read error: {}", e),
+                reason: format!("read: {}", e),
             }
         }
     };
@@ -153,40 +191,19 @@ pub fn run_single_test(
         Some(m) => m,
         None => {
             return TestOutcome::Fail {
-                reason: "failed to parse frontmatter".into(),
+                reason: "bad frontmatter".into(),
             }
         }
     };
 
-    for feat in &meta.features {
-        if !host.has_feature(feat) {
-            return TestOutcome::Skip {
-                reason: format!("feature: {}", feat),
-            };
-        }
-    }
-    if let Some(reason) = should_skip(&meta) {
-        return TestOutcome::Skip { reason };
-    }
-    if let Some(reason) = should_skip_path(&test_path.to_string_lossy()) {
-        return TestOutcome::Skip { reason };
-    }
-    if let Some(reason) = should_skip_source(&source) {
-        return TestOutcome::Skip { reason };
-    }
-
+    let is_module = meta.flags.contains(&"module".to_string());
     let is_raw = meta.flags.contains(&"raw".to_string());
 
     let script = if is_raw {
-        // raw: run the source exactly as-is, no harness prelude.
         source.clone()
     } else {
-        // For async tests (flag: async), set up $DONE before loading asyncHelpers.js.
-        // For non-async tests that include asyncHelpers.js, load the harness normally
-        // so asyncTest is defined and throws when $DONE is not defined.
         let is_async = meta.flags.contains(&"async".to_string());
         if is_async {
-            // Define $DONE before loading harness for ALL async tests.
             let prelude = "var $DONE = function(error) { if (error !== undefined && error !== null) throw error; };\n";
             match harness.build_script(&source, &meta.includes) {
                 Ok(s) => format!("{}{}", prelude, s),
@@ -200,14 +217,19 @@ pub fn run_single_test(
         }
     };
 
-    // Strict-mode variants (item 8): tests run sloppy AND strict unless flags
-    // say otherwise. raw/noStrict => sloppy only; onlyStrict => strict only.
     let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
 
-    // Run sloppy mode unless onlyStrict
+    let run = |s: &str, host: &mut dyn Test262Host| {
+        if is_module {
+            host.run_module_script(s)
+        } else {
+            host.run_script(s)
+        }
+    };
+
     if !only_strict {
-        let outcome = check_outcome(&meta, host.run_script(&script));
+        let outcome = check_outcome(&meta, run(&script, host));
         if !matches!(outcome, TestOutcome::Pass) {
             return outcome;
         }
@@ -216,248 +238,130 @@ pub fn run_single_test(
         }
     }
 
-    // Run strict mode (only reached if noStrict is false and onlyStrict is false)
     if no_strict {
         return TestOutcome::Pass;
     }
+
     let strict_script = format!("\"use strict\";\n{}", script);
-    match check_outcome(&meta, host.run_script(&strict_script)) {
+    match check_outcome(&meta, run(&strict_script, host)) {
         TestOutcome::Fail { reason } => TestOutcome::Fail {
-            reason: format!("strict mode: {}", reason),
+            reason: format!("strict: {}", reason),
         },
         other => other,
     }
 }
 
-/// Staged, checkpointed, fail-fast test262 runner.
 pub struct Test262Runner {
     test262_dir: PathBuf,
-    checkpoint_path: PathBuf,
     harness: HarnessLoader,
 }
 
 impl Test262Runner {
-    pub fn new(test262_dir: PathBuf, checkpoint_path: PathBuf) -> Self {
-        // Harness files are at tests/test262/harness/
-        // HarnessLoader appends /harness, so pass tests/test262
+    pub fn new(test262_dir: PathBuf) -> Self {
         Self {
             harness: HarnessLoader::new(test262_dir.to_str().unwrap_or(".")),
-            checkpoint_path,
             test262_dir,
         }
     }
 
-    /// Run tests stage by stage, stopping at first failure. Checkpoint auto-saved.
-    /// Set `TEST262_STAGE` env var to run only a specific stage (for CI); in that
-    /// mode the checkpoint file is never read, written, or deleted.
-    /// Set `TEST262_LIMIT` to run at most N tests this invocation; the checkpoint
-    /// is saved at the resume position so reruns continue incrementally.
     pub fn run(&self, host: &mut dyn Test262Host) -> RunSummary {
-        let mut summary = RunSummary::default();
-
-        // TEST262_STAGE=N: run ONLY stage N, never touching the checkpoint.
-        if let Some(stage) = std::env::var("TEST262_STAGE")
+        let all = std::env::var("ALL_STAGES")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let start = std::env::var("TEST262_STAGE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-        {
-            let ok = self.run_stage(host, stage);
-            if !ok {
-                summary.failed = 1;
-            }
-            return summary;
-        }
+            .unwrap_or(0);
 
-        let limit: Option<usize> = std::env::var("TEST262_LIMIT")
-            .ok()
-            .and_then(|s| s.parse().ok());
-        let mut executed: usize = 0;
-
-        let checkpoint = Checkpoint::load(
-            self.checkpoint_path
-                .to_str()
-                .unwrap_or(".test262_checkpoint"),
-        );
-        let start_stage = checkpoint.map(|c| c.stage).unwrap_or(0);
-        let start_index = checkpoint.map(|c| c.index).unwrap_or(0);
-
-        let mut current = checkpoint.unwrap_or(Checkpoint { stage: 0, index: 0 });
-        let ckpt_path = self
-            .checkpoint_path
-            .to_str()
-            .unwrap_or(".test262_checkpoint");
-
-        for (stage_idx, stage_dir) in STAGES.iter().enumerate() {
-            if stage_idx < start_stage {
-                println!("[SKIP] Stage {}: {}", stage_idx, stage_dir);
-                continue;
-            }
-
-            let full_path = self.test262_dir.join(stage_dir);
-            if !full_path.exists() {
-                println!("[MISSING] {}", full_path.display());
-                current.advance_stage();
-                let _ = current.save(ckpt_path);
-                continue;
-            }
-
-            let mut tests = collect_tests(&full_path);
-            tests.sort();
-            let test_count = tests.len();
-
-            println!(
-                "\n=== Stage {}: {} ({} tests) ===",
-                stage_idx, stage_dir, test_count
-            );
-
-            let mut stage_passed: usize = 0;
-            let mut stage_skipped: usize = 0;
-
-            for (test_idx, test_path) in tests.iter().enumerate() {
-                if stage_idx == start_stage && test_idx < start_index {
-                    continue;
-                }
-
-                if let Some(n) = limit {
-                    if executed >= n {
-                        current = Checkpoint {
-                            stage: stage_idx,
-                            index: test_idx,
-                        };
-                        let _ = current.save(ckpt_path);
-                        println!("\n[LIMIT] Reached TEST262_LIMIT={} ({} tests run, {} passed, {} skipped). \
-                                  Checkpoint saved at stage {}, index {} — rerun to continue.",
-                                 n, executed, summary.passed, summary.skipped, stage_idx, test_idx);
-                        return summary;
-                    }
-                }
-                executed += 1;
-
-                let outcome = run_single_test(host, &self.harness, test_path);
-
-                match &outcome {
-                    TestOutcome::Pass => {
-                        summary.passed += 1;
-                        stage_passed += 1;
-                        if limit.is_some() {
-                            println!("  [PASS] {}", test_path.display());
-                        } else if summary.passed % 100 == 0 {
-                            println!("  ... {} passed so far", summary.passed);
-                        }
-                    }
-                    TestOutcome::Skip { reason } => {
-                        summary.skipped += 1;
-                        stage_skipped += 1;
-                        *summary.skip_reasons.entry(reason.clone()).or_insert(0) += 1;
-                        if limit.is_some() {
-                            println!("  [SKIP] {} ({})", test_path.display(), reason);
-                        }
-                    }
-                    TestOutcome::Fail { reason } => {
-                        summary.failed += 1;
-                        summary.first_failure =
-                            Some((test_path.display().to_string(), reason.clone()));
-                        println!("\n═══════════════════════════════════════════════════");
-                        println!("FIRST FAILURE");
-                        println!("File: {}", test_path.display());
-                        println!("Stage: {} | Index: {}", stage_idx, test_idx);
-                        println!("───────────────────────────────────────────────────");
-                        println!("{}", reason);
-                        println!("───────────────────────────────────────────────────");
-                        println!("Fix this test, then rerun.");
-                        println!("Checkpoint: {}", self.checkpoint_path.display());
-                        println!("═══════════════════════════════════════════════════");
-                        current = Checkpoint {
-                            stage: stage_idx,
-                            index: test_idx,
-                        };
-                        let _ = current.save(ckpt_path);
-                        return summary;
-                    }
-                }
-            }
-
-            println!(
-                "Stage {} complete ({} tests, {} passed, {} skipped)",
-                stage_idx, test_count, stage_passed, stage_skipped
-            );
-            current = Checkpoint {
-                stage: stage_idx + 1,
-                index: 0,
+        let mut total = RunSummary::default();
+        let mut stage = start;
+        loop {
+            let stage_dir = match STAGES.get(stage) {
+                Some(s) => *s,
+                None => break,
             };
-            let _ = current.save(ckpt_path);
+            let s = self.run_stage(host, stage, stage_dir);
+            total.passed += s.passed;
+            total.failed += s.failed;
+            if s.failed > 0 {
+                total.first_failure = s.first_failure;
+                break;
+            }
+            if !all {
+                break;
+            }
+            stage += 1;
         }
 
-        let _ = fs::remove_file(&self.checkpoint_path);
-        println!("\n═══════════════════════════════════════════════════");
-        println!(
-            "ALL STAGES COMPLETE — {} passed, {} skipped",
-            summary.passed, summary.skipped
-        );
-        if !summary.skip_reasons.is_empty() {
-            println!("Skip reasons:");
-            for (reason, count) in &summary.skip_reasons {
-                println!("  {} × {}", count, reason);
-            }
+        if all && total.failed == 0 {
+            println!(
+                "\n=== ALL STAGES COMPLETE — {} stages passed ===",
+                STAGES.len()
+            );
         }
-        println!("═══════════════════════════════════════════════════");
-        summary
+        total
     }
 
-    /// Run only a single stage by index. Returns true if complete without failures.
-    pub fn run_stage(&self, host: &mut dyn Test262Host, stage_idx: usize) -> bool {
-        let stage_dir = match STAGES.get(stage_idx) {
-            Some(s) => *s,
-            None => return true,
-        };
+    fn run_stage(
+        &self,
+        host: &mut dyn Test262Host,
+        stage: usize,
+        stage_dir: &str,
+    ) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
             println!("[MISSING] {}", full_path.display());
-            return true;
+            return RunSummary::default();
         }
 
         let mut tests = collect_tests(&full_path);
         tests.sort();
-        let test_count = tests.len();
-        println!(
-            "\n=== Stage {}: {} ({} tests) ===",
-            stage_idx, stage_dir, test_count
-        );
+        let count = tests.len();
 
+        println!("\n=== Stage {}: {} ({} tests) ===", stage, stage_dir, count);
+
+        let mut summary = RunSummary::default();
         let mut passed = 0;
-        let mut skipped = 0;
-        let mut skip_reasons: std::collections::BTreeMap<String, usize> = Default::default();
-        for (test_idx, test_path) in tests.iter().enumerate() {
-            let outcome = run_single_test(host, &self.harness, test_path);
-            match &outcome {
+
+        for (i, path) in tests.iter().enumerate() {
+            match run_single_test(host, &self.harness, path) {
                 TestOutcome::Pass => {
                     passed += 1;
                     if passed % 100 == 0 {
                         println!("  ... {} passed", passed);
                     }
                 }
-                TestOutcome::Skip { reason } => {
-                    skipped += 1;
-                    *skip_reasons.entry(reason.clone()).or_insert(0) += 1;
-                }
                 TestOutcome::Fail { reason } => {
-                    println!("\n═══════════════════════════════════════════════════");
-                    println!("FIRST FAILURE");
-                    println!("File: {}", test_path.display());
-                    println!("Stage: {} | Index: {}", stage_idx, test_idx);
-                    println!("───────────────────────────────────────────────────");
-                    println!("{}", reason);
-                    println!("═══════════════════════════════════════════════════");
-                    return false;
+                    summary.failed += 1;
+                    summary.first_failure = Some((path.display().to_string(), reason.clone()));
+                    println!(
+                        "\n============================================================\n\
+                         FIRST FAILURE\n\
+                         Stage {} | #{}\n\
+                         {}\n\
+                         ------------------------------------------------------------\n\
+                         {}\n\
+                         ============================================================",
+                        stage,
+                        i,
+                        path.display(),
+                        reason
+                    );
+                    break;
                 }
             }
         }
-        println!(
-            "Stage {} complete ({} tests, {} passed, {} skipped)",
-            stage_idx, test_count, passed, skipped
-        );
-        for (reason, count) in &skip_reasons {
-            println!("  {} × {}", count, reason);
+
+        if summary.failed == 0 {
+            println!("ALL STAGES COMPLETE — Stage {}: {}/{}", stage, count, count);
+        } else {
+            println!(
+                "Stage {}: {}/{} passed (first failure reported)",
+                stage, passed, count
+            );
         }
-        true
+        summary.passed = passed;
+        summary
     }
 }

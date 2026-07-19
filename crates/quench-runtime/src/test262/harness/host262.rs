@@ -4,6 +4,7 @@ use crate::context::CURRENT_CONTEXT;
 use crate::test262::harness::make_native;
 use crate::value::{Object, ObjectKind};
 use crate::{Context, JsError, Value};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// $262.gc - trigger garbage collection (not supported, throws ReferenceError)
@@ -30,85 +31,59 @@ pub fn host_262_detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
-/// Realm evalScript - evaluates code in a new context
-fn realm_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
-    let code = args
-        .first()
-        .map(crate::value::to_js_string)
-        .unwrap_or_default();
-    let mut realm_ctx = Context::new()?;
-    crate::test262::harness::inject_harness(&mut realm_ctx);
-    realm_ctx.eval(&code)
-}
-
-/// $262.createRealm - creates a realm-like global facade.
-fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
-    let global = create_realm_global()?;
-    let mut realm = Object::new(ObjectKind::Ordinary);
-    realm.set("global", global);
-    realm.set("evalScript", make_native(realm_eval_script));
-    realm.set("gc", make_native(host_262_gc));
-    realm.set("detachArrayBuffer", make_native(host_262_detach_buffer));
-    Ok(Value::Object(Rc::new(std::cell::RefCell::new(realm))))
-}
-
-fn create_realm_global() -> Result<Value, JsError> {
-    let mut ctx = Context::new()?;
-    mirror_realm_bindings(&mut ctx);
-    let Value::Object(global) = ctx.get_global("globalThis").unwrap_or(Value::Undefined) else {
-        return Err(JsError("createRealm: globalThis missing".to_string()));
-    };
-    let eval_global = Rc::clone(&global);
-    global.borrow_mut().set(
-        "eval",
-        make_native(move |args| eval_realm_global(&eval_global, args)),
-    );
-    Ok(Value::Object(global))
-}
-
-fn mirror_realm_bindings(ctx: &mut Context) {
-    let names = ["Number", "String", "Boolean", "Symbol"];
-    let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
-        return;
-    };
-    for name in names {
-        if let Some(value) = ctx.get_global(name) {
-            global.borrow_mut().set(name, value);
-        }
-    }
-}
-
-fn eval_realm_global(
-    global: &Rc<std::cell::RefCell<Object>>,
+/// Realm evalScript - reuses the realm's stored context so that modifications
+/// to the realm's builtins (e.g. Object.setPrototypeOf(other.Number.prototype, ...))
+/// persist across eval calls.
+fn realm_eval_script(
+    realm_ctx: &RefCell<Option<Context>>,
     args: Vec<Value>,
 ) -> Result<Value, JsError> {
     let code = args
         .first()
         .map(crate::value::to_js_string)
         .unwrap_or_default();
+    let mut ctx = realm_ctx
+        .borrow_mut()
+        .take()
+        .expect("realm context missing");
+    let result = ctx.eval(&code);
+    // Put the context back for the next call
+    *realm_ctx.borrow_mut() = Some(ctx);
+    result
+}
+
+/// $262.createRealm - creates a realm-like global facade.
+/// The realm stores its own Context so that builtin modifications persist across
+/// eval calls (e.g., Object.setPrototypeOf(other.Number.prototype, proxy)).
+fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     let mut ctx = Context::new()?;
-    copy_global_properties(global, &mut ctx);
-    let result = ctx.eval(&code)?;
-    sync_global_properties(&ctx, global);
-    Ok(result)
-}
+    crate::test262::harness::inject_harness(&mut ctx);
+    let Value::Object(global) = ctx.get_global("globalThis").unwrap_or(Value::Undefined) else {
+        return Err(JsError("createRealm: globalThis missing".to_string()));
+    };
 
-fn copy_global_properties(global: &Rc<std::cell::RefCell<Object>>, ctx: &mut Context) {
-    for key in global.borrow().own_keys() {
-        if let Some(value) = global.borrow().get(&key) {
-            ctx.set_global(key, value);
-        }
-    }
-}
+    // Create a shared context storage; we need interior mutability so the
+    // realm_eval_script closure (which must be 'static) can mutate it.
+    let realm_ctx = Rc::new(RefCell::new(Some(ctx)));
 
-fn sync_global_properties(ctx: &Context, global: &Rc<std::cell::RefCell<Object>>) {
-    if let Some(Value::Object(evaluated)) = ctx.get_global("globalThis") {
-        for key in evaluated.borrow().own_keys() {
-            if let Some(value) = evaluated.borrow().get(&key) {
-                global.borrow_mut().set(&key, value);
-            }
-        }
-    }
+    // Set realm's eval to use the shared context
+    let eval_ctx = Rc::clone(&realm_ctx);
+    global.borrow_mut().set(
+        "eval",
+        make_native(move |args| realm_eval_script(&eval_ctx, args)),
+    );
+
+    // Create the realm facade object
+    let mut realm = Object::new(ObjectKind::Ordinary);
+    realm.set("global", Value::Object(Rc::clone(&global)));
+    realm.set(
+        "evalScript",
+        make_native(move |args| realm_eval_script(&Rc::clone(&realm_ctx), args)),
+    );
+    realm.set("gc", make_native(host_262_gc));
+    realm.set("detachArrayBuffer", make_native(host_262_detach_buffer));
+
+    Ok(Value::Object(Rc::new(RefCell::new(realm))))
 }
 
 /// $262.evalScript - evaluates code in the current context

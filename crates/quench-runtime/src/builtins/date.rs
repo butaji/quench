@@ -1,11 +1,11 @@
 //! Date built-in and global utility functions
 
 use std::cell::RefCell;
-use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{
-    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
+    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
+    ObjectKind, Value,
 };
 use crate::Context;
 
@@ -685,6 +685,7 @@ pub fn register_date(ctx: &mut Context) {
 mod tests {
     use super::*;
     use crate::Context;
+    use std::f64::consts::PI;
 
     #[test]
     fn test_days_from_ymd_before_1970_is_negative() {

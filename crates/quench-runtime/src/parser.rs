@@ -235,7 +235,7 @@ mod tests {
         }
         println!("body.len() = {}", ret.program.body.len());
         assert!(
-            ret.program.directives.len() > 0,
+            !ret.program.directives.is_empty(),
             "Expected directives but got none"
         );
     }
@@ -251,7 +251,7 @@ mod tests {
                     println!("first statement expr: {:?}", expr);
                 }
                 // First statement should be "use strict" directive
-                assert!(stmts.len() >= 1, "Expected at least 1 statement");
+                assert!(!stmts.is_empty(), "Expected at least 1 statement");
                 if let Some(crate::ast::Statement::Expression(expr)) = stmts.first() {
                     if let crate::ast::Expression::String(s) = expr.as_ref() {
                         assert_eq!(s.trim(), "use strict", "Expected 'use strict' directive");
@@ -260,6 +260,7 @@ mod tests {
                     }
                 }
             }
+            #[allow(unreachable_patterns)]
             Ok(_) => panic!("Expected Script, got something else"),
             Err(e) => panic!("Parse failed: {:?}", e),
         }

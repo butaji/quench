@@ -26,17 +26,31 @@ crates/quench-runtime/src/
 
 ## test262 Runner
 
-**51 ordered stages** — literals → identifiers → expressions → statements → built-ins → modules → annexB.
+**93 ordered stages** — harness → language (lex → types → statements → modules) → built-ins (globals → constructors → iterators → collections → advanced) → annexB.
+
+Scope: every directory under `tests/test262/test/` is enumerated, with
+two intentional exclusions — `test/intl402` (ECMA-402, separate suite)
+and `test/staging` (pre-draft cases). Anything else is unreachable from
+the ECMA-262 conformance target and is not implemented; the stage list
+in `crates/quench-runtime/src/test262/runner.rs::STAGES` mirrors
+`tasks/index.json` exactly.
 
 No checkpoints. No skips. Each stage runs to 100% passing, then move to the next.
 
 ```bash
-# Run current stage (stage 0)
+# Run current stage (see tasks/index.json `current_stage`)
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
-# Run specific stage
+# Run a specific stage
 TEST262_STAGE=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+
+# Run every stage in order, stop on first failure
+ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
+
+On 100% a stage prints `ALL STAGES COMPLETE — Stage N: X/X`; CI's summary
+job greps that line to flip a stage to ✅. With `ALL_STAGES=1` a clean
+full run prints `ALL STAGES COMPLETE — 93 stages passed`.
 
 Strict mode: every non-`raw` test runs sloppy, then with `"use strict";`. `raw`/`noStrict` run sloppy only, `onlyStrict` strict only.
 

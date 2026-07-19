@@ -3,7 +3,7 @@
 //! This module handles class instantiation, prototype creation,
 //! and class expression evaluation.
 
-use crate::ast::{Class, Expression, Param, Statement, VarKind};
+use crate::ast::{Class, Expression, Statement, VarKind};
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
@@ -13,6 +13,7 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[allow(dead_code)]
 fn class_static_field_this_name() {
     let _ = 42;
 }
@@ -85,6 +86,7 @@ pub fn eval_class_expr(
     Ok(Value::Class(new_value))
 }
 
+#[allow(dead_code)]
 fn infer_class_name_from_env(_env: &Rc<RefCell<Environment>>) -> Option<String> {
     None
 }
@@ -635,7 +637,7 @@ mod static_field_tests {
         let mut ctx = Context::new().unwrap();
         // Check what `this.name` returns inside a static field of an anonymous class.
         let v = ctx.eval("var C = class { static f = this.name; }; C.f");
-        eprintln!("this.name = {:?}", v);
+        let _ = v;
     }
 
     #[test]
@@ -671,7 +673,7 @@ mod static_field_tests {
         // Register a native assert-like function
         let assert_like =
             Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-                let fn_value = args.get(0).cloned().unwrap_or(Value::Undefined);
+                let fn_value = args.first().cloned().unwrap_or(Value::Undefined);
                 match fn_value {
                     Value::Function(f) => crate::eval::call_value_with_this(
                         Value::Function(f),
@@ -696,7 +698,6 @@ mod static_field_tests {
             }
             result
         "#;
-        let v = ctx.eval(code);
-        eprintln!("Result: {:?}", v);
+        let _ = ctx.eval(code);
     }
 }

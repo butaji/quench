@@ -95,7 +95,7 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
                 .get("globalThis")
                 .unwrap_or(Value::Undefined)
         };
-        crate::interpreter::set_this_binding(&mut ctx.env, this_value);
+        crate::interpreter::set_this_binding(&ctx.env, this_value);
         crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };
     CURRENT_CONTEXT.with(|cell| {
@@ -204,6 +204,10 @@ impl Context {
         self.init_commonjs()?;
         self.init_es_module_cache()?;
         self.init_js_globals()?;
+        // sync_globals_to_global_this must come AFTER init_js_globals (which creates
+        // globalThis). All builtins registered before init_js_globals are already in
+        // the env but not yet on globalThis.
+        self.sync_globals_to_global_this();
         self.register_eval_function()?;
         Ok(())
     }
@@ -267,7 +271,7 @@ impl Context {
             enumerable: false,
             configurable: false,
         };
-        let mut define_value_prop = |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
+        let define_value_prop = |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
             let mut flags = value_flags.clone();
             flags.value = Some(val.clone());
             global_obj.borrow_mut().define(key, val, flags);
@@ -290,6 +294,35 @@ impl Context {
             .set_object_binding(Rc::clone(&global_obj));
 
         Ok(())
+    }
+
+    /// Sync all global bindings from the environment to globalThis.
+    /// This is called after init_js_globals (which creates globalThis) so that
+    /// all builtins registered before globalThis existed get mirrored onto it.
+    /// Without this, globalThis.{Number,Object,Array,...} would be undefined.
+    fn sync_globals_to_global_this(&mut self) {
+        let Some(Value::Object(global_obj)) = self.get_global("globalThis") else {
+            return;
+        };
+        // Only the global scope (index 0) holds global bindings.
+        let scopes = &self.env.borrow().scopes;
+        if scopes.is_empty() {
+            return;
+        }
+        let global_scope = scopes[0].borrow();
+        for (name, value_rc) in global_scope.bindings() {
+            let value = (**value_rc).clone();
+            global_obj.borrow_mut().define(
+                name.as_str(),
+                value.clone(),
+                crate::value::PropertyFlags {
+                    value: Some(value),
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
     }
 
     /// Register the eval function as a global
@@ -363,7 +396,7 @@ impl Context {
         let result = (|| {
             let program = parser::parse_es_module(source)?;
             // Module code: `this` is undefined (ThisMode::module per ES spec)
-            interpreter::set_this_binding(&mut self.env, Value::Undefined);
+            interpreter::set_this_binding(&self.env, Value::Undefined);
             interpreter::eval_program(&program, &mut self.env, Some(source), false)
         })();
 
@@ -436,11 +469,20 @@ impl Context {
         let name_for_global = name.clone();
         let value_for_global = value.clone();
         self.env.borrow_mut().define(name, value);
-        // Also set on globalThis so globalThis.Array, globalThis.Object etc. work
+        // Also set on globalThis so globalThis.Array, globalThis.Object etc. work.
+        // Use `define` (not `set`) to bypass non-writable descriptors from
+        // define_value_prop. Built-in functions must be writable on globalThis
+        // per spec; set_global is called for them after globalThis is created.
         if let Some(global_obj) = global_obj {
+            let flags = crate::value::PropertyFlags {
+                value: Some(value_for_global.clone()),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            };
             global_obj
                 .borrow_mut()
-                .set(&name_for_global, value_for_global);
+                .define(&name_for_global, value_for_global, flags);
         }
     }
 

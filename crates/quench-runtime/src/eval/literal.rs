@@ -157,6 +157,11 @@ pub fn eval_object_literal(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let keys_info: Vec<String> = props
+        .iter()
+        .map(|(k, v)| format!("{:?}({:?})", k, v))
+        .collect();
+    let _ = keys_info;
     let mut obj = Object::new(ObjectKind::Ordinary);
     if let Some(prototype) = builtins::get_object_prototype() {
         obj.prototype = Some(prototype);

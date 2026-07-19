@@ -18,9 +18,9 @@ pub mod reflect;
 pub mod regex; // regex module includes string_methods submodule
 pub mod string;
 pub mod symbol;
-pub mod weak;
 pub mod typed_array;
 pub mod uri;
+pub mod weak;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -87,7 +87,6 @@ impl serde::Serialize for JsValueProxy<'_> {
             }
             #[allow(unused_variables)]
             Value::Class(_) => serializer.serialize_str("[Function]"),
-            Value::BigInt(_) => serializer.serialize_str("[BigInt]"),
             Value::BigInt(bi) => serializer.serialize_str(&format!("{}n", bi)),
         }
     }

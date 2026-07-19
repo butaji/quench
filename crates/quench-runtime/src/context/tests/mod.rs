@@ -9,3 +9,4 @@ pub mod class_fields;
 pub mod default_params;
 pub mod es_modules;
 pub mod object_static;
+pub mod realm_reuse;

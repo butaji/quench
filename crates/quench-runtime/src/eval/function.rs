@@ -60,7 +60,6 @@ pub(crate) fn call_value_impl(
             }
         }
         _ => {
-            // Create a proper TypeError and set it as the thrown value
             let msg = format!("Value is not a function, got {:?}", func);
             let (err_val, js_err) =
                 crate::value::error::create_js_error_with_type(&msg, "TypeError");
@@ -130,7 +129,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         box_sloppy_this(this_val)
     };
 
-    let mut call_env = Environment::with_parent(Rc::clone(&closure));
+    let call_env = Environment::with_parent(Rc::clone(&closure));
     // Per ES §10.2.1, arrow functions capture `this` from their lexical
     // (closure) scope. Setting this on the new scope would override that
     // capture with the caller-supplied this. Skip for arrows.

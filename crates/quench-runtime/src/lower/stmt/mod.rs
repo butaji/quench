@@ -182,12 +182,12 @@ fn module_export_name_to_string(name: &ast::ModuleExportName) -> String {
     }
 }
 
-#[allow(clippy::complexity)]
-fn lower_export_named(export: &ast::ExportNamedDeclaration) -> Option<Statement> {
+#[allow(dead_code)]
+fn lower_export_named_local(export: &ast::ExportNamedDeclaration) -> Option<Statement> {
     // Handle export-from syntax: export { x } from 'module'
     if let Some(src) = &export.source {
         let source = src.value.to_string();
-        let (imports, stmts) = collect_export_from_specs_mod(&export.specifiers);
+        let (imports, stmts) = collect_export_from_specs(&export.specifiers);
         let import_stmt = Statement::Import {
             default: None,
             named: imports,
@@ -202,9 +202,9 @@ fn lower_export_named(export: &ast::ExportNamedDeclaration) -> Option<Statement>
     // Handle direct exports - ExportSpecifier is a struct with local and exported fields
     let mut stmts = Vec::new();
     for spec in &export.specifiers {
-        let exported = module_export_name_to_string_mod(&spec.exported);
-        let local = module_export_name_to_string_mod(&spec.local);
-        stmts.push(make_export_assignment_mod(&exported, &local));
+        let exported = module_export_name_to_string(&spec.exported);
+        let local = module_export_name_to_string(&spec.local);
+        stmts.push(make_export_assignment(&exported, &local));
     }
 
     if stmts.is_empty() {
@@ -218,7 +218,8 @@ fn lower_export_named(export: &ast::ExportNamedDeclaration) -> Option<Statement>
     }
 }
 
-fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<Statement> {
+#[allow(dead_code)]
+fn lower_export_default_decl_local(export: &ast::ExportDefaultDeclaration) -> Option<Statement> {
     use crate::ast::Param;
 
     match &export.declaration {
@@ -305,10 +306,10 @@ fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Option<S
 
 fn lower_export_all_decl(export: &ast::ExportAllDeclaration) -> Option<Statement> {
     let source = export.source.value.to_string();
-    Some(lower_export_star_from(&source))
+    Some(lower_export_star_from_local(&source))
 }
 
-fn lower_export_star_from(source: &str) -> Statement {
+fn lower_export_star_from_local(source: &str) -> Statement {
     let unique_name = format!("_star_{}", source.replace(['/', '-', '.'], "_"));
     let import_stmt = Statement::Import {
         default: None,
@@ -340,33 +341,23 @@ fn lower_export_star_from(source: &str) -> Statement {
     Statement::Block(vec![import_stmt, for_in])
 }
 
+#[allow(dead_code)]
 fn collect_export_from_specs_mod(
     specs: &[ast::ExportSpecifier],
 ) -> (Vec<(String, String)>, Vec<Statement>) {
     let mut imports = Vec::new();
     let mut stmts = Vec::new();
     for spec in specs {
-        // In OXC, ExportSpecifier is a struct with local and exported fields
-        let exported = module_export_name_to_string_mod(&spec.exported);
-        let local = module_export_name_to_string_mod(&spec.local);
-        let stmt = make_export_assignment_mod(&exported, &local);
+        let exported = module_export_name_to_string(&spec.exported);
+        let local = module_export_name_to_string(&spec.local);
+        let stmt = make_export_assignment(&exported, &local);
         imports.push((local.clone(), local));
         stmts.push(stmt);
     }
     (imports, stmts)
 }
 
-fn make_export_assignment_mod(prop: &str, value: &str) -> Statement {
-    Statement::Expression(Box::new(Expression::Assignment {
-        left: Box::new(Expression::Member {
-            object: Box::new(Expression::Identifier("exports".to_string())),
-            property: PropertyKey::Ident(prop.to_string()),
-            computed: false,
-        }),
-        right: Box::new(Expression::Identifier(value.to_string())),
-    }))
-}
-
+#[allow(dead_code)]
 fn module_export_name_to_string_mod(name: &ast::ModuleExportName) -> String {
     match name {
         ast::ModuleExportName::IdentifierReference(i) => i.name.as_str().to_string(),
