@@ -78,29 +78,91 @@ is what we minimize, not per-PR diffs. Strategic rules:
 - **One canonical spec-abstract-operation path.** `ToPrimitive`,
   `ToPropertyKey`, `IteratorNext`, `IteratorClose`, `CreateDataPropertyOrThrow`,
   `OrdinaryHasProperty`, `IsCallable`, … live in **one** place
-  (`src/eval/ops.rs` and friends). Every builtin and eval node routes
-  through them. Re-implementing a spec op inside one builtin because "it's
-  only 3 lines" is how LOC balloons — and how spec ordering bugs creep in.
+  (`src/eval/ops.rs`). Every builtin and eval node routes through them.
+  Re-implementing a spec op inside one builtin because "it's only 3
+  lines" is how LOC balloons — and how spec ordering bugs creep in.
+  Before writing a private `to_*` / `same_value*` / `is_callable` /
+  `native_fn` / `iterator_*` helper, grep `src/eval/ops.rs`. If it exists
+  there, use it. If it doesn't, add it there with a failing-test-first
+  cycle and reuse it.
 - **One iterator protocol.** `%IteratorPrototype%` is implemented once.
   Array / String / RegExp / Map / Set iterators and `%GeneratorPrototype%`
   inherit via the prototype chain instead of carrying per-type method
-  tables. Same for `%AsyncIteratorPrototype%`.
+  tables. Same for `%AsyncIteratorPrototype%`. No eager materialization:
+  iterators are streamed through `iterator_next` / `iterator_step` /
+  `iterator_close` from `eval/ops.rs`.
 - **Prefer a crate over hand-rolling** when the crate already implements
   the spec algorithm verbatim. Confirmed dependency choices live in
   `DEPENDENCIES.md`; adding a hand-rolled copy of `regress`, `num-bigint`,
-  or `chrono` semantics is forbidden. Adding a *new* crate requires a
+  or `chrono` semantics is forbidden — including thinly-disguised copies
+  under helpers named after the crate (a `chrono_*` function that never
+  imports `chrono` is the bug). Adding a *new* crate requires a
   `DEPENDENCIES.md` row in the same diff.
 - **Share intrinsic prototypes across realms.** `ThrowTypeError`,
-  `%IteratorPrototype%`, intrinsic error constructors — wire once; do not
-  rebuild them per created realm.
-- **No speculative generality.** Don't add slots, flags, or hooks that no
-  current test262 case exercises. They cost LOC now and create
-  drift-later. Add them when the stage that needs them lands, with a
-  failing unit test.
+  `%IteratorPrototype%`, intrinsic error constructors — wire once onto a
+  `Realm` and clone, never rebuild per `Context::new` / `Context::reset`.
+  `Context::reset` must clear *every* thread-local proto pointer
+  consistently (ideally there are none to clear because they live on
+  `Realm`).
+- **No speculative generality.** Don't add slots, flags, hooks, enum
+  variants, vtables, or storage maps that no current test262 case
+  exercises. They cost LOC now and create drift later. Add them when the
+  stage that needs them lands, with a failing unit test. "I'll wire it up
+  next stage" is not a sufficient reason to land dead scaffolding — if
+  it has zero call sites, it gets deleted in the same PR.
+
+### Zero duplication — enforceable, no exceptions
+
+Duplication is the single largest LOC driver and the single largest
+source of spec-drift bugs in this crate's history. The contract:
+
+- `grep -R` for the symbol you're about to define. If a spec-abstract op
+  (any name in ECMA-262's "Abstract Operations" section) already exists
+  anywhere under `src/`, your job is to delete the duplicate and route
+  through the canonical one — not to add a third copy.
+- Two structurally identical `fn`s in two `builtins/*.rs` files that
+  operate on `Value`/`Object` must be hoisted to `value/` or `eval/ops.rs`
+  in the same PR, with a unit test for the hoisted version.
+- "I only need it in one file for now" is not a reason to private-copy a
+  spec op. The canonical home exists; put it there.
+- `#[allow(dead_code)]` on a function, struct, enum variant, or field is
+  a `TODO(delete)` marker, not a permanent state. A diff that *adds* an
+  `#[allow(dead_code)]` is rejected at review unless it deletes the
+  annotated symbol in the same diff.
+
+### Dead code is a bug, not polish
+
+- A `pub fn` with zero callers outside its own module is deleted. Adding
+  `pub` "in case someone needs it" is forbidden.
+- An `enum` variant that is constructed nowhere is deleted in the same
+  PR that notices.
+- A struct field that is written but never read (`vtable`, `slots`,
+  `data`, `props`) is deleted in the same PR that notices.
+- A `thread_local!` pointer that is rebuilt by `register_builtins` on
+  every realm is restructured onto `Realm` (see R5 in
+  `tasks/refactor-plan.md`).
+- The fixture for catching dead code is `cargo test -p quench-runtime` +
+  `cargo clippy -p quench-runtime --all-targets` clean. `cargo +nightly
+  udeps` or a manual `grep` for the symbol across `src/` is the check.
+
+### Builtins throw `JsError`, never panic — and never via `JsError::from(&str)`
+
+- Use `value::error::throw_type_error(msg) -> JsError` (one line,
+  performs both `create_js_error_with_type` and `set_thrown_value`).
+  Other error classes get the same helper if a second one shows up.
+- `JsError::from("TypeError: ...")` is forbidden — it produces no JS
+  error object, loses `stack`/subclass identity, and is only catchable
+  because `eval_try_catch` happens to scrape the string.
+- `panic!` / `unwrap()` / `expect()` in `builtins/` or `eval/` is
+  forbidden (the only exceptions are `unreachable!` in pattern arms the
+  spec rules out, and `tests/`).
 
 Verifying minimum-LOC: when a builtin lands, ask "could this be 3 fewer
 lines by calling an existing spec op?" If yes, do that; if the spec op
-does not exist yet, extract it (with a test) and reuse it.
+does not exist yet, extract it (with a test) and reuse it. The active
+cross-cutting cleanup queue is `tasks/refactor-plan.md` (R0–R14); new
+spec-op extractions should be added there if they don't fit an existing
+item.
 
 ## Architecture
 
@@ -111,18 +173,28 @@ crates/quench-runtime/src/
 ├── ast.rs         # internal AST
 ├── interpreter.rs # eval entry points
 ├── eval/          # tree-walking evaluator
+│   └── ops.rs     # canonical home for spec abstract operations
+│                   (ToPrimitive, ToPropertyKey, IteratorNext, IsCallable, …)
 ├── env.rs         # lexical environments
 ├── value/         # Value, Object, Function, NativeFunction, JsError
 ├── builtins/      # native builtins (Object, Array, Map, Symbol, Promise, ...)
-├── context/       # Context, globals, CURRENT_CONTEXT
+├── context/       # Context, Realm, globals, CURRENT_CONTEXT
 └── test262/      # runner.rs, harness/, metadata.rs
 ```
+
+The active cross-cutting cleanup queue is `tasks/refactor-plan.md`
+(R0–R14). All non-trivial refactors route through that list; if a
+spec-op extraction doesn't fit an existing item, add a new Rn row.
 
 ## Conventions
 
 - **Builtins throw `JsError`**, never panic. Use
-  `crate::value::error::create_js_error_with_type` and
-  `crate::value::set_thrown_value`.
+  `value::error::throw_type_error(msg)` (a one-line helper that
+  performs `create_js_error_with_type` + `set_thrown_value` together).
+  Other error classes get the same treatment if a second helper shows
+  up. `JsError::from("TypeError: …")` and `panic!`/`unwrap()`/`expect()`
+  in `builtins/` or `eval/` are forbidden (only `unreachable!` in
+  spec-impossible pattern arms is allowed).
 - **Minimal diffs** — match surrounding style, no opportunistic refactors.
 - **Symbols**: `Value::Symbol` payload is raw `desc\0id` string; used as property key directly.
 - **Boxed primitives**: stored via `builtins::object::set_boxed_value` as `_value` property.
