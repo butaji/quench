@@ -184,8 +184,9 @@ fn inject_test262_error(ctx: &mut Context) {
     // Set Test262Error.prototype.constructor = Test262Error
     let ctor_val = Value::NativeConstructor(Rc::new(test262_error));
     proto.borrow_mut().set("constructor", ctor_val.clone());
-    ctx.set_global("Test262Error".to_string(), ctor_val);
+    ctx.set_global("Test262Error".to_string(), ctor_val.clone());
     ctx.set_global("Test262ErrorThrower".to_string(), thrower);
+    crate::value::error::set_test262_error(ctor_val);
 }
 
 /// Load and evaluate a JS harness file (strips frontmatter).
@@ -236,7 +237,12 @@ fn done(args: Vec<Value>) -> Result<Value, JsError> {
     if let Some(err) = args.first() {
         if !matches!(err, Value::Undefined | Value::Null) {
             let msg = crate::value::to_js_string(err);
-            let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+            let (err_val, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+            if let Value::Object(o) = &err_val {
+                o.borrow_mut()
+                    .set("name", Value::String("Test262Error".to_string()));
+            }
             crate::value::set_thrown_value(err_val);
             return Err(js_err);
         }
@@ -328,9 +334,14 @@ fn donotevaluate(_args: Vec<Value>) -> Result<Value, JsError> {
 
 /// assert.notUnreachable - throws if reached
 fn assert_not_unreachable(_args: Vec<Value>) -> Result<Value, JsError> {
-    let (err_val, js_err) = crate::value::error::create_js_error(
+    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
         "assert.notUnreachable: unreachable code was executed",
+        "Test262Error",
     );
+    if let Value::Object(o) = &err_val {
+        o.borrow_mut()
+            .set("name", Value::String("Test262Error".to_string()));
+    }
     crate::value::set_thrown_value(err_val);
     Err(js_err)
 }
@@ -433,7 +444,12 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
                     crate::value::to_js_string(&unexpected),
                     msg
                 );
-                let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+                let (err_val, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+                if let Value::Object(o) = &err_val {
+                    o.borrow_mut()
+                        .set("name", Value::String("Test262Error".to_string()));
+                }
                 crate::value::set_thrown_value(err_val);
                 return Err(js_err);
             }

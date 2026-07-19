@@ -3,6 +3,8 @@
 //! Run with:
 //!   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
+use quench_runtime::test262::harness::HarnessLoader;
+use quench_runtime::test262::runner::run_single_test;
 use quench_runtime::test262::{QuenchHost, Test262Host, Test262Runner};
 use std::path::PathBuf;
 
@@ -859,4 +861,63 @@ fn test262_staged() {
         summary.failed,
         summary.first_failure
     );
+}
+
+/// Run a single test262 test file directly (no timeout). Usage:
+/// TEST262_FILE="path/to/test.js" cargo test -p quench-runtime --test test262 test262_one -- --ignored --nocapture
+#[test]
+#[ignore = "run with --ignored"]
+fn test262_one() {
+    use quench_runtime::test262::host::TestOutcome;
+    let test_path = std::env::var("TEST262_FILE").expect("TEST262_FILE env var required");
+    let path = std::path::Path::new(&test_path);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let test262_dir = std::env::var("TEST262_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo_root.join("tests/test262"));
+
+    let runner = Test262Runner::new(test262_dir);
+    let src = std::fs::read_to_string(path).expect("read test file");
+    let meta = quench_runtime::test262::metadata::Test262Metadata::parse(&src).unwrap_or_default();
+    let mut host = QuenchHost::new();
+    let script = runner.harness.build_script(&src, &meta.includes).expect("build script");
+    let start = std::time::Instant::now();
+    let result = host.run_script(&script);
+    let elapsed = start.elapsed();
+    println!("Time: {:?}", elapsed);
+    match result {
+        Ok(()) => println!("PASS"),
+        Err(e) => panic!("FAIL: {}", e),
+    }
+}
+
+/// Profile regex eval performance
+#[test]
+fn profile_regex_eval() {
+    use std::time::Instant;
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    
+    // Measure actual test pattern: eval("/" + xx + "/") in JS
+    let start = Instant::now();
+    let test_js = r#"
+        for (var cu = 0; cu < 1000; ++cu) {
+            var Elimination =
+                ((cu === 0x002A) || (cu === 0x002F) || (cu === 0x005C) || (cu === 0x002B) ||
+                 (cu === 0x003F) || (cu === 0x0028) || (cu === 0x0029) ||
+                 (cu === 0x005B) || (cu === 0x005D) || (cu === 0x007B) || (cu === 0x007D));
+            var LineTerminator = ((cu === 0x000A) || (cu === 0x000D) || (cu === 0x2028) || (cu === 0x2029));
+            if ((Elimination || LineTerminator) === false) {
+                var xx = String.fromCharCode(cu);
+                var pattern = eval("/" + xx + "/");
+                if (pattern.source !== xx) throw new Error("mismatch: " + cu);
+            }
+        }
+    "#;
+    ctx.eval(test_js).unwrap();
+    let t = start.elapsed();
+    println!("1000 iterations of actual test: {:?} = {:?}/iter", t, t / 1000);
+    let per_iter = t / 1000;
+    println!("Estimated 65536 iterations: {:?}", per_iter * 65536);
 }

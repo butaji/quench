@@ -14,15 +14,13 @@ use std::sync::Arc;
 /// Parse JavaScript source using OXC (script mode, not module)
 pub fn parse_script(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_jsx(true);
-    let allocator = Arc::new(Allocator::default());
-    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
     check_strict_reserved(&ret.program)?;
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    // allocator is dropped here, but result is already computed
-    drop(allocator);
     result
 }
 
@@ -47,8 +45,8 @@ fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError
 /// Parse ES module source using OXC
 pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_module(true).with_jsx(true);
-    let allocator = Arc::new(Allocator::default());
-    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
@@ -59,20 +57,18 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
         )));
     }
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    drop(allocator);
     result
 }
 
 /// Parse JavaScript/JSX source using OXC (script mode)
 pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_jsx(true);
-    let allocator = Arc::new(Allocator::default());
-    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    drop(allocator);
     result
 }
 

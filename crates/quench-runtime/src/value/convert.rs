@@ -269,6 +269,7 @@ fn strict_eq_same_type(a: &Value, b: &Value) -> bool {
         (Value::String(ai), Value::String(bi)) => ai == bi,
         (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::BigInt(ai), Value::BigInt(bi)) => ai.as_ref() == bi.as_ref(),
         (Value::Function(_), Value::Function(_))
         | (Value::NativeFunction(_), Value::NativeFunction(_))
         | (Value::NativeConstructor(_), Value::NativeConstructor(_))
@@ -325,6 +326,7 @@ fn same_value_same_type(a: &Value, b: &Value) -> bool {
         (Value::String(ai), Value::String(bi)) => ai == bi,
         (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::BigInt(ai), Value::BigInt(bi)) => ai.as_ref() == bi.as_ref(),
         _ => false,
     }
 }

@@ -21,6 +21,7 @@ pub mod symbol;
 pub mod typed_array;
 pub mod uri;
 pub mod weak;
+pub mod bigint;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -131,6 +132,7 @@ pub fn register_builtins(ctx: &mut Context) {
     string::register_string(ctx);
     // Number must be registered before Date (for timestamp conversion)
     number::register_number(ctx);
+    bigint::register_bigint(ctx);
     date::register_global_functions(ctx);
     function::register_function(ctx);
     error::register_error(ctx);

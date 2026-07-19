@@ -31,7 +31,7 @@ pub fn eval_member_access(
         Value::Function(f) => eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => eval_native_function_member(nf, prop_name),
         Value::NativeConstructor(nc) => eval_native_constructor_member(nc, prop_name),
-        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_) => {
             eval_number_member(obj_val, prop_name, env)
         }
         Value::Class(class) => eval_class_member(class, prop_name, env),
@@ -156,7 +156,7 @@ fn box_primitive(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Rc<RefCell<Object>>, JsError> {
     match obj_val {
-        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {}
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_) => {}
         _ => {
             return Err(JsError("box_primitive: not a primitive".to_string()));
         }
@@ -165,6 +165,7 @@ fn box_primitive(
         Value::Number(_) => "Number",
         Value::Boolean(_) => "Boolean",
         Value::Symbol(_) => "Symbol",
+        Value::BigInt(_) => "BigInt",
         _ => return Err(JsError("box_primitive: unreachable".to_string())),
     };
     let ctor_val = env
@@ -200,6 +201,10 @@ fn box_primitive(
         }
         Value::Symbol(_) => {
             // No exotic kind for Symbol
+        }
+        Value::BigInt(bi) => {
+            boxed.exotic_kind = Some(crate::value::kind::ExoticKind::BigInt);
+            boxed.set("_value", Value::BigInt(Rc::clone(bi)));
         }
         _ => {}
     }

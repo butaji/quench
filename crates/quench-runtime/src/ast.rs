@@ -269,6 +269,8 @@ pub enum Expression {
         pattern: String,
         flags: String,
     },
+    /// BigInt literal: 123n, 0xFFn, etc.
+    BigInt(String),
 }
 
 /// JSX tag name (element name or component reference)
