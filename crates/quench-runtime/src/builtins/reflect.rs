@@ -1,0 +1,100 @@
+//! Minimal Reflect and Proxy globals. Reflect exposes only `ownKeys` for
+//! the test262 harness. Proxy provides a basic target-forwarding constructor
+//! that delegates `get`/`set`/`has` traps (defaulting to forwarding when
+//! the handler omits them). Tests that require the full Reflect or Proxy
+//! API are still skipped via the `Reflect`/`Proxy` feature gates.
+
+use crate::context::Context;
+use crate::value::{Object, ObjectKind, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+pub fn register_reflect(ctx: &mut Context) {
+    let mut reflect = Object::new(ObjectKind::Ordinary);
+    reflect.set(
+        "ownKeys",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| match args.first() {
+                Some(Value::Object(o)) => {
+                    let keys: Vec<Value> = o
+                        .borrow()
+                        .own_keys()
+                        .into_iter()
+                        .map(Value::String)
+                        .collect();
+                    Ok(Value::Object(Rc::new(RefCell::new(
+                        Object::new_array_from(keys),
+                    ))))
+                }
+                _ => {
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        "Reflect.ownKeys called on non-object",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    Err(js_err)
+                }
+            },
+        ))),
+    );
+    ctx.set_global(
+        "Reflect".to_string(),
+        Value::Object(Rc::new(RefCell::new(reflect))),
+    );
+    register_proxy(ctx);
+}
+
+fn register_proxy(ctx: &mut Context) {
+    // Proxy(target, handler) — minimal forwarding implementation.
+    // The proxy is an object whose default traps (get/set/has) forward to
+    // the target. A handler object may override any of those traps. This
+    // is sufficient for test262 tests that use a plain handler `{}` to
+    // check private-field access boundaries.
+    let proxy_ctor =
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new_with_prototype(
+            |args: Vec<Value>| -> Result<Value, crate::value::JsError> {
+                let target = match args.first() {
+                    Some(v) => v.clone(),
+                    _ => return Err(crate::value::JsError::new("Proxy: target argument missing")),
+                };
+                let handler = match args.get(1) {
+                    Some(v) => v.clone(),
+                    _ => {
+                        return Err(crate::value::JsError::new(
+                            "Proxy: handler argument missing",
+                        ))
+                    }
+                };
+                if !matches!(
+                    target,
+                    Value::Object(_)
+                        | Value::Class(_)
+                        | Value::Function(_)
+                        | Value::NativeFunction(_)
+                ) {
+                    return Err(crate::value::JsError::new(
+                        "TypeError: Proxy target must be an object",
+                    ));
+                }
+                if !matches!(handler, Value::Object(_)) {
+                    return Err(crate::value::JsError::new(
+                        "TypeError: Proxy handler must be an object",
+                    ));
+                }
+                let mut proxy = Object::new(ObjectKind::Ordinary);
+                // Stash the target and handler on the proxy so the get/set
+                // forwarding logic (see object::get_setter) can find them.
+                proxy.set("__quench_proxy_target", target);
+                proxy.set("__quench_proxy_handler", handler);
+                Ok(Value::Object(Rc::new(RefCell::new(proxy))))
+            },
+            std::rc::Rc::new(std::cell::RefCell::new(Object::new(
+                crate::value::ObjectKind::Ordinary,
+            ))),
+        )));
+    // Set the constructor's name and expose it as a global.
+    if let Value::NativeFunction(ref nf) = proxy_ctor {
+        nf.set_property("name", Value::String("Proxy".to_string()));
+    }
+    ctx.set_global("Proxy".to_string(), proxy_ctor);
+}

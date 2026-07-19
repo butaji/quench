@@ -1,0 +1,6 @@
+[submodule "tests/typescript"]
+	path = tests/typescript
+	url = https://github.com/microsoft/TypeScript.git
+[submodule "tests/test262"]
+	path = tests/test262
+	url = https://github.com/tc39/test262.git

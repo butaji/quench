@@ -1,0 +1,5 @@
+# Strict clippy configuration for quench-runtime
+msrv = "1.80"
+cognitive-complexity-threshold = 10
+max-fn-params-bools = 3
+too-many-lines-threshold = 500
