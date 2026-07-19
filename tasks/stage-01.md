@@ -23,6 +23,9 @@ leave the test in. Do not edit `tests/test262.rs` or anything under
 - Numeric / string / regex / template literals touch the parser; null /
   undefined / boolean literals touch the eval value path. Pick the
   matching module before writing the reproducer.
+- This stage is pure parser/lowering work — no self-hosted JS builtin
+  is touched. The R0 self-hosting pivot (`tasks/refactor-plan.md`) is
+  orthogonal and can proceed in parallel without regressing literals.
 
 ## History
 

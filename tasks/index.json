@@ -1,5 +1,7 @@
 {
+  "$schema": "quench stages v1",
   "current_stage": 1,
+  "goal": "100% of test262, staged, with the minimum possible implementation LOC — small Rust core plus self-hosted JS builtins (see docs/architecture.md and tasks/refactor-plan.md).",
   "scope": {
     "includes": ["test/"],
     "excludes": ["test/intl402", "test/staging"],

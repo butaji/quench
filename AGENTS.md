@@ -1,7 +1,12 @@
 # AGENTS.md
 
-Quench — Rust-native JS runtime targeting **100% test262 conformance**.
-Single crate: `crates/quench-runtime`. Never modify `tests/test262`.
+Quench — JavaScript runtime targeting **100% test262 conformance**,
+staged to 100% per stage, implemented with the **minimum possible LOC**
+as a **small Rust core** plus a **self-hosted JS builtins layer**. Single
+crate: `crates/quench-runtime`. Never modify `tests/test262`.
+
+See `docs/architecture.md` for the full split and `tasks/refactor-plan.md`
+for the active migration queue (R0 self-hosting pivot through R14).
 
 ## Commands
 
@@ -73,18 +78,29 @@ edited; the reproductions live next to the code under `src/.../mod tests`.
 
 The goal is the smallest correct runtime that passes every enumerated
 test262 stage. Reaching 100% covers ~40k tests; total implementation LOC
-is what we minimize, not per-PR diffs. Strategic rules:
+across the Rust core *and* the JS builtins layer is what we minimize,
+not per-PR diffs. Two compounding levers:
 
-- **One canonical spec-abstract-operation path.** `ToPrimitive`,
-  `ToPropertyKey`, `IteratorNext`, `IteratorClose`, `CreateDataPropertyOrThrow`,
-  `OrdinaryHasProperty`, `IsCallable`, … live in **one** place
-  (`src/eval/ops.rs`). Every builtin and eval node routes through them.
-  Re-implementing a spec op inside one builtin because "it's only 3
-  lines" is how LOC balloons — and how spec ordering bugs creep in.
-  Before writing a private `to_*` / `same_value*` / `is_callable` /
-  `native_fn` / `iterator_*` helper, grep `src/eval/ops.rs`. If it exists
-  there, use it. If it doesn't, add it there with a failing-test-first
-  cycle and reuse it.
+1. **Small Rust core.** Only the parser/lower/eval/value/env/context
+   surface plus a handful of crate-backed primitives in
+   `builtins/core/` live in Rust. Every pure spec algorithm on top of
+   `%ops%` is authored in JS under `builtins/*.js`. JS is ~1/3 the LOC
+   of the equivalent Rust; exploiting that is the entire reason the
+   split exists.
+2. **One canonical spec-abstract-operation path.** `ToPrimitive`,
+   `ToPropertyKey`, `ToObject`, `IteratorNext`, `IteratorClose`,
+   `CreateDataPropertyOrThrow`, `OrdinaryHasProperty`, `IsCallable`,
+   `SameValueZero`, … live in **one** place: `src/eval/ops.rs`,
+   exposed to JS as a frozen `%ops%` object. Every builtin (Rust or
+   JS) and every eval node routes through them. Re-implementing a spec
+   op anywhere else — including a thinly-disguised copy in JS — is
+   forbidden. Before writing a private `to_*` / `same_value*` /
+   `is_callable` / `native_fn` / `iterator_*` helper, grep
+   `src/eval/ops.rs`. If it exists there, use it. If it doesn't, add
+   it there with a failing-test-first cycle and reuse it.
+
+Strategic rules:
+
 - **One iterator protocol.** `%IteratorPrototype%` is implemented once.
   Array / String / RegExp / Map / Set iterators and `%GeneratorPrototype%`
   inherit via the prototype chain instead of carrying per-type method
@@ -167,27 +183,59 @@ item.
 ## Architecture
 
 ```
-crates/quench-runtime/src/
-├── parser.rs      # OXC → internal AST
-├── lower/         # AST lowering
-├── ast.rs         # internal AST
-├── interpreter.rs # eval entry points
-├── eval/          # tree-walking evaluator
-│   └── ops.rs     # canonical home for spec abstract operations
-│                   (ToPrimitive, ToPropertyKey, IteratorNext, IsCallable, …)
-├── env.rs         # lexical environments
-├── value/         # Value, Object, Function, NativeFunction, JsError
-├── builtins/      # native builtins (Object, Array, Map, Symbol, Promise, ...)
-├── context/       # Context, Realm, globals, CURRENT_CONTEXT
-└── test262/      # runner.rs, harness/, metadata.rs
+crates/quench-runtime/
+├── src/
+│   ├── parser.rs        # OXC → internal AST (TS/TSX/JSX)
+│   ├── lower/           # AST lowering
+│   ├── ast.rs           # internal AST
+│   ├── interpreter.rs   # eval entry points
+│   ├── eval/
+│   │   └── ops.rs       # canonical spec abstract operations + %ops% bridge
+│   ├── env.rs           # lexical environments
+│   ├── value/           # Value, Object, Function, NativeFunction, JsError
+│   ├── context/         # Context, Realm (intrinsic prototypes owned here)
+│   ├── builtins/
+│   │   ├── core/        # crate-backed primitives only
+│   │   │   ├── regex.rs    # regress
+│   │   │   ├── date.rs     # chrono
+│   │   │   ├── bigint.rs   # num-bigint
+│   │   │   ├── json.rs     # serde_json
+│   │   │   └── uri.rs      # urlencoding
+│   │   ├── bootstrap.rs # parses + evaluates builtins/*.js at realm init
+│   │   └── mod.rs
+│   └── test262/         # staged runner (no checkpoints, no skips)
+└── builtins/            # self-hosted JS builtins, embedded via include_str!
+    ├── _intrinsics.js   # %ops% destructure (resolved at parse time)
+    ├── Object.js, Function.js, Error.js, Symbol.js,
+    ├── Number.js, Boolean.js, String.js, Math.js,
+    ├── Array.js, Iterator.js,
+    ├── Map.js, Set.js, WeakMap.js, WeakSet.js,
+    ├── Promise.js, JSON.js, Reflect.js, Proxy.js,
+    ├── RegExp.js, Date.js, BigInt.js,
+    ├── TypedArray.js, ArrayBuffer.js, DataView.js, Atomics.js,
+    └── decodeURI.js, encodeURI.js
 ```
 
+See `docs/architecture.md` for the full split and the `%ops%` contract.
+
 The active cross-cutting cleanup queue is `tasks/refactor-plan.md`
-(R0–R14). All non-trivial refactors route through that list; if a
+(R0–R14), led by the self-hosting pivot (R0) and the canonical `%ops%`
+home (R1). All non-trivial refactors route through that list; if a
 spec-op extraction doesn't fit an existing item, add a new Rn row.
 
 ## Conventions
 
+- **Self-hosted builtins** live as JS in `crates/quench-runtime/builtins/*.js`,
+  embedded via `include_str!`, parsed once at realm init by
+  `builtins/bootstrap.rs`. They never reach into `Object` storage
+  directly — they call `%ops%` (a frozen object exposed from
+  `eval/ops.rs`). A new spec op goes into `eval/ops.rs` with a failing
+  test, then a `%ops%` property, then a JS callsite.
+- **Crate-backed primitives** (regress / chrono / num-bigint /
+  serde_json / urlencoding) live in `builtins/core/` as small Rust
+  functions; the surrounding `.prototype.*` and constructor wiring is
+  JS. No hand-rolled reimplementations of these crates under
+  crate-named helpers.
 - **Builtins throw `JsError`**, never panic. Use
   `value::error::throw_type_error(msg)` (a one-line helper that
   performs `create_js_error_with_type` + `set_thrown_value` together).
@@ -202,4 +250,6 @@ spec-op extraction doesn't fit an existing item, add a new Rn row.
   Class bodies are always strict.
 - **Accessor properties**: use `Object::define_accessor`; `GetterStorage.func` takes precedence.
 - **`CURRENT_CONTEXT`** (context/mod.rs): `thread_local` raw pointer set for the duration of eval.
-- New builtins wired in `builtins/mod.rs::register_builtins` — Symbol before Map/Set, Number before Date.
+- New Rust-backed primitives registered in `builtins/mod.rs::register_builtins`;
+  self-hosted JS builtins registered in `builtins/bootstrap.rs` in
+  dependency order (see `docs/architecture.md`).
