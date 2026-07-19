@@ -8,7 +8,7 @@ use crate::interpreter::{
     ControlFlow,
 };
 use crate::value::{
-    set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
+    set_thrown_value, take_thrown_value, to_bool, to_js_string, to_number, JsError, Object, ObjectKind, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;

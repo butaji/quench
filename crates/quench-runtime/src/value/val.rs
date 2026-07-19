@@ -257,6 +257,7 @@ impl PartialEq for Value {
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
+            (Value::BigInt(a), Value::BigInt(b)) => a == b,
             _ => false,
         }
     }
@@ -289,6 +290,7 @@ fn debug_value(v: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         | Value::Class(_) => {
             write!(f, "Function(...)")
         }
+        Value::BigInt(bi) => write!(f, "{}n", bi),
         _ => write!(f, "undefined"),
     }
 }

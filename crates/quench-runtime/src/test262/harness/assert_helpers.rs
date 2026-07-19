@@ -20,7 +20,12 @@ pub fn assert_same_value(args: Vec<Value>) -> Result<Value, JsError> {
             debug_string(&b),
             message
         );
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+        if let Value::Object(o) = &err_val {
+            o.borrow_mut()
+                .set("name", Value::String("Test262Error".to_string()));
+        }
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
@@ -59,7 +64,12 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
         }
         _ => {
             let msg = "assert.throws: expected a function".to_string();
-            let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+            let (err_val, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+            if let Value::Object(o) = &err_val {
+                o.borrow_mut()
+                    .set("name", Value::String("Test262Error".to_string()));
+            }
             crate::value::set_thrown_value(err_val);
             return Err(js_err);
         }
@@ -72,7 +82,12 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
                 get_error_name(&expected_ctr),
                 message
             );
-            let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+            let (err_val, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+            if let Value::Object(o) = &err_val {
+                o.borrow_mut()
+                    .set("name", Value::String("Test262Error".to_string()));
+            }
             crate::value::set_thrown_value(err_val);
             Err(js_err)
         }
@@ -235,7 +250,12 @@ pub fn assert_compare_array(args: Vec<Value>) -> Result<Value, JsError> {
         .map(crate::value::to_js_string)
         .unwrap_or_default();
     let mk_err = |msg: String| -> Result<Value, JsError> {
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+        if let Value::Object(o) = &err_val {
+            o.borrow_mut()
+                .set("name", Value::String("Test262Error".to_string()));
+        }
         crate::value::set_thrown_value(err_val);
         Err(js_err)
     };

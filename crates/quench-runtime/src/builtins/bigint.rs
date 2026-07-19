@@ -4,7 +4,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
-use num_traits::ToPrimitive;
 
 use crate::value::{
     create_js_error_with_type, to_number, to_primitive, NativeFunction, Object, ObjectKind,
@@ -23,17 +22,16 @@ pub fn n_to_bigint(n: f64) -> BigInt {
 }
 
 /// Convert a BigInt to f64 (for loose equality comparison)
+#[allow(dead_code)]
 pub fn bigint_to_f64(bi: &BigInt) -> f64 {
-    // Check if BigInt fits in i64
-    if let Some(i) = bi.to_i64() {
-        i as f64
+    // For very large BigInts that don't fit in f64, return infinity
+    if bi >= &BigInt::from(i64::MAX) {
+        f64::INFINITY
+    } else if bi <= &BigInt::from(i64::MIN) {
+        f64::NEG_INFINITY
     } else {
-        // For very large BigInts, return infinity (they can't equal a Number)
-        if bi >= &BigInt::from(0) {
-            f64::INFINITY
-        } else {
-            f64::NEG_INFINITY
-        }
+        // Convert through string representation for precision
+        bi.to_string().parse::<f64>().unwrap_or(0.0)
     }
 }
 
