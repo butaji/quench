@@ -180,9 +180,8 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
     ) -> bool {
         // Check if this object's prototype is the target
-        // Use pointer comparison on the underlying RefCell to handle Rc clones correctly
         if let Some(ref proto_rc) = obj.prototype {
-            // Compare the underlying RefCell pointers
+            // Use pointer comparison first (fast path for matching Rc clones)
             let proto_ptr: *const std::cell::RefCell<crate::value::Object> = &**proto_rc;
             let target_ptr: *const std::cell::RefCell<crate::value::Object> = &**target_proto;
             if proto_ptr == target_ptr {
