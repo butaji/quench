@@ -40,65 +40,6 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
         return Ok(Value::Undefined);
     }
 
-    // Fast path: regex literal eval like eval("/x/") or eval("/x/.source")
-    // Skip OXC parse entirely for common patterns in test262.
-    let source_bytes = source.as_bytes();
-    if source_bytes.first() == Some(&b'/') {
-        if let Some(end_slash) = source_bytes[1..].iter().position(|&b| b == b'/') {
-            let pattern = &source[1..][..end_slash];
-            let after = &source[1..][end_slash + 1..];
-            let is_simple_regex = after.is_empty()
-                || after == ".source"
-                || after.chars().all(|c| matches!(c, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd' | 'v'))
-                || {
-                    let dot_idx = after.find('.');
-                    dot_idx.map_or(false, |i| {
-                        after[..i].chars().all(|c| matches!(c, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd' | 'v'))
-                            && &after[i..] == ".source"
-                    })
-                };
-            if is_simple_regex {
-                let flags = if let Some(dot) = after.find('.') { &after[..dot] } else { after };
-                if flags.chars().all(|c| matches!(c, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd')) {
-                    // For regex followed by .source, skip creating the full regex object
-                    if after.ends_with(".source") {
-                        return Ok(crate::value::Value::String(pattern.to_string()));
-                    }
-                    // For flags-less regex, create a minimal regex object without regress::Regex
-                    if flags.is_empty() {
-                        // Cache single-character regex objects to avoid repeated allocation
-                        if pattern.len() == 1 {
-                            let ch = pattern.as_bytes()[0] as char;
-                            let cached = REGEX_CACHE.with(|cache| cache.borrow().get(&ch).cloned());
-                            if let Some(val) = cached {
-                                return Ok(val);
-                            }
-                        }
-                        let pattern_owned = pattern.to_string();
-                        let mut obj = crate::value::Object::new(crate::value::ObjectKind::RegExp);
-                        obj.internal_regex_source = Some(pattern_owned.clone());
-                        obj.properties.insert("source".to_string(), crate::value::Value::String(pattern_owned));
-                        obj.properties.insert("global".to_string(), crate::value::Value::Boolean(false));
-                        obj.properties.insert("ignoreCase".to_string(), crate::value::Value::Boolean(false));
-                        obj.properties.insert("multiline".to_string(), crate::value::Value::Boolean(false));
-                        obj.properties.insert("flags".to_string(), crate::value::Value::String(String::new()));
-                        obj.properties.insert("lastIndex".to_string(), crate::value::Value::Number(0.0));
-                        let obj_rc = std::rc::Rc::new(std::cell::RefCell::new(obj));
-                        let proto = crate::builtins::regex::get_regexp_prototype();
-                        obj_rc.borrow_mut().prototype = Some(proto);
-                        let val = crate::value::Value::Object(obj_rc);
-                        if pattern.len() == 1 {
-                            let ch = pattern.as_bytes()[0] as char;
-                            REGEX_CACHE.with(|cache| { cache.borrow_mut().insert(ch, val.clone()); });
-                        }
-                        return Ok(val);
-                    }
-                    return crate::eval::literal::eval_regexp_literal(pattern, flags);
-                }
-            }
-        }
-    }
-
     // Check for legacy octal BEFORE parsing, using inherited strict mode from
     // the outer context (is_strict_mode returns true if the code calling eval
     // is itself strict, e.g. "use strict"; eval("01;")).
@@ -129,7 +70,6 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let program = match ctx.parse(&source) {
         Ok(program) => program,
         Err(e) => {
-            eprintln!("EVAL_IMPL PARSE ERROR: {:?}", e);
             CURRENT_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = prev_ctx;
             });
