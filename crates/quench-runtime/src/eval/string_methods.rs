@@ -1,0 +1,111 @@
+//! Primitive string member access.
+//!
+//! Resolves properties and methods from the prototype object exposed by the
+//! global `String` constructor (the same object that carries the RegExp-based
+//! methods installed by `builtins::regex::string_methods`), so that primitive
+//! string member access and `String.prototype` stay in sync.
+
+use crate::env::Environment;
+use crate::value::{JsError, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// Resolve a property on a primitive string value: `length`, numeric indices,
+/// or a method inherited from the global `String` constructor's prototype.
+pub fn resolve_string_member(s: &str, prop_name: &str, env: &Rc<RefCell<Environment>>) -> Value {
+    if prop_name == "length" {
+        return Value::Number(s.len() as f64);
+    }
+    if let Some(ctor) = env.borrow().get("String") {
+        let proto: Option<Rc<RefCell<crate::value::Object>>> = match &ctor {
+            Value::Object(o) => o.borrow().get("prototype").and_then(|v| match v {
+                Value::Object(p) => Some(p),
+                _ => None,
+            }),
+            Value::NativeFunction(nf) => nf.prototype.borrow().clone(),
+            Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
+            _ => None,
+        };
+        if let Some(proto) = proto {
+            if let Some(val) = proto.borrow().get(prop_name) {
+                return val;
+            }
+        }
+    }
+    // Numeric property access (e.g., str[0], str[15])
+    // Valid array indices for String are 0 to 2^32-2 (4294967294).
+    // Indices >= 2^32-1 are NOT valid array indices and should return undefined.
+    if let Ok(idx) = prop_name.parse::<u32>() {
+        if idx <= 4294967294 {
+            // Return undefined for out-of-bounds (nth returns None)
+            if let Some(ch) = s.chars().nth(idx as usize) {
+                return Value::String(ch.to_string());
+            }
+            return Value::Undefined;
+        }
+        // idx >= 4294967295 is not a valid array index
+        return Value::Undefined;
+    }
+    Value::Undefined
+}
+
+/// Resolve a string primitive property to its value (method or property).
+pub fn get_string_method(
+    s: &str,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    Ok(resolve_string_member(s, prop_name, env))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::value::Value;
+    use crate::Context;
+
+    #[test]
+    fn test_primitive_methods_dispatch_through_prototype() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(ctx.eval("'hello'.length").unwrap(), Value::Number(5.0));
+        assert_eq!(
+            ctx.eval("'hello'.toUpperCase()").unwrap(),
+            Value::String("HELLO".to_string())
+        );
+        assert_eq!(
+            ctx.eval("'hello'.charAt(1)").unwrap(),
+            Value::String("e".to_string())
+        );
+        assert_eq!(
+            ctx.eval("'hello'[1]").unwrap(),
+            Value::String("e".to_string())
+        );
+        assert_eq!(
+            ctx.eval("'a,b,c'.split(',').length").unwrap(),
+            Value::Number(3.0)
+        );
+        assert_eq!(
+            ctx.eval("'a,b,c'.split(',')[1]").unwrap(),
+            Value::String("b".to_string())
+        );
+        assert_eq!(
+            ctx.eval("'hello'.slice(1, 3)").unwrap(),
+            Value::String("el".to_string())
+        );
+        assert_eq!(
+            ctx.eval("'hello'.includes('ell')").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn test_prototype_mutation_visible_on_primitives() {
+        let mut ctx = Context::new().unwrap();
+        // Methods resolve from the shared String.prototype, so additions are visible
+        ctx.eval("String.prototype.shout = function() { return 'hi'; };")
+            .unwrap();
+        assert_eq!(
+            ctx.eval("typeof 'x'.shout").unwrap(),
+            Value::String("function".to_string())
+        );
+    }
+}
