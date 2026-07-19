@@ -406,11 +406,22 @@ impl Context {
             if sb.len() > 1 && sb[0] == b'/' {
                 if let Some(es) = sb[1..].iter().position(|&b| b == b'/') {
                     let pat = &source[1..][..es];
+                    // Reject regex literals containing line terminators (SyntaxError per spec)
+                    let has_line_term = pat.contains('\n') || pat.contains('\r') || pat.contains('\u{2028}') || pat.contains('\u{2029}');
+                    // Reject patterns starting with excluded first-char: * \ / [
+                    let bad_first_char = pat.as_bytes().first().map_or(false, |&b| matches!(b, b'*' | b'\\' | b'/' | b'['));
                     let after = &source[1..][es + 1..];
-                    let clean = after.is_empty()
+                    let clean = !has_line_term && !bad_first_char && (after.is_empty()
                         || after == ".source"
-                        || after.bytes().all(|b| matches!(b, b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd'));
-                    if clean {
+                        || after.bytes().all(|b| matches!(b, b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd'))
+                        || {
+                            let dot_idx = after.find('.');
+                            dot_idx.map_or(false, |i| {
+                                after[..i].bytes().all(|b| matches!(b, b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd'))
+                                    && &after[i..] == ".source"
+                            })
+                        });
+                        if clean {
                         let flags = if let Some(d) = after.find('.') { &after[..d] } else { after };
                         if flags.bytes().all(|b| matches!(b, b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd')) {
                             // Single-char regex cache

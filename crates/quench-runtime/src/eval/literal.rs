@@ -125,6 +125,15 @@ fn eval_super(env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
 pub fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError> {
     use crate::value::PropertyFlags;
     use regress::Regex;
+    // ES 11.8.5: regex literals must not contain line terminators
+    if pattern.contains('\n') || pattern.contains('\r') || pattern.contains('\u{2028}') || pattern.contains('\u{2029}') {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "Invalid regular expression: unexpected line terminator",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
     let regex = Regex::new(pattern).map_err(|_| JsError::new("Invalid regular expression"))?;
     let mut obj = Object::new(ObjectKind::RegExp);
     obj.internal_regex_source = Some(pattern.to_string());

@@ -518,7 +518,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "++ operator broken (pre-existing)"]
     fn test_do_while_desugaring() {
         assert_eq!(
             eval("let i = 0; do { i++; } while (i < 3); i").unwrap(),

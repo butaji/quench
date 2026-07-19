@@ -100,7 +100,7 @@ impl Scope {
             return None;
         }
         if !object.borrow().has(name) {
-            return Some(!strict);
+            return None;
         }
         // Check writability: non-writable → strict throws, sloppy returns Ok.
         if let Some(flags) = object.borrow().get_descriptor(name) {
