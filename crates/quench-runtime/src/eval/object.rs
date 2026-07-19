@@ -852,7 +852,7 @@ fn get_member_function(
     match obj_val {
         Value::Object(o) => crate::eval::member::eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => get_string_method(s, prop_name, env),
-        Value::Number(_) => get_number_method(obj_val, prop_name, env),
+        Value::Number(_) | Value::BigInt(_) => get_number_method(obj_val, prop_name, env),
         Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => {
             crate::eval::member::eval_native_function_member(nf, prop_name)
@@ -905,7 +905,7 @@ fn get_number_method(
 ) -> Result<Value, JsError> {
     if !matches!(
         obj_val,
-        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_)
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_)
     ) {
         return Ok(Value::Undefined);
     }
@@ -913,6 +913,7 @@ fn get_number_method(
         Value::Number(_) => "Number",
         Value::Boolean(_) => "Boolean",
         Value::Symbol(_) => "Symbol",
+        Value::BigInt(_) => "BigInt",
         _ => return Ok(Value::Undefined),
     };
     let ctor_val = match env.borrow().get(ctor_name) {

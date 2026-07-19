@@ -2,10 +2,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{Test262Host, TestOutcome};
+use crate::test262::host::{QuenchHost, Test262Host, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
+
+/// Per-test timeout in seconds. If a test takes longer than this,
+/// it is reported as a failure rather than blocking the stage.
+const TEST_TIMEOUT_SECS: u64 = 10;
 
 /// Ordered stages (relative to test262/test/).
 ///
@@ -220,16 +226,35 @@ pub fn run_single_test(
     let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
 
-    let run = |s: &str, host: &mut dyn Test262Host| {
-        if is_module {
-            host.run_module_script(s)
-        } else {
-            host.run_script(s)
+    let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
+    let run_sloppy = |script: &str, host: &mut dyn Test262Host| -> TestOutcome {
+        // Use a fresh QuenchHost in a separate thread so a stuck thread
+        // does not block the stage — the thread is abandoned after timeout.
+        let meta = meta.clone();
+        let script = script.to_owned();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut inner = QuenchHost::new();
+            let result = if is_module {
+                inner.run_module_script(&script)
+            } else {
+                inner.run_script(&script)
+            };
+            let _ = tx.send(check_outcome(&meta, result));
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(outcome) => outcome,
+            Err(mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
+                reason: format!("Must be optimized (timed out after {}s)", TEST_TIMEOUT_SECS),
+            },
+            Err(mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
+                reason: "panicked".into(),
+            },
         }
     };
 
     if !only_strict {
-        let outcome = check_outcome(&meta, run(&script, host));
+        let outcome = run_sloppy(&script, host);
         if !matches!(outcome, TestOutcome::Pass) {
             return outcome;
         }
@@ -243,7 +268,7 @@ pub fn run_single_test(
     }
 
     let strict_script = format!("\"use strict\";\n{}", script);
-    match check_outcome(&meta, run(&strict_script, host)) {
+    match run_sloppy(&strict_script, host) {
         TestOutcome::Fail { reason } => TestOutcome::Fail {
             reason: format!("strict: {}", reason),
         },
@@ -252,8 +277,8 @@ pub fn run_single_test(
 }
 
 pub struct Test262Runner {
-    test262_dir: PathBuf,
-    harness: HarnessLoader,
+    pub test262_dir: PathBuf,
+    pub harness: HarnessLoader,
 }
 
 impl Test262Runner {
@@ -276,11 +301,7 @@ impl Test262Runner {
 
         let mut total = RunSummary::default();
         let mut stage = start;
-        loop {
-            let stage_dir = match STAGES.get(stage) {
-                Some(s) => *s,
-                None => break,
-            };
+        while let Some(stage_dir) = STAGES.get(stage).copied() {
             let s = self.run_stage(host, stage, stage_dir);
             total.passed += s.passed;
             total.failed += s.failed;

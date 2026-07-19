@@ -72,6 +72,23 @@ thread_local! {
     static TYPE_ERROR_PROTOTYPE: Cell<Option<Rc<RefCell<Object>>>> = const { Cell::new(None) };
 }
 
+// Thread-local storage for the native Test262Error constructor.
+// Stored here so it survives even after JS harness files (e.g. sta.js)
+// overwrite the global Test262Error binding.
+thread_local! {
+    static TEST262_ERROR: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+/// Set the native Test262Error constructor (called by harness injection)
+pub fn set_test262_error(val: Value) {
+    TEST262_ERROR.with(|cell| *cell.borrow_mut() = Some(val));
+}
+
+/// Get the native Test262Error constructor (used by create_js_error_with_type)
+pub fn get_test262_error() -> Option<Value> {
+    TEST262_ERROR.with(|cell| cell.borrow().clone())
+}
+
 /// Register Error prototype for use in create_js_error (called during init)
 pub fn register_error_constructor(error: Value, error_prototype: Rc<RefCell<Object>>) {
     let name = if let Value::Object(obj) = &error {
@@ -99,6 +116,19 @@ pub fn create_js_error(message: &str) -> (Value, JsError) {
 
 /// Create a JS Error object with a specific error type.
 pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsError) {
+    // For Test262Error, use the thread-local native constructor first.
+    // This survives even after sta.js overwrites the global Test262Error binding.
+    if error_type == "Test262Error" {
+        if let Some(ctor) = get_test262_error() {
+            let arg = Value::String(message.to_string());
+            let result = crate::eval::call_value_with_this(ctor, vec![arg], Value::Undefined);
+            if let Ok(v) = result {
+                set_thrown_value(v.clone());
+                return (v, JsError(format!("Test262Error: {}", message)));
+            }
+        }
+    }
+
     // First try to get Error from CURRENT_CONTEXT
     let ctx_ptr = CURRENT_CONTEXT.with(|cell| *cell.borrow());
 
@@ -109,11 +139,8 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
             "SyntaxError" | "TypeError" | "ReferenceError" | "RangeError" | "EvalError"
             | "URIError" | "InternalError" => ctx
                 .get_global(error_type)
-                .or_else(|| ctx.get_global("Test262Error"))
                 .or_else(|| ctx.get_global("Error")),
-            _ => ctx
-                .get_global("Test262Error")
-                .or_else(|| ctx.get_global("Error")),
+            _ => ctx.get_global("Error").or_else(|| ctx.get_global("Test262Error")),
         };
 
         if let Some(ctor_val) = ctor {

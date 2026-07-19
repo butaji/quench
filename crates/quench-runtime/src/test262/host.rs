@@ -4,7 +4,7 @@ use crate::test262::harness::try_inject_harness;
 use crate::Context;
 
 /// Implement this for your engine to plug it into the test262 runner.
-pub trait Test262Host {
+pub trait Test262Host: Send {
     /// Execute a complete JS script (harness + test source) in script mode.
     /// `Ok(())` if execution completes without throwing,
     /// `Err(message)` if it throws or fails to evaluate.
