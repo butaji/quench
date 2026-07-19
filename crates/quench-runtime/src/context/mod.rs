@@ -349,8 +349,8 @@ impl Context {
                     let pat = &source[1..][..es];
                     // Reject regex literals containing line terminators (SyntaxError per spec)
                     let has_line_term = pat.contains('\n') || pat.contains('\r') || pat.contains('\u{2028}') || pat.contains('\u{2029}');
-                    // Reject patterns starting with excluded first-char: * \ / [
-                    let bad_first_char = pat.as_bytes().first().map_or(false, |&b| matches!(b, b'*' | b'\\' | b'/' | b'['));
+                    // Reject patterns starting with excluded first-char: * / [
+                    let bad_first_char = pat.as_bytes().first().map_or(false, |&b| matches!(b, b'*' | b'/' | b'['));
                     let after = &source[1..][es + 1..];
                     let clean = !has_line_term && !bad_first_char && (after.is_empty()
                         || after == ".source"
