@@ -2,7 +2,10 @@
 
 Goal: 100% of test262, staged, minimum LOC. Architecture is a small
 Rust core + self-hosted JS builtins (see `docs/architecture.md`).
-Everything below follows the `AGENTS.md` failing-test-first cycle.
+Everything below follows the `AGENTS.md` failing-test-first cycle and
+the linter gate (`-D warnings`; files ≤ 500 lines, functions ≤ 40
+lines, complexity ≤ 10, ≤ 3 bool params, no `#[allow]` and no
+deferrals).
 
 Audit baseline: ~32,339 Rust LOC, ~1,400–1,700 removable. Target after
 migration: **~8–12k Rust** + **~3–5k JS**, roughly half today's total,
@@ -170,14 +173,17 @@ dispatch for tests. Diverges from `eval::function::call_value`.
 
 ~55 LOC saved.
 
-## R12 — Split `eval/object.rs`  *(LOW, move-only)*
+## R12 — Split `eval/object.rs`  *(HIGH, linter gate)*
 
-1847 LOC mixing assignment + destructuring + accessor + boxing. R0
+`.clippy.toml` caps files at 500 lines; `eval/object.rs` is 1847. R0
 shrinks the surface calling these; remaining Rust is target resolution
-+ accessor internal calls.
++ accessor internal calls. Splitting is not optional — the file
+violates the linter gate today.
 
 - [ ] `eval/assign.rs`, `eval/destructuring.rs`, `eval/accessor.rs`.
 - [ ] Boxing → `eval/ops.rs::to_object` (R1).
+- [ ] Every resulting file < 500 lines, every function < 40 lines,
+      complexity ≤ 10.
 
 ## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5)*
 
