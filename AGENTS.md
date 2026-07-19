@@ -1,107 +1,80 @@
 # AGENTS.md
 
-Guidance for agentic work in this repository.
-
-## What this is
-
-Quench — a Rust-native JavaScript runtime (OXC parser + custom tree-walking
-interpreter) targeting 100% test262 conformance. Single crate:
-`crates/quench-runtime`. The test262 suite lives in the `tests/test262`
-submodule; never modify files inside it.
+Quench — Rust-native JS runtime targeting **100% test262 conformance**.
+Single crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 ## Commands
 
 ```bash
 cargo build -p quench-runtime
-cargo test -p quench-runtime                     # lib + integration + harness smoke tests
-cargo fmt -p quench-runtime                      # CI gate: fmt --check
-cargo clippy -p quench-runtime --all-targets     # CI gate: zero warnings (-D warnings)
+cargo test -p quench-runtime
+cargo fmt -p quench-runtime
+cargo clippy -p quench-runtime --all-targets
 
-# Staged test262 runner (fail-fast, checkpointed)
+# Run one stage
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-rm crates/quench-runtime/.test262_checkpoint     # restart from stage 0
-TEST262_LIMIT=10 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-TEST262_STAGE=0  cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+# Specific stage
+TEST262_STAGE=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-`TEST262_LIMIT` batches a run while still saving the checkpoint;
-`TEST262_STAGE` runs one stage without touching the checkpoint (CI mode).
+No checkpoints. No skips. Each stage runs to 100% passing before advancing.
 
-## Staged-runner workflow (test by test)
+## Workflow: unit tests, not guesswork
 
-1. Run the staged runner. It stops at the first failure and prints the test
-   path, stage, and index.
-2. Fix the engine (minimal change — see conventions below).
-3. Rerun. The checkpoint at `crates/quench-runtime/.test262_checkpoint`
-   auto-resumes where you stopped.
-4. Leave the checkpoint at the first genuine language-feature failure; do not
-   skip tests just to advance it.
+**Never debug by inspection. Never patch on a hunch. Always write a failing test first.**
 
-Every non-`raw` test runs twice: sloppy and with `"use strict";` prepended.
-A `strict mode:` prefix on the failure means only the strict run failed.
+When a test262 case fails, or when implementing/fixing a builtin, evaluator, or
+parser path, the cycle is mandatory:
 
-## Architecture map
+1. **Reproduce** — add a `#[test]` in the relevant module's `mod tests` (or in
+   `crates/quench-runtime/tests/`) that exercises the exact JS or Rust behavior
+   under inspection. Mirror the surrounding test style (see
+   `src/eval/string_methods.rs`, `src/builtins/map.rs` for the established
+   pattern).
+2. **Watch it fail** — `cargo test -p quench-runtime <name>` must fail with the
+   same symptom as the test262 case. If it doesn't, you don't understand the
+   bug yet; keep refining the test before touching production code.
+3. **Fix** — make the minimal change to production code so the unit test
+   passes.
+4. **Verify** — re-run the unit test, the module's full test suite, then the
+   relevant test262 stage. Run `cargo fmt`/`cargo clippy` before declaring done.
+5. **Leave the test in** — regression coverage stays in the tree. A fix
+   without a committed test is not done.
+
+No `println!`-driven archaeology. No speculative rewrites. No "let me try
+this" patches. If you can't express the bug as a unit test, you don't have
+enough understanding to change the code.
+
+test262 output is a signal for *what* to test, not a substitute for the test
+itself — the conformance run lives in `tests/test262.rs` only and is never
+edited; the reproductions live next to the code under `src/.../mod tests`.
+
+## Architecture
 
 ```
 crates/quench-runtime/src/
-├── parser.rs   # OXC JS/TS/TSX/JSX parsing → internal AST
-├── lower/         # AST lowering (tagged templates, switch→if-chains, etc.)
+├── parser.rs      # OXC → internal AST
+├── lower/         # AST lowering
 ├── ast.rs         # internal AST
-├── interpreter.rs # entry points, strict-mode flag, native-this, hoisting
-├── eval/          # tree-walking evaluator (expression, statement, call,
-│                  #   object, member/, function, class, operators, ...)
-├── env.rs         # lexical environments / scopes
-├── value/         # Value model: Object, ValueFunction, NativeFunction,
-│                  #   NativeConstructor, error creation
-├── builtins/      # Rust-native builtins (object, array, string, number,
-│                  #   map, symbol, promise, regex, array_buffer, ...)
-├── context/       # Context: globals + CURRENT_CONTEXT thread-local
-└── test262/       # runner.rs (staged/checkpoint), harness/ (native
-                   #   injection + JS harness loading), skip.rs, metadata.rs
+├── interpreter.rs # eval entry points
+├── eval/          # tree-walking evaluator
+├── env.rs         # lexical environments
+├── value/         # Value, Object, Function, NativeFunction, JsError
+├── builtins/      # native builtins (Object, Array, Map, Symbol, Promise, ...)
+├── context/       # Context, globals, CURRENT_CONTEXT
+└── test262/      # runner.rs, harness/, metadata.rs
 ```
-
-Pipeline: source → `parser` → `lower/` → `interpreter::eval` → `eval/`.
 
 ## Conventions
 
-- **Builtins throw `JsError`, never panic.** Use
+- **Builtins throw `JsError`**, never panic. Use
   `crate::value::error::create_js_error_with_type` and
-  `crate::value::set_thrown_value` so `try/catch` and `assert.throws` see a
-  proper JS error object.
-- **Minimal diffs.** Match the surrounding file's style; no opportunistic
-  refactors, no new dependencies without a strong reason.
-- **Skip policy lives in `src/test262/skip.rs`** — the single source of truth:
-  - `SKIP_FEATURES` / `SKIP_FLAGS`: frontmatter-driven skips.
-  - `should_skip_source`: source-level skip (currently async syntax:
-    `async function`, `async(`, `await `).
-  - `SKIP_TEST_PATHS`: individual tests incompatible with the runner's
-    harness model (keep this list as short as possible).
-- **`TOLERATED_EVAL_FAILURES`** in `src/test262/harness/mod.rs`: harness JS
-  files allowed to fail at load time (currently only
-  `resizableArrayBufferUtils.js`, pending Uint8Array). Every other harness
-  file MUST load cleanly.
-- **Symbols**: a `Value::Symbol` payload is the raw `desc\0id` string. The
-  payload is used directly as the property key everywhere (computed member
-  access, `Object.defineProperty`, `hasOwnProperty`, `delete`). Use
-  `to_property_key`-style conversion (symbol → payload, else `to_js_string`);
-  never `to_js_string` a symbol into a property key.
-- **Boxed primitives** (`Object("a")`, `new Number(1)`, ...): payload stored
-  via `builtins::object::set_boxed_value` as a non-enumerable `_value`
-  property (stands in for [[PrimitiveData]]); `boxed_object(name)` links the
-  wrapper to the constructor's prototype so `instanceof` and `valueOf` work.
-- **Function strictness is captured at definition** (`ValueFunction.strict`),
-  never inherited from the call site. Class bodies set `strict = true`
-  unconditionally. Functions created by the `Function` constructor stay
-  sloppy unless their body has a `"use strict"` directive.
-- **Accessor properties**: `Object.defineProperty` with `get`/`set` stores
-  the function values via `Object::define_accessor` (AST getters/setters from
-  object literals use `set_getter`/`set_setter`). `GetterStorage.func` takes
-  precedence at call time and preserves identity for descriptors.
-- **`CURRENT_CONTEXT`** (context/mod.rs): `thread_local` raw pointer set for
-  the duration of eval; deref only after the `Option` is `Some`, and only
-  from native code that runs during eval.
-- New builtins are wired in `builtins/mod.rs::register_builtins` — mind the
-  documented ordering constraints (Symbol before Map/Set, Number before Date).
-- Dependency choices (why a crate is in `Cargo.toml`, what it replaces) live
-  in `crates/quench-runtime/DEPENDENCIES.md`. Update that file in the same
-  diff when adding or removing a direct dependency.
+  `crate::value::set_thrown_value`.
+- **Minimal diffs** — match surrounding style, no opportunistic refactors.
+- **Symbols**: `Value::Symbol` payload is raw `desc\0id` string; used as property key directly.
+- **Boxed primitives**: stored via `builtins::object::set_boxed_value` as `_value` property.
+- **Function strictness** captured at definition, never inherited from call site.
+  Class bodies are always strict.
+- **Accessor properties**: use `Object::define_accessor`; `GetterStorage.func` takes precedence.
+- **`CURRENT_CONTEXT`** (context/mod.rs): `thread_local` raw pointer set for the duration of eval.
+- New builtins wired in `builtins/mod.rs::register_builtins` — Symbol before Map/Set, Number before Date.
