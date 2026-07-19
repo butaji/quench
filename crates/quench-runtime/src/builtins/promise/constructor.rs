@@ -73,7 +73,7 @@ pub fn create_promise_constructor(
                         Ok(Value::Undefined)
                     })));
 
-                let executor_result =
+                let _executor_result =
                     call_value_with_this(executor, vec![resolve_val, reject_val], Value::Undefined);
                 // Let executor errors propagate naturally.
                 // For `new Promise(fn)`, if fn throws synchronously, the error propagates out.

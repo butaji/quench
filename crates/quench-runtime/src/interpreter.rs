@@ -67,9 +67,9 @@ pub(crate) fn get_current_eval_env() -> Option<Rc<RefCell<Environment>>> {
     CURRENT_EVAL_ENV.with(|cell| cell.borrow().clone())
 }
 
-/// Thread-local flag: true when the current eval call is a direct eval
-/// (identifier-only `eval(...)` resolving to the global eval function).
-/// False for indirect eval (`var f = eval; f(...)`) or method calls (`obj.eval(...)`).
+// Thread-local flag: true when the current eval call is a direct eval
+// (identifier-only `eval(...)` resolving to the global eval function).
+// False for indirect eval (`var f = eval; f(...)`) or method calls (`obj.eval(...)`).
 thread_local! {
     static DIRECT_EVAL: Cell<bool> = const { Cell::new(false) };
 }
@@ -233,7 +233,7 @@ pub fn reset_depth() {
 pub fn eval_program(
     program: &Program,
     env: &mut Rc<RefCell<Environment>>,
-    source: Option<&str>,
+    _source: Option<&str>,
     set_this: bool,
 ) -> Result<Value, JsError> {
     match program {

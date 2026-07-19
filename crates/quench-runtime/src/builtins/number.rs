@@ -1,7 +1,6 @@
 //! Number built-in
 
 use std::cell::RefCell;
-use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{
@@ -322,6 +321,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::consts::PI;
 
     fn eval(src: &str) -> Value {
         let mut ctx = crate::Context::new().unwrap();

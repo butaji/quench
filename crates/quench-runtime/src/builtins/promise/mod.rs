@@ -138,7 +138,7 @@ mod tests {
         ctx.eval("u = 0;").unwrap();
         // Trigger microtask checkpoint again
         crate::builtins::execute_pending_microtasks().ok();
-        let result_after = ctx.eval("u").unwrap();
+        let _result_after = ctx.eval("u").unwrap();
         assert_eq!(result_before, crate::value::Value::Number(42.0));
     }
 

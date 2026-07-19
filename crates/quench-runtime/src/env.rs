@@ -235,6 +235,11 @@ impl Scope {
     pub fn is_this_initialized(&self) -> bool {
         self.this_initialized
     }
+
+    /// Iterate over all bindings in this scope.
+    pub fn bindings(&self) -> impl Iterator<Item = (&String, &Rc<Value>)> {
+        self.bindings.iter()
+    }
 }
 
 impl Default for Scope {
@@ -337,8 +342,7 @@ impl Environment {
     }
 
     /// Iterate live scopes in stack order (outermost first, innermost last).
-    /// "Live" means still in `self.scopes` (popped scopes are removed).
-    /// Callers should not retain the iterator past a mutation of `self.scopes`.
+    #[allow(dead_code)]
     fn live_scopes(&self) -> impl Iterator<Item = &Rc<RefCell<Scope>>> {
         self.scopes.iter()
     }
@@ -351,7 +355,7 @@ impl Environment {
     /// `Rc`s alive even after the block pops, so the closure can
     /// continue to reach its captured bindings.
     pub fn live_scopes_snapshot(&self) -> Vec<Rc<RefCell<Scope>>> {
-        self.scopes.iter().cloned().collect()
+        self.scopes.to_vec()
     }
 
     /// Build a fresh `Environment` that owns a snapshot of the live
@@ -473,7 +477,7 @@ impl Environment {
                         return true;
                     }
                     Value::NativeFunction(ref nf) => {
-                        nf.set_property(prop, value.clone());
+                        let _ = nf.set_property(prop, value.clone());
                         return true;
                     }
                     _ => return false,
@@ -672,7 +676,7 @@ impl Clone for Environment {
         // Preserve the parent chain (shared via Rc) and super_class; dropping
         // them would silently break variable and `super` resolution for any
         // code that clones an environment. Scope entries are shared via
-        // Rc, so captured closures see the same lexical records.
+        // Rc, and captured closures see the same lexical records.
         // pending_fields is NOT cloned — only valid for the constructor's
         // own environment during instantiation.
         Environment {

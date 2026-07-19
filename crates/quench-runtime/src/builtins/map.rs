@@ -352,10 +352,11 @@ pub fn register_map_and_set(ctx: &mut Context) {
         Ok(Value::Object(map))
     });
     if let Value::NativeFunction(nf) = &map_constructor {
-        nf.set_property("prototype", Value::Object(map_proto));
-        nf.set_property("name", Value::String("Map".to_string()));
+        let _ = nf.set_property("prototype", Value::Object(map_proto));
+        let _ = nf.set_property("name", Value::String("Map".to_string()));
         // Set up Symbol.species getter - returns this (the constructor) by default
-        if let Some(species_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("species") {
+        if let Some(species_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+        {
             let map_ctor = map_constructor.clone();
             let species_getter = NativeFunction::new(move |_args| {
                 // Return this (the Map constructor)
@@ -370,7 +371,7 @@ pub fn register_map_and_set(ctx: &mut Context) {
             });
             // Store the getter - the key is the symbol's string representation
             let species_key = format!("{}", species_sym);
-            nf.set_property(&species_key, Value::NativeFunction(Rc::new(species_getter)));
+            let _ = nf.set_property(&species_key, Value::NativeFunction(Rc::new(species_getter)));
         }
     }
     ctx.set_global("Map".to_string(), map_constructor);
@@ -409,8 +410,8 @@ pub fn register_map_and_set(ctx: &mut Context) {
         Ok(Value::Object(set))
     });
     if let Value::NativeFunction(nf) = &set_constructor {
-        nf.set_property("prototype", Value::Object(set_proto));
-        nf.set_property("name", Value::String("Set".to_string()));
+        let _ = nf.set_property("prototype", Value::Object(set_proto));
+        let _ = nf.set_property("name", Value::String("Set".to_string()));
     }
     ctx.set_global("Set".to_string(), set_constructor);
 }
@@ -538,7 +539,11 @@ mod tests {
         .unwrap();
         let result = ctx.eval("Map.prototype.set");
         // If getter works, this should be 42
-        assert_eq!(result.unwrap(), Value::Number(42.0), "Map.prototype.set getter should return 42");
+        assert_eq!(
+            result.unwrap(),
+            Value::Number(42.0),
+            "Map.prototype.set getter should return 42"
+        );
     }
 
     #[test]
@@ -560,16 +565,27 @@ mod tests {
         .unwrap();
         // new Map() should NOT call the getter (empty iterable)
         ctx.eval("new Map();").unwrap();
-        let getterCalled = ctx.eval("getterCalled").unwrap();
-        assert_eq!(getterCalled, Value::Boolean(false), "getter should not be called for empty Map()");
-        
+        let getter_called = ctx.eval("getterCalled").unwrap();
+        assert_eq!(
+            getter_called,
+            Value::Boolean(false),
+            "getter should not be called for empty Map()"
+        );
+
         // new Map([[1, 2]]) SHOULD call the getter
         let result = ctx.eval("new Map([[1, 2]]);");
-        assert!(result.is_err(), "new Map([[1, 2]]) should throw when getter throws");
-        
+        assert!(
+            result.is_err(),
+            "new Map([[1, 2]]) should throw when getter throws"
+        );
+
         // Verify getter WAS called
-        let getterCalled = ctx.eval("getterCalled").unwrap();
-        assert_eq!(getterCalled, Value::Boolean(true), "getter should be called for non-empty Map()");
+        let getter_called = ctx.eval("getterCalled").unwrap();
+        assert_eq!(
+            getter_called,
+            Value::Boolean(true),
+            "getter should be called for non-empty Map()"
+        );
     }
 
     #[test]
@@ -589,7 +605,11 @@ mod tests {
         // Call the getter and use the returned function
         let result = ctx.eval("var m = new Map(); var s = Map.prototype.set; s.call(m, 1, 2);");
         assert!(result.is_ok(), "calling getter should work: {:?}", result);
-        assert_eq!(ctx.eval("var m = new Map(); Map.prototype.set.call(m, 1, 2);").unwrap(), Value::Number(3.0));
+        assert_eq!(
+            ctx.eval("var m = new Map(); Map.prototype.set.call(m, 1, 2);")
+                .unwrap(),
+            Value::Number(3.0)
+        );
     }
 
     #[test]
@@ -607,19 +627,29 @@ mod tests {
         )
         .unwrap();
         // Check if Map has own 'set' property
-        let hasOwn = ctx.eval("Object.prototype.hasOwnProperty.call(Map.prototype, 'set');").unwrap();
-        assert_eq!(hasOwn, Value::Boolean(true), "Map.prototype should have own 'set' property");
-        
+        let has_own = ctx
+            .eval("Object.prototype.hasOwnProperty.call(Map.prototype, 'set');")
+            .unwrap();
+        assert_eq!(
+            has_own,
+            Value::Boolean(true),
+            "Map.prototype should have own 'set' property"
+        );
+
         // Now test with a map instance
         let result = ctx.eval("var m = new Map(); m.set(1, 2);");
-        assert!(result.is_err(), "calling m.set should throw (getter on prototype): {:?}", result);
+        assert!(
+            result.is_err(),
+            "calling m.set should throw (getter on prototype): {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_map_iterable_parsing() {
         // Test that new Map with iterable populates correctly
         let mut ctx = Context::new().unwrap();
-        
+
         // Test with a normal iterable (no override)
         ctx.eval("var m = new Map([[1, 2], [3, 4]]);").unwrap();
         assert_eq!(ctx.eval("m.get(1)").unwrap(), Value::Number(2.0));
@@ -646,11 +676,15 @@ mod tests {
             "#,
         )
         .unwrap();
-        
+
         // Verify counter is 2 (called twice)
         let counter = ctx.eval("counter").unwrap();
-        assert_eq!(counter, Value::Number(2.0), "Map.prototype.set should be called twice");
-        
+        assert_eq!(
+            counter,
+            Value::Number(2.0),
+            "Map.prototype.set should be called twice"
+        );
+
         // Verify map has the values
         assert_eq!(ctx.eval("map.get('foo')").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("map.get('bar')").unwrap(), Value::Number(2.0));
@@ -660,14 +694,19 @@ mod tests {
     fn test_map_override_is_found() {
         // Check if overridden Map.prototype.set is found
         let mut ctx = Context::new().unwrap();
-        
+
         // Override Map.prototype.set
-        ctx.eval("Map.prototype.set = function() { return 42; };").unwrap();
-        
+        ctx.eval("Map.prototype.set = function() { return 42; };")
+            .unwrap();
+
         // Check if a map instance sees the override
         ctx.eval("var m = new Map();").unwrap();
         let result = ctx.eval("m.set(1, 2);").unwrap();
-        assert_eq!(result, Value::Number(42.0), "m.set should return 42 from override");
+        assert_eq!(
+            result,
+            Value::Number(42.0),
+            "m.set should return 42 from override"
+        );
     }
 
     #[test]
@@ -685,7 +724,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        
+
         // Empty iterable should NOT throw
         let result = ctx.eval("new Map([]);");
         assert!(result.is_ok(), "new Map([]) should not throw: {:?}", result);
@@ -695,7 +734,7 @@ mod tests {
     fn test_map_test262_scenario() {
         // Exactly replicate the test262 test scenario
         let mut ctx = Context::new().unwrap();
-        
+
         // Step 1: Define getter
         ctx.eval(
             r#"
@@ -707,13 +746,17 @@ mod tests {
             "#,
         )
         .unwrap();
-        
+
         // Step 2: new Map() should NOT throw
         ctx.eval("new Map();").unwrap();
-        
+
         // Step 3: new Map([]) SHOULD throw
         let result = ctx.eval("new Map([]);");
-        assert!(result.is_err(), "new Map([]) should throw when getter throws: {:?}", result);
+        assert!(
+            result.is_err(),
+            "new Map([]) should throw when getter throws: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -724,7 +767,7 @@ mod tests {
         // Just test that new Map() works
         let result = ctx.eval("new Map()");
         assert!(result.is_ok(), "new Map() should work: {:?}", result);
-        
+
         // Test that Map() without new also works (implicit call)
         let result = ctx.eval("Map()");
         assert!(result.is_ok(), "Map() should work: {:?}", result);

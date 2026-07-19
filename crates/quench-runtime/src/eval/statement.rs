@@ -4,8 +4,8 @@ use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::interpreter::{
-    collect_var_names_recursive, predeclare_let_const, predeclare_var, set_control_flow,
-    take_control_flow, ControlFlow,
+    collect_var_names_recursive, predeclare_let_const, set_control_flow, take_control_flow,
+    ControlFlow,
 };
 use crate::value::{
     set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
@@ -376,7 +376,8 @@ fn eval_try_catch(
             let thrown_value = take_thrown_value();
             let thrown_value = thrown_value.unwrap_or(Value::Undefined);
             if let Some(name) = param {
-                env.borrow_mut().define(name.to_string(), thrown_value.clone());
+                env.borrow_mut()
+                    .define(name.to_string(), thrown_value.clone());
             }
             eval_statement(handler, env, false, in_arrow_function)
         }

@@ -29,8 +29,7 @@ pub fn eval_call(
             return eval_super_call(arguments, env, in_arrow_function);
         }
     }
-    let (func, this_val, is_direct_eval) =
-        crate::eval::object::eval_callee_with_this(callee, env)?;
+    let (func, this_val, is_direct_eval) = crate::eval::object::eval_callee_with_this(callee, env)?;
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     // Save the previous DIRECT_EVAL flag, then set for this call.
     // This ensures nested eval calls don't clobber the outer eval's flag.

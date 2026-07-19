@@ -94,6 +94,23 @@ Too minimal — lacks the Unicode properties that JS `RegExp` requires.
   AGENTS.md convention); `anyhow` is for top-level glue where we do not
   care to surface structured errors.
 
+## BigInt support — `num-bigint`
+
+- **Crate:** `num-bigint = "0.4"`.
+- **Why:** Powers `Value::BigInt` and the `BigInt` builtin (stage 50)
+  plus the `BigInt` literal at parse/lower time. Re-implements the ES
+  arbitrary-precision integer semantics verbatim, including ToString and
+  arithmetic, so we do not carry a hand-rolled bignum.
+- **Used by:** `src/value/val.rs`, `src/builtins/bigint.rs`.
+
+### Why not hand-rolled?
+
+A spec-correct `BigInt` (mod, bitwise, mixed `Number`/`String`
+conversions) is several hundred LOC and easy to get wrong on edge cases
+like `-0n`, signed division truncation towards zero, or the
+`BigInt.asIntN` / `BigInt.asUintN` wrap semantics. `num-bigint` already
+covers all of them.
+
 ## Conformance tooling — `walkdir`, `chrono`
 
 - **Crate:** `walkdir = "2"`, `chrono = "0.4"`.
@@ -118,8 +135,8 @@ would save <2K LOC with no behavioural difference; not worth the churn.
 ### `oxc` arena + GC interaction (forward-looking)
 
 The runtime does not yet use a tracing GC. If one is introduced, the
-arena (`oxc_allocator::Allocator`) must be kept alive for the duration of
-any lowered value that still references OXC `Box<'_, T>` nodes. Two
+arena (`oxc_allocator::Allocator`) must be kept alive for the duration
+of any lowered value that still references OXC `Box<'_, T>` nodes. Two
 strategies:
 
 1. Keep the arena alive for the entire execution (simplest, but memory
@@ -127,7 +144,7 @@ strategies:
 2. Lower OXC nodes into runtime-owned structs and drop the arena after
    `lower/` finishes.
 
-### Why no `gc`, `lasso`, `slotmap`, `num-bigint`, `lexical`, `rand`, `icu` yet
+### Why no `gc`, `lasso`, `slotmap`, `lexical`, `rand`, `icu` yet
 
 These are reserved for future stages of test262 conformance and would be
 introduced when the corresponding built-ins land:
@@ -137,7 +154,6 @@ introduced when the corresponding built-ins land:
 | `gc`        | Object identity GC becomes necessary   |
 | `lasso`     | String interning across realms         |
 | `slotmap`   | Stable `JsObjectId` handles            |
-| `num-bigint`| `BigInt` builtin                       |
 | `lexical`   | Hot-path number parsing                |
 | `rand`      | `Math.random`                          |
 | `icu`       | ECMA-402 `Intl` object                 |

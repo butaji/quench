@@ -3,7 +3,6 @@
 use crate::ast::{Expression, PropertyKey, Statement, VarKind};
 use oxc::ast::ast;
 
-use crate::lower::helpers::wtf8_atom_to_string;
 use crate::lower::pattern::{expand_nested_array_pattern, expand_nested_pattern};
 
 /// Lower array destructuring pattern

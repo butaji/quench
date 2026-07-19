@@ -12,11 +12,13 @@ use crate::value::{NativeFunction, Object, ObjectKind, Symbol as ValSymbol, Valu
 use crate::Context;
 
 /// Symbol counter for unique IDs - using atomic for thread-safety
+#[allow(dead_code)]
 static SYMBOL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Separator between a symbol's description and its unique id in the payload.
 /// Symbol payloads are stored as `desc\0id` so that string equality on
 /// Value::Symbol is identity equality (Symbol() !== Symbol()).
+#[allow(dead_code)]
 const SYMBOL_ID_SEP: char = '\u{0}';
 
 // Thread-local storage for well-known symbols.
@@ -32,6 +34,7 @@ thread_local! {
 }
 
 /// Create a unique symbol description
+#[allow(dead_code)]
 fn next_symbol_desc() -> u64 {
     SYMBOL_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
@@ -146,7 +149,7 @@ fn setup_symbol_for_method(symbol_fn: &Rc<NativeFunction>) {
             .unwrap_or_else(|| "undefined".to_string());
         Ok(symbol_for_impl(&key))
     });
-    symbol_fn.set_property("for", Value::NativeFunction(Rc::new(symbol_for)));
+    let _ = symbol_fn.set_property("for", Value::NativeFunction(Rc::new(symbol_for)));
 }
 
 /// Set up Symbol.keyFor method
@@ -155,7 +158,7 @@ fn setup_symbol_key_for_method(symbol_fn: &Rc<NativeFunction>) {
         let sym = args.first().cloned().unwrap_or(Value::Undefined);
         symbol_key_for_impl(sym)
     });
-    symbol_fn.set_property("keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
+    let _ = symbol_fn.set_property("keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
 }
 
 /// Set up Symbol.prototype with basic methods (toString, valueOf, description)
@@ -200,7 +203,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
         }
     });
     proto.set("description", Value::NativeFunction(Rc::new(description)));
-    symbol_fn.set_property("prototype", Value::Object(Rc::new(RefCell::new(proto))));
+    let _ = symbol_fn.set_property("prototype", Value::Object(Rc::new(RefCell::new(proto))));
 }
 
 /// Unwrap the symbol from a bare Symbol or a boxed Symbol object.
@@ -232,7 +235,7 @@ fn register_well_known_symbols(symbol_fn: &Rc<NativeFunction>) {
     ] {
         let symbol = new_symbol(&format!("Symbol.{}", name));
         store_well_known_symbol(name, symbol.clone());
-        symbol_fn.set_property(name, symbol);
+        let _ = symbol_fn.set_property(name, symbol);
     }
 }
 

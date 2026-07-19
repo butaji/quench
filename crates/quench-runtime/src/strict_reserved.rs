@@ -7,7 +7,7 @@
 //! strict mode. We walk the parsed AST for binding positions and report the
 //! first offending name so the caller can raise a SyntaxError.
 
-use oxc::ast::ast::{AssignmentTargetPattern, Program};
+use oxc::ast::ast::Program;
 use oxc::ast::visit::walk::walk_assignment_expression;
 use oxc::ast::visit::Visit;
 
@@ -135,9 +135,6 @@ mod tests {
             find(r#""use strict"; arguments = 10;"#).as_deref(),
             Some("arguments")
         );
-        assert_eq!(
-            find(r#""use strict"; eval = 10;"#).as_deref(),
-            Some("eval")
-        );
+        assert_eq!(find(r#""use strict"; eval = 10;"#).as_deref(), Some("eval"));
     }
 }

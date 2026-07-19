@@ -246,8 +246,8 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 let captures = match_captures(&m, &string);
                 let replaced = replace_using_value(
                     matched,
-                    &before,
-                    &after,
+                    before,
+                    after,
                     &captures,
                     start as f64,
                     &string,
@@ -307,8 +307,8 @@ fn replace_all_with_value(string: &str, regex: &Regex, replacement: &Value) -> S
             let start = m.start();
             let end = m.end();
             let matched = &string[start..end];
-            let before = &string[..start];
-            let after = &string[end..];
+            let _before = &string[..start];
+            let _after = &string[end..];
             let captures = match_captures(&m, string);
 
             // For now, call the function without proper 'this' handling

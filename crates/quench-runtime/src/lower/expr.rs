@@ -2,7 +2,7 @@
 
 use super::helpers::LowerError;
 use super::helpers::{assign_op_to_bin, lower_bin_op, lower_logical_op, lower_unary_op};
-use super::jsx::{lower_jsx_element, lower_jsx_fragment, lower_jsx_member, lower_jsx_namespaced};
+use super::jsx::{lower_jsx_element, lower_jsx_fragment};
 use super::literals::{lower_tagged_template, lower_template_literal};
 use super::opt_chain::lower_opt_chain;
 use super::stmt::lower_formal_params;
@@ -11,7 +11,7 @@ use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, Param, PropertyKey, PropertyValue, UpdateOp,
 };
 use oxc::ast::ast;
-use oxc::syntax::operator::{AssignmentOperator, LogicalOperator, UpdateOperator};
+use oxc::syntax::operator::{AssignmentOperator, UpdateOperator};
 
 /// Lower an OXC Expression to our Expression
 #[allow(clippy::complexity)]
@@ -109,7 +109,7 @@ fn lower_object_expr(obj: &ast::ObjectExpression) -> Result<Expression, LowerErr
             }
         };
 
-        // Check if it's a getter or setter (OXC recognizes these properly)
+        // Check if OXC recognizes it as a getter or setter
         if prop.kind == ast::PropertyKind::Get || prop.kind == ast::PropertyKind::Set {
             let (lowered_key, lowered_val) = lower_object_prop(prop)?;
             result.push((lowered_key, lowered_val));
@@ -117,78 +117,111 @@ fn lower_object_expr(obj: &ast::ObjectExpression) -> Result<Expression, LowerErr
             continue;
         }
 
-        // Fallback: OXC 0.47 misclassifies `set`/`get` accessors in object
-        // literals as `PropertyKind::Init`. Detect by the property key being
-        // "get"/"set" and the value being a function expression. When matched,
-        // peek ahead to find the actual property name in the next property.
-        let key_name: Option<String> = match &prop.key {
-            ast::PropertyKey::StaticIdentifier(name) => Some(name.name.to_string()),
+        // OXC may parse `{ get: fn, set: fn }` as two Init properties with keys
+        // "get" and "set" and function values. Each should use the NEXT property's
+        // key as the actual property name.
+        let key_name: Option<&str> = match &prop.key {
+            ast::PropertyKey::StaticIdentifier(name) => Some(name.name.as_str()),
             _ => None,
         };
 
-        if let (Some(name), ast::Expression::FunctionExpression(func)) =
-            (key_name.as_deref(), &prop.value)
-        {
-            if name == "get" || name == "set" {
-                // Peek ahead: the next property holds the actual property name
-                let actual_key = if i + 1 < ast_props.len() {
-                    if let ast::ObjectPropertyKind::ObjectProperty(next_prop) = &ast_props[i + 1] {
-                        // Use the next property's key as the actual property name
-                        let next_key = lower_prop_name_key_oxc(&next_prop.key)?;
-                        // Skip the next property (it's the actual { x: ... } part)
-                        i += 1;
-                        next_key
+        let is_accessor_keyword = key_name == Some("get") || key_name == Some("set");
+        let is_func_value = matches!(&prop.value, ast::Expression::FunctionExpression(_));
+
+        if is_accessor_keyword && is_func_value {
+            // The next property holds the actual property name
+            let actual_key = if i + 1 < ast_props.len() {
+                if let ast::ObjectPropertyKind::ObjectProperty(next_prop) = &ast_props[i + 1] {
+                    // If next is also an accessor keyword, use the keyword itself as the key
+                    let next_key_name = match &next_prop.key {
+                        ast::PropertyKey::StaticIdentifier(n) => Some(n.name.as_str()),
+                        _ => None,
+                    };
+                    let next_is_accessor =
+                        next_key_name == Some("get") || next_key_name == Some("set");
+                    if next_is_accessor {
+                        // Both are accessor keywords but not paired ({get, set}).
+                        // Use the keyword itself as the property name.
+                        PropertyKey::Ident(key_name.unwrap().to_string())
                     } else {
-                        // No next property, use "get"/"set" as the literal property name
-                        PropertyKey::Ident(name.to_string())
+                        // Next property is the actual property name — use it and skip it
+                        let ak = lower_prop_name_key_oxc(&next_prop.key)?;
+                        i += 1; // consume next prop
+                        ak
                     }
                 } else {
-                    PropertyKey::Ident(name.to_string())
-                };
+                    PropertyKey::Ident(key_name.unwrap().to_string())
+                }
+            } else {
+                PropertyKey::Ident(key_name.unwrap().to_string())
+            };
 
-                let lowered_val = if name == "get" {
-                    let body = func
-                        .body
-                        .as_ref()
-                        .map(|b| super::helpers::lower_fn_body(b))
-                        .unwrap_or_default();
+            if key_name == Some("get") {
+                let body = extract_accessor_body(&prop.value);
+                result.push((
+                    actual_key,
                     PropertyValue::Getter {
                         params: vec![],
                         body,
-                    }
-                } else {
-                    let param = func
-                        .params
-                        .items
-                        .first()
-                        .and_then(|p| {
-                            if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
-                                Some(ident.name.as_str().to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_else(|| "value".to_string());
-                    let body = func
-                        .body
-                        .as_ref()
-                        .map(|b| super::helpers::lower_fn_body(b))
-                        .unwrap_or_default();
-                    PropertyValue::Setter { param, body }
-                };
-                result.push((actual_key, lowered_val));
-                i += 1;
-                continue;
+                    },
+                ));
+            } else {
+                let setter = extract_setter_info(&prop.value);
+                result.push((
+                    actual_key,
+                    PropertyValue::Setter {
+                        param: setter.0,
+                        body: setter.1,
+                    },
+                ));
             }
+            i += 1;
+            continue;
         }
 
-        // Regular property (not a get/set accessor keyword)
+        // Regular property
         let (lowered_key, lowered_val) = lower_object_prop(prop)?;
         result.push((lowered_key, lowered_val));
         i += 1;
     }
 
     Ok(Expression::Object(result))
+}
+
+fn extract_accessor_body(value: &ast::Expression) -> Vec<Statement> {
+    if let ast::Expression::FunctionExpression(func) = value {
+        func.body
+            .as_ref()
+            .map(|b| super::helpers::lower_fn_body(b))
+            .unwrap_or_default()
+    } else {
+        vec![]
+    }
+}
+
+fn extract_setter_info(value: &ast::Expression) -> (String, Vec<Statement>) {
+    if let ast::Expression::FunctionExpression(func) = value {
+        let param = func
+            .params
+            .items
+            .first()
+            .and_then(|p| {
+                if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
+                    Some(ident.name.as_str().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "value".to_string());
+        let body = func
+            .body
+            .as_ref()
+            .map(|b| super::helpers::lower_fn_body(b))
+            .unwrap_or_default();
+        (param, body)
+    } else {
+        ("value".to_string(), vec![])
+    }
 }
 
 fn lower_object_prop(
@@ -543,6 +576,7 @@ fn lower_cond_expr(cond: &ast::ConditionalExpression) -> Result<Expression, Lowe
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn lower_member_prop(
     prop: &ast::IdentifierName,
 ) -> Result<(PropertyKey, bool), LowerError> {
@@ -629,8 +663,6 @@ fn lower_simple_assignment_target(
         ast::SimpleAssignmentTarget::TSNonNullExpression(e) => lower_expr(&e.expression),
         ast::SimpleAssignmentTarget::TSTypeAssertion(e) => lower_expr(&e.expression),
         ast::SimpleAssignmentTarget::TSInstantiationExpression(e) => lower_expr(&e.expression),
-        // Complex assignment targets not supported
-        _ => Err(LowerError::new("Complex assignment target not supported")),
     }
 }
 

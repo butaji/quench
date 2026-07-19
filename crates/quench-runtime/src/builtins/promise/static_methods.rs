@@ -26,8 +26,8 @@ fn invoke_promise_constructor(
     let resolve_slot: Rc<RefCell<Option<Value>>> = Rc::new(RefCell::new(None));
     let reject_slot: Rc<RefCell<Option<Value>>> = Rc::new(RefCell::new(None));
 
-    let resolve_slot_f = Rc::clone(&resolve_slot);
-    let reject_slot_f = Rc::clone(&reject_slot);
+    let _resolve_slot_f = Rc::clone(&resolve_slot);
+    let _reject_slot_f = Rc::clone(&reject_slot);
 
     // Per spec: GetCapabilitiesExecutor is passed to the constructor, which then
     // calls it. The executor will call these with the resolve/reject values.
@@ -558,6 +558,7 @@ pub fn promise_race_impl(
     Ok(Value::Object(promise_rc))
 }
 
+#[allow(dead_code)]
 fn make_race_callbacks(
     promise_rc: &Rc<RefCell<Object>>,
     settled: &Rc<RefCell<bool>>,
@@ -597,6 +598,7 @@ fn make_race_callbacks(
     (resolve_fn, reject_fn)
 }
 
+#[allow(dead_code)]
 fn settle_promise<F>(settled: &Rc<RefCell<bool>>, promise_rc: &Rc<RefCell<Object>>, fulfill: F)
 where
     F: FnOnce(&mut PromiseObjectData),
@@ -611,6 +613,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn attach_race_handlers(
     then_method: &Value,
     resolve_fn: Value,

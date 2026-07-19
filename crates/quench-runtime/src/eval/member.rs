@@ -15,8 +15,6 @@ pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;
-use crate::eval::expression::eval_expression;
-use crate::value::kind::ExoticKind;
 use crate::value::{create_js_error, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;

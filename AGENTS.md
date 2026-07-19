@@ -15,9 +15,15 @@ cargo clippy -p quench-runtime --all-targets
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 # Specific stage
 TEST262_STAGE=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+# Run every stage in order, stop on first failure
+ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-No checkpoints. No skips. Each stage runs to 100% passing before advancing.
+93 stages. No checkpoints. No skips. Each stage runs to 100% passing
+before advancing. The stage list lives in
+`crates/quench-runtime/src/test262/runner.rs::STAGES` and must mirror
+`tasks/index.json` exactly. `test/intl402` (ECMA-402) and `test/staging`
+are intentionally out of scope.
 
 ## Workflow: unit tests, not guesswork — enforced, no exceptions
 
@@ -62,6 +68,39 @@ understand it yet, and you are not allowed to touch production code.
 test262 output is a signal for *what* to test, not a substitute for the test
 itself — the conformance run lives in `tests/test262.rs` only and is never
 edited; the reproductions live next to the code under `src/.../mod tests`.
+
+## Minimum-LOC strategy
+
+The goal is the smallest correct runtime that passes every enumerated
+test262 stage. Reaching 100% covers ~40k tests; total implementation LOC
+is what we minimize, not per-PR diffs. Strategic rules:
+
+- **One canonical spec-abstract-operation path.** `ToPrimitive`,
+  `ToPropertyKey`, `IteratorNext`, `IteratorClose`, `CreateDataPropertyOrThrow`,
+  `OrdinaryHasProperty`, `IsCallable`, … live in **one** place
+  (`src/eval/ops.rs` and friends). Every builtin and eval node routes
+  through them. Re-implementing a spec op inside one builtin because "it's
+  only 3 lines" is how LOC balloons — and how spec ordering bugs creep in.
+- **One iterator protocol.** `%IteratorPrototype%` is implemented once.
+  Array / String / RegExp / Map / Set iterators and `%GeneratorPrototype%`
+  inherit via the prototype chain instead of carrying per-type method
+  tables. Same for `%AsyncIteratorPrototype%`.
+- **Prefer a crate over hand-rolling** when the crate already implements
+  the spec algorithm verbatim. Confirmed dependency choices live in
+  `DEPENDENCIES.md`; adding a hand-rolled copy of `regress`, `num-bigint`,
+  or `chrono` semantics is forbidden. Adding a *new* crate requires a
+  `DEPENDENCIES.md` row in the same diff.
+- **Share intrinsic prototypes across realms.** `ThrowTypeError`,
+  `%IteratorPrototype%`, intrinsic error constructors — wire once; do not
+  rebuild them per created realm.
+- **No speculative generality.** Don't add slots, flags, or hooks that no
+  current test262 case exercises. They cost LOC now and create
+  drift-later. Add them when the stage that needs them lands, with a
+  failing unit test.
+
+Verifying minimum-LOC: when a builtin lands, ask "could this be 3 fewer
+lines by calling an existing spec op?" If yes, do that; if the spec op
+does not exist yet, extract it (with a test) and reuse it.
 
 ## Architecture
 

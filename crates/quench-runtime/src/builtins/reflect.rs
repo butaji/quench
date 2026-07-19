@@ -94,7 +94,7 @@ fn register_proxy(ctx: &mut Context) {
         )));
     // Set the constructor's name and expose it as a global.
     if let Value::NativeFunction(ref nf) = proxy_ctor {
-        nf.set_property("name", Value::String("Proxy".to_string()));
+        let _ = nf.set_property("name", Value::String("Proxy".to_string()));
     }
     ctx.set_global("Proxy".to_string(), proxy_ctor);
 }

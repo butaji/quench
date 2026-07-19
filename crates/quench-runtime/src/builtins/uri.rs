@@ -6,7 +6,6 @@
 //! are simpler than Date parsing, but the implementation already covers
 //! the spec cases).
 
-use std::f64::consts::PI;
 use std::rc::Rc;
 
 use crate::value::{to_js_string, to_number, try_to_number, Value};
@@ -281,6 +280,7 @@ pub fn register_uri(ctx: &mut Context) {
 mod tests {
     use super::*;
     use crate::Context;
+    use std::f64::consts::PI;
 
     fn eval_str(src: &str) -> String {
         let mut ctx = Context::new().unwrap();
@@ -354,11 +354,19 @@ mod tests {
         // isFinite.name should be "isFinite"
         assert_eq!(eval_str("isFinite.name"), "isFinite");
         // isFinite.name should be non-writable and configurable
-        assert!(eval_bool("!Object.getOwnPropertyDescriptor(isFinite, 'name').writable"));
-        assert!(eval_bool("Object.getOwnPropertyDescriptor(isFinite, 'name').configurable"));
+        assert!(eval_bool(
+            "!Object.getOwnPropertyDescriptor(isFinite, 'name').writable"
+        ));
+        assert!(eval_bool(
+            "Object.getOwnPropertyDescriptor(isFinite, 'name').configurable"
+        ));
         // Check all descriptor properties
-        assert!(eval_bool("Object.getOwnPropertyDescriptor(isFinite, 'name').value === 'isFinite'"));
-        assert!(eval_bool("!Object.getOwnPropertyDescriptor(isFinite, 'name').enumerable"));
+        assert!(eval_bool(
+            "Object.getOwnPropertyDescriptor(isFinite, 'name').value === 'isFinite'"
+        ));
+        assert!(eval_bool(
+            "!Object.getOwnPropertyDescriptor(isFinite, 'name').enumerable"
+        ));
         // Also try to verify that the descriptor matches what's expected
         let desc = eval_str("JSON.stringify(Object.getOwnPropertyDescriptor(isFinite, 'name'))");
         eprintln!("isFinite.name descriptor: {}", desc);

@@ -1,6 +1,5 @@
 //! Native assert helpers (sameValue, throws, compareArray)
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::same_value;
@@ -78,14 +77,9 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
             Err(js_err)
         }
         Err(js_err) => {
-            // If eval threw before setting a thrown value (e.g., strict-mode
-            // SyntaxError from pre-parse checks), extract the thrown value from
-            // the error itself. Otherwise use the thread-local thrown value.
             let thrown = match crate::value::get_thrown_value() {
                 Some(v) => v,
                 None => {
-                    // Parse error type from "SyntaxError: ..." message and create
-                    // the matching error object so assert.throws can match it.
                     let msg = &js_err.0;
                     let err_type = msg.split(':').next().unwrap_or("Error");
                     let (err_val, _) =
@@ -112,7 +106,12 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
                         expected_name, thrown_name, message
                     )
                 };
-                let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+                let (err_val, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+                if let Value::Object(o) = &err_val {
+                    o.borrow_mut()
+                        .set("name", Value::String("Test262Error".to_string()));
+                }
                 crate::value::set_thrown_value(err_val);
                 Err(js_err)
             }
@@ -120,60 +119,75 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
-/// Check if thrown error's constructor matches expected constructor.
-/// Uses exact constructor identity: walks prototype chain to find .constructor
-/// and compares via pointer equality. This correctly distinguishes
-/// TypeError from Error (even though TypeError extends Error).
+/// Check if thrown error matches the expected constructor per assert.throws spec.
+///
+/// Algorithm: walks expected.prototype chain, checking thrown.constructor at each level.
+/// This correctly distinguishes same-named constructors from different scopes.
 fn check_error_instance(thrown: &Value, expected: &Value) -> bool {
-    let thrown_obj = match thrown {
-        Value::Object(o) => o,
-        _ => return false,
+    // Get thrown's .constructor
+    let thrown_ctor = match thrown {
+        Value::Object(o) => o.borrow().get("constructor"),
+        Value::NativeFunction(f) => Some(Value::NativeFunction(Rc::clone(f))),
+        Value::NativeConstructor(f) => Some(Value::NativeConstructor(Rc::clone(f))),
+        _ => None,
     };
 
-    // Walk prototype chain to find thrown's .constructor
-    let thrown_constructor = find_constructor(&thrown_obj.borrow());
+    let thrown_ctor = match thrown_ctor {
+        Some(Value::Undefined | Value::Null) => return false,
+        Some(v) => v,
+        None => return false,
+    };
 
-    // Compare via pointer equality on the constructor Value
-    same_constructor(&thrown_constructor, expected)
-}
-
-/// Walk prototype chain to find the .constructor property value.
-fn find_constructor(obj: &crate::value::Object) -> Value {
-    let mut current: Option<Rc<RefCell<crate::value::Object>>> = obj.prototype.clone();
-    while let Some(proto_rc) = current {
-        let proto = proto_rc.borrow();
-        if let Some(ctor) = proto.get("constructor") {
-            return ctor.clone();
-        }
-        current = proto.prototype.clone();
+    // Level 0: thrown.constructor === expected
+    if ptr_eq_value(&thrown_ctor, expected) {
+        return true;
     }
-    Value::Undefined
+
+    // Walk expected.prototype's [[Prototype]] chain
+    let mut current = get_prototype_from_function(expected);
+    loop {
+        let obj = match &current {
+            Some(Value::Object(o)) => Some(Rc::clone(o)),
+            _ => None,
+        };
+        if obj.is_none() {
+            break;
+        }
+        let obj = obj.unwrap();
+        let ctor = obj.borrow().get("constructor");
+        if let Some(c) = ctor {
+            if ptr_eq_value(&thrown_ctor, &c) {
+                return true;
+            }
+        }
+        current = obj.borrow().prototype.clone().map(Value::Object);
+    }
+
+    false
 }
 
-/// Compare two Values as constructor identity.
-/// NativeConstructor vs Function: ALWAYS false (different types).
-/// NativeConstructor vs NativeConstructor: compare names (isolated contexts).
-/// Function vs Function: compare names.
-/// Objects: pointer equality via Rc::ptr_eq.
-fn same_constructor(a: &Value, b: &Value) -> bool {
-    let result = match (a, b) {
-        // Different types → never equal
-        (Value::NativeConstructor(_), Value::Function(_)) => false,
-        (Value::Function(_), Value::NativeConstructor(_)) => false,
-        (Value::NativeConstructor(_), Value::Object(_)) => false,
-        (Value::Object(_), Value::NativeConstructor(_)) => false,
-        // Same type
-        (Value::NativeConstructor(nc_a), Value::NativeConstructor(nc_b)) => {
-            nc_a.name() == nc_b.name()
-        }
-        (Value::Function(f_a), Value::Function(f_b)) => f_a.name == f_b.name,
+fn get_prototype_from_function(f: &Value) -> Option<Value> {
+    match f {
+        Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
+        Value::Function(vf) => Some(Value::Object(vf.get_prototype())),
+        _ => None,
+    }
+}
+
+/// Compare two Values for function identity, handling Value::Object vs Value::Function
+/// wrapping the same underlying function.
+fn ptr_eq_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
         (Value::Object(o_a), Value::Object(o_b)) => Rc::ptr_eq(o_a, o_b),
-        // Function vs Object or other combos
-        (Value::Function(_), Value::Object(_)) => false,
-        (Value::Object(_), Value::Function(_)) => false,
+        (Value::Function(f_a), Value::Function(f_b)) => f_a.identity_ptr() == f_b.identity_ptr(),
+        (Value::NativeFunction(f_a), Value::NativeFunction(f_b)) => {
+            Rc::ptr_eq(&f_a.func, &f_b.func)
+        }
+        (Value::NativeConstructor(f_a), Value::NativeConstructor(f_b)) => {
+            Rc::ptr_eq(f_a.func_rc(), f_b.func_rc())
+        }
         _ => false,
-    };
-    result
+    }
 }
 
 fn is_primitive(v: &Value) -> bool {
@@ -244,7 +258,6 @@ pub fn assert_compare_array(args: Vec<Value>) -> Result<Value, JsError> {
     let expected_elems = get_array_elements(&expected)
         .ok_or_else(|| JsError("Expected is not array-like".to_string()))?;
     if actual_elems.len() != expected_elems.len() {
-        // test262 assert.compareArray always throws "same contents" even for length mismatch
         return mk_err(format!(
             "Actual {} and expected {} should have the same contents. {}",
             fmt_array(&actual_elems),
@@ -278,7 +291,82 @@ pub fn debug_string(v: &Value) -> String {
         Value::NativeConstructor(_) => "[NativeConstructor]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         Value::Class(_) => "[Class]".to_string(),
-        Value::BigInt(_) => "[BigInt]".to_string(),
         Value::BigInt(bi) => format!("{}n", bi),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test262::harness::try_inject_harness;
+
+    fn harness_ctx() -> crate::Context {
+        let mut ctx = crate::Context::new().unwrap();
+        try_inject_harness(&mut ctx).unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_check_error_instance_error_vs_typeerror() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            r#"
+            assert.throws(Error, function() { throw new TypeError() })
+        "#,
+        );
+        assert!(result.is_err(), "Error expected TypeError, should have failed");
+    }
+
+    #[test]
+    fn test_check_error_instance_same_type() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            r#"
+            assert.throws(TypeError, function() { throw new TypeError() })
+        "#,
+        );
+        if let Err(e) = &result {
+            eprintln!("ERROR: {:?}", e);
+        }
+        assert!(
+            result.is_ok(),
+            "TypeError expected TypeError, should have passed, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_check_error_instance_local_ctor() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            r#"
+            (function() {
+                function TypeError() {}
+                assert.throws(TypeError, function() { throw new TypeError() })
+            })()
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "local TypeError should match local TypeError"
+        );
+    }
+
+    #[test]
+    fn test_check_error_instance_local_vs_global() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            r#"
+            (function() {
+                function TypeError() {}
+                assert.throws(TypeError, function() {
+                    throw new globalThis.TypeError()
+                })
+            })()
+        "#,
+        );
+        assert!(
+            result.is_err(),
+            "local TypeError should NOT match global TypeError"
+        );
     }
 }

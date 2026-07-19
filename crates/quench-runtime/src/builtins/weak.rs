@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::env::Environment;
-use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value, ValueFunction};
+use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 // ============================================================================
@@ -258,14 +258,15 @@ where
     match src {
         Value::Object(o) => {
             // Get Symbol.iterator method
-            let iterator_key = match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
-                Some(Value::Symbol(payload)) => payload
-                    .desc
-                    .clone()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-                _ => String::new(),
-            };
+            let iterator_key =
+                match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
+                    Some(Value::Symbol(payload)) => payload
+                        .desc
+                        .clone()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
 
             let iter_method = if !iterator_key.is_empty() {
                 o.borrow().get(&iterator_key)
@@ -307,12 +308,16 @@ where
                 let iter_borrow = iterator.borrow();
 
                 // Check own properties only first (avoid prototype chain getters that might throw)
-                let return_method: Option<Value> = iter_borrow.properties.get("return").cloned().filter(|v| {
-                    matches!(v, Value::Function(_) | Value::NativeFunction(_))
-                });
-                let next_method: Option<Value> = iter_borrow.properties.get("next").cloned().filter(|v| {
-                    matches!(v, Value::Function(_) | Value::NativeFunction(_))
-                });
+                let return_method: Option<Value> = iter_borrow
+                    .properties
+                    .get("return")
+                    .cloned()
+                    .filter(|v| matches!(v, Value::Function(_) | Value::NativeFunction(_)));
+                let next_method: Option<Value> = iter_borrow
+                    .properties
+                    .get("next")
+                    .cloned()
+                    .filter(|v| matches!(v, Value::Function(_) | Value::NativeFunction(_)));
                 drop(iter_borrow);
 
                 let next_method = match next_method {
@@ -328,8 +333,11 @@ where
                 };
 
                 // Call next()
-                let next_result =
-                    crate::eval::call_value_with_this(next_method, vec![], Value::Object(Rc::clone(&iterator)))?;
+                let next_result = crate::eval::call_value_with_this(
+                    next_method,
+                    vec![],
+                    Value::Object(Rc::clone(&iterator)),
+                )?;
 
                 // Get done and value from result
                 let done = if let Value::Object(result_obj) = &next_result {
@@ -372,7 +380,10 @@ where
                                 }
                             }
                         } else {
-                            result_obj_ref.borrow().get("value").unwrap_or(Value::Undefined)
+                            result_obj_ref
+                                .borrow()
+                                .get("value")
+                                .unwrap_or(Value::Undefined)
                         }
                     }
                     _ => Value::Undefined,
@@ -403,14 +414,15 @@ fn extract_iterable(src: &Value) -> Result<Vec<Value>, JsError> {
     match src {
         Value::Object(o) => {
             // Check for Symbol.iterator to determine if iterable
-            let iterator_key = match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
-                Some(Value::Symbol(payload)) => payload
-                    .desc
-                    .clone()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-                _ => String::new(),
-            };
+            let iterator_key =
+                match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
+                    Some(Value::Symbol(payload)) => payload
+                        .desc
+                        .clone()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
             let has_iterator = !iterator_key.is_empty() && o.borrow().get(&iterator_key).is_some();
 
             if !has_iterator {
@@ -569,9 +581,9 @@ pub fn register_weak_collections(ctx: &mut Context) {
         Ok(Value::Object(ws))
     });
     if let Value::NativeFunction(nf) = &weakset_constructor {
-        nf.set_property("prototype", Value::Object(weakset_proto));
-        nf.set_property("name", Value::String("WeakSet".to_string()));
-        nf.set_property("length", Value::Number(0.0));
+        let _ = nf.set_property("prototype", Value::Object(weakset_proto));
+        let _ = nf.set_property("name", Value::String("WeakSet".to_string()));
+        let _ = nf.set_property("length", Value::Number(0.0));
     }
     ctx.set_global("WeakSet".to_string(), weakset_constructor);
 
@@ -638,9 +650,9 @@ pub fn register_weak_collections(ctx: &mut Context) {
         Ok(Value::Object(wm))
     });
     if let Value::NativeFunction(nf) = &weakmap_constructor {
-        nf.set_property("prototype", Value::Object(weakmap_proto));
-        nf.set_property("name", Value::String("WeakMap".to_string()));
-        nf.set_property("length", Value::Number(0.0));
+        let _ = nf.set_property("prototype", Value::Object(weakmap_proto));
+        let _ = nf.set_property("name", Value::String("WeakMap".to_string()));
+        let _ = nf.set_property("length", Value::Number(0.0));
     }
     ctx.set_global("WeakMap".to_string(), weakmap_constructor);
 }

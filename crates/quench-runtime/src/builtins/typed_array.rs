@@ -158,7 +158,7 @@ fn construct_typed_array(
                     .set("byteLength", Value::Number(byte_length as f64));
             }
             // new TypedArray(typedArray) or new TypedArray(array-like)
-            Value::Object(src_rc) if !Rc::ptr_eq(&src_rc, &object_rc) => {
+            Value::Object(src_rc) if !Rc::ptr_eq(src_rc, &object_rc) => {
                 let src = src_rc.borrow();
                 // Check if it has elements (treat as array-like)
                 if !src.elements.is_empty() {
