@@ -129,6 +129,7 @@ fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let program = match ctx.parse(&source) {
         Ok(program) => program,
         Err(e) => {
+            eprintln!("EVAL_IMPL PARSE ERROR: {:?}", e);
             CURRENT_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = prev_ctx;
             });
