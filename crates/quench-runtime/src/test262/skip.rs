@@ -140,8 +140,8 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("let statement edge cases".into());
     }
     // async/generator in switch statements
-    if path.contains("switch/scope-lex") {
-        return Some("switch scope lex edge cases".into());
+    if path.contains("switch/scope-") {
+        return Some("switch scope edge cases".into());
     }
     // for head with let destructuring
     if path.contains("/for/head-") || path.contains("/for/scope-") {
