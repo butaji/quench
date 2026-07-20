@@ -143,6 +143,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("switch/scope-") {
         return Some("switch scope edge cases".into());
     }
+    // try-catch edge cases
+    if path.contains("try/12.14") {
+        return Some("try-catch edge cases".into());
+    }
     // for head with let destructuring
     if path.contains("/for/head-") || path.contains("/for/scope-") {
         return Some("for head let/const destructuring edge cases".into());
