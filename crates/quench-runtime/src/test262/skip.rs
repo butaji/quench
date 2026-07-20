@@ -56,8 +56,12 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("async/await not fully implemented".into());
     }
     // tc39 proposals
-    if path.contains("/await-using/") || path.contains("/using-") {
+    if path.contains("/await-using/") || path.contains("/using-") || path.contains("/using/") {
         return Some("using declarations proposal not implemented".into());
+    }
+    // Symbol.dispose (using declarations related)
+    if path.contains("Symbol.dispose") {
+        return Some("Symbol.dispose not implemented".into());
     }
     // eval/break/continue edge cases
     if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
