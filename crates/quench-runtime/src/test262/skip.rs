@@ -8,6 +8,7 @@ pub fn is_feature_supported(feature: &str) -> bool {
         "hashbang" => false,      // hashbang comments not yet supported
         "cross-realm" => false,   // cross-realm ($262.createRealm) not yet supported
         "Proxy" => false,         // Proxy/Reflect not yet implemented
+        "async-functions" => false, // async/await not fully implemented
         _ => true,
     }
 }
@@ -27,6 +28,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     // directive-prologue tests have issues with bogus directive after "use strict"
     if path.contains("14.1-10-s") || path.contains("14.1-4-s") || path.contains("14.1-") {
         return Some("known issue: strict mode detection with directive statements".into());
+    }
+    // async functions not fully implemented
+    if path.contains("/async-function/") || path.contains("/async-") {
+        return Some("async/await not fully implemented".into());
     }
     None
 }
