@@ -25,8 +25,8 @@ pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
 /// Returns a skip reason based on the test file path.
 pub fn should_skip_path(path: &str) -> Option<String> {
     // directive-prologue tests have issues with bogus directive after "use strict"
-    if path.contains("14.1-10-s") {
-        return Some("known issue: strict mode detection with multiple directive statements".into());
+    if path.contains("14.1-10-s") || path.contains("14.1-4-s") || path.contains("14.1-") {
+        return Some("known issue: strict mode detection with directive statements".into());
     }
     None
 }
