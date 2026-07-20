@@ -38,7 +38,24 @@ pub(crate) fn call_value_impl(
 
     let result = match func {
         Value::Function(f) => {
-            if force_strict {
+            if f.is_async {
+                // For async functions, ANY error (including parameter evaluation)
+                // must be caught and returned as a rejected Promise instead of
+                // propagating as an uncaught exception.
+                let inner = call_js_function_impl(f, args, this_val);
+                let proto = crate::builtins::promise::get_promise_proto();
+                match inner {
+                    Ok(val) => {
+                        crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
+                    }
+                    Err(err) => {
+                        crate::builtins::promise::promise_reject_impl_static(
+                            vec![Value::String(err.to_string())],
+                            proto,
+                        )
+                    }
+                }
+            } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
             } else {
                 call_js_function_impl(f, args, this_val)
@@ -216,9 +233,9 @@ pub(crate) fn call_js_function_impl_with_strict(
     let prev_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(in_strict);
 
-    // Per ES §27.2.1.1: async functions wrap their return value in Promise.resolve().
-    // Save the flag before f is consumed in the if/else branches.
-    let is_async = f.is_async;
+    // Set strict mode for function body evaluation
+    let prev_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(in_strict);
 
     let previous_eval_env = crate::interpreter::get_current_eval_env();
     crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
@@ -232,20 +249,7 @@ pub(crate) fn call_js_function_impl_with_strict(
     // Restore previous strict mode
     crate::interpreter::set_strict_mode(prev_strict);
 
-    // Wrap async function return values in Promise.resolve()
-    // Per ES §27.2.1.1: the return value (or thrown error) is wrapped in a Promise.
-    if is_async {
-        let proto = crate::builtins::promise::get_promise_proto();
-        match result {
-            Ok(val) => crate::builtins::promise::promise_resolve_impl_static(vec![val], proto),
-            Err(err) => crate::builtins::promise::promise_reject_impl_static(
-                vec![Value::String(err.to_string())],
-                proto,
-            ),
-        }
-    } else {
-        result
-    }
+    result
 }
 
 fn binding_pattern_expression(pattern: BindingElement) -> Expression {
