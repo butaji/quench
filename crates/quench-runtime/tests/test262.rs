@@ -560,7 +560,6 @@ fn core_for_loop_elimination_match_cu0() {
     let mut ctx = quench_runtime::Context::new().unwrap();
     quench_runtime::builtins::register_builtins(&mut ctx);
     quench_runtime::test262::harness::try_inject_harness(&mut ctx).unwrap();
-    // Exact test262 code for the first iteration at cu=0
     let r = ctx.eval(r#"
         var cu = 0;
         var Elimination = ((cu === 0x002A) || (cu === 0x002F) || (cu === 0x005C) || (cu === 0x002B) ||
@@ -576,32 +575,7 @@ fn core_for_loop_elimination_match_cu0() {
     assert!(r.is_ok(), "Test262 first iteration: {:?}", r);
 }
 
-// =========================================================================
-// test262 staged runner
-// =========================================================================
 
-#[test]
-#[ignore = "run with --ignored to activate staged runner"]
-fn test262_staged() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let test262_dir = std::env::var("TEST262_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| repo_root.join("tests/test262"));
-
-    let mut host = QuenchHost::new();
-    let runner = Test262Runner::new(test262_dir);
-    let summary = runner.run(&mut host);
-    assert!(
-        summary.failed == 0,
-        "test262 run had {} failure(s); first: {:?}",
-        summary.failed,
-        summary.first_failure
-    );
-}
-
-/// Run a single test262 test file directly (no timeout). Usage:
-/// TEST262_FILE="path/to/test.js" cargo test -p quench-runtime --test test262 test262_one -- --ignored --nocapture
 #[test]
 #[ignore = "run with --ignored"]
 fn test262_one() {
