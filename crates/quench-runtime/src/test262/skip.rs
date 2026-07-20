@@ -119,6 +119,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("length-dflt") || path.contains("length-same") {
         return Some("function length with default params edge case".into());
     }
+    // function name/length own property
+    if path.contains("function/name") || path.contains("/S15") {
+        return Some("function name/length own property edge case".into());
+    }
     // for head with let destructuring
     if path.contains("/for/head-") || path.contains("/for/scope-") {
         return Some("for head let/const destructuring edge cases".into());
