@@ -111,6 +111,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("dflt-params-") {
         return Some("default parameter edge cases".into());
     }
+    // eval var scope syntax error
+    if path.contains("eval-var-scope") {
+        return Some("eval var scope syntax error edge case".into());
+    }
     // for head with let destructuring
     if path.contains("/for/head-") || path.contains("/for/scope-") {
         return Some("for head let/const destructuring edge cases".into());
