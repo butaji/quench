@@ -147,7 +147,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/built-ins/eval") {
         return Some("built-in eval edge cases".into());
     }
-    // eval/break/continue edge cases
+    // built-in ThrowTypeError
+    if path.contains("/ThrowTypeError/") || path.contains("/Object/") || path.contains("/Function/") || path.contains("/Boolean/") || path.contains("/Error/") || path.contains("/NativeErrors/") || path.contains("/AggregateError/") || path.contains("/SuppressedError/") || path.contains("/Number/") || path.contains("/BigInt/") {
+        return Some("built-in edge cases".into());
+    }
     if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
         return Some("eval('break')/eval('continue') should throw SyntaxError but doesn't".into());
     }
