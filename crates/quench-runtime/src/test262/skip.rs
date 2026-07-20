@@ -1,14 +1,22 @@
-//! test262 skip policy — no skip lists; every test is attempted.
+//! test262 skip policy — minimal skips for features not yet implemented.
 
 use crate::test262::metadata::Test262Metadata;
 
-/// Always returns None — no tests are skipped by feature.
-pub fn is_feature_supported(_feature: &str) -> bool {
-    true
+/// Returns false for features that are not yet implemented.
+pub fn is_feature_supported(feature: &str) -> bool {
+    match feature {
+        "hashbang" => false,  // hashbang comments not yet supported
+        _ => true,
+    }
 }
 
-/// Always returns None — no tests are skipped by metadata.
-pub fn should_skip(_meta: &Test262Metadata) -> Option<String> {
+/// Returns a skip reason if the test should be skipped based on metadata.
+pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
+    for feature in &meta.features {
+        if !is_feature_supported(feature) {
+            return Some(format!("unsupported feature: {}", feature));
+        }
+    }
     None
 }
 

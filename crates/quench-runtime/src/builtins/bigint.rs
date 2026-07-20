@@ -78,7 +78,7 @@ fn setup_bigint_prototype(proto: &Rc<RefCell<Object>>) {
 fn setup_bigint_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     // BigInt() constructor
     let proto_for_closure = Rc::clone(proto);
-    let mut bigint_ctor = crate::value::NativeConstructor::new(
+    let bigint_ctor = crate::value::NativeConstructor::new(
         move |args: Vec<Value>| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
 

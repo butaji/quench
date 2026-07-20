@@ -1,5 +1,11 @@
 //! String.prototype methods that use RegExp
 
+mod helpers;
+pub use helpers::{
+    apply_substitution, make_match_array, make_value_array, match_captures, replace_all_matches,
+    split_by_regex,
+};
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -46,84 +52,6 @@ fn get_string_prototype(ctx: &mut Context) -> Option<Rc<RefCell<Object>>> {
     None
 }
 
-/// Apply $-substitution to replacement string based on match info.
-/// Handles: $$ -> $, $& -> matched, $` -> before match, $' -> after match, $n -> capture n
-/// Per ECMAScript spec: for unrecognized $X where X is not one of the above,
-/// the $ is kept literal and X is processed normally.
-fn apply_substitution(
-    replacement: &str,
-    matched: &str,
-    before: &str,
-    after: &str,
-    captures: &[&str],
-) -> String {
-    let mut result = String::new();
-    let mut chars = replacement.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '$' {
-            if let Some(&next) = chars.peek() {
-                match next {
-                    '$' => {
-                        chars.next();
-                        result.push('$');
-                    }
-                    '&' => {
-                        chars.next();
-                        result.push_str(matched);
-                    }
-                    '`' => {
-                        chars.next();
-                        result.push_str(before);
-                    }
-                    '\'' => {
-                        chars.next();
-                        result.push_str(after);
-                    }
-                    '0'..='9' => {
-                        chars.next();
-                        // Collect the full number after $
-                        let mut num_str = String::new();
-                        num_str.push(next);
-                        while let Some(&peeked) = chars.peek() {
-                            if peeked.is_ascii_digit() {
-                                chars.next();
-                                num_str.push(peeked);
-                            } else {
-                                break;
-                            }
-                        }
-                        let n: usize = num_str.parse().unwrap_or(0);
-                        result.push_str(&handle_dollar_n(captures, n));
-                    }
-                    _ => {
-                        // Non-special character after $, emit $ literally
-                        // and let the next char be processed normally
-                        result.push(c);
-                    }
-                }
-            } else {
-                // Trailing $, emit literally
-                result.push(c);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Handle $n replacement patterns (1-99)
-/// Per ECMAScript spec: $n where n is 1-99 refers to the nth captured group.
-/// If n > number of captures, use "$n" literally.
-fn handle_dollar_n(captures: &[&str], n: usize) -> String {
-    if n > 0 && n <= captures.len() {
-        captures[n - 1].to_string()
-    } else {
-        format!("${}", n)
-    }
-}
-
 pub(crate) fn string_match_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this()
         .ok_or_else(|| JsError::new("String.prototype.match requires 'this'".to_string()))?;
@@ -138,7 +66,6 @@ pub(crate) fn string_match_impl(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 fn match_all_impl(string: &str, pattern: &Value) -> Result<Value, JsError> {
-    // Check if pattern is a RegExp object
     if let Value::Object(ref obj) = pattern {
         if let Some(regex) = obj.borrow().internal_regex.clone() {
             let is_global = obj
@@ -148,31 +75,23 @@ fn match_all_impl(string: &str, pattern: &Value) -> Result<Value, JsError> {
                 .unwrap_or(false);
 
             if !is_global {
-                return super::regexp_exec_impl(vec![Value::String(string.to_string())]);
+                // Call exec via call_value_with_this so `this` is the RegExp object.
+                let exec = obj.borrow().get("exec").unwrap_or(Value::Undefined);
+                return crate::eval::call_value_with_this(
+                    exec,
+                    vec![Value::String(string.to_string())],
+                    Value::Object(Rc::clone(obj)),
+                );
             }
             return Ok(make_match_array(string, &regex));
         }
     }
 
-    // String pattern: convert to regex
     let pattern_str = to_js_string(pattern);
     if let Ok(regex) = Regex::new(&pattern_str) {
         return Ok(make_match_array(string, &regex));
     }
     Ok(Value::Null)
-}
-
-fn make_match_array(string: &str, regex: &Regex) -> Value {
-    let matches: Vec<Value> = regex
-        .find_iter(string)
-        .map(|m| Value::String(m.as_str(string).to_string()))
-        .collect();
-
-    if matches.is_empty() {
-        return Value::Null;
-    }
-    let array = Object::new_array_from(matches);
-    Value::Object(Rc::new(RefCell::new(array)))
 }
 
 pub(crate) fn string_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -219,7 +138,6 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
         };
 
         if let Some(regex) = regex {
-            // Global RegExp replaces every match
             let is_global = match &pattern {
                 Value::Object(ref obj) => obj
                     .borrow()
@@ -235,7 +153,6 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
                     &replacement,
                 )));
             }
-            // Find first match
             if let Some(m) = regex.find(&string) {
                 let start = m.start();
                 let end = m.end();
@@ -253,8 +170,7 @@ pub(crate) fn string_replace_impl(args: Vec<Value>) -> Result<Value, JsError> {
                     &string,
                     &replacement,
                 )?;
-                let result = format!("{}{}{}", before, replaced, after);
-                return Ok(Value::String(result));
+                return Ok(Value::String(format!("{}{}{}", before, replaced, after)));
             }
         }
     }
@@ -272,7 +188,6 @@ fn replace_using_value(
     string: &str,
     replacement: &Value,
 ) -> Result<String, JsError> {
-    // If replacement is a function, call it
     if matches!(
         replacement,
         Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)
@@ -286,7 +201,6 @@ fn replace_using_value(
             crate::eval::call_value_with_this(replacement.clone(), args, Value::Undefined)?;
         Ok(to_js_string(&result))
     } else {
-        // String replacement with $-substitution
         let replacer = to_js_string(replacement);
         Ok(apply_substitution(
             &replacer, matched, before, after, captures,
@@ -307,12 +221,8 @@ fn replace_all_with_value(string: &str, regex: &Regex, replacement: &Value) -> S
             let start = m.start();
             let end = m.end();
             let matched = &string[start..end];
-            let _before = &string[..start];
-            let _after = &string[end..];
             let captures = match_captures(&m, string);
 
-            // For now, call the function without proper 'this' handling
-            // (this should use the global object or undefined in strict mode)
             let args: Vec<Value> = std::iter::once(Value::String(matched.to_string()))
                 .chain(captures.iter().map(|s| Value::String(s.to_string())))
                 .chain([
@@ -325,7 +235,7 @@ fn replace_all_with_value(string: &str, regex: &Regex, replacement: &Value) -> S
                 crate::eval::call_value_with_this(replacement.clone(), args, Value::Undefined);
             let replaced = match func_result {
                 Ok(val) => to_js_string(&val),
-                Err(_) => matched.to_string(), // On error, keep original
+                Err(_) => matched.to_string(),
             };
 
             result.push_str(&string[last_end..start]);
@@ -355,7 +265,6 @@ pub(crate) fn string_replace_all_impl(args: Vec<Value>) -> Result<Value, JsError
 }
 
 fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Result<Value, JsError> {
-    // Check if pattern is a RegExp with global flag
     if let Value::Object(ref obj) = pattern {
         if obj.borrow().internal_regex.is_some() {
             let has_global = obj
@@ -374,9 +283,7 @@ fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Resu
 
     let pattern_str = to_js_string(pattern);
 
-    // Handle empty string pattern FIRST - before regex creation
     if pattern_str.is_empty() {
-        // For empty pattern, replacement must be a string (per spec)
         let replacer = to_js_string(replacement);
         return Ok(Value::String(replace_all_empty(string, &replacer)));
     }
@@ -394,9 +301,6 @@ fn replace_all_inner(string: &str, pattern: &Value, replacement: &Value) -> Resu
 }
 
 fn replace_all_empty(string: &str, replacer: &str) -> String {
-    // Per ECMAScript spec, replaceAll with empty string pattern
-    // inserts replacement at the beginning, between each character, and at the end
-    // For "abc" with "-" replacement: "-a-b-c-"
     let mut result = String::new();
     if string.is_empty() {
         return result;
@@ -410,38 +314,6 @@ fn replace_all_empty(string: &str, replacer: &str) -> String {
     }
     result.push_str(replacer);
     result
-}
-
-fn replace_all_matches(string: &str, regex: &Regex, replacer: &str) -> String {
-    let mut result = String::new();
-    let mut last_end = 0;
-
-    for m in regex.find_iter(string) {
-        let start = m.start();
-        let end = m.end();
-        let matched = &string[start..end];
-
-        result.push_str(&string[last_end..start]);
-
-        let before = &string[..start];
-        let after = &string[end..];
-        let captures = match_captures(&m, string);
-        let replaced = apply_substitution(replacer, matched, before, after, &captures);
-        result.push_str(&replaced);
-
-        last_end = end;
-    }
-    result.push_str(&string[last_end..]);
-    result
-}
-
-/// Extract capture-group strings from a match (group 0 excluded; unmatched
-/// groups become empty strings).
-fn match_captures<'a>(m: &regress::Match, string: &'a str) -> Vec<&'a str> {
-    m.captures
-        .iter()
-        .map(|c| c.as_ref().map(|r| &string[r.clone()]).unwrap_or(""))
-        .collect()
 }
 
 pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -485,138 +357,6 @@ fn get_separator_regex(separator: &Value) -> Option<Regex> {
     }
 }
 
-fn split_by_regex(string: &str, regex: &Regex, limit: usize) -> Value {
-    let mut parts = Vec::new();
-    let mut last_end = 0;
-
-    for m in regex.find_iter(string) {
-        if parts.len() >= limit {
-            break;
-        }
-        parts.push(Value::String(string[last_end..m.start()].to_string()));
-        last_end = m.end();
-    }
-
-    if parts.len() < limit {
-        parts.push(Value::String(string[last_end..].to_string()));
-    }
-    make_value_array(parts)
-}
-
-fn make_value_array(values: Vec<Value>) -> Value {
-    let array = Object::new_array_from(values);
-    Value::Object(Rc::new(RefCell::new(array)))
-}
-
 #[cfg(test)]
-mod tests {
-    use crate::value::Value;
-    use crate::Context;
-
-    // Tests for match()
-    #[test]
-    fn test_match_returns_array() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello world'.match('o')");
-        assert!(result.is_ok());
-        let val = result.unwrap();
-        assert!(matches!(val, Value::Object(_)));
-    }
-
-    #[test]
-    fn test_match_returns_null_on_no_match() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello'.match('x')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::Null);
-    }
-
-    #[test]
-    fn test_match_global_returns_all_matches() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'abab'.match(/ab/g)");
-        assert!(result.is_ok());
-    }
-
-    // Tests for replace() with $-substitution
-    #[test]
-    fn test_replace_dollar_ampersand() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello'.replace('l', '-$&-')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("he-l-lo".to_string()));
-    }
-
-    #[test]
-    fn test_replace_dollar_dollar() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello'.replace('l', '$$')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("he$lo".to_string()));
-    }
-
-    #[test]
-    fn test_replace_dollar_backtick() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello'.replace('l', '$`')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("hehelo".to_string()));
-    }
-
-    #[test]
-    fn test_replace_dollar_quote() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello'.replace('l', \"$'\")");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("helolo".to_string()));
-    }
-
-    #[test]
-    fn test_replace_capture_group_substitution() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'abc'.replace(/(b)/, '[$1]')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("a[b]c".to_string()));
-    }
-
-    #[test]
-    fn test_replace_global_regex_replaces_all() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'aaa'.replace(/a/g, 'b')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("bbb".to_string()));
-    }
-
-    #[test]
-    fn test_replace_non_global_regex_replaces_first() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello world'.replace(/o/, '0')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("hell0 world".to_string()));
-    }
-
-    // Tests for replaceAll()
-    #[test]
-    fn test_replace_all_empty_search() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'abc'.replaceAll('', '-')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("-a-b-c-".to_string()));
-    }
-
-    #[test]
-    fn test_replace_all_basic() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'hello world'.replaceAll('o', '0')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("hell0 w0rld".to_string()));
-    }
-
-    #[test]
-    fn test_replace_all_with_substitution() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("'abab'.replaceAll('ab', '($&)')");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("(ab)(ab)".to_string()));
-    }
-}
+#[cfg(test)]
+mod tests;

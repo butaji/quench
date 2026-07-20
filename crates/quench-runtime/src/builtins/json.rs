@@ -233,7 +233,9 @@ fn from_serde_value(v: serde_json::Value) -> Value {
 }
 
 /// Walk a value and apply reviver.
-fn walk_with_reviver(reviver: &Value, key: Value, val: Value) -> Result<Value, JsError> {
+/// Returns `None` if the reviver returned `undefined` for a non-root key,
+/// signaling that the property should be deleted.
+fn walk_with_reviver(reviver: &Value, key: Value, val: Value) -> Result<Option<Value>, JsError> {
     let new_val = if let Value::Object(obj_rc) = &val {
         let obj = obj_rc.borrow().clone();
 
@@ -242,7 +244,7 @@ fn walk_with_reviver(reviver: &Value, key: Value, val: Value) -> Result<Value, J
             for (i, elem) in obj.elements.iter().enumerate() {
                 let idx_key = Value::String(i.to_string());
                 let walked = walk_with_reviver(reviver, idx_key, elem.clone())?;
-                new_elements.push(walked);
+                new_elements.push(walked.unwrap_or(Value::Undefined));
             }
             Value::Object(Rc::new(RefCell::new(Object::new_array_from(new_elements))))
         } else {
@@ -250,7 +252,10 @@ fn walk_with_reviver(reviver: &Value, key: Value, val: Value) -> Result<Value, J
             for (k, v) in &obj.properties {
                 let k_val = Value::String(k.clone());
                 let walked = walk_with_reviver(reviver, k_val, v.clone())?;
-                new_obj.properties.insert(k.clone(), walked);
+                // If reviver returned undefined for this property, skip it (delete)
+                if let Some(w) = walked {
+                    new_obj.properties.insert(k.clone(), w);
+                }
             }
             Value::Object(Rc::new(RefCell::new(new_obj)))
         }
@@ -258,7 +263,14 @@ fn walk_with_reviver(reviver: &Value, key: Value, val: Value) -> Result<Value, J
         val
     };
 
-    call_fn(reviver, key, new_val)
+    let result = call_fn(reviver, key.clone(), new_val)?;
+
+    // Per ES 24.5.3.2: if reviver returns undefined, the property is deleted
+    if result == Value::Undefined && key != Value::String(String::new()) {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
 }
 
 /// Call a JS function with arguments.
@@ -310,7 +322,8 @@ fn json_parse(args: &[Value]) -> Result<Value, JsError> {
             _ => false,
         };
         if is_fn {
-            return walk_with_reviver(reviver, Value::String(String::new()), native_val);
+            return walk_with_reviver(reviver, Value::String(String::new()), native_val)
+                .map(|opt| opt.unwrap_or(Value::Undefined));
         }
     }
 
@@ -351,6 +364,8 @@ pub fn register_json(ctx: &mut Context) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     fn create_test_context() -> crate::Context {
         let mut ctx = crate::Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
@@ -459,5 +474,390 @@ mod tests {
             crate::value::Value::Boolean(true),
             "stringify should be configurable"
         );
+    }
+
+    // ─── quote_string tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_quote_string_basic() {
+        assert_eq!(quote_string(""), "\"\"");
+    }
+
+    #[test]
+    fn test_quote_string_plain_text() {
+        assert_eq!(quote_string("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_double_quote() {
+        assert_eq!(quote_string("say \"hi\""), "\"say \\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_backslash() {
+        assert_eq!(quote_string("a\\b"), "\"a\\\\b\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_newline() {
+        assert_eq!(quote_string("line1\nline2"), "\"line1\\nline2\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_carriage_return() {
+        assert_eq!(quote_string("line1\rline2"), "\"line1\\rline2\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_tab() {
+        assert_eq!(quote_string("col1\tcol2"), "\"col1\\tcol2\"");
+    }
+
+    #[test]
+    fn test_quote_string_escapes_control_char() {
+        // Control char 0x01 → \u0001
+        assert_eq!(quote_string("\x01"), "\"\\u0001\"");
+    }
+
+    // ─── value_to_json_string tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_value_to_json_undefined() {
+        assert_eq!(value_to_json_string(&crate::value::Value::Undefined), None);
+    }
+
+    #[test]
+    fn test_value_to_json_null() {
+        assert_eq!(
+            value_to_json_string(&crate::value::Value::Null),
+            Some("null".into())
+        );
+    }
+
+    #[test]
+    fn test_value_to_json_boolean() {
+        assert_eq!(
+            value_to_json_string(&crate::value::Value::Boolean(true)),
+            Some("true".into())
+        );
+        assert_eq!(
+            value_to_json_string(&crate::value::Value::Boolean(false)),
+            Some("false".into())
+        );
+    }
+
+    #[test]
+    fn test_value_to_json_string() {
+        assert_eq!(
+            value_to_json_string(&crate::value::Value::String("hello".into())),
+            Some("\"hello\"".into())
+        );
+    }
+
+    #[test]
+    fn test_value_to_json_object() {
+        // Objects are not directly serializable
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let obj = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+        let val = crate::value::Value::Object(Rc::new(RefCell::new(obj)));
+        assert_eq!(value_to_json_string(&val), None);
+    }
+
+    // ─── json_number_string tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_json_number_nan() {
+        assert_eq!(json_number_string(f64::NAN), "null");
+    }
+
+    #[test]
+    fn test_json_number_positive_infinity() {
+        assert_eq!(json_number_string(f64::INFINITY), "null");
+    }
+
+    #[test]
+    fn test_json_number_negative_infinity() {
+        assert_eq!(json_number_string(f64::NEG_INFINITY), "null");
+    }
+
+    #[test]
+    fn test_json_number_integer() {
+        assert_eq!(json_number_string(42.0), "42");
+    }
+
+    #[test]
+    fn test_json_number_large_integer() {
+        // > 1e15 should use default to_string
+        assert_eq!(json_number_string(1e20), "100000000000000000000");
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn test_json_number_float() {
+        assert_eq!(json_number_string(3.14), "3.14");
+    }
+
+    #[test]
+    fn test_json_number_negative() {
+        assert_eq!(json_number_string(-273.15), "-273.15");
+    }
+
+    // ─── get_indent tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_indent_number() {
+        let indent = get_indent(Some(&crate::value::Value::Number(2.0)));
+        assert_eq!(indent, "  ");
+    }
+
+    #[test]
+    fn test_get_indent_number_clamped_to_10() {
+        let indent = get_indent(Some(&crate::value::Value::Number(15.0)));
+        assert_eq!(indent, " ".repeat(10));
+    }
+
+    #[test]
+    fn test_get_indent_number_negative() {
+        let indent = get_indent(Some(&crate::value::Value::Number(-1.0)));
+        assert_eq!(indent, "");
+    }
+
+    #[test]
+    fn test_get_indent_string() {
+        let indent = get_indent(Some(&crate::value::Value::String("--".into())));
+        assert_eq!(indent, "--");
+    }
+
+    #[test]
+    fn test_get_indent_string_truncated_to_10_chars() {
+        let indent = get_indent(Some(&crate::value::Value::String("abcdefghijkl".into())));
+        assert_eq!(indent, "abcdefghij");
+    }
+
+    #[test]
+    fn test_get_indent_none() {
+        assert_eq!(get_indent(None), "");
+    }
+
+    // ─── JSON.stringify integration ─────────────────────────────────────────────
+
+    #[test]
+    fn test_stringify_undefined_top_level() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.stringify(undefined)");
+        assert_eq!(result.unwrap(), crate::value::Value::Undefined);
+    }
+
+    #[test]
+    fn test_stringify_null() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.stringify(null)");
+        assert_eq!(result.unwrap(), crate::value::Value::String("null".into()));
+    }
+
+    #[test]
+    fn test_stringify_boolean() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("JSON.stringify(true)").unwrap(),
+            crate::value::Value::String("true".into())
+        );
+        assert_eq!(
+            ctx.eval("JSON.stringify(false)").unwrap(),
+            crate::value::Value::String("false".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_number() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("JSON.stringify(42)").unwrap(),
+            crate::value::Value::String("42".into())
+        );
+        assert_eq!(
+            ctx.eval("JSON.stringify(3.14)").unwrap(),
+            crate::value::Value::String("3.14".into())
+        );
+        assert_eq!(
+            ctx.eval("JSON.stringify(NaN)").unwrap(),
+            crate::value::Value::String("null".into())
+        );
+        assert_eq!(
+            ctx.eval("JSON.stringify(Infinity)").unwrap(),
+            crate::value::Value::String("null".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_string() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval(r#"JSON.stringify("hello")"#).unwrap(),
+            crate::value::Value::String("\"hello\"".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_quote_escaped() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval(r#"JSON.stringify("say \"hi\"")"#).unwrap();
+        assert_eq!(
+            result,
+            crate::value::Value::String("\"say \\\"hi\\\"\"".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_empty_object() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("JSON.stringify({})").unwrap(),
+            crate::value::Value::String("{}".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_empty_array() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("JSON.stringify([])").unwrap(),
+            crate::value::Value::String("[]".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_with_indent() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.stringify({a: 1}, null, 2)").unwrap();
+        let expected = "{\n  \"a\": 1\n}";
+        assert_eq!(result, crate::value::Value::String(expected.into()));
+    }
+
+    #[test]
+    fn test_stringify_replacer_array() {
+        let mut ctx = create_test_context();
+        let result = ctx
+            .eval(r#"JSON.stringify({a: 1, b: 2, c: 3}, ["a", "c"])"#)
+            .unwrap();
+        assert_eq!(
+            result,
+            crate::value::Value::String("{\"a\":1,\"c\":3}".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_function_member_skipped() {
+        // Functions are stored as Value::Object, and value_to_json_string returns None
+        // for objects → parent serializes as null. Arrays also convert None to null.
+        let mut ctx = create_test_context();
+        let result = ctx
+            .eval("JSON.stringify({a: 1, b: function() {}})")
+            .unwrap();
+        assert_eq!(
+            result,
+            crate::value::Value::String("{\"a\":1,\"b\":null}".into())
+        );
+    }
+
+    #[test]
+    fn test_stringify_undefined_member_skipped() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.stringify({a: 1, b: undefined})").unwrap();
+        assert_eq!(result, crate::value::Value::String("{\"a\":1}".into()));
+    }
+
+    // ─── JSON.parse integration ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_simple_object() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.parse('{\"a\": 1}').a").unwrap();
+        assert_eq!(result, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn test_parse_simple_array() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.parse('[1, 2, 3]')[1]").unwrap();
+        assert_eq!(result, crate::value::Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_parse_nested_structures() {
+        let mut ctx = create_test_context();
+        let result = ctx
+            .eval("JSON.parse('{\"a\": [1, {\"b\": 2}]}').a[1].b")
+            .unwrap();
+        assert_eq!(result, crate::value::Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_parse_primitives() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("JSON.parse('null')").unwrap(),
+            crate::value::Value::Null
+        );
+        assert_eq!(
+            ctx.eval("JSON.parse('true')").unwrap(),
+            crate::value::Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("JSON.parse('false')").unwrap(),
+            crate::value::Value::Boolean(false)
+        );
+        assert_eq!(
+            ctx.eval("JSON.parse('42')").unwrap(),
+            crate::value::Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_reviver_transforms_values() {
+        let mut ctx = create_test_context();
+        let result = ctx
+            .eval(
+                r#"
+                JSON.parse('{"n": 2}', function(k, v) {
+                    if (typeof v === 'number') return v * 2;
+                    return v;
+                }).n
+                "#,
+            )
+            .unwrap();
+        assert_eq!(result, crate::value::Value::Number(4.0));
+    }
+
+    #[test]
+    fn test_parse_reviver_deletes_properties() {
+        let mut ctx = create_test_context();
+        let result = ctx
+            .eval(
+                r#"
+                var obj = JSON.parse('{"a": 1, "b": 2}', function(k, v) {
+                    if (k === 'b') return undefined;
+                    return v;
+                });
+                "a" in obj && !("b" in obj);
+                "#,
+            )
+            .unwrap();
+        assert_eq!(result, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_parse_empty_string_error() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.parse('')");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_invalid_json_error() {
+        let mut ctx = create_test_context();
+        let result = ctx.eval("JSON.parse('{invalid}')");
+        assert!(result.is_err());
     }
 }

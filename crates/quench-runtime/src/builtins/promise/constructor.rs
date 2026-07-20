@@ -23,7 +23,7 @@ pub fn create_promise_constructor(
 ) -> NativeConstructor {
     let proto_clone = Rc::clone(&proto);
 
-    let mut constructor = NativeConstructor::new(
+    let constructor = NativeConstructor::new(
         move |args| {
             let executor = args.first().cloned().unwrap_or(Value::Undefined);
 

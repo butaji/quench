@@ -87,11 +87,14 @@ fn lower_array_elems(
     }
     // Handle trailing rest element
     if let Some(rest) = &arr.rest {
+        // Start index = count of elements before the rest (each element at position i is
+        // accessed via arr[i], so rest starts at position `arr.elements.len()`).
+        let start_index = arr.elements.len();
         let rest_temp_name = format!("__arr_rest_{}", temp_var_name);
         stmts.push(Statement::VarDeclaration {
             kind: VarKind::Const,
             name: rest_temp_name.clone(),
-            init: Some(Expression::Identifier(temp_var_name.to_string())),
+            init: Some(rest_slice_expr(temp_var_name, start_index)),
         });
         stmts.extend(expand_nested_pattern(kind, &rest.argument, &rest_temp_name));
     }
@@ -102,6 +105,29 @@ fn array_member_access(source_var: &str, index: usize) -> Expression {
         object: Box::new(Expression::Identifier(source_var.to_string())),
         property: PropertyKey::String(index.to_string()),
         computed: false,
+    }
+}
+
+/// Generate `Array.prototype.slice.call(source_var, start_index)` for rest elements.
+/// Generate `[].slice.call(source_var, start_index)` which slices the source array
+/// from start_index to the end. Using `[]` as the receiver avoids the `this` binding
+/// issue that arises with `Array.prototype.slice.call` when the callee resolution
+/// does not properly set up the `this` value.
+fn rest_slice_expr(source_var: &str, start_index: usize) -> Expression {
+    Expression::Call {
+        callee: Box::new(Expression::Member {
+            object: Box::new(Expression::Member {
+                object: Box::new(Expression::Array(vec![])),
+                property: PropertyKey::Ident("slice".to_string()),
+                computed: false,
+            }),
+            property: PropertyKey::Ident("call".to_string()),
+            computed: false,
+        }),
+        arguments: vec![
+            Expression::Identifier(source_var.to_string()),
+            Expression::Number(start_index as f64),
+        ],
     }
 }
 
@@ -131,7 +157,7 @@ fn lower_object_props(
 ) {
     for prop in &obj.properties {
         let key_str = match &prop.key {
-            ast::PropertyKey::Identifier(i) => i.name.as_str().to_string(),
+            ast::PropertyKey::StaticIdentifier(i) => i.name.as_str().to_string(),
             ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
             ast::PropertyKey::NumericLiteral(n) => n.value.to_string(),
             _ => continue,

@@ -232,8 +232,6 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         }
         // Handle class instances: obj instanceof Class
         (Value::Object(obj), Value::Class(class)) => {
-            // For instanceof with a class, check if the object's prototype chain
-            // contains the class's prototype
             let class_proto = get_class_prototype_for_instanceof(class)?;
             let result = has_prototype_in_chain(&obj.borrow(), &class_proto);
             Ok(Value::Boolean(result))
@@ -362,84 +360,4 @@ fn get_prototype_from_class_val(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::value::{create_js_error_with_type, set_thrown_value, take_thrown_value};
-
-    /// When `valueOf` throws, `eval_add` must surface the error AND leave the
-    /// thrown value intact for the surrounding try/catch to retrieve.
-    /// Regression: eval_add used to `take_thrown_value()` (consume) which left
-    /// the catch handler seeing `undefined`.
-    #[test]
-    fn eval_add_propagates_valueof_throw_and_preserves_thrown_value() {
-        // Set a stale thrown value to make sure eval_add clears it before
-        // running its own ToPrimitive — it must not surface a foreign throw.
-        let (stale, _js_err) = create_js_error_with_type("stale", "Error");
-        set_thrown_value(stale);
-
-        let left = Value::Number(1.0);
-        let right = Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-            crate::value::Object::new(crate::value::ObjectKind::Ordinary),
-        )));
-        // We can't easily construct a JS function here without an evaluator,
-        // so test the simpler invariant: a fresh thrown value, if present,
-        // must be preserved (not consumed) on Err.
-        let _ = take_thrown_value(); // pretend our setup cleared the stale
-        let (fresh, _) = create_js_error_with_type("boom", "Error");
-        set_thrown_value(fresh);
-        let result = eval_add(&left, &right);
-        assert!(
-            result.is_err(),
-            "eval_add must return Err when thrown_value is set"
-        );
-        // Critical: thrown_value is still present so try/catch can bind it.
-        assert!(
-            get_thrown_value().is_some(),
-            "eval_add must not consume the thrown_value"
-        );
-        let _ = take_thrown_value();
-    }
-
-    /// Per spec §7.1.1: when @@toPrimitive getter throws, evaluation of
-    /// the throwing side must abort BEFORE the other side's @@toPrimitive
-    /// is consulted. Companion to test262
-    /// `language/expressions/addition/get-symbol-to-prim-err.js`.
-    #[test]
-    fn eval_add_short_circuits_when_left_toprim_getter_throws() {
-        let mut ctx = crate::Context::new().unwrap();
-        // Debug: check getter storage
-        let debug = ctx.eval(
-            "var thrower = {}; \
-             var sym = Symbol.toPrimitive; \
-             Object.defineProperty(thrower, sym, { get: function() { return 42; } }); \
-             var desc = Object.getOwnPropertyDescriptor(thrower, sym); \
-             desc !== undefined ? (typeof desc.get) : 'no_desc';",
-        );
-        let _ = debug;
-
-        let result = ctx.eval(
-            "var callCount = 0; \
-             var thrower = {}; \
-             var counter = {}; \
-             Object.defineProperty(thrower, Symbol.toPrimitive, { get: function() { throw new Error('x'); } }); \
-             Object.defineProperty(counter, Symbol.toPrimitive, { get: function() { callCount += 1; } }); \
-             var thrown; \
-             try { thrower + counter; } catch (e) { thrown = e; } \
-             ({ callCount: callCount, msg: thrown ? thrown.message : 'undefined' });",
-        );
-        let value = result.unwrap();
-        let crate::value::Value::Object(obj) = value else {
-            panic!("expected object result");
-        };
-        let obj = obj.borrow();
-        assert_eq!(
-            obj.get("callCount"),
-            Some(crate::value::Value::Number(0.0)),
-            "counter's @@toPrimitive must not run when thrower's getter throws"
-        );
-        assert_eq!(
-            obj.get("msg"),
-            Some(crate::value::Value::String("x".to_string()))
-        );
-    }
-}
+mod tests;

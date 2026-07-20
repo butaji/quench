@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Never guess or do printing, write unit tests.
+Never guess or do printing, write unit tests. Dont just replicate test262 tests as unit tests, never.
+
+Make proper coverage of Rust Runtime Core with unit tests, of all layers and all functions. Changing of this core is always with TDD.
 
 Quench — JavaScript runtime targeting **100% test262 conformance**,
 staged to 100% per stage, with the **minimum possible LOC** as a

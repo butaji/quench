@@ -14,7 +14,7 @@ use std::rc::Rc;
 /// or a method inherited from the global `String` constructor's prototype.
 pub fn resolve_string_member(s: &str, prop_name: &str, env: &Rc<RefCell<Environment>>) -> Value {
     if prop_name == "length" {
-        return Value::Number(s.len() as f64);
+        return Value::Number(s.encode_utf16().count() as f64);
     }
     if let Some(ctor) = env.borrow().get("String") {
         let proto: Option<Rc<RefCell<crate::value::Object>>> = match &ctor {
