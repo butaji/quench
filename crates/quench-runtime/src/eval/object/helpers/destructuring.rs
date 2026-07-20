@@ -16,6 +16,7 @@ pub fn box_primitive_for_set(
         Value::Number(_) => "Number",
         Value::Boolean(_) => "Boolean",
         Value::Symbol(_) => "Symbol",
+        Value::String(_) => "String",
         _ => {
             return Err(JsError(
                 "box_primitive_for_set: not a primitive".to_string(),
