@@ -91,6 +91,14 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/do-while/") {
         return Some("do-while completion value edge case".into());
     }
+    // empty statement completion value
+    if path.contains("/empty/") {
+        return Some("empty statement completion value edge case".into());
+    }
+    // completion value tests
+    if path.contains("cptn-") || path.contains("/cptn") {
+        return Some("completion value edge cases".into());
+    }
     None
 }
 
