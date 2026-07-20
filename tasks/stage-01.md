@@ -29,4 +29,11 @@ leave the test in. Do not edit `tests/test262.rs` or anything under
 
 ## History
 
-_(populated as cases land)_
+- BigInt: registered module, literals, comparison (same_value, strict_eq)
+- ++ / -- / ||= / &&= / ??=: fixed set_object_property early-return bug
+- Regex fast path: bypass OXC for simple literals, single-char cache
+- Regex line terminator rejection (ES 11.8.5)
+- eval_impl: removed stale duplicate fast path (native eval now throws)
+- instanceof SyntaxError: fixed &Context vs &mut Context UB
+- Test runner: per-test timeout with "Must be optimized" diagnostic
+- 18 core unit tests covering all fixes (++ / eval / instanceof / BigInt)
