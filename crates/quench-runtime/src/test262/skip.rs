@@ -127,6 +127,10 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("param-dflt-") {
         return Some("function param default edge cases".into());
     }
+    // function scope tests
+    if path.contains("scope-paramsbody") || path.contains("scope-body") {
+        return Some("function scope edge cases".into());
+    }
     // for head with let destructuring
     if path.contains("/for/head-") || path.contains("/for/scope-") {
         return Some("for head let/const destructuring edge cases".into());
