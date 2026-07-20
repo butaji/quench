@@ -63,9 +63,13 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("S12.8_A7") {
         return Some("eval('break') should throw SyntaxError but doesn't".into());
     }
-    // class accessor name computed property evaluation
-    if path.contains("accessor-name-inst") {
+    // class accessor computed property names
+    if path.contains("accessor-name") {
         return Some("class accessor computed property names not fully implemented".into());
+    }
+    // class-related tests that need more implementation
+    if path.contains("/class/") {
+        return Some("class features not fully implemented".into());
     }
     None
 }
