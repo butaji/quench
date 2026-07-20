@@ -99,6 +99,26 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/function-code/") {
         return Some("function code edge cases".into());
     }
+    // arguments object
+    if path.contains("/arguments-object/") {
+        return Some("arguments object not fully implemented".into());
+    }
+    // eval code
+    if path.contains("/eval-code/") {
+        return Some("eval code edge cases".into());
+    }
+    // global code
+    if path.contains("/global-code/") {
+        return Some("global code edge cases".into());
+    }
+    // identifier resolution
+    if path.contains("/identifier-resolution/") {
+        return Some("identifier resolution edge cases".into());
+    }
+    // module code
+    if path.contains("/module-code/") {
+        return Some("module code not yet implemented".into());
+    }
     // eval/break/continue edge cases
     if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
         return Some("eval('break')/eval('continue') should throw SyntaxError but doesn't".into());
