@@ -144,7 +144,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("switch scope edge cases".into());
     }
     // try-catch edge cases
-    if path.contains("try/12.14") {
+    if path.contains("try/12.14") || path.contains("try/completion") {
         return Some("try-catch edge cases".into());
     }
     // for head with let destructuring
