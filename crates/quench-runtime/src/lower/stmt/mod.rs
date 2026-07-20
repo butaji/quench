@@ -76,8 +76,13 @@ pub fn lower_script(script: &ast::Program) -> Result<crate::ast::Program, LowerE
 /// Lower a statement, propagating an error for truly unsupported statements
 fn lower_stmt_checked(stmt: &ast::Statement) -> Result<Option<Statement>, LowerError> {
     match stmt {
-        ast::Statement::WithStatement(_) => {
-            Err(LowerError::new("`with` statements are not supported"))
+        ast::Statement::WithStatement(with_stmt) => {
+            let object = lower_expr(&with_stmt.object).map_err(|e| LowerError::new(format!("with object: {}", e)))?;
+            let body = lower_stmt(&with_stmt.body).unwrap_or(Statement::Empty);
+            Ok(Some(Statement::With {
+                object: Box::new(object),
+                body: Box::new(body),
+            }))
         }
         _ => Ok(lower_stmt(stmt)),
     }

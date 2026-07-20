@@ -160,6 +160,27 @@ pub fn register_function(ctx: &mut Context) {
         .borrow_mut()
         .set("constructor", func_ctor.clone());
     ctx.set_global("Function".to_string(), func_ctor);
+
+    // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
+    // as native constructors that delegate to the Function constructor logic.
+    let async_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    async_func_ctor.set_name("AsyncFunction");
+    ctx.set_global(
+        "AsyncFunction".to_string(),
+        Value::NativeConstructor(Rc::new(async_func_ctor)),
+    );
+    let gen_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    gen_func_ctor.set_name("GeneratorFunction");
+    ctx.set_global(
+        "GeneratorFunction".to_string(),
+        Value::NativeConstructor(Rc::new(gen_func_ctor)),
+    );
+    let async_gen_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    async_gen_func_ctor.set_name("AsyncGeneratorFunction");
+    ctx.set_global(
+        "AsyncGeneratorFunction".to_string(),
+        Value::NativeConstructor(Rc::new(async_gen_func_ctor)),
+    );
 }
 
 fn make_function_prototype() -> Rc<RefCell<Object>> {
@@ -212,6 +233,24 @@ fn make_function_constructor(
                 .collect::<Vec<_>>()
                 .join(",");
             let source = format!("function anonymous({}) {{\n{}\n}}", params_src, body_src);
+            // Per ES spec §16.1, a hashbang comment (#! ...) is only valid at the
+            // very beginning of source text. The Function constructor wraps the body
+            // in `function anonymous() { ... }`, so a hashbang inside the body is
+            // not at the start and must be rejected as a SyntaxError.
+            // OXC 0.47 accepts hashbang anywhere, so we check here.
+            if let Some(body_start) = body_src.find("#!") {
+                let line_before = &body_src[..body_start];
+                if !line_before.contains('\n') && params_src.is_empty() {
+                    // First-line hashbang in body: OK for the first argument
+                } else {
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        "Function constructor produced: Unexpected hashbang comment",
+                        "SyntaxError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+            }
             match crate::parser::parse_script(&source) {
                 Ok(crate::ast::Program::Script(stmts)) => {
                     if let Some(crate::ast::Statement::FunctionDeclaration {
