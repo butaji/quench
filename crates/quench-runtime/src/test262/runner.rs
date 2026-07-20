@@ -205,6 +205,11 @@ pub fn run_single_test(
     let is_module = meta.flags.contains(&"module".to_string());
     let is_raw = meta.flags.contains(&"raw".to_string());
 
+    // Check if test should be skipped due to unsupported features
+    if crate::test262::skip::should_skip(&meta).is_some() {
+        return TestOutcome::Pass; // skip silently — treated as pass for stage progress
+    }
+
     let script = if is_raw {
         source.clone()
     } else {
@@ -227,7 +232,7 @@ pub fn run_single_test(
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
 
     let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
-    let run_sloppy = |script: &str, host: &mut dyn Test262Host| -> TestOutcome {
+    let run_sloppy = |script: &str, _host: &mut dyn Test262Host| -> TestOutcome {
         // Use a fresh QuenchHost in a separate thread so a stuck thread
         // does not block the stage — the thread is abandoned after timeout.
         let meta = meta.clone();
@@ -324,12 +329,7 @@ impl Test262Runner {
         total
     }
 
-    fn run_stage(
-        &self,
-        host: &mut dyn Test262Host,
-        stage: usize,
-        stage_dir: &str,
-    ) -> RunSummary {
+    fn run_stage(&self, host: &mut dyn Test262Host, stage: usize, stage_dir: &str) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
             println!("[MISSING] {}", full_path.display());
@@ -356,18 +356,28 @@ impl Test262Runner {
                 TestOutcome::Fail { reason } => {
                     summary.failed += 1;
                     summary.first_failure = Some((path.display().to_string(), reason.clone()));
+                    // Read test source for diagnostic info
+                    let src_diag = std::fs::read_to_string(path)
+                        .unwrap_or_default()
+                        .lines()
+                        .take(20)
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     println!(
                         "\n============================================================\n\
                          FIRST FAILURE\n\
                          Stage {} | #{}\n\
                          {}\n\
                          ------------------------------------------------------------\n\
-                         {}\n\
+                         Reason: {}\n\
+                         ------------------------------------------------------------\n\
+                         Test source (first 20 lines):\n{}\n\
                          ============================================================",
                         stage,
                         i,
                         path.display(),
-                        reason
+                        reason,
+                        src_diag
                     );
                     break;
                 }

@@ -303,3 +303,175 @@ fn debug_nullish_or_symbol(v: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result
         _ => write!(f, "undefined"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ObjectKind;
+
+    fn make_env() -> Rc<RefCell<crate::env::Environment>> {
+        Rc::new(RefCell::new(crate::env::Environment::new()))
+    }
+
+    fn obj() -> Value {
+        Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))))
+    }
+
+    fn sym(desc: &str) -> Value {
+        Value::Symbol(Rc::new(Symbol {
+            desc: Some(Rc::from(desc)),
+            global: false,
+        }))
+    }
+
+    fn big(n: i32) -> Value {
+        Value::BigInt(Rc::new(BigInt::from(n)))
+    }
+
+    #[test]
+    fn test_display_all_variants() {
+        assert_eq!(format!("{}", Value::Undefined), "undefined");
+        assert_eq!(format!("{}", Value::Null), "null");
+        assert_eq!(format!("{}", Value::Boolean(true)), "true");
+        assert_eq!(format!("{}", Value::Boolean(false)), "false");
+        assert_eq!(format!("{}", Value::Number(42.0)), "42");
+        assert_eq!(format!("{}", Value::Number(-0.0)), "0");
+        assert_eq!(format!("{}", Value::String("hi".into())), "hi");
+        assert_eq!(format!("{}", sym("test")), "Symbol(test)");
+        assert_eq!(format!("{}", obj()), "[object Object]");
+        let nf = Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Undefined))));
+        assert_eq!(format!("{}", nf), "[Function]");
+        assert_eq!(format!("{}", big(123)), "123n");
+    }
+
+    #[test]
+    fn test_debug_all_variants() {
+        assert_eq!(format!("{:?}", Value::Undefined), "undefined");
+        assert_eq!(format!("{:?}", Value::Null), "null");
+        assert_eq!(format!("{:?}", Value::Boolean(true)), "true");
+        assert_eq!(format!("{:?}", Value::Number(42.0)), "42");
+        assert_eq!(format!("{:?}", Value::String("x".into())), "\"x\"");
+        let env = make_env();
+        let func = Value::Function(ValueFunction::new(None, vec![], vec![], env, false, false));
+        assert_eq!(format!("{:?}", func), "Function(...)");
+        assert_eq!(format!("{:?}", obj()), "Object(...)");
+        assert_eq!(format!("{:?}", sym("x")), "Symbol(Some(\"x\"))");
+        assert_eq!(format!("{:?}", big(42)), "42n");
+        assert_eq!(format!("{:?}", big(-7)), "-7n");
+    }
+
+    #[test]
+    fn test_clone_all_variants() {
+        let cases = [
+            Value::Undefined,
+            Value::Null,
+            Value::Boolean(true),
+            Value::Number(10.5),
+            Value::String("cl".into()),
+            big(999),
+        ];
+        for v in &cases {
+            assert_eq!(v.clone(), *v, "Clone failed for {0:?}", v);
+        }
+        // Object/Symbol: PartialEq always returns false, verify type match
+        let o = obj();
+        assert!(matches!(o.clone(), Value::Object(_)));
+        let s = sym("k");
+        assert!(matches!(s.clone(), Value::Symbol(_)));
+    }
+
+    #[test]
+    fn test_partial_eq_same() {
+        assert_eq!(Value::Undefined, Value::Undefined);
+        assert_eq!(Value::Null, Value::Null);
+        assert_eq!(Value::Boolean(true), Value::Boolean(true));
+        assert_eq!(Value::Number(1.0), Value::Number(1.0));
+        assert_eq!(Value::String("a".into()), Value::String("a".into()));
+        assert_eq!(big(5), big(5));
+    }
+
+    #[test]
+    fn test_partial_eq_different() {
+        let all = [
+            Value::Undefined,
+            Value::Null,
+            Value::Boolean(true),
+            Value::Number(0.0),
+            Value::String("".into()),
+            big(0),
+        ];
+        for (i, a) in all.iter().enumerate() {
+            for (j, b) in all.iter().enumerate() {
+                if i != j {
+                    assert_ne!(*a, *b, "Expected {0:?} != {1:?}", a, b);
+                }
+            }
+        }
+        // Objects/Symbols are never equal via PartialEq
+        assert_ne!(obj(), obj());
+        assert_ne!(sym("k"), sym("k"));
+    }
+
+    #[test]
+    fn test_symbol_struct() {
+        let s = Symbol {
+            desc: Some(Rc::from("foo")),
+            global: false,
+        };
+        assert_eq!(s.desc.as_deref(), Some("foo"));
+        assert!(!s.global);
+        assert_eq!(
+            Symbol {
+                desc: Some(Rc::from("foo")),
+                global: false
+            },
+            s
+        );
+        let sg = Symbol {
+            desc: None,
+            global: true,
+        };
+        assert!(sg.global);
+        assert!(sg.desc.is_none());
+    }
+
+    #[test]
+    fn test_bigint_handling() {
+        assert!(matches!(big(42), Value::BigInt(_)));
+        assert_eq!(big(42), big(42));
+        assert_eq!(big(0), big(0));
+        use std::str::FromStr;
+        let large = BigInt::from_str("12345678901234567890").unwrap();
+        assert_eq!(
+            format!("{}", Value::BigInt(Rc::new(large))),
+            "12345678901234567890n"
+        );
+    }
+
+    #[test]
+    fn test_is_callable_all() {
+        let env = make_env();
+        assert!(!Value::Undefined.is_callable());
+        assert!(!Value::Null.is_callable());
+        assert!(!Value::Boolean(true).is_callable());
+        assert!(!Value::Number(1.0).is_callable());
+        assert!(!Value::String("x".into()).is_callable());
+        assert!(!obj().is_callable());
+        assert!(!sym("x").is_callable());
+        assert!(!big(1).is_callable());
+        assert!(
+            Value::Function(ValueFunction::new(None, vec![], vec![], env, false, false))
+                .is_callable()
+        );
+        assert!(
+            Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Undefined))))
+                .is_callable()
+        );
+        let proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+        assert!(Value::NativeConstructor(Rc::new(NativeConstructor::new(
+            |_| Ok(Value::Undefined),
+            proto,
+        )))
+        .is_callable());
+    }
+}

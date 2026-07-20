@@ -6,11 +6,14 @@
 //! - Functions have interior mutability (RefCell) for prototype caching
 //! - Values are immutable reference-counted handles
 
+pub mod coerce;
+pub mod compare;
 pub mod convert;
 pub mod error;
 pub mod function;
 pub mod kind;
 pub mod object;
+pub mod primitive;
 mod val;
 
 pub use convert::{

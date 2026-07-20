@@ -18,6 +18,18 @@ pub fn lower_decl(decl: &ast::Declaration) -> Option<Statement> {
 
 #[allow(clippy::complexity)]
 pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> {
+    lower_var_decl_impl(var_decl, None)
+}
+
+/// Lower a variable declaration, using `iterable_override` as the init expression for
+/// destructuring patterns when present (used in for-of/for-in loops).
+/// For `for (let [a, b] of iterable)`, the iterable is passed here so the pattern
+/// can access elements from it rather than from a separate initializer.
+#[allow(clippy::complexity)]
+pub fn lower_var_decl_impl(
+    var_decl: &ast::VariableDeclaration,
+    iterable_override: Option<Expression>,
+) -> Option<Statement> {
     use crate::lower::stmt::destructuring::{
         lower_array_destructuring, lower_object_destructuring, wrap_decls,
     };
@@ -39,21 +51,23 @@ pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> 
             }
             _ => None,
         };
-        let init_expr = binding.init.as_ref().and_then(|e| {
-            let mut lowered = lower_expr(e).ok()?;
-            // Per ES §14.6.13 step 18a, if the initializer is an
-            // anonymous class expression, the inferred name is the
-            // binding identifier. We set the name on the lowerer-produced
-            // `Expression::Class` so the static-field initializer can
-            // observe it via `this.name`.
-            if let Some(name) = &ident_name {
-                if let crate::ast::Expression::Class(class) = &mut lowered {
-                    if class.name.is_none() {
-                        class.name = Some(name.clone());
+        let init_expr = iterable_override.clone().or_else(|| {
+            binding.init.as_ref().and_then(|e| {
+                let mut lowered = lower_expr(e).ok()?;
+                // Per ES §14.6.13 step 18a, if the initializer is an
+                // anonymous class expression, the inferred name is the
+                // binding identifier. We set the name on the lowerer-produced
+                // `Expression::Class` so the static-field initializer can
+                // observe it via `this.name`.
+                if let Some(name) = &ident_name {
+                    if let crate::ast::Expression::Class(class) = &mut lowered {
+                        if class.name.is_none() {
+                            class.name = Some(name.clone());
+                        }
                     }
                 }
-            }
-            Some(lowered)
+                Some(lowered)
+            })
         });
         match &binding.id.kind {
             ast::BindingPatternKind::BindingIdentifier(ident) => {
@@ -74,9 +88,33 @@ pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> 
                     decls.len(),
                 ));
             }
-            ast::BindingPatternKind::AssignmentPattern(_) => {
-                // Fall through - not a valid pattern for variable declaration
-                continue;
+            ast::BindingPatternKind::AssignmentPattern(assign) => {
+                // `[a = default] = init` → `let a = init["0"] ?? default`
+                let ident_name = match &assign.left.kind {
+                    ast::BindingPatternKind::BindingIdentifier(id) => id.name.as_str().to_string(),
+                    _ => continue, // Nested patterns not yet supported here
+                };
+                if let Some(init) = init_expr {
+                    // Build: init[0] ?? default
+                    let accessor = Expression::Member {
+                        object: Box::new(init.clone()),
+                        property: PropertyKey::Number(0.0),
+                        computed: true,
+                    };
+                    let default_expr = crate::lower::expr::lower_expr(&assign.right)
+                        .ok()
+                        .unwrap_or(Expression::Undefined);
+                    let initializer = Expression::Binary {
+                        left: Box::new(accessor),
+                        op: crate::ast::BinaryOp::NullishCoalescing,
+                        right: Box::new(default_expr),
+                    };
+                    decls.push(Statement::VarDeclaration {
+                        kind,
+                        name: ident_name,
+                        init: Some(initializer),
+                    });
+                }
             }
         }
     }
@@ -104,7 +142,13 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
             stmts
         })
         .unwrap_or_default();
-    Some(Statement::FunctionDeclaration { name, params, body })
+    Some(Statement::FunctionDeclaration {
+        name,
+        params,
+        body,
+        is_async: func_decl.r#async,
+        is_generator: func_decl.generator,
+    })
 }
 
 /// Lower a single FormalParameter to Param

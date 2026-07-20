@@ -122,9 +122,6 @@ pub fn eval_for_in(
 ) -> Result<Value, JsError> {
     let obj_value = eval_expression(object, env, in_arrow_function)?;
     let keys = get_enumerable_keys(&obj_value)?;
-    if matches!(variable, Expression::ObjectPattern(_)) {
-        return Err(JsError("unsupported pattern in for-in loop".to_string()));
-    }
     for key in keys {
         assign_to(variable, &Value::String(key), env)?;
         let _ = eval_statement(body, env, false, in_arrow_function)?;
@@ -142,5 +139,352 @@ pub fn eval_for_in(
         Ok(val)
     } else {
         Ok(Value::Undefined)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins;
+    use crate::context::Context;
+    use crate::value::{Object, ObjectKind, Value};
+
+    fn new_ctx() -> Context {
+        let mut ctx = Context::new().unwrap();
+        builtins::register_builtins(&mut ctx);
+        ctx
+    }
+
+    // get_iterator
+
+    #[test]
+    fn test_get_iterator_array() {
+        let mut ctx = new_ctx();
+        let arr = ctx.eval("[10, 20, 30]").unwrap();
+        let items = get_iterator(&arr).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], Value::Number(10.0));
+        assert_eq!(items[1], Value::Number(20.0));
+        assert_eq!(items[2], Value::Number(30.0));
+    }
+
+    #[test]
+    fn test_get_iterator_empty_array() {
+        let mut ctx = new_ctx();
+        let arr = ctx.eval("[]").unwrap();
+        let items = get_iterator(&arr).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_get_iterator_string() {
+        let items = get_iterator(&Value::String("abc".to_string())).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], Value::String("a".to_string()));
+        assert_eq!(items[1], Value::String("b".to_string()));
+        assert_eq!(items[2], Value::String("c".to_string()));
+    }
+
+    #[test]
+    fn test_get_iterator_empty_string() {
+        let items = get_iterator(&Value::String("".to_string())).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_get_iterator_unicode_string() {
+        let items = get_iterator(&Value::String("aé世".to_string())).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], Value::String("a".to_string()));
+        assert_eq!(items[1], Value::String("é".to_string()));
+        assert_eq!(items[2], Value::String("世".to_string()));
+    }
+
+    #[test]
+    fn test_get_iterator_non_iterable_number() {
+        let err = get_iterator(&Value::Number(42.0)).unwrap_err();
+        assert!(
+            err.0.contains("TypeError"),
+            "expected TypeError, got: {0:?}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn test_get_iterator_non_iterable_boolean() {
+        let err = get_iterator(&Value::Boolean(true)).unwrap_err();
+        assert!(err.0.contains("TypeError"));
+    }
+
+    #[test]
+    fn test_get_iterator_non_iterable_null() {
+        let err = get_iterator(&Value::Null).unwrap_err();
+        assert!(err.0.contains("TypeError"));
+    }
+
+    #[test]
+    fn test_get_iterator_non_iterable_undefined() {
+        let err = get_iterator(&Value::Undefined).unwrap_err();
+        assert!(err.0.contains("TypeError"));
+    }
+
+    #[test]
+    fn test_get_iterator_object_with_elements() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.elements.push(Value::Number(1.0));
+        obj.elements.push(Value::Number(2.0));
+        obj.elements.push(Value::Number(3.0));
+        let val = Value::Object(Rc::new(RefCell::new(obj)));
+        let items = get_iterator(&val).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], Value::Number(1.0));
+        assert_eq!(items[2], Value::Number(3.0));
+    }
+
+    #[test]
+    fn test_get_iterator_object_empty_elements() {
+        let obj = Object::new(ObjectKind::Ordinary);
+        let val = Value::Object(Rc::new(RefCell::new(obj)));
+        let items = get_iterator(&val).unwrap();
+        assert!(items.is_empty());
+    }
+
+    // get_enumerable_keys
+
+    #[test]
+    fn test_get_enumerable_keys_object() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.set("x", Value::Number(1.0));
+        obj.set("y", Value::Number(2.0));
+        let val = Value::Object(Rc::new(RefCell::new(obj)));
+        let keys = get_enumerable_keys(&val).unwrap();
+        assert_eq!(keys, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_object_with_elements() {
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.set("a", Value::Number(10.0));
+        obj.elements.push(Value::Number(1.0));
+        obj.elements.push(Value::Number(2.0));
+        let val = Value::Object(Rc::new(RefCell::new(obj)));
+        let keys = get_enumerable_keys(&val).unwrap();
+        assert!(keys.contains(&"a".to_string()));
+        assert!(keys.contains(&"0".to_string()));
+        assert!(keys.contains(&"1".to_string()));
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_string() {
+        let keys = get_enumerable_keys(&Value::String("ab".to_string())).unwrap();
+        assert_eq!(keys, vec!["0", "1"]);
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_empty_string() {
+        let keys = get_enumerable_keys(&Value::String("".to_string())).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_number() {
+        let keys = get_enumerable_keys(&Value::Number(42.0)).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_boolean() {
+        let keys = get_enumerable_keys(&Value::Boolean(false)).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_undefined() {
+        let keys = get_enumerable_keys(&Value::Undefined).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_null() {
+        let keys = get_enumerable_keys(&Value::Null).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_get_enumerable_keys_empty_object() {
+        let obj = Object::new(ObjectKind::Ordinary);
+        let val = Value::Object(Rc::new(RefCell::new(obj)));
+        let keys = get_enumerable_keys(&val).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    // for-of loops (via Context::eval -> eval_for_of)
+
+    #[test]
+    fn test_for_of_array_sum() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = 0; for (let x of [1, 2, 3, 4, 5]) { s += x; } s")
+            .unwrap();
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    #[test]
+    fn test_for_of_string_concat() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = ''; for (let ch of 'abc') { s += ch; } s")
+            .unwrap();
+        assert_eq!(result, Value::String("abc".to_string()));
+    }
+
+    #[test]
+    fn test_for_of_empty_array() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = 0; for (let x of []) { s += x; } s")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_for_of_empty_string() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = ''; for (let ch of '') { s += ch; } s")
+            .unwrap();
+        assert_eq!(result, Value::String("".to_string()));
+    }
+
+    #[test]
+    fn test_for_of_break() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = 0; for (let x of [1, 2, 3, 4]) { s += x; if (x === 3) break; } s")
+            .unwrap();
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn test_for_of_continue() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = ''; for (let ch of 'abcde') { if (ch === 'c') continue; s += ch; } s")
+            .unwrap();
+        assert_eq!(result, Value::String("abde".to_string()));
+    }
+
+    #[test]
+    fn test_for_of_break_immediately() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = 0; for (let x of [1, 2, 3]) { break; s += x; } s")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_for_of_single_element_array() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let s = 0; for (let x of [42]) { s += x; } s")
+            .unwrap();
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // for-in loops (via Context::eval -> eval_for_in)
+
+    #[test]
+    fn test_for_in_object_keys() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let keys = ''; for (let k in {a: 1, b: 2}) { keys += k; } keys")
+            .unwrap();
+        assert_eq!(result, Value::String("ab".to_string()));
+    }
+
+    #[test]
+    fn test_for_in_empty_object() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let count = 0; for (let k in {}) { count++; } count")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_for_in_break() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "let keys = ''; for (let k in {a: 1, b: 2, c: 3}) { keys += k; if (k === 'b') break; } keys",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("ab".to_string()));
+    }
+
+    #[test]
+    fn test_for_in_continue() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "let keys = ''; for (let k in {a: 1, b: 2, c: 3}) { if (k === 'b') continue; keys += k; } keys",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("ac".to_string()));
+    }
+
+    #[test]
+    fn test_for_in_on_number_does_not_iterate() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let count = 0; for (let k in 42) { count++; } count")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_for_in_on_string() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let keys = []; for (let k in 'ab') { keys.push(k); } keys.length")
+            .unwrap();
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_for_in_on_undefined_does_not_iterate() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let count = 0; for (let k in undefined) { count++; } count")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_for_in_on_null_does_not_iterate() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("let count = 0; for (let k in null) { count++; } count")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    // Edge cases: error propagation
+
+    #[test]
+    fn test_for_of_non_iterable_throws() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval("let s = 0; for (let x of 42) { s += x; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_for_of_throw_in_body_propagates() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "let s = 0; for (let x of [1, 2]) { if (x === 2) { throw new Error('boom'); } s += x; }",
+        );
+        assert!(result.is_err());
     }
 }

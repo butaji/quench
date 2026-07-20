@@ -13,7 +13,14 @@ pub fn eval_native_function_member(
         return Ok(val);
     }
     match prop_name {
-        "name" => Ok(Value::String("anonymous".to_string())),
+        "name" => Ok(Value::String({
+            let n = nf.name.clone();
+            if n.is_empty() {
+                "anonymous".to_string()
+            } else {
+                n
+            }
+        })),
         "prototype" => eval_native_prototype(nf),
         "length" => Ok(Value::Number(0.0)),
         "call" => eval_native_call_method(nf),

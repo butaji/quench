@@ -8,7 +8,7 @@ use crate::interpreter::{
     ControlFlow,
 };
 use crate::value::{
-    set_thrown_value, take_thrown_value, to_bool, to_js_string, to_number, JsError, Object, ObjectKind, Value,
+    set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -71,9 +71,13 @@ pub fn eval_statement(
         Statement::VarDeclaration { kind, name, init } => {
             eval_var_decl(kind, name, init, env, in_arrow_function)
         }
-        Statement::FunctionDeclaration { name, params, body } => {
-            eval_func_decl(name, params, body, env)
-        }
+        Statement::FunctionDeclaration {
+            name,
+            params,
+            body,
+            is_async,
+            is_generator,
+        } => eval_func_decl(name, params, body, env, *is_async, *is_generator),
         Statement::ClassDeclaration { name, class } => eval_class_decl(name, class, env),
         Statement::If {
             condition,
@@ -239,12 +243,16 @@ fn eval_func_decl(
     params: &[Param],
     body: &[Statement],
     env: &Rc<RefCell<Environment>>,
+    is_async: bool,
+    is_generator: bool,
 ) -> Result<Value, JsError> {
     let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
         params.to_vec(),
         body.to_vec(),
         Rc::clone(env),
+        is_async,
+        is_generator,
     );
     func.strict = crate::interpreter::is_strict_mode();
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
@@ -500,3 +508,6 @@ fn eval_for_in_stmt(
     }
     Ok(Value::Undefined)
 }
+
+#[cfg(test)]
+mod tests;

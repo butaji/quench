@@ -34,6 +34,8 @@ pub enum Statement {
         name: String,
         params: Vec<Param>,
         body: Vec<Statement>,
+        is_async: bool,
+        is_generator: bool,
     },
     /// Class declaration
     ClassDeclaration { name: String, class: Class },
@@ -181,6 +183,8 @@ pub enum Expression {
         name: Option<String>,
         params: Vec<Param>,
         body: Vec<Statement>,
+        is_async: bool,
+        is_generator: bool,
     },
     ArrowFunction {
         params: Vec<Param>,

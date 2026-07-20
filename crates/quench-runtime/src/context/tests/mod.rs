@@ -2,6 +2,7 @@
 
 #![allow(clippy::too_many_lines, clippy::complexity)]
 
+pub mod accessor_symbol;
 pub mod array_literal;
 pub mod at_methods;
 pub mod basic;

@@ -13,46 +13,36 @@ use crate::{Context, Value};
 #[test]
 fn test_class_instance_field_basic_isolated() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx.eval("class C { x = 1; } C");
-    eprintln!("Class only: {:?}", r);
+    ctx.eval("class C { x = 1; } C").unwrap();
 }
 
 #[cfg(test)]
 #[test]
 fn test_class_new_with_fields_isolated() {
     let mut ctx = Context::new().unwrap();
-    eprintln!(">>> test_class_new_with_fields_isolated ENTER");
-    let r = ctx.eval("class C { x = 1; } new C()");
-    eprintln!("new C(): {:?}", r);
-    eprintln!("<<< EXIT");
+    ctx.eval("class C { x = 1; } new C()").unwrap();
 }
 
 #[cfg(test)]
 #[test]
 fn test_class_explicit_empty_constructor() {
     let mut ctx = Context::new().unwrap();
-    eprintln!(">>> test_class_explicit_empty_constructor ENTER");
-    let r = ctx.eval("class C { x = 1; constructor() {} } new C()");
-    eprintln!("explicit empty ctor: {:?}", r);
-    eprintln!("<<< EXIT");
+    ctx.eval("class C { x = 1; constructor() {} } new C()")
+        .unwrap();
 }
 
 #[cfg(test)]
 #[test]
 fn test_class_parse_with_field() {
     let ctx = Context::new().unwrap();
-    eprintln!(">>> parse ENTER");
-    let r = ctx.parse("class C { x = 1; }");
-    eprintln!("parse result: {:?}", r);
-    eprintln!("<<< parse EXIT");
+    ctx.parse("class C { x = 1; }").unwrap();
 }
 
 #[cfg(test)]
 #[test]
 fn test_class_new_no_fields() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx.eval("class C { } new C()");
-    eprintln!("no fields new C(): {:?}", r);
+    ctx.eval("class C { } new C()").unwrap();
 }
 
 #[cfg(test)]

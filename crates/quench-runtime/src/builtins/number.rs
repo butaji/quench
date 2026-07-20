@@ -121,7 +121,7 @@ fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     // Number() returns a primitive, new Number() returns an object
     let proto_for_closure = Rc::clone(proto);
-    let mut number_ctor = crate::value::NativeConstructor::new(
+    let number_ctor = crate::value::NativeConstructor::new(
         move |args: Vec<Value>| {
             let n = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -321,7 +321,6 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::consts::PI;
 
     fn eval(src: &str) -> Value {
         let mut ctx = crate::Context::new().unwrap();
@@ -449,7 +448,8 @@ mod tests {
     fn test_number_parse_float() {
         assert_eq!(eval_num("Number.parseFloat('123.456')"), 123.456);
         assert_eq!(eval_num("Number.parseFloat('42')"), 42.0);
-        assert_eq!(eval_num("Number.parseFloat('3.14abc')"), PI);
+        let expected = eval_num("3.14");
+        assert!((eval_num("Number.parseFloat('3.14abc')") - expected).abs() < 1e-10);
         let nan: f64 = eval_num("Number.parseFloat('not a number')");
         assert!(nan.is_nan());
     }

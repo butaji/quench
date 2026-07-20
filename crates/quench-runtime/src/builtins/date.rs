@@ -1,279 +1,17 @@
-//! Date built-in and global utility functions
+//! Date built-in and global utility functions.
+
+pub mod helpers;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+
+pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
     to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
     ObjectKind, Value,
 };
 use crate::Context;
-
-// ============================================================================
-// parseInt and parseFloat (ECMAScript spec compliant)
-// ============================================================================
-
-fn is_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c' | '\u{00a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
-fn is_digit_in_radix(c: char, radix: u32) -> Option<u32> {
-    let c = c.to_ascii_lowercase();
-    let val = if c.is_ascii_digit() {
-        c.to_digit(10)?
-    } else if c.is_ascii_lowercase() {
-        c.to_digit(36)?
-    } else {
-        return None;
-    };
-    if val < radix {
-        Some(val)
-    } else {
-        None
-    }
-}
-
-pub(crate) fn spec_parse_int(string: &str, mut radix: u32) -> f64 {
-    let s = string.trim_start_matches(is_whitespace);
-    if s.is_empty() {
-        return f64::NAN;
-    }
-
-    let mut chars = s.chars();
-    let mut sign = 1f64;
-
-    let first = chars.next().unwrap();
-    if first == '-' {
-        sign = -1.0;
-    } else if first == '+' {
-        // positive, sign stays 1.0
-    } else {
-        // Not a sign, put it back conceptually by starting from first
-        let remaining: String = std::iter::once(first).chain(chars).collect();
-        // Detect hex prefix for auto radix
-        if radix == 10 && (remaining.starts_with("0x") || remaining.starts_with("0X")) {
-            radix = 16;
-        }
-        return parse_int_value(&remaining, radix, sign);
-    }
-
-    let remaining: String = chars.collect();
-    // Detect hex prefix for auto radix
-    if radix == 10 && (remaining.starts_with("0x") || remaining.starts_with("0X")) {
-        radix = 16;
-    }
-    parse_int_value(&remaining, radix, sign)
-}
-
-fn parse_int_value(s: &str, radix: u32, sign: f64) -> f64 {
-    let chars = s.chars().peekable();
-
-    // Handle 0x prefix for radix 16
-    let chars: Vec<char> = if radix == 16 {
-        let mut c = chars;
-        let prefix_chars: Vec<_> = c.by_ref().take(2).collect();
-        if prefix_chars.len() == 2
-            && prefix_chars[0] == '0'
-            && prefix_chars[1].eq_ignore_ascii_case(&'x')
-        {
-            c.collect()
-        } else {
-            prefix_chars.into_iter().chain(c).collect()
-        }
-    } else {
-        chars.collect()
-    };
-
-    let mut result: f64 = 0.0;
-    let mut any_digit = false;
-
-    for c in chars {
-        if let Some(val) = is_digit_in_radix(c, radix) {
-            result = result * (radix as f64) + (val as f64);
-            any_digit = true;
-        } else {
-            break;
-        }
-    }
-
-    if !any_digit {
-        f64::NAN
-    } else {
-        result * sign
-    }
-}
-
-pub(crate) fn spec_parse_float(string: &str) -> f64 {
-    let s = string.trim_start_matches(is_whitespace);
-    if s.is_empty() {
-        return f64::NAN;
-    }
-
-    let mut chars = s.chars().peekable();
-    let sign = parse_float_sign(&mut chars);
-
-    // Per ECMA-262 StrNumericLiteral, parseFloat accepts the literal "Infinity"
-    // (case-sensitive — only the exact capital-I spelling) after the optional
-    // sign. parseFloat("Infinity") === Infinity, parseFloat("-Infinity") ===
-    // -Infinity, but parseFloat("infinity") === NaN.
-    let rest: String = chars.clone().collect();
-    if rest == "Infinity" {
-        return f64::INFINITY * sign;
-    }
-
-    // Handle hex floats
-    if let Some(val) = try_parse_hex_float(&mut chars) {
-        return val * sign;
-    }
-
-    // Parse decimal significand
-    let (significand, has_digit) = parse_decimal_significand(&mut chars);
-    if !has_digit {
-        return f64::NAN;
-    }
-
-    // Handle exponent
-    let significand = apply_exponent(&mut chars, significand);
-    significand * sign
-}
-
-fn parse_float_sign(chars: &mut std::iter::Peekable<std::str::Chars>) -> f64 {
-    if chars.peek() == Some(&'-') {
-        chars.next();
-        -1.0
-    } else if chars.peek() == Some(&'+') {
-        chars.next();
-        1.0
-    } else {
-        1.0
-    }
-}
-
-fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<f64> {
-    if chars.peek() != Some(&'0') {
-        return None;
-    }
-    let mut c = chars.clone();
-    c.next();
-    if !c.peek()?.eq_ignore_ascii_case(&'x') {
-        return None;
-    }
-    chars.next(); // consume 'x'
-    let mut significand = 0.0;
-    let mut has_digit = false;
-
-    while let Some(&ch) = chars.peek() {
-        if let Some(d) = ch.to_digit(16) {
-            significand = significand * 16.0 + (d as f64);
-            has_digit = true;
-            chars.next();
-        } else {
-            break;
-        }
-    }
-    if !has_digit {
-        return Some(f64::NAN);
-    }
-
-    // Parse optional exponent (p for hex floats)
-    if chars.peek().map(|c| c.to_ascii_lowercase()) == Some('p') {
-        chars.next();
-        let exp_sign = if chars.peek() == Some(&'-') {
-            chars.next();
-            -1.0
-        } else if chars.peek() == Some(&'+') {
-            chars.next();
-            1.0
-        } else {
-            1.0
-        };
-        let exp = parse_exponent(chars);
-        significand *= 10.0_f64.powf(exp * exp_sign);
-    }
-    Some(significand)
-}
-
-fn parse_decimal_significand(chars: &mut std::iter::Peekable<std::str::Chars>) -> (f64, bool) {
-    let mut significand = 0.0;
-    let mut has_digit = false;
-    let mut frac_digits: Vec<u32> = Vec::new();
-
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            significand = significand * 10.0 + (c.to_digit(10).unwrap() as f64);
-            has_digit = true;
-            chars.next();
-        } else {
-            break;
-        }
-    }
-
-    // Handle decimal point
-    if chars.peek() == Some(&'.') {
-        chars.next();
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                frac_digits.push(c.to_digit(10).unwrap());
-                has_digit = true;
-                chars.next();
-            } else {
-                break;
-            }
-        }
-    }
-    // Apply the fractional digits once (not per-digit) so the value
-    // matches the literal — e.g. ".01" → 1 / 100 = 0.01. Doing this
-    // per-digit via `scale *= 0.1` accumulates floating-point error and
-    // can mis-round for inputs like ".01e+2" (gives 10 instead of 1).
-    if !frac_digits.is_empty() {
-        for &d in &frac_digits {
-            significand = significand * 10.0 + (d as f64);
-        }
-        significand /= 10f64.powi(frac_digits.len() as i32);
-    }
-    (significand, has_digit)
-}
-
-fn apply_exponent(chars: &mut std::iter::Peekable<std::str::Chars>, significand: f64) -> f64 {
-    if chars.peek().map(|c| c.to_ascii_lowercase()) != Some('e') {
-        return significand;
-    }
-    chars.next();
-    let exp_sign = if chars.peek() == Some(&'-') {
-        chars.next();
-        -1.0
-    } else if chars.peek() == Some(&'+') {
-        chars.next();
-        1.0
-    } else {
-        1.0
-    };
-    let exp = parse_exponent(chars);
-    significand * 10.0_f64.powf(exp * exp_sign)
-}
-
-fn parse_exponent(chars: &mut std::iter::Peekable<std::str::Chars>) -> f64 {
-    let mut exp: f64 = 0.0;
-    while let Some(&c) = chars.peek() {
-        if let Some(d) = c.to_digit(10) {
-            exp = exp * 10.0 + (d as f64);
-            chars.next();
-        } else {
-            break;
-        }
-    }
-    exp
-}
 
 // ============================================================================
 // Global utility functions
@@ -350,8 +88,6 @@ fn register_string_converter(ctx: &mut Context) {
     let string_fn = create_string_constructor_fn(string_proto_clone);
 
     let string_obj = create_string_constructor_object(string_proto.clone(), string_fn.clone());
-    // Set String.prototype.constructor so primitive string access returns
-    // the String constructor (matches Object.prototype.constructor pattern).
     string_proto
         .borrow_mut()
         .set("constructor", Value::Object(Rc::clone(&string_obj)));
@@ -508,18 +244,12 @@ fn chrono_now() -> i64 {
         .as_millis() as i64
 }
 
-/// Convert calendar date to Unix timestamp (seconds since epoch)
 fn chrono_to_timestamp(year: i32, month: i32, day: i32, hour: i32, min: i32, sec: i32) -> i64 {
     let days = days_from_ymd(year, month, day);
     (days * 86400) + (hour as i64 * 3600) + (min as i64 * 60) + sec as i64
 }
 
-/// Calculate days from Unix epoch (1970-01-01) to given date.
-/// Handles years before 1970 (negative day counts) and normalizes
-/// out-of-range months (e.g. month 13 rolls into the next year).
-/// Out-of-range days carry arithmetically into adjacent months.
 fn days_from_ymd(year: i32, month: i32, day: i32) -> i64 {
-    // Normalize months outside 1..=12 into the year
     let total_months = year as i64 * 12 + (month as i64 - 1);
     let year = total_months.div_euclid(12) as i32;
     let month = total_months.rem_euclid(12) as i32 + 1;
@@ -537,7 +267,7 @@ fn days_from_ymd(year: i32, month: i32, day: i32) -> i64 {
     for m in 1..month {
         days += days_in_month(year, m);
     }
-    days + (day - 1) as i64 // day is 1-based, epoch is day 0
+    days + (day - 1) as i64
 }
 
 fn is_leap_year(year: i32) -> bool {
@@ -583,11 +313,7 @@ pub fn register_date(ctx: &mut Context) {
     );
     date_proto_rc.borrow_mut().set(
         "getTimezoneOffset",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-            // Return local timezone offset in minutes (negative for ahead of UTC)
-            // For simplicity, return 0 (UTC) - proper impl would check local timezone
-            Ok(Value::Number(0.0))
-        }))),
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| Ok(Value::Number(0.0))))),
     );
     date_proto_rc.borrow_mut().set(
         "getTime",
@@ -613,7 +339,6 @@ pub fn register_date(ctx: &mut Context) {
             } else if args.len() == 1 {
                 crate::value::to_number(&args[0])
             } else {
-                // new Date(year, month, day, hour, min, sec, ms)
                 let year = crate::value::to_number(&args[0]) as i32;
                 let month = crate::value::to_number(&args[1]) as i32;
                 let day = args
@@ -637,8 +362,6 @@ pub fn register_date(ctx: &mut Context) {
                     .map(|v| crate::value::to_number(v) as i32)
                     .unwrap_or(0);
 
-                // Convert Y/M/D/H/M/S/MS to Unix timestamp
-                // JS months are 0-based, but our helpers expect 1-based
                 let total_secs = chrono_to_timestamp(year, month + 1, day, hour, min, sec);
                 (total_secs * 1000) as f64 + ms as f64
             };
@@ -684,39 +407,36 @@ pub fn register_date(ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Context;
-    use std::f64::consts::PI;
 
     #[test]
     fn test_days_from_ymd_before_1970_is_negative() {
-        // 1969-01-01 is 365 days before the epoch
         assert_eq!(days_from_ymd(1969, 1, 1), -365);
-        // 1968-01-01 includes leap year 1968
         assert_eq!(days_from_ymd(1968, 1, 1), -(365 + 366));
-        // Epoch itself is day 0
         assert_eq!(days_from_ymd(1970, 1, 1), 0);
     }
 
     #[test]
     fn test_days_from_ymd_normalizes_month_overflow() {
-        // Month 14 of 2024 == February 2025
         assert_eq!(days_from_ymd(2024, 14, 1), days_from_ymd(2025, 2, 1));
-        // Month 0 rolls back to December of the previous year
         assert_eq!(days_from_ymd(2024, 0, 1), days_from_ymd(2023, 12, 1));
     }
 
     #[test]
     fn test_date_before_1970_has_negative_timestamp() {
+        use crate::Context;
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("new Date(1969, 0, 1).getTime()").unwrap();
         match result {
-            Value::Number(n) => assert!(n < 0.0, "Date(1969,0,1).getTime() must be < 0, got {}", n),
+            Value::Number(n) => {
+                assert!(n < 0.0, "Date(1969,0,1).getTime() must be < 0, got {}", n)
+            }
             other => panic!("expected Number, got {:?}", other),
         }
     }
 
     #[test]
     fn test_date_month_overflow_normalizes() {
+        use crate::Context;
         let mut ctx = Context::new().unwrap();
         let overflow = ctx.eval("new Date(2024, 13, 1).getTime()").unwrap();
         let expected = ctx.eval("new Date(2025, 1, 1).getTime()").unwrap();
@@ -724,6 +444,7 @@ mod tests {
     }
 
     fn eval_num(src: &str) -> f64 {
+        use crate::Context;
         let mut ctx = Context::new().unwrap();
         match ctx.eval(src).unwrap() {
             Value::Number(n) => n,
@@ -733,26 +454,21 @@ mod tests {
 
     #[test]
     fn test_parse_float_accepts_infinity_literal() {
-        // Per ECMA-262 StrNumericLiteral, parseFloat accepts the literal
-        // "Infinity" (case-sensitive — only the exact capital-I spelling)
-        // after the optional sign.
         assert!(eval_num("parseFloat(Infinity)").is_infinite());
         assert!(eval_num("parseFloat(Infinity)") > 0.0);
         assert!(eval_num("parseFloat(-Infinity)") < 0.0);
         assert!(eval_num("parseFloat('Infinity')").is_infinite());
         assert!(eval_num("parseFloat('-Infinity')").is_infinite());
         assert!(eval_num("parseFloat('-Infinity')") < 0.0);
-        // Case-sensitive: "infinity" must be NaN.
         assert!(eval_num("parseFloat('infinity')").is_nan());
     }
 
     #[test]
     fn test_parse_float_decimal_then_exponent() {
-        // ".01e+2" must round-trip to the same value as the literal .01e+2.
-        // The per-digit scale*=0.1 accumulator loses precision and gives 10.
         assert_eq!(eval_num("parseFloat('.01e+2')"), 1.0);
         assert_eq!(eval_num("parseFloat('.5e1')"), 5.0);
-        assert_eq!(eval_num("parseFloat('3.14')"), PI);
+        let expected = eval_num("3.14");
+        assert!((eval_num("parseFloat('3.14')") - expected).abs() < 1e-10);
         assert_eq!(eval_num("parseFloat('.01')"), 0.01);
     }
 }

@@ -151,7 +151,7 @@ pub fn register_function(ctx: &mut Context) {
         *fp.borrow_mut() = Some(Rc::clone(&function_proto));
     });
 
-    let mut function_constructor =
+    let function_constructor =
         make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
     function_constructor.set_name("Function");
     let func_ctor = Value::NativeConstructor(Rc::new(function_constructor));
@@ -214,14 +214,21 @@ fn make_function_constructor(
             let source = format!("function anonymous({}) {{\n{}\n}}", params_src, body_src);
             match crate::parser::parse_script(&source) {
                 Ok(crate::ast::Program::Script(stmts)) => {
-                    if let Some(crate::ast::Statement::FunctionDeclaration { name, params, body }) =
-                        stmts.into_iter().next()
+                    if let Some(crate::ast::Statement::FunctionDeclaration {
+                        name,
+                        params,
+                        body,
+                        is_async,
+                        is_generator,
+                    }) = stmts.into_iter().next()
                     {
                         Ok(Value::Function(ValueFunction::new(
                             Some(name),
                             params,
                             body,
                             Rc::clone(&global_env),
+                            is_async,
+                            is_generator,
                         )))
                     } else {
                         Err(JsError::new(
@@ -229,7 +236,14 @@ fn make_function_constructor(
                         ))
                     }
                 }
-                Err(e) => Err(JsError::new(format!("SyntaxError: {}", e.0))),
+                Err(e) => {
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        &format!("Function constructor produced: {}", e.0),
+                        "SyntaxError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    Err(js_err)
+                }
             }
         },
         function_proto,

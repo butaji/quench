@@ -8,6 +8,9 @@ use crate::value::convert::to_js_string;
 use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
+#[cfg(test)]
+mod tests;
+
 pub fn register_error(ctx: &mut Context) {
     let error_proto = create_error_proto("Error");
     let error_proto_rc = Rc::new(RefCell::new(error_proto));
@@ -59,7 +62,7 @@ fn create_error_proto(name: &str) -> Object {
             };
             let name_val = obj_rc.borrow().get("name").unwrap_or(Value::Undefined);
             let name_str = to_js_string(&name_val);
-            let final_name = if name_str == "undefined" {
+            let final_name = if name_str == "undefined" || name_str.is_empty() {
                 &default_name
             } else {
                 &name_str
@@ -84,9 +87,12 @@ fn create_error_proto(name: &str) -> Object {
 fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<Object>>) {
     let proto_for_closure = Rc::clone(proto);
     let name_str = name.to_string();
-    let mut constructor = NativeConstructor::new(
+    let constructor = NativeConstructor::new(
         move |args| {
-            let message = args.first().cloned().unwrap_or(Value::Undefined);
+            let message = args
+                .first()
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
             let error_obj =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
             let error_rc = Rc::new(RefCell::new(error_obj));

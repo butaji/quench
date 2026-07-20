@@ -3,6 +3,7 @@
 // Re-export submodules
 pub mod array;
 pub mod array_buffer;
+pub mod bigint;
 pub mod console;
 pub mod date;
 pub mod error;
@@ -21,7 +22,6 @@ pub mod symbol;
 pub mod typed_array;
 pub mod uri;
 pub mod weak;
-pub mod bigint;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
