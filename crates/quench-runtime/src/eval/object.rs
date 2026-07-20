@@ -413,16 +413,17 @@ fn assign_to_native_constructor(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
-    if crate::interpreter::is_strict_mode()
-        && is_readonly_constructor_property(&nc.name(), prop_name)
-    {
+    let readonly = is_readonly_constructor_property(&nc.name(), prop_name);
+    if crate::interpreter::is_strict_mode() && readonly {
         let (_, error) = crate::value::error::create_js_error_with_type(
             "Cannot assign to read only property",
             "TypeError",
         );
         return Err(error);
     }
-    nc.set_property(prop_name, value);
+    if !readonly {
+        nc.set_property(prop_name, value);
+    }
     Ok(())
 }
 
