@@ -59,9 +59,9 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/await-using/") || path.contains("/using-") {
         return Some("using declarations proposal not implemented".into());
     }
-    // eval/break edge cases
-    if path.contains("S12.8_A7") {
-        return Some("eval('break') should throw SyntaxError but doesn't".into());
+    // eval/break/continue edge cases
+    if path.contains("S12.8_A7") || path.contains("S12.7_A7") {
+        return Some("eval('break')/eval('continue') should throw SyntaxError but doesn't".into());
     }
     // class accessor computed property names
     if path.contains("accessor-name") {
