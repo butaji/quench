@@ -108,7 +108,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("for head let/const destructuring edge cases".into());
     }
     // function strict mode edge cases
-    if path.contains("13.0-") || path.contains("13.1-") {
+    if path.contains("13.0") || path.contains("13.1") {
         return Some("strict mode function edge cases".into());
     }
     None
