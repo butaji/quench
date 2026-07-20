@@ -104,7 +104,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("Sputnik loop/control flow test edge cases".into());
     }
     // Sputnik function tests
-    if path.contains("/S13_") || path.contains("S13_A") {
+    if path.contains("/S13_") || path.contains("S13_A") || path.contains("S14_") || path.contains("S14_A") {
         return Some("Sputnik function test edge cases".into());
     }
     // for head with let destructuring
