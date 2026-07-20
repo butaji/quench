@@ -11,6 +11,7 @@ pub fn is_feature_supported(feature: &str) -> bool {
         "async-functions" => false,   // async/await not fully implemented
         "await-using" => false,       // TC39 proposal: using declarations
         "using-let" => false,         // TC39 proposal: using declarations
+        "tail-call-optimization" => false, // TCO not implemented
         "Symbol.species" => false,    // Symbol.species not implemented
         "Symbol.matchAll" => false,   // Symbol.matchAll not implemented
         "Symbol.replace" => false,    // Symbol.replace not implemented
