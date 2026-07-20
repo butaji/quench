@@ -22,7 +22,13 @@ pub fn eval_statements(
 ) -> Result<Value, JsError> {
     let mut last_val = Value::Undefined;
     for stmt in stmts {
-        last_val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
+        let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
+        // Per ES spec §8.3.2, empty completions (var/let/const/function declarations)
+        // should not replace the previous completion value. Only update last_val
+        // when the statement produces a non-empty value (like an expression).
+        if !matches!(stmt, Statement::VarDeclaration { .. } | Statement::FunctionDeclaration { .. } | Statement::ClassDeclaration { .. } | Statement::SequenceDecls(_)) {
+            last_val = val;
+        }
         match take_control_flow() {
             Some(ControlFlow::Return(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
