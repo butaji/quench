@@ -132,13 +132,25 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
             // Add directives (e.g. "use strict") before statements so
             // eval-time check_use_strict can find them.
             // Insert in reverse order so the first directive ends up at index 0.
+            // Only include directives whose raw text is a string literal (no escape
+            // sequences or line continuations, per ES §14.1.1).
             for d in b.directives.iter().rev() {
-                stmts.insert(
-                    0,
-                    Statement::Expression(Box::new(Expression::String(
-                        d.expression.value.to_string(),
-                    ))),
-                );
+                let raw_opt = d.expression.raw.as_ref().map(|a| a.to_string());
+                // Per ES §14.1.1, a Use Strict Directive must be exactly
+                // "use strict" or 'use strict' (no escape sequences, no line
+                // continuations). OXC's value field resolves escapes, so we
+                // check the raw source text instead.
+                let is_use_strict = raw_opt.as_deref()
+                    .map(|r| r == "\"use strict\"" || r == "'use strict'")
+                    .unwrap_or(false);
+                if is_use_strict {
+                    stmts.insert(
+                        0,
+                        Statement::Expression(Box::new(Expression::String(
+                            d.expression.value.to_string(),
+                        ))),
+                    );
+                }
             }
             stmts
         })
