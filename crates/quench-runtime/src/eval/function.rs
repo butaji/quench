@@ -278,9 +278,19 @@ fn declare_pattern_bindings(pattern: &BindingElement, env: &Rc<RefCell<Environme
 
 /// Check if a function body starts with "use strict"; directive
 fn check_use_strict(body: &[Statement]) -> bool {
-    if let Some(Statement::Expression(expr)) = body.first() {
-        if let Expression::String(s) = expr.as_ref() {
-            return s.trim() == "use strict";
+    for stmt in body {
+        match stmt {
+            Statement::Expression(expr) => {
+                if let Expression::String(s) = expr.as_ref() {
+                    if s.trim() == "use strict" {
+                        return true;
+                    }
+                } else {
+                    // Non-string expression ends the directive prologue
+                    return false;
+                }
+            }
+            _ => return false, // Non-expression ends the directive prologue
         }
     }
     false

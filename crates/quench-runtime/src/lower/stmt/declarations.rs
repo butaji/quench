@@ -131,7 +131,8 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
             let mut stmts: Vec<Statement> = b.statements.iter().filter_map(lower_stmt).collect();
             // Add directives (e.g. "use strict") before statements so
             // eval-time check_use_strict can find them.
-            for d in &b.directives {
+            // Insert in reverse order so the first directive ends up at index 0.
+            for d in b.directives.iter().rev() {
                 stmts.insert(
                     0,
                     Statement::Expression(Box::new(Expression::String(
