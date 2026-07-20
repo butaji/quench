@@ -26,11 +26,20 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         "call" => eval_function_call_method(f),
         "apply" => eval_function_apply_method(f),
         "bind" => eval_function_bind_method(f),
-        _ => Ok(f
-            .get_prototype()
-            .borrow()
-            .get(prop_name)
-            .unwrap_or(Value::Undefined)),
+        _ => {
+            // Per ES spec, property lookup on a function object follows the
+            // [[Prototype]] chain, which for all functions is Function.prototype.
+            // f.get_prototype() returns the .prototype property (for new instances),
+            // NOT the function's own [[Prototype]]. Use Function.prototype instead.
+            if let Some(func_proto) = crate::builtins::get_function_prototype() {
+                Ok(func_proto
+                    .borrow()
+                    .get(prop_name)
+                    .unwrap_or(Value::Undefined))
+            } else {
+                Ok(Value::Undefined)
+            }
+        }
     }
 }
 
