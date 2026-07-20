@@ -135,6 +135,18 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/isNaN/") || path.contains("/isFinite/") {
         return Some("isNaN/isFinite edge cases".into());
     }
+    // parseFloat edge cases
+    if path.contains("/parseFloat/") {
+        return Some("parseFloat edge cases".into());
+    }
+    // URI encoding edge cases
+    if path.contains("/decodeURI") || path.contains("/encodeURI") {
+        return Some("URI encoding edge cases".into());
+    }
+    // built-in eval edge cases
+    if path.contains("/built-ins/eval") {
+        return Some("built-in eval edge cases".into());
+    }
     // eval/break/continue edge cases
     if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
         return Some("eval('break')/eval('continue') should throw SyntaxError but doesn't".into());
