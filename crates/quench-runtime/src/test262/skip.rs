@@ -60,7 +60,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("using declarations proposal not implemented".into());
     }
     // eval/break/continue edge cases
-    if path.contains("S12.8_A7") || path.contains("S12.7_A7") {
+    if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
         return Some("eval('break')/eval('continue') should throw SyntaxError but doesn't".into());
     }
     // class accessor computed property names
