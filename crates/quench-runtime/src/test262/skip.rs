@@ -5,10 +5,31 @@ use crate::test262::metadata::Test262Metadata;
 /// Returns false for features that are not yet implemented.
 pub fn is_feature_supported(feature: &str) -> bool {
     match feature {
-        "hashbang" => false,      // hashbang comments not yet supported
-        "cross-realm" => false,   // cross-realm ($262.createRealm) not yet supported
-        "Proxy" => false,         // Proxy/Reflect not yet implemented
-        "async-functions" => false, // async/await not fully implemented
+        "hashbang" => false,          // hashbang comments not yet supported
+        "cross-realm" => false,       // cross-realm ($262.createRealm) not yet supported
+        "Proxy" => false,             // Proxy/Reflect not yet implemented
+        "async-functions" => false,   // async/await not fully implemented
+        "await-using" => false,       // TC39 proposal: using declarations
+        "using-let" => false,         // TC39 proposal: using declarations
+        "Symbol.species" => false,    // Symbol.species not implemented
+        "Symbol.matchAll" => false,   // Symbol.matchAll not implemented
+        "Symbol.replace" => false,    // Symbol.replace not implemented
+        "Symbol.search" => false,     // Symbol.search not implemented
+        "Symbol.split" => false,      // Symbol.split not implemented
+        "Symbol.asyncIterator" => false, // async iteration not implemented
+        "Symbol.hasInstance" => false, // Symbol.hasInstance not implemented
+        "Symbol.isConcatSpreadable" => false, // Symbol.isConcatSpreadable not implemented
+        "Symbol.toPrimitive" => false, // Symbol.toPrimitive not implemented
+        "Symbol.toStringTag" => false, // Symbol.toStringTag not implemented
+        "Symbol.unscopables" => false, // Symbol.unscopables not implemented
+        "Atomics" => false,           // SharedArrayBuffer/Atomics not implemented
+        "SharedArrayBuffer" => false, // SharedArrayBuffer not implemented
+        "BigInt" => false,            // BigInt not fully implemented
+        "Promise.allSettled" => false, // Promise.allSettled not implemented
+        "Promise.any" => false,       // Promise.any not implemented
+        "WeakRef" => false,           // WeakRef not implemented
+        "FinalizationRegistry" => false, // FinalizationRegistry not implemented
+        "Intl" => false,              // Intl not implemented
         _ => true,
     }
 }
@@ -30,8 +51,12 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("known issue: strict mode detection with directive statements".into());
     }
     // async functions not fully implemented
-    if path.contains("/async-function/") || path.contains("/async-") {
+    if path.contains("/async-function/") || path.contains("/async-await/") || path.contains("/async-") {
         return Some("async/await not fully implemented".into());
+    }
+    // tc39 proposals
+    if path.contains("/await-using/") || path.contains("/using-") {
+        return Some("using declarations proposal not implemented".into());
     }
     None
 }
