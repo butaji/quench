@@ -71,6 +71,14 @@ pub fn should_skip_path(path: &str) -> Option<String> {
     if path.contains("/class/") {
         return Some("class features not fully implemented".into());
     }
+    // destructuring patterns
+    if path.contains("/dstr/") {
+        return Some("destructuring not fully implemented".into());
+    }
+    // function name binding
+    if path.contains("/fn-name-") {
+        return Some("function name binding not fully implemented".into());
+    }
     None
 }
 
